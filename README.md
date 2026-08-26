@@ -9,6 +9,8 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+> Opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager). Community issue/PR credits: [CREDITS.md](CREDITS.md).
+
 ## Screenshots
 
 ### Dashboard
