@@ -39,9 +39,8 @@ export function tsUnescape(str: string): string {
       i++;
       if (i >= str.length) throw new Error("Invalid escape sequence");
       const mapped = UNESCAPE_MAP[str[i]];
-      if (mapped === undefined)
-        throw new Error(`Unknown escape: \\${str[i]}`);
-      result += mapped;
+      // Unknown escapes (e.g. \H on some TS6 builds) — keep the following char
+      result += mapped !== undefined ? mapped : str[i];
     } else {
       result += str[i];
     }

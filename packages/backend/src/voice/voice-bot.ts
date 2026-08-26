@@ -495,6 +495,24 @@ export class VoiceBot extends EventEmitter {
     }
   }
 
+  /** Stop current audio without disconnecting the bot (used by clear-queue). */
+  clearPlayback(): void {
+    this.stopIcyPolling();
+    this.stopPlayback();
+    try {
+      this.client.sendVoiceStop();
+    } catch {
+      /* ignore if not connected */
+    }
+    this.resetNickname();
+    this._nowPlaying = null;
+    if (this._status === 'playing' || this._status === 'paused') {
+      this._status = 'connected';
+      this.emit('statusChange', this._status);
+    }
+    this.emit('trackEnd', null);
+  }
+
   pause(): void {
     if (this._status !== 'playing') return;
     this.pausedAtFrame = this.frameIndex;

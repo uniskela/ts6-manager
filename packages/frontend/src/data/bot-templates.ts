@@ -246,11 +246,15 @@ export const BOT_TEMPLATES: BotTemplate[] = [
           makeNode(n1, 'trigger_event', 'Client Moved', { eventName: 'notifyclientmoved' }, 60, 80),
           makeNode(n2, 'condition', 'Joined Lobby?', { expression: `event.ctid == ${cfg.lobbyChannelId}` }, 300, 80),
           makeNode(n3, 'action_webquery', 'Get Client Info', { command: 'clientinfo clid={{event.clid}}', storeAs: 'client' }, 540, 80),
-          makeNode(n4, 'action_channelCreate', 'Create Channel', { channel_name: "{{temp.client.client_nickname}}'s Channel", cpid: cfg.parentChannelId, channel_flag_semi_permanent: '1' }, 780, 80),
+          makeNode(n4, 'action_channelCreate', 'Create Channel', { channel_name: "{{temp.client.client_nickname}}'s Channel", cpid: String(cfg.parentChannelId), channel_flag_semi_permanent: '1' }, 780, 80),
           makeNode(n5, 'action_move', 'Move to Channel', { cid: '{{temp.lastCreatedChannelId}}' }, 1020, 80),
           // Cron cleanup: delete empty channels under parent every minute
+          // Protect BOTH the lobby and parent so they are never deleted by cleanup
           makeNode(n6, 'trigger_cron', 'Cleanup Timer', { cron: '* * * * *' }, 60, 220),
-          makeNode(n7, 'action_tempChannelCleanup', 'Delete Empty Channels', { parentChannelId: cfg.parentChannelId, protectedChannelIds: cfg.lobbyChannelId }, 300, 220),
+          makeNode(n7, 'action_tempChannelCleanup', 'Delete Empty Channels', {
+            parentChannelId: String(cfg.parentChannelId),
+            protectedChannelIds: [cfg.lobbyChannelId, cfg.parentChannelId].filter(Boolean).join(','),
+          }, 300, 220),
         ],
         edges: [
           makeEdge(eid(), n1, n2),

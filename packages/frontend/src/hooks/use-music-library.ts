@@ -9,6 +9,14 @@ export function useSongs(configId: number | null) {
   });
 }
 
+export function useScanLibrary() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (configId: number) => musicLibraryApi.scan(configId),
+    onSuccess: (_, configId) => qc.invalidateQueries({ queryKey: ['songs', configId] }),
+  });
+}
+
 export function useUploadSong() {
   const qc = useQueryClient();
   return useMutation({

@@ -85,8 +85,8 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
     const fields = ['name', 'host', 'webqueryPort', 'apiKey', 'useHttps', 'sshPort', 'sshUsername', 'sshPassword', 'enabled'];
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        // Don't overwrite API key or SSH password with empty strings
-        if ((field === 'apiKey' || field === 'sshPassword') && req.body[field] === '') continue;
+        // Don't overwrite secrets/SSH username with empty strings (edit form omits unchanged secrets)
+        if ((field === 'apiKey' || field === 'sshPassword' || field === 'sshUsername') && req.body[field] === '') continue;
         // H8: Encrypt sensitive fields
         if (field === 'apiKey' || field === 'sshPassword') {
           data[field] = encrypt(req.body[field]);
@@ -98,9 +98,15 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
 
     const server = await prisma.tsServerConfig.update({ where: { id }, data });
 
-    // Refresh connection pool
+    // Refresh WebQuery connection pool (destroy old sockets first)
     const pool: ConnectionPool = req.app.locals.connectionPool;
     await pool.refreshClient(id);
+
+    // Force EventBridge SSH reconnect so updated SSH credentials take effect
+    const botEngine = req.app.locals.botEngine;
+    if (botEngine?.getEventBridge) {
+      await botEngine.getEventBridge().reconnectConfig(id);
+    }
 
     res.json({ id: server.id, name: server.name });
   } catch (err) { next(err); }
@@ -130,9 +136,12 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
     if (!server) throw new AppError(404, 'Server config not found');
 
     const client = new WebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
-    const ok = await client.testConnection();
+    const result = await client.testConnection();
     client.destroy(); // Close the temporary TCP connection immediately
 
-    res.json({ success: ok });
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, version: result.version });
   } catch (err) { next(err); }
 });

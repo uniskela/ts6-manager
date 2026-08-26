@@ -35,6 +35,14 @@ export function useDeleteRadioStation() {
   });
 }
 
+export function useResetRadioStationIds() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (configId: number) => radioStationsApi.resetIds(configId),
+    onSuccess: (_, configId) => qc.invalidateQueries({ queryKey: ['radio-stations', configId] }),
+  });
+}
+
 export function usePlayRadio() {
   return useMutation({
     mutationFn: ({ botId, stationId }: { botId: number; stationId: number }) =>

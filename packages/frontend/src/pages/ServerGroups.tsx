@@ -1,5 +1,10 @@
 import { useState } from 'react';
-import { useServerGroups, useServerGroupMembers, useCreateServerGroup, useDeleteServerGroup } from '@/hooks/use-groups';
+import {
+  useServerGroups, useServerGroupMembers, useCreateServerGroup, useDeleteServerGroup,
+  useAddServerGroupMember, useRemoveServerGroupMember,
+} from '@/hooks/use-groups';
+import { useQuery } from '@tanstack/react-query';
+import { clientsApi } from '@/api/clients.api';
 import { useServerStore } from '@/stores/server.store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -12,7 +17,7 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { Shield, Plus, Trash2, Users, ChevronRight } from 'lucide-react';
+import { Shield, Plus, Trash2, Users, ChevronRight, UserMinus, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function ServerGroups() {
@@ -20,16 +25,32 @@ export default function ServerGroups() {
   const { data, isLoading } = useServerGroups();
   const createGroup = useCreateServerGroup();
   const deleteGroup = useDeleteServerGroup();
+  const addMember = useAddServerGroupMember();
+  const removeMember = useRemoveServerGroupMember();
   const [selectedGroup, setSelectedGroup] = useState<number | null>(null);
   const { data: members } = useServerGroupMembers(selectedGroup);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAddMember, setShowAddMember] = useState(false);
+  const [addCldbid, setAddCldbid] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<{ sgid: number; name: string } | null>(null);
   const [newName, setNewName] = useState('');
+
+  const { data: onlineClients } = useQuery({
+    queryKey: ['clients-for-groups', selectedConfigId, selectedSid],
+    queryFn: () => clientsApi.list(selectedConfigId!, selectedSid!),
+    enabled: !!selectedConfigId && !!selectedSid && showAddMember,
+  });
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Shield} title="No server selected" />;
   if (isLoading) return <PageLoader />;
 
   const groups = Array.isArray(data) ? data : [];
+  const clientOptions = (Array.isArray(onlineClients) ? onlineClients : [])
+    .filter((c: any) => String(c.client_type) === '0')
+    .map((c: any) => ({
+      cldbid: Number(c.client_database_id),
+      name: c.client_nickname,
+    }));
 
   return (
     <div className="space-y-5">
@@ -41,7 +62,6 @@ export default function ServerGroups() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Group List */}
         <Card className="lg:col-span-1">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Groups ({groups.length})</CardTitle>
@@ -73,7 +93,6 @@ export default function ServerGroups() {
           </CardContent>
         </Card>
 
-        {/* Members */}
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between">
@@ -83,12 +102,17 @@ export default function ServerGroups() {
                 {selectedGroup && <Badge variant="default" className="font-mono-data text-[10px]">SGID: {selectedGroup}</Badge>}
               </CardTitle>
               {selectedGroup && (
-                <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => {
-                  const g = groups.find((g: any) => g.sgid === selectedGroup);
-                  if (g) setDeleteTarget({ sgid: g.sgid, name: g.name });
-                }}>
-                  <Trash2 className="h-3 w-3 mr-1" /> Delete Group
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => { setAddCldbid(''); setShowAddMember(true); }}>
+                    <UserPlus className="h-3 w-3 mr-1" /> Add member
+                  </Button>
+                  <Button variant="outline" size="sm" className="text-destructive hover:text-destructive" onClick={() => {
+                    const g = groups.find((g: any) => g.sgid === selectedGroup);
+                    if (g) setDeleteTarget({ sgid: g.sgid, name: g.name });
+                  }}>
+                    <Trash2 className="h-3 w-3 mr-1" /> Delete Group
+                  </Button>
+                </div>
               )}
             </div>
           </CardHeader>
@@ -107,7 +131,24 @@ export default function ServerGroups() {
                           </div>
                           <span className="text-sm">{m.client_nickname || `DBID: ${m.cldbid}`}</span>
                         </div>
-                        <span className="text-xs text-muted-foreground font-mono-data">DBID: {m.cldbid}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-muted-foreground font-mono-data">DBID: {m.cldbid}</span>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 text-destructive"
+                            title="Remove from group"
+                            onClick={() => removeMember.mutate(
+                              { sgid: selectedGroup, cldbid: Number(m.cldbid) },
+                              {
+                                onSuccess: () => toast.success('Member removed'),
+                                onError: () => toast.error('Failed to remove member'),
+                              },
+                            )}
+                          >
+                            <UserMinus className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                     ))
                   ) : (
@@ -127,6 +168,60 @@ export default function ServerGroups() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
             <Button onClick={() => { createGroup.mutate(newName, { onSuccess: () => { toast.success('Group created'); setShowCreate(false); setNewName(''); } }); }}>Create</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showAddMember} onOpenChange={setShowAddMember}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Add group member</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Client database ID</Label>
+              <Input
+                value={addCldbid}
+                onChange={(e) => setAddCldbid(e.target.value)}
+                placeholder="cldbid"
+                className="font-mono-data"
+              />
+            </div>
+            {clientOptions.length > 0 && (
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Online clients</Label>
+                <ScrollArea className="h-40 border rounded-md">
+                  <div className="p-1 space-y-0.5">
+                    {clientOptions.map((c) => (
+                      <button
+                        key={c.cldbid}
+                        type="button"
+                        className="w-full text-left text-sm px-2 py-1.5 rounded hover:bg-muted/50"
+                        onClick={() => setAddCldbid(String(c.cldbid))}
+                      >
+                        {c.name} <span className="text-muted-foreground font-mono-data text-xs">({c.cldbid})</span>
+                      </button>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAddMember(false)}>Cancel</Button>
+            <Button
+              disabled={!selectedGroup || !addCldbid}
+              onClick={() => {
+                if (!selectedGroup) return;
+                addMember.mutate(
+                  { sgid: selectedGroup, cldbid: parseInt(addCldbid, 10) },
+                  {
+                    onSuccess: () => { toast.success('Member added'); setShowAddMember(false); },
+                    onError: () => toast.error('Failed to add member'),
+                  },
+                );
+              }}
+            >
+              Add
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

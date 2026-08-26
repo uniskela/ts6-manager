@@ -9,6 +9,8 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+> Opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager). Community issue/PR credits: [CREDITS.md](CREDITS.md).
+
 ## Screenshots
 
 ### Dashboard
@@ -146,12 +148,23 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 ## Quick Start (Docker)
 
+Prebuilt images are published to **GitHub Container Registry** on every push to `main` (and on `v*` tags) via [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml):
+
+| Service  | Image |
+|----------|--------|
+| Backend  | `ghcr.io/uniskela/ts6-manager/backend:latest` |
+| Frontend | `ghcr.io/uniskela/ts6-manager/frontend:latest` |
+| Sidecar  | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
+
+Pull without logging in once the packages are **Public** (Packages → each image → Package settings). The workflow tries to set that automatically after the first publish.
+
 1. Download the [`docker-compose.yml`](docker-compose.yml)
 2. Create a `.env` file next to it:
 
 ```env
 JWT_SECRET=your-random-secret-at-least-32-characters
 ENCRYPTION_KEY=another-random-secret-for-credential-encryption
+SIDECAR_SECRET=shared-secret-between-backend-and-sidecar
 ```
 
 Generate secure values:
@@ -159,6 +172,7 @@ Generate secure values:
 ```bash
 echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env
 echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
+echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env
 ```
 
 3. Start the stack:
@@ -170,18 +184,21 @@ docker compose up -d
 4. Open `http://localhost:3000/setup` and create your admin account
 5. Log in, then add your TeamSpeak server connection under **Settings → Connections** (host, WebQuery port, API key)
 
-> `JWT_SECRET` is **required** — the backend will refuse to start in production without it.
-> `ENCRYPTION_KEY` is optional but recommended — if not set, `JWT_SECRET` is used as fallback for credential encryption.
+> `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` are **required** in production. The backend refuses to start without them when `NODE_ENV=production`.
+> The sidecar HTTP API is authenticated with `SIDECAR_SECRET` and is not published to the host by default.
 
 ### Building from Source
 
 ```bash
-git clone https://github.com/clusterzx/ts6-manager.git
+git clone https://github.com/uniskela/ts6-manager.git
 cd ts6-manager
 echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env
 echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
+echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env
 docker compose -f docker-compose.local.yml up -d --build
 ```
+
+> This repository is an opinionated continuation of the original [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager) project.
 
 ### Coolify / Reverse Proxy
 
@@ -231,7 +248,7 @@ The Docker images handle migrations automatically on startup.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JWT_SECRET` | — | **Required.** Secret for JWT signing. Must be set in production. |
-| `ENCRYPTION_KEY` | — | Optional. Dedicated key for AES-256-GCM credential encryption. Falls back to `JWT_SECRET` if not set. |
+| `ENCRYPTION_KEY` | — | **Required in production.** Dedicated key for AES-256-GCM credential encryption. Dev may fall back to `JWT_SECRET`. |
 | `PORT` | `3001` | Backend port |
 | `DATABASE_URL` | `file:./data/ts6webui.db` | SQLite database path |
 | `JWT_ACCESS_EXPIRY` | `15m` | Access token lifetime |
@@ -239,6 +256,7 @@ The Docker images handle migrations automatically on startup.
 | `FRONTEND_URL` | `http://localhost:3000` | CORS origin |
 | `MUSIC_DIR` | `/data/music` | Directory for downloaded music files |
 | `SIDECAR_URL` | — | Optional. Full URL of the WebRTC sidecar service (e.g. `http://ts6-sidecar:9800`). Set in Docker when sidecar runs as a separate container. |
+| `SIDECAR_SECRET` | — | **Required when `SIDECAR_URL` is set in production.** Shared bearer token for sidecar mutating APIs. |
 | `YT_COOKIE_FILE` | — | Optional. Path to a Netscape-format cookies.txt file for yt-dlp. Can also be managed via **Settings → YouTube** in the UI. |
 
 ## Environment Variables Sidecar(VideoStreaming)

@@ -80,3 +80,40 @@ radioStationRoutes.delete('/:id', async (req: Request, res: Response, next) => {
     res.json({ success: true });
   } catch (err) { next(err); }
 });
+
+// POST /reset-ids — Compact IDs after deletions (SQLite AUTOINCREMENT does not reuse IDs)
+radioStationRoutes.post('/reset-ids', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const configId = parseInt(req.params.configId as string);
+    const stations = await prisma.radioStation.findMany({
+      where: { serverConfigId: configId },
+      orderBy: { id: 'asc' },
+    });
+
+    await prisma.$transaction(async (tx: any) => {
+      await tx.radioStation.deleteMany({ where: { serverConfigId: configId } });
+      for (const s of stations) {
+        await tx.radioStation.create({
+          data: {
+            name: s.name,
+            url: s.url,
+            genre: s.genre,
+            imageUrl: s.imageUrl,
+            serverConfigId: configId,
+          },
+        });
+      }
+      // Reset SQLite sequence so next insert continues from max(id)
+      await tx.$executeRawUnsafe(
+        `DELETE FROM sqlite_sequence WHERE name = 'RadioStation'`,
+      );
+    });
+
+    const refreshed = await prisma.radioStation.findMany({
+      where: { serverConfigId: configId },
+      orderBy: { id: 'asc' },
+    });
+    res.json({ stations: refreshed });
+  } catch (err) { next(err); }
+});

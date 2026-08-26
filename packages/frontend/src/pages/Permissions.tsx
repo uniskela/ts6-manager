@@ -110,6 +110,14 @@ export default function Permissions() {
     queryFn: () => permissionsApi.clients(c!, s!),
     enabled: !!c && !!s && layer === 'client',
   });
+  const { data: dbClients } = useQuery({
+    queryKey: ['db-clients-for-perms', c, s],
+    queryFn: () => permissionsApi.clientDatabase(c!, s!),
+    enabled: !!c && !!s && layer === 'client',
+  });
+
+  const [showModifiedOnly, setShowModifiedOnly] = useState(false);
+  const [clientSearch, setClientSearch] = useState('');
 
   // Fetch current entity permissions
   const { data: entityPerms, isLoading: loadingPerms } = useQuery({
@@ -169,9 +177,13 @@ export default function Permissions() {
   // Categorize permissions
   const categories = useMemo(() => {
     const catMap = new Map<string, PermDef[]>();
-    const filtered = search
+    let filtered = search
       ? allPerms.filter((p) => p.permsid.toLowerCase().includes(search.toLowerCase()) || p.permdesc.toLowerCase().includes(search.toLowerCase()))
       : allPerms;
+
+    if (showModifiedOnly) {
+      filtered = filtered.filter((p) => currentPerms.has(p.permsid) || changes.has(p.permsid));
+    }
 
     for (const perm of filtered) {
       const cat = getCategoryKey(perm.permsid);
@@ -179,7 +191,7 @@ export default function Permissions() {
       catMap.get(cat)!.push(perm);
     }
     return catMap;
-  }, [allPerms, search]);
+  }, [allPerms, search, showModifiedOnly, currentPerms, changes]);
 
   const toggleCat = useCallback((cat: string) => {
     setExpandedCats((prev) => {
@@ -267,12 +279,26 @@ export default function Permissions() {
         return (Array.isArray(channels) ? channels : []).map((ch: any) => ({
           id: Number(ch.cid), name: ch.channel_name, type: 0,
         }));
-      case 'client':
-        return (Array.isArray(clients) ? clients : [])
+      case 'client': {
+        const online = (Array.isArray(clients) ? clients : [])
           .filter((cl: any) => String(cl.client_type) === '0')
           .map((cl: any) => ({
-            id: Number(cl.client_database_id), name: cl.client_nickname, type: 0,
+            id: Number(cl.client_database_id), name: cl.client_nickname, type: 0, online: true,
           }));
+        const onlineIds = new Set(online.map((o) => o.id));
+        const offline = (Array.isArray(dbClients) ? dbClients : [])
+          .map((cl: any) => ({
+            id: Number(cl.cldbid || cl.client_database_id),
+            name: cl.client_nickname || `DBID ${cl.cldbid || cl.client_database_id}`,
+            type: 0,
+            online: false,
+          }))
+          .filter((cl: any) => cl.id && !onlineIds.has(cl.id));
+        const merged = [...online, ...offline];
+        if (!clientSearch.trim()) return merged;
+        const q = clientSearch.toLowerCase();
+        return merged.filter((cl) => cl.name.toLowerCase().includes(q) || String(cl.id).includes(q));
+      }
       default: return [];
     }
   })();
@@ -320,6 +346,14 @@ export default function Permissions() {
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Select {LAYERS.find((l) => l.key === layer)?.label.replace(/s$/, '')}
             </CardTitle>
+            {layer === 'client' && (
+              <Input
+                placeholder="Search online/offline clients..."
+                value={clientSearch}
+                onChange={(e) => setClientSearch(e.target.value)}
+                className="h-8 text-xs mt-2"
+              />
+            )}
           </CardHeader>
           <CardContent className="p-0">
             <ScrollArea className="h-[500px]">
@@ -355,14 +389,25 @@ export default function Permissions() {
                 {entityId ? `Permissions` : 'Select an entity'}
               </CardTitle>
               {entityId && (
-                <div className="relative w-64">
-                  <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-                  <Input
-                    placeholder="Search permissions..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-7 h-8 text-xs"
-                  />
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={showModifiedOnly}
+                      onChange={(e) => setShowModifiedOnly(e.target.checked)}
+                      className="rounded border-border"
+                    />
+                    Modified only
+                  </label>
+                  <div className="relative w-64">
+                    <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                    <Input
+                      placeholder="Search permissions..."
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      className="pl-7 h-8 text-xs"
+                    />
+                  </div>
                 </div>
               )}
             </div>

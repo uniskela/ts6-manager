@@ -99,7 +99,8 @@ export async function validateUrl(
         return { valid: false, error: `Hostname "${hostname}" resolves to a cloud metadata IP` };
       }
     } catch {
-      // DNS resolution failed — allow the request to proceed and let axios/ffmpeg handle the error
+      // Fail closed: unresolved hostnames must not bypass SSRF checks
+      return { valid: false, error: `Hostname "${hostname}" could not be resolved` };
     }
   }
 

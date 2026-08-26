@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: clusterzx/ts6-manager:backend
+    image: ghcr.io/uniskela/ts6-manager/backend:latest
     container_name: ts6-backend
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
       - PORT=3001
       - DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env or environment}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env or environment}
       - TS_ALLOW_SELF_SIGNED=${TS_ALLOW_SELF_SIGNED:-false}
       - YT_COOKIE_FILE=${YT_COOKIE_FILE:-}
       - JWT_ACCESS_EXPIRY=15m
@@ -18,6 +18,7 @@ services:
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
       - MUSIC_DIR=/data/music
       - SIDECAR_URL=http://ts6-sidecar:9800
+      - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
       - SIDECAR_BINARY_PATH=${SIDECAR_BINARY_PATH:-}
     volumes:
       - backend-data:/app/packages/backend/data
@@ -32,18 +33,18 @@ services:
       - ts6-network
 
   sidecar:
-    image: clusterzx/ts6-manager:sidecar
+    image: ghcr.io/uniskela/ts6-manager/sidecar:latest
     container_name: ts6-sidecar
     restart: unless-stopped
     environment:
       - SIDECAR_PORT=9800
-    ports:
-      - "9800:9800"
+      - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
+    # Port 9800 is intentionally NOT published — backend reaches sidecar on the internal network only
     networks:
       - ts6-network
 
   frontend:
-    image: clusterzx/ts6-manager:frontend
+    image: ghcr.io/uniskela/ts6-manager/frontend:latest
     container_name: ts6-frontend
     restart: unless-stopped
     ports:

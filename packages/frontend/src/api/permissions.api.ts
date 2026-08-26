@@ -59,4 +59,6 @@ export const permissionsApi = {
     api.get(chBase(configId, sid)).then((r) => r.data),
   clients: (configId: number, sid: number) =>
     api.get(clBase(configId, sid)).then((r) => r.data),
+  clientDatabase: (configId: number, sid: number, start = 0, duration = 200) =>
+    api.get(`${clBase(configId, sid)}/database`, { params: { start, duration } }).then((r) => r.data),
 };

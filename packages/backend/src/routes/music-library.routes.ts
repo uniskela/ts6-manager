@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { downloadYouTube, searchYouTube, getYouTubeUrlInfo } from '../voice/audio/youtube.js';
+import { parseTitleArtistFromFilename, probeAudioTags } from '../voice/audio/metadata.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -55,6 +56,58 @@ musicLibraryRoutes.get('/songs', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /scan — Import audio files already present under MUSIC_DIR
+musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const configId = parseInt(req.params.configId as string);
+
+    const existing = await prisma.song.findMany({
+      where: { serverConfigId: configId },
+      select: { filePath: true },
+    });
+    const known = new Set(existing.map((s: { filePath: string }) => s.filePath));
+
+    const entries = fs.readdirSync(MUSIC_DIR, { withFileTypes: true });
+    let imported = 0;
+    const created: unknown[] = [];
+
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!ALLOWED_EXTENSIONS.includes(ext)) continue;
+      const filePath = path.join(MUSIC_DIR, entry.name);
+      if (known.has(filePath)) continue;
+
+      const tags = await probeAudioTags(filePath);
+      const fromName = parseTitleArtistFromFilename(entry.name);
+      const title = tags.title || fromName.title;
+      const artist = tags.artist || fromName.artist;
+      let duration = tags.duration ?? null;
+      if (duration == null) {
+        try { duration = await getAudioDuration(filePath); } catch { /* ignore */ }
+      }
+      const stat = fs.statSync(filePath);
+
+      const song = await prisma.song.create({
+        data: {
+          title,
+          artist,
+          duration,
+          filePath,
+          source: 'local',
+          fileSize: stat.size,
+          serverConfigId: configId,
+        },
+      });
+      created.push(song);
+      imported++;
+    }
+
+    res.json({ imported, songs: created });
+  } catch (err) { next(err); }
+});
+
 // POST /upload — Upload audio file
 musicLibraryRoutes.post('/upload', upload.single('file'), async (req: Request, res: Response, next) => {
   try {
@@ -63,20 +116,13 @@ musicLibraryRoutes.post('/upload', upload.single('file'), async (req: Request, r
     const file = req.file;
     if (!file) throw new AppError(400, 'No file uploaded');
 
-    // Extract duration via ffprobe
-    let duration: number | null = null;
-    try {
-      duration = await getAudioDuration(file.path);
-    } catch { /* ignore duration extraction failure */ }
-
-    // Parse title/artist from filename
-    const baseName = path.basename(file.originalname, path.extname(file.originalname));
-    let title = baseName;
-    let artist: string | null = null;
-    const dashIdx = baseName.indexOf(' - ');
-    if (dashIdx > 0) {
-      artist = baseName.substring(0, dashIdx).trim();
-      title = baseName.substring(dashIdx + 3).trim();
+    const tags = await probeAudioTags(file.path);
+    const fromName = parseTitleArtistFromFilename(file.originalname);
+    const title = tags.title || fromName.title;
+    const artist = tags.artist || fromName.artist;
+    let duration = tags.duration ?? null;
+    if (duration == null) {
+      try { duration = await getAudioDuration(file.path); } catch { /* ignore */ }
     }
 
     const song = await prisma.song.create({

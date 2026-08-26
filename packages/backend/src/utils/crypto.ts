@@ -13,6 +13,9 @@ function getKey(): Buffer {
 
   const source = process.env.ENCRYPTION_KEY || config.jwtSecret;
   if (!process.env.ENCRYPTION_KEY) {
+    if (config.nodeEnv === 'production') {
+      throw new Error('ENCRYPTION_KEY is required in production');
+    }
     console.warn('[WARN] ENCRYPTION_KEY not set. Using JWT_SECRET as fallback for field encryption. Set ENCRYPTION_KEY in production!');
   }
 

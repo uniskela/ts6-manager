@@ -1,0 +1,134 @@
+name: Publish container images
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: ghcr-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # Images: ghcr.io/<owner>/ts6-manager/<component>
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/ts6-manager
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Fail the matrix if any component fails so we never promote a mixed :latest set.
+      fail-fast: true
+      matrix:
+        include:
+          - component: backend
+            dockerfile: Dockerfile.backend
+          - component: frontend
+            dockerfile: Dockerfile.frontend
+          - component: sidecar
+            dockerfile: Dockerfile.sidecar
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.component }}
+          # Do not push :latest here — promote only after all components succeed.
+          tags: |
+            type=sha,prefix=sha-,format=short
+            type=ref,event=tag
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+  # Retag the just-built sha image as :latest only when every component built successfully.
+  promote-latest:
+    name: Promote ${{ matrix.component }}:latest
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    strategy:
+      fail-fast: true
+      matrix:
+        component: [backend, frontend, sidecar]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag sha as latest
+        env:
+          COMPONENT: ${{ matrix.component }}
+        run: |
+          set -euo pipefail
+          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
+          SRC="${IMAGE_PREFIX}/${COMPONENT}:sha-${SHORT_SHA}"
+          DST="${IMAGE_PREFIX}/${COMPONENT}:latest"
+          echo "Promoting ${SRC} → ${DST}"
+          docker buildx imagetools create --tag "${DST}" "${SRC}"
+
+  # First publish often creates private packages; attempt to mark them public for pull-without-auth.
+  # If this fails (org policy / token scope), set visibility manually under Packages → Package settings.
+  make-public:
+    name: Ensure packages are public
+    needs: [build-and-push, promote-latest]
+    runs-on: ubuntu-latest
+    if: always() && needs.build-and-push.result == 'success' && (needs.promote-latest.result == 'success' || needs.promote-latest.result == 'skipped')
+    permissions:
+      packages: write
+    steps:
+      - name: Set package visibility to public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OWNER="${{ github.repository_owner }}"
+          for PKG in ts6-manager/backend ts6-manager/frontend ts6-manager/sidecar; do
+            ENCODED="$(printf '%s' "$PKG" | jq -sRr @uri)"
+            echo "Setting visibility public for package: $PKG"
+            # User-owned packages
+            if gh api --method PUT "/user/packages/container/${ENCODED}/visibility" -f visibility=public 2>/dev/null; then
+              echo "OK (user): $PKG"
+              continue
+            fi
+            # Org-owned packages
+            if gh api --method PUT "/orgs/${OWNER}/packages/container/${ENCODED}/visibility" -f visibility=public 2>/dev/null; then
+              echo "OK (org): $PKG"
+              continue
+            fi
+            echo "::warning::Could not auto-set visibility for $PKG. Set it to Public in the GitHub Packages UI."
+          done

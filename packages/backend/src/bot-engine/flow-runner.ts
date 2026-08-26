@@ -471,6 +471,9 @@ export class FlowRunner {
     const exemptIds = data.exemptGroupIds
       ? (await ctx.resolveTemplate(data.exemptGroupIds)).split(',').map(s => s.trim()).filter(Boolean)
       : [];
+    const exemptChannels = data.exemptChannelIds
+      ? (await ctx.resolveTemplate(data.exemptChannelIds)).split(',').map(s => s.trim()).filter(Boolean)
+      : [];
 
     const clients = await client.executePost(ctx.sid, 'clientlist', { '-times': '', '-groups': '' });
     if (!Array.isArray(clients)) return;
@@ -481,6 +484,8 @@ export class FlowRunner {
       if (String(cl.client_type) === '1') continue;
       // Skip clients already in the AFK channel
       if (String(cl.cid) === String(afkCid)) continue;
+      // Skip exempt channels (e.g. music / meeting rooms)
+      if (exemptChannels.length > 0 && exemptChannels.includes(String(cl.cid))) continue;
       // Check idle time
       const idleMs = parseInt(cl.client_idle_time) || 0;
       if (idleMs / 1000 < thresholdSec) continue;
@@ -572,12 +577,20 @@ export class FlowRunner {
 
       // Get total online time from BotVariable (accumulate via cron)
       const varName = `onlinetime_${cldbid}`;
+      const lastKey = `onlinetime_last_${cldbid}`;
       const storedStr = await ctx.getVariable(varName);
       const storedSeconds = parseFloat(storedStr) || 0;
-      // Add current connection time
-      const connectionTime = parseInt(cl.connection_connected_time) || 0;
-      const totalSeconds = storedSeconds + connectionTime / 1000;
+      // connection_connected_time is ms since current session start
+      const connectionTimeSec = (parseInt(cl.connection_connected_time) || 0) / 1000;
+      let lastCounted = parseFloat(await ctx.getVariable(lastKey)) || 0;
+      // Session restarted — reset per-session counter
+      if (connectionTimeSec < lastCounted) lastCounted = 0;
+      const delta = Math.max(0, connectionTimeSec - lastCounted);
+      const totalSeconds = storedSeconds + delta;
       const totalHours = totalSeconds / 3600;
+
+      await ctx.setVariable(varName, String(totalSeconds));
+      await ctx.setVariable(lastKey, String(connectionTimeSec));
 
       const clientGroups = String(cl.client_servergroups || '').split(',');
 

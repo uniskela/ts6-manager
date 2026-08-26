@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/intervalpli"
 	"github.com/pion/rtcp"
@@ -1016,12 +1018,33 @@ func (s *Sidecar) Stop() {
 	s.peersLock.Unlock()
 }
 
+func requireSidecarAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		secret := os.Getenv("SIDECAR_SECRET")
+		if secret == "" {
+			http.Error(w, "sidecar auth not configured", http.StatusServiceUnavailable)
+			return
+		}
+		auth := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		if !strings.HasPrefix(auth, prefix) || subtle.ConstantTimeCompare([]byte(auth[len(prefix):]), []byte(secret)) != 1 {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
 func main() {
 	port := 9800
 	if p := os.Getenv("SIDECAR_PORT"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil {
 			port = v
 		}
+	}
+
+	if os.Getenv("SIDECAR_SECRET") == "" {
+		log.Println("[WARN] SIDECAR_SECRET is not set — mutating API endpoints will reject all requests")
 	}
 
 	sidecar := NewSidecar()
@@ -1031,7 +1054,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /peer/create", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /peer/create", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ID string `json:"id"`
 		}
@@ -1050,9 +1073,9 @@ func main() {
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{"sdp": sdp})
-	})
+	}))
 
-	mux.HandleFunc("POST /peer/answer", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /peer/answer", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ID  string `json:"id"`
 			SDP string `json:"sdp"`
@@ -1069,9 +1092,9 @@ func main() {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	}))
 
-	mux.HandleFunc("POST /peer/ice", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /peer/ice", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ID            string `json:"id"`
 			Candidate     string `json:"candidate"`
@@ -1089,9 +1112,9 @@ func main() {
 			return
 		}
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	}))
 
-	mux.HandleFunc("POST /peer/close", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /peer/close", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			ID string `json:"id"`
 		}
@@ -1101,15 +1124,15 @@ func main() {
 		}
 		sidecar.ClosePeer(req.ID)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	}))
 
-	mux.HandleFunc("POST /source", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /source", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Source    string `json:"source"`
 			Width     int    `json:"width"`
 			Height    int    `json:"height"`
 			Framerate int    `json:"framerate"`
-			Bitrate   string `json:"bitrate"` 
+			Bitrate   string `json:"bitrate"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1118,9 +1141,9 @@ func main() {
 		log.Printf("[API] Setting source: %s (%dx%d @ %dfps)", req.Source, req.Width, req.Height, req.Framerate, req.Bitrate)
 		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	}))
 
-	mux.HandleFunc("POST /source/stop", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /source/stop", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		sidecar.ffmpegLock.Lock()
 		sidecar.StopFFmpegLocked()
 		sidecar.resetSyncTiming()
@@ -1129,11 +1152,11 @@ func main() {
 		sidecar.ffmpegLock.Unlock()
 
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	})
+	}))
 
-	mux.HandleFunc("GET /stats", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /stats", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(sidecar.GetStats())
-	})
+	}))
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
