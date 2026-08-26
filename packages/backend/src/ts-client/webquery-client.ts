@@ -99,13 +99,13 @@ export class WebQueryClient {
     return Object.keys(cleaned).length > 0 ? cleaned : undefined;
   }
 
-  // Test connection
-  async testConnection(): Promise<boolean> {
+  // Test connection — returns version info or a detailed error
+  async testConnection(): Promise<{ ok: true; version: unknown } | { ok: false; error: string }> {
     try {
-      await this.execute(0, 'version');
-      return true;
-    } catch {
-      return false;
+      const version = await this.execute(0, 'version');
+      return { ok: true, version };
+    } catch (err: any) {
+      return { ok: false, error: err?.message || String(err) };
     }
   }
 

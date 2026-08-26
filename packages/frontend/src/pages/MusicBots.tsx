@@ -11,8 +11,8 @@ import {
   useSetShuffle, useSetRepeat,
   usePlayFromQueue, useMoveQueueItem,
 } from '@/hooks/use-music-bots';
-import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch } from '@/hooks/use-music-library';
-import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, usePlayRadio } from '@/hooks/use-radio-stations';
+import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary } from '@/hooks/use-music-library';
+import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
 import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
@@ -105,6 +105,7 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
           <div className="flex items-center gap-2 min-w-0">
             <div className={`h-2 w-2 rounded-full shrink-0 ${statusColors[bot.status] || 'bg-zinc-500'}`} />
             <CardTitle className="text-sm font-medium truncate">{bot.name}</CardTitle>
+            <Badge variant="secondary" className="text-[9px] font-mono-data shrink-0">ID {bot.id}</Badge>
           </div>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" className="h-7 w-7" title="Player Widget"
@@ -719,6 +720,7 @@ function LibraryTab() {
 
   const { data: songs, isLoading } = useSongs(configId);
   const uploadSong = useUploadSong();
+  const scanLibrary = useScanLibrary();
   const deleteSong = useDeleteSong();
   const ytSearch = useYouTubeSearch();
   const ytDownload = useYouTubeDownload();
@@ -848,6 +850,20 @@ function LibraryTab() {
         <input ref={fileInputRef} type="file" accept="audio/*" multiple hidden onChange={handleUpload} />
         <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploadSong.isPending}>
           <Upload className="h-4 w-4 mr-1" /> {uploadSong.isPending ? 'Uploading...' : 'Upload'}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!configId || scanLibrary.isPending}
+          onClick={() => {
+            if (!configId) return;
+            scanLibrary.mutate(configId, {
+              onSuccess: (data: any) => toast.success(`Imported ${data?.imported ?? 0} file(s) from music directory`),
+              onError: () => toast.error('Library scan failed'),
+            });
+          }}
+        >
+          <Search className="h-4 w-4 mr-1" /> {scanLibrary.isPending ? 'Scanning...' : 'Scan folder'}
         </Button>
       </div>
 
@@ -1257,6 +1273,7 @@ function RadioTab() {
   const { data: presets } = useRadioPresets(configId);
   const createStation = useCreateRadioStation();
   const deleteStation = useDeleteRadioStation();
+  const resetStationIds = useResetRadioStationIds();
   const playRadio = usePlayRadio();
 
   const { data: bots } = useMusicBots();
@@ -1350,6 +1367,20 @@ function RadioTab() {
 
         <div className="flex-1" />
 
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!configId || resetStationIds.isPending || stationList.length === 0}
+          onClick={() => {
+            if (!configId) return;
+            resetStationIds.mutate(configId, {
+              onSuccess: () => toast.success('Radio station IDs compacted'),
+              onError: () => toast.error('Failed to reset station IDs'),
+            });
+          }}
+        >
+          Reset IDs
+        </Button>
         <Button variant="outline" size="sm" onClick={() => setShowPresets(true)}>
           <Radio className="h-4 w-4 mr-1" /> Presets
         </Button>

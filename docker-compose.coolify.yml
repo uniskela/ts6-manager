@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: clusterzx/ts6-manager:backend
+    image: uniskela/ts6-manager:backend
     container_name: ts6-backend
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
       - PORT=3001
       - DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
       - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in Coolify environment variables}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in Coolify environment variables}
       - TS_ALLOW_SELF_SIGNED=${TS_ALLOW_SELF_SIGNED:-false}
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=7d
@@ -24,7 +24,7 @@ services:
       - coolify-ts
 
   frontend:
-    image: clusterzx/ts6-manager:frontend
+    image: uniskela/ts6-manager:frontend
     container_name: ts6-frontend
     restart: unless-stopped
     depends_on:

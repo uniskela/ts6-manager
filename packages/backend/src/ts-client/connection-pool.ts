@@ -46,13 +46,14 @@ export class ConnectionPool {
   }
 
   async refreshClient(configId: number): Promise<void> {
+    // Always tear down the previous WebQuery client so sockets/credentials cannot linger
+    this.removeClient(configId);
+
     const server = await this.prisma.tsServerConfig.findUnique({
       where: { id: configId },
     });
     if (server && server.enabled) {
       this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
-    } else {
-      this.removeClient(configId);
     }
   }
 

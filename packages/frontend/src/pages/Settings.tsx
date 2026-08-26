@@ -71,8 +71,8 @@ function AccountTab() {
   });
 
   const handleSubmit = () => {
-    if (newPassword.length < 6) {
-      toast.error('New password must be at least 6 characters');
+    if (newPassword.length < 8) {
+      toast.error('New password must be at least 8 characters with upper, lower, and a digit');
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -106,7 +106,7 @@ function AccountTab() {
           </div>
           <div>
             <Label className="text-xs">New Password</Label>
-            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min. 6 characters" />
+            <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Min. 8 characters, upper, lower, digit" />
           </div>
           <div>
             <Label className="text-xs">Confirm New Password</Label>
@@ -164,11 +164,11 @@ function ConnectionsTab() {
       name: server.name || '',
       host: server.host || '',
       webqueryPort: String(server.webqueryPort || 10080),
-      apiKey: server.apiKey || '',
+      apiKey: '',
       useHttps: server.useHttps || false,
       sshPort: String(server.sshPort || 10022),
-      sshUsername: server.sshUsername || '',
-      sshPassword: server.sshPassword || '',
+      sshUsername: '',
+      sshPassword: '',
     });
     setEditId(server.id);
     setShowAdd(true);
@@ -203,8 +203,8 @@ function ConnectionsTab() {
               </div>
               <div className="flex items-center gap-1 pt-2">
                 <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testServer.mutate(server.id, {
-                  onSuccess: () => toast.success('Connection successful'),
-                  onError: () => toast.error('Connection failed'),
+                  onSuccess: (data: any) => toast.success(data?.version ? 'Connection successful (WebQuery OK)' : 'Connection successful'),
+                  onError: (err: any) => toast.error(err?.response?.data?.error || 'Connection failed'),
                 })}>
                   <TestTube className="h-3 w-3 mr-1" /> Test
                 </Button>
@@ -419,7 +419,7 @@ function UsersTab() {
             </p>
             <div>
               <Label className="text-xs">New Password</Label>
-              <Input type="password" value={resetPwValue} onChange={(e) => setResetPwValue(e.target.value)} placeholder="Min. 6 characters" />
+              <Input type="password" value={resetPwValue} onChange={(e) => setResetPwValue(e.target.value)} placeholder="Min. 8 characters, upper, lower, digit" />
             </div>
           </div>
           <DialogFooter>

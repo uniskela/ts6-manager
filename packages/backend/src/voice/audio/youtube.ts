@@ -38,6 +38,41 @@ export function getCookieArgs(): string[] {
   return args;
 }
 
+/** Resolve Spotify track/album/playlist share links to a YouTube search query / best match URL. */
+export async function resolveSpotifyToYouTube(url: string): Promise<string> {
+  const cleaned = url.trim();
+  if (!/open\.spotify\.com|spotify\.link/i.test(cleaned)) return cleaned;
+
+  // Fetch Open Graph title from the Spotify page (no Spotify API key required)
+  let title = '';
+  try {
+    const res = await fetch(cleaned, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ts6-manager/1.0)' },
+      redirect: 'follow',
+    });
+    const html = await res.text();
+    const og = html.match(/property="og:title"\s+content="([^"]+)"/i)
+      || html.match(/content="([^"]+)"\s+property="og:title"/i);
+    title = og?.[1]?.replace(/&amp;/g, '&').replace(/&#39;/g, "'") || '';
+  } catch {
+    /* fall through */
+  }
+
+  if (!title) {
+    // Last resort: use path slug as query
+    try {
+      const u = new URL(cleaned);
+      title = decodeURIComponent(u.pathname.split('/').pop() || '').replace(/-/g, ' ');
+    } catch {
+      title = cleaned;
+    }
+  }
+
+  const results = await searchYouTube(`${title} audio`, 1);
+  if (!results.length) throw new Error(`No YouTube match found for Spotify title: ${title}`);
+  return `https://www.youtube.com/watch?v=${results[0].id}`;
+}
+
 /**
  * Download audio from a YouTube URL using yt-dlp
  */

@@ -2,7 +2,7 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import type { VoiceBot } from './voice-bot.js';
 import type { QueueItem } from './playlist/queue.js';
-import { downloadYouTube } from './audio/youtube.js';
+import { downloadYouTube, resolveSpotifyToYouTube } from './audio/youtube.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
@@ -57,9 +57,14 @@ export class MusicCommandHandler {
     const command = parts[0].toLowerCase();
     if (!MUSIC_COMMANDS.has(command)) return;
 
-    const args = parts.slice(1).join(' ').trim();
+    const rawArgs = parts.slice(1).join(' ').trim();
     const userClid = parseInt(data.invokerid || '0');
     if (!userClid) return;
+
+    // TS clients auto-wrap URLs in BBCode: [URL]https://...[/URL]
+    const args = rawArgs
+      .replace(/\[URL(?:=[^\]]*)?\](.*?)\[\/URL\]/gi, '$1')
+      .trim();
 
     // Ignore messages from ourselves (the bot)
     if (userClid === bot.ts3ClientId) return;
@@ -183,7 +188,7 @@ export class MusicCommandHandler {
         this.reply(bot, userClid, 'Resumed.');
         return;
       }
-      this.reply(bot, userClid, 'Usage: !play <youtube-url>');
+      this.reply(bot, userClid, 'Usage: !play <youtube-url|spotify-url>');
       return;
     }
 
@@ -195,7 +200,11 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      const { filePath, info } = await downloadYouTube(args, MUSIC_DIR);
+      let mediaUrl = args;
+      if (/spotify\.com|spotify\.link/i.test(mediaUrl)) {
+        mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
+      }
+      const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
 
       const queueItem: QueueItem = {
         id: `yt_${info.id}`,
@@ -284,6 +293,7 @@ export class MusicCommandHandler {
     // !queue clear
     if (args.toLowerCase() === 'clear') {
       bot.queue.clear();
+      bot.clearPlayback();
       this.reply(bot, userClid, 'Queue cleared.');
       return;
     }
@@ -297,7 +307,11 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      const { filePath, info } = await downloadYouTube(args, MUSIC_DIR);
+      let mediaUrl = args;
+      if (/spotify\.com|spotify\.link/i.test(mediaUrl)) {
+        mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
+      }
+      const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
 
       const queueItem: QueueItem = {
         id: `yt_${info.id}`,
@@ -306,7 +320,7 @@ export class MusicCommandHandler {
         duration: info.duration,
         filePath,
         source: 'youtube',
-        sourceUrl: args,
+        sourceUrl: mediaUrl,
       };
 
       bot.queue.add(queueItem);

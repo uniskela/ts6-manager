@@ -11,8 +11,8 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
-      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-me-in-production}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env — do not use the default in production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
       - TS_ALLOW_SELF_SIGNED=${TS_ALLOW_SELF_SIGNED:-false}
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=7d

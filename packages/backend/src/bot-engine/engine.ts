@@ -601,9 +601,11 @@ export class BotEngine {
           if (afterCmd.length > 0 && afterCmd[0] !== ' ') continue;
 
           const args = afterCmd.trim();
+          const argsParts = args.length > 0 ? args.split(/\s+/).filter(Boolean) : [];
           const enrichedData = {
             ...data,
             command_args: args,
+            command_args_list: JSON.stringify(argsParts),
             command_name: cmdTrigger.commandName,
             command_channel_id: data.__cmd_listener_channel_id || cmdTrigger.channelId || data.target || '',
           };

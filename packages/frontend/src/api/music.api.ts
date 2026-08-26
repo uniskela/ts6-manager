@@ -57,6 +57,8 @@ export const musicBotsApi = {
 
 export const musicLibraryApi = {
   songs: (configId: number) => api.get(`/servers/${configId}/music-library/songs`).then((r) => r.data),
+  scan: (configId: number) =>
+    api.post(`/servers/${configId}/music-library/scan`).then((r) => r.data),
   upload: (configId: number, formData: FormData) =>
     api.post(`/servers/${configId}/music-library/upload`, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
@@ -83,6 +85,8 @@ export const radioStationsApi = {
     api.post(`/servers/${configId}/radio-stations`, data).then((r) => r.data),
   delete: (configId: number, id: number) =>
     api.delete(`/servers/${configId}/radio-stations/${id}`).then((r) => r.data),
+  resetIds: (configId: number) =>
+    api.post(`/servers/${configId}/radio-stations/reset-ids`).then((r) => r.data),
 };
 
 // === Playlist API ===

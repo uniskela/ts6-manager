@@ -13,11 +13,13 @@ export interface SidecarStats {
 
 export class SidecarClient {
   private baseUrl: string;
+  private secret: string | undefined;
 
-  constructor(portOrUrl: number | string = 9800) {
+  constructor(portOrUrl: number | string = 9800, secret?: string) {
     this.baseUrl = typeof portOrUrl === 'string'
       ? portOrUrl.replace(/\/+$/, '')
       : `http://127.0.0.1:${portOrUrl}`;
+    this.secret = secret ?? process.env.SIDECAR_SECRET;
   }
 
   async waitHealthy(timeoutMs: number = 6000): Promise<void> {
@@ -72,9 +74,13 @@ export class SidecarClient {
   }
 
   private async call(method: string, endpoint: string, body?: any): Promise<any> {
+    const headers: Record<string, string> = {};
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (this.secret) headers['Authorization'] = `Bearer ${this.secret}`;
+
     const res = await fetch(`${this.baseUrl}${endpoint}`, {
       method,
-      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) {

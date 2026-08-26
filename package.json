@@ -10,7 +10,8 @@
     "db:migrate": "pnpm --filter @ts6/backend exec prisma migrate dev",
     "db:seed": "pnpm --filter @ts6/backend exec prisma db seed",
     "lint": "pnpm -r run lint",
-    "typecheck": "pnpm -r run typecheck"
+    "typecheck": "pnpm -r run typecheck",
+    "audit": "pnpm audit --prod"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

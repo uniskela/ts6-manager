@@ -185,6 +185,7 @@ export interface AfkMoverActionData {
   afkChannelId: string;
   idleThresholdSeconds: number;
   exemptGroupIds?: string;
+  exemptChannelIds?: string;
 }
 
 export interface IdleKickerActionData {

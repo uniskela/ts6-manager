@@ -96,6 +96,39 @@ export class EventBridge extends EventEmitter {
     }
   }
 
+  /**
+   * Drop all SSH connections (and command listeners) for a server config, then
+   * reconnect any that were previously active so updated credentials take effect.
+   */
+  async reconnectConfig(configId: number): Promise<void> {
+    const prefix = `${configId}:`;
+    const sidsToReconnect: number[] = [];
+
+    for (const key of [...this.connections.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      const sid = parseInt(key.slice(prefix.length), 10);
+      if (!Number.isNaN(sid)) sidsToReconnect.push(sid);
+      await this.disconnectServer(configId, sid);
+    }
+
+    for (const key of [...this.commandListeners.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      const client = this.commandListeners.get(key);
+      if (client) {
+        client.destroy();
+        this.commandListeners.delete(key);
+      }
+    }
+
+    for (const sid of sidsToReconnect) {
+      try {
+        await this.connectServer(configId, sid);
+      } catch (err: any) {
+        console.error(`[EventBridge] Reconnect failed for ${configId}:${sid}: ${err.message}`);
+      }
+    }
+  }
+
   isConnected(configId: number, sid: number): boolean {
     const key = this.makeKey(configId, sid);
     const client = this.connections.get(key);

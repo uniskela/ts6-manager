@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
-import { downloadYouTube } from '../voice/audio/youtube.js';
+import { downloadYouTube, resolveSpotifyToYouTube } from '../voice/audio/youtube.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
@@ -226,7 +226,11 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       throw new AppError(400, 'Bot is not connected');
     }
 
-    const { filePath, info } = await downloadYouTube(url, MUSIC_DIR);
+    let mediaUrl = url;
+    if (/spotify\.com|spotify\.link/i.test(mediaUrl)) {
+      mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
+    }
+    const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
 
     const queueItem = {
       id: `yt_${info.id}`,
@@ -235,7 +239,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       duration: info.duration,
       filePath,
       source: 'youtube' as const,
-      sourceUrl: url,
+      sourceUrl: mediaUrl,
     };
 
     bot.queue.add(queueItem);
@@ -505,13 +509,14 @@ musicBotRoutes.delete('/:id/queue/:index', async (req: Request, res: Response, n
   } catch (err) { next(err); }
 });
 
-// DELETE /:id/queue — Clear queue
+// DELETE /:id/queue — Clear queue and stop current playback
 musicBotRoutes.delete('/:id/queue', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
     bot.queue.clear();
+    bot.clearPlayback();
     res.json({ success: true });
   } catch (err) { next(err); }
 });

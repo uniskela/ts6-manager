@@ -46,3 +46,24 @@ export function useDeleteServerGroup() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['server-groups'] }),
   });
 }
+
+export function useAddServerGroupMember() {
+  const qc = useQueryClient();
+  const { selectedConfigId: c, selectedSid: s } = useServerStore();
+  return useMutation({
+    mutationFn: ({ sgid, cldbid }: { sgid: number; cldbid: number }) =>
+      groupsApi.addServerGroupMember(c!, s!, sgid, cldbid),
+    onSuccess: (_, { sgid }) => qc.invalidateQueries({ queryKey: ['server-group-members', c, s, sgid] }),
+  });
+}
+
+export function useRemoveServerGroupMember() {
+  const qc = useQueryClient();
+  const { selectedConfigId: c, selectedSid: s } = useServerStore();
+  return useMutation({
+    mutationFn: ({ sgid, cldbid }: { sgid: number; cldbid: number }) =>
+      groupsApi.removeServerGroupMember(c!, s!, sgid, cldbid),
+    onSuccess: (_, { sgid }) => qc.invalidateQueries({ queryKey: ['server-group-members', c, s, sgid] }),
+  });
+}
+

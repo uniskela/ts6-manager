@@ -1106,6 +1106,10 @@ export default function BotEditor() {
                         <Label className="text-[10px] text-muted-foreground">Exempt Group IDs (comma-separated)</Label>
                         <Input className="h-7 text-xs mt-1 font-mono-data" placeholder="6,7" value={selectedNodeData.config.exemptGroupIds || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, exemptGroupIds: e.target.value } } : n))} />
                       </div>
+                      <div>
+                        <Label className="text-[10px] text-muted-foreground">Exempt Channel IDs (comma-separated)</Label>
+                        <Input className="h-7 text-xs mt-1 font-mono-data" placeholder="12,15" value={selectedNodeData.config.exemptChannelIds || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, exemptChannelIds: e.target.value } } : n))} />
+                      </div>
                     </div>
                   )}
 

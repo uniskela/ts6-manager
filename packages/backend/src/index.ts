@@ -8,6 +8,7 @@ import { VoiceBotManager } from './voice/voice-bot-manager.js';
 import { MusicCommandHandler } from './voice/music-command-handler.js';
 import { config } from './config.js';
 import { setYtCookieFile } from './voice/audio/youtube.js';
+import { updateYtDlpInBackground } from './voice/audio/yt-dlp-update.js';
 import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
@@ -22,6 +23,18 @@ async function main() {
     console.warn('[WARN] JWT_SECRET is using the default development value. Set JWT_SECRET in production!');
   }
 
+  // Require a distinct ENCRYPTION_KEY in production (do not fall back to JWT_SECRET)
+  if (config.nodeEnv === 'production' && !process.env.ENCRYPTION_KEY) {
+    console.error('[FATAL] ENCRYPTION_KEY is required in production. Set a separate AES key (do not reuse JWT_SECRET).');
+    process.exit(1);
+  }
+
+  // Video sidecar shared secret: required when SIDECAR_URL is set in production
+  if (config.nodeEnv === 'production' && process.env.SIDECAR_URL && !process.env.SIDECAR_SECRET) {
+    console.error('[FATAL] SIDECAR_SECRET is required when SIDECAR_URL is set in production.');
+    process.exit(1);
+  }
+
   // Configure yt-dlp cookie file: env var takes priority, then saved file from data dir
   const cookiePath = process.env.YT_COOKIE_FILE;
   const savedCookiePath = path.resolve('data', 'yt-cookies.txt');
@@ -34,6 +47,9 @@ async function main() {
   } else if (cookiePath) {
     console.warn(`[yt-dlp] Cookie file not found: ${cookiePath}`);
   }
+
+  // Non-blocking yt-dlp self-update (opt out with YT_DLP_AUTO_UPDATE=0)
+  updateYtDlpInBackground();
 
   const prisma = new PrismaClient();
   const app = createApp();

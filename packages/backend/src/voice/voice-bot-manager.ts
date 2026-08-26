@@ -240,12 +240,19 @@ export class VoiceBotManager extends EventEmitter {
 
   async removeBot(id: number): Promise<void> {
     this.clearReconnect(id);
-    const bot = this.bots.get(id);
-    if (bot && bot.status !== 'stopped') {
-      await bot.stop();
-    }
     this.stopProgressBroadcast(id);
-    this.bots.delete(id);
+    this.musicCmdHandler?.unregisterBot(id);
+
+    const bot = this.bots.get(id);
+    if (bot) {
+      try {
+        await bot.stop();
+      } catch (err: any) {
+        console.warn(`[VoiceBotManager] stop during removeBot ${id}: ${err.message}`);
+      }
+      bot.ensureDisconnected();
+      this.bots.delete(id);
+    }
     await this.prisma.musicBot.delete({ where: { id } });
   }
 
