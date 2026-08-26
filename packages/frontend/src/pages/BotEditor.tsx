@@ -1201,6 +1201,8 @@ export default function BotEditor() {
                             <SelectItem value="2">Fast (2s)</SelectItem>
                             <SelectItem value="3">Medium (3s)</SelectItem>
                             <SelectItem value="5">Slow (5s)</SelectItem>
+                            <SelectItem value="15">Relaxed (15s)</SelectItem>
+                            <SelectItem value="30">Calm (30s)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
@@ -1208,6 +1210,22 @@ export default function BotEditor() {
                         <Label className="text-[10px] text-muted-foreground">Prefix</Label>
                         <Input className="h-7 text-xs mt-1 font-mono-data" placeholder="[cspacer]" value={selectedNodeData.config.prefix ?? '[cspacer]'} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, prefix: e.target.value } } : n))} />
                         <p className="text-[9px] text-muted-foreground mt-1">TS3 channel name prefix (e.g. [cspacer] for centered spacer)</p>
+                      </div>
+                      <div>
+                        <Label className="text-[10px] text-muted-foreground">Suppress edit events</Label>
+                        <Select
+                          value={selectedNodeData.config.suppressEditEvents === false || selectedNodeData.config.suppressEditEvents === 'false' ? 'false' : 'true'}
+                          onValueChange={(v) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, suppressEditEvents: v === 'true' } } : n))}
+                        >
+                          <SelectTrigger className="h-7 text-xs mt-1"><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="true">Yes (recommended)</SelectItem>
+                            <SelectItem value="false">No</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[9px] text-muted-foreground mt-1">
+                          Ignore TeamSpeak channel-edited notifications for this channel so other flows are not flooded. Does not hide renames inside the TeamSpeak client.
+                        </p>
                       </div>
                     </div>
                   )}

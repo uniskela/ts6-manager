@@ -224,6 +224,8 @@ export interface AnimatedChannelActionData {
   style: 'scroll' | 'typewriter' | 'bounce' | 'blink' | 'wave' | 'alternateCase';
   intervalSeconds: string;
   prefix: string;
+  /** Suppress notifychanneledited handling for this channel while animating (default true). */
+  suppressEditEvents?: boolean;
 }
 
 // --- Condition ---

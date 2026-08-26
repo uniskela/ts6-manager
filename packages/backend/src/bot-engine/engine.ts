@@ -173,7 +173,16 @@ function normalizeFlowData(raw: any): FlowDefinition {
       data = { actionType: 'voiceTts', label, botId: config.botId || '', text: config.text || '', language: config.language || '' };
     } else if (nodeType === 'action_animatedChannel') {
       type = 'action';
-      data = { actionType: 'animatedChannel', label, channelId: config.channelId || '', text: config.text || '', style: config.style || 'scroll', intervalSeconds: config.intervalSeconds || '3', prefix: config.prefix || '[cspacer]' };
+      data = {
+        actionType: 'animatedChannel',
+        label,
+        channelId: config.channelId || '',
+        text: config.text || '',
+        style: config.style || 'scroll',
+        intervalSeconds: config.intervalSeconds || '3',
+        prefix: config.prefix || '[cspacer]',
+        suppressEditEvents: config.suppressEditEvents !== false && config.suppressEditEvents !== 'false',
+      };
     } else if (nodeType === 'condition') {
       type = 'condition';
       data = { nodeType: 'condition', label, expression: config.expression || '' };
@@ -548,6 +557,11 @@ export class BotEngine {
   }
 
   private onTsEvent(configId: number, sid: number, eventName: string, data: Record<string, string>): void {
+    // Animated Channel renames fire notifychanneledited every tick — optionally ignore them.
+    if (eventName === 'notifychanneledited' && data.cid && this.animationManager.isChannelEditSuppressed(sid, data.cid)) {
+      return;
+    }
+
     console.log(`[BotEngine] TS Event received: ${eventName} from ${configId}:${sid}`, JSON.stringify(data).substring(0, 200));
     for (const flow of this.flows.values()) {
       if (flow.serverConfigId !== configId || flow.virtualServerId !== sid) continue;
@@ -777,12 +791,14 @@ export class BotEngine {
 
       for (const node of animNodes) {
         const d = node.data as AnimatedChannelActionData;
+        const parsedInterval = parseFloat(String(d.intervalSeconds));
         const config: AnimationConfig = {
           channelId: d.channelId,
           text: d.text,
           style: d.style || 'scroll',
-          intervalSeconds: parseInt(d.intervalSeconds) || 3,
+          intervalSeconds: Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 3,
           prefix: d.prefix || '[cspacer]',
+          suppressEditEvents: d.suppressEditEvents !== false,
         };
 
         this.animationManager.startAnimation(flowId, virtualServerId, config, client);

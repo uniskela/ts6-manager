@@ -79,6 +79,10 @@ export interface Channel {
   channel_maxclients: number;
   channel_maxfamilyclients: number;
   seconds_empty: number;
+  /** TS6 channel banner image URL (https:// or ts3image://). */
+  channel_banner_gfx_url?: string;
+  /** TS6 banner display mode (0 = stretch, 1 = keep aspect, …). */
+  channel_banner_mode?: number;
 }
 
 export interface ChannelInfo extends Channel {
