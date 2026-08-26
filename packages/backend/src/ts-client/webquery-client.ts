@@ -4,6 +4,39 @@ import https from 'https';
 import { TSApiError } from '../middleware/error-handler.js';
 import { config } from '../config.js';
 
+const TRANSIENT_CODES = new Set([
+  'ECONNRESET',
+  'ECONNABORTED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'EAI_AGAIN',
+]);
+
+function isTransientNetworkError(error: any): boolean {
+  const code = error?.code || error?.cause?.code;
+  if (code && TRANSIENT_CODES.has(code)) return true;
+  const msg = String(error?.message || '');
+  return (
+    msg.includes('socket hang up') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('EPIPE') ||
+    msg.includes('ETIMEDOUT') ||
+    msg.includes('network socket disconnected')
+  );
+}
+
+function toTsApiError(error: any): never {
+  if (error instanceof TSApiError) throw error;
+  if (error.response?.data?.status) {
+    throw new TSApiError(
+      error.response.data.status.code,
+      error.response.data.status.message,
+    );
+  }
+  throw new TSApiError(-1, error.message || 'Connection failed');
+}
+
 export class WebQueryClient {
   private http: AxiosInstance;
   private agent: http.Agent | https.Agent;
@@ -33,8 +66,33 @@ export class WebQueryClient {
     });
   }
 
-  async execute(sid: number, command: string, params?: Record<string, any>): Promise<any> {
+  /**
+   * Retry once on stale keep-alive / reset sockets.
+   * Do not destroy the shared agent here — other in-flight callers may still be using it.
+   * Node removes the dead socket after ECONNRESET; the retry opens a fresh one.
+   */
+  private async withTransientRetry<T>(op: () => Promise<T>): Promise<T> {
     try {
+      return await op();
+    } catch (error: any) {
+      if (error instanceof TSApiError || error.response?.data?.status) {
+        toTsApiError(error);
+      }
+      if (!isTransientNetworkError(error)) {
+        toTsApiError(error);
+      }
+
+      await new Promise((r) => setTimeout(r, 50));
+      try {
+        return await op();
+      } catch (retryError: any) {
+        toTsApiError(retryError);
+      }
+    }
+  }
+
+  async execute(sid: number, command: string, params?: Record<string, any>): Promise<any> {
+    return this.withTransientRetry(async () => {
       // WebQuery URL pattern: /{sid}/{command}
       // For instance-level commands (sid=0): /{command}
       const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
@@ -50,20 +108,11 @@ export class WebQueryClient {
       }
 
       return data.body || data;
-    } catch (error: any) {
-      if (error instanceof TSApiError) throw error;
-      if (error.response?.data?.status) {
-        throw new TSApiError(
-          error.response.data.status.code,
-          error.response.data.status.message,
-        );
-      }
-      throw new TSApiError(-1, error.message || 'Connection failed');
-    }
+    });
   }
 
   async executePost(sid: number, command: string, params?: Record<string, any>): Promise<any> {
-    try {
+    return this.withTransientRetry(async () => {
       const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
       const response = await this.http.post(path, null, {
         params: this.cleanParams(params),
@@ -75,16 +124,7 @@ export class WebQueryClient {
       }
 
       return data.body || data;
-    } catch (error: any) {
-      if (error instanceof TSApiError) throw error;
-      if (error.response?.data?.status) {
-        throw new TSApiError(
-          error.response.data.status.code,
-          error.response.data.status.message,
-        );
-      }
-      throw new TSApiError(-1, error.message || 'Connection failed');
-    }
+    });
   }
 
   // Remove undefined/null values from params
