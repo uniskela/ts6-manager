@@ -227,7 +227,12 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     }
 
     let mediaUrl = url;
-    if (/spotify\.com|spotify\.link/i.test(mediaUrl)) {
+    if ((() => {
+      try {
+        const host = new URL(url).hostname.toLowerCase();
+        return host === 'open.spotify.com' || host === 'spotify.com' || host.endsWith('.spotify.com') || host === 'spotify.link';
+      } catch { return false; }
+    })()) {
       mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
     }
     const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
