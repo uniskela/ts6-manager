@@ -148,6 +148,16 @@ export const BOT_TEMPLATES: BotTemplate[] = [
         { label: 'Insane (0.25s)', value: '0.25' },
       ] },
       { key: 'prefix', label: 'Channel Name Prefix', type: 'text', placeholder: '[cspacer]', defaultValue: '[cspacer]' },
+      {
+        key: 'suppressEditEvents',
+        label: 'Suppress edit events',
+        type: 'select',
+        defaultValue: 'true',
+        options: [
+          { label: 'Yes (recommended)', value: 'true' },
+          { label: 'No', value: 'false' },
+        ],
+      },
     ],
     flowDataFactory: (cfg) => {
       resetIds();
@@ -160,6 +170,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
             style: cfg.style || 'scroll',
             intervalSeconds: cfg.intervalSeconds || '3',
             prefix: cfg.prefix || '[cspacer]',
+            suppressEditEvents: cfg.suppressEditEvents !== 'false',
           }, 200, 100),
         ],
         edges: [],

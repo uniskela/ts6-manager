@@ -9,11 +9,16 @@ export interface AnimationConfig {
   intervalSeconds: number;
   prefix: string;
   timezone?: string;
+  /** When true, BotEngine ignores notifychanneledited for this channel. */
+  suppressEditEvents?: boolean;
 }
 
 interface ActiveAnimation {
   timer: ReturnType<typeof setInterval>;
   frameIndex: number;
+  sid: number;
+  channelId: string;
+  suppressEditEvents: boolean;
 }
 
 const MAX_CHANNEL_NAME = 40;
@@ -210,9 +215,15 @@ export class AnimationManager {
     tick();
 
     const timer = setInterval(tick, intervalMs);
-    this.animations.set(flowId, { timer, frameIndex });
+    this.animations.set(flowId, {
+      timer,
+      frameIndex,
+      sid,
+      channelId: String(config.channelId),
+      suppressEditEvents: config.suppressEditEvents !== false,
+    });
 
-    console.log(`[AnimationManager] Started animation for flow ${flowId}: style=${config.style}, interval=${config.intervalSeconds}s, channel=${config.channelId}`);
+    console.log(`[AnimationManager] Started animation for flow ${flowId}: style=${config.style}, interval=${config.intervalSeconds}s, channel=${config.channelId}, suppressEditEvents=${config.suppressEditEvents !== false}`);
   }
 
   stopAnimation(flowId: number): void {
@@ -225,7 +236,7 @@ export class AnimationManager {
   }
 
   stopAll(): void {
-    for (const [flowId, anim] of this.animations) {
+    for (const [, anim] of this.animations) {
       clearInterval(anim.timer);
     }
     this.animations.clear();
@@ -233,5 +244,16 @@ export class AnimationManager {
 
   getActiveCount(): number {
     return this.animations.size;
+  }
+
+  /** True when an active animated-channel node asked to suppress edits for this cid. */
+  isChannelEditSuppressed(sid: number, channelId: string | number): boolean {
+    const cid = String(channelId);
+    for (const anim of this.animations.values()) {
+      if (anim.suppressEditEvents && anim.sid === sid && anim.channelId === cid) {
+        return true;
+      }
+    }
+    return false;
   }
 }
