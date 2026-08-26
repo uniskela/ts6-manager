@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
-import { downloadYouTube, resolveSpotifyToYouTube, getYouTubeUrlInfo } from '../voice/audio/youtube.js';
+import { downloadYouTube, resolveSpotifyToYouTube, expandYouTubeToWatchUrls, isYouTubeHostUrl, parseYouTubeUrl } from '../voice/audio/youtube.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
@@ -11,6 +11,10 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
 /** Cancels stale background playlist expansions when a newer play-url starts for the same bot. */
 const playlistExpandGeneration = new Map<number, number>();
+
+function invalidatePlaylistExpansion(botId: number): void {
+  playlistExpandGeneration.set(botId, (playlistExpandGeneration.get(botId) ?? 0) + 1);
+}
 
 // All routes require admin role
 musicBotRoutes.use(requireRole('admin'));
@@ -159,6 +163,7 @@ musicBotRoutes.post('/:id/stop', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const id = parseInt(req.params.id as string);
+    invalidatePlaylistExpansion(id);
     await manager.stopBot(id);
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -239,27 +244,32 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
     }
 
-    // Expand YouTube playlists / Music radio mixes (cap downloads).
+    // Expand YouTube / YouTube Music playlists (cap downloads).
+    // Canonicalizes music.youtube.com → www.youtube.com before yt-dlp.
     const PLAYLIST_CAP = 25;
     let urlsToPlay: string[] = [mediaUrl];
     let playlistTitle: string | undefined;
-    try {
-      const host = new URL(mediaUrl).hostname.toLowerCase();
-      const isYt =
-        host.includes('youtube.com') ||
-        host.includes('youtu.be') ||
-        host.includes('music.youtube.com');
-      if (isYt) {
-        const info = await getYouTubeUrlInfo(mediaUrl);
-        if (info.type === 'playlist' && info.items.length > 0) {
-          playlistTitle = info.items[0]?.title;
-          urlsToPlay = info.items
-            .slice(0, PLAYLIST_CAP)
-            .map((item) => `https://www.youtube.com/watch?v=${item.id}`);
+    if (isYouTubeHostUrl(mediaUrl)) {
+      const parsed = parseYouTubeUrl(mediaUrl);
+      try {
+        const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
+        if (expanded.urls.length > 0) {
+          urlsToPlay = expanded.urls;
+          playlistTitle = expanded.title;
+        } else if (parsed.watchUrl) {
+          urlsToPlay = [parsed.watchUrl];
+        } else if (parsed.listId && !parsed.videoId) {
+          throw new AppError(502, 'Could not resolve any videos from that playlist URL');
+        }
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+        // Single-video Music/watch URLs can still download via canonical watch URL.
+        if (parsed.watchUrl) {
+          urlsToPlay = [parsed.watchUrl];
+        } else {
+          throw new AppError(502, `Failed to resolve YouTube URL: ${(err as Error).message || err}`);
         }
       }
-    } catch {
-      // Fall back to single-URL download if playlist probe fails.
     }
 
     const saveHistory = async (sourceUrl: string, title: string) => {
@@ -420,8 +430,10 @@ musicBotRoutes.post('/:id/resume', async (req: Request, res: Response, next) => 
 musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    const bot = manager.getBot(parseInt(req.params.id as string));
+    const id = parseInt(req.params.id as string);
+    const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
+    invalidatePlaylistExpansion(id);
     bot.stopAudio();
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -596,8 +608,10 @@ musicBotRoutes.delete('/:id/queue/:index', async (req: Request, res: Response, n
 musicBotRoutes.delete('/:id/queue', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    const bot = manager.getBot(parseInt(req.params.id as string));
+    const id = parseInt(req.params.id as string);
+    const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
+    invalidatePlaylistExpansion(id);
     bot.queue.clear();
     bot.clearPlayback();
     res.json({ success: true });

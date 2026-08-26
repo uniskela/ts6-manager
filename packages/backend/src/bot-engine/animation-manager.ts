@@ -1,3 +1,4 @@
+import { TSApiError } from '../middleware/error-handler.js';
 import type { WebQueryClient } from '../ts-client/webquery-client.js';
 
 export type AnimationStyle = 'scroll' | 'typewriter' | 'bounce' | 'blink' | 'wave' | 'alternateCase';
@@ -15,13 +16,25 @@ export interface AnimationConfig {
 
 interface ActiveAnimation {
   timer: ReturnType<typeof setInterval>;
-  frameIndex: number;
   sid: number;
   channelId: string;
   suppressEditEvents: boolean;
 }
 
 const MAX_CHANNEL_NAME = 40;
+const ERROR_LOG_THROTTLE_MS = 15_000;
+const MAX_BACKOFF_MS = 30_000;
+
+function isConnectionError(message: string): boolean {
+  return (
+    message.includes('ECONNRESET') ||
+    message.includes('socket hang up') ||
+    message.includes('EPIPE') ||
+    message.includes('ETIMEDOUT') ||
+    message.includes('ECONNABORTED') ||
+    message.includes('Connection failed')
+  );
+}
 
 // --- Frame generators (pure functions, return string[]) ---
 
@@ -187,27 +200,76 @@ export class AnimationManager {
     this.stopAnimation(flowId);
 
     const intervalMs = Math.max(250, config.intervalSeconds * 1000);
-    let frameIndex = 0;
+
+    // Tick runtime state lives in this closure (not on the map entry) so overlapping
+    // setInterval callbacks can skip/backoff without racing the Map record.
+    const state = {
+      frameIndex: 0,
+      inFlight: false,
+      consecutiveErrors: 0,
+      pauseUntil: 0,
+      lastErrorLogAt: 0,
+      suppressedErrorCount: 0,
+    };
+
+    const logError = (message: string) => {
+      const now = Date.now();
+      if (now - state.lastErrorLogAt < ERROR_LOG_THROTTLE_MS) {
+        state.suppressedErrorCount++;
+        return;
+      }
+      const extra = state.suppressedErrorCount > 0
+        ? ` (+${state.suppressedErrorCount} similar since last log)`
+        : '';
+      console.error(`[AnimationManager] Flow ${flowId} channel update error: ${message}${extra}`);
+      state.lastErrorLogAt = now;
+      state.suppressedErrorCount = 0;
+    };
 
     const tick = async () => {
+      if (state.inFlight) return;
+      if (Date.now() < state.pauseUntil) return;
+
+      state.inFlight = true;
       try {
         // Resolve {{time.*}} in text each tick (for dynamic content)
         const resolvedText = resolveTimeVars(config.text, config.timezone);
         const frames = generateFrames(resolvedText, config.style, config.prefix);
         if (frames.length === 0) return;
 
-        const channelName = frames[frameIndex % frames.length];
-        frameIndex++;
+        const channelName = frames[state.frameIndex % frames.length];
+        state.frameIndex++;
 
         await client.executePost(sid, 'channeledit', {
           cid: config.channelId,
           channel_name: channelName,
         });
+
+        state.consecutiveErrors = 0;
+        state.pauseUntil = 0;
       } catch (err: any) {
-        // Log but don't stop — transient errors are common
-        if (!err.message?.includes('304')) { // 304 = name unchanged, ignore
-          console.error(`[AnimationManager] Flow ${flowId} channel update error: ${err.message}`);
+        const code = err instanceof TSApiError ? err.code : undefined;
+        const message = String(err?.message || err);
+        // 304 = name unchanged — treat as success for backoff purposes
+        if (code === 304 || message.includes('304')) {
+          state.consecutiveErrors = 0;
+          state.pauseUntil = 0;
+          return;
         }
+
+        logError(message);
+
+        // Back off only on connection/socket failures so API errors don't inflate delay.
+        if (isConnectionError(message)) {
+          state.consecutiveErrors++;
+          const backoffMs = Math.min(
+            MAX_BACKOFF_MS,
+            intervalMs * Math.pow(2, Math.min(state.consecutiveErrors, 5)),
+          );
+          state.pauseUntil = Date.now() + backoffMs;
+        }
+      } finally {
+        state.inFlight = false;
       }
     };
 
@@ -217,7 +279,6 @@ export class AnimationManager {
     const timer = setInterval(tick, intervalMs);
     this.animations.set(flowId, {
       timer,
-      frameIndex,
       sid,
       channelId: String(config.channelId),
       suppressEditEvents: config.suppressEditEvents !== false,
