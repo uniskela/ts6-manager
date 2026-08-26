@@ -3,13 +3,16 @@
 
 # TS6 Manager
 
+> [!IMPORTANT]
+> **This is an opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager), not a mirror or drop-in republish of upstream.**
+> Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`).
+> Community issue/PR credits: [`CREDITS.md`](CREDITS.md).
+
 Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets — all from your browser.
 
 Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSpeak builds). Telnet is not used or supported.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
-
-> Opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager). Community issue/PR credits: [CREDITS.md](CREDITS.md).
 
 ## Screenshots
 
