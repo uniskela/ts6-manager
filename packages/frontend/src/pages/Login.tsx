@@ -22,13 +22,35 @@ export default function Login() {
       setCheckingSetup(false);
       return;
     }
-    axios
-      .get<{ needsSetup: boolean }>('/api/setup/status')
-      .then((res) => {
-        if (res.data.needsSetup) navigate('/setup', { replace: true });
-        else setCheckingSetup(false);
-      })
-      .catch(() => setCheckingSetup(false));
+
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 20;
+
+    const probe = () => {
+      axios
+        .get<{ needsSetup: boolean }>('/api/setup/status')
+        .then((res) => {
+          if (cancelled) return;
+          if (res.data.needsSetup) navigate('/setup', { replace: true });
+          else setCheckingSetup(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          attempt += 1;
+          // Retry briefly — nginx may be up before the backend finishes prisma/start.
+          if (attempt < maxAttempts) {
+            window.setTimeout(probe, 1500);
+          } else {
+            setCheckingSetup(false);
+          }
+        });
+    };
+
+    probe();
+    return () => {
+      cancelled = true;
+    };
   }, [isAuthenticated, navigate]);
 
   if (isAuthenticated) return <Navigate to="/dashboard" replace />;
