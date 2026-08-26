@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useLogin } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth.store';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -134,7 +135,7 @@ export default function Login() {
         </Card>
 
         <p className="text-center text-[10px] text-muted-foreground/50 mt-6 font-mono-data">
-          TS6 WEBUI v1.0.0
+          {APP_VERSION_LABEL}
         </p>
       </div>
     </div>
