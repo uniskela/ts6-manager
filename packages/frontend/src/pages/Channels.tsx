@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useChannels, useCreateChannel, useDeleteChannel, useEditChannel, useMoveChannel } from '@/hooks/use-channels';
 import { useClients } from '@/hooks/use-clients';
+import { channelsApi } from '@/api/channels.api';
 import { useServerStore } from '@/stores/server.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -8,13 +9,15 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2 } from 'lucide-react';
+import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface ChannelNode {
@@ -26,8 +29,31 @@ interface ChannelNode {
   channel_flag_permanent: number;
   channel_flag_password: number;
   channel_codec_quality: number;
+  channel_icon_id?: number;
+  channel_banner_gfx_url?: string;
+  channel_banner_mode?: number;
   children: ChannelNode[];
 }
+
+interface EditChannelForm {
+  channel_name: string;
+  channel_topic: string;
+  channel_password: string;
+  channel_description: string;
+  channel_icon_id: string;
+  channel_banner_gfx_url: string;
+  channel_banner_mode: string;
+}
+
+const EMPTY_EDIT_FORM: EditChannelForm = {
+  channel_name: '',
+  channel_topic: '',
+  channel_password: '',
+  channel_description: '',
+  channel_icon_id: '0',
+  channel_banner_gfx_url: '',
+  channel_banner_mode: '0',
+};
 
 interface ClientInfo {
   clid: number;
@@ -47,7 +73,10 @@ function buildTree(channels: any[]): ChannelNode[] {
     channel_flag_permanent: Number(ch.channel_flag_permanent) || 0,
     channel_flag_password: Number(ch.channel_flag_password) || 0,
     channel_codec_quality: Number(ch.channel_codec_quality) || 0,
+    channel_icon_id: Number(ch.channel_icon_id) || 0,
     channel_topic: ch.channel_topic || '',
+    channel_banner_gfx_url: ch.channel_banner_gfx_url || '',
+    channel_banner_mode: Number(ch.channel_banner_mode) || 0,
   }));
   const map = new Map<number, ChannelNode>();
   const roots: ChannelNode[] = [];
@@ -230,7 +259,8 @@ export default function Channels() {
   const [showCreate, setShowCreate] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ cid: number; name: string } | null>(null);
   const [editTarget, setEditTarget] = useState<ChannelNode | null>(null);
-  const [editForm, setEditForm] = useState({ channel_name: '', channel_topic: '', channel_password: '' });
+  const [editForm, setEditForm] = useState<EditChannelForm>(EMPTY_EDIT_FORM);
+  const [editLoading, setEditLoading] = useState(false);
   const [newName, setNewName] = useState('');
   const [draggedCid, setDraggedCid] = useState<number | null>(null);
 
@@ -278,15 +308,51 @@ export default function Channels() {
     });
   };
 
-  const handleEditOpen = (node: ChannelNode) => {
+  const handleEditOpen = async (node: ChannelNode) => {
     setEditTarget(node);
-    setEditForm({ channel_name: node.channel_name, channel_topic: node.channel_topic || '', channel_password: '' });
+    setEditForm({
+      channel_name: node.channel_name,
+      channel_topic: node.channel_topic || '',
+      channel_password: '',
+      channel_description: '',
+      channel_icon_id: String(node.channel_icon_id || 0),
+      channel_banner_gfx_url: node.channel_banner_gfx_url || '',
+      channel_banner_mode: String(node.channel_banner_mode || 0),
+    });
+    if (!selectedConfigId || !selectedSid) return;
+
+    setEditLoading(true);
+    try {
+      const info = await channelsApi.get(selectedConfigId, selectedSid, node.cid);
+      const ch = Array.isArray(info) ? info[0] : info;
+      if (!ch) return;
+      setEditForm({
+        channel_name: ch.channel_name || node.channel_name,
+        channel_topic: ch.channel_topic || '',
+        channel_password: '',
+        channel_description: ch.channel_description || '',
+        channel_icon_id: String(ch.channel_icon_id ?? node.channel_icon_id ?? 0),
+        channel_banner_gfx_url: ch.channel_banner_gfx_url || '',
+        channel_banner_mode: String(ch.channel_banner_mode ?? 0),
+      });
+    } catch {
+      toast.error('Failed to load full channel details');
+    } finally {
+      setEditLoading(false);
+    }
   };
 
   const handleEditSave = () => {
     if (!editTarget || !editForm.channel_name.trim()) return;
-    const data: any = { channel_name: editForm.channel_name };
-    if (editForm.channel_topic !== undefined) data.channel_topic = editForm.channel_topic;
+    const data: Record<string, string | number> = {
+      channel_name: editForm.channel_name,
+      channel_topic: editForm.channel_topic,
+      channel_description: editForm.channel_description,
+      channel_banner_gfx_url: editForm.channel_banner_gfx_url,
+      channel_banner_mode: parseInt(editForm.channel_banner_mode, 10) || 0,
+    };
+    const iconId = parseInt(editForm.channel_icon_id, 10);
+    if (Number.isFinite(iconId)) data.channel_icon_id = iconId;
     if (editForm.channel_password) data.channel_password = editForm.channel_password;
     editChannel.mutate({ cid: editTarget.cid, data }, {
       onSuccess: () => { toast.success('Channel updated'); setEditTarget(null); },
@@ -370,27 +436,79 @@ export default function Channels() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editTarget} onOpenChange={(v) => { if (!v) setEditTarget(null); }}>
-        <DialogContent>
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Channel</DialogTitle>
+            <DialogTitle>Edit Channel{editTarget ? ` #${editTarget.cid}` : ''}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <Label className="text-xs">Channel Name</Label>
-              <Input value={editForm.channel_name} onChange={(e) => setEditForm({ ...editForm, channel_name: e.target.value })} />
+          {editLoading ? (
+            <div className="flex items-center justify-center py-10 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin mr-2" /> Loading channel details…
             </div>
-            <div>
-              <Label className="text-xs">Topic</Label>
-              <Input value={editForm.channel_topic} onChange={(e) => setEditForm({ ...editForm, channel_topic: e.target.value })} placeholder="Optional" />
+          ) : (
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs">Channel Name</Label>
+                <Input value={editForm.channel_name} onChange={(e) => setEditForm({ ...editForm, channel_name: e.target.value })} />
+              </div>
+              <div>
+                <Label className="text-xs">Topic</Label>
+                <Input value={editForm.channel_topic} onChange={(e) => setEditForm({ ...editForm, channel_topic: e.target.value })} placeholder="Optional" />
+              </div>
+              <div>
+                <Label className="text-xs">Description</Label>
+                <Textarea
+                  value={editForm.channel_description}
+                  onChange={(e) => setEditForm({ ...editForm, channel_description: e.target.value })}
+                  placeholder="Optional channel description (supports BBCode)"
+                  rows={4}
+                />
+              </div>
+              <div>
+                <Label className="text-xs">Icon ID</Label>
+                <Input
+                  className="font-mono-data"
+                  value={editForm.channel_icon_id}
+                  onChange={(e) => setEditForm({ ...editForm, channel_icon_id: e.target.value })}
+                  placeholder="0 = no icon"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Numeric icon ID already uploaded on the server. Use <span className="font-mono">0</span> to clear.
+                </p>
+              </div>
+              <div>
+                <Label className="text-xs">Banner image URL</Label>
+                <Input
+                  value={editForm.channel_banner_gfx_url}
+                  onChange={(e) => setEditForm({ ...editForm, channel_banner_gfx_url: e.target.value })}
+                  placeholder="https://… or ts3image://…"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  TS6 channel banner. External HTTPS URL or a <span className="font-mono">ts3image://</span> link to a file on this server.
+                </p>
+              </div>
+              <div>
+                <Label className="text-xs">Banner mode</Label>
+                <Select
+                  value={editForm.channel_banner_mode}
+                  onValueChange={(v) => setEditForm({ ...editForm, channel_banner_mode: v })}
+                >
+                  <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">0 — Stretch</SelectItem>
+                    <SelectItem value="1">1 — Keep aspect ratio</SelectItem>
+                    <SelectItem value="2">2 — Ignore aspect / fill</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs">Password</Label>
+                <Input type="password" value={editForm.channel_password} onChange={(e) => setEditForm({ ...editForm, channel_password: e.target.value })} placeholder="Leave empty to keep current" />
+              </div>
             </div>
-            <div>
-              <Label className="text-xs">Password</Label>
-              <Input type="password" value={editForm.channel_password} onChange={(e) => setEditForm({ ...editForm, channel_password: e.target.value })} placeholder="Leave empty to keep current" />
-            </div>
-          </div>
+          )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)}>Cancel</Button>
-            <Button onClick={handleEditSave} disabled={!editForm.channel_name.trim() || editChannel.isPending}>
+            <Button onClick={handleEditSave} disabled={editLoading || !editForm.channel_name.trim() || editChannel.isPending}>
               {editChannel.isPending ? 'Saving...' : 'Save'}
             </Button>
           </DialogFooter>
