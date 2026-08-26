@@ -7,6 +7,7 @@ import {
   resolveSpotifyToYouTube,
   expandYouTubeToWatchUrls,
   isYouTubeHostUrl,
+  parseYouTubeUrl,
 } from './audio/youtube.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
@@ -249,10 +250,24 @@ export class MusicCommandHandler {
     let urlsToPlay = [mediaUrl];
     let playlistTitle: string | undefined;
     if (isYouTubeHostUrl(mediaUrl)) {
-      const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
-      if (expanded.urls.length > 0) {
-        urlsToPlay = expanded.urls;
-        playlistTitle = expanded.title;
+      const parsed = parseYouTubeUrl(mediaUrl);
+      try {
+        const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
+        if (expanded.urls.length > 0) {
+          urlsToPlay = expanded.urls;
+          playlistTitle = expanded.title;
+        } else if (parsed.watchUrl) {
+          urlsToPlay = [parsed.watchUrl];
+        } else if (parsed.listId && !parsed.videoId) {
+          throw new Error('Could not resolve any videos from that playlist URL');
+        }
+      } catch (err) {
+        // Single-video URLs can still download via canonical watch URL.
+        if (parsed.watchUrl) {
+          urlsToPlay = [parsed.watchUrl];
+        } else {
+          throw err;
+        }
       }
     }
 

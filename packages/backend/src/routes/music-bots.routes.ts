@@ -2,7 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
-import { downloadYouTube, resolveSpotifyToYouTube, expandYouTubeToWatchUrls, isYouTubeHostUrl } from '../voice/audio/youtube.js';
+import { downloadYouTube, resolveSpotifyToYouTube, expandYouTubeToWatchUrls, isYouTubeHostUrl, parseYouTubeUrl } from '../voice/audio/youtube.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
@@ -250,14 +250,25 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     let urlsToPlay: string[] = [mediaUrl];
     let playlistTitle: string | undefined;
     if (isYouTubeHostUrl(mediaUrl)) {
+      const parsed = parseYouTubeUrl(mediaUrl);
       try {
         const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
         if (expanded.urls.length > 0) {
           urlsToPlay = expanded.urls;
           playlistTitle = expanded.title;
+        } else if (parsed.watchUrl) {
+          urlsToPlay = [parsed.watchUrl];
+        } else if (parsed.listId && !parsed.videoId) {
+          throw new AppError(502, 'Could not resolve any videos from that playlist URL');
         }
-      } catch {
-        // Fall back to single-URL download if playlist probe fails.
+      } catch (err) {
+        if (err instanceof AppError) throw err;
+        // Single-video Music/watch URLs can still download via canonical watch URL.
+        if (parsed.watchUrl) {
+          urlsToPlay = [parsed.watchUrl];
+        } else {
+          throw new AppError(502, `Failed to resolve YouTube URL: ${(err as Error).message || err}`);
+        }
       }
     }
 
