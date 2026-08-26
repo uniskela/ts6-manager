@@ -2,10 +2,23 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import type { VoiceBot } from './voice-bot.js';
 import type { QueueItem } from './playlist/queue.js';
-import { downloadYouTube, resolveSpotifyToYouTube } from './audio/youtube.js';
+import {
+  downloadYouTube,
+  resolveSpotifyToYouTube,
+  expandYouTubeToWatchUrls,
+  isYouTubeHostUrl,
+} from './audio/youtube.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
+const PLAYLIST_CAP = 25;
+
+/** Cancels stale background playlist expansions for chat !play / !queue. */
+const chatPlaylistGeneration = new Map<number, number>();
+
+function invalidateChatPlaylistExpansion(botId: number): void {
+  chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
+}
 
 const MUSIC_COMMANDS = new Set([
   'radio', 'play', 'stop', 'pause', 'skip', 'next', 'prev',
@@ -213,38 +226,114 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      let mediaUrl = args;
-      if (isSpotifyShareUrl(mediaUrl)) {
-        mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
-      }
-      const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
-
-      const queueItem: QueueItem = {
-        id: `yt_${info.id}`,
-        title: info.title,
-        artist: info.artist,
-        duration: info.duration,
-        filePath,
-        source: 'youtube',
-        sourceUrl: mediaUrl,
-      };
-
-      bot.queue.add(queueItem);
-
-      // Save to MusicRequest history
-      this.saveMusicRequest(bot, queueItem);
-
-      // If something is already playing, queue it instead of interrupting
-      if (bot.status === 'playing' || bot.status === 'paused') {
-        this.reply(bot, userClid, `Queued: ${info.artist} - ${info.title} (position #${bot.queue.length})`);
-      } else {
-        bot.queue.playAt(bot.queue.length - 1);
-        await bot.play(queueItem);
-        this.reply(bot, userClid, `Now playing: ${info.artist} - ${info.title}`);
-      }
+      await this.enqueueMediaUrl(bot, userClid, args);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to play: ${err.message}`);
     }
+  }
+
+  /**
+   * Resolve Spotify / YouTube Music / playlist URLs, download the first track,
+   * and queue the rest in the background (same approach as play-url).
+   */
+  private async enqueueMediaUrl(
+    bot: VoiceBot,
+    userClid: number,
+    rawUrl: string,
+  ): Promise<void> {
+    let mediaUrl = rawUrl;
+    if (isSpotifyShareUrl(mediaUrl)) {
+      mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
+    }
+
+    let urlsToPlay = [mediaUrl];
+    let playlistTitle: string | undefined;
+    if (isYouTubeHostUrl(mediaUrl)) {
+      const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
+      if (expanded.urls.length > 0) {
+        urlsToPlay = expanded.urls;
+        playlistTitle = expanded.title;
+      }
+    }
+
+    const firstUrl = urlsToPlay[0];
+    const { filePath, info } = await downloadYouTube(firstUrl, MUSIC_DIR);
+
+    const firstItem: QueueItem = {
+      id: `yt_${info.id}`,
+      title: info.title,
+      artist: info.artist,
+      duration: info.duration,
+      filePath,
+      source: 'youtube',
+      sourceUrl: firstUrl,
+    };
+
+    bot.queue.add(firstItem);
+    this.saveMusicRequest(bot, firstItem);
+
+    const alreadyPlaying = bot.status === 'playing' || bot.status === 'paused';
+    if (!alreadyPlaying) {
+      bot.queue.playAt(bot.queue.length - 1);
+      await bot.play(firstItem);
+    }
+
+    const rest = urlsToPlay.slice(1);
+    const playlistNote =
+      rest.length > 0
+        ? ` (+${rest.length} more from${playlistTitle ? ` "${playlistTitle}"` : ' playlist'})`
+        : '';
+
+    if (alreadyPlaying) {
+      this.reply(
+        bot,
+        userClid,
+        `Queued: ${info.artist} - ${info.title} (position #${bot.queue.length})${playlistNote}`,
+      );
+    } else {
+      this.reply(bot, userClid, `Now playing: ${info.artist} - ${info.title}${playlistNote}`);
+    }
+
+    if (rest.length === 0) return;
+
+    const botId = bot.currentConfig.id;
+    const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
+    chatPlaylistGeneration.set(botId, generation);
+
+    void (async () => {
+      for (const itemUrl of rest) {
+        if (chatPlaylistGeneration.get(botId) !== generation) break;
+        try {
+          const live = this.voiceBotManager.getBot(botId);
+          if (!live || live.status === 'stopped' || live.status === 'error') break;
+          const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
+          if (chatPlaylistGeneration.get(botId) !== generation) break;
+          const stillLive = this.voiceBotManager.getBot(botId);
+          if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') break;
+
+          const queueItem: QueueItem = {
+            id: `yt_${dl.info.id}`,
+            title: dl.info.title,
+            artist: dl.info.artist,
+            duration: dl.info.duration,
+            filePath: dl.filePath,
+            source: 'youtube',
+            sourceUrl: itemUrl,
+          };
+          stillLive.queue.add(queueItem);
+          this.saveMusicRequest(stillLive, queueItem);
+
+          if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
+            stillLive.queue.playAt(stillLive.queue.length - 1);
+            await stillLive.play(queueItem).catch((err) => {
+              console.error('[MusicCmd] Failed to resume playlist playback:', err);
+            });
+          }
+        } catch (err) {
+          console.error(`[MusicCmd] Failed to queue playlist track ${itemUrl}:`, err);
+        }
+      }
+    })();
   }
 
   private showQueue(bot: VoiceBot, userClid: number): void {
@@ -305,6 +394,7 @@ export class MusicCommandHandler {
 
     // !queue clear
     if (args.toLowerCase() === 'clear') {
+      invalidateChatPlaylistExpansion(bot.currentConfig.id);
       bot.queue.clear();
       bot.clearPlayback();
       this.reply(bot, userClid, 'Queue cleared.');
@@ -320,41 +410,14 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      let mediaUrl = args;
-      if (isSpotifyShareUrl(mediaUrl)) {
-        mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
-      }
-      const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
-
-      const queueItem: QueueItem = {
-        id: `yt_${info.id}`,
-        title: info.title,
-        artist: info.artist,
-        duration: info.duration,
-        filePath,
-        source: 'youtube',
-        sourceUrl: mediaUrl,
-      };
-
-      bot.queue.add(queueItem);
-
-      // Save to MusicRequest history
-      this.saveMusicRequest(bot, queueItem);
-
-      // If nothing is playing, start playing the queued item
-      if (bot.status !== 'playing' && bot.status !== 'paused') {
-        bot.queue.playAt(bot.queue.length - 1);
-        await bot.play(queueItem);
-        this.reply(bot, userClid, `Now playing: ${info.artist} - ${info.title}`);
-      } else {
-        this.reply(bot, userClid, `Queued: ${info.artist} - ${info.title} (position #${bot.queue.length})`);
-      }
+      await this.enqueueMediaUrl(bot, userClid, args);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to queue: ${err.message}`);
     }
   }
 
   private handleStop(bot: VoiceBot, userClid: number): void {
+    invalidateChatPlaylistExpansion(bot.currentConfig.id);
     bot.stopAudio();
     this.reply(bot, userClid, 'Playback stopped.');
   }

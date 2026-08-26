@@ -19,6 +19,17 @@ export interface YouTubeSearchResult {
   thumbnail: string;
 }
 
+export interface ParsedYouTubeUrl {
+  videoId?: string;
+  listId?: string;
+  /** music.youtube.com rewritten to www.youtube.com (or original if not YT). */
+  canonicalUrl: string;
+  /** Best URL for playlist expansion when listId is present. */
+  playlistUrl?: string;
+  /** Best single-video watch URL when videoId is present. */
+  watchUrl?: string;
+}
+
 // Shared cookie file path (set from settings)
 let ytCookieFile: string | null = null;
 
@@ -38,6 +49,109 @@ export function getCookieArgs(): string[] {
   return args;
 }
 
+/** Prefer ERROR lines in yt-dlp stderr (warnings often drown the real failure). */
+function summarizeYtDlpStderr(stderr: string, maxLen = 280): string {
+  const lines = stderr
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const errors = lines.filter((l) => /ERROR:/i.test(l));
+  const chosen = errors.length > 0 ? errors : lines;
+  const text = chosen.join(" | ");
+  return text.slice(0, maxLen) || "unknown yt-dlp error";
+}
+
+/**
+ * Canonicalize YouTube / YouTube Music URLs before calling yt-dlp.
+ * music.youtube.com is rewritten to www.youtube.com (yt-dlp does not support Music natively).
+ * Video and playlist ids are taken from standard v= / list= / youtu.be forms.
+ */
+export function parseYouTubeUrl(raw: string): ParsedYouTubeUrl {
+  const trimmed = raw.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { canonicalUrl: trimmed };
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const isYt =
+    host === "youtu.be" ||
+    host === "youtube.com" ||
+    host === "www.youtube.com" ||
+    host === "m.youtube.com" ||
+    host === "music.youtube.com" ||
+    host.endsWith(".youtube.com");
+
+  if (!isYt) {
+    return { canonicalUrl: trimmed };
+  }
+
+  // music.youtube.com → www.youtube.com (same path/query)
+  if (host === "music.youtube.com" || host.startsWith("music.")) {
+    parsed.hostname = "www.youtube.com";
+  } else if (host === "m.youtube.com" || host === "youtube.com") {
+    parsed.hostname = "www.youtube.com";
+  }
+
+  const href = parsed.toString();
+  const listMatch = href.match(/[?&]list=([\w-]+)/i);
+  const videoMatch =
+    href.match(/[?&]v=([\w-]{11})/i) ||
+    href.match(/youtu\.be\/([\w-]{11})/i) ||
+    href.match(/\/(?:shorts|embed|live|v)\/([\w-]{11})/i);
+
+  const listId = listMatch?.[1];
+  const videoId = videoMatch?.[1];
+
+  const watchUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : undefined;
+  const playlistUrl = listId ? `https://www.youtube.com/playlist?list=${listId}` : undefined;
+
+  let canonicalUrl = href;
+  if (listId && !videoId) {
+    canonicalUrl = playlistUrl!;
+  } else if (videoId && listId) {
+    // Keep list for playlist expansion; watch URL used for single-track download.
+    canonicalUrl = `https://www.youtube.com/watch?v=${videoId}&list=${listId}`;
+  } else if (videoId) {
+    canonicalUrl = watchUrl!;
+  } else if (playlistUrl) {
+    canonicalUrl = playlistUrl;
+  }
+
+  return { videoId, listId, canonicalUrl, playlistUrl, watchUrl };
+}
+
+export function isYouTubeHostUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === "youtu.be" ||
+      host.includes("youtube.com") ||
+      host === "music.youtube.com"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function runYtDlp(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn("yt-dlp", args, { shell: false });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    proc.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    proc.on("close", (code) => resolve({ code, stdout, stderr }));
+    proc.on("error", (err) => reject(new Error(`yt-dlp not found: ${err.message}`)));
+  });
+}
+
 /** Resolve Spotify track/album/playlist share links to a YouTube search query / best match URL. */
 export async function resolveSpotifyToYouTube(url: string): Promise<string> {
   const cleaned = url.trim();
@@ -45,39 +159,40 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
   try {
     parsed = new URL(cleaned);
   } catch {
-    throw new Error('Invalid Spotify URL');
+    throw new Error("Invalid Spotify URL");
   }
 
   const host = parsed.hostname.toLowerCase();
   const allowed =
-    host === 'open.spotify.com' ||
-    host === 'spotify.com' ||
-    host.endsWith('.spotify.com') ||
-    host === 'spotify.link';
+    host === "open.spotify.com" ||
+    host === "spotify.com" ||
+    host.endsWith(".spotify.com") ||
+    host === "spotify.link";
   if (!allowed) {
-    throw new Error('Not a Spotify share URL');
+    throw new Error("Not a Spotify share URL");
   }
-  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-    throw new Error('Invalid Spotify URL protocol');
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new Error("Invalid Spotify URL protocol");
   }
 
   // Fetch Open Graph title from the Spotify page (no Spotify API key required)
-  let title = '';
+  let title = "";
   try {
     const res = await fetch(parsed.toString(), {
-      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ts6-manager/1.0)' },
-      redirect: 'follow',
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
+      redirect: "follow",
     });
     const html = await res.text();
-    const og = html.match(/property="og:title"\s+content="([^"]+)"/i)
-      || html.match(/content="([^"]+)"\s+property="og:title"/i);
-    title = og?.[1]?.replace(/&amp;/g, '&').replace(/&#39;/g, "'") || '';
+    const og =
+      html.match(/property="og:title"\s+content="([^"]+)"/i) ||
+      html.match(/content="([^"]+)"\s+property="og:title"/i);
+    title = og?.[1]?.replace(/&amp;/g, "&").replace(/&#39;/g, "'") || "";
   } catch {
     /* fall through */
   }
 
   if (!title) {
-    title = decodeURIComponent(parsed.pathname.split('/').pop() || '').replace(/-/g, ' ');
+    title = decodeURIComponent(parsed.pathname.split("/").pop() || "").replace(/-/g, " ");
   }
 
   const results = await searchYouTube(`${title} audio`, 1);
@@ -86,205 +201,258 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
 }
 
 /**
- * Download audio from a YouTube URL using yt-dlp
+ * Download audio from a YouTube URL using yt-dlp.
+ * Always canonicalizes Music URLs to www.youtube.com/watch?v=… first.
  */
-export function downloadYouTube(url: string, outputDir: string): Promise<{ filePath: string; info: YouTubeInfo }> {
-  return new Promise((resolve, reject) => {
-    const outputTemplate = path.join(outputDir, "%(id)s.%(ext)s");
+export async function downloadYouTube(
+  url: string,
+  outputDir: string,
+): Promise<{ filePath: string; info: YouTubeInfo }> {
+  const parsed = parseYouTubeUrl(url);
+  if (parsed.listId && !parsed.videoId) {
+    throw new Error(
+      "Refusing to download a playlist URL as a single track — expand the playlist first",
+    );
+  }
+  const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
+  const outputTemplate = path.join(outputDir, "%(id)s.%(ext)s");
 
-    // First get info
-    const infoProc = spawn("yt-dlp", [
-        ...getCookieArgs(),
-        "--dump-json",
-      "--no-playlist",
-      url,
-    ], { shell: false });
+  const infoResult = await runYtDlp([
+    ...getCookieArgs(),
+    "--no-warnings",
+    "--dump-json",
+    "--no-playlist",
+    mediaUrl,
+  ]);
 
-    let infoJson = "";
-    let infoErr = "";
-    infoProc.stdout.on("data", (chunk: Buffer) => {
-      infoJson += chunk.toString();
-    });
-    infoProc.stderr.on("data", (chunk: Buffer) => {
-      infoErr += chunk.toString();
-    });
+  if (infoResult.code !== 0 && !infoResult.stdout.trim()) {
+    throw new Error(`yt-dlp info failed (code ${infoResult.code}): ${summarizeYtDlpStderr(infoResult.stderr)}`);
+  }
 
-    infoProc.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new Error(`yt-dlp info failed (code ${code}): ${infoErr.slice(0, 200)}`));
-      }
+  let parsedInfo: any;
+  try {
+    // dump-json may still print warnings on stdout in rare cases — take first JSON object line
+    const jsonLine = infoResult.stdout
+      .trim()
+      .split("\n")
+      .find((l) => l.trim().startsWith("{"));
+    parsedInfo = JSON.parse(jsonLine || infoResult.stdout);
+  } catch {
+    throw new Error(
+      `Failed to parse yt-dlp output: ${summarizeYtDlpStderr(infoResult.stderr || infoResult.stdout)}`,
+    );
+  }
 
-      let parsed: any;
-      try {
-        parsed = JSON.parse(infoJson);
-      } catch {
-        return reject(new Error("Failed to parse yt-dlp output"));
-      }
+  const info: YouTubeInfo = {
+    id: parsedInfo.id,
+    title: parsedInfo.title || "Unknown",
+    artist: parsedInfo.uploader || parsedInfo.channel || "Unknown",
+    duration: parsedInfo.duration || 0,
+    thumbnail: parsedInfo.thumbnail || "",
+    url: mediaUrl,
+  };
 
-      const info: YouTubeInfo = {
-        id: parsed.id,
-        title: parsed.title || "Unknown",
-        artist: parsed.uploader || parsed.channel || "Unknown",
-        duration: parsed.duration || 0,
-        thumbnail: parsed.thumbnail || "",
-        url,
-      };
+  const expectedPath = path.join(outputDir, `${info.id}.opus`);
 
-      const expectedPath = path.join(outputDir, `${info.id}.opus`);
+  // Check if already downloaded
+  if (fs.existsSync(expectedPath)) {
+    return { filePath: expectedPath, info };
+  }
 
-      // Check if already downloaded
-      if (fs.existsSync(expectedPath)) {
-        return resolve({ filePath: expectedPath, info });
-      }
+  const dlResult = await runYtDlp([
+    ...getCookieArgs(),
+    "--no-warnings",
+    "-x", // extract audio
+    "--audio-format",
+    "opus", // opus format (native for TS3)
+    "--audio-quality",
+    "0", // best quality
+    "--no-playlist",
+    "-o",
+    outputTemplate,
+    mediaUrl,
+  ]);
 
-      // Download audio only
-      const dlProc = spawn("yt-dlp", [
-        ...getCookieArgs(),
-        "-x",                       // extract audio
-        "--audio-format", "opus",   // opus format (native for TS3)
-        "--audio-quality", "0",     // best quality
-        "--no-playlist",
-        "-o", outputTemplate,
-        url,
-      ], { shell: false });
+  if (dlResult.code !== 0) {
+    throw new Error(`yt-dlp download failed (code ${dlResult.code}): ${summarizeYtDlpStderr(dlResult.stderr)}`);
+  }
 
-      let dlErr = "";
-      dlProc.stderr.on("data", (chunk: Buffer) => {
-        dlErr += chunk.toString();
-      });
+  // yt-dlp may use different extensions, find the actual file
+  const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(info.id));
+  if (files.length === 0) {
+    throw new Error("Downloaded file not found");
+  }
 
-      dlProc.on("close", (dlCode) => {
-        if (dlCode !== 0) {
-          return reject(new Error(`yt-dlp download failed (code ${dlCode}): ${dlErr.slice(0, 200)}`));
-        }
-
-        // yt-dlp may use different extensions, find the actual file
-        const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(info.id));
-        if (files.length === 0) {
-          return reject(new Error("Downloaded file not found"));
-        }
-
-        const filePath = path.join(outputDir, files[files.length - 1]);
-        resolve({ filePath, info });
-      });
-
-      dlProc.on("error", (err) => {
-        reject(new Error(`yt-dlp not found: ${err.message}`));
-      });
-    });
-
-    infoProc.on("error", (err) => {
-      reject(new Error(`yt-dlp not found: ${err.message}`));
-    });
-  });
+  const filePath = path.join(outputDir, files[files.length - 1]);
+  return { filePath, info };
 }
 
 /**
  * Get info about a YouTube URL (single video or playlist).
- * Returns type ('video' or 'playlist') and array of items.
+ * Uses flat playlist probe flags (--yes-playlist --flat-playlist --dump-single-json --ignore-errors).
+ * Music URLs are rewritten to www.youtube.com before invoking yt-dlp.
  */
-export function getYouTubeUrlInfo(url: string): Promise<{ type: 'video' | 'playlist'; items: YouTubeSearchResult[] }> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
-        ...getCookieArgs(),
-        "--dump-json",
-      "--flat-playlist",
-      "--no-download",
-      url,
-    ], { shell: false });
+export async function getYouTubeUrlInfo(
+  url: string,
+): Promise<{ type: "video" | "playlist"; items: YouTubeSearchResult[]; title?: string }> {
+  const parsed = parseYouTubeUrl(url);
+  // Prefer playlist endpoint when a list id is present (Music mixes, playlists).
+  const probeUrl = parsed.listId ? parsed.playlistUrl! : parsed.canonicalUrl;
 
-    let output = "";
-    let stderr = "";
-    proc.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
+  const result = await runYtDlp([
+    ...getCookieArgs(),
+    "--no-warnings",
+    "--yes-playlist",
+    "--flat-playlist",
+    "--dump-single-json",
+    "--ignore-errors",
+    "--no-download",
+    probeUrl,
+  ]);
 
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new Error(`yt-dlp info failed (code ${code}): ${stderr.slice(0, 200)}`));
+  const stdout = result.stdout.trim();
+  if (!stdout) {
+    throw new Error(`yt-dlp info failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+  }
+
+  let data: any;
+  try {
+    const jsonLine = stdout.split("\n").find((l) => l.trim().startsWith("{")) || stdout;
+    data = JSON.parse(jsonLine);
+  } catch {
+    throw new Error(`Failed to parse yt-dlp output: ${summarizeYtDlpStderr(result.stderr || stdout)}`);
+  }
+
+  const entries: any[] = Array.isArray(data.entries)
+    ? data.entries.filter((e: any) => e && e.id)
+    : [];
+
+  if (entries.length > 0) {
+    const items: YouTubeSearchResult[] = entries.map((entry) => ({
+      id: entry.id,
+      title: entry.title || "Unknown",
+      artist: entry.uploader || entry.channel || entry.artists?.[0] || "Unknown",
+      duration: entry.duration || 0,
+      thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+    }));
+    return {
+      type: items.length > 1 ? "playlist" : "video",
+      items,
+      title: data.title || undefined,
+    };
+  }
+
+  // Single video dump
+  if (data.id) {
+    return {
+      type: "video",
+      title: data.title || undefined,
+      items: [
+        {
+          id: data.id,
+          title: data.title || "Unknown",
+          artist: data.uploader || data.channel || "Unknown",
+          duration: data.duration || 0,
+          thumbnail: data.thumbnails?.[0]?.url || data.thumbnail || "",
+        },
+      ],
+    };
+  }
+
+  // Fallback: if we already parsed a video id, return it without requiring yt-dlp metadata
+  if (parsed.videoId) {
+    return {
+      type: "video",
+      items: [
+        {
+          id: parsed.videoId,
+          title: "Unknown",
+          artist: "Unknown",
+          duration: 0,
+          thumbnail: "",
+        },
+      ],
+    };
+  }
+
+  throw new Error(`yt-dlp info failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+}
+
+/**
+ * Expand a YouTube / YouTube Music URL into concrete watch?v= URLs (capped).
+ * Used by play-url and chat !play so Music playlist links never hit --no-playlist.
+ */
+export async function expandYouTubeToWatchUrls(
+  url: string,
+  cap = 25,
+): Promise<{ type: "video" | "playlist"; urls: string[]; title?: string }> {
+  const parsed = parseYouTubeUrl(url);
+
+  if (parsed.listId || !parsed.videoId) {
+    try {
+      const info = await getYouTubeUrlInfo(url);
+      if (info.items.length > 0) {
+        return {
+          type: info.type,
+          title: info.title,
+          urls: info.items.slice(0, cap).map((item) => `https://www.youtube.com/watch?v=${item.id}`),
+        };
       }
+    } catch {
+      // Fall through to single-video canonicalization when possible.
+    }
+  }
 
-      try {
-        const lines = output.trim().split("\n").filter(Boolean);
-        const items: YouTubeSearchResult[] = lines.map((line) => {
-          const parsed = JSON.parse(line);
-          return {
-            id: parsed.id,
-            title: parsed.title || "Unknown",
-            artist: parsed.uploader || parsed.channel || "Unknown",
-            duration: parsed.duration || 0,
-            thumbnail: parsed.thumbnails?.[0]?.url || parsed.thumbnail || "",
-          };
-        });
+  if (parsed.videoId) {
+    return {
+      type: "video",
+      urls: [`https://www.youtube.com/watch?v=${parsed.videoId}`],
+    };
+  }
 
-        const type = items.length > 1 ? 'playlist' : 'video';
-        resolve({ type, items });
-      } catch {
-        reject(new Error("Failed to parse yt-dlp output"));
-      }
-    });
-
-    proc.on("error", (err) => {
-      reject(new Error(`yt-dlp not found: ${err.message}`));
-    });
-  });
+  // Last resort: try probe anyway
+  const info = await getYouTubeUrlInfo(parsed.canonicalUrl);
+  return {
+    type: info.type,
+    title: info.title,
+    urls: info.items.slice(0, cap).map((item) => `https://www.youtube.com/watch?v=${item.id}`),
+  };
 }
 
 /**
  * Search YouTube using yt-dlp
  */
-export function searchYouTube(query: string, maxResults: number = 10): Promise<YouTubeSearchResult[]> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", [
-        ...getCookieArgs(),
-        `ytsearch${maxResults}:${query}`,
-      "--dump-json",
-      "--flat-playlist",
-      "--no-download",
-    ], { shell: false });
+export async function searchYouTube(query: string, maxResults: number = 10): Promise<YouTubeSearchResult[]> {
+  const result = await runYtDlp([
+    ...getCookieArgs(),
+    "--no-warnings",
+    `ytsearch${maxResults}:${query}`,
+    "--dump-json",
+    "--flat-playlist",
+    "--no-download",
+  ]);
 
-    let output = "";
-    let stderr = "";
-    proc.stdout.on("data", (chunk: Buffer) => {
-      output += chunk.toString();
-    });
-    proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
+  if (result.code !== 0 && !result.stdout.trim()) {
+    throw new Error(`yt-dlp search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+  }
 
-    proc.on("close", (code) => {
-      if (code !== 0) {
-        return reject(new Error(`yt-dlp search failed (code ${code}): ${stderr.slice(0, 200)}`));
-      }
-
-      try {
-        // yt-dlp outputs one JSON object per line
-        const results = output
-          .trim()
-          .split("\n")
-          .filter(Boolean)
-          .map((line) => {
-            const parsed = JSON.parse(line);
-            return {
-              id: parsed.id,
-              title: parsed.title || "Unknown",
-              artist: parsed.uploader || parsed.channel || "Unknown",
-              duration: parsed.duration || 0,
-              thumbnail: parsed.thumbnails?.[0]?.url || "",
-            };
-          });
-
-        resolve(results);
-      } catch {
-        resolve([]);
-      }
-    });
-
-    proc.on("error", (err) => {
-      reject(new Error(`yt-dlp not found: ${err.message}`));
-    });
-  });
+  try {
+    // yt-dlp outputs one JSON object per line
+    return result.stdout
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        const parsed = JSON.parse(line);
+        return {
+          id: parsed.id,
+          title: parsed.title || "Unknown",
+          artist: parsed.uploader || parsed.channel || "Unknown",
+          duration: parsed.duration || 0,
+          thumbnail: parsed.thumbnails?.[0]?.url || "",
+        };
+      });
+  } catch {
+    return [];
+  }
 }
