@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -9,12 +10,36 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 export default function Login() {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [checkingSetup, setCheckingSetup] = useState(true);
   const login = useLogin();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated());
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      setCheckingSetup(false);
+      return;
+    }
+    axios
+      .get<{ needsSetup: boolean }>('/api/setup/status')
+      .then((res) => {
+        if (res.data.needsSetup) navigate('/setup', { replace: true });
+        else setCheckingSetup(false);
+      })
+      .catch(() => setCheckingSetup(false));
+  }, [isAuthenticated, navigate]);
+
   if (isAuthenticated) return <Navigate to="/dashboard" replace />;
+
+  if (checkingSetup) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();

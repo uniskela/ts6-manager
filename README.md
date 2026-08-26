@@ -155,8 +155,11 @@ Prebuilt images are published to **GitHub Container Registry** on every push to 
 | Backend  | `ghcr.io/uniskela/ts6-manager/backend:latest` |
 | Frontend | `ghcr.io/uniskela/ts6-manager/frontend:latest` |
 | Sidecar  | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
+| All-in-one | `ghcr.io/uniskela/ts6-manager/all-in-one:latest` |
 
 Pull without logging in once the packages are **Public** (Packages → each image → Package settings). The workflow tries to set that automatically after the first publish.
+
+### Split stack (default)
 
 1. Download the [`docker-compose.yml`](docker-compose.yml)
 2. Create a `.env` file next to it:
@@ -186,6 +189,18 @@ docker compose up -d
 
 > `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` are **required** in production. The backend refuses to start without them when `NODE_ENV=production`.
 > The sidecar HTTP API is authenticated with `SIDECAR_SECRET` and is not published to the host by default.
+
+### All-in-one (single container)
+
+Runs nginx + backend + sidecar in one image (adapted from upstream [PR #64](https://github.com/clusterzx/ts6-manager/pull/64) by [@joaobosconff](https://github.com/joaobosconff)):
+
+```bash
+# Same .env secrets as above
+docker compose -f docker-compose.all-in-one.yml up -d
+# or: docker pull ghcr.io/uniskela/ts6-manager/all-in-one:latest
+```
+
+Open `http://localhost:3000` (override with `HOST_PORT`). Only port 80 is published; backend and sidecar stay on loopback inside the container.
 
 ### Building from Source
 

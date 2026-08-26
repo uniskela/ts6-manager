@@ -1,0 +1,40 @@
+version: "3.8"
+
+# One container: UI (nginx :80) + API (:3001) + sidecar (:9800) on loopback.
+# Adapted from upstream PR #64 by @joaobosconff.
+
+services:
+  ts6:
+    image: ghcr.io/uniskela/ts6-manager/all-in-one:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.all-in-one
+    container_name: ts6-all-in-one
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env or environment}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env or environment}
+      - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
+      - TS_ALLOW_SELF_SIGNED=${TS_ALLOW_SELF_SIGNED:-false}
+      - YT_COOKIE_FILE=${YT_COOKIE_FILE:-}
+      - JWT_ACCESS_EXPIRY=15m
+      - JWT_REFRESH_EXPIRY=7d
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      - MUSIC_DIR=/data/music
+      - SIDECAR_URL=http://127.0.0.1:9800
+      - SIDECAR_PORT=9800
+    volumes:
+      - backend-data:/app/packages/backend/data
+      - music-data:/data/music
+    ports:
+      # Sidecar (:9800) and backend (:3001) are intentionally not published
+      - "${HOST_PORT:-3000}:80"
+
+volumes:
+  backend-data:
+    driver: local
+  music-data:
+    driver: local
