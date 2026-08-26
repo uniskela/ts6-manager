@@ -2,12 +2,15 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
-import { downloadYouTube, resolveSpotifyToYouTube } from '../voice/audio/youtube.js';
+import { downloadYouTube, resolveSpotifyToYouTube, getYouTubeUrlInfo } from '../voice/audio/youtube.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+
+/** Cancels stale background playlist expansions when a newer play-url starts for the same bot. */
+const playlistExpandGeneration = new Map<number, number>();
 
 // All routes require admin role
 musicBotRoutes.use(requireRole('admin'));
@@ -212,7 +215,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /:id/play-url — Play a directly provided URL (e.g. from Music Requests History)
+// POST /:id/play-url — Play a YouTube/direct URL (single video or playlist)
 musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
@@ -235,50 +238,125 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     })()) {
       mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
     }
-    const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
 
-    const queueItem = {
+    // Expand YouTube playlists / Music radio mixes (cap downloads).
+    const PLAYLIST_CAP = 25;
+    let urlsToPlay: string[] = [mediaUrl];
+    let playlistTitle: string | undefined;
+    try {
+      const host = new URL(mediaUrl).hostname.toLowerCase();
+      const isYt =
+        host.includes('youtube.com') ||
+        host.includes('youtu.be') ||
+        host.includes('music.youtube.com');
+      if (isYt) {
+        const info = await getYouTubeUrlInfo(mediaUrl);
+        if (info.type === 'playlist' && info.items.length > 0) {
+          playlistTitle = info.items[0]?.title;
+          urlsToPlay = info.items
+            .slice(0, PLAYLIST_CAP)
+            .map((item) => `https://www.youtube.com/watch?v=${item.id}`);
+        }
+      }
+    } catch {
+      // Fall back to single-URL download if playlist probe fails.
+    }
+
+    const saveHistory = async (sourceUrl: string, title: string) => {
+      try {
+        const prisma = req.app.locals.prisma;
+        if (!bot.currentConfig.serverConfigId) return;
+        await prisma.musicRequest.upsert({
+          where: {
+            serverConfigId_url: {
+              serverConfigId: bot.currentConfig.serverConfigId,
+              url: sourceUrl,
+            },
+          },
+          update: {
+            requestedAt: new Date(),
+            title: title || 'Unknown Title',
+          },
+          create: {
+            serverConfigId: bot.currentConfig.serverConfigId,
+            url: sourceUrl,
+            title: title || 'Unknown Title',
+            requestedAt: new Date(),
+          },
+        });
+      } catch (saveErr) {
+        console.error('[music-bots.routes] Failed to save music request history:', saveErr);
+      }
+    };
+
+    // Download + play the first track immediately so the request doesn't time out on playlists.
+    const generation = (playlistExpandGeneration.get(id) ?? 0) + 1;
+    playlistExpandGeneration.set(id, generation);
+
+    const firstUrl = urlsToPlay[0];
+    const { filePath, info } = await downloadYouTube(firstUrl, MUSIC_DIR);
+    const firstItem = {
       id: `yt_${info.id}`,
       title: info.title,
       artist: info.artist,
       duration: info.duration,
       filePath,
       source: 'youtube' as const,
-      sourceUrl: mediaUrl,
+      sourceUrl: firstUrl,
     };
-
-    bot.queue.add(queueItem);
+    bot.queue.add(firstItem);
     bot.queue.playAt(bot.queue.length - 1);
-    await bot.play(queueItem);
+    await bot.play(firstItem);
+    await saveHistory(firstUrl, firstItem.title);
 
-    // Save to MusicRequest History
-    try {
-      const prisma = req.app.locals.prisma;
-      if (queueItem.sourceUrl && bot.currentConfig.serverConfigId) {
-        await prisma.musicRequest.upsert({
-          where: {
-            serverConfigId_url: {
-              serverConfigId: bot.currentConfig.serverConfigId,
-              url: queueItem.sourceUrl,
-            },
-          },
-          update: {
-            requestedAt: new Date(),
-            title: queueItem.title || 'Unknown Title',
-          },
-          create: {
-            serverConfigId: bot.currentConfig.serverConfigId,
-            url: queueItem.sourceUrl,
-            title: queueItem.title || 'Unknown Title',
-            requestedAt: new Date(),
-          },
-        });
-      }
-    } catch (saveErr) {
-      console.error('[music-bots.routes] Failed to save music request history:', saveErr);
+    // Queue remaining playlist tracks in the background.
+    // If the first track ends before later downloads finish, resume when the next item lands.
+    const rest = urlsToPlay.slice(1);
+    if (rest.length > 0) {
+      void (async () => {
+        for (const itemUrl of rest) {
+          if (playlistExpandGeneration.get(id) !== generation) break;
+          try {
+            const live = manager.getBot(id);
+            if (!live || live.status === 'stopped' || live.status === 'error') break;
+            const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
+            if (playlistExpandGeneration.get(id) !== generation) break;
+            const stillLive = manager.getBot(id);
+            if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') break;
+
+            const queueItem = {
+              id: `yt_${dl.info.id}`,
+              title: dl.info.title,
+              artist: dl.info.artist,
+              duration: dl.info.duration,
+              filePath: dl.filePath,
+              source: 'youtube' as const,
+              sourceUrl: itemUrl,
+            };
+            stillLive.queue.add(queueItem);
+            await saveHistory(itemUrl, queueItem.title);
+
+            // First track may have finished while we were downloading — resume from this item.
+            if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
+              stillLive.queue.playAt(stillLive.queue.length - 1);
+              await stillLive.play(queueItem).catch((err) => {
+                console.error('[music-bots.routes] Failed to resume playlist playback:', err);
+              });
+            }
+          } catch (err) {
+            console.error(`[music-bots.routes] Failed to queue playlist track ${itemUrl}:`, err);
+          }
+        }
+      })();
     }
 
-    res.json({ success: true, queueItem });
+    res.json({
+      success: true,
+      queued: 1 + rest.length,
+      playlist: urlsToPlay.length > 1,
+      playlistTitle,
+      queueItem: { id: firstItem.id, title: firstItem.title },
+    });
   } catch (err: any) {
     next(new AppError(500, `Failed to play URL: ${err.message}`));
   }
