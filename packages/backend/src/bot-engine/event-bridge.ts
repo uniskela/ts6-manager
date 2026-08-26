@@ -103,9 +103,11 @@ export class EventBridge extends EventEmitter {
   async reconnectConfig(configId: number): Promise<void> {
     const prefix = `${configId}:`;
     const sidsToReconnect: number[] = [];
+    const cmdListenersToRestore: Array<{ sid: number; channelId: number }> = [];
 
     for (const key of [...this.connections.keys()]) {
       if (!key.startsWith(prefix)) continue;
+      // Skip cmd listener keys if they ever share the map (they don't)
       const sid = parseInt(key.slice(prefix.length), 10);
       if (!Number.isNaN(sid)) sidsToReconnect.push(sid);
       await this.disconnectServer(configId, sid);
@@ -113,6 +115,13 @@ export class EventBridge extends EventEmitter {
 
     for (const key of [...this.commandListeners.keys()]) {
       if (!key.startsWith(prefix)) continue;
+      // key format: `${configId}:${sid}:cmd:${channelId}`
+      const parts = key.split(':');
+      const sid = parseInt(parts[1], 10);
+      const channelId = parseInt(parts[3], 10);
+      if (!Number.isNaN(sid) && !Number.isNaN(channelId)) {
+        cmdListenersToRestore.push({ sid, channelId });
+      }
       const client = this.commandListeners.get(key);
       if (client) {
         client.destroy();
@@ -125,6 +134,14 @@ export class EventBridge extends EventEmitter {
         await this.connectServer(configId, sid);
       } catch (err: any) {
         console.error(`[EventBridge] Reconnect failed for ${configId}:${sid}: ${err.message}`);
+      }
+    }
+
+    for (const { sid, channelId } of cmdListenersToRestore) {
+      try {
+        await this.connectCommandListener(configId, sid, channelId);
+      } catch (err: any) {
+        console.error(`[EventBridge] CMD listener reconnect failed for ${configId}:${sid}:${channelId}: ${err.message}`);
       }
     }
   }

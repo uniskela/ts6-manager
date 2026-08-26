@@ -57,8 +57,8 @@ importers:
         specifier: ^1.4.5-lts.1
         version: 1.4.5-lts.2
       nanoid:
-        specifier: ^6.0.1
-        version: 6.0.1
+        specifier: ^5.1.16
+        version: 5.1.16
       node-cron:
         specifier: ^3.0.3
         version: 3.0.3
@@ -2441,9 +2441,9 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
-  nanoid@6.0.1:
-    resolution: {integrity: sha512-3wVS3i51pE2pi1k5FFL/95BGfVS0kSsvDVuGXHOtxox/TywUmtgq+3qiTOTbs9J7KfHaXPiN171k/A6dBnaXFw==}
-    engines: {node: ^22 || ^24 || >=26}
+  nanoid@5.1.16:
+    resolution: {integrity: sha512-kVrnsrJqMR8+oLJnGEmSWw9BivK5mt7H3FZatVRjrc5wGqFYuBxX1yG7+A7Gi5AefkX6t/oCkizcQgpu0cY1dQ==}
+    engines: {node: ^18 || >=20}
     hasBin: true
 
   negotiator@0.6.3:
@@ -5148,7 +5148,7 @@ snapshots:
 
   nanoid@3.3.11: {}
 
-  nanoid@6.0.1: {}
+  nanoid@5.1.16: {}
 
   negotiator@0.6.3: {}
 

@@ -499,6 +499,11 @@ export class VoiceBot extends EventEmitter {
   clearPlayback(): void {
     this.stopIcyPolling();
     this.stopPlayback();
+    try {
+      this.client.sendVoiceStop();
+    } catch {
+      /* ignore if not connected */
+    }
     this.resetNickname();
     this._nowPlaying = null;
     if (this._status === 'playing' || this._status === 'paused') {

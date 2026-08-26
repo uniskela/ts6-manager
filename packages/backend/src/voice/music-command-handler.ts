@@ -13,6 +13,19 @@ const MUSIC_COMMANDS = new Set([
   'stream', 'stopstream', 'viewers',
 ]);
 
+function isSpotifyShareUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host === 'open.spotify.com' ||
+      host === 'spotify.com' ||
+      host.endsWith('.spotify.com') ||
+      host === 'spotify.link'
+    );
+  } catch {
+    return false;
+  }
+}
 /**
  * Handles text-based music commands (!radio, !play, !stop, etc.)
  * by listening directly on each VoiceBot's TS3 connection.
@@ -201,7 +214,7 @@ export class MusicCommandHandler {
 
     try {
       let mediaUrl = args;
-      if (/spotify\.com|spotify\.link/i.test(mediaUrl)) {
+      if (isSpotifyShareUrl(mediaUrl)) {
         mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
       }
       const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
@@ -213,7 +226,7 @@ export class MusicCommandHandler {
         duration: info.duration,
         filePath,
         source: 'youtube',
-        sourceUrl: args,
+        sourceUrl: mediaUrl,
       };
 
       bot.queue.add(queueItem);
@@ -308,7 +321,7 @@ export class MusicCommandHandler {
 
     try {
       let mediaUrl = args;
-      if (/spotify\.com|spotify\.link/i.test(mediaUrl)) {
+      if (isSpotifyShareUrl(mediaUrl)) {
         mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
       }
       const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);

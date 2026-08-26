@@ -41,12 +41,30 @@ export function getCookieArgs(): string[] {
 /** Resolve Spotify track/album/playlist share links to a YouTube search query / best match URL. */
 export async function resolveSpotifyToYouTube(url: string): Promise<string> {
   const cleaned = url.trim();
-  if (!/open\.spotify\.com|spotify\.link/i.test(cleaned)) return cleaned;
+  let parsed: URL;
+  try {
+    parsed = new URL(cleaned);
+  } catch {
+    throw new Error('Invalid Spotify URL');
+  }
+
+  const host = parsed.hostname.toLowerCase();
+  const allowed =
+    host === 'open.spotify.com' ||
+    host === 'spotify.com' ||
+    host.endsWith('.spotify.com') ||
+    host === 'spotify.link';
+  if (!allowed) {
+    throw new Error('Not a Spotify share URL');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('Invalid Spotify URL protocol');
+  }
 
   // Fetch Open Graph title from the Spotify page (no Spotify API key required)
   let title = '';
   try {
-    const res = await fetch(cleaned, {
+    const res = await fetch(parsed.toString(), {
       headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ts6-manager/1.0)' },
       redirect: 'follow',
     });
@@ -59,13 +77,7 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
   }
 
   if (!title) {
-    // Last resort: use path slug as query
-    try {
-      const u = new URL(cleaned);
-      title = decodeURIComponent(u.pathname.split('/').pop() || '').replace(/-/g, ' ');
-    } catch {
-      title = cleaned;
-    }
+    title = decodeURIComponent(parsed.pathname.split('/').pop() || '').replace(/-/g, ' ');
   }
 
   const results = await searchYouTube(`${title} audio`, 1);
