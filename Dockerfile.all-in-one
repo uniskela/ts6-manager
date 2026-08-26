@@ -1,0 +1,84 @@
+# syntax=docker/dockerfile:1.4
+# Single image: nginx (SPA + API proxy) + Node backend + Go sidecar
+# Adapted from upstream PR #64 by @joaobosconff (clusterzx/ts6-manager)
+
+FROM golang:1.25-bookworm AS sidecar-build
+WORKDIR /src
+COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
+RUN go mod download
+COPY packages/sidecar/main.go .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar main.go
+
+FROM node:20-slim AS base
+RUN corepack enable && corepack prepare pnpm@9 --activate
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      openssl \
+      ffmpeg \
+      python3 \
+      python3-pip \
+      ca-certificates \
+    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+FROM base AS build
+ARG GIT_SHA=
+ENV VITE_GIT_SHA=$GIT_SHA
+COPY . .
+RUN pnpm install --no-frozen-lockfile
+RUN pnpm --filter @ts6/common run build
+RUN pnpm --filter @ts6/backend exec prisma generate
+RUN pnpm --filter @ts6/backend run build
+RUN pnpm --filter @ts6/frontend run build
+
+FROM base AS production
+ENV NODE_ENV=production \
+    SIDECAR_URL=http://127.0.0.1:9800 \
+    DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      nginx \
+      supervisor \
+      netcat-openbsd \
+      curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
+COPY --from=build /app/packages/common/dist ./packages/common/dist
+COPY --from=build /app/packages/common/package.json ./packages/common/package.json
+COPY --from=build /app/packages/backend/dist ./packages/backend/dist
+COPY --from=build /app/packages/backend/generated ./packages/backend/generated
+COPY --from=build /app/packages/backend/prisma ./packages/backend/prisma
+COPY --from=build /app/packages/backend/package.json ./packages/backend/package.json
+COPY --from=build /app/packages/backend/node_modules ./packages/backend/node_modules
+
+COPY --from=build /app/packages/frontend/dist /var/www/html
+
+COPY --from=sidecar-build /sidecar /usr/local/bin/sidecar
+
+COPY docker-commands/nginx-all-in-one.conf /etc/nginx/sites-available/default
+COPY docker-commands/supervisord-all-in-one.conf /etc/supervisor/conf.d/ts6.conf
+COPY docker-commands/start-backend.sh /usr/local/bin/start-backend.sh
+RUN chmod +x /usr/local/bin/start-backend.sh /usr/local/bin/sidecar
+
+RUN mkdir -p /app/packages/backend/data /data/music \
+    && mkdir -p /root/.config/yt-dlp \
+    && echo "--js-runtimes node" > /root/.config/yt-dlp/config
+
+# Only publish nginx (:80) from compose. Backend/sidecar stay loopback-only inside the container.
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+  CMD curl -fsS http://127.0.0.1/api/health >/dev/null && curl -fsS http://127.0.0.1:9800/health >/dev/null || exit 1
+
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]

@@ -5,6 +5,8 @@ WORKDIR /app
 
 # Copy everything at once to avoid BuildKit ordering bug on Windows
 FROM base AS build
+ARG GIT_SHA=
+ENV VITE_GIT_SHA=$GIT_SHA
 COPY . .
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm --filter @ts6/common run build

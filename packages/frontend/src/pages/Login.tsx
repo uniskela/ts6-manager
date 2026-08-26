@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -7,14 +8,61 @@ import { Label } from '@/components/ui/label';
 import { useLogin } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth.store';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function Login() {
+  const navigate = useNavigate();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [checkingSetup, setCheckingSetup] = useState(true);
   const login = useLogin();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated());
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      setCheckingSetup(false);
+      return;
+    }
+
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 20;
+
+    const probe = () => {
+      axios
+        .get<{ needsSetup: boolean }>('/api/setup/status')
+        .then((res) => {
+          if (cancelled) return;
+          if (res.data.needsSetup) navigate('/setup', { replace: true });
+          else setCheckingSetup(false);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          attempt += 1;
+          // Retry briefly — nginx may be up before the backend finishes prisma/start.
+          if (attempt < maxAttempts) {
+            window.setTimeout(probe, 1500);
+          } else {
+            setCheckingSetup(false);
+          }
+        });
+    };
+
+    probe();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, navigate]);
+
   if (isAuthenticated) return <Navigate to="/dashboard" replace />;
+
+  if (checkingSetup) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,7 +135,7 @@ export default function Login() {
         </Card>
 
         <p className="text-center text-[10px] text-muted-foreground/50 mt-6 font-mono-data">
-          TS6 WEBUI v1.0.0
+          {APP_VERSION_LABEL}
         </p>
       </div>
     </div>

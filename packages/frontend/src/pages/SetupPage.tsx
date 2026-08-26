@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
 import axios from 'axios';
+import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function SetupPage() {
   const navigate = useNavigate();
@@ -147,7 +148,7 @@ export default function SetupPage() {
         </Card>
 
         <p className="text-center text-[10px] text-muted-foreground/50 mt-6 font-mono-data">
-          TS6 WEBUI v1.0.0
+          {APP_VERSION_LABEL}
         </p>
       </div>
     </div>
