@@ -66,7 +66,10 @@ COPY --from=build /app/packages/frontend/dist /var/www/html
 
 COPY --from=sidecar-build /sidecar /usr/local/bin/sidecar
 
-COPY docker-commands/nginx-all-in-one.conf /etc/nginx/sites-available/default
+# Install site config where Debian nginx always loads it (conf.d), and drop the stock default site.
+COPY docker-commands/nginx-all-in-one.conf /etc/nginx/conf.d/ts6.conf
+RUN rm -f /etc/nginx/sites-enabled/default
+
 COPY docker-commands/supervisord-all-in-one.conf /etc/supervisor/conf.d/ts6.conf
 COPY docker-commands/start-backend.sh /usr/local/bin/start-backend.sh
 RUN chmod +x /usr/local/bin/start-backend.sh /usr/local/bin/sidecar
