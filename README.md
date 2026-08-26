@@ -148,6 +148,16 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 ## Quick Start (Docker)
 
+Prebuilt images are published to **GitHub Container Registry** on every push to `main` (and on `v*` tags) via [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml):
+
+| Service  | Image |
+|----------|--------|
+| Backend  | `ghcr.io/uniskela/ts6-manager/backend:latest` |
+| Frontend | `ghcr.io/uniskela/ts6-manager/frontend:latest` |
+| Sidecar  | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
+
+Pull without logging in once the packages are **Public** (Packages → each image → Package settings). The workflow tries to set that automatically after the first publish.
+
 1. Download the [`docker-compose.yml`](docker-compose.yml)
 2. Create a `.env` file next to it:
 

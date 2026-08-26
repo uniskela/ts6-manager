@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: uniskela/ts6-manager:backend
+    image: ghcr.io/uniskela/ts6-manager/backend:latest
     container_name: ts6-backend
     restart: unless-stopped
     environment:
@@ -24,7 +24,7 @@ services:
       - coolify-ts
 
   frontend:
-    image: uniskela/ts6-manager:frontend
+    image: ghcr.io/uniskela/ts6-manager/frontend:latest
     container_name: ts6-frontend
     restart: unless-stopped
     depends_on:

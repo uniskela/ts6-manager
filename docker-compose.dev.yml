@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   backend:
-    image: uniskela/ts6-manager:backend-dev
+    image: ghcr.io/uniskela/ts6-manager/backend:latest
     container_name: ts6-backend-dev
     restart: unless-stopped
     environment:
@@ -28,7 +28,7 @@ services:
       - ts6-network
 
   sidecar:
-    image: uniskela/ts6-manager:sidecar-dev
+    image: ghcr.io/uniskela/ts6-manager/sidecar:latest
     container_name: ts6-sidecar-dev
     restart: unless-stopped
     environment:
@@ -38,7 +38,7 @@ services:
       - ts6-network
 
   frontend:
-    image: uniskela/ts6-manager:frontend-dev
+    image: ghcr.io/uniskela/ts6-manager/frontend:latest
     container_name: ts6-frontend-dev
     restart: unless-stopped
     ports:
