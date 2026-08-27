@@ -1,8 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { downloadYouTube, searchYouTube, getYouTubeUrlInfo, fetchYouTubeVideoMeta } from '../voice/audio/youtube.js';
+import { downloadYouTube, searchYouTube, getYouTubeUrlInfo, fetchYouTubeVideoMeta, parseYouTubeUrl } from '../voice/audio/youtube.js';
 import { getImportJob, startYouTubePlaylistImport } from '../voice/audio/youtube-playlist-import.js';
+import {
+  appleMusicTrackToYouTubeUrl,
+  isAppleMusicShareUrl,
+  resolveAppleMusicTracks,
+} from '../voice/audio/apple-music.js';
 import {
   looksLikeYouTubeIdTitle,
   parseTitleArtistFromFilename,
@@ -18,6 +23,70 @@ import rateLimit from 'express-rate-limit';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.webm'];
+/** Cap Apple Music → YouTube matches for library info / import previews. */
+const APPLE_MUSIC_INFO_CAP = 25;
+
+async function resolveAppleMusicAsYouTubeInfo(url: string): Promise<{
+  type: 'video' | 'playlist';
+  items: Array<{ id: string; title: string; artist: string; duration: number; thumbnail: string }>;
+  title?: string;
+}> {
+  const am = await resolveAppleMusicTracks(url);
+  if (!am.tracks.length) {
+    throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
+  }
+
+  const items: Array<{ id: string; title: string; artist: string; duration: number; thumbnail: string }> = [];
+  for (const track of am.tracks.slice(0, APPLE_MUSIC_INFO_CAP)) {
+    try {
+      const ytUrl = await appleMusicTrackToYouTubeUrl(track);
+      if (!ytUrl) continue;
+      const videoId = parseYouTubeUrl(ytUrl).videoId;
+      if (!videoId) continue;
+      items.push({
+        id: videoId,
+        title: track.title,
+        artist: track.artist || 'Unknown',
+        duration: 0,
+        thumbnail: '',
+      });
+    } catch {
+      /* skip failed YouTube matches */
+    }
+  }
+
+  if (!items.length) {
+    throw new AppError(502, 'No YouTube matches found for that Apple Music URL');
+  }
+
+  return {
+    type: items.length > 1 ? 'playlist' : 'video',
+    items,
+    title: am.title,
+  };
+}
+
+async function resolveMediaUrlForYouTubeDownload(url: string): Promise<string> {
+  if (!isAppleMusicShareUrl(url)) return url;
+  const am = await resolveAppleMusicTracks(url);
+  if (!am.tracks.length) {
+    throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
+  }
+  if (am.tracks.length > 1) {
+    throw new AppError(
+      400,
+      'Apple Music playlists cannot be downloaded as a single track — Load the URL first, then download selected songs or use !play / Play URL',
+    );
+  }
+  const ytUrl = await appleMusicTrackToYouTubeUrl(am.tracks[0]);
+  if (!ytUrl) {
+    throw new AppError(
+      502,
+      `No YouTube match for Apple Music track: ${am.tracks[0].artist} - ${am.tracks[0].title}`,
+    );
+  }
+  return ytUrl;
+}
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 
 // Ensure music directory exists
@@ -324,7 +393,7 @@ musicLibraryRoutes.post('/youtube/search', async (req: Request, res: Response, n
   } catch (err) { next(err); }
 });
 
-// POST /youtube/download — Download from YouTube
+// POST /youtube/download — Download from YouTube (Apple Music single tracks are resolved first)
 musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
@@ -332,12 +401,13 @@ musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Requ
     const { url } = req.body;
     if (!url) throw new AppError(400, 'url is required');
 
-    const { filePath, info } = await downloadYouTube(url, MUSIC_DIR);
+    const mediaUrl = await resolveMediaUrlForYouTubeDownload(url);
+    const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR);
     const fileStats = fs.statSync(filePath);
 
     // Check if song already exists for this server (by sourceUrl)
     const existing = await prisma.song.findFirst({
-      where: { sourceUrl: url, serverConfigId: configId },
+      where: { sourceUrl: mediaUrl, serverConfigId: configId },
     });
     if (existing) {
       return res.json(existing);
@@ -350,7 +420,7 @@ musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Requ
         duration: info.duration,
         filePath,
         source: 'youtube',
-        sourceUrl: url,
+        sourceUrl: mediaUrl,
         fileSize: fileStats.size,
         serverConfigId: configId,
       },
@@ -360,11 +430,15 @@ musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Requ
   } catch (err) { next(err); }
 });
 
-// POST /youtube/info — Get info about a YouTube URL (video or playlist)
+// POST /youtube/info — Get info about a YouTube / Apple Music URL (video or playlist)
 musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, next) => {
   try {
     const { url } = req.body;
     if (!url) throw new AppError(400, 'url is required');
+    if (isAppleMusicShareUrl(url)) {
+      const info = await resolveAppleMusicAsYouTubeInfo(url);
+      return res.json(info);
+    }
     const info = await getYouTubeUrlInfo(url);
     res.json(info);
   } catch (err) { next(err); }
@@ -377,6 +451,12 @@ musicLibraryRoutes.post('/youtube/import-playlist', heavyMusicOpLimiter, async (
     const configId = parseInt(req.params.configId as string);
     const { url, playlistName, playlistId, reimport } = req.body;
     if (!url) throw new AppError(400, 'url is required');
+    if (isAppleMusicShareUrl(url)) {
+      throw new AppError(
+        400,
+        'Apple Music playlist import via this endpoint is not supported — Load the URL, then Download selected / use !play or Play URL',
+      );
+    }
 
     const jobId = await startYouTubePlaylistImport(prisma, configId, url, {
       playlistName,

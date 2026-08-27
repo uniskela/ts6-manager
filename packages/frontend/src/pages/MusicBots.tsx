@@ -942,7 +942,7 @@ function LibraryTab() {
                 value={ytUrl}
                 onChange={(e) => setYtUrl(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleLoadUrl()}
-                placeholder="Paste YouTube URL or Playlist URL..."
+                placeholder="Paste YouTube, Apple Music, or Playlist URL..."
                 className="pl-9"
               />
             </div>
@@ -1799,7 +1799,7 @@ function PlaylistsTab() {
                         value={addYtUrl}
                         onChange={(e) => setAddYtUrl(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleAddLoadUrl()}
-                        placeholder="Paste YouTube URL or Playlist URL..."
+                        placeholder="Paste YouTube, Apple Music, or Playlist URL..."
                         className="pl-9"
                       />
                     </div>
