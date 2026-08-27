@@ -88,12 +88,17 @@ export interface PlaybackState {
 
 // === Playlist Types ===
 
+export type PlaylistMode = 'local' | 'stream';
+
 export interface PlaylistSummary {
   id: number;
   name: string;
+  mode: PlaylistMode;
   musicBotId: number | null;
   songCount: number;
   createdAt: string;
+  youtubePlaylistId?: string | null;
+  serverConfigId?: number | null;
 }
 
 export interface PlaylistDetail extends PlaylistSummary {
@@ -125,6 +130,33 @@ export interface RadioPreset {
   name: string;
   url: string;
   genre: string;
+}
+
+// === Chat Commands (music bot !commands) ===
+
+export interface ChatCommandInfo {
+  id: number;
+  serverConfigId: number;
+  name: string;
+  response: string;
+  description: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateChatCommandRequest {
+  name: string;
+  response: string;
+  description?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateChatCommandRequest {
+  name?: string;
+  response?: string;
+  description?: string | null;
+  enabled?: boolean;
 }
 
 export interface YouTubeUrlInfo {

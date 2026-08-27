@@ -103,22 +103,24 @@ async function runImport(
   if (playlistId) {
     const existing = await prisma.playlist.findUnique({ where: { id: playlistId } });
     if (!existing) throw new Error('Playlist not found');
-    if (options.playlistName) {
-      await prisma.playlist.update({
-        where: { id: playlistId },
-        data: { name: options.playlistName },
-      });
+    if (existing.mode === 'local' && !existing.youtubePlaylistId) {
+      throw new Error(
+        'Cannot import a YouTube playlist into a local-only playlist — create or select a stream playlist',
+      );
     }
-    if (listId) {
-      await prisma.playlist.update({
-        where: { id: playlistId },
-        data: { youtubePlaylistId: listId, serverConfigId },
-      });
-    }
+    await prisma.playlist.update({
+      where: { id: playlistId },
+      data: {
+        mode: 'stream',
+        ...(options.playlistName ? { name: options.playlistName } : {}),
+        ...(listId ? { youtubePlaylistId: listId, serverConfigId } : { serverConfigId }),
+      },
+    });
   } else {
     const created = await prisma.playlist.create({
       data: {
         name: options.playlistName || info.title || 'Imported Playlist',
+        mode: 'stream',
         youtubePlaylistId: listId ?? null,
         serverConfigId,
       },

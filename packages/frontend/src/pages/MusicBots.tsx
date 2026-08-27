@@ -13,7 +13,7 @@ import {
 } from '@/hooks/use-music-bots';
 import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
 import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
-import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
+import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useAddPlaylistToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -36,12 +36,16 @@ import {
   Volume2, VolumeX, Upload, Search, Download, ListMusic, Shuffle,
   Repeat, Repeat1, Power, PowerOff, RefreshCw, Pencil, X, Loader2,
   Youtube, FileAudio, Link, GripVertical, Music2, Radio, Clock,
-  Video,
+  Video, MessageSquare,
 } from 'lucide-react';
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
-import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, YouTubeSearchResult, RadioStationInfo, RadioPreset } from '@ts6/common';
+import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
+import {
+  useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
+} from '@/hooks/use-chat-commands';
+import { Textarea } from '@/components/ui/textarea';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -893,7 +897,18 @@ function LibraryTab() {
           onClick={() => {
             if (!configId) return;
             scanLibrary.mutate(configId, {
-              onSuccess: (data: any) => toast.success(`Imported ${data?.imported ?? 0} file(s) from music directory`),
+              onSuccess: (data: any) => {
+                const imported = data?.imported ?? 0;
+                const updated = data?.updated ?? 0;
+                if (imported === 0 && updated === 0) {
+                  toast.success('Scan complete — nothing new');
+                } else {
+                  const parts = [];
+                  if (imported) parts.push(`imported ${imported}`);
+                  if (updated) parts.push(`updated ${updated} YouTube file(s)`);
+                  toast.success(`Scan complete — ${parts.join(', ')}`);
+                }
+              },
               onError: () => toast.error('Library scan failed'),
             });
           }}
@@ -1138,29 +1153,54 @@ function PlaylistsTab() {
   const createPlaylist = useCreatePlaylist();
   const deletePlaylist = useDeletePlaylist();
   const addSong = useAddSongToPlaylist();
+  const addFromPlaylist = useAddPlaylistToPlaylist();
   const removeSong = useRemoveSongFromPlaylist();
 
   const { data: songs } = useSongs(selectedConfigId);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newMode, setNewMode] = useState<PlaylistMode>('local');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showAddSong, setShowAddSong] = useState(false);
+  const [addTab, setAddTab] = useState<'songs' | 'playlists'>('songs');
   const [songFilter, setSongFilter] = useState('');
 
   const { data: detail } = usePlaylist(selectedId) as { data: PlaylistDetail | undefined };
 
   const playlists = (Array.isArray(data) ? data : []) as PlaylistSummary[];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
+  const playlistMode: PlaylistMode = detail?.mode === 'stream' ? 'stream' : 'local';
   const playlistSongIds = new Set((detail?.songs || []).map((s: any) => s.id));
-  const availableSongs = songList.filter((s) => !playlistSongIds.has(s.id) && (!songFilter || s.title.toLowerCase().includes(songFilter.toLowerCase())));
+
+  const songMatchesMode = (source: string) =>
+    playlistMode === 'local' ? source === 'local' : source === 'youtube' || source === 'url';
+
+  const availableSongs = songList.filter(
+    (s) =>
+      !playlistSongIds.has(s.id) &&
+      songMatchesMode(s.source) &&
+      (!songFilter ||
+        s.title.toLowerCase().includes(songFilter.toLowerCase()) ||
+        (s.artist || '').toLowerCase().includes(songFilter.toLowerCase())),
+  );
+
+  const otherPlaylists = playlists.filter((pl) => pl.id !== selectedId);
 
   const handleCreate = () => {
-    createPlaylist.mutate({ name: newName }, {
-      onSuccess: () => { toast.success('Playlist created'); setShowCreate(false); setNewName(''); },
-      onError: () => toast.error('Failed to create playlist'),
-    });
+    createPlaylist.mutate(
+      { name: newName, mode: newMode },
+      {
+        onSuccess: () => {
+          toast.success('Playlist created');
+          setShowCreate(false);
+          setNewName('');
+          setNewMode('local');
+        },
+        onError: () => toast.error('Failed to create playlist'),
+      },
+    );
   };
 
   if (isLoading) return <PageLoader />;
@@ -1168,67 +1208,129 @@ function PlaylistsTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{playlists.length} playlist{playlists.length !== 1 ? 's' : ''}</p>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <p className="text-sm text-muted-foreground">
+          {playlists.length} playlist{playlists.length !== 1 ? 's' : ''}
+        </p>
+        <Button
+          size="sm"
+          onClick={() => {
+            setNewName('');
+            setNewMode('local');
+            setShowCreate(true);
+          }}
+        >
           <Plus className="h-4 w-4 mr-1" /> New Playlist
         </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
-        {/* Playlist list */}
         <div className="space-y-1.5">
           {playlists.length === 0 ? (
-            <EmptyState icon={ListMusic} title="No playlists" description="Create a playlist to organize your songs." />
-          ) : playlists.map((pl) => (
-            <div
-              key={pl.id}
-              className={`flex items-center gap-2 p-2.5 rounded-md cursor-pointer transition-colors ${
-                selectedId === pl.id ? 'bg-primary/10 border border-primary/30' : 'hover:bg-muted/50 border border-transparent'
-              }`}
-              onClick={() => setSelectedId(pl.id)}
-            >
-              <ListMusic className={`h-4 w-4 shrink-0 ${selectedId === pl.id ? 'text-primary' : 'text-muted-foreground'}`} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">{pl.name}</p>
-                <p className="text-[10px] text-muted-foreground">{pl.songCount} song{pl.songCount !== 1 ? 's' : ''}</p>
-              </div>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive shrink-0"
-                onClick={(e) => { e.stopPropagation(); setDeleteId(pl.id); }}
+            <EmptyState
+              icon={ListMusic}
+              title="No playlists"
+              description="Create a local or stream playlist to organize your songs."
+            />
+          ) : (
+            playlists.map((pl) => (
+              <div
+                key={pl.id}
+                className={`flex items-center gap-2 p-2.5 rounded-md cursor-pointer transition-colors ${
+                  selectedId === pl.id
+                    ? 'bg-primary/10 border border-primary/30'
+                    : 'hover:bg-muted/50 border border-transparent'
+                }`}
+                onClick={() => setSelectedId(pl.id)}
               >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
+                <ListMusic
+                  className={`h-4 w-4 shrink-0 ${selectedId === pl.id ? 'text-primary' : 'text-muted-foreground'}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{pl.name}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Badge variant="outline" className="text-[9px] h-4 px-1">
+                      {pl.mode === 'stream' ? 'stream' : 'local'}
+                    </Badge>
+                    <p className="text-[10px] text-muted-foreground">
+                      {pl.songCount} song{pl.songCount !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-destructive hover:text-destructive shrink-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteId(pl.id);
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))
+          )}
         </div>
 
-        {/* Playlist detail */}
         {selectedId && detail ? (
           <Card>
             <CardHeader className="py-3 px-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">{detail.name}</CardTitle>
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowAddSong(true)}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <CardTitle className="text-sm truncate">{detail.name}</CardTitle>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {playlistMode === 'local'
+                      ? 'Local only — library uploads / scanned local files'
+                      : 'Stream only — YouTube / URL tracks'}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => {
+                    setAddTab('songs');
+                    setSongFilter('');
+                    setShowAddSong(true);
+                  }}
+                >
                   <Plus className="h-3 w-3 mr-1" /> Add Songs
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
               {detail.songs.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted-foreground">No songs in this playlist</div>
+                <div className="py-8 text-center text-xs text-muted-foreground">
+                  No songs in this playlist
+                </div>
               ) : (
                 <div className="max-h-[400px] overflow-y-auto">
                   {detail.songs.map((song: any, i: number) => (
-                    <div key={song.id} className="flex items-center gap-2 px-4 py-2 hover:bg-muted/30 transition-colors border-t border-border/50">
+                    <div
+                      key={song.id}
+                      className="flex items-center gap-2 px-4 py-2 hover:bg-muted/30 transition-colors border-t border-border/50"
+                    >
                       <span className="text-[10px] text-muted-foreground w-5 text-right">{i + 1}</span>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium truncate">{song.title}</p>
-                        {song.artist && <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>}
+                        {song.artist && (
+                          <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>
+                        )}
                       </div>
+                      <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                        {song.source}
+                      </Badge>
                       <span className="text-[10px] text-muted-foreground">{formatTime(song.duration)}</span>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive"
-                        onClick={() => removeSong.mutate({ playlistId: selectedId, songId: song.id }, {
-                          onSuccess: () => toast.success('Song removed'),
-                        })}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-destructive hover:text-destructive"
+                        onClick={() =>
+                          removeSong.mutate(
+                            { playlistId: selectedId, songId: song.id },
+                            { onSuccess: () => toast.success('Song removed') },
+                          )
+                        }
                       >
                         <X className="h-3 w-3" />
                       </Button>
@@ -1245,73 +1347,540 @@ function PlaylistsTab() {
         )}
       </div>
 
-      {/* Create Playlist Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Playlist</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Name</Label>
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="My Playlist"
-              onKeyDown={(e) => e.key === 'Enter' && newName && handleCreate()}
-            />
+          <DialogHeader>
+            <DialogTitle>New Playlist</DialogTitle>
+            <DialogDescription>
+              Local playlists hold uploaded/scanned files. Stream playlists hold YouTube / URL tracks.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Name</Label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="My Playlist"
+                onKeyDown={(e) => e.key === 'Enter' && newName && handleCreate()}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Mode</Label>
+              <Select value={newMode} onValueChange={(v) => setNewMode(v as PlaylistMode)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">Local only</SelectItem>
+                  <SelectItem value="stream">Stream only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={!newName || createPlaylist.isPending}>Create</Button>
+            <Button variant="outline" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={!newName || createPlaylist.isPending}>
+              Create
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Add Song Dialog */}
-      <Dialog open={showAddSong} onOpenChange={setShowAddSong}>
+      <Dialog
+        open={showAddSong}
+        onOpenChange={(open) => {
+          setShowAddSong(open);
+          if (!open) {
+            setSongFilter('');
+            setAddTab('songs');
+          }
+        }}
+      >
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Add Songs to Playlist</DialogTitle></DialogHeader>
-          <Input
-            value={songFilter}
-            onChange={(e) => setSongFilter(e.target.value)}
-            placeholder="Filter songs..."
-          />
-          <ScrollArea className="max-h-72">
-            {availableSongs.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">No songs available. Upload songs to the library first.</p>
-            ) : availableSongs.map((song) => (
-              <div key={song.id} className="flex items-center gap-2 py-1.5 hover:bg-muted/30 transition-colors rounded px-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs truncate">{song.title}</p>
-                  {song.artist && <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>}
-                </div>
-                <Button variant="outline" size="sm" className="h-6 text-[10px] shrink-0"
-                  onClick={() => {
-                    if (selectedId) addSong.mutate({ playlistId: selectedId, songId: song.id }, {
-                      onSuccess: () => toast.success('Song added'),
-                    });
-                  }}
-                >
-                  <Plus className="h-3 w-3 mr-0.5" /> Add
-                </Button>
-              </div>
-            ))}
-          </ScrollArea>
+          <DialogHeader>
+            <DialogTitle>Add to {detail?.name || 'playlist'}</DialogTitle>
+            <DialogDescription>
+              {playlistMode === 'local'
+                ? 'Add local library songs, or copy matching songs from another playlist.'
+                : 'Add YouTube / URL tracks, or copy matching songs from another playlist.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant={addTab === 'songs' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setAddTab('songs')}
+            >
+              <FileAudio className="h-3 w-3 mr-1" /> Songs
+            </Button>
+            <Button
+              variant={addTab === 'playlists' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setAddTab('playlists')}
+            >
+              <ListMusic className="h-3 w-3 mr-1" /> From playlist
+            </Button>
+          </div>
+
+          {addTab === 'songs' ? (
+            <>
+              <Input
+                value={songFilter}
+                onChange={(e) => setSongFilter(e.target.value)}
+                placeholder="Filter songs..."
+              />
+              <ScrollArea className="max-h-72">
+                {availableSongs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">
+                    No matching {playlistMode === 'local' ? 'local' : 'stream'} songs available.
+                  </p>
+                ) : (
+                  availableSongs.map((song) => (
+                    <div
+                      key={song.id}
+                      className="flex items-center gap-2 py-1.5 hover:bg-muted/30 transition-colors rounded px-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs truncate">{song.title}</p>
+                        {song.artist && (
+                          <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>
+                        )}
+                      </div>
+                      <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                        {song.source}
+                      </Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[10px] shrink-0"
+                        onClick={() => {
+                          if (selectedId)
+                            addSong.mutate(
+                              { playlistId: selectedId, songId: song.id },
+                              {
+                                onSuccess: () => toast.success('Song added'),
+                                onError: (err: any) =>
+                                  toast.error(err?.response?.data?.error || 'Failed to add song'),
+                              },
+                            );
+                        }}
+                      >
+                        <Plus className="h-3 w-3 mr-0.5" /> Add
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </ScrollArea>
+            </>
+          ) : (
+            <ScrollArea className="max-h-72">
+              {otherPlaylists.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-8">
+                  No other playlists to import from.
+                </p>
+              ) : (
+                otherPlaylists.map((pl) => (
+                  <div
+                    key={pl.id}
+                    className="flex items-center gap-2 py-1.5 hover:bg-muted/30 transition-colors rounded px-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{pl.name}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {pl.songCount} song{pl.songCount !== 1 ? 's' : ''} · {pl.mode === 'stream' ? 'stream' : 'local'}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] shrink-0"
+                      disabled={addFromPlaylist.isPending}
+                      onClick={() => {
+                        if (!selectedId) return;
+                        addFromPlaylist.mutate(
+                          { playlistId: selectedId, sourcePlaylistId: pl.id },
+                          {
+                            onSuccess: (res: any) => {
+                              const added = res?.added ?? 0;
+                              toast.success(
+                                added > 0
+                                  ? `Added ${added} song${added === 1 ? '' : 's'} from “${pl.name}”`
+                                  : 'No new matching songs to add',
+                              );
+                            },
+                            onError: (err: any) =>
+                              toast.error(err?.response?.data?.error || 'Failed to import playlist'),
+                          },
+                        );
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-0.5" /> Add all matching
+                    </Button>
+                  </div>
+                ))
+              )}
+            </ScrollArea>
+          )}
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAddSong(false); setSongFilter(''); }}>Done</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowAddSong(false);
+                setSongFilter('');
+              }}
+            >
+              Done
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
       <ConfirmDialog
         open={deleteId !== null}
         onOpenChange={() => setDeleteId(null)}
         title="Delete Playlist?"
         description="This will permanently delete this playlist."
         onConfirm={() => {
-          if (deleteId) deletePlaylist.mutate(deleteId, {
-            onSuccess: () => {
-              toast.success('Playlist deleted');
-              if (selectedId === deleteId) setSelectedId(null);
-              setDeleteId(null);
+          if (deleteId)
+            deletePlaylist.mutate(deleteId, {
+              onSuccess: () => {
+                toast.success('Playlist deleted');
+                if (selectedId === deleteId) setSelectedId(null);
+                setDeleteId(null);
+              },
+            });
+        }}
+        destructive
+      />
+    </div>
+  );
+}
+
+// ─── Commands Tab ────────────────────────────────────────────────────────────
+
+function CommandsTab() {
+  const { selectedConfigId } = useServerStore();
+  const { data: servers } = useServers();
+  const [serverId, setServerId] = useState<number | null>(selectedConfigId);
+  const configId = serverId || selectedConfigId;
+
+  const { data: commands, isLoading } = useChatCommands(configId);
+  const createCommand = useCreateChatCommand();
+  const updateCommand = useUpdateChatCommand();
+  const deleteCommand = useDeleteChatCommand();
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [editCmd, setEditCmd] = useState<ChatCommandInfo | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [form, setForm] = useState({ name: '', response: '', description: '', enabled: true });
+
+  const serverList = Array.isArray(servers) ? servers : [];
+  const commandList = (Array.isArray(commands) ? commands : []) as ChatCommandInfo[];
+
+  const resetForm = () => setForm({ name: '', response: '', description: '', enabled: true });
+
+  const openEdit = (cmd: ChatCommandInfo) => {
+    setEditCmd(cmd);
+    setForm({
+      name: cmd.name,
+      response: cmd.response,
+      description: cmd.description || '',
+      enabled: cmd.enabled,
+    });
+  };
+
+  const handleCreate = () => {
+    if (!configId || !form.name.trim() || !form.response.trim()) {
+      toast.error('Name and response are required');
+      return;
+    }
+    createCommand.mutate(
+      {
+        configId,
+        data: {
+          name: form.name,
+          response: form.response,
+          description: form.description || undefined,
+          enabled: form.enabled,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Command added');
+          setShowAdd(false);
+          resetForm();
+        },
+        onError: (err: any) =>
+          toast.error(err?.response?.data?.error || 'Failed to add command'),
+      },
+    );
+  };
+
+  const handleUpdate = () => {
+    if (!configId || !editCmd) return;
+    updateCommand.mutate(
+      {
+        configId,
+        id: editCmd.id,
+        data: {
+          name: form.name,
+          response: form.response,
+          description: form.description || null,
+          enabled: form.enabled,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Command updated');
+          setEditCmd(null);
+          resetForm();
+        },
+        onError: (err: any) =>
+          toast.error(err?.response?.data?.error || 'Failed to update command'),
+      },
+    );
+  };
+
+  if (!configId) {
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Select a server"
+        description="Choose a server to manage custom chat commands."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Select value={String(configId)} onValueChange={(v) => setServerId(parseInt(v))}>
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="Server..." />
+          </SelectTrigger>
+          <SelectContent>
+            {serverList.map((s: any) => (
+              <SelectItem key={s.id} value={String(s.id)}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex-1" />
+        <Button
+          size="sm"
+          onClick={() => {
+            resetForm();
+            setShowAdd(true);
+          }}
+        >
+          <Plus className="h-4 w-4 mr-1" /> Add command
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Users type <code className="text-[11px]">!help</code> in the music bot&apos;s channel chat for built-in
+        commands. Custom commands below reply with your text (same channel / private reply as other bot
+        commands). Names cannot override built-ins like <code className="text-[11px]">play</code> or{' '}
+        <code className="text-[11px]">help</code>.
+      </p>
+
+      {isLoading ? (
+        <PageLoader />
+      ) : commandList.length === 0 ? (
+        <EmptyState
+          icon={MessageSquare}
+          title="No custom commands"
+          description="Add a command like !rules that replies with fixed text in chat."
+        />
+      ) : (
+        <div className="space-y-1">
+          {commandList.map((cmd) => (
+            <div
+              key={cmd.id}
+              className="flex items-start gap-2 py-2 px-2 hover:bg-muted/30 transition-colors rounded group"
+            >
+              <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">!{cmd.name}</p>
+                  {!cmd.enabled && (
+                    <Badge variant="secondary" className="text-[10px]">
+                      Disabled
+                    </Badge>
+                  )}
+                </div>
+                {cmd.description && (
+                  <p className="text-[11px] text-muted-foreground truncate">{cmd.description}</p>
+                )}
+                <p className="text-[11px] text-muted-foreground/80 line-clamp-2 mt-0.5">{cmd.response}</p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(cmd)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-destructive"
+                  onClick={() => setDeleteId(cmd.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog
+        open={showAdd}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowAdd(false);
+            resetForm();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add chat command</DialogTitle>
+            <DialogDescription>
+              When someone types !name in the music bot channel, the bot replies with your response.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Command name</Label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-muted-foreground">!</span>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="rules"
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Help blurb (optional)</Label>
+              <Input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Shown next to the command in !help"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Response</Label>
+              <Textarea
+                value={form.response}
+                onChange={(e) => setForm({ ...form, response: e.target.value })}
+                placeholder="Text the bot will send…"
+                rows={4}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.enabled}
+                onCheckedChange={(enabled) => setForm({ ...form, enabled })}
+              />
+              <Label className="text-xs">Enabled</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={createCommand.isPending}>
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editCmd !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditCmd(null);
+            resetForm();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit !{editCmd?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Command name</Label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-muted-foreground">!</span>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Help blurb (optional)</Label>
+              <Input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Response</Label>
+              <Textarea
+                value={form.response}
+                onChange={(e) => setForm({ ...form, response: e.target.value })}
+                rows={4}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.enabled}
+                onCheckedChange={(enabled) => setForm({ ...form, enabled })}
+              />
+              <Label className="text-xs">Enabled</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditCmd(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdate} disabled={updateCommand.isPending}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteId !== null}
+        onOpenChange={() => setDeleteId(null)}
+        title="Delete command?"
+        description="Users will no longer be able to trigger this chat command."
+        onConfirm={() => {
+          if (!configId || deleteId === null) return;
+          deleteCommand.mutate(
+            { configId, id: deleteId },
+            {
+              onSuccess: () => {
+                toast.success('Command deleted');
+                setDeleteId(null);
+              },
+              onError: () => toast.error('Failed to delete command'),
             },
-          });
+          );
         }}
         destructive
       />
@@ -1776,6 +2345,7 @@ export default function MusicBots() {
           <TabsTrigger value="video"><Video className="h-3.5 w-3.5 mr-1.5" /> Video</TabsTrigger>
           <TabsTrigger value="library"><FileAudio className="h-3.5 w-3.5 mr-1.5" /> Library</TabsTrigger>
           <TabsTrigger value="playlists"><ListMusic className="h-3.5 w-3.5 mr-1.5" /> Playlists</TabsTrigger>
+          <TabsTrigger value="commands"><MessageSquare className="h-3.5 w-3.5 mr-1.5" /> Commands</TabsTrigger>
           <TabsTrigger value="radio"><Radio className="h-3.5 w-3.5 mr-1.5" /> Radio</TabsTrigger>
         </TabsList>
 
@@ -1784,6 +2354,7 @@ export default function MusicBots() {
         <TabsContent value="video"><VideoTab /></TabsContent>
         <TabsContent value="library"><LibraryTab /></TabsContent>
         <TabsContent value="playlists"><PlaylistsTab /></TabsContent>
+        <TabsContent value="commands"><CommandsTab /></TabsContent>
         <TabsContent value="radio"><RadioTab /></TabsContent>
       </Tabs>
     </div>

@@ -391,6 +391,39 @@ export async function downloadYouTube(
 }
 
 /**
+ * Lightweight metadata lookup for a single YouTube video id (no download).
+ * Used when scanning `%(id)s.ext` files that were downloaded without library rows.
+ */
+export async function fetchYouTubeVideoMeta(
+  videoId: string,
+): Promise<{ title: string; artist: string; duration: number; url: string } | null> {
+  if (!/^[\w-]{11}$/.test(videoId)) return null;
+  const mediaUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const infoResult = await runYtDlp(
+    withMediaUrl(
+      [...getCookieArgs(), "--no-warnings", "--dump-json", "--no-playlist", "--no-download"],
+      mediaUrl,
+    ),
+  );
+  if (infoResult.code !== 0 && !infoResult.stdout.trim()) return null;
+  try {
+    const jsonLine = infoResult.stdout
+      .trim()
+      .split("\n")
+      .find((l) => l.trim().startsWith("{"));
+    const parsedInfo = JSON.parse(jsonLine || infoResult.stdout);
+    return {
+      title: parsedInfo.title || videoId,
+      artist: parsedInfo.uploader || parsedInfo.channel || "Unknown",
+      duration: parsedInfo.duration || 0,
+      url: mediaUrl,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Get info about a YouTube URL (single video or playlist).
  * Uses flat playlist probe flags (--yes-playlist --flat-playlist --dump-single-json --ignore-errors).
  * Music URLs are rewritten to www.youtube.com before invoking yt-dlp.

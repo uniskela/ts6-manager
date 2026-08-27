@@ -19,7 +19,8 @@ export function usePlaylist(id: number | null) {
 export function useCreatePlaylist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; musicBotId?: number }) => playlistsApi.create(data),
+    mutationFn: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream' }) =>
+      playlistsApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlists'] }),
   });
 }
@@ -48,7 +49,27 @@ export function useAddSongToPlaylist() {
   return useMutation({
     mutationFn: ({ playlistId, songId }: { playlistId: number; songId: number }) =>
       playlistsApi.addSong(playlistId, songId),
-    onSuccess: (_, { playlistId }) => qc.invalidateQueries({ queryKey: ['playlist', playlistId] }),
+    onSuccess: (_, { playlistId }) => {
+      qc.invalidateQueries({ queryKey: ['playlist', playlistId] });
+      qc.invalidateQueries({ queryKey: ['playlists'] });
+    },
+  });
+}
+
+export function useAddPlaylistToPlaylist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      playlistId,
+      sourcePlaylistId,
+    }: {
+      playlistId: number;
+      sourcePlaylistId: number;
+    }) => playlistsApi.addFromPlaylist(playlistId, sourcePlaylistId),
+    onSuccess: (_, { playlistId }) => {
+      qc.invalidateQueries({ queryKey: ['playlist', playlistId] });
+      qc.invalidateQueries({ queryKey: ['playlists'] });
+    },
   });
 }
 
