@@ -9,6 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import rateLimit from 'express-rate-limit';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.webm'];
@@ -40,6 +41,13 @@ const upload = multer({
   },
 });
 
+const scanRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limit expensive scan operations per window per client
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 export const musicLibraryRoutes: Router = Router({ mergeParams: true });
 
 musicLibraryRoutes.use(requireRole('admin'));
@@ -58,7 +66,7 @@ musicLibraryRoutes.get('/songs', async (req: Request, res: Response, next) => {
 });
 
 // POST /scan — Import audio files already present under MUSIC_DIR
-musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
+musicLibraryRoutes.post('/scan', scanRateLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
