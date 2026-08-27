@@ -2,6 +2,7 @@ import { useChannelGroups } from '@/hooks/use-groups';
 import { useServerStore } from '@/stores/server.store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -9,10 +10,26 @@ import { ShieldCheck } from 'lucide-react';
 
 export default function ChannelGroups() {
   const { selectedConfigId, selectedSid } = useServerStore();
-  const { data, isLoading } = useChannelGroups();
+  const { data, isLoading, error, refetch, isFetching } = useChannelGroups();
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={ShieldCheck} title="No server selected" />;
   if (isLoading) return <PageLoader />;
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={ShieldCheck}
+          title="Connection failed"
+          description={(error as any)?.response?.data?.error || (error as any)?.message || 'Could not load channel groups from the TeamSpeak server.'}
+        />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const groups = Array.isArray(data) ? data : [];
 

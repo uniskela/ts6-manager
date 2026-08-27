@@ -9,5 +9,8 @@ export function useDashboard() {
     queryFn: () => dashboardApi.get(selectedConfigId!, selectedSid!),
     enabled: !!selectedConfigId && !!selectedSid,
     refetchInterval: 10000,
+    // First paint often races AnimationManager / bot traffic on the shared WebQuery socket.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
   });
 }

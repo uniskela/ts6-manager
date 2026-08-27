@@ -8,6 +8,9 @@ export function useServerGroups() {
     queryKey: ['server-groups', c, s],
     queryFn: () => groupsApi.serverGroups(c!, s!),
     enabled: !!c && !!s,
+    refetchInterval: 30000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
   });
 }
 
@@ -17,6 +20,9 @@ export function useChannelGroups() {
     queryKey: ['channel-groups', c, s],
     queryFn: () => groupsApi.channelGroups(c!, s!),
     enabled: !!c && !!s,
+    refetchInterval: 30000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
   });
 }
 

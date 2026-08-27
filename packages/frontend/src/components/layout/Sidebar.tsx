@@ -10,6 +10,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 
 const navSections = [
   {
@@ -150,7 +151,7 @@ export function Sidebar() {
           </nav>
         </ScrollArea>
 
-        {/* Settings + Collapse */}
+        {/* Settings + Collapse + version */}
         <div className="border-t border-sidebar-border p-2 space-y-1">
           <NavLink
             to="/settings"
@@ -174,6 +175,23 @@ export function Sidebar() {
             {sidebarCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
             {!sidebarCollapsed && <span>Collapse</span>}
           </button>
+
+          {sidebarCollapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <p className="px-1 py-1 text-center text-[9px] font-mono-data text-sidebar-foreground/35 truncate cursor-default">
+                  v{APP_VERSION}
+                </p>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="font-mono-data text-xs">
+                {APP_VERSION_LABEL}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-mono-data text-sidebar-foreground/40 truncate" title={APP_VERSION_LABEL}>
+              {APP_VERSION_LABEL}
+            </p>
+          )}
         </div>
       </aside>
     </TooltipProvider>

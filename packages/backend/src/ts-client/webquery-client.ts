@@ -40,6 +40,13 @@ function toTsApiError(error: any): never {
 export class WebQueryClient {
   private http: AxiosInstance;
   private agent: http.Agent | https.Agent;
+  /**
+   * Serialize all WebQuery HTTP ops on this client.
+   * keepAlive + maxSockets:1 already limits TCP, but Promise.all / animation ticks
+   * still race at the axios layer and reset the shared socket (ECONNRESET / hang up).
+   * Mirror SshQueryClient: one in-flight request at a time.
+   */
+  private requestChain: Promise<void> = Promise.resolve();
 
   constructor(
     host: string,
@@ -66,9 +73,19 @@ export class WebQueryClient {
     });
   }
 
+  /** Run `op` after prior enqueued ops finish (failures do not break the chain). */
+  private enqueue<T>(op: () => Promise<T>): Promise<T> {
+    const run = this.requestChain.then(op, op);
+    this.requestChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   /**
    * Retry once on stale keep-alive / reset sockets.
-   * Do not destroy the shared agent here — other in-flight callers may still be using it.
+   * Do not destroy the shared agent here — other queued callers may still need it.
    * Node removes the dead socket after ECONNRESET; the retry opens a fresh one.
    */
   private async withTransientRetry<T>(op: () => Promise<T>): Promise<T> {
@@ -82,7 +99,7 @@ export class WebQueryClient {
         toTsApiError(error);
       }
 
-      await new Promise((r) => setTimeout(r, 50));
+      await new Promise((r) => setTimeout(r, 100));
       try {
         return await op();
       } catch (retryError: any) {
@@ -92,39 +109,43 @@ export class WebQueryClient {
   }
 
   async execute(sid: number, command: string, params?: Record<string, any>): Promise<any> {
-    return this.withTransientRetry(async () => {
-      // WebQuery URL pattern: /{sid}/{command}
-      // For instance-level commands (sid=0): /{command}
-      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+    return this.enqueue(() =>
+      this.withTransientRetry(async () => {
+        // WebQuery URL pattern: /{sid}/{command}
+        // For instance-level commands (sid=0): /{command}
+        const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
 
-      const response = await this.http.get(path, {
-        params: this.cleanParams(params),
-      });
+        const response = await this.http.get(path, {
+          params: this.cleanParams(params),
+        });
 
-      const data = response.data;
+        const data = response.data;
 
-      if (data.status && data.status.code !== 0) {
-        throw new TSApiError(data.status.code, data.status.message);
-      }
+        if (data.status && data.status.code !== 0) {
+          throw new TSApiError(data.status.code, data.status.message);
+        }
 
-      return data.body || data;
-    });
+        return data.body || data;
+      }),
+    );
   }
 
   async executePost(sid: number, command: string, params?: Record<string, any>): Promise<any> {
-    return this.withTransientRetry(async () => {
-      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
-      const response = await this.http.post(path, null, {
-        params: this.cleanParams(params),
-      });
+    return this.enqueue(() =>
+      this.withTransientRetry(async () => {
+        const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+        const response = await this.http.post(path, null, {
+          params: this.cleanParams(params),
+        });
 
-      const data = response.data;
-      if (data.status && data.status.code !== 0) {
-        throw new TSApiError(data.status.code, data.status.message);
-      }
+        const data = response.data;
+        if (data.status && data.status.code !== 0) {
+          throw new TSApiError(data.status.code, data.status.message);
+        }
 
-      return data.body || data;
-    });
+        return data.body || data;
+      }),
+    );
   }
 
   // Remove undefined/null values from params

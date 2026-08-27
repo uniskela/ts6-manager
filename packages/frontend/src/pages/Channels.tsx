@@ -249,7 +249,7 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, clientsByChannel, onDelete,
 export default function Channels() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const isAdmin = useAuthStore((s) => s.isAdmin());
-  const { data: channelData, isLoading: channelsLoading } = useChannels();
+  const { data: channelData, isLoading: channelsLoading, error: channelsError, refetch: refetchChannels, isFetching: channelsFetching } = useChannels();
   const { data: clientData } = useClients();
   const createChannel = useCreateChannel();
   const deleteChannel = useDeleteChannel();
@@ -290,6 +290,22 @@ export default function Channels() {
   }, [clientData]);
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Hash} title="No server selected" />;
+  if (channelsError) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={Hash}
+          title="Connection failed"
+          description={(channelsError as any)?.response?.data?.error || (channelsError as any)?.message || 'Could not load channels from the TeamSpeak server.'}
+        />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => refetchChannels()} disabled={channelsFetching}>
+            {channelsFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
   if (channelsLoading) return <PageLoader />;
 
   const handleCreate = () => {
