@@ -4,6 +4,7 @@ import {
   isSpotifyShareHostname,
   isYouTubeHostUrl,
   isYouTubeHostname,
+  mapYtDlpInfoJson,
   parseYouTubeUrl,
   resolveSpotifyFetchHost,
 } from "./youtube.js";
@@ -62,5 +63,30 @@ describe("parseYouTubeUrl", () => {
     const parsed = parseYouTubeUrl("https://music.youtube.com/watch?v=dQw4w9WgXcQ");
     assert.equal(parsed.videoId, "dQw4w9WgXcQ");
     assert.equal(parsed.watchUrl, "https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+  });
+});
+
+describe("mapYtDlpInfoJson", () => {
+  it("does not throw when dump-single-json is literal null", () => {
+    const mapped = mapYtDlpInfoJson("null", "dQw4w9WgXcQ");
+    assert.ok(mapped);
+    assert.equal(mapped!.items[0].id, "dQw4w9WgXcQ");
+  });
+
+  it("handles entries: null without TypeError", () => {
+    const mapped = mapYtDlpInfoJson(JSON.stringify({ id: "abc12345678", title: "T", entries: null }));
+    assert.ok(mapped);
+    assert.equal(mapped!.type, "video");
+    assert.equal(mapped!.items[0].id, "abc12345678");
+  });
+
+  it("maps playlist entries", () => {
+    const mapped = mapYtDlpInfoJson(JSON.stringify({
+      title: "Mix",
+      entries: [{ id: "aaaaaaaaaaa", title: "A" }, { id: "bbbbbbbbbbb", title: "B" }, null],
+    }));
+    assert.ok(mapped);
+    assert.equal(mapped!.type, "playlist");
+    assert.equal(mapped!.items.length, 2);
   });
 });
