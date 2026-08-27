@@ -19,12 +19,13 @@ export function AppLayout() {
   });
 
   useEffect(() => {
-    if (me) {
+    const user = me?.user ?? me;
+    if (user?.id != null) {
       setUser({
-        id: me.id,
-        username: me.username,
-        displayName: me.displayName,
-        role: me.role,
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
       });
     }
   }, [me, setUser]);

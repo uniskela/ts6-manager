@@ -928,16 +928,32 @@ export class VoiceBot extends EventEmitter {
     this._videoSource = source;
     this._videoStartedAt = Date.now();
 
-    // Download remote sources to disk, then stream via sidecar ffmpeg
-    const resolvedSource = await this.resolveStreamSource(source, presetConfig.height);
-    await this.sidecarHttp.setSource(
-      resolvedSource,
-      presetConfig.width,
-      presetConfig.height,
-      effectiveFramerate,
-      effectiveBitrate,
-      this._videoStreamVolume,
-    );
+    try {
+      const resolvedSource = await this.resolveStreamSource(source, presetConfig.height);
+      await this.sidecarHttp.setSource(
+        resolvedSource,
+        presetConfig.width,
+        presetConfig.height,
+        effectiveFramerate,
+        effectiveBitrate,
+        this._videoStreamVolume,
+      );
+    } catch (err) {
+      if (this.signaling && this._activeStreamId) {
+        this.signaling.sendStreamStop(this._activeStreamId);
+      }
+      this._activeStreamId = null;
+      this._videoSource = null;
+      this._videoStreaming = false;
+      this._videoStartedAt = null;
+      this.signaling = null;
+      if (this.sidecarProc) {
+        await this.sidecarProc.stop();
+        this.sidecarProc = null;
+      }
+      this.sidecarHttp = null;
+      throw err;
+    }
 
     console.log(`[VoiceBot ${this.config.id}] Video stream started: ${stream.id}, source: ${source}`);
     this.emit('videoStreamStarted', { streamId: stream.id, source, preset: this._videoPreset });

@@ -160,7 +160,9 @@ export class SshQueryClient extends EventEmitter {
             return false;
           }
           if (!this.options.hostKeyFingerprint && this.options.onHostKeyPinned) {
-            void Promise.resolve(this.options.onHostKeyPinned(fp)).catch((e) => {
+            void Promise.resolve(this.options.onHostKeyPinned(fp)).then(() => {
+              this.options.hostKeyFingerprint = fp;
+            }).catch((e) => {
               console.error(`[SshQueryClient] Failed to persist host key fingerprint: ${e.message}`);
             });
           }
