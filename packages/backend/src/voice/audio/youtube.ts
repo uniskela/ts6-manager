@@ -76,22 +76,12 @@ export function parseYouTubeUrl(raw: string): ParsedYouTubeUrl {
   }
 
   const host = parsed.hostname.toLowerCase();
-  const isYt =
-    host === "youtu.be" ||
-    host === "youtube.com" ||
-    host === "www.youtube.com" ||
-    host === "m.youtube.com" ||
-    host === "music.youtube.com" ||
-    host.endsWith(".youtube.com");
-
-  if (!isYt) {
+  if (!isYouTubeHostname(host)) {
     return { canonicalUrl: trimmed };
   }
 
-  // music.youtube.com → www.youtube.com (same path/query)
-  if (host === "music.youtube.com" || host.startsWith("music.")) {
-    parsed.hostname = "www.youtube.com";
-  } else if (host === "m.youtube.com" || host === "youtube.com") {
+  // music.youtube.com / m.youtube.com / bare youtube.com → www.youtube.com
+  if (host === "music.youtube.com" || host === "m.youtube.com" || host === "youtube.com") {
     parsed.hostname = "www.youtube.com";
   }
 
@@ -123,17 +113,94 @@ export function parseYouTubeUrl(raw: string): ParsedYouTubeUrl {
   return { videoId, listId, canonicalUrl, playlistUrl, watchUrl };
 }
 
+/** Exact YouTube host match (avoids substring false positives like evil-youtube.com). */
+export function isYouTubeHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com");
+}
+
 export function isYouTubeHostUrl(url: string): boolean {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
-      host === "youtu.be" ||
-      host.includes("youtube.com") ||
-      host === "music.youtube.com"
-    );
+    return isYouTubeHostname(new URL(url).hostname);
   } catch {
     return false;
   }
+}
+
+/** Spotify share hosts we are willing to fetch for Open Graph titles. */
+export function isSpotifyShareHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return (
+    host === "open.spotify.com" ||
+    host === "spotify.com" ||
+    host === "spotify.link" ||
+    host.endsWith(".spotify.com")
+  );
+}
+
+/**
+ * Decode a small set of HTML entities once. Decode `&amp;` last so sequences
+ * like `&amp;#39;` cannot be double-unescaped into a quote.
+ */
+function decodeBasicHtmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&amp;/gi, "&");
+}
+
+/**
+ * Fetch a URL while re-validating the host on every redirect hop.
+ * `redirect: "follow"` would otherwise allow SSRF via an open redirect off an allowlisted host.
+ */
+async function fetchAllowlistedUrl(
+  initialUrl: URL,
+  isAllowedHost: (hostname: string) => boolean,
+  maxRedirects = 5,
+): Promise<Response> {
+  let current = initialUrl;
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const host = current.hostname.toLowerCase();
+    if (!isAllowedHost(host)) {
+      throw new Error(`Refusing fetch to disallowed host: ${host}`);
+    }
+    if (current.protocol !== "https:" && current.protocol !== "http:") {
+      throw new Error("Invalid URL protocol");
+    }
+    // Block obvious local/metadata targets even if somehow allowlisted later.
+    if (
+      host === "localhost" ||
+      host === "127.0.0.1" ||
+      host === "::1" ||
+      host === "metadata.google.internal" ||
+      host.endsWith(".local")
+    ) {
+      throw new Error(`Refusing fetch to local host: ${host}`);
+    }
+
+    const res = await fetch(current.toString(), {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
+      redirect: "manual",
+    });
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) {
+        throw new Error("Redirect missing Location header");
+      }
+      // Resolve relative redirect targets against the current URL.
+      current = new URL(location, current);
+      continue;
+    }
+
+    return res;
+  }
+
+  throw new Error("Too many redirects while fetching allowlisted URL");
 }
 
 function rejectYtDlpOptionUrl(url: string): void {
@@ -174,31 +241,23 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
     throw new Error("Invalid Spotify URL");
   }
 
-  const host = parsed.hostname.toLowerCase();
-  const allowed =
-    host === "open.spotify.com" ||
-    host === "spotify.com" ||
-    host.endsWith(".spotify.com") ||
-    host === "spotify.link";
-  if (!allowed) {
+  if (!isSpotifyShareHostname(parsed.hostname)) {
     throw new Error("Not a Spotify share URL");
   }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("Invalid Spotify URL protocol");
   }
 
-  // Fetch Open Graph title from the Spotify page (no Spotify API key required)
+  // Fetch Open Graph title from the Spotify page (no Spotify API key required).
+  // Redirects are followed manually so each hop stays on an allowlisted Spotify host.
   let title = "";
   try {
-    const res = await fetch(parsed.toString(), {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
-      redirect: "follow",
-    });
+    const res = await fetchAllowlistedUrl(parsed, isSpotifyShareHostname);
     const html = await res.text();
     const og =
       html.match(/property="og:title"\s+content="([^"]+)"/i) ||
       html.match(/content="([^"]+)"\s+property="og:title"/i);
-    title = og?.[1]?.replace(/&amp;/g, "&").replace(/&#39;/g, "'") || "";
+    title = og?.[1] ? decodeBasicHtmlEntities(og[1]) : "";
   } catch {
     /* fall through */
   }

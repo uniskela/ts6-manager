@@ -72,6 +72,8 @@ export class ExecutionContext {
     public readonly eventData: Record<string, string>,
     public readonly timezone?: string,
   ) {
+    // expr-eval-fork >=3.0.1 restricts callable functions (CVE-2025-12735).
+    // Keep member access enabled — condition expressions use event./temp./var./time. namespaces.
     this.exprParser = new Parser();
     // Register custom functions for expression evaluation
     this.exprParser.functions.contains = (str: string, substr: string) => String(str).includes(String(substr)) ? 1 : 0;
