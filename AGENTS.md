@@ -40,16 +40,25 @@ Every merged version-bump PR that ships user-facing work should be cut as a **se
 
 ### Tag & GitHub Release (after merge to `main`)
 
-1. Tag format: annotated git tag **`vX.Y.Z`** (leading `v`) on the merge commit on `main`, matching package versions (`v1.3.0` ↔ `1.3.0`).
-2. Create a **GitHub Release** for that tag:
-   - Title: `vX.Y.Z`
-   - Body: the CHANGELOG section for `X.Y.Z` (Breaking / Added / Changed / …)
-3. Prefer tagging **after** the version-bump PR merges so the release SHA is what ships.
+**Agents must cut the release after a version-bump PR merges** (do not leave this as a follow-up for the maintainer unless push/release permissions fail).
+
+1. Fast-forward local `main` to `origin/main`.
+2. Tag format: annotated git tag **`vX.Y.Z`** (leading `v`) on the **merge commit** on `main`, matching package versions (`v1.3.0` ↔ `1.3.0`):
+   ```bash
+   git tag -a "vX.Y.Z" <merge-sha> -m "vX.Y.Z"
+   git push origin "vX.Y.Z"
+   ```
+3. Create a **GitHub Release** for that tag (body = the CHANGELOG section for `X.Y.Z`):
+   ```bash
+   # Extract ## [X.Y.Z] … block from CHANGELOG.md into notes file, then:
+   gh release create "vX.Y.Z" --title "vX.Y.Z" --notes-file /tmp/release-notes.md
+   ```
 4. Pushing a `v*` tag triggers [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml), which publishes GHCR images with semver tags (`{{version}}`, `{{major}}.{{minor}}`).
+5. If several version bumps merged without releases, catch up in order (oldest → newest) so the highest version remains Latest.
 
 ### Checklist (agents / maintainers)
 
 - [ ] Version bumped in frontend / backend / common `package.json` + `app-version.ts`
 - [ ] `CHANGELOG.md` has `## [X.Y.Z] - date` with the right sections (including **Breaking Changes** when applicable)
 - [ ] PR title/body mentions `bump vX.Y.Z`
-- [ ] After merge: annotated tag `vX.Y.Z` on `main` + GitHub Release notes from CHANGELOG
+- [ ] **After merge:** annotated tag `vX.Y.Z` on `main` + GitHub Release notes from CHANGELOG (agent responsibility)
