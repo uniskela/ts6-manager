@@ -5,6 +5,7 @@ import {
   isYouTubeHostUrl,
   isYouTubeHostname,
   parseYouTubeUrl,
+  resolveSpotifyFetchHost,
 } from "./youtube.js";
 
 describe("isYouTubeHostname", () => {
@@ -35,17 +36,24 @@ describe("isSpotifyShareHostname", () => {
     assert.equal(isSpotifyShareHostname("open.spotify.com"), true);
     assert.equal(isSpotifyShareHostname("spotify.link"), true);
     assert.equal(isSpotifyShareHostname("spotify.com"), true);
+    assert.equal(isSpotifyShareHostname("play.spotify.com"), true);
   });
 
-  it("rejects non-Spotify hosts", () => {
+  it("rejects non-Spotify and non-allowlisted hosts", () => {
     assert.equal(isSpotifyShareHostname("evil.spotify.com.attacker.test"), false);
     assert.equal(isSpotifyShareHostname("spotify.com.evil.test"), false);
     assert.equal(isSpotifyShareHostname("example.com"), false);
+    assert.equal(isSpotifyShareHostname("accounts.spotify.com"), false);
   });
 
-  it("accepts FQDN trailing-dot hosts", () => {
+  it("accepts FQDN trailing-dot hosts via normalization", () => {
     assert.equal(isYouTubeHostname("www.youtube.com."), true);
     assert.equal(isSpotifyShareHostname("open.spotify.com."), true);
+  });
+
+  it("resolveSpotifyFetchHost returns constant allowlisted hosts", () => {
+    assert.equal(resolveSpotifyFetchHost("OPEN.SPOTIFY.COM."), "open.spotify.com");
+    assert.equal(resolveSpotifyFetchHost("evil.com"), null);
   });
 });
 

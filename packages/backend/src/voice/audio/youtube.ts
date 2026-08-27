@@ -132,15 +132,38 @@ export function isYouTubeHostUrl(url: string): boolean {
   }
 }
 
+/** Exact Spotify hosts allowed for Open Graph title fetches (no wildcard suffixes). */
+type SpotifyFetchHost =
+  | "open.spotify.com"
+  | "www.spotify.com"
+  | "spotify.com"
+  | "spotify.link"
+  | "play.spotify.com";
+
+/**
+ * Map a hostname to an allowlisted Spotify host constant.
+ * Returning string literals (not the input) keeps the fetch target host untainted for SSRF analysis.
+ */
+export function resolveSpotifyFetchHost(hostname: string): SpotifyFetchHost | null {
+  switch (normalizeHostname(hostname)) {
+    case "open.spotify.com":
+      return "open.spotify.com";
+    case "www.spotify.com":
+      return "www.spotify.com";
+    case "spotify.com":
+      return "spotify.com";
+    case "spotify.link":
+      return "spotify.link";
+    case "play.spotify.com":
+      return "play.spotify.com";
+    default:
+      return null;
+  }
+}
+
 /** Spotify share hosts we are willing to fetch for Open Graph titles. */
 export function isSpotifyShareHostname(hostname: string): boolean {
-  const host = normalizeHostname(hostname);
-  return (
-    host === "open.spotify.com" ||
-    host === "spotify.com" ||
-    host === "spotify.link" ||
-    host.endsWith(".spotify.com")
-  );
+  return resolveSpotifyFetchHost(hostname) !== null;
 }
 
 /**
@@ -158,40 +181,39 @@ function decodeBasicHtmlEntities(text: string): string {
 }
 
 /**
- * Fetch a URL while re-validating the host on every redirect hop.
- * `redirect: "follow"` would otherwise allow SSRF via an open redirect off an allowlisted host.
+ * Rebuild an https URL on an allowlisted host. Path/query are taken from the
+ * parsed URL; scheme, host, userinfo, and hash are not taken from user input.
  */
-async function fetchAllowlistedUrl(
-  initialUrl: URL,
-  isAllowedHost: (hostname: string) => boolean,
-  maxRedirects = 5,
-): Promise<Response> {
+function buildSpotifyFetchUrl(allowedHost: SpotifyFetchHost, from: URL): URL {
+  const safe = new URL(`https://${allowedHost}`);
+  safe.pathname = from.pathname;
+  safe.search = from.search;
+  return safe;
+}
+
+/**
+ * Fetch a Spotify share URL while re-validating the host on every redirect hop.
+ * The request URL is rebuilt from an allowlisted host constant (not the raw user URL)
+ * so redirects cannot pivot SSRF off an open redirect.
+ */
+async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Response> {
   let current = initialUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    const host = normalizeHostname(current.hostname);
-    // Userinfo can confuse parsers / proxies; never fetch credentialed URLs.
     if (current.username || current.password) {
       throw new Error("URL credentials are not allowed");
     }
-    if (!isAllowedHost(host)) {
-      throw new Error(`Refusing fetch to disallowed host: ${host}`);
-    }
-    if (current.protocol !== "https:" && current.protocol !== "http:") {
-      throw new Error("Invalid URL protocol");
-    }
-    // Block obvious local/metadata targets even if somehow allowlisted later.
-    if (
-      host === "localhost" ||
-      host === "127.0.0.1" ||
-      host === "::1" ||
-      host === "metadata.google.internal" ||
-      host.endsWith(".local")
-    ) {
-      throw new Error(`Refusing fetch to local host: ${host}`);
+    if (current.protocol !== "https:") {
+      throw new Error("Invalid URL protocol: only https is allowed");
     }
 
-    const res = await fetch(current.toString(), {
+    const allowedHost = resolveSpotifyFetchHost(current.hostname);
+    if (!allowedHost) {
+      throw new Error(`Refusing fetch to disallowed host: ${normalizeHostname(current.hostname)}`);
+    }
+
+    const safeUrl = buildSpotifyFetchUrl(allowedHost, current);
+    const res = await fetch(safeUrl.href, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
       redirect: "manual",
     });
@@ -201,8 +223,8 @@ async function fetchAllowlistedUrl(
       if (!location) {
         throw new Error("Redirect missing Location header");
       }
-      // Resolve relative redirect targets against the current URL.
-      current = new URL(location, current);
+      // Resolve relative redirect targets against the *safe* URL (https + allowlisted host).
+      current = new URL(location, safeUrl);
       continue;
     }
 
@@ -253,15 +275,18 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
   if (!isSpotifyShareHostname(parsed.hostname)) {
     throw new Error("Not a Spotify share URL");
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error("Invalid Spotify URL protocol");
+  if (parsed.protocol !== "https:") {
+    throw new Error("Invalid Spotify URL protocol: only https is allowed");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("URL credentials are not allowed");
   }
 
   // Fetch Open Graph title from the Spotify page (no Spotify API key required).
-  // Redirects are followed manually so each hop stays on an allowlisted Spotify host.
+  // Redirects are followed manually; each hop is rebuilt onto an allowlisted https host.
   let title = "";
   try {
-    const res = await fetchAllowlistedUrl(parsed, isSpotifyShareHostname);
+    const res = await fetchSpotifyOgPage(parsed);
     const html = await res.text();
     const og =
       html.match(/property="og:title"\s+content="([^"]+)"/i) ||
