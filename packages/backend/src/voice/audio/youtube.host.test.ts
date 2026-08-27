@@ -42,6 +42,11 @@ describe("isSpotifyShareHostname", () => {
     assert.equal(isSpotifyShareHostname("spotify.com.evil.test"), false);
     assert.equal(isSpotifyShareHostname("example.com"), false);
   });
+
+  it("accepts FQDN trailing-dot hosts", () => {
+    assert.equal(isYouTubeHostname("www.youtube.com."), true);
+    assert.equal(isSpotifyShareHostname("open.spotify.com."), true);
+  });
 });
 
 describe("parseYouTubeUrl", () => {

@@ -113,9 +113,14 @@ export function parseYouTubeUrl(raw: string): ParsedYouTubeUrl {
   return { videoId, listId, canonicalUrl, playlistUrl, watchUrl };
 }
 
+/** Normalize host for allowlist checks (FQDN trailing dots, case). */
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
 /** Exact YouTube host match (avoids substring false positives like evil-youtube.com). */
 export function isYouTubeHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
+  const host = normalizeHostname(hostname);
   return host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com");
 }
 
@@ -129,7 +134,7 @@ export function isYouTubeHostUrl(url: string): boolean {
 
 /** Spotify share hosts we are willing to fetch for Open Graph titles. */
 export function isSpotifyShareHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase();
+  const host = normalizeHostname(hostname);
   return (
     host === "open.spotify.com" ||
     host === "spotify.com" ||
@@ -164,7 +169,11 @@ async function fetchAllowlistedUrl(
   let current = initialUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
-    const host = current.hostname.toLowerCase();
+    const host = normalizeHostname(current.hostname);
+    // Userinfo can confuse parsers / proxies; never fetch credentialed URLs.
+    if (current.username || current.password) {
+      throw new Error("URL credentials are not allowed");
+    }
     if (!isAllowedHost(host)) {
       throw new Error(`Refusing fetch to disallowed host: ${host}`);
     }
