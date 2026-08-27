@@ -34,11 +34,14 @@ export default function Messages() {
     { accessorKey: 'senderName', header: 'From', cell: ({ getValue }) => <span className="font-medium">{(getValue() as string) || '-'}</span> },
     { accessorKey: 'subject', header: 'Subject' },
     { accessorKey: 'timestamp', header: 'Date', cell: ({ getValue }) => <span className="text-xs text-muted-foreground">{timeAgo(getValue() as number)}</span> },
-    { accessorKey: 'flag_read', header: 'Status', cell: ({ getValue }) => (
-      <span className={`text-xs px-1.5 py-0.5 rounded ${getValue() ? 'bg-muted text-muted-foreground' : 'bg-primary/20 text-primary font-medium'}`}>
-        {getValue() ? 'Read' : 'Unread'}
-      </span>
-    )},
+    { accessorKey: 'flag_read', header: 'Status', cell: ({ getValue }) => {
+      const read = Number(getValue()) === 1;
+      return (
+        <span className={`text-xs px-1.5 py-0.5 rounded ${read ? 'bg-muted text-muted-foreground' : 'bg-primary/20 text-primary font-medium'}`}>
+          {read ? 'Read' : 'Unread'}
+        </span>
+      );
+    }},
     {
       id: 'actions', header: '',
       cell: ({ row }) => (

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,6 +62,31 @@ func envIntOrDefault(key string, def int) int {
 
 func getFfmpegPath() string {
 	return envOrDefault("FFMPEG_PATH", "ffmpeg")
+}
+
+func getMusicDir() string {
+	return envOrDefault("MUSIC_DIR", "/data/music")
+}
+
+func validSource(source string) error {
+	if source == "" {
+		return nil
+	}
+	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		return nil
+	}
+	absSource, err := filepath.Abs(source)
+	if err != nil {
+		return fmt.Errorf("invalid source path: %w", err)
+	}
+	absMusic, err := filepath.Abs(getMusicDir())
+	if err != nil {
+		return fmt.Errorf("invalid MUSIC_DIR: %w", err)
+	}
+	if absSource != absMusic && !strings.HasPrefix(absSource, absMusic+string(os.PathSeparator)) {
+		return fmt.Errorf("local source must be under MUSIC_DIR")
+	}
+	return nil
 }
 
 func debugLogsEnabled() bool {
@@ -849,9 +875,14 @@ func (s *Sidecar) ClosePeer(id string) {
 	s.peersLock.Unlock()
 }
 
-func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string) {
+func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string, volume int) {
 	s.ffmpegLock.Lock()
 	defer s.ffmpegLock.Unlock()
+
+	if err := validSource(source); err != nil {
+		log.Printf("[FFmpeg] Rejected source: %v", err)
+		return
+	}
 
 	s.StopFFmpegLocked()
 	s.resetSyncTiming()
@@ -932,10 +963,15 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 			"-map", "0:a:0?",
 		)
 
+		audioFilters := []string{}
 		if audioDelayMs > 0 {
-			args = append(args,
-				"-af", fmt.Sprintf("adelay=delays=%d:all=1", audioDelayMs),
-			)
+			audioFilters = append(audioFilters, fmt.Sprintf("adelay=delays=%d:all=1", audioDelayMs))
+		}
+		if volume >= 0 && volume <= 100 && volume != 100 {
+			audioFilters = append(audioFilters, fmt.Sprintf("volume=%.2f", float64(volume)/100.0))
+		}
+		if len(audioFilters) > 0 {
+			args = append(args, "-af", strings.Join(audioFilters, ","))
 		}
 
 		args = append(args,
@@ -1133,13 +1169,28 @@ func main() {
 			Height    int    `json:"height"`
 			Framerate int    `json:"framerate"`
 			Bitrate   string `json:"bitrate"`
+			Volume    *int   `json:"volume"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		log.Printf("[API] Setting source: %s (%dx%d @ %dfps)", req.Source, req.Width, req.Height, req.Framerate, req.Bitrate)
-		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate)
+		if err := validSource(req.Source); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		vol := 100
+		if req.Volume != nil {
+			vol = *req.Volume
+			if vol < 0 {
+				vol = 0
+			}
+			if vol > 100 {
+				vol = 100
+			}
+		}
+		log.Printf("[API] Setting source: %s (%dx%d @ %dfps vol=%d)", req.Source, req.Width, req.Height, req.Framerate, vol)
+		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate, vol)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 

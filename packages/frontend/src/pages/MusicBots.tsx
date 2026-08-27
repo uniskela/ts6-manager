@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicRequestsApi } from '@/api/music-requests.api';
 import { musicBotsApi } from '@/api/music.api';
 import {
@@ -11,7 +11,7 @@ import {
   useSetShuffle, useSetRepeat,
   usePlayFromQueue, useMoveQueueItem,
 } from '@/hooks/use-music-bots';
-import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary } from '@/hooks/use-music-library';
+import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
 import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
 import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
 import { useServers } from '@/hooks/use-servers';
@@ -713,6 +713,7 @@ function BotsTab() {
 // ─── Library Tab ─────────────────────────────────────────────────────────────
 
 function LibraryTab() {
+  const qc = useQueryClient();
   const { selectedConfigId } = useServerStore();
   const { data: servers } = useServers();
   const [libServerId, setLibServerId] = useState<number | null>(selectedConfigId);
@@ -727,6 +728,7 @@ function LibraryTab() {
 
   const ytInfo = useYouTubeInfo();
   const ytBatchDownload = useYouTubeDownloadBatch();
+  const ytImportPlaylist = useYouTubeImportPlaylist();
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -735,9 +737,12 @@ function LibraryTab() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
   const [ytUrl, setYtUrl] = useState('');
-  const [urlInfo, setUrlInfo] = useState<{ type: 'video' | 'playlist'; items: YouTubeSearchResult[] } | null>(null);
+  const [urlInfo, setUrlInfo] = useState<{ type: 'video' | 'playlist'; items: YouTubeSearchResult[]; title?: string } | null>(null);
   const [selectedUrlIds, setSelectedUrlIds] = useState<Set<string>>(new Set());
   const [batchProgress, setBatchProgress] = useState<string | null>(null);
+  const [importJobId, setImportJobId] = useState<string | null>(null);
+  const [importPlaylistName, setImportPlaylistName] = useState('');
+  const { data: importJob } = useYouTubeImportStatus(configId, importJobId);
 
   const serverList = Array.isArray(servers) ? servers : [];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
@@ -824,6 +829,36 @@ function LibraryTab() {
     });
   };
 
+  const handleImportPlaylist = (reimport = false) => {
+    if (!configId || !ytUrl.trim()) return;
+    ytImportPlaylist.mutate({
+      configId,
+      url: ytUrl.trim(),
+      playlistName: importPlaylistName.trim() || urlInfo?.title,
+      reimport,
+    }, {
+      onSuccess: (data: any) => {
+        setImportJobId(data.jobId);
+        toast.success('Playlist import started');
+      },
+      onError: () => toast.error('Failed to start playlist import'),
+    });
+  };
+
+  useEffect(() => {
+    if (importJob?.status === 'completed') {
+      toast.success(`Import complete: ${importJob.downloaded} downloaded, ${importJob.skipped} skipped`);
+      qc.invalidateQueries({ queryKey: ['songs', configId] });
+      qc.invalidateQueries({ queryKey: ['playlists'] });
+      setImportJobId(null);
+      setUrlInfo(null);
+      setYtUrl('');
+    } else if (importJob?.status === 'failed') {
+      toast.error(importJob.errors[0] || 'Playlist import failed');
+      setImportJobId(null);
+    }
+  }, [importJob?.status, configId, qc, importJob]);
+
   if (!configId) {
     return <EmptyState icon={Music} title="Select a server" description="Choose a server to manage its music library." />;
   }
@@ -900,7 +935,7 @@ function LibraryTab() {
                   {urlInfo.type === 'playlist' ? `Playlist (${urlInfo.items.length} videos)` : 'Single Video'}
                 </Badge>
                 {urlInfo.type === 'playlist' && (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <Button variant="ghost" size="sm" className="h-6 text-[10px]"
                       onClick={() => setSelectedUrlIds(new Set(urlInfo.items.map((i) => i.id)))}
                     >
@@ -920,6 +955,29 @@ function LibraryTab() {
                       ) : (
                         <><Download className="h-3 w-3 mr-1" /> Download {selectedUrlIds.size} Selected</>
                       )}
+                    </Button>
+                    <Input
+                      className="h-7 w-40 text-xs"
+                      placeholder="Playlist name (optional)"
+                      value={importPlaylistName}
+                      onChange={(e) => setImportPlaylistName(e.target.value)}
+                    />
+                    <Button variant="secondary" size="sm" className="h-7 text-xs"
+                      onClick={() => handleImportPlaylist(false)}
+                      disabled={ytImportPlaylist.isPending || !!importJobId}
+                    >
+                      {importJobId ? (
+                        <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Importing {importJob?.processed ?? 0}/{importJob?.total ?? '?'}</>
+                      ) : (
+                        <><ListMusic className="h-3 w-3 mr-1" /> Import as Playlist</>
+                      )}
+                    </Button>
+                    <Button variant="outline" size="sm" className="h-7 text-xs"
+                      onClick={() => handleImportPlaylist(true)}
+                      disabled={ytImportPlaylist.isPending || !!importJobId}
+                      title="Re-import adds missing tracks and re-links existing downloads"
+                    >
+                      Re-import
                     </Button>
                   </div>
                 )}

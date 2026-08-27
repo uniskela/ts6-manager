@@ -66,3 +66,33 @@ export function useYouTubeDownloadBatch() {
     onSuccess: (_, { configId }) => qc.invalidateQueries({ queryKey: ['songs', configId] }),
   });
 }
+
+export function useYouTubeImportPlaylist() {
+  return useMutation({
+    mutationFn: ({
+      configId,
+      url,
+      playlistName,
+      playlistId,
+      reimport,
+    }: {
+      configId: number;
+      url: string;
+      playlistName?: string;
+      playlistId?: number;
+      reimport?: boolean;
+    }) => musicLibraryApi.youtubeImportPlaylist(configId, { url, playlistName, playlistId, reimport }),
+  });
+}
+
+export function useYouTubeImportStatus(configId: number | null, jobId: string | null) {
+  return useQuery({
+    queryKey: ['yt-import', configId, jobId],
+    queryFn: () => musicLibraryApi.youtubeImportStatus(configId!, jobId!),
+    enabled: !!configId && !!jobId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === 'pending' || status === 'running' ? 2000 : false;
+    },
+  });
+}

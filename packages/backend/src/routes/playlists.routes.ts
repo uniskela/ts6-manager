@@ -20,6 +20,8 @@ playlistRoutes.get('/', async (req: Request, res: Response, next) => {
       id: p.id,
       name: p.name,
       musicBotId: p.musicBotId,
+      youtubePlaylistId: p.youtubePlaylistId,
+      serverConfigId: p.serverConfigId,
       songCount: p._count.songs,
       createdAt: p.createdAt,
     })));

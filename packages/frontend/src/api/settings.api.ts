@@ -15,4 +15,9 @@ export const settingsApi = {
     api.post('/settings/yt-cookies', { text }).then((r) => r.data),
 
   deleteYtCookies: () => api.delete('/settings/yt-cookies').then((r) => r.data),
+
+  getLimits: () => api.get('/settings/limits').then((r) => r.data),
+
+  updateLimits: (data: { maxVideoDuration?: number; maxPlaylistImport?: number }) =>
+    api.put('/settings/limits', data).then((r) => r.data),
 };

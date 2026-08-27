@@ -9,6 +9,12 @@ import fs from 'fs';
 import path from 'path';
 import { AppError } from '../middleware/error-handler.js';
 import { setYtCookieFile, getYtCookieFile } from '../voice/audio/youtube.js';
+import {
+  MAX_VIDEO_DURATION_KEY,
+  MAX_PLAYLIST_IMPORT_KEY,
+  parseVideoDuration,
+  parseImportCap,
+} from '../utils/app-settings.js';
 
 const settingsRoutes: Router = Router();
 
@@ -72,6 +78,51 @@ settingsRoutes.delete('/yt-cookies', requireAdmin, (_req: Request, res: Response
     }
     setYtCookieFile(null);
     console.log('[yt-dlp] Cookie file removed');
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// GET /api/settings/limits — App-wide numeric limits
+settingsRoutes.get('/limits', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const rows = await prisma.appSetting.findMany({
+      where: { key: { in: [MAX_VIDEO_DURATION_KEY, MAX_PLAYLIST_IMPORT_KEY] } },
+    });
+    const map = new Map(rows.map((r: { key: string; value: string }) => [r.key, r.value]));
+    res.json({
+      maxVideoDuration: parseVideoDuration(map.get(MAX_VIDEO_DURATION_KEY) as string | undefined),
+      maxPlaylistImport: parseImportCap(map.get(MAX_PLAYLIST_IMPORT_KEY) as string | undefined),
+    });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/settings/limits — Update app-wide numeric limits
+settingsRoutes.put('/limits', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const { maxVideoDuration, maxPlaylistImport } = req.body;
+
+    if (maxVideoDuration != null) {
+      const val = parseVideoDuration(String(maxVideoDuration), -1);
+      if (val < 0) throw new AppError(400, 'maxVideoDuration must be a non-negative integer (seconds)');
+      await prisma.appSetting.upsert({
+        where: { key: MAX_VIDEO_DURATION_KEY },
+        create: { key: MAX_VIDEO_DURATION_KEY, value: String(val) },
+        update: { value: String(val) },
+      });
+    }
+
+    if (maxPlaylistImport != null) {
+      const val = parseImportCap(String(maxPlaylistImport), -1);
+      if (val <= 0) throw new AppError(400, 'maxPlaylistImport must be a positive integer (max 500)');
+      await prisma.appSetting.upsert({
+        where: { key: MAX_PLAYLIST_IMPORT_KEY },
+        create: { key: MAX_PLAYLIST_IMPORT_KEY, value: String(val) },
+        update: { value: String(val) },
+      });
+    }
+
     res.json({ success: true });
   } catch (err) { next(err); }
 });

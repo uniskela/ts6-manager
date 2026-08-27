@@ -7,50 +7,7 @@ import { StreamSignaling, type ActiveStream, type SignalingMessage } from './str
 import { SidecarClient } from './streaming/sidecar-client.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
 import { STREAM_PRESETS, DEFAULT_PRESET, type VideoViewerInfo, type VideoStreamStatus } from './streaming/types.js';
-import { getCookieArgs } from './audio/youtube.js';
-import { spawn } from 'child_process';
-
-/** Resolve a YouTube/yt-dlp-compatible URL to a direct stream URL */
-function resolveVideoUrl(url: string, maxHeight: number = 720): Promise<string> {
-  // Only resolve YouTube and other yt-dlp-supported sites
-  if (!url.includes('youtube.com/') && !url.includes('youtu.be/') && !url.includes('twitch.tv/')) {
-    return Promise.resolve(url);
-  }
-
-  return new Promise((resolve, reject) => {
-    // Request best combined format (video+audio) up to the target height
-    const formatFilter = `best[height<=${maxHeight}][ext=mp4]/best[height<=${maxHeight}]/best[ext=mp4]/best`;
-    const proc = spawn('yt-dlp', [
-      ...getCookieArgs(),
-      '-f', formatFilter,
-      '--no-playlist',
-      '-g',  // print direct URL only
-      url,
-    ], { shell: false });
-
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
-    proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
-
-    proc.on('close', (code) => {
-      if (code !== 0) {
-        return reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(0, 200)}`));
-      }
-      // yt-dlp -g returns the direct URL(s), take the first one
-      const directUrl = stdout.trim().split('\n')[0];
-      if (!directUrl) {
-        return reject(new Error('yt-dlp returned no URL'));
-      }
-      console.log(`[VideoResolve] Resolved: ${url.substring(0, 60)}... → direct URL`);
-      resolve(directUrl);
-    });
-
-    proc.on('error', (err) => {
-      reject(new Error(`yt-dlp not found: ${err.message}`));
-    });
-  });
-}
+import { downloadVideoForStream, safeUnlinkStreamTemp, resolvePathUnderMusicDir } from './streaming/video-download.js';
 
 export type VoiceBotStatus = 'stopped' | 'starting' | 'connected' | 'playing' | 'paused' | 'error';
 
@@ -74,6 +31,9 @@ export interface VoiceBotConfig {
   sidecarBinaryPath?: string;
   sidecarPort?: number;
   streamPreset?: string;
+  autoStopEmptySeconds?: number;
+  maxVideoDurationSec?: number;
+  videoStreamVolume?: number;
 }
 
 export class VoiceBot extends EventEmitter {
@@ -131,11 +91,16 @@ export class VoiceBot extends EventEmitter {
   private _videoBitrate: string = STREAM_PRESETS[DEFAULT_PRESET]?.bitrate ?? '2500k';
   private _videoStartedAt: number | null = null;
   private _viewers: Map<number, VideoViewerInfo> = new Map();
+  private _videoTempFile: string | null = null;
+  private _videoStreamVolume: number = 100;
+  private autoStopTimer: ReturnType<typeof setInterval> | null = null;
+  private autoStopEmptySince: number | null = null;
 
   constructor(config: VoiceBotConfig) {
     super();
     this.config = config;
     this._originalNickname = config.nickname;
+    this._videoStreamVolume = config.videoStreamVolume ?? 100;
     this.client = new Ts3Client();
     this.pipeline = new AudioPipeline();
     this.queue = new PlayQueue();
@@ -160,8 +125,9 @@ export class VoiceBot extends EventEmitter {
       const msg = params.msg || 'unknown error';
       this._lastError = `TS3 error ${id}: ${msg}`;
       // Fatal errors that should not trigger reconnect
-      // 2568 = invalid password, 3329 = banned, 1796 = max clients reached
-      if (id === 2568 || id === 3329 || id === 1796) {
+      // 3329 = banned, 1796 = max clients reached
+      // 2568 = insufficient client permissions — operation-level, not fatal
+      if (id === 3329 || id === 1796) {
         this._status = 'error';
         this.emit('statusChange', this._status);
         this.emit('fatalError', this._lastError);
@@ -236,6 +202,66 @@ export class VoiceBot extends EventEmitter {
   updateConfig(partial: Partial<VoiceBotConfig>): void {
     Object.assign(this.config, partial);
     if (partial.nickname) this._originalNickname = partial.nickname;
+    if (partial.videoStreamVolume != null) {
+      this._videoStreamVolume = Math.max(0, Math.min(100, partial.videoStreamVolume));
+    }
+  }
+
+  /** Stop playback when the bot's channel has been empty for the configured grace period. */
+  private startAutoStopTimer(): void {
+    this.stopAutoStopTimer();
+    const graceSec = this.config.autoStopEmptySeconds ?? 300;
+    if (graceSec <= 0) return;
+
+    this.autoStopEmptySince = null;
+    this.autoStopTimer = setInterval(() => {
+      if (this._status !== 'playing' && !this._videoStreaming) {
+        this.stopAutoStopTimer();
+        return;
+      }
+      if (this.client.getChannelUserCount() > 0) {
+        this.autoStopEmptySince = null;
+        return;
+      }
+      const now = Date.now();
+      if (this.autoStopEmptySince == null) {
+        this.autoStopEmptySince = now;
+        return;
+      }
+      if ((now - this.autoStopEmptySince) / 1000 >= graceSec) {
+        console.log(`[VoiceBot ${this.config.id}] Auto-stop: channel empty for ${graceSec}s`);
+        this.stopAutoStopTimer();
+        if (this._videoStreaming) {
+          this.stopVideoStream().catch((err) => this.emit('error', err));
+        } else {
+          this.clearPlayback();
+        }
+      }
+    }, 5000);
+  }
+
+  private stopAutoStopTimer(): void {
+    if (this.autoStopTimer) {
+      clearInterval(this.autoStopTimer);
+      this.autoStopTimer = null;
+    }
+    this.autoStopEmptySince = null;
+  }
+
+  private cleanupVideoTempFile(): void {
+    if (!this._videoTempFile) return;
+    safeUnlinkStreamTemp(this._videoTempFile);
+    this._videoTempFile = null;
+  }
+
+  private async resolveStreamSource(source: string, maxHeight: number): Promise<string> {
+    const maxDur = this.config.maxVideoDurationSec ?? 900;
+    const filePath = await downloadVideoForStream(source, maxHeight, maxDur);
+    if (filePath.includes('.stream-') && filePath.endsWith('.mp4')) {
+      this.cleanupVideoTempFile();
+      this._videoTempFile = filePath;
+    }
+    return filePath;
   }
 
   /** Update the TS3 nickname to show what's playing. Max 30 chars. */
@@ -332,6 +358,7 @@ export class VoiceBot extends EventEmitter {
 
   async stop(): Promise<void> {
     this._manuallyStopped = true;
+    this.stopAutoStopTimer();
     this.stopIcyPolling();
     this.resetNickname();
     this.stopPlayback();
@@ -378,6 +405,7 @@ export class VoiceBot extends EventEmitter {
       this.pcmFrames = this.pipeline.splitFrames(pcmData);
       this.frameIndex = 0;
       this.startPlaybackLoop();
+      this.startAutoStopTimer();
     } catch (err) {
       this._status = 'connected';
       this._nowPlaying = null;
@@ -485,6 +513,7 @@ export class VoiceBot extends EventEmitter {
       };
 
       this.playbackTimer = setTimeout(tick, 200);
+      this.startAutoStopTimer();
     } catch (err) {
       this._isStreaming = false;
       this.streamKill = null;
@@ -506,6 +535,9 @@ export class VoiceBot extends EventEmitter {
     }
     this.resetNickname();
     this._nowPlaying = null;
+    if (!this._videoStreaming) {
+      this.stopAutoStopTimer();
+    }
     if (this._status === 'playing' || this._status === 'paused') {
       this._status = 'connected';
       this.emit('statusChange', this._status);
@@ -780,12 +812,22 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Start video streaming to TS6 via WebRTC */
-  async startVideoStream(source: string, preset?: string, framerate?: number, bitrate?: string): Promise<void> {
+  async startVideoStream(
+    source: string,
+    preset?: string,
+    framerate?: number,
+    bitrate?: string,
+    volume?: number,
+  ): Promise<void> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
     if (this._videoStreaming) {
       throw new Error('Video stream already active');
+    }
+
+    if (volume != null) {
+      this._videoStreamVolume = Math.max(0, Math.min(100, volume));
     }
 
     const sidecarBinary = this.config.sidecarBinaryPath || process.env.SIDECAR_BINARY_PATH || 'sidecar';
@@ -821,10 +863,14 @@ export class VoiceBot extends EventEmitter {
       this.sidecarProc = new SidecarProcess(sidecarConfig);
       this.sidecarProc.on('exited', (code: number | null) => {
         console.log(`[VoiceBot ${this.config.id}] Sidecar exited (code=${code})`);
+        this.cleanupVideoTempFile();
         if (this._videoStreaming) {
           this._videoStreaming = false;
           this._activeStreamId = null;
           this._viewers.clear();
+          if (this._status !== 'playing') {
+            this.stopAutoStopTimer();
+          }
           this.emit('videoStreamStopped');
           this.emit('statusChange', this._status);
         }
@@ -877,19 +923,37 @@ export class VoiceBot extends EventEmitter {
     this._videoSource = source;
     this._videoStartedAt = Date.now();
 
-    // Resolve YouTube/streaming URLs via yt-dlp, then start ffmpeg
-    const resolvedSource = await resolveVideoUrl(source, presetConfig.height);
-    await this.sidecarHttp.setSource(
-      resolvedSource,
-      presetConfig.width,
-      presetConfig.height,
-      effectiveFramerate,
-      effectiveBitrate,
-    );
+    try {
+      const resolvedSource = await this.resolveStreamSource(source, presetConfig.height);
+      await this.sidecarHttp.setSource(
+        resolvedSource,
+        presetConfig.width,
+        presetConfig.height,
+        effectiveFramerate,
+        effectiveBitrate,
+        this._videoStreamVolume,
+      );
+    } catch (err) {
+      if (this.signaling && this._activeStreamId) {
+        this.signaling.sendStreamStop(this._activeStreamId);
+      }
+      this._activeStreamId = null;
+      this._videoSource = null;
+      this._videoStreaming = false;
+      this._videoStartedAt = null;
+      this.signaling = null;
+      if (this.sidecarProc) {
+        await this.sidecarProc.stop();
+        this.sidecarProc = null;
+      }
+      this.sidecarHttp = null;
+      throw err;
+    }
 
     console.log(`[VoiceBot ${this.config.id}] Video stream started: ${stream.id}, source: ${source}`);
     this.emit('videoStreamStarted', { streamId: stream.id, source, preset: this._videoPreset });
     this.emit('statusChange', this._status);
+    this.startAutoStopTimer();
   }
 
   /** Stop video streaming */
@@ -930,6 +994,10 @@ export class VoiceBot extends EventEmitter {
     this._videoStreaming = false;
     this._videoStartedAt = null;
     this.signaling = null;
+    this.cleanupVideoTempFile();
+    if (this._status !== 'playing') {
+      this.stopAutoStopTimer();
+    }
 
     console.log(`[VoiceBot ${this.config.id}] Video stream stopped`);
     this.emit('videoStreamStopped');
@@ -937,13 +1005,16 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Change video source while streaming */
-  async setVideoSource(source: string): Promise<void> {
+  async setVideoSource(source: string, volume?: number): Promise<void> {
     if (!this._videoStreaming || !this.sidecarHttp) {
       throw new Error('No active video stream');
     }
+    if (volume != null) {
+      this._videoStreamVolume = Math.max(0, Math.min(100, volume));
+    }
     this._videoSource = source;
     const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
-    const resolvedSource = await resolveVideoUrl(source, currentPreset.height);
+    const resolvedSource = await this.resolveStreamSource(source, currentPreset.height);
 
     await this.sidecarHttp.setSource(
       resolvedSource,
@@ -951,9 +1022,39 @@ export class VoiceBot extends EventEmitter {
       currentPreset.height,
       this._videoFramerate,
       this._videoBitrate,
+      this._videoStreamVolume,
     );
     console.log(`[VoiceBot ${this.config.id}] Video source changed: ${source}`);
     this.emit('videoSourceChanged', source);
+  }
+
+  /** Adjust video stream audio volume (0–100) while streaming. */
+  async setVideoStreamVolume(volume: number): Promise<void> {
+    if (!this._videoStreaming || !this.sidecarHttp || !this._videoSource) {
+      throw new Error('No active video stream');
+    }
+    this._videoStreamVolume = Math.max(0, Math.min(100, volume));
+    const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
+    const resolvedSource = this._videoTempFile
+      ? (() => {
+          try {
+            return resolvePathUnderMusicDir(this._videoTempFile);
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+    const sourcePath = resolvedSource
+      ?? await this.resolveStreamSource(this._videoSource, currentPreset.height);
+    await this.sidecarHttp.setSource(
+      sourcePath,
+      currentPreset.width,
+      currentPreset.height,
+      this._videoFramerate,
+      this._videoBitrate,
+      this._videoStreamVolume,
+    );
+    this.emit('videoVolumeChange', this._videoStreamVolume);
   }
 
   /** Kick a viewer from the video stream */

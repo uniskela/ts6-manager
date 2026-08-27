@@ -17,7 +17,7 @@ if ! nc -z 127.0.0.1 "$SP" 2>/dev/null; then
   exit 1
 fi
 
-cd /app/packages/backend
-npx prisma db push --skip-generate
-npx prisma db seed || true
+# Upgrade-aware Prisma schema apply (fresh install / older image → new schema)
+/usr/local/bin/apply-schema.sh
+
 exec node dist/index.js

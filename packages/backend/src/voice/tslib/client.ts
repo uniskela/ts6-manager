@@ -121,6 +121,9 @@ export class Ts3Client extends EventEmitter {
 
   // Channel map (populated during init sequence for auto-move)
   private channelMap = new Map<string, number>(); // channel_name → cid
+  private currentChannelId = 0;
+  private channelMembers = new Set<number>();
+  private queryMembers = new Set<number>();
 
   constructor() {
     super();
@@ -132,6 +135,10 @@ export class Ts3Client extends EventEmitter {
 
   getClientId(): number {
     return this.clientId;
+  }
+
+  getChannelUserCount(): number {
+    return this.channelMembers.size;
   }
 
   async connect(opts: Ts3ClientOptions): Promise<void> {
@@ -151,6 +158,9 @@ export class Ts3Client extends EventEmitter {
     this.fragmentFlags = 0;
     this.clientId = 0;
     this.channelMap.clear();
+    this.currentChannelId = 0;
+    this.channelMembers.clear();
+    this.queryMembers.clear();
 
     return new Promise((resolve, reject) => {
       this.socket = dgram.createSocket("udp4");
@@ -742,22 +752,53 @@ export class Ts3Client extends EventEmitter {
       case "channellistfinished":
         this.handleChannelListFinished();
         break;
-      case "notifyclientleftview":
-        if (
-          parsed.params.clid &&
-          parseInt(parsed.params.clid) === this.clientId
-        ) {
+      case "notifycliententerview": {
+        const clid = parseInt(parsed.params.clid || "0");
+        const cid = parseInt(parsed.params.ctid || parsed.params.cid || "0");
+        if (clid && clid !== this.clientId && cid === this.currentChannelId) {
+          if (String(parsed.params.client_type) === "1") this.queryMembers.add(clid);
+          else this.channelMembers.add(clid);
+        }
+        break;
+      }
+      case "notifyclientleftview": {
+        const clid = parseInt(parsed.params.clid || "0");
+        if (clid) {
+          this.channelMembers.delete(clid);
+          this.queryMembers.delete(clid);
+        }
+        if (clid && clid === this.clientId) {
           this.cleanup();
         }
         break;
+      }
+      case "notifyclientmoved": {
+        const clid = parseInt(parsed.params.clid || "0");
+        const toCid = parseInt(parsed.params.ctid || "0");
+        if (clid && clid === this.clientId) {
+          this.currentChannelId = toCid;
+          this.channelMembers.clear();
+          this.queryMembers.clear();
+          break;
+        }
+        const fromCid = parseInt(parsed.params.cfid || "0");
+        if (clid) {
+          const isQuery = String(parsed.params.client_type) === "1";
+          const target = isQuery ? this.queryMembers : this.channelMembers;
+          if (fromCid === this.currentChannelId) target.delete(clid);
+          if (toCid === this.currentChannelId) target.add(clid);
+        }
+        break;
+      }
       case "notifytextmessage":
         this.emit("textMessage", parsed.params);
         break;
       case "error": {
         this.emit("ts3error", parsed.params);
         // Fatal TS3 errors: reject connect promise and disconnect immediately
+        // 2568 = insufficient client permissions — not fatal (uniplayer1/ts6-manager)
         const errId = parseInt(parsed.params.id || "0");
-        if (errId === 2568 || errId === 3329 || errId === 1796) {
+        if (errId === 3329 || errId === 1796) {
           const errMsg = parsed.params.msg || "unknown error";
           this.emit("error", new Error(`TS3 error ${errId}: ${errMsg}`));
           this.disconnect();
@@ -957,6 +998,7 @@ export class Ts3Client extends EventEmitter {
       clid: this.clientId,
       cpw: this.opts.channelPassword ?? "",
     });
+    this.currentChannelId = cid;
     this.emit("debug", `Moving to channel "${target}" (cid=${cid})`);
     this.sendCommand(moveCmd);
   }

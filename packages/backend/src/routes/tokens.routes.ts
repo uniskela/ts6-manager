@@ -10,7 +10,7 @@ const getClient = (req: Request) => {
 };
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
-tokenRoutes.get('/', async (req: Request, res: Response, next) => {
+tokenRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try { res.json(await getClient(req).execute(getSid(req), 'privilegekeylist')); } catch (err) { next(err); }
 });
 
