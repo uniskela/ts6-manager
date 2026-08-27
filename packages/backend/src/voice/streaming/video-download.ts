@@ -12,6 +12,47 @@ function rejectYtDlpOptionUrl(url: string): void {
   }
 }
 
+function ensureMusicDir(): string {
+  const musicRoot = path.resolve(MUSIC_DIR);
+  if (!fs.existsSync(musicRoot)) {
+    fs.mkdirSync(musicRoot, { recursive: true });
+  }
+  return fs.realpathSync(musicRoot);
+}
+
+/** Resolve a local path and require it to live under MUSIC_DIR (symlink-safe). */
+export function resolvePathUnderMusicDir(filePath: string): string {
+  const resolved = path.resolve(filePath);
+  if (!fs.existsSync(resolved)) {
+    throw new Error('Local video file not found');
+  }
+  const canonicalMusicRoot = ensureMusicDir();
+  const canonicalResolved = fs.realpathSync(resolved);
+  if (
+    !canonicalResolved.startsWith(canonicalMusicRoot + path.sep) &&
+    canonicalResolved !== canonicalMusicRoot
+  ) {
+    throw new Error('Local video path must be under MUSIC_DIR');
+  }
+  return canonicalResolved;
+}
+
+function isYtDlpStreamHost(url: string): boolean {
+  let hostname: string;
+  try {
+    hostname = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return (
+    hostname === 'youtube.com' ||
+    hostname.endsWith('.youtube.com') ||
+    hostname === 'youtu.be' ||
+    hostname === 'twitch.tv' ||
+    hostname.endsWith('.twitch.tv')
+  );
+}
+
 /**
  * Download on-demand video via proxied yt-dlp to a temp file under MUSIC_DIR,
  * then stream from disk (avoids datacenter-IP YouTube 403 on googlevideo URLs).
@@ -29,15 +70,7 @@ export async function downloadVideoForStream(
     url.startsWith('https://');
 
   if (!isRemote) {
-    const resolved = path.resolve(url);
-    const musicRoot = path.resolve(MUSIC_DIR);
-    if (!resolved.startsWith(musicRoot + path.sep) && resolved !== musicRoot) {
-      throw new Error('Local video path must be under MUSIC_DIR');
-    }
-    if (!fs.existsSync(resolved)) {
-      throw new Error('Local video file not found');
-    }
-    return resolved;
+    return resolvePathUnderMusicDir(url);
   }
 
   const check = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
@@ -45,16 +78,13 @@ export async function downloadVideoForStream(
     throw new Error(`Video source blocked: ${check.error}`);
   }
 
-  if (
-    !url.includes('youtube.com/') &&
-    !url.includes('youtu.be/') &&
-    !url.includes('twitch.tv/')
-  ) {
+  if (!isYtDlpStreamHost(url)) {
     return url;
   }
 
+  const musicRoot = ensureMusicDir();
   const formatFilter = `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/b`;
-  const tempPath = path.join(MUSIC_DIR, `.stream-${Date.now()}.mp4`);
+  const tempPath = path.join(musicRoot, `.stream-${Date.now()}.mp4`);
 
   await new Promise<void>((resolve, reject) => {
     const args = [
@@ -95,18 +125,31 @@ export async function downloadVideoForStream(
     throw new Error('yt-dlp completed but the output file was not found');
   }
 
-  console.log(`[VideoDownload] Downloaded: ${tempPath} (${fs.statSync(tempPath).size} bytes)`);
-  return tempPath;
+  const canonicalTemp = resolvePathUnderMusicDir(tempPath);
+  console.log(`[VideoDownload] Downloaded: ${canonicalTemp} (${fs.statSync(canonicalTemp).size} bytes)`);
+  return canonicalTemp;
+}
+
+/** Safely unlink a `.stream-*.mp4` temp file if it resolves under MUSIC_DIR. */
+export function safeUnlinkStreamTemp(filePath: string): void {
+  try {
+    const canonical = resolvePathUnderMusicDir(filePath);
+    const base = path.basename(canonical);
+    if (!base.startsWith('.stream-') || !base.endsWith('.mp4')) return;
+    fs.unlinkSync(canonical);
+  } catch {
+    /* ignore missing/invalid paths */
+  }
 }
 
 /** Remove orphaned .stream-*.mp4 temp files from prior runs. */
 export function sweepStreamTempFiles(): void {
   try {
-    if (!fs.existsSync(MUSIC_DIR)) return;
-    for (const name of fs.readdirSync(MUSIC_DIR)) {
+    const musicRoot = ensureMusicDir();
+    for (const name of fs.readdirSync(musicRoot)) {
       if (name.startsWith('.stream-') && name.endsWith('.mp4')) {
         try {
-          fs.unlinkSync(path.join(MUSIC_DIR, name));
+          safeUnlinkStreamTemp(path.join(musicRoot, name));
           console.log(`[VideoDownload] Swept orphan stream file: ${name}`);
         } catch { /* ignore */ }
       }

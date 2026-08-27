@@ -8,7 +8,7 @@ import { SidecarClient } from './streaming/sidecar-client.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
 import { STREAM_PRESETS, DEFAULT_PRESET, type VideoViewerInfo, type VideoStreamStatus } from './streaming/types.js';
 import fs from 'fs';
-import { downloadVideoForStream } from './streaming/video-download.js';
+import { downloadVideoForStream, safeUnlinkStreamTemp, resolvePathUnderMusicDir } from './streaming/video-download.js';
 
 export type VoiceBotStatus = 'stopped' | 'starting' | 'connected' | 'playing' | 'paused' | 'error';
 
@@ -251,11 +251,7 @@ export class VoiceBot extends EventEmitter {
 
   private cleanupVideoTempFile(): void {
     if (!this._videoTempFile) return;
-    try {
-      if (fs.existsSync(this._videoTempFile)) {
-        fs.unlinkSync(this._videoTempFile);
-      }
-    } catch { /* ignore */ }
+    safeUnlinkStreamTemp(this._videoTempFile);
     this._videoTempFile = null;
   }
 
@@ -1040,11 +1036,19 @@ export class VoiceBot extends EventEmitter {
     }
     this._videoStreamVolume = Math.max(0, Math.min(100, volume));
     const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
-    const resolvedSource = this._videoTempFile && fs.existsSync(this._videoTempFile)
-      ? this._videoTempFile
-      : await this.resolveStreamSource(this._videoSource, currentPreset.height);
+    const resolvedSource = this._videoTempFile
+      ? (() => {
+          try {
+            return resolvePathUnderMusicDir(this._videoTempFile);
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+    const sourcePath = resolvedSource
+      ?? await this.resolveStreamSource(this._videoSource, currentPreset.height);
     await this.sidecarHttp.setSource(
-      resolvedSource,
+      sourcePath,
       currentPreset.width,
       currentPreset.height,
       this._videoFramerate,
