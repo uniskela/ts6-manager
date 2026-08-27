@@ -1,11 +1,14 @@
 import { EventEmitter } from 'events';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
+import { broadcastScoped } from '../ws/ws-session.js';
 import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus } from './voice-bot.js';
 import { generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
 import type { QueueItem } from './playlist/queue.js';
 import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
+import { sweepStreamTempFiles } from './streaming/video-download.js';
+import { loadMaxVideoDuration } from '../utils/app-settings.js';
 
 const PROGRESS_INTERVAL_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -19,6 +22,7 @@ interface ReconnectState {
 
 export class VoiceBotManager extends EventEmitter {
   private bots = new Map<number, VoiceBot>();
+  private botServerConfigIds = new Map<number, number>();
   private progressTimers = new Map<number, ReturnType<typeof setInterval>>();
   private reconnectState = new Map<number, ReconnectState>();
   private musicCmdHandler: MusicCommandHandler | null = null;
@@ -39,6 +43,11 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    sweepStreamTempFiles();
+    const maxVideoDurationSec = await loadMaxVideoDuration(this.prisma);
+    const autoStopEmptySeconds = parseInt(process.env.BOT_AUTO_STOP_EMPTY_SECONDS ?? '300', 10);
+    const parsedAutoStop = Number.isFinite(autoStopEmptySeconds) ? autoStopEmptySeconds : 300;
+
     const dbBots = await this.prisma.musicBot.findMany({
       include: { serverConfig: true },
     });
@@ -68,10 +77,13 @@ export class VoiceBotManager extends EventEmitter {
         sidecarBinaryPath: process.env.SIDECAR_BINARY_PATH,
         sidecarPort: (dbBot as any).sidecarPort ?? 9800,
         streamPreset: (dbBot as any).streamPreset ?? '720p',
+        maxVideoDurationSec,
+        autoStopEmptySeconds: parsedAutoStop,
       };
 
       const bot = this.createBotInstance(config);
       this.bots.set(dbBot.id, bot);
+      this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 
       if (dbBot.autoStart) {
         bot.start().catch((err) => {
@@ -226,10 +238,13 @@ export class VoiceBotManager extends EventEmitter {
       sidecarBinaryPath: process.env.SIDECAR_BINARY_PATH,
       sidecarPort: 9800,
       streamPreset: '720p',
+      maxVideoDurationSec: await loadMaxVideoDuration(this.prisma),
+      autoStopEmptySeconds: parseInt(process.env.BOT_AUTO_STOP_EMPTY_SECONDS ?? '300', 10) || 300,
     };
 
     const bot = this.createBotInstance(config);
     this.bots.set(dbBot.id, bot);
+    this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 
     return { id: dbBot.id };
   }
@@ -252,6 +267,7 @@ export class VoiceBotManager extends EventEmitter {
       }
       bot.ensureDisconnected();
       this.bots.delete(id);
+      this.botServerConfigIds.delete(id);
     }
     await this.prisma.musicBot.delete({ where: { id } });
   }
@@ -410,11 +426,10 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   private broadcast(type: string, payload: any): void {
-    const msg = JSON.stringify({ type, ...payload });
-    this.wss.clients.forEach((client) => {
-      if (client.readyState === 1) {
-        client.send(msg);
-      }
-    });
+    const botId = payload.botId as number | undefined;
+    const serverConfigId = botId !== undefined
+      ? this.botServerConfigIds.get(botId)
+      : payload.serverConfigId as number | undefined;
+    broadcastScoped(this.wss, type, payload, { serverConfigId });
   }
 }

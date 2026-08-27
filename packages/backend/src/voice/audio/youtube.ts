@@ -136,6 +136,18 @@ export function isYouTubeHostUrl(url: string): boolean {
   }
 }
 
+function rejectYtDlpOptionUrl(url: string): void {
+  if (url.trim().startsWith("-")) {
+    throw new Error("Invalid URL: must not start with '-'");
+  }
+}
+
+/** Append a media URL after yt-dlp's `--` separator to block option injection. */
+function withMediaUrl(args: string[], url: string): string[] {
+  rejectYtDlpOptionUrl(url);
+  return [...args, "--", url];
+}
+
 function runYtDlp(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     const proc = spawn("yt-dlp", args, { shell: false });
@@ -217,13 +229,12 @@ export async function downloadYouTube(
   const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
   const outputTemplate = path.join(outputDir, "%(id)s.%(ext)s");
 
-  const infoResult = await runYtDlp([
+  const infoResult = await runYtDlp(withMediaUrl([
     ...getCookieArgs(),
     "--no-warnings",
     "--dump-json",
     "--no-playlist",
-    mediaUrl,
-  ]);
+  ], mediaUrl));
 
   if (infoResult.code !== 0 && !infoResult.stdout.trim()) {
     throw new Error(`yt-dlp info failed (code ${infoResult.code}): ${summarizeYtDlpStderr(infoResult.stderr)}`);
@@ -259,7 +270,7 @@ export async function downloadYouTube(
     return { filePath: expectedPath, info };
   }
 
-  const dlResult = await runYtDlp([
+  const dlResult = await runYtDlp(withMediaUrl([
     ...getCookieArgs(),
     "--no-warnings",
     "-x", // extract audio
@@ -270,8 +281,7 @@ export async function downloadYouTube(
     "--no-playlist",
     "-o",
     outputTemplate,
-    mediaUrl,
-  ]);
+  ], mediaUrl));
 
   if (dlResult.code !== 0) {
     throw new Error(`yt-dlp download failed (code ${dlResult.code}): ${summarizeYtDlpStderr(dlResult.stderr)}`);
@@ -299,7 +309,7 @@ export async function getYouTubeUrlInfo(
   // Prefer playlist endpoint when a list id is present (Music mixes, playlists).
   const probeUrl = parsed.listId ? parsed.playlistUrl! : parsed.canonicalUrl;
 
-  const result = await runYtDlp([
+  const result = await runYtDlp(withMediaUrl([
     ...getCookieArgs(),
     "--no-warnings",
     "--yes-playlist",
@@ -307,8 +317,7 @@ export async function getYouTubeUrlInfo(
     "--dump-single-json",
     "--ignore-errors",
     "--no-download",
-    probeUrl,
-  ]);
+  ], probeUrl));
 
   const stdout = result.stdout.trim();
   if (!stdout) {
@@ -423,6 +432,9 @@ export async function expandYouTubeToWatchUrls(
  * Search YouTube using yt-dlp
  */
 export async function searchYouTube(query: string, maxResults: number = 10): Promise<YouTubeSearchResult[]> {
+  if (query.trim().startsWith("-")) {
+    throw new Error("Invalid search query");
+  }
   const result = await runYtDlp([
     ...getCookieArgs(),
     "--no-warnings",

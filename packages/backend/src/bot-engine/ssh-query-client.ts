@@ -3,12 +3,16 @@ import { EventEmitter } from 'events';
 import { parseQueryResponse } from '@ts6/common';
 import { TS_EVENT_TYPES } from '@ts6/common';
 import crypto from 'crypto';
+import { fingerprintHostKey, hostKeyMatches } from '../utils/ssh-host-key.js';
 
 export interface SshQueryClientOptions {
   host: string;
   port: number;
   username: string;
   password: string;
+  /** Expected SHA-256 hex fingerprint; null = pin on first connect. */
+  hostKeyFingerprint?: string | null;
+  onHostKeyPinned?: (fingerprint: string) => void | Promise<void>;
 }
 
 interface QueuedCommand {
@@ -43,7 +47,7 @@ export class SshQueryClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private fatalError: boolean = false;
-  private readonly nickSuffix = crypto.randomBytes(3).toString('hex'); // z.B. "a1b2c3"
+  private readonly nickSuffix = crypto.randomBytes(3).toString('hex');
   private reconnecting: boolean = false;
 
   constructor(private options: SshQueryClientOptions) {
@@ -141,9 +145,27 @@ export class SshQueryClient extends EventEmitter {
         port: this.options.port,
         username: this.options.username,
         password: this.options.password,
-        keepaliveInterval: 30000, // TCP-level keepalive every 30s
-        keepaliveCountMax: 3, // Disconnect after 3 missed keepalives (~90s)
+        keepaliveInterval: 30000,
+        keepaliveCountMax: 3,
         readyTimeout: 10000,
+        hostHash: 'sha256',
+        hostVerifier: (key: Buffer) => {
+          const fp = fingerprintHostKey(key);
+          if (!hostKeyMatches(this.options.hostKeyFingerprint, key)) {
+            const err = new Error(
+              `SSH host key mismatch for ${this.options.host}: expected ${this.options.hostKeyFingerprint}, got ${fp}`,
+            );
+            this.fatalError = true;
+            this.emit('error', err);
+            return false;
+          }
+          if (!this.options.hostKeyFingerprint && this.options.onHostKeyPinned) {
+            void Promise.resolve(this.options.onHostKeyPinned(fp)).catch((e) => {
+              console.error(`[SshQueryClient] Failed to persist host key fingerprint: ${e.message}`);
+            });
+          }
+          return true;
+        },
       });
     });
   }

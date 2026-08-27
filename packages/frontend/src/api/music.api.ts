@@ -39,11 +39,13 @@ export const musicBotsApi = {
   playerWidgetToken: (id: number) => api.get(`/music-bots/${id}/player-widget-token`).then((r) => r.data),
 
   // Video Streaming
-  startStream: (id: number, source: string, preset?: string, framerate?: number, bitrate?: string) =>
-    api.post(`/music-bots/${id}/stream/start`, { source, preset, framerate, bitrate }).then((r) => r.data),
+  startStream: (id: number, source: string, preset?: string, framerate?: number, bitrate?: string, volume?: number) =>
+    api.post(`/music-bots/${id}/stream/start`, { source, preset, framerate, bitrate, volume }).then((r) => r.data),
   stopStream: (id: number) => api.post(`/music-bots/${id}/stream/stop`).then((r) => r.data),
-  setStreamSource: (id: number, source: string) =>
-    api.post(`/music-bots/${id}/stream/source`, { source }).then((r) => r.data),
+  setStreamSource: (id: number, source: string, volume?: number) =>
+    api.post(`/music-bots/${id}/stream/source`, { source, volume }).then((r) => r.data),
+  setStreamVolume: (id: number, volume: number) =>
+    api.post(`/music-bots/${id}/stream/volume`, { volume }).then((r) => r.data),
   streamStatus: (id: number) => api.get(`/music-bots/${id}/stream/status`).then((r) => r.data),
   kickViewer: (id: number, clid: number) => api.delete(`/music-bots/${id}/stream/viewer/${clid}`).then((r) => r.data),
   webrtcOffer: (id: number) => api.post(`/music-bots/${id}/stream/webrtc/offer`).then((r) => r.data),
@@ -74,6 +76,10 @@ export const musicLibraryApi = {
     api.post(`/servers/${configId}/music-library/youtube/info`, { url }).then((r) => r.data),
   youtubeDownloadBatch: (configId: number, urls: string[]) =>
     api.post(`/servers/${configId}/music-library/youtube/download-batch`, { urls }, { timeout: 600000 }).then((r) => r.data),
+  youtubeImportPlaylist: (configId: number, data: { url: string; playlistName?: string; playlistId?: number; reimport?: boolean }) =>
+    api.post(`/servers/${configId}/music-library/youtube/import-playlist`, data).then((r) => r.data),
+  youtubeImportStatus: (configId: number, jobId: string) =>
+    api.get(`/servers/${configId}/music-library/youtube/import/${jobId}`).then((r) => r.data),
 };
 
 // === Radio Station API ===

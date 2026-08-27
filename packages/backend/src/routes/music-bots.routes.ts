@@ -685,9 +685,9 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    const { source, preset, framerate, bitrate } = req.body;
+    const { source, preset, framerate, bitrate, volume } = req.body;
     if (!source) throw new AppError(400, 'source is required');
-    await bot.startVideoStream(source, preset, framerate, bitrate);
+    await bot.startVideoStream(source, preset, framerate, bitrate, volume);
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });
@@ -709,9 +709,22 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    const { source } = req.body;
+    const { source, volume } = req.body;
     if (!source) throw new AppError(400, 'source is required');
-    await bot.setVideoSource(source);
+    await bot.setVideoSource(source, volume);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// POST /:id/stream/volume — Adjust video stream volume
+musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, next) => {
+  try {
+    const manager: VoiceBotManager = req.app.locals.voiceBotManager;
+    const bot = manager.getBot(parseInt(req.params.id as string));
+    if (!bot) throw new AppError(404, 'Music bot not found');
+    const { volume } = req.body;
+    if (volume == null) throw new AppError(400, 'volume is required');
+    await bot.setVideoStreamVolume(parseInt(volume));
     res.json({ success: true });
   } catch (err) { next(err); }
 });

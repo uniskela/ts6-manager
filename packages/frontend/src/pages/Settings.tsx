@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usersApi } from '@/api/bots.api';
 import { authApi } from '@/api/auth.api';
@@ -581,6 +581,82 @@ function YouTubeTab() {
           )}
         </CardContent>
       </Card>
+
+      <LimitsCard />
     </div>
+  );
+}
+
+function LimitsCard() {
+  const qc = useQueryClient();
+  const { data: limits, isLoading } = useQuery({
+    queryKey: ['settings-limits'],
+    queryFn: settingsApi.getLimits,
+  });
+  const [maxVideoDuration, setMaxVideoDuration] = useState('');
+  const [maxPlaylistImport, setMaxPlaylistImport] = useState('');
+
+  useEffect(() => {
+    if (limits) {
+      setMaxVideoDuration(String(limits.maxVideoDuration ?? 900));
+      setMaxPlaylistImport(String(limits.maxPlaylistImport ?? 50));
+    }
+  }, [limits]);
+
+  const saveLimits = useMutation({
+    mutationFn: () => settingsApi.updateLimits({
+      maxVideoDuration: parseInt(maxVideoDuration, 10),
+      maxPlaylistImport: parseInt(maxPlaylistImport, 10),
+    }),
+    onSuccess: () => {
+      toast.success('Limits saved');
+      qc.invalidateQueries({ queryKey: ['settings-limits'] });
+    },
+    onError: () => toast.error('Failed to save limits'),
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm font-medium">Download &amp; Stream Limits</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-xs text-muted-foreground">
+          Cap YouTube playlist imports and on-demand video stream downloads.
+        </p>
+        {isLoading ? (
+          <p className="text-xs text-muted-foreground">Loading...</p>
+        ) : (
+          <>
+            <div>
+              <Label className="text-xs">Max video duration (seconds, 0 = unlimited)</Label>
+              <Input
+                type="number"
+                min={0}
+                value={maxVideoDuration}
+                onChange={(e) => setMaxVideoDuration(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Max playlist import tracks (1–500)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={500}
+                value={maxPlaylistImport}
+                onChange={(e) => setMaxPlaylistImport(e.target.value)}
+              />
+            </div>
+            <Button
+              size="sm"
+              onClick={() => saveLimits.mutate()}
+              disabled={saveLimits.isPending}
+            >
+              {saveLimits.isPending ? 'Saving...' : 'Save Limits'}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }
