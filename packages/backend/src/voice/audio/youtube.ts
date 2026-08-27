@@ -431,6 +431,31 @@ export async function fetchYouTubeVideoMeta(
 export async function getYouTubeUrlInfo(
   url: string,
 ): Promise<{ type: "video" | "playlist"; items: YouTubeSearchResult[]; title?: string }> {
+  // Apple Music / Spotify must be resolved before yt-dlp — never pass them through.
+  try {
+    const host = new URL(url.trim()).hostname.toLowerCase().replace(/\.+$/, "");
+    if (
+      host === "music.apple.com" ||
+      host === "itunes.apple.com" ||
+      host === "geo.itunes.apple.com" ||
+      host === "apple.co" ||
+      host === "open.spotify.com" ||
+      host === "spotify.com" ||
+      host.endsWith(".spotify.com") ||
+      host === "spotify.link"
+    ) {
+      throw new Error(
+        `Unsupported URL for yt-dlp info: ${host} — resolve Apple Music / Spotify before probing`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      /* invalid URL — let yt-dlp path handle */
+    } else {
+      throw err;
+    }
+  }
+
   const parsed = parseYouTubeUrl(url);
   // Prefer playlist endpoint when a list id is present (Music mixes, playlists).
   const probeUrl = parsed.listId ? parsed.playlistUrl! : parsed.canonicalUrl;

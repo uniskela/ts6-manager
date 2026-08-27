@@ -180,7 +180,7 @@ export function parseAppleMusicUrl(raw: string): ParsedAppleMusicUrl {
     }
     return { kind: "album", id, storefront };
   }
-  if (kindRaw === "playlist" && id && /^pl\.[a-zA-Z0-9]+$/.test(id)) {
+  if (kindRaw === "playlist" && id && /^pl\.[a-zA-Z0-9._-]+$/.test(id)) {
     return { kind: "playlist", id, storefront };
   }
 

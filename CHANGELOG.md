@@ -32,6 +32,17 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
 
+## [1.3.1] - 2026-08-27
+
+### Added
+
+- `!shuffle [on|off]` chat command to toggle or set queue shuffle
+
+### Fixed
+
+- Apple Music user playlist IDs (`pl.u-…` with hyphens) parse correctly
+- Library / playlist **Load URL** resolves Apple Music links via metadata + YouTube match instead of sending them to yt-dlp (fixes `Unsupported URL: music.apple.com`)
+
 ## [1.3.0] - 2026-08-27
 
 ### Breaking Changes

@@ -64,6 +64,15 @@ describe("parseAppleMusicUrl", () => {
     assert.equal(p.id, "pl.f4d106fed2bd41149aaacabb233eb5eb");
   });
 
+  it("parses user playlist pl.u-* ids with hyphens", () => {
+    const p = parseAppleMusicUrl(
+      "https://music.apple.com/au/playlist/26-vibes/pl.u-jV89bRVCD84B0y2",
+    );
+    assert.equal(p.kind, "playlist");
+    assert.equal(p.id, "pl.u-jV89bRVCD84B0y2");
+    assert.equal(p.storefront, "au");
+  });
+
   it("parses /song/ paths", () => {
     const p = parseAppleMusicUrl("https://music.apple.com/us/song/better-together/1440857881");
     assert.equal(p.kind, "song");
