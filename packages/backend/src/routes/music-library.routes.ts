@@ -24,7 +24,26 @@ import rateLimit from 'express-rate-limit';
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.webm'];
 /** Cap Apple Music → YouTube matches for library info / import previews. */
-const APPLE_MUSIC_INFO_CAP = 25;
+const APPLE_MUSIC_INFO_CAP = 15;
+/** Parallel yt-dlp searches so Load does not time out on large playlists. */
+const APPLE_MUSIC_YT_CONCURRENCY = 5;
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 async function resolveAppleMusicAsYouTubeInfo(url: string): Promise<{
   type: 'video' | 'playlist';
@@ -41,28 +60,39 @@ async function resolveAppleMusicAsYouTubeInfo(url: string): Promise<{
     throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
   }
 
-  const items: Array<{ id: string; title: string; artist: string; duration: number; thumbnail: string }> = [];
-  for (const track of am.tracks.slice(0, APPLE_MUSIC_INFO_CAP)) {
+  const tracks = am.tracks.slice(0, APPLE_MUSIC_INFO_CAP);
+  console.log(
+    `[MusicLibrary] Apple Music “${am.title || 'playlist'}”: ${am.tracks.length} tracks — matching first ${tracks.length} on YouTube (concurrency ${APPLE_MUSIC_YT_CONCURRENCY})`,
+  );
+
+  const matched = await mapPool(tracks, APPLE_MUSIC_YT_CONCURRENCY, async (track) => {
     try {
       const ytUrl = await appleMusicTrackToYouTubeUrl(track);
-      if (!ytUrl) continue;
+      if (!ytUrl) return null;
       const videoId = parseYouTubeUrl(ytUrl).videoId;
-      if (!videoId) continue;
-      items.push({
+      if (!videoId) return null;
+      return {
         id: videoId,
         title: track.title,
         artist: track.artist || 'Unknown',
         duration: 0,
         thumbnail: '',
-      });
+      };
     } catch {
-      /* skip failed YouTube matches */
+      return null;
     }
-  }
+  });
+
+  const items = matched.filter(
+    (item): item is { id: string; title: string; artist: string; duration: number; thumbnail: string } =>
+      item != null,
+  );
 
   if (!items.length) {
     throw new AppError(502, 'No YouTube matches found for that Apple Music URL');
   }
+
+  console.log(`[MusicLibrary] Apple Music match complete: ${items.length}/${tracks.length} YouTube hits`);
 
   return {
     type: items.length > 1 ? 'playlist' : 'video',
@@ -444,14 +474,18 @@ musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Requ
 musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, next) => {
   try {
     const { url } = req.body;
-    if (!url) throw new AppError(400, 'url is required');
-    if (isAppleMusicShareUrl(url)) {
-      const info = await resolveAppleMusicAsYouTubeInfo(url);
+    if (!url || typeof url !== 'string') throw new AppError(400, 'url is required');
+    const trimmed = url.trim();
+    if (isAppleMusicShareUrl(trimmed)) {
+      const info = await resolveAppleMusicAsYouTubeInfo(trimmed);
       return res.json(info);
     }
-    const info = await getYouTubeUrlInfo(url);
+    const info = await getYouTubeUrlInfo(trimmed);
     res.json(info);
-  } catch (err) { next(err); }
+  } catch (err: any) {
+    if (err instanceof AppError) return next(err);
+    next(new AppError(502, err?.message || 'Failed to load URL info'));
+  }
 });
 
 // POST /youtube/import-playlist — Start background YouTube playlist import
