@@ -13,7 +13,7 @@ import {
 } from '@/hooks/use-music-bots';
 import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
 import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
-import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useAddPlaylistToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
+import { usePlaylists, usePlaylist, useCreatePlaylist, useUpdatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useAddPlaylistToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -342,13 +342,15 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
 
 // ─── Play Song Dialog ─────────────────────────────────────────────────────────
 
-function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLoadPlaylist }: {
+function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLoadPlaylist, mode = 'play' }: {
   botId: number | null;
   onClose: () => void;
   onPlaySong: (songId: number) => void;
   onPlayUrl: (url: string) => void;
   onEnqueue: (songId: number) => void;
   onLoadPlaylist: (playlistId: number) => void;
+  /** play = Bots tab (play/queue/load); queue = Queue tab (enqueue / append only). */
+  mode?: 'play' | 'queue';
 }) {
   const { selectedConfigId } = useServerStore();
   const { data: servers } = useServers();
@@ -359,7 +361,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
   const { data: history = [] } = useQuery({
     queryKey: ['music-requests', configId],
     queryFn: () => musicRequestsApi.list(configId!),
-    enabled: !!configId,
+    enabled: !!configId && mode === 'play',
   });
   const [tab, setTab] = useState<'songs' | 'playlists' | 'history'>('songs');
   const [filter, setFilter] = useState('');
@@ -367,6 +369,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
   const serverList = Array.isArray(servers) ? servers : [];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
   const playlistList = (Array.isArray(playlists) ? playlists : []) as PlaylistSummary[];
+  const isQueueMode = mode === 'queue';
 
   const filtered = filter
     ? songList.filter((s) => s.title.toLowerCase().includes(filter.toLowerCase()) || (s.artist || '').toLowerCase().includes(filter.toLowerCase()))
@@ -376,8 +379,12 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
     <Dialog open={botId !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
         <DialogHeader>
-          <DialogTitle>Play Music</DialogTitle>
-          <DialogDescription>Select a song or playlist to play on this bot.</DialogDescription>
+          <DialogTitle>{isQueueMode ? 'Add to Queue' : 'Play Music'}</DialogTitle>
+          <DialogDescription>
+            {isQueueMode
+              ? 'Select a song or playlist to append to this bot\'s queue.'
+              : 'Select a song or playlist to play on this bot.'}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="flex items-center gap-2 mb-2">
@@ -391,11 +398,13 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
           >
             <ListMusic className="h-3 w-3 mr-1" /> Playlists
           </Button>
-          <Button variant={tab === 'history' ? 'default' : 'outline'} size="sm" className="h-7 text-xs"
-            onClick={() => setTab('history')}
-          >
-            <Clock className="h-3 w-3 mr-1" /> History
-          </Button>
+          {!isQueueMode && (
+            <Button variant={tab === 'history' ? 'default' : 'outline'} size="sm" className="h-7 text-xs"
+              onClick={() => setTab('history')}
+            >
+              <Clock className="h-3 w-3 mr-1" /> History
+            </Button>
+          )}
           <div className="flex-1" />
           {tab === 'songs' && (
             <Select value={String(configId || '')} onValueChange={(v) => setServerId(parseInt(v))}>
@@ -428,12 +437,14 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
                   </div>
                   <span className="text-[10px] text-muted-foreground shrink-0">{formatTime(song.duration)}</span>
                   <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Button variant="default" size="sm" className="h-6 text-[10px] px-2"
-                      onClick={() => onPlaySong(song.id)}
-                    >
-                      <Play className="h-3 w-3 mr-0.5" /> Play
-                    </Button>
-                    <Button variant="outline" size="sm" className="h-6 text-[10px] px-2"
+                    {!isQueueMode && (
+                      <Button variant="default" size="sm" className="h-6 text-[10px] px-2"
+                        onClick={() => onPlaySong(song.id)}
+                      >
+                        <Play className="h-3 w-3 mr-0.5" /> Play
+                      </Button>
+                    )}
+                    <Button variant={isQueueMode ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2"
                       onClick={() => onEnqueue(song.id)}
                     >
                       <Plus className="h-3 w-3 mr-0.5" /> Queue
@@ -459,14 +470,18 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
                 <Button variant="default" size="sm" className="h-6 text-[10px] px-2 opacity-0 group-hover:opacity-100 transition-opacity"
                   onClick={() => onLoadPlaylist(pl.id)}
                 >
-                  <Play className="h-3 w-3 mr-0.5" /> Load & Play
+                  {isQueueMode ? (
+                    <><Plus className="h-3 w-3 mr-0.5" /> Add to queue</>
+                  ) : (
+                    <><Play className="h-3 w-3 mr-0.5" /> Load & Play</>
+                  )}
                 </Button>
               </div>
             ))}
           </div>
         )}
 
-        {tab === 'history' && (
+        {!isQueueMode && tab === 'history' && (
           <div className="flex-1 max-h-[400px] overflow-y-auto">
             {history.length === 0 ? (
               <p className="text-xs text-muted-foreground text-center py-8">No music requests found. Use !play in chat to build history.</p>
@@ -1148,13 +1163,19 @@ function LibraryTab() {
 // ─── Playlists Tab ───────────────────────────────────────────────────────────
 
 function PlaylistsTab() {
+  const qc = useQueryClient();
   const { selectedConfigId } = useServerStore();
   const { data, isLoading } = usePlaylists();
   const createPlaylist = useCreatePlaylist();
+  const updatePlaylist = useUpdatePlaylist();
   const deletePlaylist = useDeletePlaylist();
   const addSong = useAddSongToPlaylist();
   const addFromPlaylist = useAddPlaylistToPlaylist();
   const removeSong = useRemoveSongFromPlaylist();
+  const ytInfo = useYouTubeInfo();
+  const ytDownload = useYouTubeDownload();
+  const ytBatchDownload = useYouTubeDownloadBatch();
+  const ytImportPlaylist = useYouTubeImportPlaylist();
 
   const { data: songs } = useSongs(selectedConfigId);
 
@@ -1164,15 +1185,25 @@ function PlaylistsTab() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showAddSong, setShowAddSong] = useState(false);
-  const [addTab, setAddTab] = useState<'songs' | 'playlists'>('songs');
+  const [addTab, setAddTab] = useState<'songs' | 'playlists' | 'url'>('songs');
   const [songFilter, setSongFilter] = useState('');
+  const [showEdit, setShowEdit] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editMode, setEditMode] = useState<PlaylistMode>('local');
+  const [addYtUrl, setAddYtUrl] = useState('');
+  const [addUrlInfo, setAddUrlInfo] = useState<any>(null);
+  const [addSelectedUrlIds, setAddSelectedUrlIds] = useState<Set<string>>(new Set());
+  const [addBatchProgress, setAddBatchProgress] = useState<string | null>(null);
+  const [addImportJobId, setAddImportJobId] = useState<string | null>(null);
 
   const { data: detail } = usePlaylist(selectedId) as { data: PlaylistDetail | undefined };
+  const { data: addImportJob } = useYouTubeImportStatus(selectedConfigId, addImportJobId);
 
   const playlists = (Array.isArray(data) ? data : []) as PlaylistSummary[];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
   const playlistMode: PlaylistMode = detail?.mode === 'stream' ? 'stream' : 'local';
   const playlistSongIds = new Set((detail?.songs || []).map((s: any) => s.id));
+  const isYtLinked = !!detail?.youtubePlaylistId;
 
   const songMatchesMode = (source: string) =>
     playlistMode === 'local' ? source === 'local' : source === 'youtube' || source === 'url';
@@ -1188,6 +1219,14 @@ function PlaylistsTab() {
 
   const otherPlaylists = playlists.filter((pl) => pl.id !== selectedId);
 
+  const resetAddUrlState = () => {
+    setAddYtUrl('');
+    setAddUrlInfo(null);
+    setAddSelectedUrlIds(new Set());
+    setAddBatchProgress(null);
+    setAddImportJobId(null);
+  };
+
   const handleCreate = () => {
     createPlaylist.mutate(
       { name: newName, mode: newMode },
@@ -1202,6 +1241,154 @@ function PlaylistsTab() {
       },
     );
   };
+
+  const openEdit = () => {
+    if (!detail) return;
+    setEditName(detail.name);
+    setEditMode(detail.mode === 'stream' ? 'stream' : 'local');
+    setShowEdit(true);
+  };
+
+  const handleEditSave = () => {
+    if (!selectedId || !editName.trim()) return;
+    const modeChanging = editMode !== playlistMode && !isYtLinked;
+    updatePlaylist.mutate(
+      {
+        id: selectedId,
+        data: {
+          name: editName.trim(),
+          ...(isYtLinked ? {} : { mode: editMode }),
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Playlist updated');
+          if (modeChanging && (detail?.songs?.length ?? 0) > 0) {
+            toast.message('Mode changed — remove songs that no longer match the new mode if needed');
+          }
+          setShowEdit(false);
+        },
+        onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to update playlist'),
+      },
+    );
+  };
+
+  const handleAddLoadUrl = () => {
+    if (!addYtUrl.trim() || !selectedConfigId) return;
+    ytInfo.mutate(
+      { configId: selectedConfigId, url: addYtUrl.trim() },
+      {
+        onSuccess: (data: any) => {
+          setAddUrlInfo(data);
+          if (data.type === 'playlist') {
+            setAddSelectedUrlIds(new Set(data.items.map((i: any) => i.id)));
+          }
+        },
+        onError: () => toast.error('Failed to load URL info'),
+      },
+    );
+  };
+
+  const toggleAddUrlSelect = (id: string) => {
+    setAddSelectedUrlIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleAddSingleDownload = (url: string) => {
+    if (!selectedConfigId || !selectedId) return;
+    ytDownload.mutate(
+      { configId: selectedConfigId, url },
+      {
+        onSuccess: (song: any) => {
+          addSong.mutate(
+            { playlistId: selectedId, songId: song.id },
+            {
+              onSuccess: () => toast.success('Added to playlist'),
+              onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to add song'),
+            },
+          );
+          setAddUrlInfo(null);
+          setAddYtUrl('');
+        },
+        onError: () => toast.error('Download failed'),
+      },
+    );
+  };
+
+  const handleAddBatchDownload = () => {
+    if (!selectedConfigId || !selectedId || !addUrlInfo) return;
+    const ids = Array.from(addSelectedUrlIds);
+    const urls = ids.map((id) => `https://youtube.com/watch?v=${id}`);
+    setAddBatchProgress(`Downloading 0/${urls.length}...`);
+    ytBatchDownload.mutate(
+      { configId: selectedConfigId, urls },
+      {
+        onSuccess: async (data: any) => {
+          setAddBatchProgress(null);
+          const results = Array.isArray(data?.results) ? data.results : [];
+          let added = 0;
+          for (const song of results) {
+            if (!song?.id || playlistSongIds.has(song.id)) continue;
+            try {
+              await addSong.mutateAsync({ playlistId: selectedId, songId: song.id });
+              added++;
+            } catch {
+              // skip duplicates / mode mismatches
+            }
+          }
+          toast.success(
+            added > 0
+              ? `Added ${added} song${added === 1 ? '' : 's'} from URL`
+              : `Downloaded ${data.downloaded ?? 0}/${data.total ?? 0} — nothing new to add`,
+          );
+          if (data.errors?.length) toast.error(`${data.errors.length} failed`);
+          resetAddUrlState();
+        },
+        onError: () => {
+          setAddBatchProgress(null);
+          toast.error('Batch download failed');
+        },
+      },
+    );
+  };
+
+  const handleAddImportPlaylist = (reimport = false) => {
+    if (!selectedConfigId || !selectedId || !addYtUrl.trim()) return;
+    ytImportPlaylist.mutate(
+      {
+        configId: selectedConfigId,
+        url: addYtUrl.trim(),
+        playlistId: selectedId,
+        reimport,
+      },
+      {
+        onSuccess: (data: any) => {
+          setAddImportJobId(data.jobId);
+          toast.success('Playlist import started');
+        },
+        onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to start playlist import'),
+      },
+    );
+  };
+
+  useEffect(() => {
+    if (addImportJob?.status === 'completed') {
+      toast.success(
+        `Import complete: ${addImportJob.downloaded} downloaded, ${addImportJob.skipped} skipped`,
+      );
+      qc.invalidateQueries({ queryKey: ['songs', selectedConfigId] });
+      qc.invalidateQueries({ queryKey: ['playlist', selectedId] });
+      qc.invalidateQueries({ queryKey: ['playlists'] });
+      resetAddUrlState();
+    } else if (addImportJob?.status === 'failed') {
+      toast.error(addImportJob.errors?.[0] || 'Playlist import failed');
+      setAddImportJobId(null);
+    }
+  }, [addImportJob?.status, selectedConfigId, selectedId, qc, addImportJob]);
 
   if (isLoading) return <PageLoader />;
 
@@ -1284,18 +1471,24 @@ function PlaylistsTab() {
                       : 'Stream only — YouTube / URL tracks'}
                   </p>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-7 text-xs shrink-0"
-                  onClick={() => {
-                    setAddTab('songs');
-                    setSongFilter('');
-                    setShowAddSong(true);
-                  }}
-                >
-                  <Plus className="h-3 w-3 mr-1" /> Add Songs
-                </Button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={openEdit}>
+                    <Pencil className="h-3 w-3 mr-1" /> Edit
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-7 text-xs"
+                    onClick={() => {
+                      setAddTab(playlistMode === 'stream' ? 'url' : 'songs');
+                      setSongFilter('');
+                      resetAddUrlState();
+                      setShowAddSong(true);
+                    }}
+                  >
+                    <Plus className="h-3 w-3 mr-1" /> Add Songs
+                  </Button>
+                </div>
               </div>
             </CardHeader>
             <CardContent className="p-0">
@@ -1389,6 +1582,60 @@ function PlaylistsTab() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={showEdit} onOpenChange={setShowEdit}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Playlist</DialogTitle>
+            <DialogDescription>
+              Rename this playlist or change whether it holds local or stream tracks.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Name</Label>
+              <Input
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                placeholder="My Playlist"
+                onKeyDown={(e) => e.key === 'Enter' && editName.trim() && handleEditSave()}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Mode</Label>
+              <Select
+                value={editMode}
+                onValueChange={(v) => setEditMode(v as PlaylistMode)}
+                disabled={isYtLinked}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">Local only</SelectItem>
+                  <SelectItem value="stream">Stream only</SelectItem>
+                </SelectContent>
+              </Select>
+              {isYtLinked && (
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  YouTube-imported playlists stay in stream mode.
+                </p>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEdit(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleEditSave}
+              disabled={!editName.trim() || updatePlaylist.isPending}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog
         open={showAddSong}
         onOpenChange={(open) => {
@@ -1396,6 +1643,7 @@ function PlaylistsTab() {
           if (!open) {
             setSongFilter('');
             setAddTab('songs');
+            resetAddUrlState();
           }
         }}
       >
@@ -1405,11 +1653,11 @@ function PlaylistsTab() {
             <DialogDescription>
               {playlistMode === 'local'
                 ? 'Add local library songs, or copy matching songs from another playlist.'
-                : 'Add YouTube / URL tracks, or copy matching songs from another playlist.'}
+                : 'Add via YouTube URL, pick stream library tracks, or copy from another playlist.'}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant={addTab === 'songs' ? 'default' : 'outline'}
               size="sm"
@@ -1426,6 +1674,16 @@ function PlaylistsTab() {
             >
               <ListMusic className="h-3 w-3 mr-1" /> From playlist
             </Button>
+            {playlistMode === 'stream' && (
+              <Button
+                variant={addTab === 'url' ? 'default' : 'outline'}
+                size="sm"
+                className="h-7 text-xs"
+                onClick={() => setAddTab('url')}
+              >
+                <Link className="h-3 w-3 mr-1" /> URL
+              </Button>
+            )}
           </div>
 
           {addTab === 'songs' ? (
@@ -1478,7 +1736,7 @@ function PlaylistsTab() {
                 )}
               </ScrollArea>
             </>
-          ) : (
+          ) : addTab === 'playlists' ? (
             <ScrollArea className="max-h-72">
               {otherPlaylists.length === 0 ? (
                 <p className="text-xs text-muted-foreground text-center py-8">
@@ -1526,6 +1784,171 @@ function PlaylistsTab() {
                 ))
               )}
             </ScrollArea>
+          ) : (
+            <div className="space-y-3">
+              {!selectedConfigId ? (
+                <p className="text-xs text-muted-foreground text-center py-6">
+                  Select a server in the sidebar to import from YouTube.
+                </p>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="relative flex-1">
+                      <Link className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        value={addYtUrl}
+                        onChange={(e) => setAddYtUrl(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleAddLoadUrl()}
+                        placeholder="Paste YouTube URL or Playlist URL..."
+                        className="pl-9"
+                      />
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleAddLoadUrl}
+                      disabled={ytInfo.isPending || !addYtUrl.trim()}
+                    >
+                      {ytInfo.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Youtube className="h-4 w-4 mr-1" />
+                      )}
+                      Load
+                    </Button>
+                  </div>
+
+                  {addUrlInfo && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <Badge variant="secondary" className="text-xs">
+                          {addUrlInfo.type === 'playlist'
+                            ? `Playlist (${addUrlInfo.items.length} videos)`
+                            : 'Single Video'}
+                        </Badge>
+                        {addUrlInfo.type === 'playlist' && (
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-[10px]"
+                              onClick={() =>
+                                setAddSelectedUrlIds(new Set(addUrlInfo.items.map((i: any) => i.id)))
+                              }
+                            >
+                              Select All
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-[10px]"
+                              onClick={() => setAddSelectedUrlIds(new Set())}
+                            >
+                              Deselect All
+                            </Button>
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={handleAddBatchDownload}
+                              disabled={addSelectedUrlIds.size === 0 || ytBatchDownload.isPending}
+                            >
+                              {ytBatchDownload.isPending ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />{' '}
+                                  {addBatchProgress || 'Downloading...'}
+                                </>
+                              ) : (
+                                <>
+                                  <Download className="h-3 w-3 mr-1" /> Add {addSelectedUrlIds.size}{' '}
+                                  Selected
+                                </>
+                              )}
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="h-7 text-xs"
+                              onClick={() => handleAddImportPlaylist(false)}
+                              disabled={ytImportPlaylist.isPending || !!addImportJobId}
+                            >
+                              {addImportJobId ? (
+                                <>
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" /> Importing{' '}
+                                  {addImportJob?.processed ?? 0}/{addImportJob?.total ?? '?'}
+                                </>
+                              ) : (
+                                <>
+                                  <ListMusic className="h-3 w-3 mr-1" /> Import all
+                                </>
+                              )}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                      <ScrollArea className="max-h-60">
+                        {addUrlInfo.items.map((item: any) => (
+                          <div
+                            key={item.id}
+                            className={`flex items-center gap-3 px-2 py-1.5 rounded transition-colors ${
+                              addUrlInfo.type === 'playlist'
+                                ? `cursor-pointer ${addSelectedUrlIds.has(item.id) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
+                                : 'hover:bg-muted/50'
+                            }`}
+                            onClick={() =>
+                              addUrlInfo.type === 'playlist' && toggleAddUrlSelect(item.id)
+                            }
+                          >
+                            {addUrlInfo.type === 'playlist' && (
+                              <input
+                                type="checkbox"
+                                checked={addSelectedUrlIds.has(item.id)}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => toggleAddUrlSelect(item.id)}
+                                className="shrink-0 accent-primary"
+                              />
+                            )}
+                            {item.thumbnail && (
+                              <img
+                                src={item.thumbnail}
+                                alt=""
+                                className="h-8 w-12 rounded object-cover shrink-0"
+                              />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium truncate">{item.title}</p>
+                              <p className="text-[10px] text-muted-foreground">
+                                {item.artist} - {formatTime(item.duration)}
+                              </p>
+                            </div>
+                            {addUrlInfo.type === 'video' && (
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className="h-7 text-xs shrink-0"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleAddSingleDownload(`https://youtube.com/watch?v=${item.id}`);
+                                }}
+                                disabled={ytDownload.isPending}
+                              >
+                                {ytDownload.isPending ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <>
+                                    <Plus className="h-3 w-3 mr-1" /> Add
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </ScrollArea>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           )}
 
           <DialogFooter>
@@ -1534,6 +1957,7 @@ function PlaylistsTab() {
               onClick={() => {
                 setShowAddSong(false);
                 setSongFilter('');
+                resetAddUrlState();
               }}
             >
               Done
@@ -1687,9 +2111,8 @@ function CommandsTab() {
 
       <p className="text-xs text-muted-foreground">
         Users type <code className="text-[11px]">!help</code> in the music bot&apos;s channel chat for built-in
-        commands. Custom commands below reply with your text (same channel / private reply as other bot
-        commands). Names cannot override built-ins like <code className="text-[11px]">play</code> or{' '}
-        <code className="text-[11px]">help</code>.
+        commands. Custom commands below reply with your text in the same channel chat. Names cannot override
+        built-ins like <code className="text-[11px]">play</code> or <code className="text-[11px]">help</code>.
       </p>
 
       {isLoading ? (
@@ -2202,11 +2625,14 @@ function VideoTab() {
 function QueueTab() {
   const { data: bots } = useMusicBots();
   const [selectedBot, setSelectedBot] = useState<number | null>(null);
+  const [showAddDialog, setShowAddDialog] = useState(false);
   const { data: state } = useMusicBotState(selectedBot);
   const removeFromQueue = useRemoveFromQueue();
   const clearQueue = useClearQueue();
   const playFromQueue = usePlayFromQueue();
   const moveQueueItem = useMoveQueueItem();
+  const enqueueSong = useEnqueue();
+  const loadPlaylist = useLoadPlaylist();
 
   const botList = Array.isArray(bots) ? bots : [];
   const queue: any[] = state?.queue ?? [];
@@ -2233,20 +2659,35 @@ function QueueTab() {
             ))}
           </SelectContent>
         </Select>
-        {queue.length > 0 && (
-          <div className="flex items-center gap-2 ml-auto">
+        <div className="flex items-center gap-2 ml-auto">
+          {queue.length > 0 && (
             <Badge variant="secondary" className="text-[10px]">{queue.length} tracks</Badge>
+          )}
+          {selectedBot && (
+            <Button variant="default" size="sm" className="h-7 text-xs" onClick={() => setShowAddDialog(true)}>
+              <Plus className="h-3 w-3 mr-1" /> Add to queue
+            </Button>
+          )}
+          {queue.length > 0 && (
             <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => selectedBot && clearQueue.mutate(selectedBot)}>
               <Trash2 className="h-3 w-3 mr-1" /> Clear
             </Button>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
       {!selectedBot ? (
         <EmptyState icon={Music} title="Select a bot to manage its queue" />
       ) : queue.length === 0 ? (
-        <EmptyState icon={ListMusic} title="Queue is empty" />
+        <EmptyState
+          icon={ListMusic}
+          title="Queue is empty"
+          description="Add songs or playlists to this bot's queue."
+        >
+          <Button size="sm" onClick={() => setShowAddDialog(true)}>
+            <Plus className="h-3 w-3 mr-1" /> Add to queue
+          </Button>
+        </EmptyState>
       ) : (
         <Card>
           <CardContent className="p-0">
@@ -2322,6 +2763,37 @@ function QueueTab() {
           </CardContent>
         </Card>
       )}
+
+      <PlaySongDialog
+        botId={showAddDialog && selectedBot ? selectedBot : null}
+        mode="queue"
+        onClose={() => setShowAddDialog(false)}
+        onPlaySong={() => {}}
+        onPlayUrl={() => {}}
+        onEnqueue={(songId) => {
+          if (!selectedBot) return;
+          enqueueSong.mutate(
+            { botId: selectedBot, songId },
+            {
+              onSuccess: () => toast.success('Added to queue'),
+              onError: () => toast.error('Failed to enqueue'),
+            },
+          );
+        }}
+        onLoadPlaylist={(playlistId) => {
+          if (!selectedBot) return;
+          loadPlaylist.mutate(
+            { botId: selectedBot, playlistId, clearFirst: false },
+            {
+              onSuccess: () => {
+                toast.success('Playlist added to queue');
+                setShowAddDialog(false);
+              },
+              onError: () => toast.error('Failed to add playlist'),
+            },
+          );
+        }}
+      />
     </div>
   );
 }

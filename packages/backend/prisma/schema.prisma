@@ -220,7 +220,7 @@ model ChatCommand {
   serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
   /// Command name without leading "!"; stored lowercase.
   name           String
-  /// Reply text sent as a private chat message when the command is used.
+  /// Reply text sent to the music bot's channel chat when the command is used.
   response       String
   /// Optional short blurb shown in !help.
   description    String?
