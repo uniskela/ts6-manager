@@ -128,7 +128,8 @@ musicLibraryRoutes.get('/songs', async (req: Request, res: Response, next) => {
 });
 
 // POST /scan — Import audio files already present under MUSIC_DIR
-musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {  try {
+musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
+  try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
 
