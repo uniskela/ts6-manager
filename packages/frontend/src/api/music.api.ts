@@ -95,16 +95,36 @@ export const radioStationsApi = {
     api.post(`/servers/${configId}/radio-stations/reset-ids`).then((r) => r.data),
 };
 
+// === Custom chat commands (!name → reply) ===
+
+export const chatCommandsApi = {
+  list: (configId: number) => api.get(`/servers/${configId}/chat-commands`).then((r) => r.data),
+  create: (
+    configId: number,
+    data: { name: string; response: string; description?: string; enabled?: boolean },
+  ) => api.post(`/servers/${configId}/chat-commands`, data).then((r) => r.data),
+  update: (
+    configId: number,
+    id: number,
+    data: { name?: string; response?: string; description?: string | null; enabled?: boolean },
+  ) => api.put(`/servers/${configId}/chat-commands/${id}`, data).then((r) => r.data),
+  delete: (configId: number, id: number) =>
+    api.delete(`/servers/${configId}/chat-commands/${id}`).then((r) => r.data),
+};
+
 // === Playlist API ===
 
 export const playlistsApi = {
   list: (musicBotId?: number) =>
     api.get('/playlists', { params: musicBotId ? { musicBotId } : undefined }).then((r) => r.data),
   get: (id: number) => api.get(`/playlists/${id}`).then((r) => r.data),
-  create: (data: { name: string; musicBotId?: number }) => api.post('/playlists', data).then((r) => r.data),
+  create: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream' }) =>
+    api.post('/playlists', data).then((r) => r.data),
   update: (id: number, data: any) => api.put(`/playlists/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/playlists/${id}`),
   addSong: (id: number, songId: number) => api.post(`/playlists/${id}/songs`, { songId }).then((r) => r.data),
+  addFromPlaylist: (id: number, sourcePlaylistId: number) =>
+    api.post(`/playlists/${id}/songs/from-playlist`, { sourcePlaylistId }).then((r) => r.data),
   removeSong: (id: number, songId: number) => api.delete(`/playlists/${id}/songs/${songId}`).then((r) => r.data),
   reorder: (id: number, songIds: number[]) => api.put(`/playlists/${id}/songs/reorder`, { songIds }).then((r) => r.data),
 };

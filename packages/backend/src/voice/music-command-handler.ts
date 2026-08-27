@@ -9,6 +9,13 @@ import {
   isYouTubeHostUrl,
   parseYouTubeUrl,
 } from './audio/youtube.js';
+import {
+  appleMusicTrackToYouTubeUrl,
+  isAppleMusicShareUrl,
+  resolveAppleMusicTracks,
+  type AppleMusicTrack,
+} from './audio/apple-music.js';
+import { BUILTIN_COMMAND_HELP, BUILTIN_CHAT_COMMANDS } from './chat-commands.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
@@ -21,11 +28,24 @@ function invalidateChatPlaylistExpansion(botId: number): void {
   chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
 }
 
-const MUSIC_COMMANDS = new Set([
-  'radio', 'play', 'stop', 'pause', 'skip', 'next', 'prev',
-  'vol', 'volume', 'np', 'nowplaying', 'queue', 'add',
-  'stream', 'stopstream', 'viewers',
-]);
+const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
+
+/** Per bot+user cooldown for !help / custom replies (ms). */
+const CHAT_REPLY_COOLDOWN_MS = 2500;
+const chatReplyCooldownUntil = new Map<string, number>();
+
+function chatReplyCooldownKey(botId: number, clid: number): string {
+  return `${botId}:${clid}`;
+}
+
+function isChatReplyCoolingDown(botId: number, clid: number): boolean {
+  const until = chatReplyCooldownUntil.get(chatReplyCooldownKey(botId, clid)) ?? 0;
+  return Date.now() < until;
+}
+
+function markChatReplyCooldown(botId: number, clid: number): void {
+  chatReplyCooldownUntil.set(chatReplyCooldownKey(botId, clid), Date.now() + CHAT_REPLY_COOLDOWN_MS);
+}
 
 function isSpotifyShareUrl(url: string): boolean {
   try {
@@ -82,8 +102,6 @@ export class MusicCommandHandler {
 
     const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
     const command = parts[0].toLowerCase();
-    if (!MUSIC_COMMANDS.has(command)) return;
-
     const rawArgs = parts.slice(1).join(' ').trim();
     const userClid = parseInt(data.invokerid || '0');
     if (!userClid) return;
@@ -96,55 +114,122 @@ export class MusicCommandHandler {
     // Ignore messages from ourselves (the bot)
     if (userClid === bot.ts3ClientId) return;
 
-    console.log(`[MusicCmd] Bot ${botId}: !${command} ${args} (from clid=${userClid})`);
-
-    try {
-      switch (command) {
-        case 'radio':
-          await this.handleRadio(botId, bot, userClid, args);
-          break;
-        case 'play':
-          await this.handlePlay(bot, userClid, args);
-          break;
-        case 'stop':
-          this.handleStop(bot, userClid);
-          break;
-        case 'pause':
-          this.handlePause(bot, userClid);
-          break;
-        case 'skip':
-        case 'next':
-          await this.handleSkip(bot, userClid);
-          break;
-        case 'prev':
-          await this.handlePrev(bot, userClid);
-          break;
-        case 'vol':
-        case 'volume':
-          this.handleVolume(bot, userClid, args);
-          break;
-        case 'np':
-        case 'nowplaying':
-          this.handleNowPlaying(bot, userClid);
-          break;
-        case 'queue':
-        case 'add':
-          await this.handleQueue(bot, userClid, args);
-          break;
-        case 'stream':
-          await this.handleStream(bot, userClid, args);
-          break;
-        case 'stopstream':
-          await this.handleStopStream(bot, userClid);
-          break;
-        case 'viewers':
-          this.handleViewers(bot, userClid);
-          break;
+    // Built-in commands
+    if (MUSIC_COMMANDS.has(command)) {
+      console.log(`[MusicCmd] Bot ${botId}: !${command} ${args} (from clid=${userClid})`);
+      try {
+        switch (command) {
+          case 'help':
+            await this.handleHelp(botId, bot, userClid);
+            break;
+          case 'radio':
+            await this.handleRadio(botId, bot, userClid, args);
+            break;
+          case 'play':
+            await this.handlePlay(bot, userClid, args);
+            break;
+          case 'stop':
+            this.handleStop(bot, userClid);
+            break;
+          case 'pause':
+            this.handlePause(bot, userClid);
+            break;
+          case 'skip':
+          case 'next':
+            await this.handleSkip(bot, userClid);
+            break;
+          case 'prev':
+            await this.handlePrev(bot, userClid);
+            break;
+          case 'vol':
+          case 'volume':
+            this.handleVolume(bot, userClid, args);
+            break;
+          case 'np':
+          case 'nowplaying':
+            this.handleNowPlaying(bot, userClid);
+            break;
+          case 'queue':
+          case 'add':
+            await this.handleQueue(bot, userClid, args);
+            break;
+          case 'stream':
+            await this.handleStream(bot, userClid, args);
+            break;
+          case 'stopstream':
+            await this.handleStopStream(bot, userClid);
+            break;
+          case 'viewers':
+            this.handleViewers(bot, userClid);
+            break;
+        }
+      } catch (err: any) {
+        console.error(`[MusicCmd] Error handling !${command}: ${err.message}`);
+        this.reply(bot, userClid, `Error: ${err.message}`);
       }
-    } catch (err: any) {
-      console.error(`[MusicCmd] Error handling !${command}: ${err.message}`);
-      this.reply(bot, userClid, `Error: ${err.message}`);
+      return;
     }
+
+    // Admin-defined custom commands for this bot's server
+    await this.handleCustomCommand(botId, bot, userClid, command);
+  }
+
+  private async handleHelp(botId: number, bot: VoiceBot, userClid: number): Promise<void> {
+    if (isChatReplyCoolingDown(botId, userClid)) return;
+    markChatReplyCooldown(botId, userClid);
+
+    const lines: string[] = ['Music bot commands:'];
+    for (const entry of BUILTIN_COMMAND_HELP) {
+      lines.push(`  ${entry.usage} — ${entry.blurb}`);
+    }
+
+    const dbBot = await this.prisma.musicBot.findUnique({
+      where: { id: botId },
+      select: { serverConfigId: true },
+    });
+    if (dbBot) {
+      const custom = await this.prisma.chatCommand.findMany({
+        where: { serverConfigId: dbBot.serverConfigId, enabled: true },
+        orderBy: { name: 'asc' },
+        select: { name: true, description: true },
+      });
+      if (custom.length > 0) {
+        lines.push('');
+        lines.push('Custom commands:');
+        for (const c of custom) {
+          const blurb = c.description?.trim() || 'Custom reply';
+          lines.push(`  !${c.name} — ${blurb}`);
+        }
+      }
+    }
+
+    this.reply(bot, userClid, lines.join('\n'));
+  }
+
+  private async handleCustomCommand(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    command: string,
+  ): Promise<void> {
+    if (isChatReplyCoolingDown(botId, userClid)) return;
+
+    const dbBot = await this.prisma.musicBot.findUnique({
+      where: { id: botId },
+      select: { serverConfigId: true },
+    });
+    if (!dbBot) return;
+
+    const custom = await this.prisma.chatCommand.findUnique({
+      where: {
+        serverConfigId_name: { serverConfigId: dbBot.serverConfigId, name: command },
+      },
+    });
+    if (!custom || !custom.enabled) return;
+
+    markChatReplyCooldown(botId, userClid);
+    console.log(`[MusicCmd] Bot ${botId}: !${command} (custom, from clid=${userClid})`);
+    this.reply(bot, userClid, custom.response);
   }
 
   private reply(bot: VoiceBot, targetClid: number, msg: string): void {
@@ -215,7 +300,7 @@ export class MusicCommandHandler {
         this.reply(bot, userClid, 'Resumed.');
         return;
       }
-      this.reply(bot, userClid, 'Usage: !play <youtube-url|spotify-url>');
+      this.reply(bot, userClid, 'Usage: !play <youtube-url|spotify-url|apple-music-url>');
       return;
     }
 
@@ -234,7 +319,7 @@ export class MusicCommandHandler {
   }
 
   /**
-   * Resolve Spotify / YouTube Music / playlist URLs, download the first track,
+   * Resolve Spotify / Apple Music / YouTube Music / playlist URLs, download the first track,
    * and queue the rest in the background (same approach as play-url).
    */
   private async enqueueMediaUrl(
@@ -249,7 +334,23 @@ export class MusicCommandHandler {
 
     let urlsToPlay = [mediaUrl];
     let playlistTitle: string | undefined;
-    if (isYouTubeHostUrl(mediaUrl)) {
+    let appleMusicPending: AppleMusicTrack[] = [];
+
+    if (isAppleMusicShareUrl(mediaUrl)) {
+      const am = await resolveAppleMusicTracks(mediaUrl);
+      if (!am.tracks.length) {
+        throw new Error('Could not resolve any tracks from that Apple Music URL');
+      }
+      playlistTitle = am.title;
+      const firstYt = await appleMusicTrackToYouTubeUrl(am.tracks[0]);
+      if (!firstYt) {
+        throw new Error(
+          `No YouTube match for Apple Music track: ${am.tracks[0].artist} - ${am.tracks[0].title}`,
+        );
+      }
+      urlsToPlay = [firstYt];
+      appleMusicPending = am.tracks.slice(1, PLAYLIST_CAP);
+    } else if (isYouTubeHostUrl(mediaUrl)) {
       const parsed = parseYouTubeUrl(mediaUrl);
       try {
         const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
@@ -294,9 +395,10 @@ export class MusicCommandHandler {
     }
 
     const rest = urlsToPlay.slice(1);
+    const pendingTotal = rest.length + appleMusicPending.length;
     const playlistNote =
-      rest.length > 0
-        ? ` (+${rest.length} more from${playlistTitle ? ` "${playlistTitle}"` : ' playlist'})`
+      pendingTotal > 0
+        ? ` (+${pendingTotal} more from${playlistTitle ? ` "${playlistTitle}"` : ' playlist'})`
         : '';
 
     if (alreadyPlaying) {
@@ -309,43 +411,73 @@ export class MusicCommandHandler {
       this.reply(bot, userClid, `Now playing: ${info.artist} - ${info.title}${playlistNote}`);
     }
 
-    if (rest.length === 0) return;
+    if (pendingTotal === 0) return;
 
     const botId = bot.currentConfig.id;
     const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
     chatPlaylistGeneration.set(botId, generation);
 
     void (async () => {
+      const enqueueYt = async (itemUrl: string): Promise<boolean> => {
+        if (chatPlaylistGeneration.get(botId) !== generation) return false;
+        const live = this.voiceBotManager.getBot(botId);
+        if (!live || live.status === 'stopped' || live.status === 'error') return false;
+        const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
+        if (chatPlaylistGeneration.get(botId) !== generation) return false;
+        const stillLive = this.voiceBotManager.getBot(botId);
+        if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') return false;
+
+        const queueItem: QueueItem = {
+          id: `yt_${dl.info.id}`,
+          title: dl.info.title,
+          artist: dl.info.artist,
+          duration: dl.info.duration,
+          filePath: dl.filePath,
+          source: 'youtube',
+          sourceUrl: itemUrl,
+        };
+        stillLive.queue.add(queueItem);
+        this.saveMusicRequest(stillLive, queueItem);
+
+        if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
+          stillLive.queue.playAt(stillLive.queue.length - 1);
+          await stillLive.play(queueItem).catch((err) => {
+            console.error('[MusicCmd] Failed to resume playlist playback:', err);
+          });
+        }
+        return true;
+      };
+
       for (const itemUrl of rest) {
+        try {
+          const ok = await enqueueYt(itemUrl);
+          if (!ok) break;
+        } catch (err) {
+          console.error('[MusicCmd] Failed to queue playlist track %s:', itemUrl, err);
+        }
+      }
+
+      for (const track of appleMusicPending) {
         if (chatPlaylistGeneration.get(botId) !== generation) break;
         try {
-          const live = this.voiceBotManager.getBot(botId);
-          if (!live || live.status === 'stopped' || live.status === 'error') break;
-          const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
-          if (chatPlaylistGeneration.get(botId) !== generation) break;
-          const stillLive = this.voiceBotManager.getBot(botId);
-          if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') break;
-
-          const queueItem: QueueItem = {
-            id: `yt_${dl.info.id}`,
-            title: dl.info.title,
-            artist: dl.info.artist,
-            duration: dl.info.duration,
-            filePath: dl.filePath,
-            source: 'youtube',
-            sourceUrl: itemUrl,
-          };
-          stillLive.queue.add(queueItem);
-          this.saveMusicRequest(stillLive, queueItem);
-
-          if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
-            stillLive.queue.playAt(stillLive.queue.length - 1);
-            await stillLive.play(queueItem).catch((err) => {
-              console.error('[MusicCmd] Failed to resume playlist playback:', err);
-            });
+          const ytUrl = await appleMusicTrackToYouTubeUrl(track);
+          if (!ytUrl) {
+            console.error(
+              '[MusicCmd] No YouTube match for Apple Music track: %s - %s',
+              track.artist,
+              track.title,
+            );
+            continue;
           }
+          const ok = await enqueueYt(ytUrl);
+          if (!ok) break;
         } catch (err) {
-          console.error(`[MusicCmd] Failed to queue playlist track ${itemUrl}:`, err);
+          console.error(
+            '[MusicCmd] Failed to queue Apple Music track %s - %s:',
+            track.artist,
+            track.title,
+            err,
+          );
         }
       }
     })();
