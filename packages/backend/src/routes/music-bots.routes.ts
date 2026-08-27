@@ -679,15 +679,36 @@ musicBotRoutes.put('/:id/queue/move', async (req: Request, res: Response, next) 
 
 // === Video Streaming ===
 
+/** Allow http(s) URLs or a bare MUSIC_DIR filename (no path separators). */
+function assertVideoSource(source: unknown): string {
+  if (typeof source !== 'string' || !source.trim()) {
+    throw new AppError(400, 'source is required');
+  }
+  const trimmed = source.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      // eslint-disable-next-line no-new
+      new URL(trimmed);
+    } catch {
+      throw new AppError(400, 'Invalid video source URL');
+    }
+    return trimmed;
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..') || trimmed.includes('\0')) {
+    throw new AppError(400, 'Local video source must be a filename under the music directory');
+  }
+  return trimmed;
+}
+
 // POST /:id/stream/start — Start video stream
 musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    const { source, preset, framerate, bitrate } = req.body;
-    if (!source) throw new AppError(400, 'source is required');
-    await bot.startVideoStream(source, preset, framerate, bitrate);
+    const { source, preset, framerate, bitrate, volume } = req.body;
+    const safeSource = assertVideoSource(source);
+    await bot.startVideoStream(safeSource, preset, framerate, bitrate, volume);
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });
@@ -709,9 +730,22 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    const { source } = req.body;
-    if (!source) throw new AppError(400, 'source is required');
-    await bot.setVideoSource(source);
+    const { source, volume } = req.body;
+    const safeSource = assertVideoSource(source);
+    await bot.setVideoSource(safeSource, volume);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+// POST /:id/stream/volume — Adjust video stream volume
+musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, next) => {
+  try {
+    const manager: VoiceBotManager = req.app.locals.voiceBotManager;
+    const bot = manager.getBot(parseInt(req.params.id as string));
+    if (!bot) throw new AppError(404, 'Music bot not found');
+    const { volume } = req.body;
+    if (volume == null) throw new AppError(400, 'volume is required');
+    await bot.setVideoStreamVolume(parseInt(volume));
     res.json({ success: true });
   } catch (err) { next(err); }
 });

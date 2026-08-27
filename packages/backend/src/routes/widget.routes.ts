@@ -7,7 +7,7 @@ import { widgetDataCache } from './widget-public.routes.js';
 export const widgetRoutes: Router = Router();
 
 // GET / — List all widgets
-widgetRoutes.get('/', async (req: Request, res: Response, next) => {
+widgetRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const widgets = await prisma.widget.findMany({

@@ -4,6 +4,7 @@ import type { WebQueryClient } from '../ts-client/webquery-client.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { ExecutionContext } from './context.js';
 import type { WebSocketServer } from 'ws';
+import { broadcastScoped } from '../ws/ws-session.js';
 import type {
   FlowDefinition, FlowNode, FlowEdge, NodeData,
   KickActionData, BanActionData, MoveActionData, MessageActionData,
@@ -73,6 +74,7 @@ export class FlowRunner {
       flowId: flow.id,
       executionId: execution.id,
       triggeredBy: triggerType,
+      serverConfigId: flow.serverConfigId,
     });
 
     const startTime = Date.now();
@@ -107,6 +109,7 @@ export class FlowRunner {
         flowId: flow.id,
         executionId: execution.id,
         duration: Date.now() - startTime,
+        serverConfigId: flow.serverConfigId,
       });
     } catch (err: any) {
       await this.log(ctx, null, 'error', `Flow execution failed: ${err.message}`);
@@ -120,6 +123,7 @@ export class FlowRunner {
         flowId: flow.id,
         executionId: execution.id,
         error: err.message,
+        serverConfigId: flow.serverConfigId,
       });
     }
   }
@@ -830,11 +834,8 @@ export class FlowRunner {
   }
 
   private broadcast(type: string, payload: any): void {
-    const msg = JSON.stringify({ type, ...payload });
-    this.wss.clients.forEach(client => {
-      if (client.readyState === 1) { // WebSocket.OPEN
-        client.send(msg);
-      }
+    broadcastScoped(this.wss, type, payload, {
+      serverConfigId: payload.serverConfigId as number | undefined,
     });
   }
 

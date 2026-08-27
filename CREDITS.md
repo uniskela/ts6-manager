@@ -36,6 +36,17 @@ Ideas, bug reports, and patches from the upstream tracker that informed or were 
 | [PR #72](https://github.com/clusterzx/ts6-manager/pull/72) / [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (reliability subset only) | [@coom](https://github.com/coom) | Connection-pool refresh / self-heal ideas (no Discord/SSO/i18n absorption) |
 | [PR #64](https://github.com/clusterzx/ts6-manager/pull/64) | [@joaobosconff](https://github.com/joaobosconff) | All-in-one Docker image (nginx + backend + sidecar) + first-run login → setup redirect |
 
+## Fork contributions
+
+Ideas and patches cherry-picked from active community forks (all MIT-licensed). See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+| Fork | Author | Commits / area | Adopted in uniskela |
+|------|--------|----------------|---------------------|
+| [coom/ts6-manager](https://github.com/coom/ts6-manager) | [@coom](https://github.com/coom) | Auth refresh single-flight, WebQuery boolean fixes, YouTube playlist import, Aug 2026 security review (RBAC, yt-dlp `--`, WebSocket scoping) | Phases 1–2, 4 |
+| [uniplayer1/ts6-manager](https://github.com/uniplayer1/ts6-manager) | [@uniplayer1](https://github.com/uniplayer1) | Auto-stop when channel empty, TS3 2568 not fatal, video download-then-stream, volume slider, max duration UI, bot-flow docs | Phases 1, 3, 5 |
+
+[joshii-h/ts6-manager](https://github.com/joshii-h/ts6-manager) shares the same author line as coom — credit @coom once; SAML/Discord work intentionally not absorbed.
+
 Earlier upstream merges that remain in this tree (already present on `main` before the fork work) also credit community contributors such as [@GingerFury6](https://github.com/GingerFury6), [@LemDog](https://github.com/LemDog), and others via the original git history.
 
 ## Not absorbed (intentionally)
