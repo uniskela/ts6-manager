@@ -14,10 +14,10 @@ dashboardRoutes.get('/', async (req: Request, res: Response, next) => {
     const client = getClient(req);
 
     const [serverInfo, clientList, channelList, connectionInfo] = await Promise.all([
-      client.execute(sid, 'serverinfo'),
-      client.execute(sid, 'clientlist'),
-      client.execute(sid, 'channellist'),
-      client.execute(sid, 'serverrequestconnectioninfo'),
+      client.execute(sid, 'serverinfo', undefined, { priority: 'high' }),
+      client.execute(sid, 'clientlist', undefined, { priority: 'high' }),
+      client.execute(sid, 'channellist', undefined, { priority: 'high' }),
+      client.execute(sid, 'serverrequestconnectioninfo', undefined, { priority: 'high' }),
     ]);
 
     const info = Array.isArray(serverInfo) ? serverInfo[0] : serverInfo;

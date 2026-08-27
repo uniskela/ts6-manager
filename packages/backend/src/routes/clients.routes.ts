@@ -20,7 +20,7 @@ clientRoutes.get('/', async (req: Request, res: Response, next) => {
     if (req.user?.role === 'admin') {
       flags['-ip'] = '';
     }
-    const result = await getClient(req).execute(getSid(req), 'clientlist', flags);
+    const result = await getClient(req).execute(getSid(req), 'clientlist', flags, { priority: 'high' });
     res.json(result);
   } catch (err) { next(err); }
 });

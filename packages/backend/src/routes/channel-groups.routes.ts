@@ -11,7 +11,7 @@ const getClient = (req: Request) => {
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
 channelGroupRoutes.get('/', async (req: Request, res: Response, next) => {
-  try { res.json(await getClient(req).execute(getSid(req), 'channelgrouplist')); } catch (err) { next(err); }
+  try { res.json(await getClient(req).execute(getSid(req), 'channelgrouplist', undefined, { priority: 'high' })); } catch (err) { next(err); }
 });
 
 channelGroupRoutes.post('/', requireRole('admin'), async (req: Request, res: Response, next) => {

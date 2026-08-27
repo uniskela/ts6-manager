@@ -1,56 +1,51 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { isFloodError } from './webquery-client.js';
+import { TSApiError } from '../middleware/error-handler.js';
 
 /**
- * Lightweight unit test of the enqueue serialization pattern used by WebQueryClient.
- * (Avoids spinning a real TS WebQuery server.)
+ * Unit tests for WebQuery queue helpers (priority pick + flood detection).
+ * Full client pump tests need a live TS server; these cover the pure logic.
  */
-describe('WebQuery request queue pattern', () => {
-  it('runs enqueued ops strictly one at a time', async () => {
-    let chain: Promise<void> = Promise.resolve();
-    const enqueue = <T,>(op: () => Promise<T>): Promise<T> => {
-      const run = chain.then(op, op);
-      chain = run.then(
-        () => undefined,
-        () => undefined,
-      );
-      return run;
-    };
 
-    const order: number[] = [];
-    const started: number[] = [];
-
-    const mk = (id: number, delay: number) =>
-      enqueue(async () => {
-        started.push(id);
-        await new Promise((r) => setTimeout(r, delay));
-        order.push(id);
-        return id;
-      });
-
-    const results = await Promise.all([mk(1, 30), mk(2, 5), mk(3, 5)]);
-    assert.deepEqual(results, [1, 2, 3]);
-    // Second/third must not start until prior finished → start order == completion order
-    assert.deepEqual(started, [1, 2, 3]);
-    assert.deepEqual(order, [1, 2, 3]);
+describe('isFloodError', () => {
+  it('detects flooding message and known codes', () => {
+    assert.equal(isFloodError(new TSApiError(3331, 'client is flooding')), true);
+    assert.equal(isFloodError(new TSApiError(3329, 'flood ban')), true);
+    assert.equal(isFloodError(new TSApiError(0, 'ok')), false);
+    assert.equal(isFloodError(new Error('socket hang up')), false);
+    assert.equal(isFloodError({ message: 'client is flooding' }), true);
   });
+});
 
-  it('keeps the chain alive after a failed op', async () => {
-    let chain: Promise<void> = Promise.resolve();
-    const enqueue = <T,>(op: () => Promise<T>): Promise<T> => {
-      const run = chain.then(op, op);
-      chain = run.then(
-        () => undefined,
-        () => undefined,
-      );
-      return run;
+describe('WebQuery priority pick pattern', () => {
+  it('serves high before low even if enqueued later', () => {
+    const PRIORITY_RANK = { high: 0, normal: 1, low: 2 } as const;
+    type P = keyof typeof PRIORITY_RANK;
+    const queue: { priority: P; enqueuedAt: number; id: string }[] = [
+      { priority: 'low', enqueuedAt: 1, id: 'anim' },
+      { priority: 'normal', enqueuedAt: 2, id: 'bot' },
+      { priority: 'high', enqueuedAt: 3, id: 'dash' },
+    ];
+
+    const pickNextIndex = () => {
+      let best = 0;
+      for (let i = 1; i < queue.length; i++) {
+        const cand = queue[i];
+        const cur = queue[best];
+        const candRank = PRIORITY_RANK[cand.priority];
+        const curRank = PRIORITY_RANK[cur.priority];
+        if (candRank < curRank || (candRank === curRank && cand.enqueuedAt < cur.enqueuedAt)) {
+          best = i;
+        }
+      }
+      return best;
     };
 
-    await assert.rejects(() => enqueue(async () => {
-      throw new Error('boom');
-    }));
-
-    const ok = await enqueue(async () => 'recovered');
-    assert.equal(ok, 'recovered');
+    assert.equal(queue[pickNextIndex()].id, 'dash');
+    queue.splice(pickNextIndex(), 1);
+    assert.equal(queue[pickNextIndex()].id, 'bot');
+    queue.splice(pickNextIndex(), 1);
+    assert.equal(queue[pickNextIndex()].id, 'anim');
   });
 });
