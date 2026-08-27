@@ -119,6 +119,37 @@ export class VoiceBotManager extends EventEmitter {
       });
     });
 
+    bot.on(
+      'mediaCached',
+      (payload: {
+        songId: string;
+        filePath: string;
+        fileSize?: number;
+        title?: string;
+        artist?: string;
+        duration?: number;
+      }) => {
+        const songId = parseInt(payload.songId, 10);
+        if (!Number.isFinite(songId)) return;
+        this.prisma.song
+          .update({
+            where: { id: songId },
+            data: {
+              filePath: payload.filePath,
+              ...(payload.fileSize != null ? { fileSize: payload.fileSize } : {}),
+              ...(payload.title ? { title: payload.title } : {}),
+              ...(payload.artist ? { artist: payload.artist } : {}),
+              ...(payload.duration != null ? { duration: payload.duration } : {}),
+            },
+          })
+          .catch((err: Error) => {
+            console.error(
+              `[VoiceBotManager] Failed to persist cached media for song ${songId}: ${err.message}`,
+            );
+          });
+      },
+    );
+
     bot.on('trackEnd', (item: QueueItem | null) => {
       this.broadcast('music:bot:trackEnd', { botId: config.id, songId: item?.id ?? null });
     });

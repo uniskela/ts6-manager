@@ -1,13 +1,17 @@
 import { EventEmitter } from 'events';
+import fs from 'fs';
 import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
+import { downloadYouTube } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
 import { SidecarClient } from './streaming/sidecar-client.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
 import { STREAM_PRESETS, DEFAULT_PRESET, type VideoViewerInfo, type VideoStreamStatus } from './streaming/types.js';
 import { downloadVideoForStream, safeUnlinkStreamTemp, resolvePathUnderMusicDir } from './streaming/video-download.js';
+
+const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
 export type VoiceBotStatus = 'stopped' | 'starting' | 'connected' | 'playing' | 'paused' | 'error';
 
@@ -411,7 +415,8 @@ export class VoiceBot extends EventEmitter {
     this.updateNowPlayingNickname(item.title);
 
     try {
-      const pcmData = await this.pipeline.toPcm(item.filePath);
+      const filePath = await this.ensurePlayableFile(item);
+      const pcmData = await this.pipeline.toPcm(filePath);
       this.pcmFrames = this.pipeline.splitFrames(pcmData);
       this.frameIndex = 0;
       this.startPlaybackLoop();
@@ -422,6 +427,38 @@ export class VoiceBot extends EventEmitter {
       this.emit('statusChange', this._status);
       throw err;
     }
+  }
+
+  /**
+   * Stream-mode / registered YouTube songs may have an empty filePath until first play.
+   * Download on demand, update the queue item, and notify listeners to persist the path.
+   */
+  private async ensurePlayableFile(item: QueueItem): Promise<string> {
+    if (item.filePath && fs.existsSync(item.filePath)) {
+      return item.filePath;
+    }
+    if (!item.sourceUrl) {
+      throw new Error(`No media file for “${item.title}” and no source URL to download`);
+    }
+
+    console.log(`[VoiceBot ${this.config.id}] On-demand download: ${item.title} (${item.sourceUrl})`);
+    const dl = await downloadYouTube(item.sourceUrl, MUSIC_DIR);
+    item.filePath = dl.filePath;
+    let fileSize: number | undefined;
+    try {
+      fileSize = fs.statSync(dl.filePath).size;
+    } catch {
+      /* ignore */
+    }
+    this.emit('mediaCached', {
+      songId: item.id,
+      filePath: dl.filePath,
+      fileSize,
+      title: dl.info.title,
+      artist: dl.info.artist,
+      duration: dl.info.duration,
+    });
+    return dl.filePath;
   }
 
   async playStream(item: QueueItem): Promise<void> {

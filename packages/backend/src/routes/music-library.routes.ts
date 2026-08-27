@@ -24,9 +24,9 @@ import rateLimit from 'express-rate-limit';
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.webm'];
 /** Cap Apple Music → YouTube matches for library info / import previews. */
-const APPLE_MUSIC_INFO_CAP = 15;
+const APPLE_MUSIC_INFO_CAP = 100;
 /** Parallel yt-dlp searches so Load does not time out on large playlists. */
-const APPLE_MUSIC_YT_CONCURRENCY = 5;
+const APPLE_MUSIC_YT_CONCURRENCY = 8;
 
 async function mapPool<T, R>(
   items: T[],
@@ -565,6 +565,91 @@ musicLibraryRoutes.post('/youtube/download-batch', heavyMusicOpLimiter, async (r
 
     res.json({ results, errors, total: urls.length, downloaded: results.length });
   } catch (err) { next(err); }
+});
+
+/**
+ * POST /youtube/register — Save YouTube/URL tracks as library songs without downloading.
+ * Used by stream playlists so tracks stream/download on demand when played.
+ * Body: { items: { url: string, title?: string, artist?: string, duration?: number }[] }
+ */
+musicLibraryRoutes.post('/youtube/register', musicWriteLimiter, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const configId = parseInt(req.params.configId as string);
+    const rawItems = req.body?.items;
+    if (!Array.isArray(rawItems) || rawItems.length === 0) {
+      throw new AppError(400, 'items array is required');
+    }
+    if (rawItems.length > 200) {
+      throw new AppError(400, 'At most 200 items per register request');
+    }
+
+    const results: any[] = [];
+    const errors: string[] = [];
+
+    for (const raw of rawItems) {
+      const url = typeof raw?.url === 'string' ? raw.url.trim() : '';
+      if (!url) {
+        errors.push('missing url');
+        continue;
+      }
+      try {
+        if (isAppleMusicShareUrl(url)) {
+          errors.push(`${url}: resolve Apple Music to YouTube first (Load URL)`);
+          continue;
+        }
+        let watchUrl = url;
+        try {
+          const parsed = parseYouTubeUrl(url);
+          watchUrl = parsed.watchUrl || parsed.canonicalUrl || url;
+        } catch {
+          /* keep url */
+        }
+
+        const existing = await prisma.song.findFirst({
+          where: { sourceUrl: watchUrl, serverConfigId: configId },
+        });
+        if (existing) {
+          results.push(existing);
+          continue;
+        }
+
+        const title =
+          (typeof raw.title === 'string' && raw.title.trim()) ||
+          watchUrl;
+        const artist =
+          typeof raw.artist === 'string' && raw.artist.trim() ? raw.artist.trim() : null;
+        const duration =
+          typeof raw.duration === 'number' && Number.isFinite(raw.duration) ? raw.duration : null;
+
+        const song = await prisma.song.create({
+          data: {
+            title,
+            artist,
+            duration,
+            // Empty path = on-demand download when played (stream playlists).
+            filePath: '',
+            source: 'youtube',
+            sourceUrl: watchUrl,
+            fileSize: null,
+            serverConfigId: configId,
+          },
+        });
+        results.push(song);
+      } catch (err: any) {
+        errors.push(`${url}: ${err.message}`);
+      }
+    }
+
+    res.status(201).json({
+      results,
+      errors,
+      total: rawItems.length,
+      registered: results.length,
+    });
+  } catch (err) {
+    next(err);
+  }
 });
 
 // Helper: get audio duration via ffprobe

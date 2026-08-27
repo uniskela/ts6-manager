@@ -32,6 +32,21 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
 
+## [1.3.3] - 2026-08-27
+
+### Added
+
+- Stream playlists: Add from URL **registers** YouTube tracks without downloading; audio is fetched on first play
+- `POST /music-library/youtube/register` for URL-only song rows (empty `filePath` until played)
+
+### Changed
+
+- Apple Music / URL Load matching cap raised from 15 → **100** tracks (parallel YouTube search)
+
+### Fixed
+
+- Stream-only playlists no longer bulk-download when adding from a loaded URL
+
 ## [1.3.2] - 2026-08-27
 
 ### Fixed

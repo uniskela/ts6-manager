@@ -76,6 +76,14 @@ export const musicLibraryApi = {
     api.post(`/servers/${configId}/music-library/youtube/info`, { url }).then((r) => r.data),
   youtubeDownloadBatch: (configId: number, urls: string[]) =>
     api.post(`/servers/${configId}/music-library/youtube/download-batch`, { urls }, { timeout: 600000 }).then((r) => r.data),
+  /** Register YouTube URLs as songs without downloading (stream playlists). */
+  youtubeRegister: (
+    configId: number,
+    items: { url: string; title?: string; artist?: string; duration?: number }[],
+  ) =>
+    api
+      .post(`/servers/${configId}/music-library/youtube/register`, { items }, { timeout: 120000 })
+      .then((r) => r.data),
   youtubeImportPlaylist: (configId: number, data: { url: string; playlistName?: string; playlistId?: number; reimport?: boolean }) =>
     api.post(`/servers/${configId}/music-library/youtube/import-playlist`, data).then((r) => r.data),
   youtubeImportStatus: (configId: number, jobId: string) =>
