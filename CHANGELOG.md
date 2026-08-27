@@ -30,3 +30,4 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 ### Changed
 
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
+- Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up

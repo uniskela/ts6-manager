@@ -71,8 +71,9 @@ COPY docker-commands/nginx-all-in-one.conf /etc/nginx/conf.d/ts6.conf
 RUN rm -f /etc/nginx/sites-enabled/default
 
 COPY docker-commands/supervisord-all-in-one.conf /etc/supervisor/conf.d/ts6.conf
+COPY docker-commands/apply-schema.sh /usr/local/bin/apply-schema.sh
 COPY docker-commands/start-backend.sh /usr/local/bin/start-backend.sh
-RUN chmod +x /usr/local/bin/start-backend.sh /usr/local/bin/sidecar
+RUN chmod +x /usr/local/bin/apply-schema.sh /usr/local/bin/start-backend.sh /usr/local/bin/sidecar
 
 RUN mkdir -p /app/packages/backend/data /data/music \
     && mkdir -p /root/.config/yt-dlp \
