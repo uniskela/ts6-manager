@@ -42,7 +42,7 @@ function StatsCard({ icon: Icon, label, value, sub, accentColor = 'text-primary'
 
 export default function Dashboard() {
   const { selectedConfigId, selectedSid } = useServerStore();
-  const { data, isLoading, error } = useDashboard();
+  const { data, isLoading, error, refetch, isFetching } = useDashboard();
   const isAdmin = useAuthStore((s) => s.isAdmin());
   const [bandwidthHistory, setBandwidthHistory] = useState<any[]>([]);
   const [showWidgets, setShowWidgets] = useState(false);
@@ -76,12 +76,23 @@ export default function Dashboard() {
 
   if (isLoading) return <PageLoader />;
   if (error || !data) {
+    const detail =
+      (error as any)?.response?.data?.error ||
+      (error as any)?.message ||
+      'Could not connect to the TeamSpeak server. Check your connection settings.';
     return (
-      <EmptyState
-        icon={Wifi}
-        title="Connection failed"
-        description="Could not connect to the TeamSpeak server. Check your connection settings."
-      />
+      <div className="space-y-4">
+        <EmptyState
+          icon={Wifi}
+          title="Connection failed"
+          description={detail}
+        />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? 'Retrying…' : 'Retry connection'}
+          </Button>
+        </div>
+      </div>
     );
   }
 

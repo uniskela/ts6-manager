@@ -22,7 +22,7 @@ import { toast } from 'sonner';
 
 export default function ServerGroups() {
   const { selectedConfigId, selectedSid } = useServerStore();
-  const { data, isLoading } = useServerGroups();
+  const { data, isLoading, error, refetch, isFetching } = useServerGroups();
   const createGroup = useCreateServerGroup();
   const deleteGroup = useDeleteServerGroup();
   const addMember = useAddServerGroupMember();
@@ -43,6 +43,22 @@ export default function ServerGroups() {
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Shield} title="No server selected" />;
   if (isLoading) return <PageLoader />;
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={Shield}
+          title="Connection failed"
+          description={(error as any)?.response?.data?.error || (error as any)?.message || 'Could not load server groups from the TeamSpeak server.'}
+        />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const groups = Array.isArray(data) ? data : [];
   const clientOptions = (Array.isArray(onlineClients) ? onlineClients : [])

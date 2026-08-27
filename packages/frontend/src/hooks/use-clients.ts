@@ -9,6 +9,8 @@ export function useClients() {
     queryFn: () => clientsApi.list(c!, s!),
     enabled: !!c && !!s,
     refetchInterval: 10000,
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
   });
 }
 

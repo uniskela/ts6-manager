@@ -31,7 +31,7 @@ type PlayDialogMode = 'youtube' | 'radio' | null;
 export default function Clients() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const isAdmin = useAuthStore((s) => s.isAdmin());
-  const { data, isLoading } = useClients();
+  const { data, isLoading, error, refetch, isFetching } = useClients();
   const kickClient = useKickClient();
   const banClient = useBanClient();
   const pokeClient = usePokeClient();
@@ -232,6 +232,22 @@ export default function Clients() {
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
   if (isLoading) return <PageLoader />;
+  if (error) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={Users}
+          title="Connection failed"
+          description={(error as any)?.response?.data?.error || (error as any)?.message || 'Could not load clients from the TeamSpeak server.'}
+        />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
