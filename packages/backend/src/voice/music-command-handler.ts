@@ -232,9 +232,9 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, custom.response);
   }
 
-  private reply(bot: VoiceBot, targetClid: number, msg: string): void {
+  private reply(bot: VoiceBot, _targetClid: number, msg: string): void {
     try {
-      bot.sendTextMessage(targetClid, msg);
+      bot.sendChannelMessage(msg);
     } catch (err: any) {
       console.error(`[MusicCmd] Failed to send reply: ${err.message}`);
     }

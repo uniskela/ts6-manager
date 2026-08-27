@@ -31,3 +31,20 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
+
+## [1.3.0] - 2026-08-27
+
+### Breaking Changes
+
+- Music bot `!` command replies (built-in and custom) are sent to **channel chat** instead of a private DM
+
+### Added
+
+- Stream playlists: Add Songs → **URL** tab (YouTube video/playlist import into the selected playlist)
+- Queue tab: **Add to queue** for songs and playlists (append, does not clear)
+- Playlists: edit name and local/stream mode (YouTube-linked playlists stay stream)
+- [AGENTS.md](AGENTS.md) release process: CHANGELOG sections, `vX.Y.Z` tags, GitHub Releases, GHCR publish on `v*`
+
+### Changed
+
+- Commands tab help text documents channel-chat replies

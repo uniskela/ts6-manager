@@ -186,10 +186,20 @@ export class VoiceBot extends EventEmitter {
     return this.client.getClientId();
   }
 
+  /** Private (DM) text to a client. */
   sendTextMessage(targetClid: number, msg: string): void {
     const cmd = buildCommand('sendtextmessage', {
       targetmode: 1,
       target: targetClid,
+      msg,
+    });
+    this.client.sendCommand(cmd);
+  }
+
+  /** Channel chat in the bot's current channel (visible to everyone there). */
+  sendChannelMessage(msg: string): void {
+    const cmd = buildCommand('sendtextmessage', {
+      targetmode: 2,
       msg,
     });
     this.client.sendCommand(cmd);
