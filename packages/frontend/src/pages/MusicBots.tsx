@@ -11,7 +11,7 @@ import {
   useSetShuffle, useSetRepeat,
   usePlayFromQueue, useMoveQueueItem,
 } from '@/hooks/use-music-bots';
-import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
+import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useYouTubeRegister, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
 import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
 import { usePlaylists, usePlaylist, useCreatePlaylist, useUpdatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useAddPlaylistToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
 import { useServers } from '@/hooks/use-servers';
@@ -1176,6 +1176,7 @@ function PlaylistsTab() {
   const ytInfo = useYouTubeInfo();
   const ytDownload = useYouTubeDownload();
   const ytBatchDownload = useYouTubeDownloadBatch();
+  const ytRegister = useYouTubeRegister();
   const ytImportPlaylist = useYouTubeImportPlaylist();
 
   const { data: songs } = useSongs(selectedConfigId);
@@ -1300,8 +1301,40 @@ function PlaylistsTab() {
     });
   };
 
-  const handleAddSingleDownload = (url: string) => {
+  const handleAddSingleDownload = (item: { id: string; title?: string; artist?: string; duration?: number }) => {
     if (!selectedConfigId || !selectedId) return;
+    const url = `https://youtube.com/watch?v=${item.id}`;
+
+    // Stream playlists: register URL only (download on play). Local: download now.
+    if (playlistMode === 'stream') {
+      ytRegister.mutate(
+        {
+          configId: selectedConfigId,
+          items: [{ url, title: item.title, artist: item.artist, duration: item.duration }],
+        },
+        {
+          onSuccess: async (data: any) => {
+            const song = Array.isArray(data?.results) ? data.results[0] : null;
+            if (!song?.id) {
+              toast.error('Failed to register track');
+              return;
+            }
+            addSong.mutate(
+              { playlistId: selectedId, songId: song.id },
+              {
+                onSuccess: () => toast.success('Added to stream playlist (on-demand)'),
+                onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to add song'),
+              },
+            );
+            setAddUrlInfo(null);
+            setAddYtUrl('');
+          },
+          onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to register track'),
+        },
+      );
+      return;
+    }
+
     ytDownload.mutate(
       { configId: selectedConfigId, url },
       {
@@ -1323,8 +1356,53 @@ function PlaylistsTab() {
 
   const handleAddBatchDownload = () => {
     if (!selectedConfigId || !selectedId || !addUrlInfo) return;
-    const ids = Array.from(addSelectedUrlIds);
-    const urls = ids.map((id) => `https://youtube.com/watch?v=${id}`);
+    const selectedItems = addUrlInfo.items.filter((i: any) => addSelectedUrlIds.has(i.id));
+    if (selectedItems.length === 0) return;
+
+    if (playlistMode === 'stream') {
+      setAddBatchProgress(`Registering 0/${selectedItems.length}...`);
+      ytRegister.mutate(
+        {
+          configId: selectedConfigId,
+          items: selectedItems.map((i: any) => ({
+            url: `https://youtube.com/watch?v=${i.id}`,
+            title: i.title,
+            artist: i.artist,
+            duration: i.duration,
+          })),
+        },
+        {
+          onSuccess: async (data: any) => {
+            setAddBatchProgress(null);
+            const results = Array.isArray(data?.results) ? data.results : [];
+            let added = 0;
+            for (const song of results) {
+              if (!song?.id || playlistSongIds.has(song.id)) continue;
+              try {
+                await addSong.mutateAsync({ playlistId: selectedId, songId: song.id });
+                added++;
+              } catch {
+                /* skip */
+              }
+            }
+            toast.success(
+              added > 0
+                ? `Added ${added} stream track${added === 1 ? '' : 's'} (download on play)`
+                : 'Nothing new to add',
+            );
+            if (data.errors?.length) toast.error(`${data.errors.length} failed`);
+            resetAddUrlState();
+          },
+          onError: (err: any) => {
+            setAddBatchProgress(null);
+            toast.error(err?.response?.data?.error || 'Failed to register tracks');
+          },
+        },
+      );
+      return;
+    }
+
+    const urls = selectedItems.map((i: any) => `https://youtube.com/watch?v=${i.id}`);
     setAddBatchProgress(`Downloading 0/${urls.length}...`);
     ytBatchDownload.mutate(
       { configId: selectedConfigId, urls },
@@ -1655,7 +1733,7 @@ function PlaylistsTab() {
             <DialogDescription>
               {playlistMode === 'local'
                 ? 'Add local library songs, or copy matching songs from another playlist.'
-                : 'Add via YouTube URL, pick stream library tracks, or copy from another playlist.'}
+                : 'Add via URL (saved for on-demand play — no download until played), pick stream library tracks, or copy from another playlist.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -1853,20 +1931,25 @@ function PlaylistsTab() {
                               size="sm"
                               className="h-7 text-xs"
                               onClick={handleAddBatchDownload}
-                              disabled={addSelectedUrlIds.size === 0 || ytBatchDownload.isPending}
+                              disabled={
+                                addSelectedUrlIds.size === 0 ||
+                                ytBatchDownload.isPending ||
+                                ytRegister.isPending
+                              }
                             >
-                              {ytBatchDownload.isPending ? (
+                              {ytBatchDownload.isPending || ytRegister.isPending ? (
                                 <>
                                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />{' '}
-                                  {addBatchProgress || 'Downloading...'}
+                                  {addBatchProgress || (playlistMode === 'stream' ? 'Adding...' : 'Downloading...')}
                                 </>
                               ) : (
                                 <>
-                                  <Download className="h-3 w-3 mr-1" /> Add {addSelectedUrlIds.size}{' '}
+                                  <Plus className="h-3 w-3 mr-1" /> Add {addSelectedUrlIds.size}{' '}
                                   Selected
                                 </>
                               )}
                             </Button>
+                            {playlistMode !== 'stream' && (
                             <Button
                               variant="secondary"
                               size="sm"
@@ -1885,6 +1968,7 @@ function PlaylistsTab() {
                                 </>
                               )}
                             </Button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1930,11 +2014,11 @@ function PlaylistsTab() {
                                 className="h-7 text-xs shrink-0"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  handleAddSingleDownload(`https://youtube.com/watch?v=${item.id}`);
+                                  handleAddSingleDownload(item);
                                 }}
-                                disabled={ytDownload.isPending}
+                                disabled={ytDownload.isPending || ytRegister.isPending}
                               >
-                                {ytDownload.isPending ? (
+                                {ytDownload.isPending || ytRegister.isPending ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                 ) : (
                                   <>

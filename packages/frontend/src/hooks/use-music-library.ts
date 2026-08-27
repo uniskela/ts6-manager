@@ -67,6 +67,20 @@ export function useYouTubeDownloadBatch() {
   });
 }
 
+export function useYouTubeRegister() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      configId,
+      items,
+    }: {
+      configId: number;
+      items: { url: string; title?: string; artist?: string; duration?: number }[];
+    }) => musicLibraryApi.youtubeRegister(configId, items),
+    onSuccess: (_, { configId }) => qc.invalidateQueries({ queryKey: ['songs', configId] }),
+  });
+}
+
 export function useYouTubeImportPlaylist() {
   return useMutation({
     mutationFn: ({
