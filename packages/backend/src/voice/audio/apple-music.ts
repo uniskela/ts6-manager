@@ -229,6 +229,20 @@ async function resolveViaItunes(parsed: ParsedAppleMusicUrl): Promise<AppleMusic
 }
 
 /**
+ * Decode a small set of HTML entities once. Decode `&amp;` last so sequences
+ * like `&amp;#39;` cannot be double-unescaped into a quote.
+ */
+function decodeBasicHtmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&amp;/gi, "&");
+}
+
+/**
  * Extract tracks from Apple Music web `serialized-server-data` JSON.
  * Prefer track-lockup rows (playlists); fall back to title+artistName pairs.
  */
@@ -339,10 +353,7 @@ async function resolveViaPageScrape(pageUrl: URL): Promise<AppleMusicResolved | 
     html.match(/property="og:title"\s+content="([^"]+)"/i) ||
     html.match(/content="([^"]+)"\s+property="og:title"/i);
   if (og?.[1]) {
-    let title = og[1]
-      .replace(/&amp;/gi, "&")
-      .replace(/&quot;/gi, '"')
-      .replace(/&#0*39;/g, "'")
+    let title = decodeBasicHtmlEntities(og[1])
       .replace(/\s+on Apple Music$/i, "")
       .trim();
     if (title && !/^Apple\s*Music/i.test(title)) {

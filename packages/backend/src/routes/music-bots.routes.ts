@@ -385,7 +385,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
             const ok = await enqueueYt(itemUrl);
             if (!ok) break;
           } catch (err) {
-            console.error(`[music-bots.routes] Failed to queue playlist track ${itemUrl}:`, err);
+            console.error('[music-bots.routes] Failed to queue playlist track %s:', itemUrl, err);
           }
         }
 
@@ -395,7 +395,9 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
             const ytUrl = await appleMusicTrackToYouTubeUrl(track);
             if (!ytUrl) {
               console.error(
-                `[music-bots.routes] No YouTube match for Apple Music track: ${track.artist} - ${track.title}`,
+                '[music-bots.routes] No YouTube match for Apple Music track: %s - %s',
+                track.artist,
+                track.title,
               );
               continue;
             }
@@ -403,7 +405,9 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
             if (!ok) break;
           } catch (err) {
             console.error(
-              `[music-bots.routes] Failed to queue Apple Music track ${track.artist} - ${track.title}:`,
+              '[music-bots.routes] Failed to queue Apple Music track %s - %s:',
+              track.artist,
+              track.title,
               err,
             );
           }

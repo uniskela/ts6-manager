@@ -453,7 +453,7 @@ export class MusicCommandHandler {
           const ok = await enqueueYt(itemUrl);
           if (!ok) break;
         } catch (err) {
-          console.error(`[MusicCmd] Failed to queue playlist track ${itemUrl}:`, err);
+          console.error('[MusicCmd] Failed to queue playlist track %s:', itemUrl, err);
         }
       }
 
@@ -463,7 +463,9 @@ export class MusicCommandHandler {
           const ytUrl = await appleMusicTrackToYouTubeUrl(track);
           if (!ytUrl) {
             console.error(
-              `[MusicCmd] No YouTube match for Apple Music track: ${track.artist} - ${track.title}`,
+              '[MusicCmd] No YouTube match for Apple Music track: %s - %s',
+              track.artist,
+              track.title,
             );
             continue;
           }
@@ -471,7 +473,9 @@ export class MusicCommandHandler {
           if (!ok) break;
         } catch (err) {
           console.error(
-            `[MusicCmd] Failed to queue Apple Music track ${track.artist} - ${track.title}:`,
+            '[MusicCmd] Failed to queue Apple Music track %s - %s:',
+            track.artist,
+            track.title,
             err,
           );
         }
