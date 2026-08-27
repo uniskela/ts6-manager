@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import { requireRole } from '../middleware/rbac.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 
 export const logRoutes: Router = Router({ mergeParams: true });
@@ -9,7 +10,7 @@ const getClient = (req: Request) => {
 };
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
-logRoutes.get('/', async (req: Request, res: Response, next) => {
+logRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     res.json(await getClient(req).execute(getSid(req), 'logview', {
       lines: req.query.lines || 100,

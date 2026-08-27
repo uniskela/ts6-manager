@@ -25,6 +25,30 @@ export class EventBridge extends EventEmitter {
     return `${configId}:${sid}`;
   }
 
+  private buildSshOptions(serverConfig: {
+    id: number;
+    host: string;
+    sshPort: number;
+    sshUsername: string;
+    sshPassword: string;
+    sshHostKeyFingerprint: string | null;
+  }) {
+    return {
+      host: serverConfig.host,
+      port: serverConfig.sshPort,
+      username: serverConfig.sshUsername,
+      password: decrypt(serverConfig.sshPassword),
+      hostKeyFingerprint: serverConfig.sshHostKeyFingerprint,
+      onHostKeyPinned: async (fingerprint: string) => {
+        await this.prisma.tsServerConfig.update({
+          where: { id: serverConfig.id },
+          data: { sshHostKeyFingerprint: fingerprint },
+        });
+        console.log(`[EventBridge] Pinned SSH host key for config ${serverConfig.id}: ${fingerprint}`);
+      },
+    };
+  }
+
   async connectServer(configId: number, sid: number): Promise<void> {
     const key = this.makeKey(configId, sid);
     if (this.connections.has(key)) return;
@@ -43,12 +67,14 @@ export class EventBridge extends EventEmitter {
       return;
     }
 
-    const client = new SshQueryClient({
+    const client = new SshQueryClient(this.buildSshOptions({
+      id: serverConfig.id,
       host: serverConfig.host,
-      port: serverConfig.sshPort,
-      username: serverConfig.sshUsername,
-      password: decrypt(serverConfig.sshPassword),
-    });
+      sshPort: serverConfig.sshPort,
+      sshUsername: serverConfig.sshUsername,
+      sshPassword: serverConfig.sshPassword,
+      sshHostKeyFingerprint: serverConfig.sshHostKeyFingerprint,
+    }));
 
     client.on('ready', async () => {
       console.log(`[EventBridge] SSH connected to ${serverConfig.host}:${serverConfig.sshPort} for sid=${sid}`);
@@ -189,12 +215,14 @@ export class EventBridge extends EventEmitter {
     const serverConfig = await this.prisma.tsServerConfig.findUnique({ where: { id: configId } });
     if (!serverConfig?.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) return;
 
-    const client = new SshQueryClient({
+    const client = new SshQueryClient(this.buildSshOptions({
+      id: serverConfig.id,
       host: serverConfig.host,
-      port: serverConfig.sshPort,
-      username: serverConfig.sshUsername,
-      password: decrypt(serverConfig.sshPassword),
-    });
+      sshPort: serverConfig.sshPort,
+      sshUsername: serverConfig.sshUsername,
+      sshPassword: serverConfig.sshPassword,
+      sshHostKeyFingerprint: serverConfig.sshHostKeyFingerprint,
+    }));
 
     client.on('ready', async () => {
       console.log(`[EventBridge] CMD listener SSH connected for ${key}`);

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { downloadYouTube, searchYouTube, getYouTubeUrlInfo } from '../voice/audio/youtube.js';
+import { getImportJob, startYouTubePlaylistImport } from '../voice/audio/youtube-playlist-import.js';
 import { parseTitleArtistFromFilename, probeAudioTags } from '../voice/audio/metadata.js';
 import multer from 'multer';
 import path from 'path';
@@ -214,6 +215,32 @@ musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, nex
     if (!url) throw new AppError(400, 'url is required');
     const info = await getYouTubeUrlInfo(url);
     res.json(info);
+  } catch (err) { next(err); }
+});
+
+// POST /youtube/import-playlist — Start background YouTube playlist import
+musicLibraryRoutes.post('/youtube/import-playlist', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const configId = parseInt(req.params.configId as string);
+    const { url, playlistName, playlistId, reimport } = req.body;
+    if (!url) throw new AppError(400, 'url is required');
+
+    const jobId = await startYouTubePlaylistImport(prisma, configId, url, {
+      playlistName,
+      playlistId: playlistId != null ? parseInt(playlistId) : undefined,
+      reimport: !!reimport,
+    });
+    res.status(202).json({ jobId });
+  } catch (err) { next(err); }
+});
+
+// GET /youtube/import/:jobId — Poll import job status
+musicLibraryRoutes.get('/youtube/import/:jobId', async (req: Request, res: Response, next) => {
+  try {
+    const job = getImportJob(req.params.jobId as string);
+    if (!job) throw new AppError(404, 'Import job not found');
+    res.json(job);
   } catch (err) { next(err); }
 });
 

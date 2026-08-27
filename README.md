@@ -6,7 +6,7 @@
 > [!IMPORTANT]
 > **This is an opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager), not a mirror or drop-in republish of upstream.**
 > Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`).
-> Community issue/PR credits: [`CREDITS.md`](CREDITS.md).
+> Community issue/PR credits: [`CREDITS.md`](CREDITS.md) (including [fork contributions](CREDITS.md#fork-contributions)).
 
 Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets — all from your browser.
 
@@ -252,14 +252,15 @@ Backend runs on `:3001`, frontend on `:5173` (Vite dev server).
 
 ### Database
 
-Prisma with SQLite. On first run:
+Prisma with SQLite. On first run (local development):
 
 ```bash
 cd packages/backend
-npx prisma migrate deploy
+npx prisma db push
+npx prisma db seed
 ```
 
-The Docker images handle migrations automatically on startup.
+**Docker Compose upgrades:** every backend start runs [`docker-commands/apply-schema.sh`](docker-commands/apply-schema.sh). If the persistent `backend-data` volume already has a database (including installs from older images with no version marker), the script logs an upgrade, runs `prisma db push` to bring the schema current, seeds if needed, and records `packages/backend/prisma/SCHEMA_VERSION` under `data/.schema-version`. No manual migrate step is required for `docker compose up` after pulling a new image — bump `SCHEMA_VERSION` whenever the Prisma schema changes so upgrade logs stay accurate.
 
 ## Environment Variables
 

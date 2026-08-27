@@ -10,7 +10,7 @@ const getClient = (req: Request) => {
 };
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
-banRoutes.get('/', async (req: Request, res: Response, next) => {
+banRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try { res.json(await getClient(req).execute(getSid(req), 'banlist')); } catch (err) { next(err); }
 });
 

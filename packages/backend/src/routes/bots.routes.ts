@@ -4,6 +4,8 @@ import { AppError } from '../middleware/error-handler.js';
 
 export const botRoutes: Router = Router();
 
+botRoutes.use(requireRole('admin'));
+
 botRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;

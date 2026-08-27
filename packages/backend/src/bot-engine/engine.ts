@@ -4,6 +4,7 @@ import { EventBridge } from './event-bridge.js';
 import { FlowRunner } from './flow-runner.js';
 import type { Express, Request, Response } from 'express';
 import type { WebSocketServer } from 'ws';
+import { broadcastScoped } from '../ws/ws-session.js';
 import cron from 'node-cron';
 import type {
   FlowDefinition, FlowNode, FlowEdge,
@@ -809,11 +810,8 @@ export class BotEngine {
   }
 
   private broadcast(type: string, payload: any): void {
-    const msg = JSON.stringify({ type, ...payload });
-    this.wss.clients.forEach(client => {
-      if (client.readyState === 1) { // WebSocket.OPEN
-        client.send(msg);
-      }
+    broadcastScoped(this.wss, type, payload, {
+      serverConfigId: payload.serverConfigId as number | undefined,
     });
   }
 }

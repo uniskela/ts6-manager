@@ -241,13 +241,15 @@ export function useStartVideoStream() {
       preset,
       framerate,
       bitrate,
+      volume,
     }: {
       botId: number;
       source: string;
       preset?: string;
       framerate?: number;
       bitrate?: string;
-    }) => musicBotsApi.startStream(botId, source, preset, framerate, bitrate),
+      volume?: number;
+    }) => musicBotsApi.startStream(botId, source, preset, framerate, bitrate, volume),
     onSuccess: (_, { botId }) => {
       qc.invalidateQueries({ queryKey: ['video-stream-status', botId] });
       qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });
@@ -269,8 +271,17 @@ export function useStopVideoStream() {
 export function useSetStreamSource() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ botId, source }: { botId: number; source: string }) =>
-      musicBotsApi.setStreamSource(botId, source),
+    mutationFn: ({ botId, source, volume }: { botId: number; source: string; volume?: number }) =>
+      musicBotsApi.setStreamSource(botId, source, volume),
+    onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['video-stream-status', botId] }),
+  });
+}
+
+export function useSetStreamVolume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ botId, volume }: { botId: number; volume: number }) =>
+      musicBotsApi.setStreamVolume(botId, volume),
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['video-stream-status', botId] }),
   });
 }
