@@ -95,6 +95,23 @@ export const radioStationsApi = {
     api.post(`/servers/${configId}/radio-stations/reset-ids`).then((r) => r.data),
 };
 
+// === Custom chat commands (!name → reply) ===
+
+export const chatCommandsApi = {
+  list: (configId: number) => api.get(`/servers/${configId}/chat-commands`).then((r) => r.data),
+  create: (
+    configId: number,
+    data: { name: string; response: string; description?: string; enabled?: boolean },
+  ) => api.post(`/servers/${configId}/chat-commands`, data).then((r) => r.data),
+  update: (
+    configId: number,
+    id: number,
+    data: { name?: string; response?: string; description?: string | null; enabled?: boolean },
+  ) => api.put(`/servers/${configId}/chat-commands/${id}`, data).then((r) => r.data),
+  delete: (configId: number, id: number) =>
+    api.delete(`/servers/${configId}/chat-commands/${id}`).then((r) => r.data),
+};
+
 // === Playlist API ===
 
 export const playlistsApi = {

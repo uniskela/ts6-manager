@@ -127,6 +127,33 @@ export interface RadioPreset {
   genre: string;
 }
 
+// === Chat Commands (music bot !commands) ===
+
+export interface ChatCommandInfo {
+  id: number;
+  serverConfigId: number;
+  name: string;
+  response: string;
+  description: string | null;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateChatCommandRequest {
+  name: string;
+  response: string;
+  description?: string;
+  enabled?: boolean;
+}
+
+export interface UpdateChatCommandRequest {
+  name?: string;
+  response?: string;
+  description?: string | null;
+  enabled?: boolean;
+}
+
 export interface YouTubeUrlInfo {
   type: 'video' | 'playlist';
   items: YouTubeSearchResult[];

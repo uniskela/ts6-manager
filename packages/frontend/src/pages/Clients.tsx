@@ -93,7 +93,7 @@ export default function Clients() {
     const botId = parseInt(selectedBotId, 10);
     const url = ytUrl.trim();
     if (!botId || !url) {
-      toast.error('Select a music bot and paste a YouTube / YouTube Music URL');
+      toast.error('Select a music bot and paste a YouTube, Spotify, or Apple Music URL');
       return;
     }
     playUrl.mutate(
@@ -194,7 +194,7 @@ export default function Clients() {
                   className="cursor-pointer"
                   onClick={() => openPlayDialog('youtube', c.client_nickname)}
                 >
-                  <Youtube className="mr-2 h-4 w-4" /> Play YouTube / Playlist
+                  <Youtube className="mr-2 h-4 w-4" /> Play YouTube / Spotify / Apple Music
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="cursor-pointer"
@@ -289,10 +289,10 @@ export default function Clients() {
       <Dialog open={playMode === 'youtube'} onOpenChange={(open) => !open && closePlayDialog()}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Play YouTube{playClientName ? ` (from ${playClientName})` : ''}</DialogTitle>
+            <DialogTitle>Play URL{playClientName ? ` (from ${playClientName})` : ''}</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Paste a YouTube or YouTube Music video, playlist, or radio mix URL. Playback uses the selected music bot&apos;s channel.
+            Paste a YouTube / YouTube Music, Spotify, or Apple Music song or playlist URL. Playback uses the selected music bot&apos;s channel (Apple Music / Spotify resolve via YouTube).
           </p>
           <div className="space-y-3">
             <div>
@@ -311,11 +311,11 @@ export default function Clients() {
               </Select>
             </div>
             <div>
-              <Label className="text-xs">YouTube / YouTube Music URL</Label>
+              <Label className="text-xs">YouTube / Spotify / Apple Music URL</Label>
               <Input
                 value={ytUrl}
                 onChange={(e) => setYtUrl(e.target.value)}
-                placeholder="https://music.youtube.com/playlist?list=..."
+                placeholder="https://music.apple.com/... or YouTube / Spotify URL"
                 autoFocus
               />
             </div>

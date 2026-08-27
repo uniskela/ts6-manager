@@ -65,6 +65,7 @@ model TsServerConfig {
   musicBots     MusicBot[]
   songs         Song[]
   radioStations RadioStation[]
+  chatCommands  ChatCommand[]
   widgets       Widget[]
   musicRequests MusicRequest[]
   playlists     Playlist[]
@@ -208,6 +209,25 @@ model RadioStation {
   serverConfigId Int
   serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
   createdAt      DateTime       @default(now())
+}
+
+/// Admin-defined chat commands (!name → fixed reply) for music bots on a server.
+model ChatCommand {
+  id             Int            @id @default(autoincrement())
+  serverConfigId Int
+  serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
+  /// Command name without leading "!"; stored lowercase.
+  name           String
+  /// Reply text sent as a private chat message when the command is used.
+  response       String
+  /// Optional short blurb shown in !help.
+  description    String?
+  enabled        Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([serverConfigId, name])
+  @@index([serverConfigId])
 }
 
 // === Server Widget / Banner ===

@@ -36,12 +36,16 @@ import {
   Volume2, VolumeX, Upload, Search, Download, ListMusic, Shuffle,
   Repeat, Repeat1, Power, PowerOff, RefreshCw, Pencil, X, Loader2,
   Youtube, FileAudio, Link, GripVertical, Music2, Radio, Clock,
-  Video,
+  Video, MessageSquare,
 } from 'lucide-react';
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
-import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, YouTubeSearchResult, RadioStationInfo, RadioPreset } from '@ts6/common';
+import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
+import {
+  useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
+} from '@/hooks/use-chat-commands';
+import { Textarea } from '@/components/ui/textarea';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -1319,6 +1323,331 @@ function PlaylistsTab() {
   );
 }
 
+// ─── Commands Tab ────────────────────────────────────────────────────────────
+
+function CommandsTab() {
+  const { selectedConfigId } = useServerStore();
+  const { data: servers } = useServers();
+  const [serverId, setServerId] = useState<number | null>(selectedConfigId);
+  const configId = serverId || selectedConfigId;
+
+  const { data: commands, isLoading } = useChatCommands(configId);
+  const createCommand = useCreateChatCommand();
+  const updateCommand = useUpdateChatCommand();
+  const deleteCommand = useDeleteChatCommand();
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [editCmd, setEditCmd] = useState<ChatCommandInfo | null>(null);
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [form, setForm] = useState({ name: '', response: '', description: '', enabled: true });
+
+  const serverList = Array.isArray(servers) ? servers : [];
+  const commandList = (Array.isArray(commands) ? commands : []) as ChatCommandInfo[];
+
+  const resetForm = () => setForm({ name: '', response: '', description: '', enabled: true });
+
+  const openEdit = (cmd: ChatCommandInfo) => {
+    setEditCmd(cmd);
+    setForm({
+      name: cmd.name,
+      response: cmd.response,
+      description: cmd.description || '',
+      enabled: cmd.enabled,
+    });
+  };
+
+  const handleCreate = () => {
+    if (!configId || !form.name.trim() || !form.response.trim()) {
+      toast.error('Name and response are required');
+      return;
+    }
+    createCommand.mutate(
+      {
+        configId,
+        data: {
+          name: form.name,
+          response: form.response,
+          description: form.description || undefined,
+          enabled: form.enabled,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Command added');
+          setShowAdd(false);
+          resetForm();
+        },
+        onError: (err: any) =>
+          toast.error(err?.response?.data?.error || 'Failed to add command'),
+      },
+    );
+  };
+
+  const handleUpdate = () => {
+    if (!configId || !editCmd) return;
+    updateCommand.mutate(
+      {
+        configId,
+        id: editCmd.id,
+        data: {
+          name: form.name,
+          response: form.response,
+          description: form.description || null,
+          enabled: form.enabled,
+        },
+      },
+      {
+        onSuccess: () => {
+          toast.success('Command updated');
+          setEditCmd(null);
+          resetForm();
+        },
+        onError: (err: any) =>
+          toast.error(err?.response?.data?.error || 'Failed to update command'),
+      },
+    );
+  };
+
+  if (!configId) {
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Select a server"
+        description="Choose a server to manage custom chat commands."
+      />
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Select value={String(configId)} onValueChange={(v) => setServerId(parseInt(v))}>
+          <SelectTrigger className="w-48">
+            <SelectValue placeholder="Server..." />
+          </SelectTrigger>
+          <SelectContent>
+            {serverList.map((s: any) => (
+              <SelectItem key={s.id} value={String(s.id)}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <div className="flex-1" />
+        <Button
+          size="sm"
+          onClick={() => {
+            resetForm();
+            setShowAdd(true);
+          }}
+        >
+          <Plus className="h-4 w-4 mr-1" /> Add command
+        </Button>
+      </div>
+
+      <p className="text-xs text-muted-foreground">
+        Users type <code className="text-[11px]">!help</code> in the music bot&apos;s channel chat for built-in
+        commands. Custom commands below reply with your text (same channel / private reply as other bot
+        commands). Names cannot override built-ins like <code className="text-[11px]">play</code> or{' '}
+        <code className="text-[11px]">help</code>.
+      </p>
+
+      {isLoading ? (
+        <PageLoader />
+      ) : commandList.length === 0 ? (
+        <EmptyState
+          icon={MessageSquare}
+          title="No custom commands"
+          description="Add a command like !rules that replies with fixed text in chat."
+        />
+      ) : (
+        <div className="space-y-1">
+          {commandList.map((cmd) => (
+            <div
+              key={cmd.id}
+              className="flex items-start gap-2 py-2 px-2 hover:bg-muted/30 transition-colors rounded group"
+            >
+              <MessageSquare className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium">!{cmd.name}</p>
+                  {!cmd.enabled && (
+                    <Badge variant="secondary" className="text-[10px]">
+                      Disabled
+                    </Badge>
+                  )}
+                </div>
+                {cmd.description && (
+                  <p className="text-[11px] text-muted-foreground truncate">{cmd.description}</p>
+                )}
+                <p className="text-[11px] text-muted-foreground/80 line-clamp-2 mt-0.5">{cmd.response}</p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(cmd)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-destructive"
+                  onClick={() => setDeleteId(cmd.id)}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <Dialog
+        open={showAdd}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowAdd(false);
+            resetForm();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add chat command</DialogTitle>
+            <DialogDescription>
+              When someone types !name in the music bot channel, the bot replies with your response.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Command name</Label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-muted-foreground">!</span>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="rules"
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Help blurb (optional)</Label>
+              <Input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+                placeholder="Shown next to the command in !help"
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Response</Label>
+              <Textarea
+                value={form.response}
+                onChange={(e) => setForm({ ...form, response: e.target.value })}
+                placeholder="Text the bot will send…"
+                rows={4}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.enabled}
+                onCheckedChange={(enabled) => setForm({ ...form, enabled })}
+              />
+              <Label className="text-xs">Enabled</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowAdd(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={createCommand.isPending}>
+              Add
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editCmd !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditCmd(null);
+            resetForm();
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit !{editCmd?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Command name</Label>
+              <div className="flex items-center gap-1">
+                <span className="text-sm text-muted-foreground">!</span>
+                <Input
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="flex-1"
+                />
+              </div>
+            </div>
+            <div>
+              <Label className="text-xs">Help blurb (optional)</Label>
+              <Input
+                value={form.description}
+                onChange={(e) => setForm({ ...form, description: e.target.value })}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Response</Label>
+              <Textarea
+                value={form.response}
+                onChange={(e) => setForm({ ...form, response: e.target.value })}
+                rows={4}
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch
+                checked={form.enabled}
+                onCheckedChange={(enabled) => setForm({ ...form, enabled })}
+              />
+              <Label className="text-xs">Enabled</Label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditCmd(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdate} disabled={updateCommand.isPending}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteId !== null}
+        onOpenChange={() => setDeleteId(null)}
+        title="Delete command?"
+        description="Users will no longer be able to trigger this chat command."
+        onConfirm={() => {
+          if (!configId || deleteId === null) return;
+          deleteCommand.mutate(
+            { configId, id: deleteId },
+            {
+              onSuccess: () => {
+                toast.success('Command deleted');
+                setDeleteId(null);
+              },
+              onError: () => toast.error('Failed to delete command'),
+            },
+          );
+        }}
+        destructive
+      />
+    </div>
+  );
+}
+
 // ─── Radio Tab ───────────────────────────────────────────────────────────────
 
 function RadioTab() {
@@ -1776,6 +2105,7 @@ export default function MusicBots() {
           <TabsTrigger value="video"><Video className="h-3.5 w-3.5 mr-1.5" /> Video</TabsTrigger>
           <TabsTrigger value="library"><FileAudio className="h-3.5 w-3.5 mr-1.5" /> Library</TabsTrigger>
           <TabsTrigger value="playlists"><ListMusic className="h-3.5 w-3.5 mr-1.5" /> Playlists</TabsTrigger>
+          <TabsTrigger value="commands"><MessageSquare className="h-3.5 w-3.5 mr-1.5" /> Commands</TabsTrigger>
           <TabsTrigger value="radio"><Radio className="h-3.5 w-3.5 mr-1.5" /> Radio</TabsTrigger>
         </TabsList>
 
@@ -1784,6 +2114,7 @@ export default function MusicBots() {
         <TabsContent value="video"><VideoTab /></TabsContent>
         <TabsContent value="library"><LibraryTab /></TabsContent>
         <TabsContent value="playlists"><PlaylistsTab /></TabsContent>
+        <TabsContent value="commands"><CommandsTab /></TabsContent>
         <TabsContent value="radio"><RadioTab /></TabsContent>
       </Tabs>
     </div>

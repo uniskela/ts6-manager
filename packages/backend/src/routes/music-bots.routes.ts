@@ -3,6 +3,12 @@ import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { downloadYouTube, resolveSpotifyToYouTube, expandYouTubeToWatchUrls, isYouTubeHostUrl, parseYouTubeUrl } from '../voice/audio/youtube.js';
+import {
+  appleMusicTrackToYouTubeUrl,
+  isAppleMusicShareUrl,
+  resolveAppleMusicTracks,
+  type AppleMusicTrack,
+} from '../voice/audio/apple-music.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
@@ -249,7 +255,22 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     const PLAYLIST_CAP = 25;
     let urlsToPlay: string[] = [mediaUrl];
     let playlistTitle: string | undefined;
-    if (isYouTubeHostUrl(mediaUrl)) {
+    /** Apple Music tracks still needing YouTube search (after the first). */
+    let appleMusicPending: AppleMusicTrack[] = [];
+
+    if (isAppleMusicShareUrl(mediaUrl)) {
+      const am = await resolveAppleMusicTracks(mediaUrl);
+      if (!am.tracks.length) {
+        throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
+      }
+      playlistTitle = am.title;
+      const firstYt = await appleMusicTrackToYouTubeUrl(am.tracks[0]);
+      if (!firstYt) {
+        throw new AppError(502, `No YouTube match for Apple Music track: ${am.tracks[0].artist} - ${am.tracks[0].title}`);
+      }
+      urlsToPlay = [firstYt];
+      appleMusicPending = am.tracks.slice(1, PLAYLIST_CAP);
+    } else if (isYouTubeHostUrl(mediaUrl)) {
       const parsed = parseYouTubeUrl(mediaUrl);
       try {
         const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
@@ -323,40 +344,68 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
 
     // Queue remaining playlist tracks in the background.
     // If the first track ends before later downloads finish, resume when the next item lands.
+    // Apple Music: resolve each remaining track via YouTube search, then download.
     const rest = urlsToPlay.slice(1);
-    if (rest.length > 0) {
+    const pendingTotal = rest.length + appleMusicPending.length;
+    if (pendingTotal > 0) {
       void (async () => {
+        const enqueueYt = async (itemUrl: string) => {
+          if (playlistExpandGeneration.get(id) !== generation) return false;
+          const live = manager.getBot(id);
+          if (!live || live.status === 'stopped' || live.status === 'error') return false;
+          const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
+          if (playlistExpandGeneration.get(id) !== generation) return false;
+          const stillLive = manager.getBot(id);
+          if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') return false;
+
+          const queueItem = {
+            id: `yt_${dl.info.id}`,
+            title: dl.info.title,
+            artist: dl.info.artist,
+            duration: dl.info.duration,
+            filePath: dl.filePath,
+            source: 'youtube' as const,
+            sourceUrl: itemUrl,
+          };
+          stillLive.queue.add(queueItem);
+          await saveHistory(itemUrl, queueItem.title);
+
+          // First track may have finished while we were downloading — resume from this item.
+          if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
+            stillLive.queue.playAt(stillLive.queue.length - 1);
+            await stillLive.play(queueItem).catch((err) => {
+              console.error('[music-bots.routes] Failed to resume playlist playback:', err);
+            });
+          }
+          return true;
+        };
+
         for (const itemUrl of rest) {
-          if (playlistExpandGeneration.get(id) !== generation) break;
           try {
-            const live = manager.getBot(id);
-            if (!live || live.status === 'stopped' || live.status === 'error') break;
-            const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
-            if (playlistExpandGeneration.get(id) !== generation) break;
-            const stillLive = manager.getBot(id);
-            if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') break;
-
-            const queueItem = {
-              id: `yt_${dl.info.id}`,
-              title: dl.info.title,
-              artist: dl.info.artist,
-              duration: dl.info.duration,
-              filePath: dl.filePath,
-              source: 'youtube' as const,
-              sourceUrl: itemUrl,
-            };
-            stillLive.queue.add(queueItem);
-            await saveHistory(itemUrl, queueItem.title);
-
-            // First track may have finished while we were downloading — resume from this item.
-            if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
-              stillLive.queue.playAt(stillLive.queue.length - 1);
-              await stillLive.play(queueItem).catch((err) => {
-                console.error('[music-bots.routes] Failed to resume playlist playback:', err);
-              });
-            }
+            const ok = await enqueueYt(itemUrl);
+            if (!ok) break;
           } catch (err) {
             console.error(`[music-bots.routes] Failed to queue playlist track ${itemUrl}:`, err);
+          }
+        }
+
+        for (const track of appleMusicPending) {
+          if (playlistExpandGeneration.get(id) !== generation) break;
+          try {
+            const ytUrl = await appleMusicTrackToYouTubeUrl(track);
+            if (!ytUrl) {
+              console.error(
+                `[music-bots.routes] No YouTube match for Apple Music track: ${track.artist} - ${track.title}`,
+              );
+              continue;
+            }
+            const ok = await enqueueYt(ytUrl);
+            if (!ok) break;
+          } catch (err) {
+            console.error(
+              `[music-bots.routes] Failed to queue Apple Music track ${track.artist} - ${track.title}:`,
+              err,
+            );
           }
         }
       })();
@@ -364,8 +413,8 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
 
     res.json({
       success: true,
-      queued: 1 + rest.length,
-      playlist: urlsToPlay.length > 1,
+      queued: 1 + pendingTotal,
+      playlist: pendingTotal > 0,
       playlistTitle,
       queueItem: { id: firstItem.id, title: firstItem.title },
     });
