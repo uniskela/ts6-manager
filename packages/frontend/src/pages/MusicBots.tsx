@@ -819,7 +819,8 @@ function LibraryTab() {
           setSelectedUrlIds(new Set(data.items.map((i: any) => i.id)));
         }
       },
-      onError: () => toast.error('Failed to load URL info'),
+      onError: (err: any) =>
+        toast.error(err?.response?.data?.error || 'Failed to load URL info'),
     });
   };
 
@@ -1284,7 +1285,8 @@ function PlaylistsTab() {
             setAddSelectedUrlIds(new Set(data.items.map((i: any) => i.id)));
           }
         },
-        onError: () => toast.error('Failed to load URL info'),
+        onError: (err: any) =>
+          toast.error(err?.response?.data?.error || 'Failed to load URL info'),
       },
     );
   };

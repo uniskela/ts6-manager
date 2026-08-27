@@ -34,6 +34,10 @@ import { widgetRoutes } from './routes/widget.routes.js';
 import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { requireServerAccess } from './middleware/server-access.js';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const backendPkg = require('../package.json') as { version?: string };
 
 export function createApp(): Express {
   const app = express();
@@ -45,9 +49,14 @@ export function createApp(): Express {
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
   app.use(express.json({ limit: '10mb' }));
 
-  // Health check
+  // Health check (includes version so deploys can verify backend image matches UI)
   app.get('/api/health', (_req, res) => {
-    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    res.json({
+      status: 'ok',
+      version: backendPkg.version || 'unknown',
+      gitSha: (process.env.GIT_SHA || '').slice(0, 7) || undefined,
+      timestamp: new Date().toISOString(),
+    });
   });
 
   // H1: Rate limiting on auth endpoints

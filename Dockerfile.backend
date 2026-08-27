@@ -26,7 +26,9 @@ RUN pnpm --filter @ts6/backend run build
 
 # Production image
 FROM base AS production
-ENV NODE_ENV=production
+ARG GIT_SHA=
+ENV NODE_ENV=production \
+    GIT_SHA=$GIT_SHA
 WORKDIR /app
 
 COPY --from=build /app/node_modules ./node_modules

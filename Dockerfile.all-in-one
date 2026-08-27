@@ -36,9 +36,11 @@ RUN pnpm --filter @ts6/backend run build
 RUN pnpm --filter @ts6/frontend run build
 
 FROM base AS production
+ARG GIT_SHA=
 ENV NODE_ENV=production \
     SIDECAR_URL=http://127.0.0.1:9800 \
-    DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
+    DATABASE_URL=file:/app/packages/backend/data/ts6webui.db \
+    GIT_SHA=$GIT_SHA
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

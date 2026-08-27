@@ -32,6 +32,15 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
 
+## [1.3.2] - 2026-08-27
+
+### Fixed
+
+- Apple Music **Load URL** matches YouTube tracks in parallel (avoids proxy timeouts on large playlists like 250+ tracks)
+- `/youtube/info` returns the real error message as HTTP 502 instead of a generic 500
+- Frontend Load toast shows the server error text
+- `/api/health` reports backend `version` (+ optional `gitSha`) so deploys can confirm backend matches the UI
+
 ## [1.3.1] - 2026-08-27
 
 ### Added
