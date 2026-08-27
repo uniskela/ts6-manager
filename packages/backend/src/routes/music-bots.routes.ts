@@ -679,6 +679,27 @@ musicBotRoutes.put('/:id/queue/move', async (req: Request, res: Response, next) 
 
 // === Video Streaming ===
 
+/** Allow http(s) URLs or a bare MUSIC_DIR filename (no path separators). */
+function assertVideoSource(source: unknown): string {
+  if (typeof source !== 'string' || !source.trim()) {
+    throw new AppError(400, 'source is required');
+  }
+  const trimmed = source.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    try {
+      // eslint-disable-next-line no-new
+      new URL(trimmed);
+    } catch {
+      throw new AppError(400, 'Invalid video source URL');
+    }
+    return trimmed;
+  }
+  if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..') || trimmed.includes('\0')) {
+    throw new AppError(400, 'Local video source must be a filename under the music directory');
+  }
+  return trimmed;
+}
+
 // POST /:id/stream/start — Start video stream
 musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, next) => {
   try {
@@ -686,8 +707,8 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
     const { source, preset, framerate, bitrate, volume } = req.body;
-    if (!source) throw new AppError(400, 'source is required');
-    await bot.startVideoStream(source, preset, framerate, bitrate, volume);
+    const safeSource = assertVideoSource(source);
+    await bot.startVideoStream(safeSource, preset, framerate, bitrate, volume);
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });
@@ -710,8 +731,8 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
     const { source, volume } = req.body;
-    if (!source) throw new AppError(400, 'source is required');
-    await bot.setVideoSource(source, volume);
+    const safeSource = assertVideoSource(source);
+    await bot.setVideoSource(safeSource, volume);
     res.json({ success: true });
   } catch (err) { next(err); }
 });

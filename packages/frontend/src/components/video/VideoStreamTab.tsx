@@ -131,7 +131,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                   ) : null}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  YouTube, direct video URLs (MP4, HLS), or local file paths
+                  YouTube / Twitch URLs, direct http(s) video URLs, or a filename already under the music directory
                 </p>
               </div>
 
