@@ -179,6 +179,8 @@ model Song {
 model Playlist {
   id                Int            @id @default(autoincrement())
   name              String
+  /// local = library uploads / local files only; stream = YouTube/URL tracks only.
+  mode              String         @default("local")
   musicBotId        Int?
   musicBot          MusicBot?      @relation(fields: [musicBotId], references: [id], onDelete: SetNull)
   youtubePlaylistId String?

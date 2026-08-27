@@ -44,6 +44,25 @@ export function parseTitleArtistFromFilename(fileName: string): { title: string;
   return { title, artist };
 }
 
+/**
+ * YouTube video ids are 11 chars [A-Za-z0-9_-]. This app's yt-dlp downloads use
+ * `%(id)s.%(ext)s` with opus/webm/m4a — only treat those extensions as id candidates
+ * so ordinary local uploads are not misclassified.
+ */
+export function youtubeIdFromFilename(fileName: string): string | null {
+  const ext = path.extname(fileName).toLowerCase();
+  if (!['.opus', '.webm', '.m4a', '.mp3'].includes(ext)) return null;
+  const baseName = path.basename(fileName, path.extname(fileName));
+  // Prefer ids that look like yt-dlp output (mixed alnum, often _ or -).
+  if (!/^[\w-]{11}$/.test(baseName)) return null;
+  return baseName;
+}
+
+/** True when the stored title is just a YouTube id (scan imported without meta). */
+export function looksLikeYouTubeIdTitle(title: string): boolean {
+  return /^[\w-]{11}$/.test(title.trim());
+}
+
 /** Read title/artist via ffprobe tags when present. */
 export function probeAudioTags(filePath: string): Promise<{ title?: string; artist?: string; duration?: number }> {
   return new Promise((resolve) => {

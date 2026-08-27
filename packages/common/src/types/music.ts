@@ -88,12 +88,17 @@ export interface PlaybackState {
 
 // === Playlist Types ===
 
+export type PlaylistMode = 'local' | 'stream';
+
 export interface PlaylistSummary {
   id: number;
   name: string;
+  mode: PlaylistMode;
   musicBotId: number | null;
   songCount: number;
   createdAt: string;
+  youtubePlaylistId?: string | null;
+  serverConfigId?: number | null;
 }
 
 export interface PlaylistDetail extends PlaylistSummary {

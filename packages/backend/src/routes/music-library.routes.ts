@@ -1,9 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { downloadYouTube, searchYouTube, getYouTubeUrlInfo } from '../voice/audio/youtube.js';
+import { downloadYouTube, searchYouTube, getYouTubeUrlInfo, fetchYouTubeVideoMeta } from '../voice/audio/youtube.js';
 import { getImportJob, startYouTubePlaylistImport } from '../voice/audio/youtube-playlist-import.js';
-import { parseTitleArtistFromFilename, probeAudioTags } from '../voice/audio/metadata.js';
+import {
+  looksLikeYouTubeIdTitle,
+  parseTitleArtistFromFilename,
+  probeAudioTags,
+  youtubeIdFromFilename,
+} from '../voice/audio/metadata.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -17,6 +22,52 @@ const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
 // Ensure music directory exists
 if (!fs.existsSync(MUSIC_DIR)) {
   fs.mkdirSync(MUSIC_DIR, { recursive: true });
+}
+
+async function enrichYouTubeIdFile(
+  filePath: string,
+  videoId: string,
+): Promise<{
+  title: string;
+  artist: string | null;
+  duration: number | null;
+  source: string;
+  sourceUrl: string;
+}> {
+  const tags = await probeAudioTags(filePath);
+  let title = tags.title;
+  let artist = tags.artist ?? null;
+  let duration = tags.duration ?? null;
+
+  if (!title || looksLikeYouTubeIdTitle(title)) {
+    try {
+      const meta = await fetchYouTubeVideoMeta(videoId);
+      if (meta) {
+        title = meta.title;
+        artist = artist || meta.artist;
+        if (duration == null && meta.duration) duration = meta.duration;
+      }
+    } catch {
+      /* keep filename fallback */
+    }
+  }
+
+  if (!title) title = videoId;
+  if (duration == null) {
+    try {
+      duration = await getAudioDuration(filePath);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return {
+    title,
+    artist,
+    duration,
+    source: 'youtube',
+    sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+  };
 }
 
 const storage = multer.diskStorage({
@@ -65,12 +116,14 @@ musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
 
     const existing = await prisma.song.findMany({
       where: { serverConfigId: configId },
-      select: { filePath: true },
     });
-    const known = new Set(existing.map((s: { filePath: string }) => s.filePath));
+    const knownByPath = new Map<string, (typeof existing)[number]>(
+      existing.map((s: (typeof existing)[number]) => [s.filePath, s]),
+    );
 
     const entries = fs.readdirSync(MUSIC_DIR, { withFileTypes: true });
     let imported = 0;
+    let updated = 0;
     const created: unknown[] = [];
 
     for (const entry of entries) {
@@ -78,34 +131,112 @@ musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
       const ext = path.extname(entry.name).toLowerCase();
       if (!ALLOWED_EXTENSIONS.includes(ext)) continue;
       const filePath = path.join(MUSIC_DIR, entry.name);
-      if (known.has(filePath)) continue;
+      const ytId = youtubeIdFromFilename(entry.name);
+      const known = knownByPath.get(filePath);
 
-      const tags = await probeAudioTags(filePath);
-      const fromName = parseTitleArtistFromFilename(entry.name);
-      const title = tags.title || fromName.title;
-      const artist = tags.artist || fromName.artist;
-      let duration = tags.duration ?? null;
-      if (duration == null) {
-        try { duration = await getAudioDuration(filePath); } catch { /* ignore */ }
+      if (known) {
+        // Repair rows that were scanned as local with a bare YouTube id title.
+        const needsRepair =
+          ytId &&
+          (known.source === 'local' ||
+            looksLikeYouTubeIdTitle(known.title) ||
+            !known.sourceUrl);
+        if (needsRepair && ytId) {
+          const enriched = await enrichYouTubeIdFile(filePath, ytId);
+          if (
+            enriched.title !== known.title ||
+            known.source !== 'youtube' ||
+            !known.sourceUrl
+          ) {
+            const song = await prisma.song.update({
+              where: { id: known.id },
+              data: {
+                title: enriched.title,
+                artist: enriched.artist ?? known.artist,
+                duration: enriched.duration ?? known.duration,
+                source: 'youtube',
+                sourceUrl: enriched.sourceUrl,
+              },
+            });
+            updated++;
+            created.push(song);
+          }
+        }
+        continue;
       }
-      const stat = fs.statSync(filePath);
 
-      const song = await prisma.song.create({
-        data: {
+      const stat = fs.statSync(filePath);
+      let songData: {
+        title: string;
+        artist: string | null;
+        duration: number | null;
+        filePath: string;
+        source: string;
+        sourceUrl: string | null;
+        fileSize: number;
+        serverConfigId: number;
+      };
+
+      if (ytId) {
+        const enriched = await enrichYouTubeIdFile(filePath, ytId);
+        // Only mark as youtube when yt-dlp returned a real title (avoids false positives).
+        const confirmed =
+          enriched.title !== ytId && enriched.source === 'youtube' && !!enriched.sourceUrl;
+        if (confirmed) {
+          songData = {
+            title: enriched.title,
+            artist: enriched.artist,
+            duration: enriched.duration,
+            filePath,
+            source: enriched.source,
+            sourceUrl: enriched.sourceUrl,
+            fileSize: stat.size,
+            serverConfigId: configId,
+          };
+        } else {
+          const fromName = parseTitleArtistFromFilename(entry.name);
+          songData = {
+            title: fromName.title,
+            artist: fromName.artist,
+            duration: enriched.duration,
+            filePath,
+            source: 'local',
+            sourceUrl: null,
+            fileSize: stat.size,
+            serverConfigId: configId,
+          };
+        }
+      } else {
+        const tags = await probeAudioTags(filePath);
+        const fromName = parseTitleArtistFromFilename(entry.name);
+        const title = tags.title || fromName.title;
+        const artist = tags.artist || fromName.artist;
+        let duration = tags.duration ?? null;
+        if (duration == null) {
+          try {
+            duration = await getAudioDuration(filePath);
+          } catch {
+            /* ignore */
+          }
+        }
+        songData = {
           title,
           artist,
           duration,
           filePath,
           source: 'local',
+          sourceUrl: null,
           fileSize: stat.size,
           serverConfigId: configId,
-        },
-      });
+        };
+      }
+
+      const song = await prisma.song.create({ data: songData });
       created.push(song);
       imported++;
     }
 
-    res.json({ imported, songs: created });
+    res.json({ imported, updated, songs: created });
   } catch (err) { next(err); }
 });
 

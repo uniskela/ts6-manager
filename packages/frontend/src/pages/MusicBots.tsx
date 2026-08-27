@@ -13,7 +13,7 @@ import {
 } from '@/hooks/use-music-bots';
 import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
 import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
-import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
+import { usePlaylists, usePlaylist, useCreatePlaylist, useDeletePlaylist, useAddSongToPlaylist, useAddPlaylistToPlaylist, useRemoveSongFromPlaylist } from '@/hooks/use-playlists';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -41,7 +41,7 @@ import {
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
-import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
+import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
 import {
   useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
 } from '@/hooks/use-chat-commands';
@@ -897,7 +897,18 @@ function LibraryTab() {
           onClick={() => {
             if (!configId) return;
             scanLibrary.mutate(configId, {
-              onSuccess: (data: any) => toast.success(`Imported ${data?.imported ?? 0} file(s) from music directory`),
+              onSuccess: (data: any) => {
+                const imported = data?.imported ?? 0;
+                const updated = data?.updated ?? 0;
+                if (imported === 0 && updated === 0) {
+                  toast.success('Scan complete — nothing new');
+                } else {
+                  const parts = [];
+                  if (imported) parts.push(`imported ${imported}`);
+                  if (updated) parts.push(`updated ${updated} YouTube file(s)`);
+                  toast.success(`Scan complete — ${parts.join(', ')}`);
+                }
+              },
               onError: () => toast.error('Library scan failed'),
             });
           }}
@@ -1142,29 +1153,54 @@ function PlaylistsTab() {
   const createPlaylist = useCreatePlaylist();
   const deletePlaylist = useDeletePlaylist();
   const addSong = useAddSongToPlaylist();
+  const addFromPlaylist = useAddPlaylistToPlaylist();
   const removeSong = useRemoveSongFromPlaylist();
 
   const { data: songs } = useSongs(selectedConfigId);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
+  const [newMode, setNewMode] = useState<PlaylistMode>('local');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showAddSong, setShowAddSong] = useState(false);
+  const [addTab, setAddTab] = useState<'songs' | 'playlists'>('songs');
   const [songFilter, setSongFilter] = useState('');
 
   const { data: detail } = usePlaylist(selectedId) as { data: PlaylistDetail | undefined };
 
   const playlists = (Array.isArray(data) ? data : []) as PlaylistSummary[];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
+  const playlistMode: PlaylistMode = detail?.mode === 'stream' ? 'stream' : 'local';
   const playlistSongIds = new Set((detail?.songs || []).map((s: any) => s.id));
-  const availableSongs = songList.filter((s) => !playlistSongIds.has(s.id) && (!songFilter || s.title.toLowerCase().includes(songFilter.toLowerCase())));
+
+  const songMatchesMode = (source: string) =>
+    playlistMode === 'local' ? source === 'local' : source === 'youtube' || source === 'url';
+
+  const availableSongs = songList.filter(
+    (s) =>
+      !playlistSongIds.has(s.id) &&
+      songMatchesMode(s.source) &&
+      (!songFilter ||
+        s.title.toLowerCase().includes(songFilter.toLowerCase()) ||
+        (s.artist || '').toLowerCase().includes(songFilter.toLowerCase())),
+  );
+
+  const otherPlaylists = playlists.filter((pl) => pl.id !== selectedId);
 
   const handleCreate = () => {
-    createPlaylist.mutate({ name: newName }, {
-      onSuccess: () => { toast.success('Playlist created'); setShowCreate(false); setNewName(''); },
-      onError: () => toast.error('Failed to create playlist'),
-    });
+    createPlaylist.mutate(
+      { name: newName, mode: newMode },
+      {
+        onSuccess: () => {
+          toast.success('Playlist created');
+          setShowCreate(false);
+          setNewName('');
+          setNewMode('local');
+        },
+        onError: () => toast.error('Failed to create playlist'),
+      },
+    );
   };
 
   if (isLoading) return <PageLoader />;
@@ -1172,67 +1208,129 @@ function PlaylistsTab() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">{playlists.length} playlist{playlists.length !== 1 ? 's' : ''}</p>
-        <Button size="sm" onClick={() => setShowCreate(true)}>
+        <p className="text-sm text-muted-foreground">
+          {playlists.length} playlist{playlists.length !== 1 ? 's' : ''}
+        </p>
+        <Button
+          size="sm"
+          onClick={() => {
+            setNewName('');
+            setNewMode('local');
+            setShowCreate(true);
+          }}
+        >
           <Plus className="h-4 w-4 mr-1" /> New Playlist
         </Button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
-        {/* Playlist list */}
         <div className="space-y-1.5">
           {playlists.length === 0 ? (
-            <EmptyState icon={ListMusic} title="No playlists" description="Create a playlist to organize your songs." />
-          ) : playlists.map((pl) => (
-            <div
-              key={pl.id}
-              className={`flex items-center gap-2 p-2.5 rounded-md cursor-pointer transition-colors ${
-                selectedId === pl.id ? 'bg-primary/10 border border-primary/30' : 'hover:bg-muted/50 border border-transparent'
-              }`}
-              onClick={() => setSelectedId(pl.id)}
-            >
-              <ListMusic className={`h-4 w-4 shrink-0 ${selectedId === pl.id ? 'text-primary' : 'text-muted-foreground'}`} />
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium truncate">{pl.name}</p>
-                <p className="text-[10px] text-muted-foreground">{pl.songCount} song{pl.songCount !== 1 ? 's' : ''}</p>
-              </div>
-              <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive shrink-0"
-                onClick={(e) => { e.stopPropagation(); setDeleteId(pl.id); }}
+            <EmptyState
+              icon={ListMusic}
+              title="No playlists"
+              description="Create a local or stream playlist to organize your songs."
+            />
+          ) : (
+            playlists.map((pl) => (
+              <div
+                key={pl.id}
+                className={`flex items-center gap-2 p-2.5 rounded-md cursor-pointer transition-colors ${
+                  selectedId === pl.id
+                    ? 'bg-primary/10 border border-primary/30'
+                    : 'hover:bg-muted/50 border border-transparent'
+                }`}
+                onClick={() => setSelectedId(pl.id)}
               >
-                <Trash2 className="h-3 w-3" />
-              </Button>
-            </div>
-          ))}
+                <ListMusic
+                  className={`h-4 w-4 shrink-0 ${selectedId === pl.id ? 'text-primary' : 'text-muted-foreground'}`}
+                />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">{pl.name}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Badge variant="outline" className="text-[9px] h-4 px-1">
+                      {pl.mode === 'stream' ? 'stream' : 'local'}
+                    </Badge>
+                    <p className="text-[10px] text-muted-foreground">
+                      {pl.songCount} song{pl.songCount !== 1 ? 's' : ''}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 text-destructive hover:text-destructive shrink-0"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleteId(pl.id);
+                  }}
+                >
+                  <Trash2 className="h-3 w-3" />
+                </Button>
+              </div>
+            ))
+          )}
         </div>
 
-        {/* Playlist detail */}
         {selectedId && detail ? (
           <Card>
             <CardHeader className="py-3 px-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">{detail.name}</CardTitle>
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setShowAddSong(true)}>
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <CardTitle className="text-sm truncate">{detail.name}</CardTitle>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    {playlistMode === 'local'
+                      ? 'Local only — library uploads / scanned local files'
+                      : 'Stream only — YouTube / URL tracks'}
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs shrink-0"
+                  onClick={() => {
+                    setAddTab('songs');
+                    setSongFilter('');
+                    setShowAddSong(true);
+                  }}
+                >
                   <Plus className="h-3 w-3 mr-1" /> Add Songs
                 </Button>
               </div>
             </CardHeader>
             <CardContent className="p-0">
               {detail.songs.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted-foreground">No songs in this playlist</div>
+                <div className="py-8 text-center text-xs text-muted-foreground">
+                  No songs in this playlist
+                </div>
               ) : (
                 <div className="max-h-[400px] overflow-y-auto">
                   {detail.songs.map((song: any, i: number) => (
-                    <div key={song.id} className="flex items-center gap-2 px-4 py-2 hover:bg-muted/30 transition-colors border-t border-border/50">
+                    <div
+                      key={song.id}
+                      className="flex items-center gap-2 px-4 py-2 hover:bg-muted/30 transition-colors border-t border-border/50"
+                    >
                       <span className="text-[10px] text-muted-foreground w-5 text-right">{i + 1}</span>
                       <div className="min-w-0 flex-1">
                         <p className="text-xs font-medium truncate">{song.title}</p>
-                        {song.artist && <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>}
+                        {song.artist && (
+                          <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>
+                        )}
                       </div>
+                      <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                        {song.source}
+                      </Badge>
                       <span className="text-[10px] text-muted-foreground">{formatTime(song.duration)}</span>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive"
-                        onClick={() => removeSong.mutate({ playlistId: selectedId, songId: song.id }, {
-                          onSuccess: () => toast.success('Song removed'),
-                        })}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 text-destructive hover:text-destructive"
+                        onClick={() =>
+                          removeSong.mutate(
+                            { playlistId: selectedId, songId: song.id },
+                            { onSuccess: () => toast.success('Song removed') },
+                          )
+                        }
                       >
                         <X className="h-3 w-3" />
                       </Button>
@@ -1249,73 +1347,215 @@ function PlaylistsTab() {
         )}
       </div>
 
-      {/* Create Playlist Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>
         <DialogContent>
-          <DialogHeader><DialogTitle>New Playlist</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Name</Label>
-            <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="My Playlist"
-              onKeyDown={(e) => e.key === 'Enter' && newName && handleCreate()}
-            />
+          <DialogHeader>
+            <DialogTitle>New Playlist</DialogTitle>
+            <DialogDescription>
+              Local playlists hold uploaded/scanned files. Stream playlists hold YouTube / URL tracks.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <Label className="text-xs">Name</Label>
+              <Input
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="My Playlist"
+                onKeyDown={(e) => e.key === 'Enter' && newName && handleCreate()}
+              />
+            </div>
+            <div>
+              <Label className="text-xs">Mode</Label>
+              <Select value={newMode} onValueChange={(v) => setNewMode(v as PlaylistMode)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="local">Local only</SelectItem>
+                  <SelectItem value="stream">Stream only</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={!newName || createPlaylist.isPending}>Create</Button>
+            <Button variant="outline" onClick={() => setShowCreate(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={!newName || createPlaylist.isPending}>
+              Create
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Add Song Dialog */}
-      <Dialog open={showAddSong} onOpenChange={setShowAddSong}>
+      <Dialog
+        open={showAddSong}
+        onOpenChange={(open) => {
+          setShowAddSong(open);
+          if (!open) {
+            setSongFilter('');
+            setAddTab('songs');
+          }
+        }}
+      >
         <DialogContent className="max-w-lg">
-          <DialogHeader><DialogTitle>Add Songs to Playlist</DialogTitle></DialogHeader>
-          <Input
-            value={songFilter}
-            onChange={(e) => setSongFilter(e.target.value)}
-            placeholder="Filter songs..."
-          />
-          <ScrollArea className="max-h-72">
-            {availableSongs.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">No songs available. Upload songs to the library first.</p>
-            ) : availableSongs.map((song) => (
-              <div key={song.id} className="flex items-center gap-2 py-1.5 hover:bg-muted/30 transition-colors rounded px-2">
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs truncate">{song.title}</p>
-                  {song.artist && <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>}
-                </div>
-                <Button variant="outline" size="sm" className="h-6 text-[10px] shrink-0"
-                  onClick={() => {
-                    if (selectedId) addSong.mutate({ playlistId: selectedId, songId: song.id }, {
-                      onSuccess: () => toast.success('Song added'),
-                    });
-                  }}
-                >
-                  <Plus className="h-3 w-3 mr-0.5" /> Add
-                </Button>
-              </div>
-            ))}
-          </ScrollArea>
+          <DialogHeader>
+            <DialogTitle>Add to {detail?.name || 'playlist'}</DialogTitle>
+            <DialogDescription>
+              {playlistMode === 'local'
+                ? 'Add local library songs, or copy matching songs from another playlist.'
+                : 'Add YouTube / URL tracks, or copy matching songs from another playlist.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant={addTab === 'songs' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setAddTab('songs')}
+            >
+              <FileAudio className="h-3 w-3 mr-1" /> Songs
+            </Button>
+            <Button
+              variant={addTab === 'playlists' ? 'default' : 'outline'}
+              size="sm"
+              className="h-7 text-xs"
+              onClick={() => setAddTab('playlists')}
+            >
+              <ListMusic className="h-3 w-3 mr-1" /> From playlist
+            </Button>
+          </div>
+
+          {addTab === 'songs' ? (
+            <>
+              <Input
+                value={songFilter}
+                onChange={(e) => setSongFilter(e.target.value)}
+                placeholder="Filter songs..."
+              />
+              <ScrollArea className="max-h-72">
+                {availableSongs.length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-8">
+                    No matching {playlistMode === 'local' ? 'local' : 'stream'} songs available.
+                  </p>
+                ) : (
+                  availableSongs.map((song) => (
+                    <div
+                      key={song.id}
+                      className="flex items-center gap-2 py-1.5 hover:bg-muted/30 transition-colors rounded px-2"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs truncate">{song.title}</p>
+                        {song.artist && (
+                          <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>
+                        )}
+                      </div>
+                      <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
+                        {song.source}
+                      </Badge>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[10px] shrink-0"
+                        onClick={() => {
+                          if (selectedId)
+                            addSong.mutate(
+                              { playlistId: selectedId, songId: song.id },
+                              {
+                                onSuccess: () => toast.success('Song added'),
+                                onError: (err: any) =>
+                                  toast.error(err?.response?.data?.error || 'Failed to add song'),
+                              },
+                            );
+                        }}
+                      >
+                        <Plus className="h-3 w-3 mr-0.5" /> Add
+                      </Button>
+                    </div>
+                  ))
+                )}
+              </ScrollArea>
+            </>
+          ) : (
+            <ScrollArea className="max-h-72">
+              {otherPlaylists.length === 0 ? (
+                <p className="text-xs text-muted-foreground text-center py-8">
+                  No other playlists to import from.
+                </p>
+              ) : (
+                otherPlaylists.map((pl) => (
+                  <div
+                    key={pl.id}
+                    className="flex items-center gap-2 py-1.5 hover:bg-muted/30 transition-colors rounded px-2"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{pl.name}</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {pl.songCount} song{pl.songCount !== 1 ? 's' : ''} · {pl.mode === 'stream' ? 'stream' : 'local'}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[10px] shrink-0"
+                      disabled={addFromPlaylist.isPending}
+                      onClick={() => {
+                        if (!selectedId) return;
+                        addFromPlaylist.mutate(
+                          { playlistId: selectedId, sourcePlaylistId: pl.id },
+                          {
+                            onSuccess: (res: any) => {
+                              const added = res?.added ?? 0;
+                              toast.success(
+                                added > 0
+                                  ? `Added ${added} song${added === 1 ? '' : 's'} from “${pl.name}”`
+                                  : 'No new matching songs to add',
+                              );
+                            },
+                            onError: (err: any) =>
+                              toast.error(err?.response?.data?.error || 'Failed to import playlist'),
+                          },
+                        );
+                      }}
+                    >
+                      <Plus className="h-3 w-3 mr-0.5" /> Add all matching
+                    </Button>
+                  </div>
+                ))
+              )}
+            </ScrollArea>
+          )}
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAddSong(false); setSongFilter(''); }}>Done</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowAddSong(false);
+                setSongFilter('');
+              }}
+            >
+              Done
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
       <ConfirmDialog
         open={deleteId !== null}
         onOpenChange={() => setDeleteId(null)}
         title="Delete Playlist?"
         description="This will permanently delete this playlist."
         onConfirm={() => {
-          if (deleteId) deletePlaylist.mutate(deleteId, {
-            onSuccess: () => {
-              toast.success('Playlist deleted');
-              if (selectedId === deleteId) setSelectedId(null);
-              setDeleteId(null);
-            },
-          });
+          if (deleteId)
+            deletePlaylist.mutate(deleteId, {
+              onSuccess: () => {
+                toast.success('Playlist deleted');
+                if (selectedId === deleteId) setSelectedId(null);
+                setDeleteId(null);
+              },
+            });
         }}
         destructive
       />
