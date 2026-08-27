@@ -54,6 +54,7 @@ model TsServerConfig {
   sshPort      Int      @default(10022)
   sshUsername  String?
   sshPassword  String?
+  sshHostKeyFingerprint String?
   enabled      Boolean  @default(true)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -66,6 +67,7 @@ model TsServerConfig {
   radioStations RadioStation[]
   widgets       Widget[]
   musicRequests MusicRequest[]
+  playlists     Playlist[]
 }
 
 model BotFlow {
@@ -174,11 +176,14 @@ model Song {
 }
 
 model Playlist {
-  id         Int       @id @default(autoincrement())
-  name       String
-  musicBotId Int?
-  musicBot   MusicBot? @relation(fields: [musicBotId], references: [id], onDelete: SetNull)
-  createdAt  DateTime  @default(now())
+  id                Int            @id @default(autoincrement())
+  name              String
+  musicBotId        Int?
+  musicBot          MusicBot?      @relation(fields: [musicBotId], references: [id], onDelete: SetNull)
+  youtubePlaylistId String?
+  serverConfigId    Int?
+  serverConfig      TsServerConfig? @relation(fields: [serverConfigId], references: [id], onDelete: SetNull)
+  createdAt         DateTime       @default(now())
 
   songs PlaylistSong[]
 }

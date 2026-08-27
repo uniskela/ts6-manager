@@ -164,8 +164,8 @@ export default function Clients() {
         accessorKey: 'client_away',
         header: 'Status',
         cell: ({ row }) => {
-          if (row.original.client_away) return <Badge variant="warning" className="text-[10px]">Away</Badge>;
-          if (row.original.client_input_muted) return <Badge variant="secondary" className="text-[10px]">Muted</Badge>;
+          if (Number(row.original.client_away) === 1) return <Badge variant="warning" className="text-[10px]">Away</Badge>;
+          if (Number(row.original.client_input_muted) === 1) return <Badge variant="secondary" className="text-[10px]">Muted</Badge>;
           return <Badge variant="success" className="text-[10px]">Active</Badge>;
         },
       },

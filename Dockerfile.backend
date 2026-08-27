@@ -40,6 +40,10 @@ COPY --from=build /app/packages/backend/prisma ./packages/backend/prisma
 COPY --from=build /app/packages/backend/package.json ./packages/backend/package.json
 COPY --from=build /app/packages/backend/node_modules ./packages/backend/node_modules
 
+COPY docker-commands/apply-schema.sh /usr/local/bin/apply-schema.sh
+COPY docker-commands/start-backend-standalone.sh /usr/local/bin/start-backend-standalone.sh
+RUN chmod +x /usr/local/bin/apply-schema.sh /usr/local/bin/start-backend-standalone.sh
+
 WORKDIR /app/packages/backend
 RUN mkdir -p data /data/music && \
     mkdir -p /root/.config/yt-dlp && \
@@ -47,4 +51,4 @@ RUN mkdir -p data /data/music && \
 
 EXPOSE 3001
 ENV SIDECAR_URL=http://ts6-sidecar:9800
-CMD ["sh", "-c", "npx prisma db push --skip-generate && npx prisma db seed || true && node dist/index.js"]
+CMD ["/usr/local/bin/start-backend-standalone.sh"]

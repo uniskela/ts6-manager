@@ -11,6 +11,7 @@ import {
   useStartVideoStream,
   useStopVideoStream,
   useSetStreamSource,
+  useSetStreamVolume,
   useKickVideoViewer,
 } from '@/hooks/use-music-bots';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Slider } from '@/components/ui/slider';
 
 const PRESETS = [
   { value: '480p', label: '480p (854x480, 1 Mbps)' },
@@ -41,11 +43,13 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
   const [preset, setPreset] = useState('720p');
   const [framerate, setFramerate] = useState('30');
   const [bitrate, setBitrate] = useState('2500k');
+  const [streamVolume, setStreamVolume] = useState(100);
 
   const { data: streamStatus } = useVideoStreamStatus(botId);
   const startStream = useStartVideoStream();
   const stopStream = useStopVideoStream();
   const setSource = useSetStreamSource();
+  const setStreamVolumeMut = useSetStreamVolume();
   const kickViewer = useKickVideoViewer();
 
   const isStreaming = streamStatus?.streaming ?? false;
@@ -59,6 +63,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
       preset,
       framerate: Number(framerate),
       bitrate: bitrate.trim(),
+      volume: streamVolume,
     });
   };
 
@@ -126,7 +131,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                   ) : null}
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  YouTube, direct video URLs (MP4, HLS), or local file paths
+                  YouTube / Twitch URLs, direct http(s) video URLs, or a filename already under the music directory
                 </p>
               </div>
 
@@ -174,6 +179,37 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                       Examples: 1500k, 2500k, 4500k, 6000k
                     </p>
                   </div>
+                  <div className="space-y-2">
+                    <Label>Stream Volume ({streamVolume}%)</Label>
+                    <Slider
+                      value={[streamVolume]}
+                      min={0}
+                      max={100}
+                      step={1}
+                      onValueChange={([val]) => {
+                        setStreamVolume(val);
+                        if (isStreaming) {
+                          setStreamVolumeMut.mutate({ botId, volume: val });
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {isStreaming && (
+                <div className="space-y-2">
+                  <Label>Stream Volume ({streamVolume}%)</Label>
+                  <Slider
+                    value={[streamVolume]}
+                    min={0}
+                    max={100}
+                    step={1}
+                    onValueChange={([val]) => {
+                      setStreamVolume(val);
+                      setStreamVolumeMut.mutate({ botId, volume: val });
+                    }}
+                  />
                 </div>
               )}
 

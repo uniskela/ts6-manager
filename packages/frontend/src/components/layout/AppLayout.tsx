@@ -1,11 +1,34 @@
+import { useEffect } from 'react';
 import { Outlet, Navigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useAuthStore } from '@/stores/auth.store';
+import { authApi } from '@/api/auth.api';
 import { Toaster } from 'sonner';
 
 export function AppLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated());
+  const setUser = useAuthStore((s) => s.setUser);
+
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => authApi.me(),
+    enabled: isAuthenticated,
+    staleTime: 60_000,
+  });
+
+  useEffect(() => {
+    const user = me?.user ?? me;
+    if (user?.id != null) {
+      setUser({
+        id: user.id,
+        username: user.username,
+        displayName: user.displayName,
+        role: user.role,
+      });
+    }
+  }, [me, setUser]);
 
   if (!isAuthenticated) {
     return <Navigate to="/login" replace />;

@@ -10,6 +10,8 @@ import { config } from './config.js';
 import { setYtCookieFile } from './voice/audio/youtube.js';
 import { updateYtDlpInBackground } from './voice/audio/yt-dlp-update.js';
 import jwt from 'jsonwebtoken';
+import { setWsSession } from './ws/ws-session.js';
+import type { JwtPayload } from '@ts6/common';
 import fs from 'fs';
 import path from 'path';
 
@@ -55,7 +57,7 @@ async function main() {
   const app = createApp();
   const server = createServer(app);
 
-  // H3: WebSocket with JWT authentication
+  // H3: WebSocket with JWT authentication + per-user session scoping
   const wss = new WebSocketServer({
     server,
     path: '/ws',
@@ -70,6 +72,41 @@ async function main() {
         done(false, 401, 'Invalid token');
       }
     },
+  });
+
+  wss.on('connection', async (ws, req) => {
+    try {
+      const wsUrl = new URL(req.url!, `http://${req.headers.host}`);
+      const token = wsUrl.searchParams.get('token');
+      if (!token) {
+        ws.close(4001, 'Missing token');
+        return;
+      }
+      const payload = jwt.verify(token, config.jwtSecret, { algorithms: ['HS256'] }) as JwtPayload;
+      const user = await prisma.user.findUnique({
+        where: { id: payload.id },
+        select: {
+          id: true,
+          enabled: true,
+          role: true,
+          serverAccess: { select: { serverConfigId: true } },
+        },
+      });
+      if (!user || !user.enabled) {
+        ws.close(4003, 'User disabled');
+        return;
+      }
+      const allowedServerConfigIds = user.role === 'admin'
+        ? new Set<number>()
+        : new Set(user.serverAccess.map((a) => a.serverConfigId));
+      setWsSession(ws, {
+        userId: user.id,
+        role: user.role as 'admin' | 'viewer',
+        allowedServerConfigIds,
+      });
+    } catch {
+      ws.close(4002, 'Invalid session');
+    }
   });
 
   // Initialize TS connection pool
