@@ -43,9 +43,9 @@ async function getWidgetData(token: string, req: Request): Promise<WidgetData | 
   const sid = widget.virtualServerId;
 
   const [serverInfoRaw, channelListRaw, clientListRaw] = await Promise.all([
-    client.execute(sid, 'serverinfo'),
-    client.execute(sid, 'channellist'),
-    client.execute(sid, 'clientlist'),
+    client.execute(sid, 'serverinfo', undefined, { priority: 'low' }),
+    client.execute(sid, 'channellist', undefined, { priority: 'low' }),
+    client.execute(sid, 'clientlist', undefined, { priority: 'low' }),
   ]);
 
   const info = Array.isArray(serverInfoRaw) ? serverInfoRaw[0] : serverInfoRaw;

@@ -11,7 +11,7 @@ const getClient = (req: Request) => {
 const getSid = (req: Request) => parseInt(String(req.params.sid));
 
 serverGroupRoutes.get('/', async (req: Request, res: Response, next) => {
-  try { res.json(await getClient(req).execute(getSid(req), 'servergrouplist')); } catch (err) { next(err); }
+  try { res.json(await getClient(req).execute(getSid(req), 'servergrouplist', undefined, { priority: 'high' })); } catch (err) { next(err); }
 });
 
 serverGroupRoutes.post('/', requireRole('admin'), async (req: Request, res: Response, next) => {

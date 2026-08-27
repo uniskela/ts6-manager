@@ -26,13 +26,15 @@ const ERROR_LOG_THROTTLE_MS = 15_000;
 const MAX_BACKOFF_MS = 30_000;
 
 function isConnectionError(message: string): boolean {
+  const lower = message.toLowerCase();
   return (
-    message.includes('ECONNRESET') ||
-    message.includes('socket hang up') ||
-    message.includes('EPIPE') ||
-    message.includes('ETIMEDOUT') ||
-    message.includes('ECONNABORTED') ||
-    message.includes('Connection failed')
+    lower.includes('econnreset') ||
+    lower.includes('socket hang up') ||
+    lower.includes('epipe') ||
+    lower.includes('etimedout') ||
+    lower.includes('econnaborted') ||
+    lower.includes('connection failed') ||
+    lower.includes('flood')
   );
 }
 
@@ -199,7 +201,8 @@ export class AnimationManager {
     // Stop existing animation for this flow
     this.stopAnimation(flowId);
 
-    const intervalMs = Math.max(250, config.intervalSeconds * 1000);
+    // Floor at 2s — 1s channeledit ticks flood TeamSpeak query anti-spam and starve the WebUI.
+    const intervalMs = Math.max(2_000, config.intervalSeconds * 1000);
 
     // Tick runtime state lives in this closure (not on the map entry) so overlapping
     // setInterval callbacks can skip/backoff without racing the Map record.
@@ -243,7 +246,7 @@ export class AnimationManager {
         await client.executePost(sid, 'channeledit', {
           cid: config.channelId,
           channel_name: channelName,
-        });
+        }, { priority: 'low' });
 
         state.consecutiveErrors = 0;
         state.pauseUntil = 0;
@@ -284,7 +287,7 @@ export class AnimationManager {
       suppressEditEvents: config.suppressEditEvents !== false,
     });
 
-    console.log(`[AnimationManager] Started animation for flow ${flowId}: style=${config.style}, interval=${config.intervalSeconds}s, channel=${config.channelId}, suppressEditEvents=${config.suppressEditEvents !== false}`);
+    console.log(`[AnimationManager] Started animation for flow ${flowId}: style=${config.style}, interval=${config.intervalSeconds}s (effective ${intervalMs}ms), channel=${config.channelId}, suppressEditEvents=${config.suppressEditEvents !== false}`);
   }
 
   stopAnimation(flowId: number): void {

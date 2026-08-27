@@ -14,7 +14,7 @@ channelRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const result = await getClient(req).execute(getSid(req), 'channellist', {
       '-topic': '', '-flags': '', '-voice': '', '-limits': '', '-icon': '', '-secondsempty': '',
-    });
+    }, { priority: 'high' });
     res.json(result);
   } catch (err) { next(err); }
 });

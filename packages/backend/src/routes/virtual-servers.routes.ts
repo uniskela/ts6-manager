@@ -11,7 +11,7 @@ const getClient = (req: Request) => {
 
 virtualServerRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
-    const result = await getClient(req).execute(0, 'serverlist');
+    const result = await getClient(req).execute(0, 'serverlist', undefined, { priority: 'high' });
     res.json(result);
   } catch (err) { next(err); }
 });

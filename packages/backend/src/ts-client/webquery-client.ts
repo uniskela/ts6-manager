@@ -4,6 +4,20 @@ import https from 'https';
 import { TSApiError } from '../middleware/error-handler.js';
 import { config } from '../config.js';
 
+/** UI / interactive traffic jumps ahead of background bots & animations. */
+export type WebQueryPriority = 'high' | 'normal' | 'low';
+
+const PRIORITY_RANK: Record<WebQueryPriority, number> = {
+  high: 0,
+  normal: 1,
+  low: 2,
+};
+
+/** Minimum gap between WebQuery commands — TS flood protection trips without this. */
+const MIN_COMMAND_GAP_MS = 250;
+const FLOOD_BASE_PAUSE_MS = 5_000;
+const FLOOD_MAX_PAUSE_MS = 30_000;
+
 const TRANSIENT_CODES = new Set([
   'ECONNRESET',
   'ECONNABORTED',
@@ -26,6 +40,20 @@ function isTransientNetworkError(error: any): boolean {
   );
 }
 
+/** TeamSpeak query flood / anti-spam (commonly 3329/3331 + "client is flooding"). */
+export function isFloodError(error: any): boolean {
+  const code = error instanceof TSApiError
+    ? error.code
+    : error?.response?.data?.status?.code;
+  if (code === 3329 || code === 3331) return true;
+  const msg = String(
+    error instanceof TSApiError
+      ? error.message
+      : error?.response?.data?.status?.message || error?.message || '',
+  ).toLowerCase();
+  return msg.includes('flood');
+}
+
 function toTsApiError(error: any): never {
   if (error instanceof TSApiError) throw error;
   if (error.response?.data?.status) {
@@ -37,16 +65,22 @@ function toTsApiError(error: any): never {
   throw new TSApiError(-1, error.message || 'Connection failed');
 }
 
+interface QueueEntry<T> {
+  priority: WebQueryPriority;
+  enqueuedAt: number;
+  op: () => Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason: unknown) => void;
+}
+
 export class WebQueryClient {
   private http: AxiosInstance;
   private agent: http.Agent | https.Agent;
-  /**
-   * Serialize all WebQuery HTTP ops on this client.
-   * keepAlive + maxSockets:1 already limits TCP, but Promise.all / animation ticks
-   * still race at the axios layer and reset the shared socket (ECONNRESET / hang up).
-   * Mirror SshQueryClient: one in-flight request at a time.
-   */
-  private requestChain: Promise<void> = Promise.resolve();
+  private queue: QueueEntry<any>[] = [];
+  private pumping = false;
+  private nextAllowedAt = 0;
+  private floodPauseUntil = 0;
+  private floodStrikes = 0;
 
   constructor(
     host: string,
@@ -73,20 +107,86 @@ export class WebQueryClient {
     });
   }
 
-  /** Run `op` after prior enqueued ops finish (failures do not break the chain). */
-  private enqueue<T>(op: () => Promise<T>): Promise<T> {
-    const run = this.requestChain.then(op, op);
-    this.requestChain = run.then(
-      () => undefined,
-      () => undefined,
-    );
-    return run;
+  /**
+   * Enqueue a WebQuery op with priority + global pacing.
+   * Serialization alone is not enough — TS still returns "client is flooding"
+   * when channeledit/dashboard/cron fire back-to-back.
+   */
+  private enqueue<T>(op: () => Promise<T>, priority: WebQueryPriority = 'normal'): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      this.queue.push({
+        priority,
+        enqueuedAt: Date.now(),
+        op,
+        resolve,
+        reject,
+      });
+      void this.pump();
+    });
+  }
+
+  private pickNextIndex(): number {
+    let best = 0;
+    for (let i = 1; i < this.queue.length; i++) {
+      const cand = this.queue[i];
+      const cur = this.queue[best];
+      const candRank = PRIORITY_RANK[cand.priority];
+      const curRank = PRIORITY_RANK[cur.priority];
+      if (candRank < curRank || (candRank === curRank && cand.enqueuedAt < cur.enqueuedAt)) {
+        best = i;
+      }
+    }
+    return best;
+  }
+
+  private async pump(): Promise<void> {
+    if (this.pumping) return;
+    this.pumping = true;
+    try {
+      while (this.queue.length > 0) {
+        const waitMs = Math.max(
+          0,
+          this.nextAllowedAt - Date.now(),
+          this.floodPauseUntil - Date.now(),
+        );
+        if (waitMs > 0) {
+          await new Promise((r) => setTimeout(r, waitMs));
+        }
+
+        const idx = this.pickNextIndex();
+        const item = this.queue.splice(idx, 1)[0];
+        try {
+          const result = await this.withTransientRetry(item.op);
+          this.floodStrikes = 0;
+          item.resolve(result);
+        } catch (err) {
+          if (isFloodError(err)) {
+            this.floodStrikes += 1;
+            const pause = Math.min(
+              FLOOD_MAX_PAUSE_MS,
+              FLOOD_BASE_PAUSE_MS * 2 ** Math.min(this.floodStrikes - 1, 3),
+            );
+            this.floodPauseUntil = Date.now() + pause;
+            console.warn(
+              `[WebQuery] TeamSpeak flood protection — pausing query traffic for ${pause}ms (strike ${this.floodStrikes})`,
+            );
+          }
+          item.reject(err);
+        } finally {
+          this.nextAllowedAt = Date.now() + MIN_COMMAND_GAP_MS;
+        }
+      }
+    } finally {
+      this.pumping = false;
+      if (this.queue.length > 0) {
+        void this.pump();
+      }
+    }
   }
 
   /**
    * Retry once on stale keep-alive / reset sockets.
-   * Do not destroy the shared agent here — other queued callers may still need it.
-   * Node removes the dead socket after ECONNRESET; the retry opens a fresh one.
+   * Never retry flood errors (that makes anti-spam worse).
    */
   private async withTransientRetry<T>(op: () => Promise<T>): Promise<T> {
     try {
@@ -99,7 +199,7 @@ export class WebQueryClient {
         toTsApiError(error);
       }
 
-      await new Promise((r) => setTimeout(r, 100));
+      await new Promise((r) => setTimeout(r, 150));
       try {
         return await op();
       } catch (retryError: any) {
@@ -108,47 +208,52 @@ export class WebQueryClient {
     }
   }
 
-  async execute(sid: number, command: string, params?: Record<string, any>): Promise<any> {
-    return this.enqueue(() =>
-      this.withTransientRetry(async () => {
-        // WebQuery URL pattern: /{sid}/{command}
-        // For instance-level commands (sid=0): /{command}
-        const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+  async execute(
+    sid: number,
+    command: string,
+    params?: Record<string, any>,
+    options?: { priority?: WebQueryPriority },
+  ): Promise<any> {
+    return this.enqueue(async () => {
+      // WebQuery URL pattern: /{sid}/{command}
+      // For instance-level commands (sid=0): /{command}
+      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
 
-        const response = await this.http.get(path, {
-          params: this.cleanParams(params),
-        });
+      const response = await this.http.get(path, {
+        params: this.cleanParams(params),
+      });
 
-        const data = response.data;
+      const data = response.data;
 
-        if (data.status && data.status.code !== 0) {
-          throw new TSApiError(data.status.code, data.status.message);
-        }
+      if (data.status && data.status.code !== 0) {
+        throw new TSApiError(data.status.code, data.status.message);
+      }
 
-        return data.body || data;
-      }),
-    );
+      return data.body || data;
+    }, options?.priority ?? 'normal');
   }
 
-  async executePost(sid: number, command: string, params?: Record<string, any>): Promise<any> {
-    return this.enqueue(() =>
-      this.withTransientRetry(async () => {
-        const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
-        const response = await this.http.post(path, null, {
-          params: this.cleanParams(params),
-        });
+  async executePost(
+    sid: number,
+    command: string,
+    params?: Record<string, any>,
+    options?: { priority?: WebQueryPriority },
+  ): Promise<any> {
+    return this.enqueue(async () => {
+      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+      const response = await this.http.post(path, null, {
+        params: this.cleanParams(params),
+      });
 
-        const data = response.data;
-        if (data.status && data.status.code !== 0) {
-          throw new TSApiError(data.status.code, data.status.message);
-        }
+      const data = response.data;
+      if (data.status && data.status.code !== 0) {
+        throw new TSApiError(data.status.code, data.status.message);
+      }
 
-        return data.body || data;
-      }),
-    );
+      return data.body || data;
+    }, options?.priority ?? 'normal');
   }
 
-  // Remove undefined/null values from params
   private cleanParams(params?: Record<string, any>): Record<string, any> | undefined {
     if (!params) return undefined;
     const cleaned: Record<string, any> = {};
@@ -160,18 +265,15 @@ export class WebQueryClient {
     return Object.keys(cleaned).length > 0 ? cleaned : undefined;
   }
 
-  // Test connection — returns version info or a detailed error
   async testConnection(): Promise<{ ok: true; version: unknown } | { ok: false; error: string }> {
     try {
-      const version = await this.execute(0, 'version');
+      const version = await this.execute(0, 'version', undefined, { priority: 'high' });
       return { ok: true, version };
     } catch (err: any) {
       return { ok: false, error: err?.message || String(err) };
     }
   }
 
-  // Destroy the HTTP agent, closing all keep-alive sockets.
-  // Call this for temporary clients (e.g. test connection) to avoid lingering query logins.
   destroy(): void {
     this.agent.destroy();
   }
