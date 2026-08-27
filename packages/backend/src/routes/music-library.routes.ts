@@ -14,6 +14,7 @@ import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
+import rateLimit from 'express-rate-limit';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.webm'];
@@ -91,6 +92,24 @@ const upload = multer({
   },
 });
 
+/** Bound expensive FS / yt-dlp operations (scan, import, batch download). */
+const heavyMusicOpLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many library scan/import requests, please try again later' },
+});
+
+/** Slightly higher budget for single downloads / uploads. */
+const musicWriteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many library write requests, please try again later' },
+});
+
 export const musicLibraryRoutes: Router = Router({ mergeParams: true });
 
 musicLibraryRoutes.use(requireRole('admin'));
@@ -109,7 +128,7 @@ musicLibraryRoutes.get('/songs', async (req: Request, res: Response, next) => {
 });
 
 // POST /scan — Import audio files already present under MUSIC_DIR
-musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
+musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
@@ -143,10 +162,12 @@ musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
             !known.sourceUrl);
         if (needsRepair && ytId) {
           const enriched = await enrichYouTubeIdFile(filePath, ytId);
+          const confirmed = enriched.title !== ytId;
           if (
-            enriched.title !== known.title ||
-            known.source !== 'youtube' ||
-            !known.sourceUrl
+            confirmed &&
+            (enriched.title !== known.title ||
+              known.source !== 'youtube' ||
+              !known.sourceUrl)
           ) {
             const song = await prisma.song.update({
               where: { id: known.id },
@@ -241,7 +262,7 @@ musicLibraryRoutes.post('/scan', async (req: Request, res: Response, next) => {
 });
 
 // POST /upload — Upload audio file
-musicLibraryRoutes.post('/upload', upload.single('file'), async (req: Request, res: Response, next) => {
+musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
@@ -304,7 +325,7 @@ musicLibraryRoutes.post('/youtube/search', async (req: Request, res: Response, n
 });
 
 // POST /youtube/download — Download from YouTube
-musicLibraryRoutes.post('/youtube/download', async (req: Request, res: Response, next) => {
+musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
@@ -350,7 +371,7 @@ musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, nex
 });
 
 // POST /youtube/import-playlist — Start background YouTube playlist import
-musicLibraryRoutes.post('/youtube/import-playlist', async (req: Request, res: Response, next) => {
+musicLibraryRoutes.post('/youtube/import-playlist', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
@@ -376,7 +397,7 @@ musicLibraryRoutes.get('/youtube/import/:jobId', async (req: Request, res: Respo
 });
 
 // POST /youtube/download-batch — Download multiple YouTube videos
-musicLibraryRoutes.post('/youtube/download-batch', async (req: Request, res: Response, next) => {
+musicLibraryRoutes.post('/youtube/download-batch', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
