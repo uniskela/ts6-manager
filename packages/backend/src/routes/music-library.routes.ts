@@ -31,7 +31,12 @@ async function resolveAppleMusicAsYouTubeInfo(url: string): Promise<{
   items: Array<{ id: string; title: string; artist: string; duration: number; thumbnail: string }>;
   title?: string;
 }> {
-  const am = await resolveAppleMusicTracks(url);
+  let am;
+  try {
+    am = await resolveAppleMusicTracks(url);
+  } catch (err: any) {
+    throw new AppError(502, err?.message || 'Could not resolve that Apple Music URL');
+  }
   if (!am.tracks.length) {
     throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
   }
@@ -68,7 +73,12 @@ async function resolveAppleMusicAsYouTubeInfo(url: string): Promise<{
 
 async function resolveMediaUrlForYouTubeDownload(url: string): Promise<string> {
   if (!isAppleMusicShareUrl(url)) return url;
-  const am = await resolveAppleMusicTracks(url);
+  let am;
+  try {
+    am = await resolveAppleMusicTracks(url);
+  } catch (err: any) {
+    throw new AppError(502, err?.message || 'Could not resolve that Apple Music URL');
+  }
   if (!am.tracks.length) {
     throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
   }

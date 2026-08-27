@@ -34,6 +34,10 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ## [1.3.1] - 2026-08-27
 
+### Added
+
+- `!shuffle [on|off]` chat command to toggle or set queue shuffle
+
 ### Fixed
 
 - Apple Music user playlist IDs (`pl.u-…` with hyphens) parse correctly

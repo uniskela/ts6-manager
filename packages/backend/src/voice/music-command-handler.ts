@@ -153,6 +153,9 @@ export class MusicCommandHandler {
           case 'add':
             await this.handleQueue(bot, userClid, args);
             break;
+          case 'shuffle':
+            this.handleShuffle(bot, userClid, args);
+            break;
           case 'stream':
             await this.handleStream(bot, userClid, args);
             break;
@@ -579,6 +582,24 @@ export class MusicCommandHandler {
     } else {
       this.reply(bot, userClid, 'Nothing is playing.');
     }
+  }
+
+  private handleShuffle(bot: VoiceBot, userClid: number, args: string): void {
+    const arg = args.trim().toLowerCase();
+    let enabled: boolean;
+    if (!arg) {
+      enabled = !bot.queue.shuffle;
+    } else if (arg === 'on' || arg === '1' || arg === 'true' || arg === 'yes') {
+      enabled = true;
+    } else if (arg === 'off' || arg === '0' || arg === 'false' || arg === 'no') {
+      enabled = false;
+    } else {
+      this.reply(bot, userClid, 'Usage: !shuffle [on|off]');
+      return;
+    }
+
+    bot.queue.setShuffle(enabled);
+    this.reply(bot, userClid, enabled ? 'Shuffle on.' : 'Shuffle off.');
   }
 
   private async handleSkip(bot: VoiceBot, userClid: number): Promise<void> {
