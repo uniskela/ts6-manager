@@ -59,6 +59,7 @@ export function createApp(): Express {
   });
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/refresh', authLimiter);
+  app.use('/api/auth/password', authLimiter);
 
   // Public routes
   app.use('/api/setup', setupRoutes);

@@ -18,7 +18,7 @@
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.0",
-    "expr-eval-fork": "^2.0.2",
+    "expr-eval-fork": "^3.0.3",
     "express": "^4.21.0",
     "express-rate-limit": "^7.4.0",
     "helmet": "^8.0.0",

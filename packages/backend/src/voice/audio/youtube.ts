@@ -76,22 +76,12 @@ export function parseYouTubeUrl(raw: string): ParsedYouTubeUrl {
   }
 
   const host = parsed.hostname.toLowerCase();
-  const isYt =
-    host === "youtu.be" ||
-    host === "youtube.com" ||
-    host === "www.youtube.com" ||
-    host === "m.youtube.com" ||
-    host === "music.youtube.com" ||
-    host.endsWith(".youtube.com");
-
-  if (!isYt) {
+  if (!isYouTubeHostname(host)) {
     return { canonicalUrl: trimmed };
   }
 
-  // music.youtube.com → www.youtube.com (same path/query)
-  if (host === "music.youtube.com" || host.startsWith("music.")) {
-    parsed.hostname = "www.youtube.com";
-  } else if (host === "m.youtube.com" || host === "youtube.com") {
+  // music.youtube.com / m.youtube.com / bare youtube.com → www.youtube.com
+  if (host === "music.youtube.com" || host === "m.youtube.com" || host === "youtube.com") {
     parsed.hostname = "www.youtube.com";
   }
 
@@ -123,17 +113,125 @@ export function parseYouTubeUrl(raw: string): ParsedYouTubeUrl {
   return { videoId, listId, canonicalUrl, playlistUrl, watchUrl };
 }
 
+/** Normalize host for allowlist checks (FQDN trailing dots, case). */
+function normalizeHostname(hostname: string): string {
+  return hostname.toLowerCase().replace(/\.+$/, "");
+}
+
+/** Exact YouTube host match (avoids substring false positives like evil-youtube.com). */
+export function isYouTubeHostname(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  return host === "youtu.be" || host === "youtube.com" || host.endsWith(".youtube.com");
+}
+
 export function isYouTubeHostUrl(url: string): boolean {
   try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
-      host === "youtu.be" ||
-      host.includes("youtube.com") ||
-      host === "music.youtube.com"
-    );
+    return isYouTubeHostname(new URL(url).hostname);
   } catch {
     return false;
   }
+}
+
+/** Exact Spotify hosts allowed for Open Graph title fetches (no wildcard suffixes). */
+type SpotifyFetchHost =
+  | "open.spotify.com"
+  | "www.spotify.com"
+  | "spotify.com"
+  | "spotify.link"
+  | "play.spotify.com";
+
+/**
+ * Map a hostname to an allowlisted Spotify host constant.
+ * Returning string literals (not the input) keeps the fetch target host untainted for SSRF analysis.
+ */
+export function resolveSpotifyFetchHost(hostname: string): SpotifyFetchHost | null {
+  switch (normalizeHostname(hostname)) {
+    case "open.spotify.com":
+      return "open.spotify.com";
+    case "www.spotify.com":
+      return "www.spotify.com";
+    case "spotify.com":
+      return "spotify.com";
+    case "spotify.link":
+      return "spotify.link";
+    case "play.spotify.com":
+      return "play.spotify.com";
+    default:
+      return null;
+  }
+}
+
+/** Spotify share hosts we are willing to fetch for Open Graph titles. */
+export function isSpotifyShareHostname(hostname: string): boolean {
+  return resolveSpotifyFetchHost(hostname) !== null;
+}
+
+/**
+ * Decode a small set of HTML entities once. Decode `&amp;` last so sequences
+ * like `&amp;#39;` cannot be double-unescaped into a quote.
+ */
+function decodeBasicHtmlEntities(text: string): string {
+  return text
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#x0*27;/gi, "'")
+    .replace(/&amp;/gi, "&");
+}
+
+/**
+ * Rebuild an https URL on an allowlisted host. Path/query are taken from the
+ * parsed URL; scheme, host, userinfo, and hash are not taken from user input.
+ */
+function buildSpotifyFetchUrl(allowedHost: SpotifyFetchHost, from: URL): URL {
+  const safe = new URL(`https://${allowedHost}`);
+  safe.pathname = from.pathname;
+  safe.search = from.search;
+  return safe;
+}
+
+/**
+ * Fetch a Spotify share URL while re-validating the host on every redirect hop.
+ * The request URL is rebuilt from an allowlisted host constant (not the raw user URL)
+ * so redirects cannot pivot SSRF off an open redirect.
+ */
+async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Response> {
+  let current = initialUrl;
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    if (current.username || current.password) {
+      throw new Error("URL credentials are not allowed");
+    }
+    if (current.protocol !== "https:") {
+      throw new Error("Invalid URL protocol: only https is allowed");
+    }
+
+    const allowedHost = resolveSpotifyFetchHost(current.hostname);
+    if (!allowedHost) {
+      throw new Error(`Refusing fetch to disallowed host: ${normalizeHostname(current.hostname)}`);
+    }
+
+    const safeUrl = buildSpotifyFetchUrl(allowedHost, current);
+    const res = await fetch(safeUrl.href, {
+      headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
+      redirect: "manual",
+    });
+
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (!location) {
+        throw new Error("Redirect missing Location header");
+      }
+      // Resolve relative redirect targets against the *safe* URL (https + allowlisted host).
+      current = new URL(location, safeUrl);
+      continue;
+    }
+
+    return res;
+  }
+
+  throw new Error("Too many redirects while fetching allowlisted URL");
 }
 
 function rejectYtDlpOptionUrl(url: string): void {
@@ -174,31 +272,26 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
     throw new Error("Invalid Spotify URL");
   }
 
-  const host = parsed.hostname.toLowerCase();
-  const allowed =
-    host === "open.spotify.com" ||
-    host === "spotify.com" ||
-    host.endsWith(".spotify.com") ||
-    host === "spotify.link";
-  if (!allowed) {
+  if (!isSpotifyShareHostname(parsed.hostname)) {
     throw new Error("Not a Spotify share URL");
   }
-  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
-    throw new Error("Invalid Spotify URL protocol");
+  if (parsed.protocol !== "https:") {
+    throw new Error("Invalid Spotify URL protocol: only https is allowed");
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error("URL credentials are not allowed");
   }
 
-  // Fetch Open Graph title from the Spotify page (no Spotify API key required)
+  // Fetch Open Graph title from the Spotify page (no Spotify API key required).
+  // Redirects are followed manually; each hop is rebuilt onto an allowlisted https host.
   let title = "";
   try {
-    const res = await fetch(parsed.toString(), {
-      headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
-      redirect: "follow",
-    });
+    const res = await fetchSpotifyOgPage(parsed);
     const html = await res.text();
     const og =
       html.match(/property="og:title"\s+content="([^"]+)"/i) ||
       html.match(/content="([^"]+)"\s+property="og:title"/i);
-    title = og?.[1]?.replace(/&amp;/g, "&").replace(/&#39;/g, "'") || "";
+    title = og?.[1] ? decodeBasicHtmlEntities(og[1]) : "";
   } catch {
     /* fall through */
   }
