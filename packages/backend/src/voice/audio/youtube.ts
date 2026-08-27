@@ -414,60 +414,115 @@ export async function getYouTubeUrlInfo(
 
   const stdout = result.stdout.trim();
   if (!stdout) {
+    if (parsed.videoId) {
+      return {
+        type: "video",
+        items: [{
+          id: parsed.videoId,
+          title: "Unknown",
+          artist: "Unknown",
+          duration: 0,
+          thumbnail: "",
+        }],
+      };
+    }
     throw new Error(`yt-dlp info failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
   }
 
-  let data: any;
+  const mapped = mapYtDlpInfoJson(stdout, parsed.videoId);
+  if (mapped) return mapped;
+
+  throw new Error(`yt-dlp info failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+}
+
+/** Parse yt-dlp JSON stdout into search results; null-safe when dump is `null` / malformed. */
+export function mapYtDlpInfoJson(
+  stdout: string,
+  fallbackVideoId?: string,
+): { type: "video" | "playlist"; items: YouTubeSearchResult[]; title?: string } | null {
+  let data: any = null;
   try {
-    const jsonLine = stdout.split("\n").find((l) => l.trim().startsWith("{")) || stdout;
+    const jsonLine = stdout
+      .split("\n")
+      .map((l) => l.trim())
+      .find((l) => l.startsWith("{") || l === "null") || stdout.trim();
     data = JSON.parse(jsonLine);
   } catch {
-    throw new Error(`Failed to parse yt-dlp output: ${summarizeYtDlpStderr(result.stderr || stdout)}`);
+    // Fall through to NDJSON / video-id fallbacks below.
   }
 
-  const entries: any[] = Array.isArray(data.entries)
-    ? data.entries.filter((e: any) => e && e.id)
-    : [];
+  // dump-single-json can print literal `null` when extraction fails with --ignore-errors.
+  if (data != null && typeof data === "object") {
+    const rawEntries = (data as { entries?: unknown }).entries;
+    const entries: any[] = Array.isArray(rawEntries)
+      ? rawEntries.filter((e: any) => e && e.id)
+      : [];
 
-  if (entries.length > 0) {
-    const items: YouTubeSearchResult[] = entries.map((entry) => ({
-      id: entry.id,
-      title: entry.title || "Unknown",
-      artist: entry.uploader || entry.channel || entry.artists?.[0] || "Unknown",
-      duration: entry.duration || 0,
-      thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
-    }));
+    if (entries.length > 0) {
+      const items: YouTubeSearchResult[] = entries.map((entry) => ({
+        id: entry.id,
+        title: entry.title || "Unknown",
+        artist: entry.uploader || entry.channel || entry.artists?.[0] || "Unknown",
+        duration: entry.duration || 0,
+        thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+      }));
+      return {
+        type: items.length > 1 ? "playlist" : "video",
+        items,
+        title: data.title || undefined,
+      };
+    }
+
+    if (data.id) {
+      return {
+        type: "video",
+        title: data.title || undefined,
+        items: [
+          {
+            id: data.id,
+            title: data.title || "Unknown",
+            artist: data.uploader || data.channel || "Unknown",
+            duration: data.duration || 0,
+            thumbnail: data.thumbnails?.[0]?.url || data.thumbnail || "",
+          },
+        ],
+      };
+    }
+  }
+
+  // NDJSON fallback: one JSON object per line (some yt-dlp modes).
+  const ndjsonItems: YouTubeSearchResult[] = [];
+  for (const line of stdout.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("{")) continue;
+    try {
+      const obj = JSON.parse(trimmed);
+      if (obj && obj.id && !Array.isArray(obj.entries)) {
+        ndjsonItems.push({
+          id: obj.id,
+          title: obj.title || "Unknown",
+          artist: obj.uploader || obj.channel || "Unknown",
+          duration: obj.duration || 0,
+          thumbnail: obj.thumbnails?.[0]?.url || obj.thumbnail || "",
+        });
+      }
+    } catch {
+      /* skip bad line */
+    }
+  }
+  if (ndjsonItems.length > 0) {
     return {
-      type: items.length > 1 ? "playlist" : "video",
-      items,
-      title: data.title || undefined,
+      type: ndjsonItems.length > 1 ? "playlist" : "video",
+      items: ndjsonItems,
     };
   }
 
-  // Single video dump
-  if (data.id) {
-    return {
-      type: "video",
-      title: data.title || undefined,
-      items: [
-        {
-          id: data.id,
-          title: data.title || "Unknown",
-          artist: data.uploader || data.channel || "Unknown",
-          duration: data.duration || 0,
-          thumbnail: data.thumbnails?.[0]?.url || data.thumbnail || "",
-        },
-      ],
-    };
-  }
-
-  // Fallback: if we already parsed a video id, return it without requiring yt-dlp metadata
-  if (parsed.videoId) {
+  if (fallbackVideoId) {
     return {
       type: "video",
       items: [
         {
-          id: parsed.videoId,
+          id: fallbackVideoId,
           title: "Unknown",
           artist: "Unknown",
           duration: 0,
@@ -477,7 +532,7 @@ export async function getYouTubeUrlInfo(
     };
   }
 
-  throw new Error(`yt-dlp info failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+  return null;
 }
 
 /**
@@ -512,13 +567,23 @@ export async function expandYouTubeToWatchUrls(
     };
   }
 
-  // Last resort: try probe anyway
-  const info = await getYouTubeUrlInfo(parsed.canonicalUrl);
-  return {
-    type: info.type,
-    title: info.title,
-    urls: info.items.slice(0, cap).map((item) => `https://www.youtube.com/watch?v=${item.id}`),
-  };
+  // Last resort: probe again; never throw a raw TypeError from null JSON.
+  try {
+    const info = await getYouTubeUrlInfo(parsed.canonicalUrl);
+    if (info.items.length > 0) {
+      return {
+        type: info.type,
+        title: info.title,
+        urls: info.items.slice(0, cap).map((item) => `https://www.youtube.com/watch?v=${item.id}`),
+      };
+    }
+  } catch (err) {
+    throw new Error(
+      `Could not resolve YouTube URL: ${(err as Error).message || String(err)}`,
+    );
+  }
+
+  throw new Error("Could not resolve any videos from that YouTube URL");
 }
 
 /**

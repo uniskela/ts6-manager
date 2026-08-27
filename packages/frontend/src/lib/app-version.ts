@@ -1,6 +1,6 @@
 /** UI / build identity for this fork (sourced from package.json + optional git sha). */
 
-const version = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.1.4';
+const version = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.1.5';
 const sha = typeof __GIT_SHA__ === 'string' ? __GIT_SHA__.trim() : '';
 
 export const APP_VERSION = version;

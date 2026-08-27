@@ -266,6 +266,8 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
         // Single-video Music/watch URLs can still download via canonical watch URL.
         if (parsed.watchUrl) {
           urlsToPlay = [parsed.watchUrl];
+        } else if (parsed.canonicalUrl && isYouTubeHostUrl(parsed.canonicalUrl) && parsed.videoId) {
+          urlsToPlay = [`https://www.youtube.com/watch?v=${parsed.videoId}`];
         } else {
           throw new AppError(502, `Failed to resolve YouTube URL: ${(err as Error).message || err}`);
         }
