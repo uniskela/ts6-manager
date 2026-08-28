@@ -278,10 +278,6 @@ export class MusicCommandHandler {
     data: Record<string, string>,
     replyChannelId?: number,
   ): Promise<void> {
-    if (replyChannelId != null && userClid) {
-      this.activeReplyChannel.set(`${botId}:${userClid}`, replyChannelId);
-    }
-    try {
     const msg = (data.msg || '').trim();
     if (!msg.startsWith(CMD_PREFIX)) return;
 
@@ -290,6 +286,16 @@ export class MusicCommandHandler {
     const rawArgs = parts.slice(1).join(' ').trim();
     const userClid = parseInt(data.invokerid || '0');
     if (!userClid) return;
+
+    const commandChannelId =
+      replyChannelId ??
+      parseInt(data.target || data.invokerchannelid || data.cid || '0', 10) ||
+      undefined;
+    if (commandChannelId && commandChannelId > 0) {
+      this.activeReplyChannel.set(`${botId}:${userClid}`, commandChannelId);
+    }
+
+    try {
 
     // TS clients auto-wrap URLs in BBCode: [URL]https://...[/URL]
     const args = rawArgs
@@ -311,7 +317,7 @@ export class MusicCommandHandler {
             await this.handleRadio(botId, bot, userClid, args);
             break;
           case 'play':
-            await this.handlePlay(bot, userClid, args);
+            await this.handlePlay(botId, bot, userClid, args);
             break;
           case 'stop':
             this.handleStop(bot, userClid);
@@ -336,7 +342,7 @@ export class MusicCommandHandler {
             break;
           case 'queue':
           case 'add':
-            await this.handleQueue(bot, userClid, args);
+            await this.handleQueue(botId, bot, userClid, args);
             break;
           case 'shuffle':
             this.handleShuffle(bot, userClid, args);
@@ -494,6 +500,8 @@ export class MusicCommandHandler {
       return;
     }
 
+    await this.joinChannelForCommand(botId, bot, userClid);
+
     const queueItem: QueueItem = {
       id: `radio_${station.id}`,
       title: station.name,
@@ -507,7 +515,30 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, `Now playing: ${station.name}`);
   }
 
-  private async handlePlay(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+  private async joinChannelForCommand(botId: number, bot: VoiceBot, userClid: number): Promise<void> {
+    const channelId = this.activeReplyChannel.get(`${botId}:${userClid}`);
+    if (!channelId || channelId <= 0) return;
+    if (bot.getCurrentChannelId() === channelId) return;
+
+    try {
+      bot.joinChannel(channelId);
+      console.log(
+        `[MusicCmd] Bot ${botId}: joined channel ${channelId} for command from clid=${userClid}`,
+      );
+      await this.refreshBotChannels(botId);
+    } catch (err: any) {
+      console.warn(`[MusicCmd] Bot ${botId}: could not join channel ${channelId}: ${err.message}`);
+    }
+  }
+
+  private async handlePlay(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    args: string,
+  ): Promise<void> {
+    await this.joinChannelForCommand(botId, bot, userClid);
+
     if (!args) {
       if (bot.status === 'paused') {
         bot.resume();
@@ -526,7 +557,7 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      await this.enqueueMediaUrl(bot, userClid, args);
+      await this.enqueueMediaUrl(botId, bot, userClid, args);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to play: ${err.message}`);
     }
@@ -537,10 +568,13 @@ export class MusicCommandHandler {
    * and queue the rest in the background (same approach as play-url).
    */
   private async enqueueMediaUrl(
+    botId: number,
     bot: VoiceBot,
     userClid: number,
     rawUrl: string,
   ): Promise<void> {
+    await this.joinChannelForCommand(botId, bot, userClid);
+
     let mediaUrl = rawUrl;
     if (isSpotifyShareUrl(mediaUrl)) {
       mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
@@ -711,7 +745,12 @@ export class MusicCommandHandler {
     );
   }
 
-  private async handleQueue(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+  private async handleQueue(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    args: string,
+  ): Promise<void> {
     // No args or "show" — display current queue
     if (!args || args.toLowerCase() === 'show') {
       this.showQueue(bot, userClid);
@@ -767,7 +806,7 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      await this.enqueueMediaUrl(bot, userClid, args);
+      await this.enqueueMediaUrl(botId, bot, userClid, args);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to queue: ${err.message}`);
     }
