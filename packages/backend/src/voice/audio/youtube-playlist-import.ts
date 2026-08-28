@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'crypto';
 import fs from 'fs';
-import type { PrismaClient } from '../../../generated/prisma/index.js';
+import type { PrismaClient, Song } from '../../../generated/prisma/index.js';
 import { parseYouTubeUrl, getYouTubeUrlInfo, downloadYouTube } from './youtube.js';
 import {
   appleMusicTrackToYouTubeUrl,
@@ -119,31 +119,35 @@ async function matchAppleTracksToImportItems(
     `[MusicLibrary] Apple Music import “${job.title || 'playlist'}”: matching ${tracks.length} tracks on YouTube (concurrency ${APPLE_MUSIC_YT_CONCURRENCY})`,
   );
 
-  const matched = await mapPool(tracks, APPLE_MUSIC_YT_CONCURRENCY, async (track) => {
-    try {
-      const ytUrl = await appleMusicTrackToYouTubeUrl(track);
-      if (!ytUrl) {
+  const matched = await mapPool<AppleMusicTrack, ImportItem | null>(
+    tracks,
+    APPLE_MUSIC_YT_CONCURRENCY,
+    async (track) => {
+      try {
+        const ytUrl = await appleMusicTrackToYouTubeUrl(track);
+        if (!ytUrl) {
+          job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+          return null;
+        }
+        const videoId = parseYouTubeUrl(ytUrl).videoId;
+        if (!videoId) {
+          job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+          return null;
+        }
+        job.matched = (job.matched ?? 0) + 1;
+        job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+        return {
+          id: videoId,
+          title: track.title,
+          artist: track.artist || 'Unknown',
+          duration: 0,
+        };
+      } catch {
         job.matchProcessed = (job.matchProcessed ?? 0) + 1;
         return null;
       }
-      const videoId = parseYouTubeUrl(ytUrl).videoId;
-      if (!videoId) {
-        job.matchProcessed = (job.matchProcessed ?? 0) + 1;
-        return null;
-      }
-      job.matched = (job.matched ?? 0) + 1;
-      job.matchProcessed = (job.matchProcessed ?? 0) + 1;
-      return {
-        id: videoId,
-        title: track.title,
-        artist: track.artist || 'Unknown',
-        duration: 0,
-      };
-    } catch {
-      job.matchProcessed = (job.matchProcessed ?? 0) + 1;
-      return null;
-    }
-  });
+    },
+  );
 
   const items = matched.filter((item): item is ImportItem => item != null);
   console.log(
@@ -223,7 +227,7 @@ async function registerStreamSong(
   serverConfigId: number,
   watchUrl: string,
   item: ImportItem,
-): Promise<{ id: number }> {
+): Promise<Song> {
   const existing = await prisma.song.findFirst({
     where: { sourceUrl: watchUrl, serverConfigId },
   });

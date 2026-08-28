@@ -85,7 +85,9 @@ function urlInfoPlaylistLabel(info: UrlLoadInfo): string {
   return `Playlist (${info.items.length} videos)`;
 }
 
-function urlItemSelectKey(index: number): string => String(index);
+function urlItemSelectKey(index: number): string {
+  return String(index);
+}
 
 function allUrlItemKeys(count: number): Set<string> {
   const keys = new Set<string>();
