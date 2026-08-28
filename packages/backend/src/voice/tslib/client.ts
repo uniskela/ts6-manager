@@ -141,6 +141,10 @@ export class Ts3Client extends EventEmitter {
     return this.channelMembers.size;
   }
 
+  getCurrentChannelId(): number {
+    return this.currentChannelId;
+  }
+
   async connect(opts: Ts3ClientOptions): Promise<void> {
     this.opts = opts;
     this.state = "init";

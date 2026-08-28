@@ -271,6 +271,30 @@ export class EventBridge extends EventEmitter {
     return Array.from(this.commandListeners.keys());
   }
 
+  /** Send channel chat in a channel with an active command listener (query client is in that channel). */
+  async sendChannelText(
+    configId: number,
+    sid: number,
+    channelId: number,
+    msg: string,
+  ): Promise<boolean> {
+    const key = this.makeCmdKey(configId, sid, channelId);
+    const client = this.commandListeners.get(key);
+    if (!client?.isConnected) return false;
+
+    const { tsEscape } = await import('../voice/tslib/commands.js');
+    try {
+      await client.executeCommand(`use sid=${sid}`);
+      await client.executeCommand(`sendtextmessage targetmode=2 msg=${tsEscape(msg)}`);
+      return true;
+    } catch (err: any) {
+      console.error(
+        `[EventBridge] sendChannelText failed for ${key}: ${err.message}`,
+      );
+      return false;
+    }
+  }
+
   destroy(): void {
   // existing "base" SSH connections
     for (const client of this.connections.values()) {

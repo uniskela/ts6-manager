@@ -148,6 +148,9 @@ model MusicBot {
   serverPassword  String?
   defaultChannel  String?
   channelPassword String?
+  /// JSON array of additional channel IDs where !commands are accepted (replies posted there via SSH listener).
+  commandChannelIds String?
+  virtualServerId   Int       @default(1)
   voicePort       Int       @default(9987)
   volume          Int       @default(50)
   identityData    String?

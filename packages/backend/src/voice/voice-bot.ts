@@ -190,6 +190,10 @@ export class VoiceBot extends EventEmitter {
     return this.client.getClientId();
   }
 
+  getCurrentChannelId(): number {
+    return this.client.getCurrentChannelId();
+  }
+
   /** Private (DM) text to a client. */
   sendTextMessage(targetClid: number, msg: string): void {
     const cmd = buildCommand('sendtextmessage', {

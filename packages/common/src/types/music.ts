@@ -10,6 +10,8 @@ export interface MusicBotSummary {
   nickname: string;
   serverPassword: string | null;
   defaultChannel: string | null;
+  commandChannelIds?: string[];
+  virtualServerId?: number;
   channelPassword: string | null;
   voicePort: number;
   volume: number;
@@ -30,6 +32,8 @@ export interface CreateMusicBotRequest {
   nickname?: string;
   serverPassword?: string;
   defaultChannel?: string;
+  commandChannelIds?: string[];
+  virtualServerId?: number;
   channelPassword?: string;
   voicePort?: number;
   volume?: number;
@@ -41,6 +45,8 @@ export interface UpdateMusicBotRequest {
   nickname?: string;
   serverPassword?: string;
   defaultChannel?: string;
+  commandChannelIds?: string[];
+  virtualServerId?: number;
   channelPassword?: string;
   voicePort?: number;
   volume?: number;

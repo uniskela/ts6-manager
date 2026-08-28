@@ -13,6 +13,7 @@ import type {
 } from '@ts6/common';
 import { AnimationManager } from './animation-manager.js';
 import type { AnimationConfig } from './animation-manager.js';
+import type { MusicCommandHandler } from '../voice/music-command-handler.js';
 import crypto from 'crypto';
 
 /**
@@ -253,6 +254,7 @@ export class BotEngine {
   private webhookEntries: WebhookEntry[] = [];
   private executionCounts: Map<number, number> = new Map();
   private running: boolean = false;
+  private musicCommandHandler: MusicCommandHandler | null = null;
 
   constructor(
     private prisma: PrismaClient,
@@ -267,6 +269,10 @@ export class BotEngine {
 
   setVoiceBotManager(manager: any): void {
     this.flowRunner.setVoiceBotManager(manager);
+  }
+
+  setMusicCommandHandler(handler: MusicCommandHandler): void {
+    this.musicCommandHandler = handler;
   }
 
   getEventBridge(): EventBridge {
@@ -504,11 +510,21 @@ export class BotEngine {
     }
   }
 
-  private setupSshConnections(): void {
-    const serverPairs = new Set<string>();
+  private getNeededServerPairs(): Set<string> {
+    const pairs = new Set<string>();
     for (const flow of this.flows.values()) {
-      serverPairs.add(`${flow.serverConfigId}:${flow.virtualServerId}`);
+      pairs.add(`${flow.serverConfigId}:${flow.virtualServerId}`);
     }
+    if (this.musicCommandHandler) {
+      for (const pair of this.musicCommandHandler.getNeededServerPairs()) {
+        pairs.add(pair);
+      }
+    }
+    return pairs;
+  }
+
+  private setupSshConnections(): void {
+    const serverPairs = this.getNeededServerPairs();
 
     for (const pair of serverPairs) {
       const [configId, sid] = pair.split(':').map(Number);
@@ -521,10 +537,7 @@ export class BotEngine {
   }
 
   private async cleanupUnusedSshConnections(): Promise<void> {
-    const neededPairs = new Set<string>();
-    for (const flow of this.flows.values()) {
-      neededPairs.add(`${flow.serverConfigId}:${flow.virtualServerId}`);
-    }
+    const neededPairs = this.getNeededServerPairs();
 
     // 1) cleanup unused ssh connections
     for (const key of this.eventBridge.getConnectedKeys()) {
@@ -659,6 +672,13 @@ export class BotEngine {
         }
       }
     }
+
+    if (this.musicCommandHandler) {
+      for (const cid of this.musicCommandHandler.getNeededCommandChannelIds(configId, sid)) {
+        ids.add(cid);
+      }
+    }
+
     return Array.from(ids);
   }
 

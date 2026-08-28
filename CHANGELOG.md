@@ -45,6 +45,13 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 - `!np` / `!nowplaying` shows track progress, up next, and expandable playback control hints (text commands — TS6 has no clickable skip/pause buttons in bot messages)
 
+## [1.3.7] - 2026-08-28
+
+### Added
+
+- Music bots can accept `!commands` in **additional channels** (channel ID list) and reply there while staying in the default playback channel
+- Uses ServerQuery SSH text-channel listeners; configure under Music Bots → bot settings
+
 ## [1.3.5] - 2026-08-28
 
 ### Changed
