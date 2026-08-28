@@ -298,10 +298,12 @@ export class MusicCommandHandler {
     const command = parts[0].toLowerCase();
     const rawArgs = parts.slice(1).join(' ').trim();
 
+    const parsedChannelId = parseInt(
+      data.target || data.invokerchannelid || data.cid || '0',
+      10,
+    );
     const commandChannelId =
-      replyChannelId ??
-      parseInt(data.target || data.invokerchannelid || data.cid || '0', 10) ||
-      undefined;
+      replyChannelId ?? (parsedChannelId > 0 ? parsedChannelId : undefined);
     if (commandChannelId && commandChannelId > 0) {
       this.activeReplyChannel.set(`${botId}:${userClid}`, commandChannelId);
     }
@@ -672,7 +674,6 @@ export class MusicCommandHandler {
 
     if (pendingTotal === 0) return;
 
-    const botId = bot.currentConfig.id;
     const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
     chatPlaylistGeneration.set(botId, generation);
 
