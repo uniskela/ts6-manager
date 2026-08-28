@@ -314,12 +314,12 @@ async function runImport(
       throw new Error('Music bot does not belong to this server');
     }
     queueBot = context.voiceBotManager?.getBot(options.musicBotId!);
-    const queueReady =
-      queueBot &&
-      (queueBot.status === 'connected' ||
-        queueBot.status === 'playing' ||
-        queueBot.status === 'paused');
-    if (!queueReady) {
+    if (
+      !queueBot ||
+      (queueBot.status !== 'connected' &&
+        queueBot.status !== 'playing' &&
+        queueBot.status !== 'paused')
+    ) {
       throw new Error('Music bot is not running — start the bot before importing to its queue');
     }
     job.musicBotId = options.musicBotId;

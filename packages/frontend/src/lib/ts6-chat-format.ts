@@ -7,7 +7,7 @@ export const TS6_CHAT_RESPONSE_EXAMPLE = `## Welcome
 Thanks for joining! Quick tips:
 
 - **!np** — now playing (with controls hint)
-- **!play** `<url>` — queue a track
+- **!play** \`<url>\` — queue a track
 
 <details>
 <summary>More commands</summary>

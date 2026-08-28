@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 import {
   formatHelpMessage,
   formatNowPlayingMessage,
@@ -16,12 +17,12 @@ describe('ts6-chat-format', () => {
       totalQueueLength: 3,
       includeControls: true,
     });
-    expect(msg).toContain('## 🎵 Now Playing');
-    expect(msg).toContain('**Song**');
-    expect(msg).toContain('1:30 / 3:20');
-    expect(msg).toContain('### Up Next');
-    expect(msg).toContain('<details>');
-    expect(msg).toContain('!pause');
+    assert.ok(msg.includes('## 🎵 Now Playing'));
+    assert.ok(msg.includes('**Song**'));
+    assert.ok(msg.includes('1:30 / 3:20'));
+    assert.ok(msg.includes('### Up Next'));
+    assert.ok(msg.includes('<details>'));
+    assert.ok(msg.includes('!pause'));
   });
 
   it('formats help with custom commands', () => {
@@ -29,10 +30,10 @@ describe('ts6-chat-format', () => {
       [{ usage: '!play <url>', blurb: 'Play URL' }],
       [{ name: 'rules', description: 'Server rules' }],
     );
-    expect(msg).toContain('### Built-in');
-    expect(msg).toContain('!play <url>');
-    expect(msg).toContain('### Custom');
-    expect(msg).toContain('!rules');
+    assert.ok(msg.includes('### Built-in'));
+    assert.ok(msg.includes('!play <url>'));
+    assert.ok(msg.includes('### Custom'));
+    assert.ok(msg.includes('!rules'));
   });
 
   it('formats queue with current marker', () => {
@@ -43,7 +44,7 @@ describe('ts6-chat-format', () => {
       ],
       1,
     );
-    expect(msg).toContain('▶️');
-    expect(msg).toContain('**2.**');
+    assert.ok(msg.includes('▶️'));
+    assert.ok(msg.includes('**2.**'));
   });
 });
