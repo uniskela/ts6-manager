@@ -15,6 +15,7 @@ import {
   youtubeIdFromFilename,
 } from '../voice/audio/metadata.js';
 import { loadMaxPlaylistImport } from '../utils/app-settings.js';
+import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -502,14 +503,23 @@ musicLibraryRoutes.post('/youtube/import-playlist', heavyMusicOpLimiter, async (
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
-    const { url, playlistName, playlistId, reimport } = req.body;
+    const { url, playlistName, playlistId, reimport, musicBotId, clearFirst } = req.body;
     if (!url) throw new AppError(400, 'url is required');
 
-    const jobId = await startYouTubePlaylistImport(prisma, configId, url.trim(), {
-      playlistName,
-      playlistId: playlistId != null ? parseInt(playlistId) : undefined,
-      reimport: !!reimport,
-    });
+    const voiceBotManager = req.app.locals.voiceBotManager as VoiceBotManager | undefined;
+    const jobId = await startYouTubePlaylistImport(
+      prisma,
+      configId,
+      url.trim(),
+      {
+        playlistName,
+        playlistId: playlistId != null ? parseInt(playlistId) : undefined,
+        reimport: !!reimport,
+        musicBotId: musicBotId != null ? parseInt(musicBotId) : undefined,
+        clearFirst: !!clearFirst,
+      },
+      { voiceBotManager },
+    );
     res.status(202).json({ jobId });
   } catch (err) { next(err); }
 });

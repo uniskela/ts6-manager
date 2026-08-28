@@ -84,8 +84,17 @@ export const musicLibraryApi = {
     api
       .post(`/servers/${configId}/music-library/youtube/register`, { items }, { timeout: 120000 })
       .then((r) => r.data),
-  youtubeImportPlaylist: (configId: number, data: { url: string; playlistName?: string; playlistId?: number; reimport?: boolean }) =>
-    api.post(`/servers/${configId}/music-library/youtube/import-playlist`, data).then((r) => r.data),
+  youtubeImportPlaylist: (
+    configId: number,
+    data: {
+      url: string;
+      playlistName?: string;
+      playlistId?: number;
+      reimport?: boolean;
+      musicBotId?: number;
+      clearFirst?: boolean;
+    },
+  ) => api.post(`/servers/${configId}/music-library/youtube/import-playlist`, data).then((r) => r.data),
   youtubeImportStatus: (configId: number, jobId: string) =>
     api.get(`/servers/${configId}/music-library/youtube/import/${jobId}`).then((r) => r.data),
 };

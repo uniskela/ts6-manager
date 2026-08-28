@@ -599,7 +599,7 @@ function LimitsCard() {
   useEffect(() => {
     if (limits) {
       setMaxVideoDuration(String(limits.maxVideoDuration ?? 900));
-      setMaxPlaylistImport(String(limits.maxPlaylistImport ?? 50));
+      setMaxPlaylistImport(String(limits.maxPlaylistImport ?? 250));
     }
   }, [limits]);
 
@@ -622,7 +622,8 @@ function LimitsCard() {
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-xs text-muted-foreground">
-          Cap YouTube playlist imports and on-demand video stream downloads.
+          Cap YouTube and Apple Music playlist imports (stream register or download). For large
+          playlists (e.g. 250+ tracks), raise the import cap below (max 500).
         </p>
         {isLoading ? (
           <p className="text-xs text-muted-foreground">Loading...</p>

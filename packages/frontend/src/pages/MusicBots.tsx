@@ -43,10 +43,11 @@ import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
 import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
-import {
-  useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
+import { useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
 } from '@/hooks/use-chat-commands';
-import { Textarea } from '@/components/ui/textarea';
+import { settingsApi } from '@/api/settings.api';
+import { TS6_CHAT_RESPONSE_EXAMPLE } from '@/lib/ts6-chat-format';
+import { Ts6ChatResponseEditor } from '@/components/Ts6ChatResponseEditor';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,10 @@ interface ImportJobStatus {
   matchProcessed?: number;
   matchTotal?: number;
   matched?: number;
+  sourceTrackCount?: number;
+  importCap?: number;
+  enqueued?: number;
+  musicBotId?: number;
   downloaded?: number;
   registered?: number;
   skipped?: number;
@@ -115,7 +120,12 @@ interface ImportJobStatus {
 function importJobProgressLabel(job: ImportJobStatus | undefined | null): string {
   if (!job) return '?';
   if (job.phase === 'matching') {
-    return `Matching ${job.matchProcessed ?? 0}/${job.matchTotal ?? '?'} (${job.matched ?? 0} hits)`;
+    const ofSource =
+      job.sourceTrackCount != null &&
+      job.sourceTrackCount > (job.matchTotal ?? 0)
+        ? ` of ${job.sourceTrackCount}`
+        : '';
+    return `Matching ${job.matchProcessed ?? 0}/${job.matchTotal ?? '?'}${ofSource} (${job.matched ?? 0} hits)`;
   }
   return `Importing ${job.processed ?? 0}/${job.total ?? '?'}`;
 }
@@ -123,9 +133,79 @@ function importJobProgressLabel(job: ImportJobStatus | undefined | null): string
 function importJobCompleteMessage(job: ImportJobStatus): string {
   const parts: string[] = [];
   if ((job.registered ?? 0) > 0) parts.push(`${job.registered} registered`);
+  if ((job.enqueued ?? 0) > 0) parts.push(`${job.enqueued} enqueued`);
   if ((job.downloaded ?? 0) > 0) parts.push(`${job.downloaded} downloaded`);
   if ((job.skipped ?? 0) > 0) parts.push(`${job.skipped} skipped`);
-  return parts.length ? `Import complete: ${parts.join(', ')}` : 'Import complete';
+  const base = parts.length ? `Import complete: ${parts.join(', ')}` : 'Import complete';
+  if (
+    job.sourceTrackCount != null &&
+    job.sourceTrackCount > (job.total ?? 0)
+  ) {
+    const cap = job.importCap ?? job.total ?? 0;
+    return `${base}. Only first ${cap} of ${job.sourceTrackCount} source tracks — raise Max playlist import in Settings → Limits`;
+  }
+  return base;
+}
+
+function ImportQueueOptions({
+  bots,
+  configId,
+  botId,
+  onBotIdChange,
+  clearFirst,
+  onClearFirstChange,
+}: {
+  bots: MusicBotSummary[];
+  configId: number | null;
+  botId: string;
+  onBotIdChange: (id: string) => void;
+  clearFirst: boolean;
+  onClearFirstChange: (v: boolean) => void;
+}) {
+  const running = bots.filter(
+    (b) =>
+      b.serverConfigId === configId &&
+      b.status !== 'stopped' &&
+      b.status !== 'error',
+  );
+  if (!configId || running.length === 0) {
+    return (
+      <p className="text-[10px] text-muted-foreground">
+        Start a music bot on this server to import directly to its queue.
+      </p>
+    );
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Select value={botId || 'none'} onValueChange={(v) => onBotIdChange(v === 'none' ? '' : v)}>
+        <SelectTrigger className="h-8 w-44 text-xs">
+          <SelectValue placeholder="Enqueue to bot..." />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">No bot queue</SelectItem>
+          {running.map((b) => (
+            <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {botId && (
+        <label className="flex items-center gap-1.5 text-[10px] text-muted-foreground cursor-pointer">
+          <input
+            type="checkbox"
+            checked={clearFirst}
+            onChange={(e) => onClearFirstChange(e.target.checked)}
+            className="accent-primary"
+          />
+          Clear queue first
+        </label>
+      )}
+    </div>
+  );
+}
+
+function importCapHint(maxPlaylistImport: number | undefined): string {
+  const cap = maxPlaylistImport ?? 250;
+  return `Imports up to ${cap} tracks (Settings → Limits). Large Apple Music playlists may need a higher cap (max 500).`;
 }
 
 const statusColors: Record<string, string> = {
@@ -820,6 +900,14 @@ function LibraryTab() {
   const ytInfo = useYouTubeInfo();
   const ytBatchDownload = useYouTubeDownloadBatch();
   const ytImportPlaylist = useYouTubeImportPlaylist();
+  const { data: importLimits } = useQuery({
+    queryKey: ['settings-limits'],
+    queryFn: settingsApi.getLimits,
+    staleTime: 60_000,
+  });
+  const maxPlaylistImport = importLimits?.maxPlaylistImport ?? 250;
+  const { data: musicBotsData } = useMusicBots();
+  const musicBots = (Array.isArray(musicBotsData) ? musicBotsData : []) as MusicBotSummary[];
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -833,6 +921,8 @@ function LibraryTab() {
   const [batchProgress, setBatchProgress] = useState<string | null>(null);
   const [importJobId, setImportJobId] = useState<string | null>(null);
   const [importPlaylistName, setImportPlaylistName] = useState('');
+  const [importQueueBotId, setImportQueueBotId] = useState('');
+  const [importClearQueue, setImportClearQueue] = useState(false);
   const { data: importJob } = useYouTubeImportStatus(configId, importJobId);
 
   const serverList = Array.isArray(servers) ? servers : [];
@@ -922,19 +1012,34 @@ function LibraryTab() {
     });
   };
 
-  const handleImportPlaylist = (reimport = false) => {
+  const handleImportPlaylist = (reimport = false, queueOnly = false) => {
     if (!configId || !ytUrl.trim()) return;
+    if (queueOnly && !importQueueBotId) {
+      toast.error('Select a running music bot to import to its queue');
+      return;
+    }
+    const musicBotId = importQueueBotId ? parseInt(importQueueBotId, 10) : undefined;
     ytImportPlaylist.mutate({
       configId,
       url: ytUrl.trim(),
-      playlistName: importPlaylistName.trim() || urlInfo?.title,
+      ...(queueOnly
+        ? {}
+        : {
+            playlistName: importPlaylistName.trim() || urlInfo?.title,
+          }),
       reimport,
+      ...(musicBotId
+        ? { musicBotId, clearFirst: importClearQueue }
+        : {}),
     }, {
       onSuccess: (data: any) => {
         setImportJobId(data.jobId);
-        toast.success('Playlist import started');
+        toast.success(queueOnly ? 'Queue import started' : 'Playlist import started', {
+          description: importCapHint(maxPlaylistImport),
+        });
       },
-      onError: () => toast.error('Failed to start playlist import'),
+      onError: (err: any) =>
+        toast.error(err?.response?.data?.error || 'Failed to start playlist import'),
     });
   };
 
@@ -943,6 +1048,10 @@ function LibraryTab() {
       toast.success(importJobCompleteMessage(importJob));
       qc.invalidateQueries({ queryKey: ['songs', configId] });
       qc.invalidateQueries({ queryKey: ['playlists'] });
+      if (importJob.musicBotId) {
+        qc.invalidateQueries({ queryKey: ['music-bot', importJob.musicBotId] });
+        qc.invalidateQueries({ queryKey: ['music-bot-state', importJob.musicBotId] });
+      }
       setImportJobId(null);
       setUrlInfo(null);
       setYtUrl('');
@@ -1009,7 +1118,16 @@ function LibraryTab() {
       {/* YouTube URL / Playlist Paste */}
       <Card className="border-dashed">
         <CardContent className="p-3 space-y-3">
-          <div className="flex items-center gap-2">
+          <p className="text-[10px] text-muted-foreground">{importCapHint(maxPlaylistImport)}</p>
+          <ImportQueueOptions
+            bots={musicBots}
+            configId={configId}
+            botId={importQueueBotId}
+            onBotIdChange={setImportQueueBotId}
+            clearFirst={importClearQueue}
+            onClearFirstChange={setImportClearQueue}
+          />
+          <div className="flex items-center gap-2 flex-wrap">
             <div className="relative flex-1">
               <Link className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1052,6 +1170,16 @@ function LibraryTab() {
                     </>
                   )}
                 </Button>
+                {importQueueBotId && (
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={() => handleImportPlaylist(false, true)}
+                    disabled={ytImportPlaylist.isPending || !!importJobId}
+                  >
+                    <ListMusic className="h-3 w-3 mr-1" /> Import to queue
+                  </Button>
+                )}
               </>
             )}
             {urlInfo && (
@@ -1281,6 +1409,14 @@ function PlaylistsTab() {
   const ytBatchDownload = useYouTubeDownloadBatch();
   const ytRegister = useYouTubeRegister();
   const ytImportPlaylist = useYouTubeImportPlaylist();
+  const { data: playlistImportLimits } = useQuery({
+    queryKey: ['settings-limits'],
+    queryFn: settingsApi.getLimits,
+    staleTime: 60_000,
+  });
+  const maxPlaylistImport = playlistImportLimits?.maxPlaylistImport ?? 250;
+  const { data: playlistMusicBotsData } = useMusicBots();
+  const playlistMusicBots = (Array.isArray(playlistMusicBotsData) ? playlistMusicBotsData : []) as MusicBotSummary[];
 
   const { data: songs } = useSongs(selectedConfigId);
 
@@ -1300,6 +1436,8 @@ function PlaylistsTab() {
   const [addSelectedUrlIds, setAddSelectedUrlIds] = useState<Set<string>>(new Set());
   const [addBatchProgress, setAddBatchProgress] = useState<string | null>(null);
   const [addImportJobId, setAddImportJobId] = useState<string | null>(null);
+  const [importQueueBotId, setImportQueueBotId] = useState('');
+  const [importClearQueue, setImportClearQueue] = useState(false);
 
   const { data: detail } = usePlaylist(selectedId) as { data: PlaylistDetail | undefined };
   const { data: addImportJob } = useYouTubeImportStatus(selectedConfigId, addImportJobId);
@@ -1539,19 +1677,27 @@ function PlaylistsTab() {
     );
   };
 
-  const handleAddImportPlaylist = (reimport = false) => {
-    if (!selectedConfigId || !selectedId || !addYtUrl.trim()) return;
+  const handleAddImportPlaylist = (reimport = false, queueOnly = false) => {
+    if (!selectedConfigId || !addYtUrl.trim()) return;
+    if (queueOnly && !importQueueBotId) {
+      toast.error('Select a running music bot to import to its queue');
+      return;
+    }
+    const musicBotId = importQueueBotId ? parseInt(importQueueBotId, 10) : undefined;
     ytImportPlaylist.mutate(
       {
         configId: selectedConfigId,
         url: addYtUrl.trim(),
-        playlistId: selectedId,
+        ...(queueOnly ? {} : { playlistId: selectedId! }),
         reimport,
+        ...(musicBotId ? { musicBotId, clearFirst: importClearQueue } : {}),
       },
       {
         onSuccess: (data: any) => {
           setAddImportJobId(data.jobId);
-          toast.success('Playlist import started');
+          toast.success(queueOnly ? 'Queue import started' : 'Playlist import started', {
+            description: importCapHint(maxPlaylistImport),
+          });
         },
         onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to start playlist import'),
       },
@@ -1564,6 +1710,10 @@ function PlaylistsTab() {
       qc.invalidateQueries({ queryKey: ['songs', selectedConfigId] });
       qc.invalidateQueries({ queryKey: ['playlist', selectedId] });
       qc.invalidateQueries({ queryKey: ['playlists'] });
+      if (addImportJob.musicBotId) {
+        qc.invalidateQueries({ queryKey: ['music-bot', addImportJob.musicBotId] });
+        qc.invalidateQueries({ queryKey: ['music-bot-state', addImportJob.musicBotId] });
+      }
       resetAddUrlState();
     } else if (addImportJob?.status === 'failed') {
       toast.error(addImportJob.errors?.[0] || 'Playlist import failed');
@@ -1973,7 +2123,15 @@ function PlaylistsTab() {
                 </p>
               ) : (
                 <>
-                  <div className="flex items-center gap-2">
+                  <ImportQueueOptions
+                    bots={playlistMusicBots}
+                    configId={selectedConfigId}
+                    botId={importQueueBotId}
+                    onBotIdChange={setImportQueueBotId}
+                    clearFirst={importClearQueue}
+                    onClearFirstChange={setImportClearQueue}
+                  />
+                  <div className="flex items-center gap-2 flex-wrap">
                     <div className="relative flex-1">
                       <Link className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -2003,23 +2161,35 @@ function PlaylistsTab() {
                       </span>
                     )}
                     {addYtUrl.trim() && !addUrlInfo && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => handleAddImportPlaylist(false)}
-                        disabled={ytImportPlaylist.isPending || !!addImportJobId || !selectedId}
-                      >
-                        {addImportJobId ? (
-                          <>
-                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                            {importJobProgressLabel(addImportJob)}
-                          </>
-                        ) : (
-                          <>
-                            <ListMusic className="h-3 w-3 mr-1" /> Import all
-                          </>
+                      <>
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleAddImportPlaylist(false)}
+                          disabled={ytImportPlaylist.isPending || !!addImportJobId || !selectedId}
+                        >
+                          {addImportJobId ? (
+                            <>
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              {importJobProgressLabel(addImportJob)}
+                            </>
+                          ) : (
+                            <>
+                              <ListMusic className="h-3 w-3 mr-1" /> Import all
+                            </>
+                          )}
+                        </Button>
+                        {importQueueBotId && (
+                          <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => handleAddImportPlaylist(false, true)}
+                            disabled={ytImportPlaylist.isPending || !!addImportJobId}
+                          >
+                            <ListMusic className="h-3 w-3 mr-1" /> Import to queue
+                          </Button>
                         )}
-                      </Button>
+                      </>
                     )}
                   </div>
 
@@ -2318,8 +2488,8 @@ function CommandsTab() {
 
       <p className="text-xs text-muted-foreground">
         Users type <code className="text-[11px]">!help</code> in the music bot&apos;s channel chat for built-in
-        commands. Custom commands below reply with your text in the same channel chat. Names cannot override
-        built-ins like <code className="text-[11px]">play</code> or <code className="text-[11px]">help</code>.
+        commands (Markdown formatted). <code className="text-[11px]">!np</code> shows now playing with an expandable
+        controls hint. Custom responses below support TS6 Markdown — see the formatting guide when editing.
       </p>
 
       {isLoading ? (
@@ -2379,11 +2549,12 @@ function CommandsTab() {
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Add chat command</DialogTitle>
             <DialogDescription>
               When someone types !name in the music bot channel, the bot replies with your response.
+              Use the formatting toolbar to match TS6 chat styling.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -2409,12 +2580,16 @@ function CommandsTab() {
             </div>
             <div>
               <Label className="text-xs">Response</Label>
-              <Textarea
+              <Ts6ChatResponseEditor
                 value={form.response}
-                onChange={(e) => setForm({ ...form, response: e.target.value })}
-                placeholder="Text the bot will send…"
-                rows={4}
+                onChange={(response) => setForm({ ...form, response })}
+                placeholder={TS6_CHAT_RESPONSE_EXAMPLE}
+                rows={8}
+                className="mt-1"
               />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Preview in TS6 client — web toolbar inserts Markdown / BBCode source text.
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <Switch
@@ -2444,7 +2619,7 @@ function CommandsTab() {
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Edit !{editCmd?.name}</DialogTitle>
           </DialogHeader>
@@ -2469,11 +2644,15 @@ function CommandsTab() {
             </div>
             <div>
               <Label className="text-xs">Response</Label>
-              <Textarea
+              <Ts6ChatResponseEditor
                 value={form.response}
-                onChange={(e) => setForm({ ...form, response: e.target.value })}
-                rows={4}
+                onChange={(response) => setForm({ ...form, response })}
+                rows={8}
+                className="mt-1"
               />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Preview in TS6 client — web toolbar inserts Markdown / BBCode source text.
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <Switch
