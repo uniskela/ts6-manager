@@ -16,6 +16,12 @@ import {
   type AppleMusicTrack,
 } from './audio/apple-music.js';
 import { BUILTIN_COMMAND_HELP, BUILTIN_CHAT_COMMANDS } from './chat-commands.js';
+import {
+  formatHelpMessage,
+  formatNowPlayingMessage,
+  formatQueueMessage,
+  formatRadioListMessage,
+} from './ts6-chat-format.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
@@ -181,32 +187,21 @@ export class MusicCommandHandler {
     if (isChatReplyCoolingDown(botId, userClid)) return;
     markChatReplyCooldown(botId, userClid);
 
-    const lines: string[] = ['Music bot commands:'];
-    for (const entry of BUILTIN_COMMAND_HELP) {
-      lines.push(`  ${entry.usage} — ${entry.blurb}`);
-    }
-
     const dbBot = await this.prisma.musicBot.findUnique({
       where: { id: botId },
       select: { serverConfigId: true },
     });
+
+    let custom: Array<{ name: string; description: string | null }> = [];
     if (dbBot) {
-      const custom = await this.prisma.chatCommand.findMany({
+      custom = await this.prisma.chatCommand.findMany({
         where: { serverConfigId: dbBot.serverConfigId, enabled: true },
         orderBy: { name: 'asc' },
         select: { name: true, description: true },
       });
-      if (custom.length > 0) {
-        lines.push('');
-        lines.push('Custom commands:');
-        for (const c of custom) {
-          const blurb = c.description?.trim() || 'Custom reply';
-          lines.push(`  !${c.name} — ${blurb}`);
-        }
-      }
     }
 
-    this.reply(bot, userClid, lines.join('\n'));
+    this.reply(bot, userClid, formatHelpMessage(BUILTIN_COMMAND_HELP, custom));
   }
 
   private async handleCustomCommand(
@@ -265,8 +260,13 @@ export class MusicCommandHandler {
 
     // No argument — list stations
     if (!args) {
-      const lines = stations.map((s: any) => `[${s.id}] ${s.name}${s.genre ? ` (${s.genre})` : ''}`);
-      this.reply(bot, userClid, 'Radio Stations:\n' + lines.join('\n'));
+      this.reply(
+        bot,
+        userClid,
+        formatRadioListMessage(
+          stations.map((s: any) => ({ id: s.id, name: s.name, genre: s.genre })),
+        ),
+      );
       return;
     }
 
@@ -488,20 +488,16 @@ export class MusicCommandHandler {
 
   private showQueue(bot: VoiceBot, userClid: number): void {
     const items = bot.queue.getAll();
-    if (items.length === 0) {
-      this.reply(bot, userClid, 'Queue is empty.');
-      return;
-    }
-
-    const currentIdx = bot.queue.index;
-    const lines = items.slice(0, 15).map((item, i) => {
-      const marker = i === currentIdx ? '▶ ' : '  ';
-      const artist = item.artist ? `${item.artist} - ` : '';
-      const dur = item.duration ? ` [${Math.floor(item.duration / 60)}:${String(Math.floor(item.duration % 60)).padStart(2, '0')}]` : '';
-      return `${marker}${i + 1}. ${artist}${item.title}${dur}`;
-    });
-    if (items.length > 15) lines.push(`  ... and ${items.length - 15} more`);
-    this.reply(bot, userClid, `Queue (${items.length} tracks):\n${lines.join('\n')}`);
+    const trackLines = items.map((item) => ({
+      title: item.title,
+      artist: item.artist,
+      duration: item.duration,
+    }));
+    this.reply(
+      bot,
+      userClid,
+      formatQueueMessage(trackLines, bot.queue.index),
+    );
   }
 
   private async handleQueue(bot: VoiceBot, userClid: number, args: string): Promise<void> {
@@ -651,12 +647,35 @@ export class MusicCommandHandler {
   private handleNowPlaying(bot: VoiceBot, userClid: number): void {
     const np = bot.nowPlaying;
     if (!np) {
-      this.reply(bot, userClid, 'Nothing is playing.');
+      this.reply(bot, userClid, '_Nothing is playing._');
       return;
     }
 
-    const artist = np.artist ? `${np.artist} - ` : '';
-    this.reply(bot, userClid, `Now playing: ${artist}${np.title}`);
+    const progress = bot.playbackProgress;
+    const queueItems = bot.queue.getAll();
+    const upcoming = queueItems
+      .slice(bot.queue.index + 1, bot.queue.index + 6)
+      .map((item) => ({
+        title: item.title,
+        artist: item.artist,
+        duration: item.duration,
+      }));
+
+    this.reply(
+      bot,
+      userClid,
+      formatNowPlayingMessage({
+        title: np.title,
+        artist: np.artist,
+        position: progress?.position,
+        duration: progress?.duration ?? np.duration,
+        paused: bot.status === 'paused',
+        upcoming,
+        totalQueueLength: queueItems.length,
+        queueIndex: bot.queue.index,
+        includeControls: true,
+      }),
+    );
   }
 
   // ─── Video Streaming Commands ─────────────────────────────

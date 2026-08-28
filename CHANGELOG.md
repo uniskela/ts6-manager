@@ -32,7 +32,18 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
 
-## [Unreleased]
+## [1.3.6] - 2026-08-28
+
+### Added
+
+- **Phase B:** Import Apple Music / YouTube playlists directly to a **running music bot queue** (`musicBotId`, optional `clearFirst`) without creating a playlist
+- TS6 **Markdown** formatting for `!help`, `!np`, `!queue`, and `!radio` bot replies (headings, lists, `<details>` controls hint)
+- Custom command editor documents TS6 Markdown / BBCode formatting for responses
+- **TS6-style formatting toolbar** on custom command responses (bold, lists, spoilers, headings, code, math, tables, Mermaid, BBCode snippets)
+
+### Changed
+
+- `!np` / `!nowplaying` shows track progress, up next, and expandable playback control hints (text commands — TS6 has no clickable skip/pause buttons in bot messages)
 
 ## [1.3.5] - 2026-08-28
 
