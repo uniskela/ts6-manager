@@ -51,9 +51,10 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 - `!np` / `!nowplaying` shows track progress, up next, and expandable playback control hints (text commands — TS6 has no clickable skip/pause buttons in bot messages)
 
-## [1.3.7] - 2026-08-28
+### Fixed
 
-### Added
+- **Load & Play** on stream playlists now starts playback after loading the queue (not only enqueue)
+- yt-dlp YouTube downloads use flexible audio format selection (`bestaudio` fallbacks) instead of forcing opus extraction, with player-client rotation for bot-check / format errors
 
 - Music bots can accept `!commands` in **additional channels** (channel ID list) and reply there while staying in the default playback channel
 - Uses ServerQuery SSH text-channel listeners; configure under Music Bots → bot settings

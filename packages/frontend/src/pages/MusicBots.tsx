@@ -926,7 +926,14 @@ function BotsTab() {
         onLoadPlaylist={(playlistId) => {
           if (showPlayDialog) {
             loadPlaylist.mutate({ botId: showPlayDialog, playlistId, clearFirst: true }, {
-              onSuccess: () => { toast.success('Playlist loaded'); setShowPlayDialog(null); },
+              onSuccess: (data: { playError?: string }) => {
+                if (data?.playError) {
+                  toast.error(`Playlist queued but playback failed: ${data.playError}`);
+                } else {
+                  toast.success('Playlist loaded');
+                }
+                setShowPlayDialog(null);
+              },
               onError: () => toast.error('Failed to load playlist'),
             });
           }

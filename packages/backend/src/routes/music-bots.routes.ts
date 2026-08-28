@@ -647,7 +647,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
 
-    const { playlistId, clearFirst } = req.body;
+    const { playlistId, clearFirst, autoplay } = req.body;
     const playlist = await prisma.playlist.findUnique({
       where: { id: parseInt(playlistId) },
       include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
@@ -667,7 +667,24 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     }));
 
     bot.queue.addMany(items);
-    res.json({ success: true, queueLength: bot.queue.length });
+
+    let playError: string | undefined;
+    const shouldAutoplay = autoplay ?? clearFirst;
+    if (shouldAutoplay && items.length > 0) {
+      const playIndex = clearFirst ? 0 : bot.queue.length - items.length;
+      const item = bot.queue.playAt(playIndex);
+      if (item) {
+        try {
+          if (item.streamUrl) await bot.playStream(item);
+          else await bot.play(item);
+        } catch (err: any) {
+          playError = err.message || String(err);
+          console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
+        }
+      }
+    }
+
+    res.json({ success: true, queueLength: bot.queue.length, playError });
   } catch (err) { next(err); }
 });
 
