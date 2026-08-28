@@ -73,7 +73,7 @@ export const musicLibraryApi = {
   youtubeDownload: (configId: number, url: string) =>
     api.post(`/servers/${configId}/music-library/youtube/download`, { url }).then((r) => r.data),
   youtubeInfo: (configId: number, url: string) =>
-    api.post(`/servers/${configId}/music-library/youtube/info`, { url }).then((r) => r.data),
+    api.post(`/servers/${configId}/music-library/youtube/info`, { url }, { timeout: 300000 }).then((r) => r.data),
   youtubeDownloadBatch: (configId: number, urls: string[]) =>
     api.post(`/servers/${configId}/music-library/youtube/download-batch`, { urls }, { timeout: 600000 }).then((r) => r.data),
   /** Register YouTube URLs as songs without downloading (stream playlists). */

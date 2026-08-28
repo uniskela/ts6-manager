@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicRequestsApi } from '@/api/music-requests.api';
 import { musicBotsApi } from '@/api/music.api';
@@ -54,6 +55,75 @@ function formatTime(seconds: number | null | undefined): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+interface UrlLoadInfo {
+  type: 'video' | 'playlist';
+  items: YouTubeSearchResult[];
+  title?: string;
+  sourceTrackCount?: number;
+  matchedCount?: number;
+  cappedAt?: number;
+}
+
+function youtubeInfoErrorMessage(err: unknown): string {
+  if (axios.isAxiosError(err) && err.code === 'ECONNABORTED') {
+    return 'Matching tracks is taking longer than expected — try again in a minute';
+  }
+  if (axios.isAxiosError(err) && err.response?.data?.error) {
+    return String(err.response.data.error);
+  }
+  return 'Failed to load URL info';
+}
+
+function urlInfoPlaylistLabel(info: UrlLoadInfo): string {
+  if (info.type !== 'playlist') return 'Single Video';
+  if (info.sourceTrackCount != null && info.matchedCount != null) {
+    const cap = info.cappedAt ?? info.items.length;
+    return `${info.matchedCount} matched of ${info.sourceTrackCount} (first ${cap} searched)`;
+  }
+  return `Playlist (${info.items.length} videos)`;
+}
+
+function urlItemSelectKey(index: number): string => String(index);
+
+function allUrlItemKeys(count: number): Set<string> {
+  const keys = new Set<string>();
+  for (let i = 0; i < count; i++) keys.add(urlItemSelectKey(i));
+  return keys;
+}
+
+function selectedUrlItems(items: YouTubeSearchResult[], selectedKeys: Set<string>): YouTubeSearchResult[] {
+  return items.filter((_, i) => selectedKeys.has(urlItemSelectKey(i)));
+}
+
+interface ImportJobStatus {
+  phase?: 'matching' | 'importing';
+  processed?: number;
+  total?: number;
+  matchProcessed?: number;
+  matchTotal?: number;
+  matched?: number;
+  downloaded?: number;
+  registered?: number;
+  skipped?: number;
+  errors?: string[];
+}
+
+function importJobProgressLabel(job: ImportJobStatus | undefined | null): string {
+  if (!job) return '?';
+  if (job.phase === 'matching') {
+    return `Matching ${job.matchProcessed ?? 0}/${job.matchTotal ?? '?'} (${job.matched ?? 0} hits)`;
+  }
+  return `Importing ${job.processed ?? 0}/${job.total ?? '?'}`;
+}
+
+function importJobCompleteMessage(job: ImportJobStatus): string {
+  const parts: string[] = [];
+  if ((job.registered ?? 0) > 0) parts.push(`${job.registered} registered`);
+  if ((job.downloaded ?? 0) > 0) parts.push(`${job.downloaded} downloaded`);
+  if ((job.skipped ?? 0) > 0) parts.push(`${job.skipped} skipped`);
+  return parts.length ? `Import complete: ${parts.join(', ')}` : 'Import complete';
 }
 
 const statusColors: Record<string, string> = {
@@ -756,7 +826,7 @@ function LibraryTab() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
   const [ytUrl, setYtUrl] = useState('');
-  const [urlInfo, setUrlInfo] = useState<{ type: 'video' | 'playlist'; items: YouTubeSearchResult[]; title?: string } | null>(null);
+  const [urlInfo, setUrlInfo] = useState<UrlLoadInfo | null>(null);
   const [selectedUrlIds, setSelectedUrlIds] = useState<Set<string>>(new Set());
   const [batchProgress, setBatchProgress] = useState<string | null>(null);
   const [importJobId, setImportJobId] = useState<string | null>(null);
@@ -813,21 +883,20 @@ function LibraryTab() {
   const handleLoadUrl = () => {
     if (!ytUrl.trim() || !configId) return;
     ytInfo.mutate({ configId, url: ytUrl }, {
-      onSuccess: (data: any) => {
+      onSuccess: (data: UrlLoadInfo) => {
         setUrlInfo(data);
         if (data.type === 'playlist') {
-          setSelectedUrlIds(new Set(data.items.map((i: any) => i.id)));
+          setSelectedUrlIds(allUrlItemKeys(data.items.length));
         }
       },
-      onError: (err: any) =>
-        toast.error(err?.response?.data?.error || 'Failed to load URL info'),
+      onError: (err: unknown) => toast.error(youtubeInfoErrorMessage(err)),
     });
   };
 
   const handleBatchDownload = () => {
     if (!configId || !urlInfo) return;
-    const ids = Array.from(selectedUrlIds);
-    const urls = ids.map((id) => `https://youtube.com/watch?v=${id}`);
+    const selected = selectedUrlItems(urlInfo.items, selectedUrlIds);
+    const urls = selected.map((item) => `https://youtube.com/watch?v=${item.id}`);
     setBatchProgress(`Downloading 0/${urls.length}...`);
     ytBatchDownload.mutate({ configId, urls }, {
       onSuccess: (data: any) => {
@@ -841,10 +910,12 @@ function LibraryTab() {
     });
   };
 
-  const toggleUrlSelect = (id: string) => {
+  const toggleUrlSelect = (index: number) => {
+    const key = urlItemSelectKey(index);
     setSelectedUrlIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -867,7 +938,7 @@ function LibraryTab() {
 
   useEffect(() => {
     if (importJob?.status === 'completed') {
-      toast.success(`Import complete: ${importJob.downloaded} downloaded, ${importJob.skipped} skipped`);
+      toast.success(importJobCompleteMessage(importJob));
       qc.invalidateQueries({ queryKey: ['songs', configId] });
       qc.invalidateQueries({ queryKey: ['playlists'] });
       setImportJobId(null);
@@ -951,6 +1022,36 @@ function LibraryTab() {
               {ytInfo.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Youtube className="h-4 w-4 mr-1" />}
               Load
             </Button>
+            {ytInfo.isPending && (
+              <span className="text-[10px] text-muted-foreground">Large Apple Music playlists can take 1–2 minutes</span>
+            )}
+            {ytUrl.trim() && !urlInfo && (
+              <>
+                <Input
+                  className="h-8 w-40 text-xs"
+                  placeholder="Playlist name (optional)"
+                  value={importPlaylistName}
+                  onChange={(e) => setImportPlaylistName(e.target.value)}
+                />
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleImportPlaylist(false)}
+                  disabled={ytImportPlaylist.isPending || !!importJobId}
+                >
+                  {importJobId ? (
+                    <>
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      {importJobProgressLabel(importJob)}
+                    </>
+                  ) : (
+                    <>
+                      <ListMusic className="h-3 w-3 mr-1" /> Import as Playlist
+                    </>
+                  )}
+                </Button>
+              </>
+            )}
             {urlInfo && (
               <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setUrlInfo(null); setYtUrl(''); }}>
                 <X className="h-4 w-4" />
@@ -963,12 +1064,12 @@ function LibraryTab() {
             <div className="space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <Badge variant="secondary" className="text-xs">
-                  {urlInfo.type === 'playlist' ? `Playlist (${urlInfo.items.length} videos)` : 'Single Video'}
+                  {urlInfoPlaylistLabel(urlInfo)}
                 </Badge>
                 {urlInfo.type === 'playlist' && (
                   <div className="flex items-center gap-2 flex-wrap">
                     <Button variant="ghost" size="sm" className="h-6 text-[10px]"
-                      onClick={() => setSelectedUrlIds(new Set(urlInfo.items.map((i) => i.id)))}
+                      onClick={() => setSelectedUrlIds(allUrlItemKeys(urlInfo.items.length))}
                     >
                       Select All
                     </Button>
@@ -998,7 +1099,7 @@ function LibraryTab() {
                       disabled={ytImportPlaylist.isPending || !!importJobId}
                     >
                       {importJobId ? (
-                        <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Importing {importJob?.processed ?? 0}/{importJob?.total ?? '?'}</>
+                        <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> {importJobProgressLabel(importJob)}</>
                       ) : (
                         <><ListMusic className="h-3 w-3 mr-1" /> Import as Playlist</>
                       )}
@@ -1014,21 +1115,21 @@ function LibraryTab() {
                 )}
               </div>
               <ScrollArea className="max-h-60">
-                {urlInfo.items.map((item) => (
+                {urlInfo.items.map((item, index) => (
                   <div
-                    key={item.id}
+                    key={`${item.id}-${index}`}
                     className={`flex items-center gap-3 px-2 py-1.5 rounded transition-colors ${
                       urlInfo.type === 'playlist'
-                        ? `cursor-pointer ${selectedUrlIds.has(item.id) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
+                        ? `cursor-pointer ${selectedUrlIds.has(urlItemSelectKey(index)) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
                         : 'hover:bg-muted/50'
                     }`}
-                    onClick={() => urlInfo.type === 'playlist' && toggleUrlSelect(item.id)}
+                    onClick={() => urlInfo.type === 'playlist' && toggleUrlSelect(index)}
                   >
                     {urlInfo.type === 'playlist' && (
                       <input
                         type="checkbox"
-                        checked={selectedUrlIds.has(item.id)}
-                        onChange={() => toggleUrlSelect(item.id)}
+                        checked={selectedUrlIds.has(urlItemSelectKey(index))}
+                        onChange={() => toggleUrlSelect(index)}
                         className="shrink-0 accent-primary"
                       />
                     )}
@@ -1193,7 +1294,7 @@ function PlaylistsTab() {
   const [editName, setEditName] = useState('');
   const [editMode, setEditMode] = useState<PlaylistMode>('local');
   const [addYtUrl, setAddYtUrl] = useState('');
-  const [addUrlInfo, setAddUrlInfo] = useState<any>(null);
+  const [addUrlInfo, setAddUrlInfo] = useState<UrlLoadInfo | null>(null);
   const [addSelectedUrlIds, setAddSelectedUrlIds] = useState<Set<string>>(new Set());
   const [addBatchProgress, setAddBatchProgress] = useState<string | null>(null);
   const [addImportJobId, setAddImportJobId] = useState<string | null>(null);
@@ -1280,23 +1381,23 @@ function PlaylistsTab() {
     ytInfo.mutate(
       { configId: selectedConfigId, url: addYtUrl.trim() },
       {
-        onSuccess: (data: any) => {
+        onSuccess: (data: UrlLoadInfo) => {
           setAddUrlInfo(data);
           if (data.type === 'playlist') {
-            setAddSelectedUrlIds(new Set(data.items.map((i: any) => i.id)));
+            setAddSelectedUrlIds(allUrlItemKeys(data.items.length));
           }
         },
-        onError: (err: any) =>
-          toast.error(err?.response?.data?.error || 'Failed to load URL info'),
+        onError: (err: unknown) => toast.error(youtubeInfoErrorMessage(err)),
       },
     );
   };
 
-  const toggleAddUrlSelect = (id: string) => {
+  const toggleAddUrlSelect = (index: number) => {
+    const key = urlItemSelectKey(index);
     setAddSelectedUrlIds((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
       return next;
     });
   };
@@ -1356,7 +1457,7 @@ function PlaylistsTab() {
 
   const handleAddBatchDownload = () => {
     if (!selectedConfigId || !selectedId || !addUrlInfo) return;
-    const selectedItems = addUrlInfo.items.filter((i: any) => addSelectedUrlIds.has(i.id));
+    const selectedItems = selectedUrlItems(addUrlInfo.items, addSelectedUrlIds);
     if (selectedItems.length === 0) return;
 
     if (playlistMode === 'stream') {
@@ -1364,7 +1465,7 @@ function PlaylistsTab() {
       ytRegister.mutate(
         {
           configId: selectedConfigId,
-          items: selectedItems.map((i: any) => ({
+          items: selectedItems.map((i) => ({
             url: `https://youtube.com/watch?v=${i.id}`,
             title: i.title,
             artist: i.artist,
@@ -1457,9 +1558,7 @@ function PlaylistsTab() {
 
   useEffect(() => {
     if (addImportJob?.status === 'completed') {
-      toast.success(
-        `Import complete: ${addImportJob.downloaded} downloaded, ${addImportJob.skipped} skipped`,
-      );
+      toast.success(importJobCompleteMessage(addImportJob));
       qc.invalidateQueries({ queryKey: ['songs', selectedConfigId] });
       qc.invalidateQueries({ queryKey: ['playlist', selectedId] });
       qc.invalidateQueries({ queryKey: ['playlists'] });
@@ -1896,15 +1995,37 @@ function PlaylistsTab() {
                       )}
                       Load
                     </Button>
+                    {ytInfo.isPending && (
+                      <span className="text-[10px] text-muted-foreground">
+                        Large Apple Music playlists can take 1–2 minutes
+                      </span>
+                    )}
+                    {addYtUrl.trim() && !addUrlInfo && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => handleAddImportPlaylist(false)}
+                        disabled={ytImportPlaylist.isPending || !!addImportJobId || !selectedId}
+                      >
+                        {addImportJobId ? (
+                          <>
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                            {importJobProgressLabel(addImportJob)}
+                          </>
+                        ) : (
+                          <>
+                            <ListMusic className="h-3 w-3 mr-1" /> Import all
+                          </>
+                        )}
+                      </Button>
+                    )}
                   </div>
 
                   {addUrlInfo && (
                     <div className="space-y-2">
                       <div className="flex items-center justify-between flex-wrap gap-2">
                         <Badge variant="secondary" className="text-xs">
-                          {addUrlInfo.type === 'playlist'
-                            ? `Playlist (${addUrlInfo.items.length} videos)`
-                            : 'Single Video'}
+                          {urlInfoPlaylistLabel(addUrlInfo)}
                         </Badge>
                         {addUrlInfo.type === 'playlist' && (
                           <div className="flex items-center gap-2 flex-wrap">
@@ -1913,7 +2034,7 @@ function PlaylistsTab() {
                               size="sm"
                               className="h-6 text-[10px]"
                               onClick={() =>
-                                setAddSelectedUrlIds(new Set(addUrlInfo.items.map((i: any) => i.id)))
+                                setAddSelectedUrlIds(allUrlItemKeys(addUrlInfo.items.length))
                               }
                             >
                               Select All
@@ -1949,7 +2070,6 @@ function PlaylistsTab() {
                                 </>
                               )}
                             </Button>
-                            {playlistMode !== 'stream' && (
                             <Button
                               variant="secondary"
                               size="sm"
@@ -1959,8 +2079,8 @@ function PlaylistsTab() {
                             >
                               {addImportJobId ? (
                                 <>
-                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" /> Importing{' '}
-                                  {addImportJob?.processed ?? 0}/{addImportJob?.total ?? '?'}
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  {importJobProgressLabel(addImportJob)}
                                 </>
                               ) : (
                                 <>
@@ -1968,29 +2088,28 @@ function PlaylistsTab() {
                                 </>
                               )}
                             </Button>
-                            )}
                           </div>
                         )}
                       </div>
                       <ScrollArea className="max-h-60">
-                        {addUrlInfo.items.map((item: any) => (
+                        {addUrlInfo.items.map((item, index) => (
                           <div
-                            key={item.id}
+                            key={`${item.id}-${index}`}
                             className={`flex items-center gap-3 px-2 py-1.5 rounded transition-colors ${
                               addUrlInfo.type === 'playlist'
-                                ? `cursor-pointer ${addSelectedUrlIds.has(item.id) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
+                                ? `cursor-pointer ${addSelectedUrlIds.has(urlItemSelectKey(index)) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
                                 : 'hover:bg-muted/50'
                             }`}
                             onClick={() =>
-                              addUrlInfo.type === 'playlist' && toggleAddUrlSelect(item.id)
+                              addUrlInfo.type === 'playlist' && toggleAddUrlSelect(index)
                             }
                           >
                             {addUrlInfo.type === 'playlist' && (
                               <input
                                 type="checkbox"
-                                checked={addSelectedUrlIds.has(item.id)}
+                                checked={addSelectedUrlIds.has(urlItemSelectKey(index))}
                                 onClick={(e) => e.stopPropagation()}
-                                onChange={() => toggleAddUrlSelect(item.id)}
+                                onChange={() => toggleAddUrlSelect(index)}
                                 className="shrink-0 accent-primary"
                               />
                             )}

@@ -32,6 +32,21 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
 
+## [1.3.4] - 2026-08-28
+
+### Added
+
+- Background **Import as Playlist** / **Import all** for Apple Music URLs (matches YouTube on YouTube, registers on stream playlists without downloading)
+- Import jobs show **matching** progress for Apple Music (`Matching 45/259 (42 hits)`) before adding tracks
+- Paste Apple Music URL and import without **Load** (library tab and playlist editor)
+
+### Fixed
+
+- Apple Music **Load URL** no longer fails at 15s while the backend is still matching tracks — client timeout raised to 5 minutes and nginx `/api` proxy timeouts set to 300s
+- Apple Music load UI shows match progress (`98 matched of 259 (first 100 searched)`) and clearer timeout error messages
+- Duplicate YouTube video matches in Apple Music playlists no longer collapse selection checkboxes
+- Stream playlist import registers YouTube tracks on-demand instead of bulk-downloading
+
 ## [1.3.3] - 2026-08-27
 
 ### Added

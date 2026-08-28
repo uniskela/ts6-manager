@@ -1,5 +1,5 @@
 /**
- * Background YouTube playlist import with job tracking.
+ * Background YouTube / Apple Music playlist import with job tracking.
  * Adapted from coom/ts6-manager (Aug 2026 playlist import series).
  */
 
@@ -7,24 +7,45 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import type { PrismaClient } from '../../../generated/prisma/index.js';
 import { parseYouTubeUrl, getYouTubeUrlInfo, downloadYouTube } from './youtube.js';
+import {
+  appleMusicTrackToYouTubeUrl,
+  isAppleMusicShareUrl,
+  resolveAppleMusicTracks,
+  type AppleMusicTrack,
+} from './apple-music.js';
 import { loadMaxPlaylistImport } from '../../utils/app-settings.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+const APPLE_MUSIC_YT_CONCURRENCY = 8;
 
 export type ImportJobStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type ImportJobPhase = 'matching' | 'importing';
 
 export interface ImportJob {
   id: string;
   status: ImportJobStatus;
+  phase?: ImportJobPhase;
   total: number;
   processed: number;
   downloaded: number;
+  registered: number;
   skipped: number;
   errors: string[];
   playlistId?: number;
   title?: string;
+  /** Apple Music source tracks queued for YouTube matching. */
+  matchTotal?: number;
+  matchProcessed?: number;
+  matched?: number;
   startedAt: number;
   finishedAt?: number;
+}
+
+interface ImportItem {
+  id: string;
+  title: string;
+  artist?: string;
+  duration?: number;
 }
 
 const jobs = new Map<string, ImportJob>();
@@ -52,6 +73,7 @@ export async function startYouTubePlaylistImport(
     total: 0,
     processed: 0,
     downloaded: 0,
+    registered: 0,
     skipped: 0,
     errors: [],
     startedAt: Date.now(),
@@ -67,21 +89,89 @@ export async function startYouTubePlaylistImport(
   return jobId;
 }
 
-async function runImport(
-  prisma: PrismaClient,
-  serverConfigId: number,
-  url: string,
-  options: StartImportOptions,
-  job: ImportJob,
-): Promise<void> {
-  job.status = 'running';
-  const cap = await loadMaxPlaylistImport(prisma);
-  const parsed = parseYouTubeUrl(url);
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
+async function matchAppleTracksToImportItems(
+  tracks: AppleMusicTrack[],
+  job: ImportJob,
+): Promise<ImportItem[]> {
+  job.phase = 'matching';
+  job.matchTotal = tracks.length;
+  job.matchProcessed = 0;
+  job.matched = 0;
+
+  console.log(
+    `[MusicLibrary] Apple Music import “${job.title || 'playlist'}”: matching ${tracks.length} tracks on YouTube (concurrency ${APPLE_MUSIC_YT_CONCURRENCY})`,
+  );
+
+  const matched = await mapPool(tracks, APPLE_MUSIC_YT_CONCURRENCY, async (track) => {
+    try {
+      const ytUrl = await appleMusicTrackToYouTubeUrl(track);
+      if (!ytUrl) {
+        job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+        return null;
+      }
+      const videoId = parseYouTubeUrl(ytUrl).videoId;
+      if (!videoId) {
+        job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+        return null;
+      }
+      job.matched = (job.matched ?? 0) + 1;
+      job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+      return {
+        id: videoId,
+        title: track.title,
+        artist: track.artist || 'Unknown',
+        duration: 0,
+      };
+    } catch {
+      job.matchProcessed = (job.matchProcessed ?? 0) + 1;
+      return null;
+    }
+  });
+
+  const items = matched.filter((item): item is ImportItem => item != null);
+  console.log(
+    `[MusicLibrary] Apple Music import match complete: ${items.length}/${tracks.length} YouTube hits`,
+  );
+  return items;
+}
+
+async function resolveImportItems(
+  url: string,
+  cap: number,
+  job: ImportJob,
+): Promise<{ items: ImportItem[]; listId: string | null; title?: string }> {
+  if (isAppleMusicShareUrl(url)) {
+    const am = await resolveAppleMusicTracks(url);
+    job.title = am.title;
+    const tracks = am.tracks.slice(0, cap);
+    const items = await matchAppleTracksToImportItems(tracks, job);
+    if (!items.length) {
+      throw new Error('No YouTube matches found for that Apple Music URL');
+    }
+    return { items, listId: null, title: am.title };
+  }
+
+  const parsed = parseYouTubeUrl(url);
   let listId = parsed.listId;
   let probeUrl = url;
 
-  // Smart URL detection: pure playlist vs watch?v=&list=
   if (parsed.listId && parsed.videoId) {
     probeUrl = parsed.playlistUrl ?? `https://www.youtube.com/playlist?list=${parsed.listId}`;
   } else if (parsed.listId && !parsed.videoId) {
@@ -95,37 +185,117 @@ async function runImport(
     throw new Error('Could not resolve any videos from that playlist URL');
   }
 
-  job.title = info.title;
-  const items = info.items.slice(0, cap);
+  const items = info.items.slice(0, cap).map((item) => ({
+    id: item.id,
+    title: item.title,
+    artist: item.artist,
+    duration: item.duration,
+  }));
+
+  return { items, listId: listId ?? null, title: info.title };
+}
+
+async function ensurePlaylistSongLink(
+  prisma: PrismaClient,
+  playlistId: number,
+  songId: number,
+): Promise<void> {
+  const link = await prisma.playlistSong.findFirst({
+    where: { playlistId, songId },
+  });
+  if (!link) {
+    const maxPos = await prisma.playlistSong.aggregate({
+      where: { playlistId },
+      _max: { position: true },
+    });
+    await prisma.playlistSong.create({
+      data: {
+        playlistId,
+        songId,
+        position: (maxPos._max.position ?? -1) + 1,
+      },
+    });
+  }
+}
+
+async function registerStreamSong(
+  prisma: PrismaClient,
+  serverConfigId: number,
+  watchUrl: string,
+  item: ImportItem,
+): Promise<{ id: number }> {
+  const existing = await prisma.song.findFirst({
+    where: { sourceUrl: watchUrl, serverConfigId },
+  });
+  if (existing) return existing;
+
+  return prisma.song.create({
+    data: {
+      title: item.title || watchUrl,
+      artist: item.artist ?? null,
+      duration: item.duration ?? null,
+      filePath: '',
+      source: 'youtube',
+      sourceUrl: watchUrl,
+      fileSize: null,
+      serverConfigId,
+    },
+  });
+}
+
+async function runImport(
+  prisma: PrismaClient,
+  serverConfigId: number,
+  url: string,
+  options: StartImportOptions,
+  job: ImportJob,
+): Promise<void> {
+  job.status = 'running';
+  const cap = await loadMaxPlaylistImport(prisma);
+  const isApple = isAppleMusicShareUrl(url);
+
+  const { items, listId, title } = await resolveImportItems(url, cap, job);
+  job.phase = 'importing';
   job.total = items.length;
+  if (title) job.title = title;
 
   let playlistId = options.playlistId;
+  let playlistMode: 'local' | 'stream' = 'stream';
+
   if (playlistId) {
     const existing = await prisma.playlist.findUnique({ where: { id: playlistId } });
     if (!existing) throw new Error('Playlist not found');
-    if (existing.mode === 'local' && !existing.youtubePlaylistId) {
+    playlistMode = existing.mode === 'stream' ? 'stream' : 'local';
+
+    if (!isApple && existing.mode === 'local' && !existing.youtubePlaylistId) {
       throw new Error(
         'Cannot import a YouTube playlist into a local-only playlist — create or select a stream playlist',
       );
     }
+
     await prisma.playlist.update({
       where: { id: playlistId },
       data: {
-        mode: 'stream',
+        ...(isApple
+          ? { serverConfigId }
+          : {
+              mode: 'stream',
+              ...(listId ? { youtubePlaylistId: listId, serverConfigId } : { serverConfigId }),
+            }),
         ...(options.playlistName ? { name: options.playlistName } : {}),
-        ...(listId ? { youtubePlaylistId: listId, serverConfigId } : { serverConfigId }),
       },
     });
   } else {
     const created = await prisma.playlist.create({
       data: {
-        name: options.playlistName || info.title || 'Imported Playlist',
+        name: options.playlistName || title || 'Imported Playlist',
         mode: 'stream',
         youtubePlaylistId: listId ?? null,
         serverConfigId,
       },
     });
     playlistId = created.id;
+    playlistMode = 'stream';
   }
   job.playlistId = playlistId;
 
@@ -138,11 +308,27 @@ async function runImport(
         where: { sourceUrl: watchUrl, serverConfigId },
       });
 
-      if (song && !options.reimport) {
+      if (song && playlistMode === 'local' && !song.filePath) {
+        const { filePath, info: dlInfo } = await downloadYouTube(watchUrl, MUSIC_DIR);
+        const fileStats = fs.statSync(filePath);
+        song = await prisma.song.update({
+          where: { id: song.id },
+          data: {
+            title: dlInfo.title,
+            artist: dlInfo.artist,
+            duration: dlInfo.duration,
+            filePath,
+            fileSize: fileStats.size,
+          },
+        });
+        job.downloaded++;
+      } else if (song && !options.reimport) {
         job.skipped++;
       } else if (song && options.reimport) {
-        // Re-import queues already-downloaded tracks (re-add to playlist)
         job.skipped++;
+      } else if (playlistMode === 'stream') {
+        song = await registerStreamSong(prisma, serverConfigId, watchUrl, item);
+        job.registered++;
       } else {
         const { filePath, info: dlInfo } = await downloadYouTube(watchUrl, MUSIC_DIR);
         const fileStats = fs.statSync(filePath);
@@ -162,22 +348,7 @@ async function runImport(
       }
 
       if (song) {
-        const link = await prisma.playlistSong.findFirst({
-          where: { playlistId, songId: song.id },
-        });
-        if (!link) {
-          const maxPos = await prisma.playlistSong.aggregate({
-            where: { playlistId },
-            _max: { position: true },
-          });
-          await prisma.playlistSong.create({
-            data: {
-              playlistId,
-              songId: song.id,
-              position: (maxPos._max.position ?? -1) + 1,
-            },
-          });
-        }
+        await ensurePlaylistSongLink(prisma, playlistId, song.id);
       }
     } catch (err: any) {
       job.errors.push(`${item.title}: ${err.message}`);
