@@ -43,9 +43,9 @@ import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
 import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
-import {
-  useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
+import { useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
 } from '@/hooks/use-chat-commands';
+import { settingsApi } from '@/api/settings.api';
 import { Textarea } from '@/components/ui/textarea';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -106,6 +106,8 @@ interface ImportJobStatus {
   matchProcessed?: number;
   matchTotal?: number;
   matched?: number;
+  sourceTrackCount?: number;
+  importCap?: number;
   downloaded?: number;
   registered?: number;
   skipped?: number;
@@ -115,7 +117,12 @@ interface ImportJobStatus {
 function importJobProgressLabel(job: ImportJobStatus | undefined | null): string {
   if (!job) return '?';
   if (job.phase === 'matching') {
-    return `Matching ${job.matchProcessed ?? 0}/${job.matchTotal ?? '?'} (${job.matched ?? 0} hits)`;
+    const ofSource =
+      job.sourceTrackCount != null &&
+      job.sourceTrackCount > (job.matchTotal ?? 0)
+        ? ` of ${job.sourceTrackCount}`
+        : '';
+    return `Matching ${job.matchProcessed ?? 0}/${job.matchTotal ?? '?'}${ofSource} (${job.matched ?? 0} hits)`;
   }
   return `Importing ${job.processed ?? 0}/${job.total ?? '?'}`;
 }
@@ -125,7 +132,20 @@ function importJobCompleteMessage(job: ImportJobStatus): string {
   if ((job.registered ?? 0) > 0) parts.push(`${job.registered} registered`);
   if ((job.downloaded ?? 0) > 0) parts.push(`${job.downloaded} downloaded`);
   if ((job.skipped ?? 0) > 0) parts.push(`${job.skipped} skipped`);
-  return parts.length ? `Import complete: ${parts.join(', ')}` : 'Import complete';
+  const base = parts.length ? `Import complete: ${parts.join(', ')}` : 'Import complete';
+  if (
+    job.sourceTrackCount != null &&
+    job.sourceTrackCount > (job.total ?? 0)
+  ) {
+    const cap = job.importCap ?? job.total ?? 0;
+    return `${base}. Only first ${cap} of ${job.sourceTrackCount} source tracks — raise Max playlist import in Settings → Limits`;
+  }
+  return base;
+}
+
+function importCapHint(maxPlaylistImport: number | undefined): string {
+  const cap = maxPlaylistImport ?? 250;
+  return `Imports up to ${cap} tracks (Settings → Limits). Large Apple Music playlists may need a higher cap (max 500).`;
 }
 
 const statusColors: Record<string, string> = {
@@ -820,6 +840,12 @@ function LibraryTab() {
   const ytInfo = useYouTubeInfo();
   const ytBatchDownload = useYouTubeDownloadBatch();
   const ytImportPlaylist = useYouTubeImportPlaylist();
+  const { data: importLimits } = useQuery({
+    queryKey: ['settings-limits'],
+    queryFn: settingsApi.getLimits,
+    staleTime: 60_000,
+  });
+  const maxPlaylistImport = importLimits?.maxPlaylistImport ?? 250;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -932,7 +958,9 @@ function LibraryTab() {
     }, {
       onSuccess: (data: any) => {
         setImportJobId(data.jobId);
-        toast.success('Playlist import started');
+        toast.success('Playlist import started', {
+          description: importCapHint(maxPlaylistImport),
+        });
       },
       onError: () => toast.error('Failed to start playlist import'),
     });
@@ -1281,6 +1309,12 @@ function PlaylistsTab() {
   const ytBatchDownload = useYouTubeDownloadBatch();
   const ytRegister = useYouTubeRegister();
   const ytImportPlaylist = useYouTubeImportPlaylist();
+  const { data: playlistImportLimits } = useQuery({
+    queryKey: ['settings-limits'],
+    queryFn: settingsApi.getLimits,
+    staleTime: 60_000,
+  });
+  const maxPlaylistImport = playlistImportLimits?.maxPlaylistImport ?? 250;
 
   const { data: songs } = useSongs(selectedConfigId);
 
@@ -1551,7 +1585,9 @@ function PlaylistsTab() {
       {
         onSuccess: (data: any) => {
           setAddImportJobId(data.jobId);
-          toast.success('Playlist import started');
+          toast.success('Playlist import started', {
+            description: importCapHint(maxPlaylistImport),
+          });
         },
         onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to start playlist import'),
       },

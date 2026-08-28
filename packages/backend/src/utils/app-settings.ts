@@ -9,7 +9,7 @@ export function parseVideoDuration(raw: string | null | undefined, fallback = 90
   return n;
 }
 
-export function parseImportCap(raw: string | null | undefined, fallback = 50): number {
+export function parseImportCap(raw: string | null | undefined, fallback = 250): number {
   const n = parseInt(String(raw ?? ''), 10);
   if (!Number.isFinite(n) || n <= 0) return fallback;
   return Math.min(n, 500);

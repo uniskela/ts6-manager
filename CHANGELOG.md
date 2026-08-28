@@ -32,6 +32,19 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Extended [CREDITS.md](CREDITS.md) with fork contributions table (coom, uniplayer1)
 - Docker startup: upgrade-aware schema apply (`apply-schema.sh`) detects older DBs / version bumps and runs `prisma db push` on compose up
 
+## [Unreleased]
+
+## [1.3.5] - 2026-08-28
+
+### Changed
+
+- Default **max playlist import** raised from 50 → **250** (still configurable up to 500 in Settings → Limits)
+
+### Fixed
+
+- Apple Music / playlist import jobs report `sourceTrackCount` and warn when capped (e.g. 259-track playlist with limit 50)
+- Import progress shows `Matching X/Y of 259`; completion toast tells you to raise Settings cap when truncated
+
 ## [1.3.4] - 2026-08-28
 
 ### Added

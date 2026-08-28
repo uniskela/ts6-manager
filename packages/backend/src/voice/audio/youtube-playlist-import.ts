@@ -37,6 +37,10 @@ export interface ImportJob {
   matchTotal?: number;
   matchProcessed?: number;
   matched?: number;
+  /** Total tracks in source playlist before import cap (Apple Music / YouTube). */
+  sourceTrackCount?: number;
+  /** Active max_playlist_import cap for this job. */
+  importCap?: number;
   startedAt: number;
   finishedAt?: number;
 }
@@ -164,6 +168,13 @@ async function resolveImportItems(
   if (isAppleMusicShareUrl(url)) {
     const am = await resolveAppleMusicTracks(url);
     job.title = am.title;
+    job.sourceTrackCount = am.tracks.length;
+    job.importCap = cap;
+    if (am.tracks.length > cap) {
+      console.log(
+        `[MusicLibrary] Apple Music “${am.title || 'playlist'}”: ${am.tracks.length} tracks — importing first ${cap} (max_playlist_import cap; raise in Settings → Limits)`,
+      );
+    }
     const tracks = am.tracks.slice(0, cap);
     const items = await matchAppleTracksToImportItems(tracks, job);
     if (!items.length) {
@@ -187,6 +198,14 @@ async function resolveImportItems(
   const info = await getYouTubeUrlInfo(probeUrl);
   if (info.type !== 'playlist' || info.items.length === 0) {
     throw new Error('Could not resolve any videos from that playlist URL');
+  }
+
+  job.sourceTrackCount = info.items.length;
+  job.importCap = cap;
+  if (info.items.length > cap) {
+    console.log(
+      `[MusicLibrary] YouTube playlist “${info.title || 'playlist'}”: ${info.items.length} videos — importing first ${cap} (max_playlist_import cap)`,
+    );
   }
 
   const items = info.items.slice(0, cap).map((item) => ({
