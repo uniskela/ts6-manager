@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
 import {
   channelListenerKey,
   parseCommandChannelIds,
@@ -7,15 +8,15 @@ import {
 
 describe('music-command-channels', () => {
   it('parses JSON channel id arrays', () => {
-    expect(parseCommandChannelIds('["12","45"]')).toEqual(['12', '45']);
-    expect(parseCommandChannelIds(null)).toEqual([]);
+    assert.deepEqual(parseCommandChannelIds('["12","45"]'), ['12', '45']);
+    assert.deepEqual(parseCommandChannelIds(null), []);
   });
 
   it('serializes unique numeric ids', () => {
-    expect(serializeCommandChannelIds(['12', '12', 'bad', '3'])).toBe('["12","3"]');
+    assert.equal(serializeCommandChannelIds(['12', '12', 'bad', '3']), '["12","3"]');
   });
 
   it('builds listener keys', () => {
-    expect(channelListenerKey(1, 1, 42)).toBe('1:1:42');
+    assert.equal(channelListenerKey(1, 1, 42), '1:1:42');
   });
 });

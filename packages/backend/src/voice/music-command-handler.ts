@@ -123,9 +123,14 @@ export class MusicCommandHandler {
   }
 
   async refreshBotChannels(botId: number): Promise<void> {
+    const prevCfg = this.botChannelConfig.get(botId);
+
     const dbBot = await this.prisma.musicBot.findUnique({ where: { id: botId } });
     if (!dbBot) {
       this.unregisterBotChannels(botId);
+      if (prevCfg) {
+        await this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
+      }
       return;
     }
 
@@ -148,39 +153,40 @@ export class MusicCommandHandler {
       this.channelToBots.get(key)!.add(botId);
     }
 
-    if (!this.eventBridge || commandChannelIds.length === 0) return;
+    await this.syncCommandListenersForPair(cfg.serverConfigId, cfg.virtualServerId);
+    if (
+      prevCfg &&
+      (prevCfg.serverConfigId !== cfg.serverConfigId ||
+        prevCfg.virtualServerId !== cfg.virtualServerId)
+    ) {
+      await this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
+    }
+  }
 
-    const bot = this.voiceBotManager.getBot(botId);
-    const homeCid =
-      bot?.getCurrentChannelId() ||
-      parseInt(dbBot.defaultChannel || '0', 10) ||
-      0;
+  /** Connect/disconnect SSH textchannel listeners to match active command-channel config. */
+  async syncCommandListenersForPair(configId: number, sid: number): Promise<void> {
+    if (!this.eventBridge) return;
 
-    for (const cidStr of commandChannelIds) {
-      const channelId = parseInt(cidStr, 10);
-      if (!channelId) continue;
-      if (bot && bot.status !== 'stopped' && bot.status !== 'error' && channelId === homeCid) {
-        try {
-          await this.eventBridge.disconnectCommandListener(
-            cfg.serverConfigId,
-            cfg.virtualServerId,
-            channelId,
-          );
-        } catch {
-          /* ignore */
-        }
-        continue;
-      }
+    const needed = new Set(this.getNeededCommandChannelIds(configId, sid));
+    const existing = new Set(this.eventBridge.getCommandListenerChannelIds(configId, sid));
+
+    for (const channelId of needed) {
+      if (existing.has(channelId)) continue;
       try {
-        await this.eventBridge.connectCommandListener(
-          cfg.serverConfigId,
-          cfg.virtualServerId,
-          channelId,
-        );
+        await this.eventBridge.connectCommandListener(configId, sid, channelId);
       } catch (err: any) {
         console.warn(
-          `[MusicCmd] Command listener for bot ${botId} channel ${channelId}: ${err.message}`,
+          `[MusicCmd] Command listener connect ${configId}:${sid}:${channelId}: ${err.message}`,
         );
+      }
+    }
+
+    for (const channelId of existing) {
+      if (needed.has(channelId)) continue;
+      try {
+        await this.eventBridge.disconnectCommandListener(configId, sid, channelId);
+      } catch {
+        /* ignore */
       }
     }
   }
@@ -213,8 +219,12 @@ export class MusicCommandHandler {
   }
 
   unregisterBot(botId: number): void {
+    const prevCfg = this.botChannelConfig.get(botId);
     this.registeredBots.delete(botId);
     this.unregisterBotChannels(botId);
+    if (prevCfg) {
+      void this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
+    }
   }
 
   /** Virtual-server pairs that need SSH for cross-channel music commands. */
@@ -278,14 +288,15 @@ export class MusicCommandHandler {
     data: Record<string, string>,
     replyChannelId?: number,
   ): Promise<void> {
+    const userClid = parseInt(data.invokerid || '0');
+    if (!userClid) return;
+
     const msg = (data.msg || '').trim();
     if (!msg.startsWith(CMD_PREFIX)) return;
 
     const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
     const command = parts[0].toLowerCase();
     const rawArgs = parts.slice(1).join(' ').trim();
-    const userClid = parseInt(data.invokerid || '0');
-    if (!userClid) return;
 
     const commandChannelId =
       replyChannelId ??

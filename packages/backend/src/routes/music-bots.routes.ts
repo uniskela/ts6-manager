@@ -10,6 +10,7 @@ import {
   type AppleMusicTrack,
 } from '../voice/audio/apple-music.js';
 import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/music-command-channels.js';
+import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
 

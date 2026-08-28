@@ -9,6 +9,7 @@ import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
 import { loadMaxVideoDuration } from '../utils/app-settings.js';
+import { serializeCommandChannelIds } from './music-command-channels.js';
 
 const PROGRESS_INTERVAL_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
