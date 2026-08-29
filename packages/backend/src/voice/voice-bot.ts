@@ -190,6 +190,18 @@ export class VoiceBot extends EventEmitter {
     return this.client.getClientId();
   }
 
+  getCurrentChannelId(): number {
+    return this.client.getCurrentChannelId();
+  }
+
+  /** Join a channel by ID (for following !play / playback commands). */
+  joinChannel(channelId: number): void {
+    if (this._status === 'stopped' || this._status === 'error' || this._status === 'starting') {
+      throw new Error('Bot is not connected');
+    }
+    this.client.moveToChannel(channelId);
+  }
+
   /** Private (DM) text to a client. */
   sendTextMessage(targetClid: number, msg: string): void {
     const cmd = buildCommand('sendtextmessage', {

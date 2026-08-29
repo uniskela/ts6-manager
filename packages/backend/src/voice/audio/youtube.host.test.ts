@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  getCookieArgs,
   isSpotifyShareHostname,
   isYouTubeHostUrl,
   isYouTubeHostname,
@@ -8,6 +9,14 @@ import {
   parseYouTubeUrl,
   resolveSpotifyFetchHost,
 } from "./youtube.js";
+
+describe("getCookieArgs", () => {
+  it("includes YouTube extractor resilience args", () => {
+    const args = getCookieArgs();
+    assert.ok(args.includes("--extractor-args"));
+    assert.ok(args.some((a) => a.includes("player_client")));
+  });
+});
 
 describe("isYouTubeHostname", () => {
   it("accepts real YouTube hosts", () => {

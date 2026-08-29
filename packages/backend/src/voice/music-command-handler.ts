@@ -22,6 +22,18 @@ import {
   formatQueueMessage,
   formatRadioListMessage,
 } from './ts6-chat-format.js';
+import type { EventBridge } from '../bot-engine/event-bridge.js';
+import {
+  channelListenerKey,
+  parseCommandChannelIds,
+} from './music-command-channels.js';
+
+interface BotChannelConfig {
+  serverConfigId: number;
+  virtualServerId: number;
+  defaultChannel: string | null;
+  commandChannelIds: string[];
+}
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
@@ -70,16 +82,121 @@ function isSpotifyShareUrl(url: string): boolean {
  * Handles text-based music commands (!radio, !play, !stop, etc.)
  * by listening directly on each VoiceBot's TS3 connection.
  *
- * The bot receives `notifytextmessage` in its own channel —
- * no SSH EventBridge needed.
+ * The bot receives `notifytextmessage` in its home channel on the voice connection.
+ * Additional channels use SSH query listeners (EventBridge) when configured.
  */
 export class MusicCommandHandler {
   private registeredBots = new Set<number>();
+  private eventBridge: EventBridge | null = null;
+  private eventBridgeListening = false;
+  private botChannelConfig = new Map<number, BotChannelConfig>();
+  private channelToBots = new Map<string, Set<number>>();
+  private activeReplyChannel = new Map<string, number>();
 
   constructor(
     private prisma: PrismaClient,
     private voiceBotManager: VoiceBotManager,
   ) {}
+
+  setEventBridge(bridge: EventBridge): void {
+    this.eventBridge = bridge;
+    if (!this.eventBridgeListening) {
+      this.eventBridgeListening = true;
+      bridge.on('tsEvent', (configId, sid, eventName, data) => {
+        if (eventName !== 'notifytextmessage') return;
+        const listenerCid = data.__cmd_listener_channel_id;
+        if (!listenerCid) return;
+        this.onCrossChannelTextMessage(configId, sid, parseInt(listenerCid, 10), data).catch(
+          (err) => {
+            console.error(`[MusicCmd] Cross-channel message error: ${err.message}`);
+          },
+        );
+      });
+    }
+  }
+
+  async refreshAllBotChannels(): Promise<void> {
+    const bots = await this.prisma.musicBot.findMany({ select: { id: true } });
+    for (const b of bots) {
+      await this.refreshBotChannels(b.id);
+    }
+  }
+
+  async refreshBotChannels(botId: number): Promise<void> {
+    const prevCfg = this.botChannelConfig.get(botId);
+
+    const dbBot = await this.prisma.musicBot.findUnique({ where: { id: botId } });
+    if (!dbBot) {
+      this.unregisterBotChannels(botId);
+      if (prevCfg) {
+        await this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
+      }
+      return;
+    }
+
+    this.unregisterBotChannels(botId);
+
+    const commandChannelIds = parseCommandChannelIds(dbBot.commandChannelIds);
+    const cfg: BotChannelConfig = {
+      serverConfigId: dbBot.serverConfigId,
+      virtualServerId: dbBot.virtualServerId ?? 1,
+      defaultChannel: dbBot.defaultChannel,
+      commandChannelIds,
+    };
+    this.botChannelConfig.set(botId, cfg);
+
+    for (const cidStr of commandChannelIds) {
+      const channelId = parseInt(cidStr, 10);
+      if (!channelId) continue;
+      const key = channelListenerKey(cfg.serverConfigId, cfg.virtualServerId, channelId);
+      if (!this.channelToBots.has(key)) this.channelToBots.set(key, new Set());
+      this.channelToBots.get(key)!.add(botId);
+    }
+
+    await this.syncCommandListenersForPair(cfg.serverConfigId, cfg.virtualServerId);
+    if (
+      prevCfg &&
+      (prevCfg.serverConfigId !== cfg.serverConfigId ||
+        prevCfg.virtualServerId !== cfg.virtualServerId)
+    ) {
+      await this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
+    }
+  }
+
+  /** Connect/disconnect SSH textchannel listeners to match active command-channel config. */
+  async syncCommandListenersForPair(configId: number, sid: number): Promise<void> {
+    if (!this.eventBridge) return;
+
+    const needed = new Set(this.getNeededCommandChannelIds(configId, sid));
+    const existing = new Set(this.eventBridge.getCommandListenerChannelIds(configId, sid));
+
+    for (const channelId of needed) {
+      if (existing.has(channelId)) continue;
+      try {
+        await this.eventBridge.connectCommandListener(configId, sid, channelId);
+      } catch (err: any) {
+        console.warn(
+          `[MusicCmd] Command listener connect ${configId}:${sid}:${channelId}: ${err.message}`,
+        );
+      }
+    }
+
+    for (const channelId of existing) {
+      if (needed.has(channelId)) continue;
+      try {
+        await this.eventBridge.disconnectCommandListener(configId, sid, channelId);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  private unregisterBotChannels(botId: number): void {
+    this.botChannelConfig.delete(botId);
+    for (const bots of this.channelToBots.values()) {
+      bots.delete(botId);
+    }
+  }
 
   /**
    * Register text message listener on a VoiceBot instance.
@@ -90,27 +207,108 @@ export class MusicCommandHandler {
     this.registeredBots.add(botId);
 
     bot.on('textMessage', (data: Record<string, string>) => {
-      this.onTextMessage(botId, bot, data).catch(err => {
+      const replyCid = bot.getCurrentChannelId();
+      this.onTextMessage(botId, bot, data, replyCid > 0 ? replyCid : undefined).catch(err => {
         console.error(`[MusicCmd] Error processing text message on bot ${botId}: ${err.message}`);
       });
     });
+
+    void this.refreshBotChannels(botId);
 
     console.log(`[MusicCmd] Registered text command listener on bot ${botId}`);
   }
 
   unregisterBot(botId: number): void {
+    const prevCfg = this.botChannelConfig.get(botId);
     this.registeredBots.delete(botId);
+    this.unregisterBotChannels(botId);
+    if (prevCfg) {
+      void this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
+    }
   }
 
-  private async onTextMessage(botId: number, bot: VoiceBot, data: Record<string, string>): Promise<void> {
+  /** Virtual-server pairs that need SSH for cross-channel music commands. */
+  getNeededServerPairs(): string[] {
+    const pairs = new Set<string>();
+    for (const cfg of this.botChannelConfig.values()) {
+      if (cfg.commandChannelIds.length === 0) continue;
+      pairs.add(`${cfg.serverConfigId}:${cfg.virtualServerId}`);
+    }
+    return Array.from(pairs);
+  }
+
+  private async onCrossChannelTextMessage(
+    configId: number,
+    sid: number,
+    channelId: number,
+    data: Record<string, string>,
+  ): Promise<void> {
+    const key = channelListenerKey(configId, sid, channelId);
+    const botIds = this.channelToBots.get(key);
+    if (!botIds || botIds.size === 0) return;
+
+    const botId = [...botIds].find((id) => {
+      const bot = this.voiceBotManager.getBot(id);
+      if (!bot || bot.status === 'stopped' || bot.status === 'error') return false;
+      const cfg = this.botChannelConfig.get(id);
+      const homeCid =
+        bot.getCurrentChannelId() || parseInt(cfg?.defaultChannel || '0', 10) || 0;
+      if (homeCid > 0 && channelId === homeCid) return false;
+      return true;
+    });
+    if (!botId) return;
+
+    const bot = this.voiceBotManager.getBot(botId)!;
+    await this.onTextMessage(botId, bot, data, channelId);
+  }
+
+  /** Channel IDs that need SSH listeners (excludes home channel while voice client is up). */
+  getNeededCommandChannelIds(configId: number, sid: number): number[] {
+    const ids = new Set<number>();
+    for (const [botId, cfg] of this.botChannelConfig) {
+      if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
+      const bot = this.voiceBotManager.getBot(botId);
+      const homeCid =
+        bot?.getCurrentChannelId() || parseInt(cfg.defaultChannel || '0', 10) || 0;
+      for (const cidStr of cfg.commandChannelIds) {
+        const channelId = parseInt(cidStr, 10);
+        if (!channelId) continue;
+        if (bot && bot.status !== 'stopped' && bot.status !== 'error' && channelId === homeCid) {
+          continue;
+        }
+        ids.add(channelId);
+      }
+    }
+    return Array.from(ids);
+  }
+
+  private async onTextMessage(
+    botId: number,
+    bot: VoiceBot,
+    data: Record<string, string>,
+    replyChannelId?: number,
+  ): Promise<void> {
+    const userClid = parseInt(data.invokerid || '0');
+    if (!userClid) return;
+
     const msg = (data.msg || '').trim();
     if (!msg.startsWith(CMD_PREFIX)) return;
 
     const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
     const command = parts[0].toLowerCase();
     const rawArgs = parts.slice(1).join(' ').trim();
-    const userClid = parseInt(data.invokerid || '0');
-    if (!userClid) return;
+
+    const parsedChannelId = parseInt(
+      data.target || data.invokerchannelid || data.cid || '0',
+      10,
+    );
+    const commandChannelId =
+      replyChannelId ?? (parsedChannelId > 0 ? parsedChannelId : undefined);
+    if (commandChannelId && commandChannelId > 0) {
+      this.activeReplyChannel.set(`${botId}:${userClid}`, commandChannelId);
+    }
+
+    try {
 
     // TS clients auto-wrap URLs in BBCode: [URL]https://...[/URL]
     const args = rawArgs
@@ -132,7 +330,7 @@ export class MusicCommandHandler {
             await this.handleRadio(botId, bot, userClid, args);
             break;
           case 'play':
-            await this.handlePlay(bot, userClid, args);
+            await this.handlePlay(botId, bot, userClid, args);
             break;
           case 'stop':
             this.handleStop(bot, userClid);
@@ -157,7 +355,7 @@ export class MusicCommandHandler {
             break;
           case 'queue':
           case 'add':
-            await this.handleQueue(bot, userClid, args);
+            await this.handleQueue(botId, bot, userClid, args);
             break;
           case 'shuffle':
             this.handleShuffle(bot, userClid, args);
@@ -181,6 +379,9 @@ export class MusicCommandHandler {
 
     // Admin-defined custom commands for this bot's server
     await this.handleCustomCommand(botId, bot, userClid, command);
+    } finally {
+      if (userClid) this.activeReplyChannel.delete(`${botId}:${userClid}`);
+    }
   }
 
   private async handleHelp(botId: number, bot: VoiceBot, userClid: number): Promise<void> {
@@ -230,7 +431,36 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, custom.response);
   }
 
-  private reply(bot: VoiceBot, _targetClid: number, msg: string): void {
+  private reply(bot: VoiceBot, targetClid: number, msg: string): void {
+    const botId = bot.currentConfig.id;
+    const replyChannelId = this.activeReplyChannel.get(`${botId}:${targetClid}`);
+    const cfg = this.botChannelConfig.get(botId);
+    const homeCid =
+      bot.getCurrentChannelId() || parseInt(cfg?.defaultChannel || '0', 10) || 0;
+
+    if (
+      replyChannelId &&
+      cfg &&
+      this.eventBridge &&
+      replyChannelId !== homeCid
+    ) {
+      void this.eventBridge
+        .sendChannelText(cfg.serverConfigId, cfg.virtualServerId, replyChannelId, msg)
+        .then((ok) => {
+          if (!ok) {
+            console.warn(
+              `[MusicCmd] Cross-channel reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
+            );
+            try {
+              bot.sendChannelMessage(msg);
+            } catch (err: any) {
+              console.error(`[MusicCmd] Failed to send reply: ${err.message}`);
+            }
+          }
+        });
+      return;
+    }
+
     try {
       bot.sendChannelMessage(msg);
     } catch (err: any) {
@@ -283,6 +513,8 @@ export class MusicCommandHandler {
       return;
     }
 
+    await this.joinChannelForCommand(botId, bot, userClid);
+
     const queueItem: QueueItem = {
       id: `radio_${station.id}`,
       title: station.name,
@@ -296,7 +528,30 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, `Now playing: ${station.name}`);
   }
 
-  private async handlePlay(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+  private async joinChannelForCommand(botId: number, bot: VoiceBot, userClid: number): Promise<void> {
+    const channelId = this.activeReplyChannel.get(`${botId}:${userClid}`);
+    if (!channelId || channelId <= 0) return;
+    if (bot.getCurrentChannelId() === channelId) return;
+
+    try {
+      bot.joinChannel(channelId);
+      console.log(
+        `[MusicCmd] Bot ${botId}: joined channel ${channelId} for command from clid=${userClid}`,
+      );
+      await this.refreshBotChannels(botId);
+    } catch (err: any) {
+      console.warn(`[MusicCmd] Bot ${botId}: could not join channel ${channelId}: ${err.message}`);
+    }
+  }
+
+  private async handlePlay(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    args: string,
+  ): Promise<void> {
+    await this.joinChannelForCommand(botId, bot, userClid);
+
     if (!args) {
       if (bot.status === 'paused') {
         bot.resume();
@@ -315,7 +570,7 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      await this.enqueueMediaUrl(bot, userClid, args);
+      await this.enqueueMediaUrl(botId, bot, userClid, args);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to play: ${err.message}`);
     }
@@ -326,10 +581,13 @@ export class MusicCommandHandler {
    * and queue the rest in the background (same approach as play-url).
    */
   private async enqueueMediaUrl(
+    botId: number,
     bot: VoiceBot,
     userClid: number,
     rawUrl: string,
   ): Promise<void> {
+    await this.joinChannelForCommand(botId, bot, userClid);
+
     let mediaUrl = rawUrl;
     if (isSpotifyShareUrl(mediaUrl)) {
       mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
@@ -416,7 +674,6 @@ export class MusicCommandHandler {
 
     if (pendingTotal === 0) return;
 
-    const botId = bot.currentConfig.id;
     const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
     chatPlaylistGeneration.set(botId, generation);
 
@@ -500,7 +757,12 @@ export class MusicCommandHandler {
     );
   }
 
-  private async handleQueue(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+  private async handleQueue(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    args: string,
+  ): Promise<void> {
     // No args or "show" — display current queue
     if (!args || args.toLowerCase() === 'show') {
       this.showQueue(bot, userClid);
@@ -556,7 +818,7 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, 'Loading...');
 
     try {
-      await this.enqueueMediaUrl(bot, userClid, args);
+      await this.enqueueMediaUrl(botId, bot, userClid, args);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to queue: ${err.message}`);
     }

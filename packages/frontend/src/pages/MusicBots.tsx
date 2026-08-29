@@ -684,8 +684,24 @@ function BotsTab() {
 
   // Create form
   const [form, setForm] = useState({
-    name: '', serverConfigId: '', nickname: 'MusicBot', serverPassword: '', defaultChannel: '', channelPassword: '', voicePort: 9987, volume: 50, autoStart: false,
+    name: '',
+    serverConfigId: '',
+    nickname: 'MusicBot',
+    serverPassword: '',
+    defaultChannel: '',
+    commandChannelsText: '',
+    virtualServerId: 1,
+    channelPassword: '',
+    voicePort: 9987,
+    volume: 50,
+    autoStart: false,
   });
+
+  const parseCommandChannelsInput = (text: string): string[] =>
+    text
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter((s) => /^\d+$/.test(s));
 
   const bots = Array.isArray(data) ? data : [];
   const serverList = Array.isArray(servers) ? servers : [];
@@ -701,6 +717,8 @@ function BotsTab() {
       nickname: form.nickname || 'MusicBot',
       serverPassword: form.serverPassword || undefined,
       defaultChannel: form.defaultChannel || undefined,
+      commandChannelIds: parseCommandChannelsInput(form.commandChannelsText),
+      virtualServerId: form.virtualServerId,
       channelPassword: form.channelPassword || undefined,
       voicePort: form.voicePort,
       volume: form.volume,
@@ -718,6 +736,8 @@ function BotsTab() {
       nickname: form.nickname,
       serverPassword: form.serverPassword || undefined,
       defaultChannel: form.defaultChannel || undefined,
+      commandChannelIds: parseCommandChannelsInput(form.commandChannelsText),
+      virtualServerId: form.virtualServerId,
       channelPassword: form.channelPassword || undefined,
       voicePort: form.voicePort,
       volume: form.volume,
@@ -728,7 +748,20 @@ function BotsTab() {
     });
   };
 
-  const resetForm = () => setForm({ name: '', serverConfigId: '', nickname: 'MusicBot', serverPassword: '', defaultChannel: '', channelPassword: '', voicePort: 9987, volume: 50, autoStart: false });
+  const resetForm = () =>
+    setForm({
+      name: '',
+      serverConfigId: '',
+      nickname: 'MusicBot',
+      serverPassword: '',
+      defaultChannel: '',
+      commandChannelsText: '',
+      virtualServerId: 1,
+      channelPassword: '',
+      voicePort: 9987,
+      volume: 50,
+      autoStart: false,
+    });
 
   return (
     <div className="space-y-4">
@@ -754,6 +787,8 @@ function BotsTab() {
                   nickname: bot.nickname,
                   serverPassword: bot.serverPassword || '',
                   defaultChannel: bot.defaultChannel || '',
+                  commandChannelsText: (bot.commandChannelIds ?? []).join(', '),
+                  virtualServerId: bot.virtualServerId ?? 1,
                   channelPassword: bot.channelPassword || '',
                   voicePort: bot.voicePort ?? 9987,
                   volume: bot.volume,
@@ -804,7 +839,27 @@ function BotsTab() {
             </div>
             <div>
               <Label className="text-xs">Default Channel</Label>
-              <Input value={form.defaultChannel} onChange={(e) => setForm({ ...form, defaultChannel: e.target.value })} placeholder="Channel name or ID (optional)" />
+              <Input value={form.defaultChannel} onChange={(e) => setForm({ ...form, defaultChannel: e.target.value })} placeholder="Channel name or ID (playback channel)" />
+            </div>
+            <div>
+              <Label className="text-xs">Command channels (optional)</Label>
+              <Input
+                value={form.commandChannelsText}
+                onChange={(e) => setForm({ ...form, commandChannelsText: e.target.value })}
+                placeholder="e.g. 12, 45 — channel IDs where !commands work"
+              />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Bot stays in the default channel for audio but listens and replies in these channels too. Requires ServerQuery SSH on the server config.
+              </p>
+            </div>
+            <div>
+              <Label className="text-xs">Virtual server ID</Label>
+              <Input
+                type="number"
+                min={1}
+                value={form.virtualServerId}
+                onChange={(e) => setForm({ ...form, virtualServerId: parseInt(e.target.value, 10) || 1 })}
+              />
             </div>
             <div>
               <Label className="text-xs">Channel Password</Label>
@@ -871,7 +926,14 @@ function BotsTab() {
         onLoadPlaylist={(playlistId) => {
           if (showPlayDialog) {
             loadPlaylist.mutate({ botId: showPlayDialog, playlistId, clearFirst: true }, {
-              onSuccess: () => { toast.success('Playlist loaded'); setShowPlayDialog(null); },
+              onSuccess: (data: { playError?: string }) => {
+                if (data?.playError) {
+                  toast.error(`Playlist queued but playback failed: ${data.playError}`);
+                } else {
+                  toast.success('Playlist loaded');
+                }
+                setShowPlayDialog(null);
+              },
               onError: () => toast.error('Failed to load playlist'),
             });
           }

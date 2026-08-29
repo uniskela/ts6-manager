@@ -141,6 +141,27 @@ export class Ts3Client extends EventEmitter {
     return this.channelMembers.size;
   }
 
+  getCurrentChannelId(): number {
+    return this.currentChannelId;
+  }
+
+  /** Move this voice client into a channel by ID (no-op if already there). */
+  moveToChannel(channelId: number): void {
+    if (!this.clientId || channelId <= 0) return;
+    if (this.currentChannelId === channelId) return;
+
+    const moveCmd = buildCommand("clientmove", {
+      cid: channelId,
+      clid: this.clientId,
+      cpw: this.opts.channelPassword ?? "",
+    });
+    this.currentChannelId = channelId;
+    this.channelMembers.clear();
+    this.queryMembers.clear();
+    this.emit("debug", `Moving to channel cid=${channelId}`);
+    this.sendCommand(moveCmd);
+  }
+
   async connect(opts: Ts3ClientOptions): Promise<void> {
     this.opts = opts;
     this.state = "init";
@@ -993,14 +1014,7 @@ export class Ts3Client extends EventEmitter {
       return;
     }
 
-    const moveCmd = buildCommand("clientmove", {
-      cid,
-      clid: this.clientId,
-      cpw: this.opts.channelPassword ?? "",
-    });
-    this.currentChannelId = cid;
-    this.emit("debug", `Moving to channel "${target}" (cid=${cid})`);
-    this.sendCommand(moveCmd);
+    this.moveToChannel(cid);
   }
 
   // ====== Resend Loop ======

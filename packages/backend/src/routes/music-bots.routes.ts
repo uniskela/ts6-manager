@@ -9,6 +9,7 @@ import {
   resolveAppleMusicTracks,
   type AppleMusicTrack,
 } from '../voice/audio/apple-music.js';
+import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/music-command-channels.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 
 export const musicBotRoutes: Router = Router();
@@ -47,6 +48,8 @@ musicBotRoutes.get('/', async (req: Request, res: Response, next) => {
         serverConfig: b.serverConfig,
         nickname: b.nickname,
         defaultChannel: b.defaultChannel,
+        commandChannelIds: parseCommandChannelIds(b.commandChannelIds),
+        virtualServerId: b.virtualServerId,
         voicePort: b.voicePort,
         volume: b.volume,
         autoStart: b.autoStart,
@@ -85,8 +88,14 @@ musicBotRoutes.get('/:id', async (req: Request, res: Response, next) => {
 musicBotRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    const { name, serverConfigId, nickname, serverPassword, defaultChannel, channelPassword, voicePort, volume, autoStart } = req.body;
+    const { name, serverConfigId, nickname, serverPassword, defaultChannel, channelPassword, commandChannelIds, virtualServerId, voicePort, volume, autoStart } = req.body;
     if (!name || !serverConfigId) throw new AppError(400, 'name and serverConfigId are required');
+
+    const parsedCommandChannels = Array.isArray(commandChannelIds)
+      ? commandChannelIds.map(String)
+      : typeof commandChannelIds === 'string'
+        ? commandChannelIds.split(/[\s,]+/).filter(Boolean)
+        : undefined;
 
     const result = await manager.createBot({
       name,
@@ -95,6 +104,8 @@ musicBotRoutes.post('/', async (req: Request, res: Response, next) => {
       serverPassword,
       defaultChannel,
       channelPassword,
+      commandChannelIds: parsedCommandChannels,
+      virtualServerId: virtualServerId != null ? parseInt(virtualServerId, 10) : undefined,
       voicePort: voicePort != null ? parseInt(voicePort) : undefined,
       volume: volume != null ? parseInt(volume) : undefined,
       autoStart: autoStart ?? false,
@@ -110,7 +121,20 @@ musicBotRoutes.put('/:id', async (req: Request, res: Response, next) => {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const id = parseInt(req.params.id as string);
-    const { name, nickname, serverPassword, defaultChannel, channelPassword, voicePort, volume, autoStart } = req.body;
+    const { name, nickname, serverPassword, defaultChannel, channelPassword, commandChannelIds, virtualServerId, voicePort, volume, autoStart } = req.body;
+
+    const commandChannelData =
+      commandChannelIds !== undefined
+        ? {
+            commandChannelIds: serializeCommandChannelIds(
+              Array.isArray(commandChannelIds)
+                ? commandChannelIds.map(String)
+                : String(commandChannelIds)
+                    .split(/[\s,]+/)
+                    .filter(Boolean),
+            ),
+          }
+        : {};
 
     const dbBot = await prisma.musicBot.update({
       where: { id },
@@ -120,11 +144,15 @@ musicBotRoutes.put('/:id', async (req: Request, res: Response, next) => {
         ...(serverPassword !== undefined && { serverPassword }),
         ...(defaultChannel !== undefined && { defaultChannel }),
         ...(channelPassword !== undefined && { channelPassword }),
+        ...commandChannelData,
+        ...(virtualServerId != null && { virtualServerId: parseInt(virtualServerId, 10) }),
         ...(voicePort != null && { voicePort: parseInt(voicePort) }),
         ...(volume != null && { volume: parseInt(volume) }),
         ...(autoStart != null && { autoStart }),
       },
     });
+
+    await manager.refreshMusicCommandChannels(id);
 
     // Update runtime config if bot is loaded
     const bot = manager.getBot(id);
@@ -619,7 +647,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
 
-    const { playlistId, clearFirst } = req.body;
+    const { playlistId, clearFirst, autoplay } = req.body;
     const playlist = await prisma.playlist.findUnique({
       where: { id: parseInt(playlistId) },
       include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
@@ -639,7 +667,24 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     }));
 
     bot.queue.addMany(items);
-    res.json({ success: true, queueLength: bot.queue.length });
+
+    let playError: string | undefined;
+    const shouldAutoplay = autoplay ?? clearFirst;
+    if (shouldAutoplay && items.length > 0) {
+      const playIndex = clearFirst ? 0 : bot.queue.length - items.length;
+      const item = bot.queue.playAt(playIndex);
+      if (item) {
+        try {
+          if (item.streamUrl) await bot.playStream(item);
+          else await bot.play(item);
+        } catch (err: any) {
+          playError = err.message || String(err);
+          console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
+        }
+      }
+    }
+
+    res.json({ success: true, queueLength: bot.queue.length, playError });
   } catch (err) { next(err); }
 });
 

@@ -41,9 +41,24 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Custom command editor documents TS6 Markdown / BBCode formatting for responses
 - **TS6-style formatting toolbar** on custom command responses (bold, lists, spoilers, headings, code, math, tables, Mermaid, BBCode snippets)
 
+### Fixed
+
+- **Import as Playlist** no longer sends `musicBotId` when a bot is selected but queue import was not requested
+- **Import to queue** available after **Load** on library and playlist URL flows
+- `!np` “… and N more” queue count accounts for current track index
+
 ### Changed
 
 - `!np` / `!nowplaying` shows track progress, up next, and expandable playback control hints (text commands — TS6 has no clickable skip/pause buttons in bot messages)
+
+### Fixed
+
+- **Load & Play** on stream playlists now starts playback after loading the queue (not only enqueue)
+- yt-dlp YouTube downloads use flexible audio format selection (`bestaudio` fallbacks) instead of forcing opus extraction, with player-client rotation for bot-check / format errors
+
+- Music bots can accept `!commands` in **additional channels** (channel ID list) and reply there while staying in the default playback channel
+- Uses ServerQuery SSH text-channel listeners; configure under Music Bots → bot settings
+- On `!play` (and `!radio <id>`), the voice bot **joins the command channel** so audio plays where the user typed the command
 
 ## [1.3.5] - 2026-08-28
 

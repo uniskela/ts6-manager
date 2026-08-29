@@ -41,12 +41,48 @@ export function getYtCookieFile(): string | null {
   return ytCookieFile;
 }
 
-export function getCookieArgs(): string[] {
-  const args: string[] = ["--remote-components", "ejs:github"];
+/** Permissive best-audio chain — ffmpeg converts whatever we get in the audio pipeline. */
+const YT_AUDIO_FORMAT = "ba/b/bestaudio/best";
+
+/** Rotate YouTube player clients to reduce bot-check and empty-format failures. */
+const YT_EXTRACTOR_CLIENT_ROTATION = [
+  "tv_embedded,web,default",
+  "web,default",
+  "tv_embedded",
+  "android_vr,web",
+] as const;
+
+function buildYtDlpBaseArgs(playerClients: string): string[] {
+  const args: string[] = [
+    "--remote-components",
+    "ejs:github",
+    "--extractor-args",
+    `youtube:player_client=${playerClients}`,
+  ];
   if (ytCookieFile) {
     args.push("--cookies", ytCookieFile);
   }
   return args;
+}
+
+export function getCookieArgs(): string[] {
+  return buildYtDlpBaseArgs(YT_EXTRACTOR_CLIENT_ROTATION[0]);
+}
+
+function findCachedAudioFile(outputDir: string, videoId: string): string | null {
+  if (!fs.existsSync(outputDir)) return null;
+  const prefix = `${videoId}.`;
+  const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(prefix));
+  if (files.length === 0) return null;
+  return path.join(outputDir, files[files.length - 1]);
+}
+
+function formatYtDlpFailure(phase: string, code: number | null, stderr: string): string {
+  const summary = summarizeYtDlpStderr(stderr);
+  if (/sign in to confirm|not a bot/i.test(stderr) && !ytCookieFile) {
+    return `${phase} (code ${code}): ${summary}. Add YouTube cookies in Settings → YouTube (or YT_COOKIE_FILE) to bypass bot checks.`;
+  }
+  return `${phase} (code ${code}): ${summary}`;
 }
 
 /** Prefer ERROR lines in yt-dlp stderr (warnings often drown the real failure). */
@@ -309,6 +345,89 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
  * Download audio from a YouTube URL using yt-dlp.
  * Always canonicalizes Music URLs to www.youtube.com/watch?v=… first.
  */
+async function ytDlpDumpJson(mediaUrl: string): Promise<Record<string, unknown>> {
+  let lastCode: number | null = null;
+  let lastStderr = "";
+
+  for (const clients of YT_EXTRACTOR_CLIENT_ROTATION) {
+    const infoResult = await runYtDlp(
+      withMediaUrl(
+        [
+          ...buildYtDlpBaseArgs(clients),
+          "--no-warnings",
+          "--dump-json",
+          "--no-playlist",
+          "--ignore-no-formats-error",
+        ],
+        mediaUrl,
+      ),
+    );
+
+    lastCode = infoResult.code;
+    lastStderr = infoResult.stderr;
+
+    if (!infoResult.stdout.trim()) continue;
+
+    try {
+      const jsonLine = infoResult.stdout
+        .trim()
+        .split("\n")
+        .find((l) => l.trim().startsWith("{"));
+      const parsedInfo = JSON.parse(jsonLine || infoResult.stdout) as Record<string, unknown>;
+      if (parsedInfo && typeof parsedInfo.id === "string") {
+        return parsedInfo;
+      }
+    } catch {
+      lastStderr = infoResult.stderr || infoResult.stdout;
+    }
+  }
+
+  throw new Error(formatYtDlpFailure("yt-dlp info failed", lastCode, lastStderr));
+}
+
+async function ytDlpDownloadAudio(
+  mediaUrl: string,
+  outputDir: string,
+  outputTemplate: string,
+  videoId: string,
+): Promise<void> {
+  const formatStrategies: string[][] = [
+    ["-f", YT_AUDIO_FORMAT, "-x", "--audio-quality", "0"],
+    ["-f", YT_AUDIO_FORMAT],
+    ["-f", "b/best"],
+  ];
+
+  let lastCode: number | null = null;
+  let lastStderr = "";
+
+  for (const clients of YT_EXTRACTOR_CLIENT_ROTATION) {
+    for (const fmtArgs of formatStrategies) {
+      const dlResult = await runYtDlp(
+        withMediaUrl(
+          [
+            ...buildYtDlpBaseArgs(clients),
+            "--no-warnings",
+            ...fmtArgs,
+            "--no-playlist",
+            "-o",
+            outputTemplate,
+          ],
+          mediaUrl,
+        ),
+      );
+
+      lastCode = dlResult.code;
+      lastStderr = dlResult.stderr;
+
+      if (dlResult.code === 0 && findCachedAudioFile(outputDir, videoId)) {
+        return;
+      }
+    }
+  }
+
+  throw new Error(formatYtDlpFailure("yt-dlp download failed", lastCode, lastStderr));
+}
+
 export async function downloadYouTube(
   url: string,
   outputDir: string,
@@ -322,71 +441,29 @@ export async function downloadYouTube(
   const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
   const outputTemplate = path.join(outputDir, "%(id)s.%(ext)s");
 
-  const infoResult = await runYtDlp(withMediaUrl([
-    ...getCookieArgs(),
-    "--no-warnings",
-    "--dump-json",
-    "--no-playlist",
-  ], mediaUrl));
-
-  if (infoResult.code !== 0 && !infoResult.stdout.trim()) {
-    throw new Error(`yt-dlp info failed (code ${infoResult.code}): ${summarizeYtDlpStderr(infoResult.stderr)}`);
-  }
-
-  let parsedInfo: any;
-  try {
-    // dump-json may still print warnings on stdout in rare cases — take first JSON object line
-    const jsonLine = infoResult.stdout
-      .trim()
-      .split("\n")
-      .find((l) => l.trim().startsWith("{"));
-    parsedInfo = JSON.parse(jsonLine || infoResult.stdout);
-  } catch {
-    throw new Error(
-      `Failed to parse yt-dlp output: ${summarizeYtDlpStderr(infoResult.stderr || infoResult.stdout)}`,
-    );
-  }
+  const parsedInfo = await ytDlpDumpJson(mediaUrl);
 
   const info: YouTubeInfo = {
-    id: parsedInfo.id,
-    title: parsedInfo.title || "Unknown",
-    artist: parsedInfo.uploader || parsedInfo.channel || "Unknown",
-    duration: parsedInfo.duration || 0,
-    thumbnail: parsedInfo.thumbnail || "",
+    id: String(parsedInfo.id),
+    title: (parsedInfo.title as string) || "Unknown",
+    artist: (parsedInfo.uploader as string) || (parsedInfo.channel as string) || "Unknown",
+    duration: (parsedInfo.duration as number) || 0,
+    thumbnail: (parsedInfo.thumbnail as string) || "",
     url: mediaUrl,
   };
 
-  const expectedPath = path.join(outputDir, `${info.id}.opus`);
-
-  // Check if already downloaded
-  if (fs.existsSync(expectedPath)) {
-    return { filePath: expectedPath, info };
+  const cached = findCachedAudioFile(outputDir, info.id);
+  if (cached) {
+    return { filePath: cached, info };
   }
 
-  const dlResult = await runYtDlp(withMediaUrl([
-    ...getCookieArgs(),
-    "--no-warnings",
-    "-x", // extract audio
-    "--audio-format",
-    "opus", // opus format (native for TS3)
-    "--audio-quality",
-    "0", // best quality
-    "--no-playlist",
-    "-o",
-    outputTemplate,
-  ], mediaUrl));
+  await ytDlpDownloadAudio(mediaUrl, outputDir, outputTemplate, info.id);
 
-  if (dlResult.code !== 0) {
-    throw new Error(`yt-dlp download failed (code ${dlResult.code}): ${summarizeYtDlpStderr(dlResult.stderr)}`);
-  }
-
-  // yt-dlp may use different extensions, find the actual file
-  const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(info.id));
-  if (files.length === 0) {
+  const filePath = findCachedAudioFile(outputDir, info.id);
+  if (!filePath) {
     throw new Error("Downloaded file not found");
   }
 
-  const filePath = path.join(outputDir, files[files.length - 1]);
   return { filePath, info };
 }
 
@@ -401,7 +478,14 @@ export async function fetchYouTubeVideoMeta(
   const mediaUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const infoResult = await runYtDlp(
     withMediaUrl(
-      [...getCookieArgs(), "--no-warnings", "--dump-json", "--no-playlist", "--no-download"],
+      [
+        ...getCookieArgs(),
+        "--no-warnings",
+        "--dump-json",
+        "--no-playlist",
+        "--no-download",
+        "--ignore-no-formats-error",
+      ],
       mediaUrl,
     ),
   );

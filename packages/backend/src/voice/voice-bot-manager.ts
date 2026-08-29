@@ -9,6 +9,7 @@ import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
 import { loadMaxVideoDuration } from '../utils/app-settings.js';
+import { serializeCommandChannelIds } from './music-command-channels.js';
 
 const PROGRESS_INTERVAL_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -39,6 +40,12 @@ export class VoiceBotManager extends EventEmitter {
     // Register all existing bots
     for (const [id, bot] of this.bots) {
       handler.registerBot(id, bot);
+    }
+  }
+
+  async refreshMusicCommandChannels(botId: number): Promise<void> {
+    if (this.musicCmdHandler) {
+      await this.musicCmdHandler.refreshBotChannels(botId);
     }
   }
 
@@ -215,6 +222,8 @@ export class VoiceBotManager extends EventEmitter {
     serverPassword?: string;
     defaultChannel?: string;
     channelPassword?: string;
+    commandChannelIds?: string[];
+    virtualServerId?: number;
     voicePort?: number;
     volume?: number;
     autoStart?: boolean;
@@ -247,6 +256,8 @@ export class VoiceBotManager extends EventEmitter {
         serverPassword: data.serverPassword,
         defaultChannel: data.defaultChannel,
         channelPassword: data.channelPassword,
+        commandChannelIds: serializeCommandChannelIds(data.commandChannelIds ?? []),
+        virtualServerId: data.virtualServerId ?? 1,
         voicePort: data.voicePort ?? 9987,
         volume: data.volume ?? 50,
         autoStart: data.autoStart ?? false,
@@ -276,6 +287,10 @@ export class VoiceBotManager extends EventEmitter {
     const bot = this.createBotInstance(config);
     this.bots.set(dbBot.id, bot);
     this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
+
+    if (this.musicCmdHandler) {
+      await this.musicCmdHandler.refreshBotChannels(dbBot.id);
+    }
 
     return { id: dbBot.id };
   }
@@ -331,6 +346,9 @@ export class VoiceBotManager extends EventEmitter {
     if (!bot) throw new Error(`Music bot ${id} not found`);
     this.clearReconnect(id);
     await bot.start();
+    if (this.musicCmdHandler) {
+      await this.musicCmdHandler.refreshBotChannels(id);
+    }
   }
 
   async stopBot(id: number): Promise<void> {

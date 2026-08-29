@@ -134,7 +134,10 @@ async function main() {
   // Wire Music Command Handler for text-based music bot control (!radio, !play, etc.)
   // Listens directly on each VoiceBot's TS3 connection (no SSH needed)
   const musicCommandHandler = new MusicCommandHandler(prisma, voiceBotManager);
+  musicCommandHandler.setEventBridge(botEngine.getEventBridge());
+  botEngine.setMusicCommandHandler(musicCommandHandler);
   voiceBotManager.setMusicCommandHandler(musicCommandHandler);
+  await musicCommandHandler.refreshAllBotChannels();
 
   server.listen(config.port, () => {
     console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);
