@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { serversApi } from '@/api/servers.api';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import {
   DEFAULT_CONNECTION_FORM,
   DEPLOYMENT_SCENARIOS,
-  TS_PREP_STEPS,
+  FIELD_HELP,
+  getTsPrepStep,
   type ConnectionFormState,
   type DeploymentScenarioId,
 } from '@/content/connection-setup';
@@ -20,11 +21,12 @@ import { cn } from '@/lib/utils';
 
 const STEPS = [
   'Where is your TeamSpeak server?',
-  'Prepare WebQuery on TS',
-  'Enter WebQuery details',
+  'WebQuery connection',
   'SSH (optional)',
   'Review & finish',
 ] as const;
+
+const REMOTE_SCENARIOS = new Set<DeploymentScenarioId>(['remote-ts', 'manager-docker-remote-ts']);
 
 interface DeploymentCheckResult {
   managerInDocker: boolean;
@@ -39,6 +41,15 @@ interface ConnectionSetupWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onComplete?: () => void;
+}
+
+function WizardGuideCallout({ title, children }: { title?: string; children: ReactNode }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-[11px] text-muted-foreground space-y-1">
+      {title && <p className="font-medium text-foreground">{title}</p>}
+      {children}
+    </div>
+  );
 }
 
 export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: ConnectionSetupWizardProps) {
@@ -58,6 +69,11 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     () => DEPLOYMENT_SCENARIOS.find((s) => s.id === scenarioId) ?? DEPLOYMENT_SCENARIOS[0],
     [scenarioId],
   );
+
+  const webqueryPortGuide = getTsPrepStep('webquery-port');
+  const apiKeyGuide = getTsPrepStep('api-key');
+  const sshGuide = getTsPrepStep('ssh');
+  const firewallGuide = getTsPrepStep('firewall');
 
   const createServer = useMutation({
     mutationFn: (data: Record<string, unknown>) => serversApi.create(data),
@@ -87,6 +103,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     onSuccess: (data) => {
       setDetection(data);
       setDetectionApplied(false);
+      setHostSuggestionApplied(false);
     },
     onError: (err: any) => {
       setDetection({
@@ -130,12 +147,14 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   const applyScenario = (id: DeploymentScenarioId, hostOverride?: string) => {
     setScenarioId(id);
     const next = DEPLOYMENT_SCENARIOS.find((s) => s.id === id);
-    if (next) {
-      setForm((prev) => ({
-        ...prev,
-        host: hostOverride ?? (hostSuggestionApplied ? prev.host : next.hostPlaceholder),
-      }));
+    if (!next) return;
+    if (hostOverride !== undefined) {
+      setForm((prev) => ({ ...prev, host: hostOverride }));
+      setHostSuggestionApplied(true);
+      return;
     }
+    setForm((prev) => ({ ...prev, host: next.hostPlaceholder }));
+    setHostSuggestionApplied(false);
   };
 
   const applyDetection = () => {
@@ -159,8 +178,8 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     : null;
 
   const canNext = () => {
-    if (step === 2) return !!form.name && !!form.host && !!form.apiKey;
-    if (step === 3 && !skipSsh) {
+    if (step === 1) return !!form.name && !!form.host && !!form.apiKey;
+    if (step === 2 && !skipSsh) {
       return !!form.sshUsername && !!form.sshPassword;
     }
     return true;
@@ -366,86 +385,134 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
         )}
 
         {step === 1 && (
-          <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              Complete these steps on your TeamSpeak server before entering credentials in the manager.
-            </p>
-            <ol className="space-y-3 list-decimal list-inside text-xs text-muted-foreground">
-              {TS_PREP_STEPS.map((item) => (
-                <li key={item.title} className="space-y-1">
-                  <span className="font-medium text-foreground">{item.title}</span>
-                  <p>{item.body}</p>
-                  {'code' in item && item.code && (
-                    <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] overflow-x-auto">{item.code}</pre>
+          <div className="space-y-4">
+            <WizardGuideCallout title="Network host">
+              <p>{scenario.hostHint}</p>
+              {scenario.notes && <p className="mt-1">{scenario.notes}</p>}
+              {REMOTE_SCENARIOS.has(scenarioId) && (
+                <p className="mt-1">{firewallGuide.body}</p>
+              )}
+            </WizardGuideCallout>
+
+            <div className="space-y-3">
+              <div>
+                <Label className="text-xs">Name</Label>
+                <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.name}</p>
+                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My TS Server" />
+              </div>
+
+              <div>
+                <Label className="text-xs">Host</Label>
+                <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.host}</p>
+                <Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={scenario.hostPlaceholder} />
+              </div>
+
+              <div>
+                <Label className="text-xs">WebQuery Port</Label>
+                <WizardGuideCallout title={webqueryPortGuide.title}>
+                  <p>{webqueryPortGuide.body}</p>
+                </WizardGuideCallout>
+                <Input
+                  className="mt-2"
+                  type="number"
+                  value={form.webqueryPort}
+                  onChange={(e) => setForm({ ...form, webqueryPort: e.target.value })}
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs">API Key</Label>
+                <WizardGuideCallout title={apiKeyGuide.title}>
+                  <p>{apiKeyGuide.body}</p>
+                  {'code' in apiKeyGuide && apiKeyGuide.code && (
+                    <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] overflow-x-auto mt-1">{apiKeyGuide.code}</pre>
                   )}
-                </li>
-              ))}
-            </ol>
-            {scenario.notes && (
-              <p className="text-[11px] text-muted-foreground rounded-md border border-border p-2">{scenario.notes}</p>
-            )}
+                </WizardGuideCallout>
+                <Input
+                  className="mt-2"
+                  type="password"
+                  value={form.apiKey}
+                  onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+                  placeholder="WebQuery API Key"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Switch checked={form.useHttps} onCheckedChange={(v) => setForm({ ...form, useHttps: v })} />
+                <Label className="text-xs">{FIELD_HELP.useHttps}</Label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleTestWebquery}
+                disabled={testWebqueryDraft.isPending || !form.host || !form.apiKey}
+              >
+                {testWebqueryDraft.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <TestTube className="h-3 w-3 mr-1" />}
+                Test WebQuery
+              </Button>
+              {webqueryTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">WebQuery OK</Badge>}
+              {webqueryTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery failed</Badge>}
+            </div>
           </div>
         )}
 
         {step === 2 && (
-          <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">{scenario.hostHint}</p>
-            <div>
-              <Label className="text-xs">Name</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My TS Server" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs">Host</Label>
-                <Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={scenario.hostPlaceholder} />
-              </div>
-              <div>
-                <Label className="text-xs">WebQuery Port</Label>
-                <Input type="number" value={form.webqueryPort} onChange={(e) => setForm({ ...form, webqueryPort: e.target.value })} />
-              </div>
-            </div>
-            <div>
-              <Label className="text-xs">API Key</Label>
-              <Input type="password" value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="WebQuery API Key" />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={form.useHttps} onCheckedChange={(v) => setForm({ ...form, useHttps: v })} />
-              <Label className="text-xs">Use HTTPS</Label>
-            </div>
-          </div>
-        )}
+          <div className="space-y-4">
+            <WizardGuideCallout title="Optional — SSH ServerQuery">
+              <p>{sshGuide.body}</p>
+              <p className="mt-1 text-[10px]">Enables file browser, bot event triggers, and music bot !commands.</p>
+            </WizardGuideCallout>
 
-        {step === 3 && (
-          <div className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              SSH enables the file browser, bot event triggers, and music bot chat commands. You can skip this and add SSH later in connection settings.
-            </p>
             <div className="flex gap-2">
               <Button variant={skipSsh ? 'default' : 'outline'} size="sm" onClick={() => setSkipSsh(true)}>Skip for now</Button>
               <Button variant={!skipSsh ? 'default' : 'outline'} size="sm" onClick={() => setSkipSsh(false)}>Configure SSH</Button>
             </div>
+
             {!skipSsh && (
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <Label className="text-xs">SSH Port</Label>
-                  <Input type="number" value={form.sshPort} onChange={(e) => setForm({ ...form, sshPort: e.target.value })} />
+              <div className="space-y-3">
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <Label className="text-xs">SSH Port</Label>
+                    <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.sshPort}</p>
+                    <Input type="number" value={form.sshPort} onChange={(e) => setForm({ ...form, sshPort: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">SSH User</Label>
+                    <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.sshUsername}</p>
+                    <Input value={form.sshUsername} onChange={(e) => setForm({ ...form, sshUsername: e.target.value })} placeholder="serveradmin" />
+                  </div>
+                  <div>
+                    <Label className="text-xs">SSH Password</Label>
+                    <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.sshPassword}</p>
+                    <Input type="password" value={form.sshPassword} onChange={(e) => setForm({ ...form, sshPassword: e.target.value })} />
+                  </div>
                 </div>
-                <div>
-                  <Label className="text-xs">SSH User</Label>
-                  <Input value={form.sshUsername} onChange={(e) => setForm({ ...form, sshUsername: e.target.value })} placeholder="serveradmin" />
-                </div>
-                <div>
-                  <Label className="text-xs">SSH Password</Label>
-                  <Input type="password" value={form.sshPassword} onChange={(e) => setForm({ ...form, sshPassword: e.target.value })} />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleTestSsh}
+                    disabled={testSshDraft.isPending || !form.host || !form.sshUsername || !form.sshPassword}
+                  >
+                    {testSshDraft.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <TestTube className="h-3 w-3 mr-1" />}
+                    Test SSH
+                  </Button>
+                  {sshTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">SSH OK</Badge>}
+                  {sshTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">SSH failed</Badge>}
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {step === 4 && (
+        {step === 3 && (
           <div className="space-y-3 text-xs">
             <div className="rounded-md border border-border p-3 space-y-1">
+              <p><span className="text-muted-foreground">Deployment:</span> {scenario.label}</p>
               <p><span className="text-muted-foreground">Name:</span> {form.name}</p>
               <p><span className="text-muted-foreground">Host:</span> {form.host}:{form.webqueryPort}</p>
               <p><span className="text-muted-foreground">HTTPS:</span> {form.useHttps ? 'Yes' : 'No'}</p>
@@ -455,22 +522,14 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2">
-              <Button variant="outline" size="sm" onClick={handleTestWebquery} disabled={testWebqueryDraft.isPending}>
-                {testWebqueryDraft.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <TestTube className="h-3 w-3 mr-1" />}
-                Test WebQuery
-              </Button>
-              {!skipSsh && form.sshUsername && form.sshPassword && (
-                <Button variant="outline" size="sm" onClick={handleTestSsh} disabled={testSshDraft.isPending}>
-                  {testSshDraft.isPending ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <TestTube className="h-3 w-3 mr-1" />}
-                  Test SSH
-                </Button>
-              )}
-              {webqueryTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">WebQuery OK</Badge>}
-              {webqueryTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery failed</Badge>}
-              {sshTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">SSH OK</Badge>}
-              {sshTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">SSH failed</Badge>}
-            </div>
+            {(webqueryTestOk !== null || sshTestOk !== null) && (
+              <div className="flex flex-wrap gap-2">
+                {webqueryTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">WebQuery tested</Badge>}
+                {webqueryTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery test failed</Badge>}
+                {sshTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">SSH tested</Badge>}
+                {sshTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">SSH test failed</Badge>}
+              </div>
+            )}
           </div>
         )}
 

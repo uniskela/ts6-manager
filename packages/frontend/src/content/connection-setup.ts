@@ -75,23 +75,31 @@ export const FEATURE_MATRIX = [
 
 export const TS_PREP_STEPS = [
   {
+    id: 'webquery-port',
     title: 'Enable WebQuery HTTP',
     body: 'In your TeamSpeak server configuration, ensure WebQuery HTTP is enabled (not telnet/raw query). Default port is 10080.',
   },
   {
+    id: 'api-key',
     title: 'Create a WebQuery API key',
     body: 'Generate an API key using ServerQuery or admin tools. Example ServerQuery command:',
     code: 'apikeyadd scope=manage ip=0.0.0.0/0',
   },
   {
+    id: 'ssh',
     title: 'Enable SSH ServerQuery (optional)',
     body: 'For file browser, bot event triggers, and music bot chat commands, enable SSH access on port 10022 (default) and note the serveradmin credentials.',
   },
   {
+    id: 'firewall',
     title: 'Open firewall ports',
     body: 'Allow the ts6-manager backend to reach WebQuery (10080) and, if used, SSH (10022).',
   },
 ] as const;
+
+export function getTsPrepStep(id: (typeof TS_PREP_STEPS)[number]['id']) {
+  return TS_PREP_STEPS.find((step) => step.id === id)!;
+}
 
 export const CHECKLIST_ITEMS = [
   { id: 'webquery-enabled', label: 'WebQuery enabled on TS server', manual: true },
