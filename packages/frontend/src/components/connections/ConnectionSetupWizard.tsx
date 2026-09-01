@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
+import { SetupDocLinks } from '@/components/connections/SetupDocLinks';
 import {
   DEFAULT_CONNECTION_FORM,
   DEPLOYMENT_SCENARIOS,
@@ -15,6 +16,7 @@ import {
   type ConnectionFormState,
   type DeploymentScenarioId,
 } from '@/content/connection-setup';
+import { TS6_SERVER_DOCS } from '@/content/teamspeak-docs';
 import { ArrowLeft, ArrowRight, Check, Loader2, Radar, Sparkles, TestTube } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -43,11 +45,20 @@ interface ConnectionSetupWizardProps {
   onComplete?: () => void;
 }
 
-function WizardGuideCallout({ title, children }: { title?: string; children: ReactNode }) {
+function WizardGuideCallout({
+  title,
+  docs,
+  children,
+}: {
+  title?: string;
+  docs?: readonly { label: string; url: string }[];
+  children: ReactNode;
+}) {
   return (
     <div className="rounded-md border border-border bg-muted/20 px-2.5 py-2 text-[11px] text-muted-foreground space-y-1">
       {title && <p className="font-medium text-foreground">{title}</p>}
       {children}
+      {docs && docs.length > 0 && <SetupDocLinks docs={docs} className="flex flex-wrap gap-x-3 gap-y-1 pt-1" />}
     </div>
   );
 }
@@ -378,6 +389,9 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                   <p className="text-[11px] mt-1">
                     Suggested host: <code className="font-mono-data">{s.hostPlaceholder}</code>
                   </p>
+                  {s.docs && s.docs.length > 0 && (
+                    <SetupDocLinks docs={s.docs} className="flex flex-wrap gap-x-3 gap-y-1 mt-2" />
+                  )}
                 </button>
               );
             })}
@@ -386,7 +400,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
         {step === 1 && (
           <div className="space-y-4">
-            <WizardGuideCallout title="Network host">
+            <WizardGuideCallout title="Network host" docs={scenario.docs}>
               <p>{scenario.hostHint}</p>
               {scenario.notes && <p className="mt-1">{scenario.notes}</p>}
               {REMOTE_SCENARIOS.has(scenarioId) && (
@@ -409,7 +423,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
               <div>
                 <Label className="text-xs">WebQuery Port</Label>
-                <WizardGuideCallout title={webqueryPortGuide.title}>
+                <WizardGuideCallout title={webqueryPortGuide.title} docs={webqueryPortGuide.docs}>
                   <p>{webqueryPortGuide.body}</p>
                 </WizardGuideCallout>
                 <Input
@@ -422,10 +436,10 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
               <div>
                 <Label className="text-xs">API Key</Label>
-                <WizardGuideCallout title={apiKeyGuide.title}>
+                <WizardGuideCallout title={apiKeyGuide.title} docs={apiKeyGuide.docs}>
                   <p>{apiKeyGuide.body}</p>
                   {'code' in apiKeyGuide && apiKeyGuide.code && (
-                    <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] overflow-x-auto mt-1">{apiKeyGuide.code}</pre>
+                    <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] overflow-x-auto mt-1 whitespace-pre-wrap">{apiKeyGuide.code}</pre>
                   )}
                 </WizardGuideCallout>
                 <Input
@@ -441,6 +455,10 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                 <Switch checked={form.useHttps} onCheckedChange={(v) => setForm({ ...form, useHttps: v })} />
                 <Label className="text-xs">{FIELD_HELP.useHttps}</Label>
               </div>
+              <SetupDocLinks
+                docs={[{ label: 'HTTPS WebQuery setup (TS6 docs)', url: TS6_SERVER_DOCS.httpQuery }]}
+                className="flex flex-wrap gap-x-3 gap-y-1"
+              />
             </div>
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -461,7 +479,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
         {step === 2 && (
           <div className="space-y-4">
-            <WizardGuideCallout title="Optional — SSH ServerQuery">
+            <WizardGuideCallout title="Optional — SSH ServerQuery" docs={sshGuide.docs}>
               <p>{sshGuide.body}</p>
               <p className="mt-1 text-[10px]">Enables file browser, bot event triggers, and music bot !commands.</p>
             </WizardGuideCallout>

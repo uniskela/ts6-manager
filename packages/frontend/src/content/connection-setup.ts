@@ -1,3 +1,5 @@
+import { TS6_SERVER_DOCS } from './teamspeak-docs';
+
 export type DeploymentScenarioId =
   | 'same-host'
   | 'ts-docker-host-manager'
@@ -12,6 +14,7 @@ export interface DeploymentScenario {
   hostPlaceholder: string;
   hostHint: string;
   notes?: string;
+  docs?: readonly { label: string; url: string }[];
 }
 
 export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
@@ -21,6 +24,10 @@ export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
     description: 'TeamSpeak and ts6-manager run on the same host.',
     hostPlaceholder: '127.0.0.1',
     hostHint: 'Use 127.0.0.1 or your LAN IP if the manager cannot reach localhost.',
+    docs: [
+      { label: 'Ports & networking', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Enable HTTP WebQuery', url: TS6_SERVER_DOCS.httpQuery },
+    ],
   },
   {
     id: 'ts-docker-host-manager',
@@ -28,6 +35,10 @@ export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
     description: 'TeamSpeak runs in a container; ts6-manager runs on the host or elsewhere outside that container network.',
     hostPlaceholder: 'teamspeak',
     hostHint: 'Use the container name, published host port mapping target, or host.docker.internal from inside Docker.',
+    docs: [
+      { label: 'Docker quick start', url: TS6_SERVER_DOCS.quickstart },
+      { label: 'Docker networking & ports', url: TS6_SERVER_DOCS.portsNetworking },
+    ],
   },
   {
     id: 'both-docker',
@@ -36,6 +47,10 @@ export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
     hostPlaceholder: 'teamspeak',
     hostHint: 'Attach the ts6-manager backend to the TeamSpeak external Docker network and use the TS service/container name as host.',
     notes: 'In docker-compose, add the TS network to the backend service (see README Coolify section).',
+    docs: [
+      { label: 'Docker Compose example', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Official TS6 Docker image', url: TS6_SERVER_DOCS.githubDocker },
+    ],
   },
   {
     id: 'remote-ts',
@@ -43,6 +58,10 @@ export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
     description: 'TeamSpeak runs on another machine reachable over the network.',
     hostPlaceholder: 'ts.example.com',
     hostHint: 'Use the hostname or public IP. Ensure firewalls allow WebQuery (default 10080) and SSH (default 10022) from the manager.',
+    docs: [
+      { label: 'Ports & firewall', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Security best practices', url: TS6_SERVER_DOCS.security },
+    ],
   },
   {
     id: 'manager-docker-remote-ts',
@@ -50,6 +69,10 @@ export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
     description: 'ts6-manager runs in Docker; TeamSpeak is on a remote host or VPS.',
     hostPlaceholder: 'ts.example.com',
     hostHint: 'Use the remote TS hostname or IP. No special Docker networking is required on the manager side.',
+    docs: [
+      { label: 'Ports & networking', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Enable HTTP WebQuery', url: TS6_SERVER_DOCS.httpQuery },
+    ],
   },
 ];
 
@@ -78,22 +101,39 @@ export const TS_PREP_STEPS = [
     id: 'webquery-port',
     title: 'Enable WebQuery HTTP',
     body: 'In your TeamSpeak server configuration, ensure WebQuery HTTP is enabled (not telnet/raw query). Default port is 10080.',
+    docs: [
+      { label: 'Enable HTTP WebQuery (TS6 docs)', url: TS6_SERVER_DOCS.httpQuery },
+      { label: 'Ports & Docker setup', url: TS6_SERVER_DOCS.portsNetworking },
+    ],
   },
   {
     id: 'api-key',
     title: 'Create a WebQuery API key',
-    body: 'Generate an API key using ServerQuery or admin tools. Example ServerQuery command:',
-    code: 'apikeyadd scope=manage ip=0.0.0.0/0',
+    body: 'Connect via SSH ServerQuery, select your virtual server (use 1), then run apikeyadd. Example:',
+    code: 'use 1\napikeyadd scope=manage ip=0.0.0.0/0',
+    docs: [
+      { label: 'SSH ServerQuery setup', url: TS6_SERVER_DOCS.sshQuery },
+      { label: 'Query authentication', url: TS6_SERVER_DOCS.authentication },
+      { label: 'Server Query overview', url: TS6_SERVER_DOCS.queryOverview },
+    ],
   },
   {
     id: 'ssh',
     title: 'Enable SSH ServerQuery (optional)',
     body: 'For file browser, bot event triggers, and music bot chat commands, enable SSH access on port 10022 (default) and note the serveradmin credentials.',
+    docs: [
+      { label: 'Enable SSH ServerQuery (TS6 docs)', url: TS6_SERVER_DOCS.sshQuery },
+      { label: 'Set serveradmin password', url: TS6_SERVER_DOCS.authentication },
+    ],
   },
   {
     id: 'firewall',
     title: 'Open firewall ports',
     body: 'Allow the ts6-manager backend to reach WebQuery (10080) and, if used, SSH (10022).',
+    docs: [
+      { label: 'Ports & networking', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Firewall & security', url: TS6_SERVER_DOCS.security },
+    ],
   },
 ] as const;
 

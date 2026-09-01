@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { Badge } from '@/components/ui/badge';
+import { SetupDocLinks } from '@/components/connections/SetupDocLinks';
 import {
   CHECKLIST_ITEMS,
   CHECKLIST_STORAGE_KEY,
@@ -12,6 +13,7 @@ import {
   TS_PREP_STEPS,
   type ChecklistItemId,
 } from '@/content/connection-setup';
+import { TS6_SERVER_DOCS } from '@/content/teamspeak-docs';
 import { Check, Circle, Wand2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -86,6 +88,10 @@ export function ConnectionSetupHelpDialog({
           <p className="text-xs text-muted-foreground">
             Reference only — the setup wizard is the easiest way to connect.
           </p>
+          <SetupDocLinks
+            docs={[{ label: 'TeamSpeak 6 Server docs', url: TS6_SERVER_DOCS.home }]}
+            className="flex flex-wrap gap-x-3 gap-y-1"
+          />
         </DialogHeader>
 
         <div className="space-y-4">
@@ -146,11 +152,14 @@ export function ConnectionSetupHelpDialog({
               <AccordionContent>
                 <ol className="space-y-3 text-xs text-muted-foreground list-decimal list-inside">
                   {TS_PREP_STEPS.map((step) => (
-                    <li key={step.title} className="space-y-1">
+                    <li key={step.id} className="space-y-1">
                       <span className="font-medium text-foreground">{step.title}</span>
                       <p>{step.body}</p>
                       {'code' in step && step.code && (
-                        <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] overflow-x-auto">{step.code}</pre>
+                        <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] overflow-x-auto whitespace-pre-wrap">{step.code}</pre>
+                      )}
+                      {'docs' in step && step.docs && (
+                        <SetupDocLinks docs={step.docs} className="flex flex-wrap gap-x-3 gap-y-1 pt-1" />
                       )}
                     </li>
                   ))}
@@ -176,11 +185,14 @@ export function ConnectionSetupHelpDialog({
                   </summary>
                   <div className="grid gap-2 mt-2">
                     {DEPLOYMENT_SCENARIOS.map((scenario) => (
-                      <div key={scenario.id} className="rounded-md border border-border p-2 space-y-0.5">
+                      <div key={scenario.id} className="rounded-md border border-border p-2 space-y-1">
                         <p className="text-xs font-medium">{scenario.label}</p>
                         <p className="text-[11px] text-muted-foreground">
                           Host: <code className="font-mono-data">{scenario.hostPlaceholder}</code>
                         </p>
+                        {scenario.docs && (
+                          <SetupDocLinks docs={scenario.docs} className="flex flex-wrap gap-x-3 gap-y-1" />
+                        )}
                       </div>
                     ))}
                   </div>
