@@ -1,22 +1,50 @@
 # Local stack for testing a PR branch (builds from the current checkout).
 #
+# Includes a TeamSpeak 6 server on the same Docker network as ts6-manager.
+#
 # Quick start:
 #   cp .env.pr-test.example .env
 #   docker compose -f docker-compose.pr-test.yml up --build
 #
 # Then open http://localhost:3000/setup and complete admin setup.
-# Test the connection wizard at Settings → Connections.
+# Settings → Connections → Start setup wizard:
+#   Scenario: "Both in Docker (separate stacks)"
+#   Host: teamspeak
+#   WebQuery port: 10080
+#   API key: create on the TS server (see below)
 #
-# If your TeamSpeak server runs on the host machine (not in Docker), use:
-#   Host: host.docker.internal
-#   WebQuery port: 10080 (default)
-#   SSH port: 10022 (default)
+# TeamSpeak query login (for creating an API key):
+#   Username: serveradmin
+#   Password: value of TS_PR_TEST_ADMIN_PASSWORD in .env (default: testadmin)
+#   Check TS logs for the initial privilege key on first boot:
+#     docker compose -f docker-compose.pr-test.yml logs teamspeak
+#
+# Optional: connect a TS client to voice on UDP 9987.
 #
 # Tear down:
 #   docker compose -f docker-compose.pr-test.yml down
 #   docker compose -f docker-compose.pr-test.yml down -v   # also remove volumes
 
 services:
+  teamspeak:
+    image: teamspeaksystems/teamspeak6-server:latest
+    container_name: ts6-pr-teamspeak
+    restart: unless-stopped
+    environment:
+      TSSERVER_LICENSE_ACCEPTED: accept
+      TSSERVER_QUERY_HTTP_ENABLED: "1"
+      TSSERVER_QUERY_HTTP_PORT: "10080"
+      TSSERVER_QUERY_SSH_ENABLED: "1"
+      TSSERVER_QUERY_SSH_PORT: "10022"
+      TSSERVER_QUERY_ADMIN_PASSWORD: ${TS_PR_TEST_ADMIN_PASSWORD:-testadmin}
+    volumes:
+      - pr-test-teamspeak-data:/var/tsserver
+    ports:
+      - "9987:9987/udp"
+      - "30033:30033/tcp"
+    networks:
+      - ts6-pr-test
+
   backend:
     build:
       context: .
@@ -49,6 +77,8 @@ services:
       - "host.docker.internal:host-gateway"
     depends_on:
       sidecar:
+        condition: service_started
+      teamspeak:
         condition: service_started
     networks:
       - ts6-pr-test
@@ -84,6 +114,7 @@ services:
 volumes:
   pr-test-backend-data:
   pr-test-music-data:
+  pr-test-teamspeak-data:
 
 networks:
   ts6-pr-test:

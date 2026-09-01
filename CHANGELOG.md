@@ -12,6 +12,7 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 - Connections tab is minimal when empty — wizard opens directly from dashboard links; detailed help moved to an optional dialog
 - Connection setup guide card hidden until at least one connection exists
+- `docker-compose.pr-test.yml` includes a TeamSpeak 6 server (`teamspeak` hostname on the compose network) for end-to-end wizard testing
 
 ## [1.3.8] - 2026-09-01
 
