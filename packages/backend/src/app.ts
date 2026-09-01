@@ -24,6 +24,7 @@ import { dashboardRoutes } from './routes/dashboard.routes.js';
 import { botRoutes } from './routes/bots.routes.js';
 import { userRoutes } from './routes/users.routes.js';
 import { musicBotRoutes } from './routes/music-bots.routes.js';
+import { iptvRoutes } from './routes/iptv.routes.js';
 import { musicLibraryRoutes } from './routes/music-library.routes.js';
 import { playlistRoutes } from './routes/playlists.routes.js';
 import { radioStationRoutes } from './routes/radio-stations.routes.js';
@@ -108,6 +109,7 @@ export function createApp(): Express {
   app.use('/api/bots', botRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/music-bots', musicBotRoutes);
+  app.use('/api/iptv', iptvRoutes);
   app.use('/api/servers/:configId/music-library', serverAccess, musicLibraryRoutes);
   app.use('/api/playlists', playlistRoutes);
   app.use('/api/servers/:configId/radio-stations', serverAccess, radioStationRoutes);

@@ -7,6 +7,7 @@ import { randomUUID } from 'crypto';
 import fs from 'fs';
 import type { PrismaClient, Song } from '../../../generated/prisma/index.js';
 import { parseYouTubeUrl, getYouTubeUrlInfo, downloadYouTube } from './youtube.js';
+import { isYouTubePlaylistUrl, planImport, youtubeWatchUrl } from './playlist-import-plan.js';
 import {
   appleMusicTrackToYouTubeUrl,
   isAppleMusicShareUrl,
@@ -200,9 +201,16 @@ async function resolveImportItems(
   let listId = parsed.listId;
   let probeUrl = url;
 
+  if (!isYouTubePlaylistUrl(url) && !parsed.listId) {
+    throw new Error('URL does not contain a YouTube playlist (list= parameter)');
+  }
+
   if (parsed.listId && parsed.videoId) {
-    probeUrl = parsed.playlistUrl ?? `https://www.youtube.com/playlist?list=${parsed.listId}`;
-  } else if (parsed.listId && !parsed.videoId) {
+    // Video opened from playlist — not a playlist import target.
+    throw new Error('URL is a single video, not a playlist');
+  }
+
+  if (parsed.listId && !parsed.videoId) {
     probeUrl = parsed.playlistUrl ?? url;
   } else if (!parsed.listId) {
     throw new Error('URL does not contain a YouTube playlist (list= parameter)');
@@ -221,7 +229,7 @@ async function resolveImportItems(
     );
   }
 
-  const items = info.items.slice(0, cap).map((item) => ({
+  const items = info.items.map((item) => ({
     id: item.id,
     title: item.title,
     artist: item.artist,
@@ -328,10 +336,8 @@ async function runImport(
     }
   }
 
-  const { items, listId, title } = await resolveImportItems(url, cap, job);
+  const { items: allItems, listId, title } = await resolveImportItems(url, cap, job);
   job.phase = 'importing';
-  job.total = items.length;
-  if (title) job.title = title;
 
   let playlistId = options.playlistId;
   let playlistMode: 'local' | 'stream' = 'stream';
@@ -375,11 +381,46 @@ async function runImport(
     job.playlistId = playlistId;
   }
 
+  if (title) job.title = title;
+
+  let items = allItems;
+  if (playlistTarget && playlistId) {
+    const attachedRows = await prisma.playlistSong.findMany({
+      where: { playlistId },
+      include: { song: { select: { sourceUrl: true } } },
+    });
+    const attached = new Set(
+      attachedRows.map((row) => row.song.sourceUrl).filter((u): u is string => Boolean(u)),
+    );
+    const plan = planImport(
+      allItems.map((item) => ({
+        id: item.id,
+        title: item.title || item.id,
+        url: youtubeWatchUrl(item.id),
+      })),
+      attached,
+      cap,
+    );
+    job.skipped = plan.alreadyPresent.length;
+    const byId = new Map(allItems.map((item) => [item.id, item]));
+    const alreadyPresent = plan.alreadyPresent
+      .map((entry) => byId.get(entry.id))
+      .filter((item): item is ImportItem => Boolean(item));
+    const toImport = plan.toImport
+      .map((entry) => byId.get(entry.id))
+      .filter((item): item is ImportItem => Boolean(item));
+    items = [...alreadyPresent, ...toImport];
+  } else {
+    items = allItems.slice(0, cap);
+  }
+
+  job.total = items.length;
+
   // Queue-only imports always register on-demand (no bulk download).
   const needsDownload = playlistTarget && playlistMode === 'local';
 
   for (const item of items) {
-    const watchUrl = `https://www.youtube.com/watch?v=${item.id}`;
+    const watchUrl = youtubeWatchUrl(item.id);
     job.processed++;
 
     try {

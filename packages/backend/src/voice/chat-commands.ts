@@ -21,6 +21,10 @@ export const BUILTIN_CHAT_COMMANDS = [
   'stream',
   'stopstream',
   'viewers',
+  'channels',
+  'tv',
+  'iptv',
+  'lyrics',
 ] as const;
 
 export type BuiltinChatCommand = (typeof BUILTIN_CHAT_COMMANDS)[number];
@@ -51,6 +55,10 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'stream', usage: '!stream <url>', blurb: 'Start video stream' },
   { name: 'stopstream', usage: '!stopstream', blurb: 'Stop video stream' },
   { name: 'viewers', usage: '!viewers', blurb: 'List stream viewers' },
+  { name: 'channels', usage: '!channels [search]', blurb: 'List IPTV channels' },
+  { name: 'tv', usage: '!tv <name>', blurb: 'Stream an IPTV channel' },
+  { name: 'iptv', usage: '!iptv <name>', blurb: 'Alias for !tv' },
+  { name: 'lyrics', usage: '!lyrics [artist - title]', blurb: 'Show lyrics for now playing or search' },
 ];
 
 export function isReservedChatCommandName(name: string): boolean {

@@ -5,6 +5,8 @@ export function useMusicBots() {
   return useQuery({
     queryKey: ['music-bots'],
     queryFn: musicBotsApi.list,
+    refetchInterval: 1000,
+    refetchIntervalInBackground: true,
   });
 }
 
@@ -47,7 +49,9 @@ export function useStartMusicBot() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => musicBotsApi.start(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['music-bots'] }),
+    onSuccess: () => {
+      void qc.refetchQueries({ queryKey: ['music-bots'] });
+    },
   });
 }
 
@@ -55,7 +59,10 @@ export function useStopMusicBot() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => musicBotsApi.stop(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['music-bots'] }),
+    onSuccess: (_, id) => {
+      qc.removeQueries({ queryKey: ['music-bot-state', id] });
+      void qc.refetchQueries({ queryKey: ['music-bots'] });
+    },
   });
 }
 

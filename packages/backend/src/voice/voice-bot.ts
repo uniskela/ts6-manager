@@ -4,7 +4,7 @@ import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, 
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
-import { downloadYouTube } from './audio/youtube.js';
+import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
 import { SidecarClient } from './streaming/sidecar-client.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
@@ -427,6 +427,25 @@ export class VoiceBot extends EventEmitter {
     this.updateNowPlayingNickname(item.title);
 
     try {
+      if (
+        !item.filePath
+        && item.sourceUrl
+        && (item.source === 'youtube' || item.source === 'url')
+        && isYouTubeHostUrl(item.sourceUrl)
+      ) {
+        try {
+          const { streamUrl, info } = await resolveYouTubeAudioStream(item.sourceUrl);
+          item.streamUrl = streamUrl;
+          if (!item.duration && info.duration) item.duration = info.duration;
+          await this.playStream(item);
+          return;
+        } catch (streamErr: any) {
+          console.warn(
+            `[VoiceBot ${this.config.id}] YouTube stream failed for “${item.title}”, falling back to download: ${streamErr.message}`,
+          );
+        }
+      }
+
       const filePath = await this.ensurePlayableFile(item);
       const pcmData = await this.pipeline.toPcm(filePath);
       this.pcmFrames = this.pipeline.splitFrames(pcmData);

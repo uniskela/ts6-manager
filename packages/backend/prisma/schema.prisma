@@ -69,6 +69,7 @@ model TsServerConfig {
   widgets       Widget[]
   musicRequests MusicRequest[]
   playlists     Playlist[]
+  iptvPlaylists IptvPlaylist[]
 }
 
 model BotFlow {
@@ -214,6 +215,38 @@ model RadioStation {
   serverConfigId Int
   serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
   createdAt      DateTime       @default(now())
+}
+
+// === IPTV ===
+
+model IptvPlaylist {
+  id                 Int            @id @default(autoincrement())
+  name               String
+  url                String
+  serverConfigId     Int
+  serverConfig       TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
+  autoRefreshMinutes Int            @default(0)
+  lastRefreshedAt    DateTime?
+  lastError          String?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  channels IptvChannel[]
+}
+
+model IptvChannel {
+  id         Int          @id @default(autoincrement())
+  playlistId Int
+  playlist   IptvPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  name       String
+  url        String
+  logo       String?
+  groupTitle String?
+  tvgId      String?
+  position   Int          @default(0)
+
+  @@index([playlistId])
+  @@index([playlistId, name])
 }
 
 /// Admin-defined chat commands (!name → fixed reply) for music bots on a server.

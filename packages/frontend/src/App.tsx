@@ -40,6 +40,7 @@ const Instance = lazy(() => import('@/pages/Instance'));
 const BotList = lazy(() => import('@/pages/BotList'));
 const BotEditor = lazy(() => import('@/pages/BotEditor'));
 const MusicBots = lazy(() => import('@/pages/MusicBots'));
+const Iptv = lazy(() => import('@/pages/Iptv'));
 const MusicRequests = lazy(() => import('@/pages/MusicRequests'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
@@ -76,6 +77,7 @@ export function App() {
               <Route path="/bots" element={<AdminRoute><BotList /></AdminRoute>} />
               <Route path="/bots/:botId" element={<AdminRoute><BotEditor /></AdminRoute>} />
               <Route path="/music-bots" element={<AdminRoute><MusicBots /></AdminRoute>} />
+              <Route path="/iptv" element={<AdminRoute><Iptv /></AdminRoute>} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />
             </Route>

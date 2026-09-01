@@ -17,7 +17,8 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2 } from 'lucide-react';
+import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3 } from 'lucide-react';
+import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
 
 interface ChannelNode {
@@ -61,7 +62,12 @@ interface ClientInfo {
   client_nickname: string;
   client_type: string;
   client_away: number;
+  client_away_message: string;
+  client_flag_talking: number;
   client_input_muted: number;
+  client_output_muted: number;
+  client_input_hardware: number;
+  client_output_hardware: number;
 }
 
 function buildTree(channels: any[]): ChannelNode[] {
@@ -89,18 +95,37 @@ function buildTree(channels: any[]): ChannelNode[] {
   return roots;
 }
 
-function ClientEntry({ client, depth }: { client: ClientInfo; depth: number }) {
+function ClientEntry({ client, depth, configId, sid }: { client: ClientInfo; depth: number; configId: number; sid: number }) {
   return (
     <div
       className="flex items-center gap-1.5 py-0.5 px-2 text-xs text-muted-foreground"
       style={{ paddingLeft: `${depth * 16 + 28}px` }}
     >
-      <div className="h-4 w-4 rounded-full bg-primary/10 flex items-center justify-center text-[8px] font-mono-data text-primary shrink-0">
-        {client.client_nickname?.[0]?.toUpperCase() || '?'}
+      <div className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-[8px] font-mono-data text-primary">
+        <ClientAvatar
+          configId={configId}
+          sid={sid}
+          clid={client.clid}
+          nickname={client.client_nickname}
+        />
       </div>
+      <span className="flex min-w-4 shrink-0 items-center justify-center gap-0.5" aria-label="Client voice status">
+        {client.client_away === 1 && <Clock3 className="h-3 w-3 text-amber-400" aria-label={client.client_away_message || 'Away'} />}
+        {(client.client_output_muted === 1 || client.client_output_hardware === 0) && <VolumeX className="h-3 w-3 text-rose-400" aria-label="Output muted" />}
+        {(client.client_input_muted === 1 || client.client_input_hardware === 0) && <MicOff className="h-3 w-3 text-rose-400" aria-label="Microphone muted" />}
+        {client.client_away !== 1
+          && client.client_output_muted !== 1
+          && client.client_output_hardware !== 0
+          && client.client_input_muted !== 1
+          && client.client_input_hardware !== 0
+          && (
+            <span
+              className={cn('h-2 w-2 rounded-full bg-sky-400', client.client_flag_talking === 1 && 'bg-emerald-400')}
+              title={client.client_flag_talking === 1 ? 'Talking' : 'Available'}
+            />
+          )}
+      </span>
       <span className="truncate">{client.client_nickname}</span>
-      {client.client_away === 1 && <Badge variant="warning" className="text-[8px] px-1 py-0 h-3.5">Away</Badge>}
-      {client.client_input_muted === 1 && !client.client_away && <Badge variant="secondary" className="text-[8px] px-1 py-0 h-3.5">Muted</Badge>}
     </div>
   );
 }
@@ -109,6 +134,8 @@ interface TreeNodeProps {
   node: ChannelNode;
   depth?: number;
   isAdmin: boolean;
+  configId: number;
+  sid: number;
   clientsByChannel: Map<number, ClientInfo[]>;
   onDelete: (cid: number, name: string) => void;
   onEdit: (node: ChannelNode) => void;
@@ -117,7 +144,7 @@ interface TreeNodeProps {
   setDraggedCid: (cid: number | null) => void;
 }
 
-function ChannelTreeNode({ node, depth = 0, isAdmin, clientsByChannel, onDelete, onEdit, onDrop, draggedCid, setDraggedCid }: TreeNodeProps) {
+function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByChannel, onDelete, onEdit, onDrop, draggedCid, setDraggedCid }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const [dropOver, setDropOver] = useState(false);
   const hasChildren = node.children.length > 0;
@@ -224,7 +251,7 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, clientsByChannel, onDelete,
       {expanded && (
         <>
           {clients.map((client) => (
-            <ClientEntry key={client.clid} client={client} depth={depth + 1} />
+            <ClientEntry key={client.clid} client={client} depth={depth + 1} configId={configId} sid={sid} />
           ))}
           {node.children.map((child) => (
             <ChannelTreeNode
@@ -232,6 +259,8 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, clientsByChannel, onDelete,
               node={child}
               depth={depth + 1}
               isAdmin={isAdmin}
+              configId={configId}
+              sid={sid}
               clientsByChannel={clientsByChannel}
               onDelete={onDelete}
               onEdit={onEdit}
@@ -281,7 +310,12 @@ export default function Channels() {
         client_nickname: c.client_nickname || '?',
         client_type: String(c.client_type),
         client_away: Number(c.client_away) || 0,
+        client_away_message: String(c.client_away_message || ''),
+        client_flag_talking: Number(c.client_flag_talking) || 0,
         client_input_muted: Number(c.client_input_muted) || 0,
+        client_output_muted: Number(c.client_output_muted) || 0,
+        client_input_hardware: Number(c.client_input_hardware) === 0 ? 0 : 1,
+        client_output_hardware: Number(c.client_output_hardware) === 0 ? 0 : 1,
       };
       if (!map.has(cid)) map.set(cid, []);
       map.get(cid)!.push(entry);
@@ -418,6 +452,8 @@ export default function Channels() {
                   key={node.cid}
                   node={node}
                   isAdmin={isAdmin}
+                  configId={selectedConfigId!}
+                  sid={selectedSid!}
                   clientsByChannel={clientsByChannel}
                   onDelete={(cid, name) => setDeleteTarget({ cid, name })}
                   onEdit={handleEditOpen}

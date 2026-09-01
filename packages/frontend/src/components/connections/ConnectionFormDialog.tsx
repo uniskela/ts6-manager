@@ -17,17 +17,25 @@ interface ConnectionFormDialogProps {
   onSave: () => void;
 }
 
-function FieldLabel({ label, help }: { label: string; help: string }) {
+function FieldLabel({
+  label,
+  help,
+  tooltipAlign = 'center',
+}: {
+  label: string;
+  help: string;
+  tooltipAlign?: 'start' | 'center' | 'end';
+}) {
   return (
-    <div className="flex items-center gap-1">
-      <Label className="text-xs">{label}</Label>
+    <div className="flex items-center gap-1 min-w-0">
+      <Label className="text-xs truncate">{label}</Label>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button type="button" className="text-muted-foreground hover:text-foreground">
+          <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground">
             <HelpCircle className="h-3 w-3" />
           </button>
         </TooltipTrigger>
-        <TooltipContent side="top" className="max-w-xs">
+        <TooltipContent side="top" align={tooltipAlign}>
           {help}
         </TooltipContent>
       </Tooltip>
@@ -80,7 +88,7 @@ export function ConnectionFormDialog({
                   />
                 </div>
                 <div>
-                  <FieldLabel label="WebQuery Port" help={FIELD_HELP.webqueryPort} />
+                  <FieldLabel label="WebQuery Port" help={FIELD_HELP.webqueryPort} tooltipAlign="end" />
                   <Input
                     type="number"
                     value={form.webqueryPort}
@@ -124,7 +132,7 @@ export function ConnectionFormDialog({
                   />
                 </div>
                 <div>
-                  <FieldLabel label="SSH User" help={FIELD_HELP.sshUsername} />
+                  <FieldLabel label="SSH User" help={FIELD_HELP.sshUsername} tooltipAlign="center" />
                   <Input
                     value={form.sshUsername}
                     onChange={(e) => onChange({ ...form, sshUsername: e.target.value })}
@@ -132,7 +140,7 @@ export function ConnectionFormDialog({
                   />
                 </div>
                 <div>
-                  <FieldLabel label="SSH Password" help={FIELD_HELP.sshPassword} />
+                  <FieldLabel label="SSH Password" help={FIELD_HELP.sshPassword} tooltipAlign="end" />
                   <Input
                     type="password"
                     value={form.sshPassword}

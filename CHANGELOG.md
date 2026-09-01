@@ -4,7 +4,30 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ## [Unreleased]
 
-## [1.3.8] - 2026-09-01
+## [1.3.9] - 2026-09-01
+
+### Added
+
+- IPTV / M3U playlist management with admin CRUD, channel refresh, auto-refresh scheduler, and live stream playback via the video sidecar (`!channels`, `!tv`, `!iptv` chat commands; adapted from [simardwtf/ts6-manager](https://github.com/simardwtf/ts6-manager))
+- `!lyrics` music-bot command with LRCLIB lookup and lyrics.ovh fallback (adapted from [coom/ts6-manager](https://github.com/coom/ts6-manager))
+- YouTube audio stream-first playback via yt-dlp direct URL resolution, with download fallback (inspired by [prankroker/ts6-manager](https://github.com/prankroker/ts6-manager))
+- Client avatars and voice-state icons in Channels (talking, AFK, mute; adapted from [kytos22/ts6-manager](https://github.com/kytos22/ts6-manager))
+- Per-channel file storage summary in File Manager (`GET /api/files/summary`; adapted from kytos22)
+- Music bot runtime status auto-refresh (1s polling; adapted from [mqh9007/ts6-manager](https://github.com/mqh9007/ts6-manager))
+- Client IP column (admin) and richer online status badges in Clients (adapted from mqh9007)
+- Settings → About tab showing build version and optional git sha (adapted from mqh9007)
+
+### Fixed
+
+- Connection form field-help tooltips no longer clip off-screen at dialog edges (collision-aware positioning)
+- YouTube playlist import edge cases: shape-based playlist URL detection, canonical `www.youtube.com` URLs, re-import already-present tracks, `!play` playlist gating, and frontend polling stop on query error (adapted from coom Aug 2026 follow-up commits)
+- File Manager channel storage summary swapped file/folder counts (ftgetfilelist type convention)
+- IPTV playlist fetch no longer follows unvalidated redirects (SSRF hardening)
+
+### Changed
+
+- Extended [CREDITS.md](CREDITS.md) with fork attribution for coom, kytos22, mqh9007, simardwtf, and prankroker
+
 
 ### Added
 
