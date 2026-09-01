@@ -6,6 +6,40 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ### Added
 
+- Deployment self-check in connection setup wizard step 1: probes localhost, `teamspeak`, and `host.docker.internal` from the manager backend and suggests a scenario/host (`GET /api/servers/deployment-check`)
+
+### Changed
+
+- Connections tab is minimal when empty — wizard opens directly from dashboard links; detailed help moved to an optional dialog
+- Connection setup guide card hidden until at least one connection exists
+- `docker-compose.pr-test.yml` includes a TeamSpeak 6 server (`teamspeak` hostname on the compose network) for end-to-end wizard testing
+- Connection setup wizard shows setup instructions inline with each settings step instead of a separate instructions-only step
+- Wizard and help dialog link to official TeamSpeak 6 Server docs for WebQuery, SSH, API keys, networking, and deployment scenarios
+- Removed `# syntax=docker/dockerfile:1.4` from Dockerfiles to avoid Docker Hub pull failures during `docker compose` builds
+
+## [1.3.8] - 2026-09-01
+
+### Added
+
+- Connection setup guide on Settings → Connections with checklist, deployment scenarios (Docker/remote/same-host), and feature matrix (WebQuery vs SSH)
+- Optional multi-step connection setup wizard with WebQuery/SSH draft testing before save
+- Field-level tooltips and sectioned connection form (WebQuery required, SSH optional)
+- SSH test endpoints (`POST /api/servers/test-ssh`, `POST /api/servers/:id/test-ssh`) and Test SSH buttons on connection cards
+- Dashboard nudge banner for admins with no server connections (links to `/settings?tab=connections`)
+
+### Security
+
+- SSRF hardening for TeamSpeak connection hosts: validate/sanitize host and port before WebQuery/SSH outbound requests; block cloud-metadata targets and URL tricks; optional DNS resolution check on draft connection tests (`TS_ALLOW_PRIVATE_HOSTS=false` to disallow private/loopback hosts)
+- CodeQL request-forgery barriers for validated TeamSpeak endpoint helpers (`.github/codeql/extensions/ts6-connection-host/`)
+
+### Fixed
+
+- Connection edit form no longer requires re-entering the API key when unchanged
+
+## [1.3.7] - 2026-09-01
+
+### Added
+
 - Auth refresh single-flight with Web Lock serialization (adapted from [coom/ts6-manager@9658cfb](https://github.com/coom/ts6-manager/commit/9658cfbbe5f33867efd96b5c883a5ce8f3dc0639))
 - `/auth/me` re-fetch on layout mount to fix stale admin role in sidebar
 - YouTube playlist import service with background jobs, `youtubePlaylistId` / `serverConfigId` on playlists, and minimal English UI (adapted from coom Aug 2026 import series)

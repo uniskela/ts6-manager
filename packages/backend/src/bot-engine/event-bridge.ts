@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import { SshQueryClient } from './ssh-query-client.js';
 import { decrypt } from '../utils/crypto.js';
+import { sanitizeTsServerHost, validateTsServerPort } from '../utils/validate-ts-host.js';
 
 export declare interface EventBridge {
   on(event: 'tsEvent', listener: (configId: number, sid: number, eventName: string, data: Record<string, string>) => void): this;
@@ -34,8 +35,8 @@ export class EventBridge extends EventEmitter {
     sshHostKeyFingerprint: string | null;
   }) {
     return {
-      host: serverConfig.host,
-      port: serverConfig.sshPort,
+      host: sanitizeTsServerHost(serverConfig.host),
+      port: validateTsServerPort(serverConfig.sshPort, 10022),
       username: serverConfig.sshUsername,
       password: decrypt(serverConfig.sshPassword),
       hostKeyFingerprint: serverConfig.sshHostKeyFingerprint,

@@ -1,0 +1,18 @@
+# Marks TeamSpeak host validation helpers as request-forgery barriers so CodeQL
+# recognizes sanitized origins before axios/http outbound calls.
+extensions:
+  - addsTo:
+      pack: codeql/javascript-all
+      extensible: barrierModel
+    data:
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[sanitizeTsServerHost].ReturnValue", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[buildTsServerOrigin].ReturnValue", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[createValidatedTsServerEndpoint].ReturnValue", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[ValidatedTsServerEndpoint].Member[fromHostPort].ReturnValue", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[ValidatedTsServerEndpoint].Member[fromHostPort].ReturnValue.Member[origin]", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[ValidatedTsServerEndpoint].Member[fromHostPort].ReturnValue.Member[host]", "request-forgery"]
+  - addsTo:
+      pack: codeql/javascript-all
+      extensible: barrierGuardModel
+    data:
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[isAllowedTsServerHost].Argument[0]", "true", "request-forgery"]

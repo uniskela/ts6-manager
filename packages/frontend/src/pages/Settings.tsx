@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { usersApi } from '@/api/bots.api';
 import { authApi } from '@/api/auth.api';
@@ -6,6 +7,12 @@ import { serversApi } from '@/api/servers.api';
 import { settingsApi } from '@/api/settings.api';
 import { useAuthStore } from '@/stores/auth.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
+import { EmptyState } from '@/components/shared/EmptyState';
+import { ConnectionSetupGuide } from '@/components/connections/ConnectionSetupGuide';
+import { ConnectionSetupHelpDialog } from '@/components/connections/ConnectionSetupHelpDialog';
+import { ConnectionSetupWizard } from '@/components/connections/ConnectionSetupWizard';
+import { ConnectionFormDialog } from '@/components/connections/ConnectionFormDialog';
+import { DEFAULT_CONNECTION_FORM, type ConnectionFormState } from '@/content/connection-setup';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -16,18 +23,21 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Settings() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const defaultTab = tabParam === 'connections' && isAdmin ? 'connections' : 'account';
 
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold">Settings</h1>
 
-      <Tabs defaultValue="account">
+      <Tabs defaultValue={defaultTab} key={defaultTab}>
         <TabsList>
           {isAdmin && <TabsTrigger value="connections"><Server className="h-3.5 w-3.5 mr-1" /> Connections</TabsTrigger>}
           <TabsTrigger value="account"><Lock className="h-3.5 w-3.5 mr-1" /> Account</TabsTrigger>
@@ -127,31 +137,62 @@ function AccountTab() {
 
 function ConnectionsTab() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: servers, isLoading } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list });
   const createServer = useMutation({ mutationFn: (data: any) => serversApi.create(data), onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }) });
   const updateServer = useMutation({ mutationFn: ({ id, data }: any) => serversApi.update(id, data), onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }) });
   const deleteServer = useMutation({ mutationFn: (id: number) => serversApi.delete(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }) });
   const testServer = useMutation({ mutationFn: (id: number) => serversApi.test(id) });
+  const testSshServer = useMutation({ mutationFn: (id: number) => serversApi.testSsh(id) });
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: '', host: '', webqueryPort: '10080', apiKey: '', useHttps: false, sshPort: '10022', sshUsername: '', sshPassword: '' });
+  const [webqueryTestPassed, setWebqueryTestPassed] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [form, setForm] = useState<ConnectionFormState>(DEFAULT_CONNECTION_FORM);
 
   const serverList = useMemo(() => (Array.isArray(servers) ? servers : []), [servers]);
+  const hasSshOnAnyConnection = serverList.some((s: any) => s.hasSshCredentials);
+
+  useEffect(() => {
+    if (searchParams.get('wizard') !== '1' || isLoading) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('wizard');
+    setSearchParams(next, { replace: true });
+    if (serverList.length === 0) {
+      setShowWizard(true);
+    }
+  }, [searchParams, setSearchParams, isLoading, serverList.length]);
 
   if (isLoading) return <PageLoader />;
 
-  const resetForm = () => setForm({ name: '', host: '', webqueryPort: '10080', apiKey: '', useHttps: false, sshPort: '10022', sshUsername: '', sshPassword: '' });
+  const resetForm = () => setForm(DEFAULT_CONNECTION_FORM);
 
   const handleSave = () => {
-    const payload = { ...form, webqueryPort: parseInt(form.webqueryPort), sshPort: parseInt(form.sshPort) };
+    const payload: Record<string, unknown> = {
+      name: form.name,
+      host: form.host,
+      webqueryPort: parseInt(form.webqueryPort, 10),
+      useHttps: form.useHttps,
+      sshPort: parseInt(form.sshPort, 10),
+    };
+    if (form.apiKey) payload.apiKey = form.apiKey;
+    if (form.sshUsername) payload.sshUsername = form.sshUsername;
+    if (form.sshPassword) payload.sshPassword = form.sshPassword;
+
     if (editId) {
       updateServer.mutate({ id: editId, data: payload }, {
         onSuccess: () => { toast.success('Connection updated'); setEditId(null); setShowAdd(false); resetForm(); },
         onError: () => toast.error('Failed to update'),
       });
     } else {
+      if (!form.apiKey) {
+        toast.error('API key is required');
+        return;
+      }
+      payload.apiKey = form.apiKey;
       createServer.mutate(payload, {
         onSuccess: () => { toast.success('Connection added'); setShowAdd(false); resetForm(); },
         onError: () => toast.error('Failed to create'),
@@ -174,82 +215,137 @@ function ConnectionsTab() {
     setShowAdd(true);
   };
 
+  const handleDialogOpenChange = (open: boolean) => {
+    if (!open) {
+      setShowAdd(false);
+      setEditId(null);
+      resetForm();
+    } else {
+      setShowAdd(true);
+    }
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Manage TeamSpeak server connections</p>
-        <Button size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}><Plus className="h-4 w-4 mr-1" /> Add Connection</Button>
-      </div>
+      <ConnectionSetupGuide
+        hasConnections={serverList.length > 0}
+        hasSshOnAnyConnection={hasSshOnAnyConnection}
+        webqueryTestPassed={webqueryTestPassed}
+        onStartWizard={() => setShowWizard(true)}
+      />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {serverList.map((server: any) => (
-          <Card key={server.id}>
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium">{server.name}</CardTitle>
-                <Badge variant={server.enabled ? 'default' : 'secondary'} className="text-[10px]">
-                  {server.enabled ? 'Enabled' : 'Disabled'}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              <div className="grid grid-cols-2 gap-2 text-xs">
-                <span className="text-muted-foreground">Host</span>
-                <span className="font-mono-data">{server.host}:{server.webqueryPort}</span>
-                <span className="text-muted-foreground">Protocol</span>
-                <span>{server.useHttps ? 'HTTPS' : 'HTTP'}</span>
-                <span className="text-muted-foreground">SSH</span>
-                <span className="font-mono-data">{server.sshPort || '-'}</span>
-              </div>
-              <div className="flex items-center gap-1 pt-2">
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testServer.mutate(server.id, {
-                  onSuccess: (data: any) => toast.success(data?.version ? 'Connection successful (WebQuery OK)' : 'Connection successful'),
-                  onError: (err: any) => toast.error(err?.response?.data?.error || 'Connection failed'),
-                })}>
-                  <TestTube className="h-3 w-3 mr-1" /> Test
-                </Button>
-                <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openEdit(server)}>
-                  <Pencil className="h-3 w-3 mr-1" /> Edit
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(server.id)}>
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {serverList.length > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">Manage TeamSpeak server connections</p>
+          <Button size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}>
+            <Plus className="h-4 w-4 mr-1" /> Add connection
+          </Button>
+        </div>
+      )}
 
-      {/* Add/Edit Dialog */}
-      <Dialog open={showAdd} onOpenChange={(v) => { if (!v) { setShowAdd(false); setEditId(null); resetForm(); } else setShowAdd(true); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>{editId ? 'Edit Connection' : 'Add Connection'}</DialogTitle></DialogHeader>
-          <div className="space-y-3">
-            <div><Label className="text-xs">Name</Label><Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My TS Server" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label className="text-xs">Host</Label><Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder="127.0.0.1" /></div>
-              <div><Label className="text-xs">WebQuery Port</Label><Input type="number" value={form.webqueryPort} onChange={(e) => setForm({ ...form, webqueryPort: e.target.value })} /></div>
-            </div>
-            <div>
-              <Label className="text-xs">API Key</Label>
-              <Input value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder={editId ? '(unchanged — enter new key to update)' : 'WebQuery API Key'} type="password" />
-            </div>
-            <div className="flex items-center gap-2">
-              <Switch checked={form.useHttps} onCheckedChange={(v) => setForm({ ...form, useHttps: v })} />
-              <Label className="text-xs">Use HTTPS</Label>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div><Label className="text-xs">SSH Port</Label><Input type="number" value={form.sshPort} onChange={(e) => setForm({ ...form, sshPort: e.target.value })} /></div>
-              <div><Label className="text-xs">SSH User</Label><Input value={form.sshUsername} onChange={(e) => setForm({ ...form, sshUsername: e.target.value })} placeholder="serveradmin" /></div>
-              <div><Label className="text-xs">SSH Password</Label><Input type="password" value={form.sshPassword} onChange={(e) => setForm({ ...form, sshPassword: e.target.value })} /></div>
-            </div>
+      {serverList.length === 0 ? (
+        <EmptyState
+          icon={Server}
+          title="Connect your TeamSpeak server"
+          description="The setup wizard walks you through WebQuery and optional SSH step by step."
+        >
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button size="sm" onClick={() => setShowWizard(true)}>
+              <Wand2 className="h-4 w-4 mr-1" /> Start setup wizard
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}>
+              Add manually
+            </Button>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setHelpOpen(true)}>
+              Need help?
+            </Button>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setShowAdd(false); setEditId(null); resetForm(); }}>Cancel</Button>
-            <Button onClick={handleSave} disabled={!form.name || !form.host || !form.apiKey}>{editId ? 'Update' : 'Add'}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        </EmptyState>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {serverList.map((server: any) => (
+            <Card key={server.id}>
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-medium">{server.name}</CardTitle>
+                  <div className="flex items-center gap-1">
+                    <Badge variant="outline" className="text-[10px]">WebQuery</Badge>
+                    <Badge variant={server.hasSshCredentials ? 'default' : 'secondary'} className="text-[10px]">
+                      {server.hasSshCredentials ? 'SSH configured' : 'SSH not configured'}
+                    </Badge>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <span className="text-muted-foreground">Host</span>
+                  <span className="font-mono-data">{server.host}:{server.webqueryPort}</span>
+                  <span className="text-muted-foreground">Protocol</span>
+                  <span>{server.useHttps ? 'HTTPS' : 'HTTP'}</span>
+                  <span className="text-muted-foreground">SSH</span>
+                  <span className="font-mono-data">{server.sshPort || '-'}</span>
+                  <span className="text-muted-foreground">Status</span>
+                  <span>
+                    <Badge variant={server.enabled ? 'default' : 'secondary'} className="text-[10px]">
+                      {server.enabled ? 'Enabled' : 'Disabled'}
+                    </Badge>
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-1 pt-2">
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testServer.mutate(server.id, {
+                    onSuccess: (data: any) => {
+                      setWebqueryTestPassed(true);
+                      toast.success(data?.version ? `WebQuery OK (${data.version})` : 'WebQuery connection successful');
+                    },
+                    onError: (err: any) => toast.error(err?.response?.data?.error || 'WebQuery test failed'),
+                  })}>
+                    <TestTube className="h-3 w-3 mr-1" /> Test WebQuery
+                  </Button>
+                  {server.hasSshCredentials && (
+                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testSshServer.mutate(server.id, {
+                      onSuccess: () => toast.success('SSH connection successful'),
+                      onError: (err: any) => toast.error(err?.response?.data?.error || 'SSH test failed'),
+                    })}>
+                      <TestTube className="h-3 w-3 mr-1" /> Test SSH
+                    </Button>
+                  )}
+                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openEdit(server)}>
+                    <Pencil className="h-3 w-3 mr-1" /> Edit
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(server.id)}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <ConnectionFormDialog
+        open={showAdd}
+        editId={editId}
+        form={form}
+        saving={createServer.isPending || updateServer.isPending}
+        onOpenChange={handleDialogOpenChange}
+        onChange={setForm}
+        onSave={handleSave}
+      />
+
+      <ConnectionSetupWizard
+        open={showWizard}
+        onOpenChange={setShowWizard}
+        onComplete={() => setWebqueryTestPassed(true)}
+      />
+
+      <ConnectionSetupHelpDialog
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        hasConnections={serverList.length > 0}
+        hasSshOnAnyConnection={hasSshOnAnyConnection}
+        webqueryTestPassed={webqueryTestPassed}
+        onStartWizard={() => { setHelpOpen(false); setShowWizard(true); }}
+      />
 
       <ConfirmDialog
         open={deleteId !== null}

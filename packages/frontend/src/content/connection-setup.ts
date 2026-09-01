@@ -1,0 +1,168 @@
+import { TS6_SERVER_DOCS } from './teamspeak-docs';
+
+export type DeploymentScenarioId =
+  | 'same-host'
+  | 'ts-docker-host-manager'
+  | 'both-docker'
+  | 'remote-ts'
+  | 'manager-docker-remote-ts';
+
+export interface DeploymentScenario {
+  id: DeploymentScenarioId;
+  label: string;
+  description: string;
+  hostPlaceholder: string;
+  hostHint: string;
+  notes?: string;
+  docs?: readonly { label: string; url: string }[];
+}
+
+export const DEPLOYMENT_SCENARIOS: DeploymentScenario[] = [
+  {
+    id: 'same-host',
+    label: 'TS on same machine (bare metal)',
+    description: 'TeamSpeak and ts6-manager run on the same host.',
+    hostPlaceholder: '127.0.0.1',
+    hostHint: 'Use 127.0.0.1 or your LAN IP if the manager cannot reach localhost.',
+    docs: [
+      { label: 'Ports & networking', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Enable HTTP WebQuery', url: TS6_SERVER_DOCS.httpQuery },
+    ],
+  },
+  {
+    id: 'ts-docker-host-manager',
+    label: 'TS in Docker, manager on host',
+    description: 'TeamSpeak runs in a container; ts6-manager runs on the host or elsewhere outside that container network.',
+    hostPlaceholder: 'teamspeak',
+    hostHint: 'Use the container name, published host port mapping target, or host.docker.internal from inside Docker.',
+    docs: [
+      { label: 'Docker quick start', url: TS6_SERVER_DOCS.quickstart },
+      { label: 'Docker networking & ports', url: TS6_SERVER_DOCS.portsNetworking },
+    ],
+  },
+  {
+    id: 'both-docker',
+    label: 'Both in Docker (separate stacks)',
+    description: 'TeamSpeak and ts6-manager each run in Docker with separate compose stacks.',
+    hostPlaceholder: 'teamspeak',
+    hostHint: 'Attach the ts6-manager backend to the TeamSpeak external Docker network and use the TS service/container name as host.',
+    notes: 'In docker-compose, add the TS network to the backend service (see README Coolify section).',
+    docs: [
+      { label: 'Docker Compose example', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Official TS6 Docker image', url: TS6_SERVER_DOCS.githubDocker },
+    ],
+  },
+  {
+    id: 'remote-ts',
+    label: 'TS on a remote server',
+    description: 'TeamSpeak runs on another machine reachable over the network.',
+    hostPlaceholder: 'ts.example.com',
+    hostHint: 'Use the hostname or public IP. Ensure firewalls allow WebQuery (default 10080) and SSH (default 10022) from the manager.',
+    docs: [
+      { label: 'Ports & firewall', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Security best practices', url: TS6_SERVER_DOCS.security },
+    ],
+  },
+  {
+    id: 'manager-docker-remote-ts',
+    label: 'Manager in Docker, TS remote',
+    description: 'ts6-manager runs in Docker; TeamSpeak is on a remote host or VPS.',
+    hostPlaceholder: 'ts.example.com',
+    hostHint: 'Use the remote TS hostname or IP. No special Docker networking is required on the manager side.',
+    docs: [
+      { label: 'Ports & networking', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Enable HTTP WebQuery', url: TS6_SERVER_DOCS.httpQuery },
+    ],
+  },
+];
+
+export const FIELD_HELP = {
+  name: 'A friendly label shown in the header server selector.',
+  host: 'Hostname or IP address where the TeamSpeak server is reachable from the ts6-manager backend.',
+  webqueryPort: 'WebQuery HTTP port on the TS server (default 10080). This is the primary API used by the manager.',
+  apiKey: 'WebQuery API key created on the TS server (via apikeyadd or admin tools). Required for all management features.',
+  useHttps: 'Enable if WebQuery is served over HTTPS instead of plain HTTP.',
+  sshPort: 'SSH ServerQuery port (default 10022). Used for file browser, bot events, and music bot chat commands.',
+  sshUsername: 'ServerQuery SSH username (commonly serveradmin).',
+  sshPassword: 'ServerQuery SSH password. Stored encrypted; leave blank when editing to keep the existing password.',
+} as const;
+
+export const FEATURE_MATRIX = [
+  { feature: 'Dashboard, channels, clients, permissions', transport: 'WebQuery' },
+  { feature: 'Virtual servers, instance settings', transport: 'WebQuery' },
+  { feature: 'Bot flow WebQuery actions', transport: 'WebQuery' },
+  { feature: 'File browser', transport: 'SSH' },
+  { feature: 'Bot flow event triggers (join, message, etc.)', transport: 'SSH' },
+  { feature: 'Music bot !commands in channel chat', transport: 'SSH' },
+] as const;
+
+export const TS_PREP_STEPS = [
+  {
+    id: 'webquery-port',
+    title: 'Enable WebQuery HTTP',
+    body: 'In your TeamSpeak server configuration, ensure WebQuery HTTP is enabled (not telnet/raw query). Default port is 10080.',
+    docs: [
+      { label: 'Enable HTTP WebQuery (TS6 docs)', url: TS6_SERVER_DOCS.httpQuery },
+      { label: 'Ports & Docker setup', url: TS6_SERVER_DOCS.portsNetworking },
+    ],
+  },
+  {
+    id: 'api-key',
+    title: 'Create a WebQuery API key',
+    body: 'Connect via SSH ServerQuery, select your virtual server (use 1), then run apikeyadd. Example:',
+    code: 'use 1\napikeyadd scope=manage ip=0.0.0.0/0',
+    docs: [
+      { label: 'SSH ServerQuery setup', url: TS6_SERVER_DOCS.sshQuery },
+      { label: 'Query authentication', url: TS6_SERVER_DOCS.authentication },
+      { label: 'Server Query overview', url: TS6_SERVER_DOCS.queryOverview },
+    ],
+  },
+  {
+    id: 'ssh',
+    title: 'Enable SSH ServerQuery (optional)',
+    body: 'For file browser, bot event triggers, and music bot chat commands, enable SSH access on port 10022 (default) and note the serveradmin credentials.',
+    docs: [
+      { label: 'Enable SSH ServerQuery (TS6 docs)', url: TS6_SERVER_DOCS.sshQuery },
+      { label: 'Set serveradmin password', url: TS6_SERVER_DOCS.authentication },
+    ],
+  },
+  {
+    id: 'firewall',
+    title: 'Open firewall ports',
+    body: 'Allow the ts6-manager backend to reach WebQuery (10080) and, if used, SSH (10022).',
+    docs: [
+      { label: 'Ports & networking', url: TS6_SERVER_DOCS.portsNetworking },
+      { label: 'Firewall & security', url: TS6_SERVER_DOCS.security },
+    ],
+  },
+] as const;
+
+export function getTsPrepStep(id: (typeof TS_PREP_STEPS)[number]['id']) {
+  return TS_PREP_STEPS.find((step) => step.id === id)!;
+}
+
+export const CHECKLIST_ITEMS = [
+  { id: 'webquery-enabled', label: 'WebQuery enabled on TS server', manual: true },
+  { id: 'api-key-created', label: 'API key created', manual: true },
+  { id: 'connection-added', label: 'Connection added in manager', manual: false },
+  { id: 'webquery-tested', label: 'WebQuery test passed', manual: false },
+  { id: 'ssh-configured', label: 'SSH credentials configured (optional)', manual: false },
+] as const;
+
+export type ChecklistItemId = (typeof CHECKLIST_ITEMS)[number]['id'];
+
+export const CHECKLIST_STORAGE_KEY = 'ts6-connection-setup-checklist';
+export const NUDGE_DISMISS_STORAGE_KEY = 'ts6-connection-nudge-dismissed';
+
+export const DEFAULT_CONNECTION_FORM = {
+  name: '',
+  host: '',
+  webqueryPort: '10080',
+  apiKey: '',
+  useHttps: false,
+  sshPort: '10022',
+  sshUsername: '',
+  sshPassword: '',
+};
+
+export type ConnectionFormState = typeof DEFAULT_CONNECTION_FORM;

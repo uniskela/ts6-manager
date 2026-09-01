@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.4
 # Single image: nginx (SPA + API proxy) + Node backend + Go sidecar
 # Adapted from upstream PR #64 by @joaobosconff (clusterzx/ts6-manager)
 

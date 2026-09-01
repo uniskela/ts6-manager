@@ -7,6 +7,12 @@ export const serversApi = {
   update: (id: number, data: any) => api.put(`/servers/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/servers/${id}`),
   test: (id: number) => api.post(`/servers/${id}/test`).then((r) => r.data),
+  testSsh: (id: number) => api.post(`/servers/${id}/test-ssh`).then((r) => r.data),
+  testWebqueryDraft: (data: { host: string; webqueryPort: number; apiKey: string; useHttps?: boolean }) =>
+    api.post('/servers/test-webquery', data).then((r) => r.data),
+  testSshDraft: (data: { host: string; sshPort: number; sshUsername: string; sshPassword: string }) =>
+    api.post('/servers/test-ssh', data).then((r) => r.data),
+  detectDeployment: () => api.get('/servers/deployment-check').then((r) => r.data),
 
   // Virtual servers
   listVirtual: (configId: number) =>

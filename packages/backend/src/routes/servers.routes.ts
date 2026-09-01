@@ -1,11 +1,26 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { WebQueryClient } from '../ts-client/webquery-client.js';
+import { WebQueryClient, createWebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import { testSshConnection } from '../utils/ssh-test.js';
+import {
+  assertResolvableTsServerHost,
+  sanitizeTsServerHost,
+  validateTsServerPort,
+} from '../utils/validate-ts-host.js';
 
 export const serverRoutes: Router = Router();
+
+// Deployment self-check for the connection setup wizard (must be before /:configId routes)
+serverRoutes.get('/deployment-check', requireRole('admin'), async (_req: Request, res: Response, next) => {
+  try {
+    const { detectDeploymentScenario } = await import('../utils/detect-deployment.js');
+    const result = await detectDeploymentScenario();
+    res.json(result);
+  } catch (err) { next(err); }
+});
 
 // List all configured TS server connections
 serverRoutes.get('/', async (req: Request, res: Response, next) => {
@@ -15,15 +30,16 @@ serverRoutes.get('/', async (req: Request, res: Response, next) => {
       select: {
         id: true, name: true, host: true, webqueryPort: true,
         useHttps: true, sshPort: true, enabled: true,
-        createdAt: true, sshUsername: true,
+        createdAt: true, sshUsername: true, sshPassword: true,
       },
       orderBy: { id: 'asc' },
     });
 
     res.json(servers.map((s: any) => ({
       ...s,
-      hasSshCredentials: !!s.sshUsername,
+      hasSshCredentials: !!s.sshUsername && !!s.sshPassword,
       sshUsername: undefined,
+      sshPassword: undefined,
     })));
   } catch (err) { next(err); }
 });
@@ -34,16 +50,20 @@ serverRoutes.post('/', requireRole('admin'), async (req: Request, res: Response,
     const { name, host, webqueryPort, apiKey, useHttps, sshPort, sshUsername, sshPassword } = req.body;
     if (!name || !host || !apiKey) throw new AppError(400, 'Name, host, and API key are required');
 
+    const safeHost = sanitizeTsServerHost(host);
+    const safeWebqueryPort = validateTsServerPort(webqueryPort, 10080);
+    const safeSshPort = validateTsServerPort(sshPort, 10022);
+
     const prisma = req.app.locals.prisma;
     // H8: Encrypt sensitive fields at rest
     const server = await prisma.tsServerConfig.create({
       data: {
         name,
-        host,
-        webqueryPort: webqueryPort || 10080,
+        host: safeHost,
+        webqueryPort: safeWebqueryPort,
         apiKey: encrypt(apiKey),
         useHttps: useHttps || false,
-        sshPort: sshPort || 10022,
+        sshPort: safeSshPort,
         sshUsername: sshUsername || null,
         sshPassword: sshPassword ? encrypt(sshPassword) : null,
       },
@@ -69,7 +89,7 @@ serverRoutes.get('/:configId', async (req: Request, res: Response, next) => {
     res.json({
       id: server.id, name: server.name, host: server.host,
       webqueryPort: server.webqueryPort, useHttps: server.useHttps,
-      sshPort: server.sshPort, hasSshCredentials: !!server.sshUsername,
+      sshPort: server.sshPort, hasSshCredentials: !!server.sshUsername && !!server.sshPassword,
       enabled: server.enabled, createdAt: server.createdAt,
     });
   } catch (err) { next(err); }
@@ -87,6 +107,18 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
       if (req.body[field] !== undefined) {
         // Don't overwrite secrets/SSH username with empty strings (edit form omits unchanged secrets)
         if ((field === 'apiKey' || field === 'sshPassword' || field === 'sshUsername') && req.body[field] === '') continue;
+        if (field === 'host') {
+          data[field] = sanitizeTsServerHost(req.body[field]);
+          continue;
+        }
+        if (field === 'webqueryPort') {
+          data[field] = validateTsServerPort(req.body[field], 10080);
+          continue;
+        }
+        if (field === 'sshPort') {
+          data[field] = validateTsServerPort(req.body[field], 10022);
+          continue;
+        }
         // H8: Encrypt sensitive fields
         if (field === 'apiKey' || field === 'sshPassword') {
           data[field] = encrypt(req.body[field]);
@@ -126,6 +158,45 @@ serverRoutes.delete('/:configId', requireRole('admin'), async (req: Request, res
   } catch (err) { next(err); }
 });
 
+// Test WebQuery with draft credentials (not persisted)
+serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const { host, webqueryPort, apiKey, useHttps } = req.body;
+    if (!host || !apiKey) throw new AppError(400, 'Host and API key are required');
+
+    const safeHost = await assertResolvableTsServerHost(host);
+    const safePort = validateTsServerPort(webqueryPort, 10080);
+
+    const client = createWebQueryClient(safeHost, safePort, apiKey, useHttps || false);
+    const result = await client.testConnection();
+    client.destroy();
+
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, version: result.version });
+  } catch (err) { next(err); }
+});
+
+// Test SSH with draft credentials (not persisted)
+serverRoutes.post('/test-ssh', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const { host, sshPort, sshUsername, sshPassword } = req.body;
+    const safeHost = await assertResolvableTsServerHost(host);
+    const result = await testSshConnection({
+      host: safeHost,
+      port: validateTsServerPort(sshPort, 10022),
+      username: sshUsername,
+      password: sshPassword,
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 // Test connection
 serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
@@ -135,7 +206,7 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
     });
     if (!server) throw new AppError(404, 'Server config not found');
 
-    const client = new WebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+    const client = createWebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
     const result = await client.testConnection();
     client.destroy(); // Close the temporary TCP connection immediately
 
@@ -143,5 +214,32 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
       return res.status(502).json({ success: false, error: result.error });
     }
     res.json({ success: true, version: result.version });
+  } catch (err) { next(err); }
+});
+
+// Test SSH for an existing connection
+serverRoutes.post('/:configId/test-ssh', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const server = await prisma.tsServerConfig.findUnique({
+      where: { id: parseInt(String(req.params.configId)) },
+    });
+    if (!server) throw new AppError(404, 'Server config not found');
+    if (!server.sshUsername || !server.sshPassword) {
+      throw new AppError(400, 'SSH credentials not configured');
+    }
+
+    const result = await testSshConnection({
+      host: server.host,
+      port: server.sshPort,
+      username: server.sshUsername,
+      password: decrypt(server.sshPassword),
+      hostKeyFingerprint: server.sshHostKeyFingerprint,
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
