@@ -148,7 +148,7 @@ export async function assertResolvableTsServerHost(host: string): Promise<string
     return safeHost;
   }
 
-  let addresses: dns.LookupAddress[];
+  let addresses: { address: string; family: number }[];
   try {
     addresses = await dns.lookup(safeHost, { all: true, verbatim: true });
   } catch {
