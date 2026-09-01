@@ -3,6 +3,7 @@ import http from 'http';
 import https from 'https';
 import { TSApiError } from '../middleware/error-handler.js';
 import { config } from '../config.js';
+import { buildTsServerOrigin } from '../utils/validate-ts-host.js';
 
 /** UI / interactive traffic jumps ahead of background bots & animations. */
 export type WebQueryPriority = 'high' | 'normal' | 'low';
@@ -88,22 +89,23 @@ export class WebQueryClient {
     apiKey: string,
     useHttps: boolean = false,
   ) {
-    const protocol = useHttps ? 'https' : 'http';
+    const baseURL = buildTsServerOrigin(host, port, useHttps);
+    const useHttpsResolved = baseURL.startsWith('https://');
 
     // Use a single persistent TCP connection (keep-alive) to the TS WebQuery API.
     // Without this, each concurrent request opens a new TCP connection, and the
     // TS server registers each one as a separate "serveradmin" query client
     // (serveradmin, serveradmin1, serveradmin2, ...).
-    this.agent = useHttps
+    this.agent = useHttpsResolved
       ? new https.Agent({ keepAlive: true, maxSockets: 1, rejectUnauthorized: !config.tsAllowSelfSigned })
       : new http.Agent({ keepAlive: true, maxSockets: 1 });
 
     this.http = axios.create({
-      baseURL: `${protocol}://${host}:${port}`,
+      baseURL,
       headers: { 'x-api-key': apiKey },
       timeout: 15000,
-      httpAgent: useHttps ? undefined : this.agent,
-      httpsAgent: useHttps ? this.agent : undefined,
+      httpAgent: useHttpsResolved ? undefined : this.agent,
+      httpsAgent: useHttpsResolved ? this.agent : undefined,
     });
   }
 

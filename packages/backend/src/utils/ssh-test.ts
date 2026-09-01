@@ -1,5 +1,6 @@
 import { Client as SSH2Client } from 'ssh2';
 import { fingerprintHostKey, hostKeyMatches } from './ssh-host-key.js';
+import { sanitizeTsServerHost, validateTsServerPort } from './validate-ts-host.js';
 
 export interface SshTestOptions {
   host: string;
@@ -10,7 +11,16 @@ export interface SshTestOptions {
 }
 
 export async function testSshConnection(options: SshTestOptions): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { host, port, username, password, hostKeyFingerprint } = options;
+  let host: string;
+  let port: number;
+  try {
+    host = sanitizeTsServerHost(options.host);
+    port = validateTsServerPort(options.port, 10022);
+  } catch (err: any) {
+    return { ok: false, error: err?.message || 'Invalid host or port' };
+  }
+
+  const { username, password, hostKeyFingerprint } = options;
 
   if (!host || !username || !password) {
     return { ok: false, error: 'Host, SSH username, and SSH password are required' };

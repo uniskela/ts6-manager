@@ -5,6 +5,11 @@ import { WebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { testSshConnection } from '../utils/ssh-test.js';
+import {
+  assertResolvableTsServerHost,
+  sanitizeTsServerHost,
+  validateTsServerPort,
+} from '../utils/validate-ts-host.js';
 
 export const serverRoutes: Router = Router();
 
@@ -36,16 +41,20 @@ serverRoutes.post('/', requireRole('admin'), async (req: Request, res: Response,
     const { name, host, webqueryPort, apiKey, useHttps, sshPort, sshUsername, sshPassword } = req.body;
     if (!name || !host || !apiKey) throw new AppError(400, 'Name, host, and API key are required');
 
+    const safeHost = sanitizeTsServerHost(host);
+    const safeWebqueryPort = validateTsServerPort(webqueryPort, 10080);
+    const safeSshPort = validateTsServerPort(sshPort, 10022);
+
     const prisma = req.app.locals.prisma;
     // H8: Encrypt sensitive fields at rest
     const server = await prisma.tsServerConfig.create({
       data: {
         name,
-        host,
-        webqueryPort: webqueryPort || 10080,
+        host: safeHost,
+        webqueryPort: safeWebqueryPort,
         apiKey: encrypt(apiKey),
         useHttps: useHttps || false,
-        sshPort: sshPort || 10022,
+        sshPort: safeSshPort,
         sshUsername: sshUsername || null,
         sshPassword: sshPassword ? encrypt(sshPassword) : null,
       },
@@ -89,6 +98,18 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
       if (req.body[field] !== undefined) {
         // Don't overwrite secrets/SSH username with empty strings (edit form omits unchanged secrets)
         if ((field === 'apiKey' || field === 'sshPassword' || field === 'sshUsername') && req.body[field] === '') continue;
+        if (field === 'host') {
+          data[field] = sanitizeTsServerHost(req.body[field]);
+          continue;
+        }
+        if (field === 'webqueryPort') {
+          data[field] = validateTsServerPort(req.body[field], 10080);
+          continue;
+        }
+        if (field === 'sshPort') {
+          data[field] = validateTsServerPort(req.body[field], 10022);
+          continue;
+        }
         // H8: Encrypt sensitive fields
         if (field === 'apiKey' || field === 'sshPassword') {
           data[field] = encrypt(req.body[field]);
@@ -134,7 +155,10 @@ serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, r
     const { host, webqueryPort, apiKey, useHttps } = req.body;
     if (!host || !apiKey) throw new AppError(400, 'Host and API key are required');
 
-    const client = new WebQueryClient(host, webqueryPort || 10080, apiKey, useHttps || false);
+    const safeHost = await assertResolvableTsServerHost(host);
+    const safePort = validateTsServerPort(webqueryPort, 10080);
+
+    const client = new WebQueryClient(safeHost, safePort, apiKey, useHttps || false);
     const result = await client.testConnection();
     client.destroy();
 
@@ -149,9 +173,10 @@ serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, r
 serverRoutes.post('/test-ssh', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const { host, sshPort, sshUsername, sshPassword } = req.body;
+    const safeHost = await assertResolvableTsServerHost(host);
     const result = await testSshConnection({
-      host,
-      port: sshPort || 10022,
+      host: safeHost,
+      port: validateTsServerPort(sshPort, 10022),
       username: sshUsername,
       password: sshPassword,
     });
