@@ -42,6 +42,7 @@ services:
     ports:
       - "9987:9987/udp"
       - "30033:30033/tcp"
+      - "10022:10022/tcp"   # SSH ServerQuery — create API keys from your host
     networks:
       - ts6-pr-test
 
