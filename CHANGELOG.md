@@ -4,19 +4,6 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ## [Unreleased]
 
-### Added
-
-- Deployment self-check in connection setup wizard step 1: probes localhost, `teamspeak`, and `host.docker.internal` from the manager backend and suggests a scenario/host (`GET /api/servers/deployment-check`)
-
-### Changed
-
-- Connections tab is minimal when empty — wizard opens directly from dashboard links; detailed help moved to an optional dialog
-- Connection setup guide card hidden until at least one connection exists
-- `docker-compose.pr-test.yml` includes a TeamSpeak 6 server (`teamspeak` hostname on the compose network) for end-to-end wizard testing
-- Connection setup wizard shows setup instructions inline with each settings step instead of a separate instructions-only step
-- Wizard and help dialog link to official TeamSpeak 6 Server docs for WebQuery, SSH, API keys, networking, and deployment scenarios
-- Removed `# syntax=docker/dockerfile:1.4` from Dockerfiles to avoid Docker Hub pull failures during `docker compose` builds
-
 ## [1.3.8] - 2026-09-01
 
 ### Added
@@ -26,6 +13,14 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - Field-level tooltips and sectioned connection form (WebQuery required, SSH optional)
 - SSH test endpoints (`POST /api/servers/test-ssh`, `POST /api/servers/:id/test-ssh`) and Test SSH buttons on connection cards
 - Dashboard nudge banner for admins with no server connections (links to `/settings?tab=connections`)
+- Deployment self-check in wizard step 1: probes localhost, `teamspeak`, and `host.docker.internal` from the manager backend (`GET /api/servers/deployment-check`)
+
+### Changed
+
+- Connections tab is minimal when empty — wizard opens from dashboard links (`?wizard=1`); detailed help in an optional dialog
+- Connection setup guide card hidden until at least one connection exists
+- Connection setup wizard shows setup instructions inline with each settings step (4 steps); links to official TeamSpeak 6 Server docs
+- `docker-compose.pr-test.yml` includes TeamSpeak 6 on the compose network (`teamspeak` hostname) for end-to-end wizard testing
 
 ### Security
 
@@ -35,6 +30,7 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 ### Fixed
 
 - Connection edit form no longer requires re-entering the API key when unchanged
+- Removed `# syntax=docker/dockerfile:1.4` from Dockerfiles to avoid Docker Hub pull failures during `docker compose` builds
 
 ## [1.3.7] - 2026-09-01
 
