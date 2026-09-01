@@ -3,7 +3,9 @@ import http from 'http';
 import https from 'https';
 import { TSApiError } from '../middleware/error-handler.js';
 import { config } from '../config.js';
-import { buildTsServerOrigin } from '../utils/validate-ts-host.js';
+import type { ValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
+import { AppError } from '../middleware/error-handler.js';
+import { createValidatedTsServerEndpoint, isAllowedTsServerHost } from '../utils/validate-ts-host.js';
 
 /** UI / interactive traffic jumps ahead of background bots & animations. */
 export type WebQueryPriority = 'high' | 'normal' | 'low';
@@ -74,6 +76,19 @@ interface QueueEntry<T> {
   reject: (reason: unknown) => void;
 }
 
+export function createWebQueryClient(
+  host: string,
+  port: number,
+  apiKey: string,
+  useHttps: boolean = false,
+): WebQueryClient {
+  if (!isAllowedTsServerHost(host)) {
+    throw new AppError(400, 'Invalid TeamSpeak server host');
+  }
+  const endpoint = createValidatedTsServerEndpoint(host, port, useHttps, port || 10080);
+  return new WebQueryClient(endpoint, apiKey);
+}
+
 export class WebQueryClient {
   private http: AxiosInstance;
   private agent: http.Agent | https.Agent;
@@ -84,13 +99,11 @@ export class WebQueryClient {
   private floodStrikes = 0;
 
   constructor(
-    host: string,
-    port: number,
+    endpoint: ValidatedTsServerEndpoint,
     apiKey: string,
-    useHttps: boolean = false,
   ) {
-    const baseURL = buildTsServerOrigin(host, port, useHttps);
-    const useHttpsResolved = baseURL.startsWith('https://');
+    const baseURL = endpoint.origin;
+    const useHttpsResolved = endpoint.useHttps;
 
     // Use a single persistent TCP connection (keep-alive) to the TS WebQuery API.
     // Without this, each concurrent request opens a new TCP connection, and the

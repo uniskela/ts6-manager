@@ -1,0 +1,89 @@
+# Local stack for testing a PR branch (builds from the current checkout).
+#
+# Quick start:
+#   cp .env.pr-test.example .env
+#   docker compose -f docker-compose.pr-test.yml up --build
+#
+# Then open http://localhost:3000/setup and complete admin setup.
+# Test the connection wizard at Settings → Connections.
+#
+# If your TeamSpeak server runs on the host machine (not in Docker), use:
+#   Host: host.docker.internal
+#   WebQuery port: 10080 (default)
+#   SSH port: 10022 (default)
+#
+# Tear down:
+#   docker compose -f docker-compose.pr-test.yml down
+#   docker compose -f docker-compose.pr-test.yml down -v   # also remove volumes
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        GIT_SHA: ${GIT_SHA:-pr-test}
+    container_name: ts6-pr-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: file:/app/packages/backend/data/ts6webui.db
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
+      SIDECAR_SECRET: ${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env}
+      SIDECAR_URL: http://sidecar:9800
+      JWT_ACCESS_EXPIRY: 15m
+      JWT_REFRESH_EXPIRY: 7d
+      FRONTEND_URL: http://localhost:3000
+      MUSIC_DIR: /data/music
+      TS_ALLOW_SELF_SIGNED: ${TS_ALLOW_SELF_SIGNED:-true}
+      TS_ALLOW_PRIVATE_HOSTS: ${TS_ALLOW_PRIVATE_HOSTS:-true}
+    volumes:
+      - pr-test-backend-data:/app/packages/backend/data
+      - pr-test-music-data:/data/music
+    ports:
+      - "3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      sidecar:
+        condition: service_started
+    networks:
+      - ts6-pr-test
+
+  sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile.sidecar
+    container_name: ts6-pr-sidecar
+    restart: unless-stopped
+    environment:
+      SIDECAR_PORT: 9800
+      SIDECAR_SECRET: ${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env}
+    networks:
+      - ts6-pr-test
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        GIT_SHA: ${GIT_SHA:-pr-test}
+    container_name: ts6-pr-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - ts6-pr-test
+
+volumes:
+  pr-test-backend-data:
+  pr-test-music-data:
+
+networks:
+  ts6-pr-test:
+    driver: bridge

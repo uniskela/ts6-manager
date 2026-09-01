@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { WebQueryClient } from '../ts-client/webquery-client.js';
+import { WebQueryClient, createWebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { testSshConnection } from '../utils/ssh-test.js';
@@ -158,7 +158,7 @@ serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, r
     const safeHost = await assertResolvableTsServerHost(host);
     const safePort = validateTsServerPort(webqueryPort, 10080);
 
-    const client = new WebQueryClient(safeHost, safePort, apiKey, useHttps || false);
+    const client = createWebQueryClient(safeHost, safePort, apiKey, useHttps || false);
     const result = await client.testConnection();
     client.destroy();
 
@@ -197,7 +197,7 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
     });
     if (!server) throw new AppError(404, 'Server config not found');
 
-    const client = new WebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+    const client = createWebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
     const result = await client.testConnection();
     client.destroy(); // Close the temporary TCP connection immediately
 

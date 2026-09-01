@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   buildTsServerOrigin,
+  createValidatedTsServerEndpoint,
   sanitizeTsServerHost,
   validateTsServerPort,
 } from './validate-ts-host.js';
@@ -36,6 +37,15 @@ describe('validateTsServerPort', () => {
   it('rejects invalid ports', () => {
     assert.throws(() => validateTsServerPort(0, 10080), /between 1 and 65535/);
     assert.throws(() => validateTsServerPort(70000, 10080), /between 1 and 65535/);
+  });
+});
+
+describe('ValidatedTsServerEndpoint', () => {
+  it('builds validated origins', () => {
+    const endpoint = createValidatedTsServerEndpoint('127.0.0.1', 10080, false, 10080);
+    assert.equal(endpoint.origin, 'http://127.0.0.1:10080');
+    assert.equal(endpoint.host, '127.0.0.1');
+    assert.equal(endpoint.port, 10080);
   });
 });
 

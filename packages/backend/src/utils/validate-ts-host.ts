@@ -115,6 +115,16 @@ export function sanitizeTsServerHost(host: string): string {
   return normalized;
 }
 
+/** Returns true when the host passes TeamSpeak SSRF validation (for guarded flows). */
+export function isAllowedTsServerHost(host: string): boolean {
+  try {
+    sanitizeTsServerHost(host);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function validateTsServerPort(port: unknown, fallback: number): number {
   const value = port === undefined || port === null || port === '' ? fallback : Number(port);
   if (!Number.isInteger(value) || value < 1 || value > 65535) {
@@ -124,9 +134,7 @@ export function validateTsServerPort(port: unknown, fallback: number): number {
 }
 
 /** Build an origin URL from validated host/port only (no user-controlled URL parsing). */
-export function buildTsServerOrigin(host: string, port: number, useHttps: boolean): string {
-  const safeHost = sanitizeTsServerHost(host);
-  const safePort = validateTsServerPort(port, port);
+function buildOriginFromSanitizedParts(safeHost: string, safePort: number, useHttps: boolean): string {
   const protocol = useHttps ? 'https' : 'http';
 
   if (net.isIPv6(safeHost)) {
@@ -134,6 +142,42 @@ export function buildTsServerOrigin(host: string, port: number, useHttps: boolea
   }
 
   return `${protocol}://${safeHost}:${safePort}`;
+}
+
+/** Opaque validated TeamSpeak endpoint used for outbound WebQuery/SSH connections. */
+export class ValidatedTsServerEndpoint {
+  readonly origin: string;
+  readonly host: string;
+  readonly port: number;
+  readonly useHttps: boolean;
+
+  private constructor(origin: string, host: string, port: number, useHttps: boolean) {
+    this.origin = origin;
+    this.host = host;
+    this.port = port;
+    this.useHttps = useHttps;
+  }
+
+  static fromHostPort(host: string, port: unknown, useHttps: boolean, defaultPort: number): ValidatedTsServerEndpoint {
+    const safeHost = sanitizeTsServerHost(host);
+    const safePort = validateTsServerPort(port, defaultPort);
+    const origin = buildOriginFromSanitizedParts(safeHost, safePort, useHttps);
+    return new ValidatedTsServerEndpoint(origin, safeHost, safePort, useHttps);
+  }
+}
+
+export function createValidatedTsServerEndpoint(
+  host: string,
+  port: unknown,
+  useHttps: boolean,
+  defaultPort: number,
+): ValidatedTsServerEndpoint {
+  return ValidatedTsServerEndpoint.fromHostPort(host, port, useHttps, defaultPort);
+}
+
+/** Build an origin URL from validated host/port only (no user-controlled URL parsing). */
+export function buildTsServerOrigin(host: string, port: number, useHttps: boolean): string {
+  return createValidatedTsServerEndpoint(host, port, useHttps, port).origin;
 }
 
 /**

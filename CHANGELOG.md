@@ -14,6 +14,11 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - SSH test endpoints (`POST /api/servers/test-ssh`, `POST /api/servers/:id/test-ssh`) and Test SSH buttons on connection cards
 - Dashboard nudge banner for admins with no server connections (links to `/settings?tab=connections`)
 
+### Security
+
+- SSRF hardening for TeamSpeak connection hosts: validate/sanitize host and port before WebQuery/SSH outbound requests; block cloud-metadata targets and URL tricks; optional DNS resolution check on draft connection tests (`TS_ALLOW_PRIVATE_HOSTS=false` to disallow private/loopback hosts)
+- CodeQL request-forgery barriers for validated TeamSpeak endpoint helpers (`.github/codeql/extensions/ts6-connection-host/`)
+
 ### Fixed
 
 - Connection edit form no longer requires re-entering the API key when unchanged
