@@ -15,6 +15,7 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 - `docker-compose.pr-test.yml` includes a TeamSpeak 6 server (`teamspeak` hostname on the compose network) for end-to-end wizard testing
 - Connection setup wizard shows setup instructions inline with each settings step instead of a separate instructions-only step
 - Wizard and help dialog link to official TeamSpeak 6 Server docs for WebQuery, SSH, API keys, networking, and deployment scenarios
+- Removed `# syntax=docker/dockerfile:1.4` from Dockerfiles to avoid Docker Hub pull failures during `docker compose` builds
 
 ## [1.3.8] - 2026-09-01
 
