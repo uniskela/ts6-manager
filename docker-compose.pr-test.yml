@@ -42,8 +42,9 @@ services:
     volumes:
       - pr-test-backend-data:/app/packages/backend/data
       - pr-test-music-data:/data/music
-    ports:
-      - "3001:3001"
+    # API is proxied through the frontend on :3000 — only publish 3001 if you need direct API access.
+    # ports:
+    #   - "3001:3001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

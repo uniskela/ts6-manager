@@ -219,24 +219,22 @@ function ConnectionsTab() {
         hasSshOnAnyConnection={hasSshOnAnyConnection}
         webqueryTestPassed={webqueryTestPassed}
         onStartWizard={() => setShowWizard(true)}
+        onAddManually={() => { resetForm(); setEditId(null); setShowAdd(true); }}
       />
 
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">Manage TeamSpeak server connections</p>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setShowWizard(true)}>Setup wizard</Button>
-          <Button size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}><Plus className="h-4 w-4 mr-1" /> Add Connection</Button>
-        </div>
+        <Button size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}>
+          <Plus className="h-4 w-4 mr-1" /> Add connection
+        </Button>
       </div>
 
       {serverList.length === 0 ? (
         <EmptyState
           icon={Server}
           title="No connections yet"
-          description="Add your TeamSpeak server connection to start managing it from the dashboard."
-        >
-          <Button size="sm" onClick={() => setShowWizard(true)}>Start setup wizard</Button>
-        </EmptyState>
+          description="Use the setup wizard above, or add a connection manually when you have your WebQuery API key ready."
+        />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {serverList.map((server: any) => (
