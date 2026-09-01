@@ -4,6 +4,7 @@ import { AppError } from '../middleware/error-handler.js';
 import { WebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
+import { testSshConnection } from '../utils/ssh-test.js';
 
 export const serverRoutes: Router = Router();
 
@@ -15,15 +16,16 @@ serverRoutes.get('/', async (req: Request, res: Response, next) => {
       select: {
         id: true, name: true, host: true, webqueryPort: true,
         useHttps: true, sshPort: true, enabled: true,
-        createdAt: true, sshUsername: true,
+        createdAt: true, sshUsername: true, sshPassword: true,
       },
       orderBy: { id: 'asc' },
     });
 
     res.json(servers.map((s: any) => ({
       ...s,
-      hasSshCredentials: !!s.sshUsername,
+      hasSshCredentials: !!s.sshUsername && !!s.sshPassword,
       sshUsername: undefined,
+      sshPassword: undefined,
     })));
   } catch (err) { next(err); }
 });
@@ -69,7 +71,7 @@ serverRoutes.get('/:configId', async (req: Request, res: Response, next) => {
     res.json({
       id: server.id, name: server.name, host: server.host,
       webqueryPort: server.webqueryPort, useHttps: server.useHttps,
-      sshPort: server.sshPort, hasSshCredentials: !!server.sshUsername,
+      sshPort: server.sshPort, hasSshCredentials: !!server.sshUsername && !!server.sshPassword,
       enabled: server.enabled, createdAt: server.createdAt,
     });
   } catch (err) { next(err); }
@@ -126,6 +128,41 @@ serverRoutes.delete('/:configId', requireRole('admin'), async (req: Request, res
   } catch (err) { next(err); }
 });
 
+// Test WebQuery with draft credentials (not persisted)
+serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const { host, webqueryPort, apiKey, useHttps } = req.body;
+    if (!host || !apiKey) throw new AppError(400, 'Host and API key are required');
+
+    const client = new WebQueryClient(host, webqueryPort || 10080, apiKey, useHttps || false);
+    const result = await client.testConnection();
+    client.destroy();
+
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true, version: result.version });
+  } catch (err) { next(err); }
+});
+
+// Test SSH with draft credentials (not persisted)
+serverRoutes.post('/test-ssh', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const { host, sshPort, sshUsername, sshPassword } = req.body;
+    const result = await testSshConnection({
+      host,
+      port: sshPort || 10022,
+      username: sshUsername,
+      password: sshPassword,
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 // Test connection
 serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
@@ -143,5 +180,32 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
       return res.status(502).json({ success: false, error: result.error });
     }
     res.json({ success: true, version: result.version });
+  } catch (err) { next(err); }
+});
+
+// Test SSH for an existing connection
+serverRoutes.post('/:configId/test-ssh', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const server = await prisma.tsServerConfig.findUnique({
+      where: { id: parseInt(String(req.params.configId)) },
+    });
+    if (!server) throw new AppError(404, 'Server config not found');
+    if (!server.sshUsername || !server.sshPassword) {
+      throw new AppError(400, 'SSH credentials not configured');
+    }
+
+    const result = await testSshConnection({
+      host: server.host,
+      port: server.sshPort,
+      username: server.sshUsername,
+      password: decrypt(server.sshPassword),
+      hostKeyFingerprint: server.sshHostKeyFingerprint,
+    });
+
+    if (!result.ok) {
+      return res.status(502).json({ success: false, error: result.error });
+    }
+    res.json({ success: true });
   } catch (err) { next(err); }
 });

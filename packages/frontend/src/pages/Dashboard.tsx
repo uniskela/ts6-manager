@@ -1,6 +1,9 @@
 import { useDashboard } from '@/hooks/use-dashboard';
+import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { useAuthStore } from '@/stores/auth.store';
+import { NUDGE_DISMISS_STORAGE_KEY } from '@/content/connection-setup';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,7 +11,7 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
 import { formatBytes, formatUptime } from '@/lib/utils';
-import { Users, Activity, Clock, Hash, ArrowDownToLine, ArrowUpFromLine, Wifi, Server, LayoutGrid } from 'lucide-react';
+import { Users, Activity, Clock, Hash, ArrowDownToLine, ArrowUpFromLine, Wifi, Server, LayoutGrid, X } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { useState, useEffect } from 'react';
 
@@ -42,10 +45,30 @@ function StatsCard({ icon: Icon, label, value, sub, accentColor = 'text-primary'
 
 export default function Dashboard() {
   const { selectedConfigId, selectedSid } = useServerStore();
+  const { data: servers } = useServers();
   const { data, isLoading, error, refetch, isFetching } = useDashboard();
   const isAdmin = useAuthStore((s) => s.isAdmin());
   const [bandwidthHistory, setBandwidthHistory] = useState<any[]>([]);
   const [showWidgets, setShowWidgets] = useState(false);
+  const [nudgeDismissed, setNudgeDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(NUDGE_DISMISS_STORAGE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+
+  const hasNoConnections = isAdmin && Array.isArray(servers) && servers.length === 0;
+  const showConnectionNudge = hasNoConnections && !nudgeDismissed;
+
+  const dismissNudge = () => {
+    setNudgeDismissed(true);
+    try {
+      localStorage.setItem(NUDGE_DISMISS_STORAGE_KEY, '1');
+    } catch {
+      // ignore
+    }
+  };
 
   // Build bandwidth history from periodic data
   useEffect(() => {
@@ -66,11 +89,43 @@ export default function Dashboard() {
 
   if (!selectedConfigId || !selectedSid) {
     return (
-      <EmptyState
-        icon={Server}
-        title="No server selected"
-        description="Select a server connection from the header to view the dashboard."
-      />
+      <div className="space-y-4">
+        {showConnectionNudge && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardContent className="py-3 flex items-center justify-between gap-3">
+              <div className="text-sm">
+                <p className="font-medium">Connect your TeamSpeak server to get started</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Add a connection under Settings to manage channels, clients, bots, and more.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Button size="sm" asChild>
+                  <Link to="/settings?tab=connections">Go to Connections</Link>
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={dismissNudge} aria-label="Dismiss">
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        <EmptyState
+          icon={Server}
+          title={hasNoConnections ? 'No server connection configured' : 'No server selected'}
+          description={
+            hasNoConnections
+              ? 'Use the setup wizard in Settings → Connections to add your TeamSpeak server.'
+              : 'Select a server connection from the header to view the dashboard.'
+          }
+        >
+          {hasNoConnections && (
+            <Button size="sm" asChild>
+              <Link to="/settings?tab=connections">Open connection setup</Link>
+            </Button>
+          )}
+        </EmptyState>
+      </div>
     );
   }
 
