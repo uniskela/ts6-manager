@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { serversApi } from '@/api/servers.api';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,7 @@ import {
   type ConnectionFormState,
   type DeploymentScenarioId,
 } from '@/content/connection-setup';
-import { ArrowLeft, ArrowRight, Check, Loader2, TestTube } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2, Radar, Sparkles, TestTube } from 'lucide-react';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -25,6 +25,15 @@ const STEPS = [
   'SSH (optional)',
   'Review & finish',
 ] as const;
+
+interface DeploymentCheckResult {
+  managerInDocker: boolean;
+  probes: Array<{ host: string; port: number; dnsResolved: boolean; reachable: boolean }>;
+  suggestedScenarioId: DeploymentScenarioId | null;
+  suggestedHost: string | null;
+  confidence: 'high' | 'medium' | 'low' | 'none';
+  reason: string;
+}
 
 interface ConnectionSetupWizardProps {
   open: boolean;
@@ -40,6 +49,10 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   const [skipSsh, setSkipSsh] = useState(false);
   const [webqueryTestOk, setWebqueryTestOk] = useState<boolean | null>(null);
   const [sshTestOk, setSshTestOk] = useState<boolean | null>(null);
+  const [detection, setDetection] = useState<DeploymentCheckResult | null>(null);
+  const [detectionApplied, setDetectionApplied] = useState(false);
+  const [hostSuggestionApplied, setHostSuggestionApplied] = useState(false);
+  const [autoCheckStarted, setAutoCheckStarted] = useState(false);
 
   const scenario = useMemo(
     () => DEPLOYMENT_SCENARIOS.find((s) => s.id === scenarioId) ?? DEPLOYMENT_SCENARIOS[0],
@@ -69,6 +82,25 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     }),
   });
 
+  const runDetection = useMutation({
+    mutationFn: () => serversApi.detectDeployment() as Promise<DeploymentCheckResult>,
+    onSuccess: (data) => {
+      setDetection(data);
+      setDetectionApplied(false);
+    },
+    onError: (err: any) => {
+      setDetection({
+        managerInDocker: false,
+        probes: [],
+        suggestedScenarioId: null,
+        suggestedHost: null,
+        confidence: 'none',
+        reason: err?.response?.data?.error || 'Self-check could not run. Choose your deployment manually.',
+      });
+      toast.error(err?.response?.data?.error || 'Self-check failed');
+    },
+  });
+
   const reset = () => {
     setStep(0);
     setScenarioId('same-host');
@@ -76,6 +108,11 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     setSkipSsh(false);
     setWebqueryTestOk(null);
     setSshTestOk(null);
+    setDetection(null);
+    setDetectionApplied(false);
+    setHostSuggestionApplied(false);
+    setAutoCheckStarted(false);
+    runDetection.reset();
   };
 
   const handleClose = (next: boolean) => {
@@ -83,13 +120,43 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     onOpenChange(next);
   };
 
-  const applyScenario = (id: DeploymentScenarioId) => {
+  useEffect(() => {
+    if (open && step === 0 && !autoCheckStarted && !runDetection.isPending) {
+      setAutoCheckStarted(true);
+      runDetection.mutate();
+    }
+  }, [open, step, autoCheckStarted, runDetection.isPending]);
+
+  const applyScenario = (id: DeploymentScenarioId, hostOverride?: string) => {
     setScenarioId(id);
     const next = DEPLOYMENT_SCENARIOS.find((s) => s.id === id);
     if (next) {
-      setForm((prev) => ({ ...prev, host: next.hostPlaceholder }));
+      setForm((prev) => ({
+        ...prev,
+        host: hostOverride ?? (hostSuggestionApplied ? prev.host : next.hostPlaceholder),
+      }));
     }
   };
+
+  const applyDetection = () => {
+    if (!detection) return;
+    if (detection.suggestedScenarioId) {
+      applyScenario(
+        detection.suggestedScenarioId,
+        detection.suggestedHost ?? undefined,
+      );
+      setDetectionApplied(true);
+      setHostSuggestionApplied(!!detection.suggestedHost);
+    } else if (detection.suggestedHost) {
+      setForm((prev) => ({ ...prev, host: detection.suggestedHost! }));
+      setHostSuggestionApplied(true);
+      toast.message('Suggested host applied — pick the scenario below that best matches your setup.');
+    }
+  };
+
+  const suggestedScenario = detection?.suggestedScenarioId
+    ? DEPLOYMENT_SCENARIOS.find((s) => s.id === detection.suggestedScenarioId)
+    : null;
 
   const canNext = () => {
     if (step === 2) return !!form.name && !!form.host && !!form.apiKey;
@@ -179,25 +246,122 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
         </DialogHeader>
 
         {step === 0 && (
-          <div className="space-y-2">
-            <p className="text-xs text-muted-foreground">Choose how your TeamSpeak server is deployed relative to ts6-manager.</p>
-            {DEPLOYMENT_SCENARIOS.map((s) => (
-              <button
-                key={s.id}
-                type="button"
-                onClick={() => applyScenario(s.id)}
-                className={cn(
-                  'w-full text-left rounded-md border p-3 transition-colors',
-                  scenarioId === s.id ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/30',
-                )}
-              >
-                <p className="text-xs font-medium">{s.label}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">{s.description}</p>
-                <p className="text-[11px] mt-1">
-                  Suggested host: <code className="font-mono-data">{s.hostPlaceholder}</code>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">
+              Choose how your TeamSpeak server is deployed relative to ts6-manager.
+            </p>
+
+            <div className="rounded-md border border-border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium flex items-center gap-1.5">
+                  <Radar className="h-3.5 w-3.5" /> Deployment self-check
                 </p>
-              </button>
-            ))}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => runDetection.mutate()}
+                  disabled={runDetection.isPending}
+                >
+                  {runDetection.isPending ? (
+                    <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Checking…</>
+                  ) : (
+                    'Run again'
+                  )}
+                </Button>
+              </div>
+
+              {runDetection.isPending && !detection && (
+                <p className="text-[11px] text-muted-foreground">
+                  Probing localhost, Docker host, and common service names from the manager…
+                </p>
+              )}
+
+              {detection && (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground">{detection.reason}</p>
+                  <div className="flex flex-wrap gap-1">
+                    {detection.probes.map((probe) => (
+                      <Badge
+                        key={probe.host}
+                        variant="outline"
+                        className={cn(
+                          'text-[10px]',
+                          probe.reachable
+                            ? 'text-emerald-400 border-emerald-500/30'
+                            : 'text-muted-foreground',
+                        )}
+                      >
+                        {probe.host}:{probe.port} {probe.reachable ? '✓' : '—'}
+                      </Badge>
+                    ))}
+                    <Badge variant="secondary" className="text-[10px]">
+                      Manager {detection.managerInDocker ? 'in Docker' : 'on host'}
+                    </Badge>
+                  </div>
+
+                  {(detection.suggestedScenarioId || detection.suggestedHost) && (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {suggestedScenario && (
+                        <span className="text-[11px] text-muted-foreground">
+                          Suggested: <span className="text-foreground">{suggestedScenario.label}</span>
+                        </span>
+                      )}
+                      {detection.suggestedHost && !suggestedScenario && (
+                        <span className="text-[11px] text-muted-foreground">
+                          Suggested host: <code className="font-mono-data">{detection.suggestedHost}</code>
+                        </span>
+                      )}
+                      {detection.confidence !== 'none' && (
+                        <Badge variant="outline" className="text-[10px] capitalize">{detection.confidence} confidence</Badge>
+                      )}
+                      {!(detectionApplied || hostSuggestionApplied) && (
+                        <Button size="sm" className="h-7 text-xs" onClick={applyDetection}>
+                          <Sparkles className="h-3 w-3 mr-1" /> Apply suggestion
+                        </Button>
+                      )}
+                      {detectionApplied && (
+                        <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/30">Applied</Badge>
+                      )}
+                      {hostSuggestionApplied && !detectionApplied && (
+                        <Badge variant="outline" className="text-[10px] text-emerald-400 border-emerald-500/30">Host applied</Badge>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {DEPLOYMENT_SCENARIOS.map((s) => {
+              const isSuggested = detection?.suggestedScenarioId === s.id && !detectionApplied;
+              const isSelected = scenarioId === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => applyScenario(
+                    s.id,
+                    detection?.suggestedScenarioId === s.id && detection.suggestedHost ? detection.suggestedHost : undefined,
+                  )}
+                  className={cn(
+                    'w-full text-left rounded-md border p-3 transition-colors',
+                    isSelected ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/30',
+                    isSuggested && !isSelected && 'border-primary/40',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-medium">{s.label}</p>
+                    {isSuggested && (
+                      <Badge variant="secondary" className="text-[10px]">Suggested</Badge>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">{s.description}</p>
+                  <p className="text-[11px] mt-1">
+                    Suggested host: <code className="font-mono-data">{s.hostPlaceholder}</code>
+                  </p>
+                </button>
+              );
+            })}
           </div>
         )}
 

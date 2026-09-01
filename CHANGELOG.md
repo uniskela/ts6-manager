@@ -4,6 +4,15 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ## [Unreleased]
 
+### Added
+
+- Deployment self-check in connection setup wizard step 1: probes localhost, `teamspeak`, and `host.docker.internal` from the manager backend and suggests a scenario/host (`GET /api/servers/deployment-check`)
+
+### Changed
+
+- Connections tab is minimal when empty — wizard opens directly from dashboard links; detailed help moved to an optional dialog
+- Connection setup guide card hidden until at least one connection exists
+
 ## [1.3.8] - 2026-09-01
 
 ### Added

@@ -12,6 +12,7 @@ export const serversApi = {
     api.post('/servers/test-webquery', data).then((r) => r.data),
   testSshDraft: (data: { host: string; sshPort: number; sshUsername: string; sshPassword: string }) =>
     api.post('/servers/test-ssh', data).then((r) => r.data),
+  detectDeployment: () => api.get('/servers/deployment-check').then((r) => r.data),
 
   // Virtual servers
   listVirtual: (configId: number) =>

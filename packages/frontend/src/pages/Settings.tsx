@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConnectionSetupGuide } from '@/components/connections/ConnectionSetupGuide';
+import { ConnectionSetupHelpDialog } from '@/components/connections/ConnectionSetupHelpDialog';
 import { ConnectionSetupWizard } from '@/components/connections/ConnectionSetupWizard';
 import { ConnectionFormDialog } from '@/components/connections/ConnectionFormDialog';
 import { DEFAULT_CONNECTION_FORM, type ConnectionFormState } from '@/content/connection-setup';
@@ -22,7 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 export default function Settings() {
@@ -136,6 +137,7 @@ function AccountTab() {
 
 function ConnectionsTab() {
   const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { data: servers, isLoading } = useQuery({ queryKey: ['servers'], queryFn: serversApi.list });
   const createServer = useMutation({ mutationFn: (data: any) => serversApi.create(data), onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }) });
   const updateServer = useMutation({ mutationFn: ({ id, data }: any) => serversApi.update(id, data), onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }) });
@@ -148,10 +150,21 @@ function ConnectionsTab() {
   const [editId, setEditId] = useState<number | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [webqueryTestPassed, setWebqueryTestPassed] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [form, setForm] = useState<ConnectionFormState>(DEFAULT_CONNECTION_FORM);
 
   const serverList = useMemo(() => (Array.isArray(servers) ? servers : []), [servers]);
   const hasSshOnAnyConnection = serverList.some((s: any) => s.hasSshCredentials);
+
+  useEffect(() => {
+    if (searchParams.get('wizard') !== '1' || isLoading) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('wizard');
+    setSearchParams(next, { replace: true });
+    if (serverList.length === 0) {
+      setShowWizard(true);
+    }
+  }, [searchParams, setSearchParams, isLoading, serverList.length]);
 
   if (isLoading) return <PageLoader />;
 
@@ -219,22 +232,35 @@ function ConnectionsTab() {
         hasSshOnAnyConnection={hasSshOnAnyConnection}
         webqueryTestPassed={webqueryTestPassed}
         onStartWizard={() => setShowWizard(true)}
-        onAddManually={() => { resetForm(); setEditId(null); setShowAdd(true); }}
       />
 
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Manage TeamSpeak server connections</p>
-        <Button size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}>
-          <Plus className="h-4 w-4 mr-1" /> Add connection
-        </Button>
-      </div>
+      {serverList.length > 0 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-muted-foreground">Manage TeamSpeak server connections</p>
+          <Button size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}>
+            <Plus className="h-4 w-4 mr-1" /> Add connection
+          </Button>
+        </div>
+      )}
 
       {serverList.length === 0 ? (
         <EmptyState
           icon={Server}
-          title="No connections yet"
-          description="Use the setup wizard above, or add a connection manually when you have your WebQuery API key ready."
-        />
+          title="Connect your TeamSpeak server"
+          description="The setup wizard walks you through WebQuery and optional SSH step by step."
+        >
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <Button size="sm" onClick={() => setShowWizard(true)}>
+              <Wand2 className="h-4 w-4 mr-1" /> Start setup wizard
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => { resetForm(); setEditId(null); setShowAdd(true); }}>
+              Add manually
+            </Button>
+            <Button variant="ghost" size="sm" className="text-xs text-muted-foreground" onClick={() => setHelpOpen(true)}>
+              Need help?
+            </Button>
+          </div>
+        </EmptyState>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {serverList.map((server: any) => (
@@ -310,6 +336,15 @@ function ConnectionsTab() {
         open={showWizard}
         onOpenChange={setShowWizard}
         onComplete={() => setWebqueryTestPassed(true)}
+      />
+
+      <ConnectionSetupHelpDialog
+        open={helpOpen}
+        onOpenChange={setHelpOpen}
+        hasConnections={serverList.length > 0}
+        hasSshOnAnyConnection={hasSshOnAnyConnection}
+        webqueryTestPassed={webqueryTestPassed}
+        onStartWizard={() => { setHelpOpen(false); setShowWizard(true); }}
       />
 
       <ConfirmDialog

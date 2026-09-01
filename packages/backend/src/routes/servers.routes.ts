@@ -13,6 +13,15 @@ import {
 
 export const serverRoutes: Router = Router();
 
+// Deployment self-check for the connection setup wizard (must be before /:configId routes)
+serverRoutes.get('/deployment-check', requireRole('admin'), async (_req: Request, res: Response, next) => {
+  try {
+    const { detectDeploymentScenario } = await import('../utils/detect-deployment.js');
+    const result = await detectDeploymentScenario();
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // List all configured TS server connections
 serverRoutes.get('/', async (req: Request, res: Response, next) => {
   try {

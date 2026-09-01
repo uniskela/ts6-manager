@@ -101,7 +101,7 @@ export default function Dashboard() {
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <Button size="sm" asChild>
-                  <Link to="/settings?tab=connections">Go to Connections</Link>
+                  <Link to="/settings?tab=connections&wizard=1">Go to Connections</Link>
                 </Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={dismissNudge} aria-label="Dismiss">
                   <X className="h-4 w-4" />
@@ -121,7 +121,7 @@ export default function Dashboard() {
         >
           {hasNoConnections && (
             <Button size="sm" asChild>
-              <Link to="/settings?tab=connections">Open connection setup</Link>
+              <Link to="/settings?tab=connections&wizard=1">Open connection setup</Link>
             </Button>
           )}
         </EmptyState>
