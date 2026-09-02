@@ -28,6 +28,7 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 - Extended [CREDITS.md](CREDITS.md) with fork attribution for coom, kytos22, mqh9007, simardwtf, and prankroker
 
+## [1.3.8] - 2026-09-01
 
 ### Added
 
