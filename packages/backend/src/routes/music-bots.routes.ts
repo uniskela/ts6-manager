@@ -3,6 +3,7 @@ import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { downloadYouTube, resolveSpotifyToYouTube, expandYouTubeToWatchUrls, isYouTubeHostUrl, parseYouTubeUrl } from '../voice/audio/youtube.js';
+import { isYouTubePlaylistUrl } from '../voice/audio/playlist-import-plan.js';
 import {
   appleMusicTrackToYouTubeUrl,
   isAppleMusicShareUrl,
@@ -300,26 +301,20 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       appleMusicPending = am.tracks.slice(1, PLAYLIST_CAP);
     } else if (isYouTubeHostUrl(mediaUrl)) {
       const parsed = parseYouTubeUrl(mediaUrl);
-      try {
+      if (isYouTubePlaylistUrl(mediaUrl)) {
         const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
         if (expanded.urls.length > 0) {
           urlsToPlay = expanded.urls;
           playlistTitle = expanded.title;
-        } else if (parsed.watchUrl) {
-          urlsToPlay = [parsed.watchUrl];
-        } else if (parsed.listId && !parsed.videoId) {
+        } else {
           throw new AppError(502, 'Could not resolve any videos from that playlist URL');
         }
-      } catch (err) {
-        if (err instanceof AppError) throw err;
-        // Single-video Music/watch URLs can still download via canonical watch URL.
-        if (parsed.watchUrl) {
-          urlsToPlay = [parsed.watchUrl];
-        } else if (parsed.canonicalUrl && isYouTubeHostUrl(parsed.canonicalUrl) && parsed.videoId) {
-          urlsToPlay = [`https://www.youtube.com/watch?v=${parsed.videoId}`];
-        } else {
-          throw new AppError(502, `Failed to resolve YouTube URL: ${(err as Error).message || err}`);
-        }
+      } else if (parsed.watchUrl) {
+        urlsToPlay = [parsed.watchUrl];
+      } else if (parsed.canonicalUrl && parsed.videoId) {
+        urlsToPlay = [`https://www.youtube.com/watch?v=${parsed.videoId}`];
+      } else {
+        throw new AppError(502, 'Could not resolve that YouTube URL');
       }
     }
 

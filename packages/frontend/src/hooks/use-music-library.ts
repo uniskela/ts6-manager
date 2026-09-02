@@ -105,6 +105,7 @@ export function useYouTubeImportStatus(configId: number | null, jobId: string | 
     queryFn: () => musicLibraryApi.youtubeImportStatus(configId!, jobId!),
     enabled: !!configId && !!jobId,
     refetchInterval: (query) => {
+      if (query.state.error) return false;
       const status = query.state.data?.status;
       return status === 'pending' || status === 'running' ? 2000 : false;
     },

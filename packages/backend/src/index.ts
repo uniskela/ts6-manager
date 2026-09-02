@@ -14,6 +14,7 @@ import { setWsSession } from './ws/ws-session.js';
 import type { JwtPayload } from '@ts6/common';
 import fs from 'fs';
 import path from 'path';
+import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -139,6 +140,8 @@ async function main() {
   voiceBotManager.setMusicCommandHandler(musicCommandHandler);
   await musicCommandHandler.refreshAllBotChannels();
 
+  const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
+
   server.listen(config.port, () => {
     console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);
     console.log(`[TS6 WebUI] WebSocket available at ws://localhost:${config.port}/ws`);
@@ -148,6 +151,7 @@ async function main() {
   // Graceful shutdown
   const shutdown = async () => {
     console.log('\n[TS6 WebUI] Shutting down...');
+    stopIptvAutoRefresh();
     await voiceBotManager.stopAll();
     botEngine.destroy();
     connectionPool.destroy();

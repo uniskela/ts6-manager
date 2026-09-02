@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { formatUptime } from '@/lib/utils';
-import { Users, MoreHorizontal, LogOut, Ban, Zap, Youtube, Radio } from 'lucide-react';
+import { Users, MoreHorizontal, LogOut, Ban, Zap, Youtube, Radio, Copy } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import type { MusicBotSummary, RadioStationInfo } from '@ts6/common';
@@ -35,6 +35,9 @@ export default function Clients() {
   const kickClient = useKickClient();
   const banClient = useBanClient();
   const pokeClient = usePokeClient();
+  const copyIp = (ip: string) => {
+    void navigator.clipboard.writeText(ip).then(() => toast.success('IP copied'));
+  };
   const { data: bots } = useMusicBots();
   const { data: stations } = useRadioStations(selectedConfigId);
   const playUrl = usePlayUrl();
@@ -155,6 +158,31 @@ export default function Clients() {
         header: 'Country',
         cell: ({ getValue }) => <span className="font-mono-data text-xs">{(getValue() as string) || '-'}</span>,
       },
+      ...(isAdmin
+        ? [{
+            accessorKey: 'connection_client_ip',
+            header: 'IP',
+            cell: ({ row }: { row: { original: Record<string, unknown> } }) => {
+              const ip = String(row.original.connection_client_ip || '-');
+              return (
+                <div className="flex items-center gap-1 font-mono-data text-xs">
+                  <span>{ip}</span>
+                  {ip !== '-' && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      aria-label="Copy IP"
+                      onClick={() => copyIp(ip)}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </Button>
+                  )}
+                </div>
+              );
+            },
+          } as ColumnDef<any>]
+        : []),
       {
         accessorKey: 'client_idle_time',
         header: 'Idle',
@@ -164,8 +192,18 @@ export default function Clients() {
         accessorKey: 'client_away',
         header: 'Status',
         cell: ({ row }) => {
-          if (Number(row.original.client_away) === 1) return <Badge variant="warning" className="text-[10px]">Away</Badge>;
-          if (Number(row.original.client_input_muted) === 1) return <Badge variant="secondary" className="text-[10px]">Muted</Badge>;
+          const o = row.original;
+          if (Number(o.client_output_muted) === 1 && Number(o.client_away) === 1) {
+            return <Badge className="bg-orange-500/15 text-orange-700 text-[10px]">Speaker away</Badge>;
+          }
+          if (Number(o.client_output_muted) === 1 && Number(o.client_input_muted) === 1) {
+            return <Badge className="bg-orange-500/15 text-orange-700 text-[10px]">Speaker + mic muted</Badge>;
+          }
+          if (Number(o.client_output_muted) === 1) {
+            return <Badge className="bg-orange-500/15 text-orange-700 text-[10px]">Speaker muted</Badge>;
+          }
+          if (Number(o.client_away) === 1) return <Badge variant="warning" className="text-[10px]">Away</Badge>;
+          if (Number(o.client_input_muted) === 1) return <Badge variant="secondary" className="text-[10px]">Mic muted</Badge>;
           return <Badge variant="success" className="text-[10px]">Active</Badge>;
         },
       },

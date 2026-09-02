@@ -20,4 +20,8 @@ export const clientsApi = {
     api.post(`${base(configId, sid)}/${clid}/poke`, { msg }).then((r) => r.data),
   message: (configId: number, sid: number, clid: number, msg: string) =>
     api.post(`${base(configId, sid)}/${clid}/message`, { msg }).then((r) => r.data),
+  avatar: async (configId: number, sid: number, clid: number): Promise<Blob> => {
+    const response = await api.get(`${base(configId, sid)}/${clid}/avatar`, { responseType: 'blob' });
+    return response.data as Blob;
+  },
 };

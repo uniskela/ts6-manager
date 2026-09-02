@@ -1050,7 +1050,7 @@ function LibraryTab() {
   const handleBatchDownload = () => {
     if (!configId || !urlInfo) return;
     const selected = selectedUrlItems(urlInfo.items, selectedUrlIds);
-    const urls = selected.map((item) => `https://youtube.com/watch?v=${item.id}`);
+    const urls = selected.map((item) => `https://www.youtube.com/watch?v=${item.id}`);
     setBatchProgress(`Downloading 0/${urls.length}...`);
     ytBatchDownload.mutate({ configId, urls }, {
       onSuccess: (data: any) => {
@@ -1334,7 +1334,7 @@ function LibraryTab() {
                     </div>
                     {urlInfo.type === 'video' && (
                       <Button variant="default" size="sm" className="h-7 text-xs shrink-0"
-                        onClick={(e) => { e.stopPropagation(); handleYtDownload(`https://youtube.com/watch?v=${item.id}`); }}
+                        onClick={(e) => { e.stopPropagation(); handleYtDownload(`https://www.youtube.com/watch?v=${item.id}`); }}
                         disabled={ytDownload.isPending}
                       >
                         <Download className="h-3 w-3 mr-1" /> Download
@@ -1389,7 +1389,7 @@ function LibraryTab() {
                     <p className="text-[10px] text-muted-foreground">{r.artist} - {formatTime(r.duration)}</p>
                   </div>
                   <Button variant="outline" size="sm" className="h-7 text-xs shrink-0"
-                    onClick={() => handleYtDownload(`https://youtube.com/watch?v=${r.id}`)}
+                    onClick={() => handleYtDownload(`https://www.youtube.com/watch?v=${r.id}`)}
                     disabled={ytDownload.isPending}
                   >
                     <Download className="h-3 w-3 mr-1" /> Download
@@ -1606,7 +1606,7 @@ function PlaylistsTab() {
 
   const handleAddSingleDownload = (item: { id: string; title?: string; artist?: string; duration?: number }) => {
     if (!selectedConfigId || !selectedId) return;
-    const url = `https://youtube.com/watch?v=${item.id}`;
+    const url = `https://www.youtube.com/watch?v=${item.id}`;
 
     // Stream playlists: register URL only (download on play). Local: download now.
     if (playlistMode === 'stream') {
@@ -1668,7 +1668,7 @@ function PlaylistsTab() {
         {
           configId: selectedConfigId,
           items: selectedItems.map((i) => ({
-            url: `https://youtube.com/watch?v=${i.id}`,
+            url: `https://www.youtube.com/watch?v=${i.id}`,
             title: i.title,
             artist: i.artist,
             duration: i.duration,
@@ -1705,7 +1705,7 @@ function PlaylistsTab() {
       return;
     }
 
-    const urls = selectedItems.map((i: any) => `https://youtube.com/watch?v=${i.id}`);
+    const urls = selectedItems.map((i: any) => `https://www.youtube.com/watch?v=${i.id}`);
     setAddBatchProgress(`Downloading 0/${urls.length}...`);
     ytBatchDownload.mutate(
       { configId: selectedConfigId, urls },

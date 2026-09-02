@@ -467,6 +467,47 @@ export async function downloadYouTube(
   return { filePath, info };
 }
 
+/** Resolve a direct audio stream URL for YouTube without downloading (prankroker approach). */
+export async function resolveYouTubeAudioStream(
+  url: string,
+): Promise<{ streamUrl: string; info: YouTubeInfo }> {
+  const parsed = parseYouTubeUrl(url);
+  const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
+  const result = await runYtDlp(withMediaUrl([
+    ...getCookieArgs(),
+    '--no-warnings',
+    '--no-playlist',
+    '-f', 'ba/b',
+    '--dump-single-json',
+    '--no-download',
+  ], mediaUrl));
+
+  if (result.code !== 0) {
+    throw new Error(`yt-dlp stream resolve failed: ${summarizeYtDlpStderr(result.stderr)}`);
+  }
+
+  let data: Record<string, unknown>;
+  try {
+    data = JSON.parse(result.stdout.trim().split('\n').find((l) => l.startsWith('{')) || result.stdout.trim());
+  } catch {
+    throw new Error('Failed to parse yt-dlp stream output');
+  }
+
+  const streamUrl = typeof data.url === 'string' ? data.url : '';
+  if (!streamUrl) throw new Error('No stream URL in yt-dlp output');
+
+  const info: YouTubeInfo = {
+    id: String(data.id ?? parsed.videoId ?? ''),
+    title: (data.title as string) || 'Unknown',
+    artist: (data.uploader as string) || (data.channel as string) || 'Unknown',
+    duration: (data.duration as number) || 0,
+    thumbnail: (data.thumbnail as string) || '',
+    url: mediaUrl,
+  };
+
+  return { streamUrl, info };
+}
+
 /**
  * Lightweight metadata lookup for a single YouTube video id (no download).
  * Used when scanning `%(id)s.ext` files that were downloaded without library rows.
@@ -541,8 +582,12 @@ export async function getYouTubeUrlInfo(
   }
 
   const parsed = parseYouTubeUrl(url);
-  // Prefer playlist endpoint when a list id is present (Music mixes, playlists).
-  const probeUrl = parsed.listId ? parsed.playlistUrl! : parsed.canonicalUrl;
+  // Only probe as playlist when the URL is a bare playlist (no v=). Video URLs
+  // with &list= (opened from a playlist or Mix) must stay single-track.
+  const probeUrl =
+    parsed.listId && !parsed.videoId
+      ? (parsed.playlistUrl ?? parsed.canonicalUrl)
+      : (parsed.watchUrl ?? parsed.canonicalUrl);
 
   const result = await runYtDlp(withMediaUrl([
     ...getCookieArgs(),
@@ -687,7 +732,10 @@ export async function expandYouTubeToWatchUrls(
 ): Promise<{ type: "video" | "playlist"; urls: string[]; title?: string }> {
   const parsed = parseYouTubeUrl(url);
 
-  if (parsed.listId || !parsed.videoId) {
+  // Expand only bare playlist URLs. A video with &list= plays that video only.
+  const isPlaylist = parsed.listId && !parsed.videoId;
+
+  if (isPlaylist) {
     try {
       const info = await getYouTubeUrlInfo(url);
       if (info.items.length > 0) {

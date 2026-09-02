@@ -9,6 +9,8 @@ import {
   isYouTubeHostUrl,
   parseYouTubeUrl,
 } from './audio/youtube.js';
+import { isYouTubePlaylistUrl } from './audio/playlist-import-plan.js';
+import { fetchLyrics, cleanTrackTitle, chunkLyrics, lyricsInputFromTrack } from './lyrics.js';
 import {
   appleMusicTrackToYouTubeUrl,
   isAppleMusicShareUrl,
@@ -369,6 +371,16 @@ export class MusicCommandHandler {
           case 'viewers':
             this.handleViewers(bot, userClid);
             break;
+          case 'channels':
+            await this.handleChannels(bot, userClid, args);
+            break;
+          case 'tv':
+          case 'iptv':
+            await this.handleTv(bot, userClid, args);
+            break;
+          case 'lyrics':
+            await this.handleLyrics(bot, userClid, args);
+            break;
         }
       } catch (err: any) {
         console.error(`[MusicCmd] Error handling !${command}: ${err.message}`);
@@ -613,23 +625,22 @@ export class MusicCommandHandler {
       appleMusicPending = am.tracks.slice(1, PLAYLIST_CAP);
     } else if (isYouTubeHostUrl(mediaUrl)) {
       const parsed = parseYouTubeUrl(mediaUrl);
-      try {
-        const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
-        if (expanded.urls.length > 0) {
-          urlsToPlay = expanded.urls;
-          playlistTitle = expanded.title;
-        } else if (parsed.watchUrl) {
-          urlsToPlay = [parsed.watchUrl];
-        } else if (parsed.listId && !parsed.videoId) {
-          throw new Error('Could not resolve any videos from that playlist URL');
-        }
-      } catch (err) {
-        // Single-video URLs can still download via canonical watch URL.
-        if (parsed.watchUrl) {
-          urlsToPlay = [parsed.watchUrl];
-        } else {
+      if (isYouTubePlaylistUrl(mediaUrl)) {
+        try {
+          const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
+          if (expanded.urls.length > 0) {
+            urlsToPlay = expanded.urls;
+            playlistTitle = expanded.title;
+          } else {
+            throw new Error('Could not resolve any videos from that playlist URL');
+          }
+        } catch (err) {
           throw err;
         }
+      } else if (parsed.watchUrl) {
+        urlsToPlay = [parsed.watchUrl];
+      } else {
+        throw new Error('Could not resolve that YouTube URL');
       }
     }
 
@@ -984,6 +995,108 @@ export class MusicCommandHandler {
     }
     await bot.stopVideoStream();
     this.reply(bot, userClid, 'Video stream stopped.');
+  }
+
+  private async handleChannels(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    if (!serverConfigId) {
+      this.reply(bot, userClid, 'No server configured for this bot.');
+      return;
+    }
+    const search = args.trim();
+    const channels = await this.prisma.iptvChannel.findMany({
+      where: {
+        playlist: { serverConfigId },
+        ...(search ? { name: { contains: search } } : {}),
+      },
+      orderBy: { position: 'asc' },
+      take: 20,
+    });
+
+    if (channels.length === 0) {
+      this.reply(bot, userClid, search
+        ? `No IPTV channels matching "${search}". Add a playlist in the IPTV page.`
+        : 'No IPTV channels found. Add a playlist in the IPTV page.');
+      return;
+    }
+
+    const list = channels.map((c) => `• ${c.name}`).join('\n');
+    this.reply(
+      bot,
+      userClid,
+      `IPTV channels${search ? ` matching "${search}"` : ''} (first ${channels.length}):\n${list}\n\nUse !tv <name> to stream one.`,
+    );
+  }
+
+  private async handleTv(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    const query = args.trim();
+    if (!query) {
+      this.reply(bot, userClid, 'Usage: !tv <channel name>  — Use !channels to list.');
+      return;
+    }
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    if (!serverConfigId) {
+      this.reply(bot, userClid, 'No server configured for this bot.');
+      return;
+    }
+
+    const channel = await this.prisma.iptvChannel.findFirst({
+      where: { playlist: { serverConfigId }, name: { contains: query } },
+      orderBy: { position: 'asc' },
+    });
+    if (!channel) {
+      this.reply(bot, userClid, `No channel matching "${query}". Use !channels ${query} to search.`);
+      return;
+    }
+
+    if (bot.videoStreaming) {
+      await bot.setVideoSource(channel.url);
+      this.reply(bot, userClid, `Now streaming: ${channel.name}`);
+      return;
+    }
+
+    this.reply(bot, userClid, `Starting stream: ${channel.name}...`);
+    try {
+      await bot.startVideoStream(channel.url);
+      this.reply(bot, userClid, `Video stream started: ${channel.name}`);
+    } catch (err: any) {
+      this.reply(bot, userClid, `Failed to start stream: ${err.message}`);
+    }
+  }
+
+  private async handleLyrics(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    let input: { artist?: string; title?: string; query?: string };
+    let label: string;
+
+    if (args.trim()) {
+      input = { query: args.trim() };
+      label = args.trim();
+    } else {
+      const np = bot.nowPlaying;
+      if (!np) {
+        this.reply(bot, userClid, 'Nothing playing. Usage: !lyrics [artist - title]');
+        return;
+      }
+      const parsed = lyricsInputFromTrack({ artist: np.artist, title: np.title });
+      input = parsed.input;
+      label = parsed.label;
+    }
+
+    this.reply(bot, userClid, 'Looking up lyrics…');
+    const result = await fetchLyrics(input);
+    if (!result) {
+      this.reply(bot, userClid, `Lyrics not found for "${label}".`);
+      return;
+    }
+    if (result.instrumental) {
+      this.reply(bot, userClid, `♪ ${result.artist} — ${result.title}: instrumental track.`);
+      return;
+    }
+
+    const header = `🎤 ${result.artist ? `${result.artist} — ` : ''}${result.title}`;
+    for (const chunk of chunkLyrics(header, result.lyrics, 900)) {
+      this.reply(bot, userClid, chunk);
+    }
   }
 
   private handleViewers(bot: VoiceBot, userClid: number): void {

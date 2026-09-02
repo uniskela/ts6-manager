@@ -42,8 +42,12 @@ Ideas and patches cherry-picked from active community forks (all MIT-licensed). 
 
 | Fork | Author | Commits / area | Adopted in uniskela |
 |------|--------|----------------|---------------------|
-| [coom/ts6-manager](https://github.com/coom/ts6-manager) | [@coom](https://github.com/coom) | Auth refresh single-flight, WebQuery boolean fixes, YouTube playlist import, Aug 2026 security review (RBAC, yt-dlp `--`, WebSocket scoping) | Phases 1–2, 4 |
+| [coom/ts6-manager](https://github.com/coom/ts6-manager) | [@coom](https://github.com/coom) | Auth refresh single-flight, WebQuery boolean fixes, YouTube playlist import, Aug 2026 security review (RBAC, yt-dlp `--`, WebSocket scoping), playlist-import edge-case fixes, `!lyrics` | Phases 1–2, 4, v1.3.9 |
 | [uniplayer1/ts6-manager](https://github.com/uniplayer1/ts6-manager) | [@uniplayer1](https://github.com/uniplayer1) | Auto-stop when channel empty, TS3 2568 not fatal, video download-then-stream, volume slider, max duration UI, bot-flow docs | Phases 1, 3, 5 |
+| [kytos22/ts6-manager](https://github.com/kytos22/ts6-manager) | [@kytos22](https://github.com/kytos22) | Client avatars + voice-state icons in Channels, per-channel file storage summary | v1.3.9 |
+| [mqh9007/ts6-manager](https://github.com/mqh9007/ts6-manager) | [@mqh9007](https://github.com/mqh9007) | Music bot status auto-refresh, client IP/status visibility, Settings About build version | v1.3.9 |
+| [simardwtf/ts6-manager](https://github.com/simardwtf/ts6-manager) | [@simardwtf](https://github.com/simardwtf) | IPTV / M3U streaming (`!tv`, `!channels`) | v1.3.9 |
+| [prankroker/ts6-manager](https://github.com/prankroker/ts6-manager) | [@prankroker](https://github.com/prankroker) | YouTube audio stream-without-download (stream-first `!play`) | v1.3.9 |
 
 [joshii-h/ts6-manager](https://github.com/joshii-h/ts6-manager) shares the same author line as coom — credit @coom once; SAML/Discord work intentionally not absorbed.
 

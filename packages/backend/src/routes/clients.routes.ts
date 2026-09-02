@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
-import { TSApiError } from '../middleware/error-handler.js';
+import { AppError, TSApiError } from '../middleware/error-handler.js';
 
 export const clientRoutes: Router = Router({ mergeParams: true });
 
@@ -10,6 +11,75 @@ const getClient = (req: Request) => {
   return pool.getClient(parseInt(String(req.params.configId)));
 };
 const getSid = (req: Request) => parseInt(String(req.params.sid));
+
+interface AvatarCacheEntry {
+  data: Buffer;
+  contentType: string;
+  etag: string;
+  verifiedAt: number;
+}
+
+const AVATAR_CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+const MAX_CACHED_AVATARS = 256;
+const avatarCache = new Map<string, AvatarCacheEntry>();
+const avatarDownloads = new Map<string, Promise<AvatarCacheEntry>>();
+
+function avatarContentType(data: Buffer): string {
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'image/jpeg';
+  if (data.length >= 6 && ['GIF87a', 'GIF89a'].includes(data.subarray(0, 6).toString('ascii'))) return 'image/gif';
+  if (data.length >= 12 && data.subarray(0, 4).toString('ascii') === 'RIFF' && data.subarray(8, 12).toString('ascii') === 'WEBP') return 'image/webp';
+  throw new AppError(502, 'TeamSpeak profile avatar is not a supported image');
+}
+
+function parseMyTeamSpeakAvatar(rawValue: unknown): URL | null {
+  const raw = String(rawValue || '').trim();
+  if (!raw) return null;
+  const value = raw.includes(',') ? raw.slice(raw.indexOf(',') + 1) : raw;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new AppError(502, 'TeamSpeak returned an invalid profile avatar URL');
+  }
+  if (
+    url.protocol !== 'https:'
+    || url.hostname !== 'storage.googleapis.com'
+    || url.port !== ''
+    || !url.pathname.startsWith('/ts-sys-myts-avatars/')
+    || url.username !== ''
+    || url.password !== ''
+  ) {
+    throw new AppError(502, 'TeamSpeak returned an untrusted profile avatar URL');
+  }
+  return url;
+}
+
+async function fetchAvatar(url: URL): Promise<AvatarCacheEntry> {
+  const response = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(8000) });
+  if (!response.ok) throw new AppError(502, `TeamSpeak profile avatar returned HTTP ${response.status}`);
+  const declaredSize = Number(response.headers.get('content-length') || 0);
+  if (declaredSize > MAX_AVATAR_BYTES) throw new AppError(502, 'TeamSpeak profile avatar is too large');
+  if (!response.body) throw new AppError(502, 'TeamSpeak profile avatar returned an empty response');
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let received = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    received += value.byteLength;
+    if (received > MAX_AVATAR_BYTES) {
+      await reader.cancel();
+      throw new AppError(502, 'TeamSpeak profile avatar is too large');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  const data = Buffer.concat(chunks, received);
+  const contentType = avatarContentType(data);
+  const digest = createHash('sha256').update(data).digest('base64url');
+  return { data, contentType, etag: `"${digest}"`, verifiedAt: Date.now() };
+}
 
 clientRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
@@ -38,6 +108,45 @@ clientRoutes.get('/database/:cldbid', requireRole('admin'), async (req: Request,
   try {
     const result = await getClient(req).execute(getSid(req), 'clientdbinfo', { cldbid: String(req.params.cldbid) });
     res.json(result);
+  } catch (err) { next(err); }
+});
+
+clientRoutes.get('/:clid/avatar', async (req: Request, res: Response, next) => {
+  try {
+    const clid = Number(req.params.clid);
+    if (!Number.isInteger(clid) || clid <= 0) throw new AppError(400, 'A valid connected client ID is required');
+
+    const info = (await getClient(req).execute(getSid(req), 'clientinfo', { clid: String(clid) }))[0] || {};
+    const avatarUrl = parseMyTeamSpeakAvatar(info.client_myteamspeak_avatar);
+    if (!avatarUrl) throw new AppError(404, 'This client has no TeamSpeak profile avatar');
+
+    const cacheKey = `${req.params.configId}:${getSid(req)}:${info.client_unique_identifier || clid}:${avatarUrl.href}`;
+    let entry = avatarCache.get(cacheKey);
+    if (!entry || Date.now() - entry.verifiedAt >= AVATAR_CACHE_TTL_MS) {
+      let pending = avatarDownloads.get(cacheKey);
+      if (!pending) {
+        pending = fetchAvatar(avatarUrl).finally(() => avatarDownloads.delete(cacheKey));
+        avatarDownloads.set(cacheKey, pending);
+      }
+      entry = await pending;
+      avatarCache.delete(cacheKey);
+      avatarCache.set(cacheKey, entry);
+      while (avatarCache.size > MAX_CACHED_AVATARS) {
+        const oldestKey = avatarCache.keys().next().value;
+        if (oldestKey === undefined) break;
+        avatarCache.delete(oldestKey);
+      }
+    }
+
+    res.set({
+      'Content-Type': entry.contentType,
+      'Content-Length': String(entry.data.length),
+      'Cache-Control': 'private, max-age=300, must-revalidate',
+      ETag: entry.etag,
+      'X-Content-Type-Options': 'nosniff',
+    });
+    if (req.headers['if-none-match'] === entry.etag) return res.status(304).end();
+    res.send(entry.data);
   } catch (err) { next(err); }
 });
 

@@ -23,7 +23,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2 } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info } from 'lucide-react';
+import { APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 import { toast } from 'sonner';
 
 export default function Settings() {
@@ -43,6 +44,7 @@ export default function Settings() {
           <TabsTrigger value="account"><Lock className="h-3.5 w-3.5 mr-1" /> Account</TabsTrigger>
           {isAdmin && <TabsTrigger value="users"><Users className="h-3.5 w-3.5 mr-1" /> Users</TabsTrigger>}
           {isAdmin && <TabsTrigger value="youtube"><Youtube className="h-3.5 w-3.5 mr-1" /> YouTube</TabsTrigger>}
+          <TabsTrigger value="about"><Info className="h-3.5 w-3.5 mr-1" /> About</TabsTrigger>
         </TabsList>
 
         {isAdmin && (
@@ -66,8 +68,32 @@ export default function Settings() {
             <YouTubeTab />
           </TabsContent>
         )}
+
+        <TabsContent value="about" className="mt-4">
+          <AboutTab />
+        </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+function AboutTab() {
+  return (
+    <Card className="max-w-md">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-sm font-medium">
+          <Info className="h-4 w-4 text-primary" />
+          About
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <div className="flex items-center justify-between">
+          <span className="text-muted-foreground">Version</span>
+          <Badge variant="secondary" className="font-mono-data">{APP_VERSION}</Badge>
+        </div>
+        <p className="text-xs text-muted-foreground font-mono-data">{APP_VERSION_LABEL}</p>
+      </CardContent>
+    </Card>
   );
 }
 
