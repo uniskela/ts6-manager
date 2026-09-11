@@ -4,6 +4,10 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ## [Unreleased]
 
+### Changed
+
+- Release Please now owns semver bumps, changelog sections, tags, and GitHub Releases on `main` (aligned with adhd-hub / codex-lb-rates)
+
 ## [1.4.0] - 2026-09-11
 
 ### Security
