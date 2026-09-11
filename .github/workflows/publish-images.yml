@@ -67,7 +67,7 @@ jobs:
           COMPONENT: ${{ matrix.component }}
         run: |
           set -euo pipefail
-          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
           {
             echo "list<<EOF"
             echo "${IMAGE_PREFIX}/${COMPONENT}:sha-${SHORT_SHA}"
@@ -144,7 +144,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          SHORT_SHA="$(git rev-parse --short=7 HEAD)"
+          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
           {
             echo "list<<EOF"
             echo "${IMAGE_PREFIX}/all-in-one:sha-${SHORT_SHA}"
