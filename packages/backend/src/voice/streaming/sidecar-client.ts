@@ -58,6 +58,7 @@ export class SidecarClient {
     framerate?: number,
     bitrate?: string,
     volume?: number,
+    loop?: boolean,
   ): Promise<void> {
     await this.call('POST', '/source', {
       source,
@@ -66,6 +67,7 @@ export class SidecarClient {
       framerate,
       bitrate,
       volume,
+      loop,
     });
   }
 

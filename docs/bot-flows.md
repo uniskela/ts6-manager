@@ -55,11 +55,14 @@ Conditions that fail skip the connected action branch (depending on edge wiring)
 - **`{{flow.varName}}`** — variables set by earlier nodes in the same run
 - **`{{client.nickname}}`**, **`{{channel.name}}`** — common shortcuts where supported
 
+**Condition expressions are different:** they use expr-eval property access (`event.field`, `flow.varName`) against a scoped data object. Do **not** wrap references in `{{...}}` inside condition expressions — template substitution is intentionally skipped there so untrusted event data (e.g. chat text) cannot alter expression syntax.
+
 ## Security notes
 
 - Bot flow **GET** routes (listing flows, reading `flowData`, webhook tokens) require **admin** role.
 - Webhook endpoints use unguessable tokens; treat leaked tokens like passwords.
 - WebSocket live updates are scoped to servers the authenticated user may access.
+- Condition node expressions are evaluated without template interpolation (injection hardening).
 
 ## Example patterns
 

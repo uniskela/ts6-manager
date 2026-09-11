@@ -4,6 +4,27 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-09-11
+
+### Security
+
+- Bot-flow condition expressions are no longer template-interpolated before evaluation, so untrusted event data (e.g. chat text) cannot alter expr-eval syntax (adapted from [DomeNinchen/ts6forkmanager](https://github.com/DomeNinchen/ts6forkmanager))
+
+### Fixed
+
+- Sidecar compose mounts now share `music-data` with the backend so pre-downloaded videos are readable by ffmpeg
+- On-demand video downloads no longer loop forever; streams auto-stop after the probed clip duration
+- Sidecar A/V pacing clamps anomalous RTP latency spikes that previously overflowed RTP queues
+- SSH query client teardown is awaited on shutdown, and in-flight `connect()` aborts cleanly if `destroy()` races it (avoids nickname-in-use / already-member errors on fast restart)
+- Video stream start/source API calls use a 120s client timeout so long downloads no longer falsely fail at 15s
+
+### Changed
+
+- Sidecar VP8 encode uses multi-threaded libvpx (`-threads` / `-row-mt`), default `-cpu-used 4`, and bitrate-scaled `-bufsize`
+- Channels shows ServerQuery clients with a distinct Query badge (useful for spotting leftover query sessions)
+- WebUI video preview supports mute/unmute while keeping autoplay-safe default mute
+- Extended [CREDITS.md](CREDITS.md) with DomeNinchen fork attribution
+
 ## [1.3.9] - 2026-09-01
 
 ### Added

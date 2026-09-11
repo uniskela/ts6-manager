@@ -103,16 +103,42 @@ function isYtDlpStreamHost(url: string): boolean {
   );
 }
 
+/** Probe a local media file's duration in seconds, or null if unknown. */
+function probeVideoDurationSec(filePath: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const proc = spawn('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ], { shell: false });
+
+    let stdout = '';
+    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+    proc.on('close', (code) => {
+      const seconds = code === 0 ? parseFloat(stdout.trim()) : NaN;
+      resolve(Number.isFinite(seconds) && seconds > 0 ? seconds : null);
+    });
+    proc.on('error', () => resolve(null));
+  });
+}
+
+export interface DownloadedStreamVideo {
+  path: string;
+  /** Set for freshly downloaded temps — used to auto-stop when the clip ends. */
+  durationSec: number | null;
+}
+
 /**
  * Download on-demand video via proxied yt-dlp to a temp file under MUSIC_DIR,
  * then stream from disk (avoids datacenter-IP YouTube 403 on googlevideo URLs).
- * Adapted from uniplayer1/ts6-manager.
+ * Adapted from uniplayer1/ts6-manager; duration probe inspired by DomeNinchen/ts6forkmanager.
  */
 export async function downloadVideoForStream(
   url: string,
   maxHeight: number = 720,
   maxDurationSec: number = 900,
-): Promise<string> {
+): Promise<DownloadedStreamVideo> {
   rejectYtDlpOptionUrl(url);
 
   const isRemote =
@@ -120,7 +146,7 @@ export async function downloadVideoForStream(
     url.startsWith('https://');
 
   if (!isRemote) {
-    return resolvePathUnderMusicDir(url);
+    return { path: resolvePathUnderMusicDir(url), durationSec: null };
   }
 
   const check = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
@@ -129,7 +155,7 @@ export async function downloadVideoForStream(
   }
 
   if (!isYtDlpStreamHost(url)) {
-    return url;
+    return { path: url, durationSec: null };
   }
 
   const musicRoot = ensureMusicDir();
@@ -175,8 +201,11 @@ export async function downloadVideoForStream(
 
   // Re-resolve via allowlisted basename (tempName is server-generated).
   const canonicalTemp = resolvePathUnderMusicDir(tempName);
-  console.log(`[VideoDownload] Downloaded: ${canonicalTemp} (${fs.statSync(canonicalTemp).size} bytes)`);
-  return canonicalTemp;
+  const durationSec = await probeVideoDurationSec(canonicalTemp);
+  console.log(
+    `[VideoDownload] Downloaded: ${canonicalTemp} (${fs.statSync(canonicalTemp).size} bytes, ${durationSec ?? 'unknown'}s)`,
+  );
+  return { path: canonicalTemp, durationSec };
 }
 
 /**

@@ -93,6 +93,11 @@ services:
     environment:
       SIDECAR_PORT: 9800
       SIDECAR_SECRET: ${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env}
+      MUSIC_DIR: /data/music
+      VIDEO_QUEUE_SIZE: 8192
+      AUDIO_QUEUE_SIZE: 16384
+    volumes:
+      - pr-test-music-data:/data/music
     networks:
       - ts6-pr-test
 

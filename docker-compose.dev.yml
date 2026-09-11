@@ -34,6 +34,12 @@ services:
     environment:
       - SIDECAR_PORT=9800
       - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
+      - MUSIC_DIR=/data/music
+      - VIDEO_QUEUE_SIZE=8192
+      - AUDIO_QUEUE_SIZE=16384
+    volumes:
+      # Must match the backend mount — pre-downloaded videos are read by ffmpeg here.
+      - music-data:/data/music
     networks:
       - ts6-network
 

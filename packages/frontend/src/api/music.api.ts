@@ -39,11 +39,14 @@ export const musicBotsApi = {
   playerWidgetToken: (id: number) => api.get(`/music-bots/${id}/player-widget-token`).then((r) => r.data),
 
   // Video Streaming
+  // start/source await a full video download server-side before responding
+  // (often past the client's default 15s timeout), so they get a longer,
+  // bounded timeout of their own instead of the global default.
   startStream: (id: number, source: string, preset?: string, framerate?: number, bitrate?: string, volume?: number) =>
-    api.post(`/music-bots/${id}/stream/start`, { source, preset, framerate, bitrate, volume }).then((r) => r.data),
+    api.post(`/music-bots/${id}/stream/start`, { source, preset, framerate, bitrate, volume }, { timeout: 120000 }).then((r) => r.data),
   stopStream: (id: number) => api.post(`/music-bots/${id}/stream/stop`).then((r) => r.data),
   setStreamSource: (id: number, source: string, volume?: number) =>
-    api.post(`/music-bots/${id}/stream/source`, { source, volume }).then((r) => r.data),
+    api.post(`/music-bots/${id}/stream/source`, { source, volume }, { timeout: 120000 }).then((r) => r.data),
   setStreamVolume: (id: number, volume: number) =>
     api.post(`/music-bots/${id}/stream/volume`, { volume }).then((r) => r.data),
   streamStatus: (id: number) => api.get(`/music-bots/${id}/stream/status`).then((r) => r.data),

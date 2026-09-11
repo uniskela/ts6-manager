@@ -17,7 +17,7 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3 } from 'lucide-react';
+import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
 
@@ -96,36 +96,46 @@ function buildTree(channels: any[]): ChannelNode[] {
 }
 
 function ClientEntry({ client, depth, configId, sid }: { client: ClientInfo; depth: number; configId: number; sid: number }) {
+  const isQuery = client.client_type === '1';
   return (
     <div
       className="flex items-center gap-1.5 py-0.5 px-2 text-xs text-muted-foreground"
       style={{ paddingLeft: `${depth * 16 + 28}px` }}
     >
-      <div className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-[8px] font-mono-data text-primary">
-        <ClientAvatar
-          configId={configId}
-          sid={sid}
-          clid={client.clid}
-          nickname={client.client_nickname}
-        />
-      </div>
-      <span className="flex min-w-4 shrink-0 items-center justify-center gap-0.5" aria-label="Client voice status">
-        {client.client_away === 1 && <Clock3 className="h-3 w-3 text-amber-400" aria-label={client.client_away_message || 'Away'} />}
-        {(client.client_output_muted === 1 || client.client_output_hardware === 0) && <VolumeX className="h-3 w-3 text-rose-400" aria-label="Output muted" />}
-        {(client.client_input_muted === 1 || client.client_input_hardware === 0) && <MicOff className="h-3 w-3 text-rose-400" aria-label="Microphone muted" />}
-        {client.client_away !== 1
-          && client.client_output_muted !== 1
-          && client.client_output_hardware !== 0
-          && client.client_input_muted !== 1
-          && client.client_input_hardware !== 0
-          && (
-            <span
-              className={cn('h-2 w-2 rounded-full bg-sky-400', client.client_flag_talking === 1 && 'bg-emerald-400')}
-              title={client.client_flag_talking === 1 ? 'Talking' : 'Available'}
-            />
-          )}
-      </span>
+      {isQuery ? (
+        <div className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-muted">
+          <Terminal className="h-3 w-3 text-muted-foreground" aria-label="ServerQuery client" />
+        </div>
+      ) : (
+        <div className="relative flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary/10 text-[8px] font-mono-data text-primary">
+          <ClientAvatar
+            configId={configId}
+            sid={sid}
+            clid={client.clid}
+            nickname={client.client_nickname}
+          />
+        </div>
+      )}
+      {!isQuery && (
+        <span className="flex min-w-4 shrink-0 items-center justify-center gap-0.5" aria-label="Client voice status">
+          {client.client_away === 1 && <Clock3 className="h-3 w-3 text-amber-400" aria-label={client.client_away_message || 'Away'} />}
+          {(client.client_output_muted === 1 || client.client_output_hardware === 0) && <VolumeX className="h-3 w-3 text-rose-400" aria-label="Output muted" />}
+          {(client.client_input_muted === 1 || client.client_input_hardware === 0) && <MicOff className="h-3 w-3 text-rose-400" aria-label="Microphone muted" />}
+          {client.client_away !== 1
+            && client.client_output_muted !== 1
+            && client.client_output_hardware !== 0
+            && client.client_input_muted !== 1
+            && client.client_input_hardware !== 0
+            && (
+              <span
+                className={cn('h-2 w-2 rounded-full bg-sky-400', client.client_flag_talking === 1 && 'bg-emerald-400')}
+                title={client.client_flag_talking === 1 ? 'Talking' : 'Available'}
+              />
+            )}
+        </span>
+      )}
       <span className="truncate">{client.client_nickname}</span>
+      {isQuery && <Badge variant="outline" className="h-3.5 px-1 py-0 text-[8px]">Query</Badge>}
     </div>
   );
 }
@@ -302,7 +312,8 @@ export default function Channels() {
     const map = new Map<number, ClientInfo[]>();
     if (!clientData || !Array.isArray(clientData)) return map;
     for (const c of clientData) {
-      if (String(c.client_type) !== '0') continue;
+      // Include ServerQuery clients (type 1) so leftover query sessions after a
+      // restart are visible in the channel they occupy, not only in logs.
       const cid = Number(c.cid);
       const entry: ClientInfo = {
         clid: Number(c.clid),

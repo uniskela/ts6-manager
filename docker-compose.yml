@@ -39,6 +39,13 @@ services:
     environment:
       - SIDECAR_PORT=9800
       - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
+      - MUSIC_DIR=/data/music
+      - VIDEO_QUEUE_SIZE=8192
+      - AUDIO_QUEUE_SIZE=16384
+    volumes:
+      # Must match the backend mount — backend pre-downloads videos here and
+      # ffmpeg in this container reads them back by the same path.
+      - music-data:/data/music
     # Port 9800 is intentionally NOT published — backend reaches sidecar on the internal network only
     networks:
       - ts6-network
