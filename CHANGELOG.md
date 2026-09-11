@@ -2,6 +2,13 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.4.1](https://github.com/uniskela/ts6-manager/compare/v1.4.0...v1.4.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* keep GHCR sha tags aligned with :latest promote ([996a4e2](https://github.com/uniskela/ts6-manager/commit/996a4e2fc7ead98872e3c48ff85f7fabdcd68f80))
+
 ## [Unreleased]
 
 ### Changed
