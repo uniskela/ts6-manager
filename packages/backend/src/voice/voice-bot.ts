@@ -97,6 +97,7 @@ export class VoiceBot extends EventEmitter {
   private _viewers: Map<number, VideoViewerInfo> = new Map();
   private _videoTempFile: string | null = null;
   private _videoEndTimer: ReturnType<typeof setTimeout> | null = null;
+  private _videoDurationSec: number | null = null;
   private _videoStreamVolume: number = 100;
   private autoStopTimer: ReturnType<typeof setInterval> | null = null;
   private autoStopEmptySince: number | null = null;
@@ -314,12 +315,20 @@ export class VoiceBot extends EventEmitter {
     const isDownloadedTemp = filePath.includes('.stream-') && filePath.endsWith('.mp4');
 
     this.clearVideoEndTimer();
+    this._videoDurationSec = null;
     if (isDownloadedTemp) {
       this.cleanupVideoTempFile();
       this._videoTempFile = filePath;
-      if (durationSec != null) {
-        this.scheduleVideoEndStop(durationSec);
+      // Prefer probed duration; if ffprobe fails, fall back to the download
+      // max so a non-looping clip cannot leave the bot "streaming" forever.
+      const stopAfter = durationSec ?? maxDur;
+      this._videoDurationSec = stopAfter;
+      if (durationSec == null) {
+        console.warn(
+          `[VoiceBot ${this.config.id}] Could not probe video duration; auto-stop fallback in ${stopAfter}s`,
+        );
       }
+      this.scheduleVideoEndStop(stopAfter);
     }
     return { path: filePath, loop: !isDownloadedTemp };
   }
@@ -1074,6 +1083,7 @@ export class VoiceBot extends EventEmitter {
     if (!this._videoStreaming) return;
 
     this.clearVideoEndTimer();
+    this._videoDurationSec = null;
 
     // Remove all viewers from TS6 stream first
     if (this.signaling && this._activeStreamId) {
@@ -1176,6 +1186,11 @@ export class VoiceBot extends EventEmitter {
       this._videoStreamVolume,
       loop,
     );
+    // setSource restarts ffmpeg from the beginning for volume changes, so
+    // refresh the auto-stop timer from now for non-looping on-demand clips.
+    if (!loop && this._videoDurationSec != null) {
+      this.scheduleVideoEndStop(this._videoDurationSec);
+    }
     this.emit('videoVolumeChange', this._videoStreamVolume);
   }
 
