@@ -473,9 +473,9 @@ export class BotEngine {
     return this.flows.get(flowId);
   }
 
-  destroy(): void {
-    this.stop();
-    this.eventBridge.destroy();
+  async destroy(): Promise<void> {
+    await this.stop();
+    await this.eventBridge.destroy();
     this.broadcast('bot:engine:stopped', {});
   }
 

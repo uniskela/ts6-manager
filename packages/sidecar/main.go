@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +88,30 @@ func validSource(source string) error {
 		return fmt.Errorf("local source must be under MUSIC_DIR")
 	}
 	return nil
+}
+
+// parseBitrateKbps parses ffmpeg-style bitrate strings ("4500k", "20000K",
+// or a bare number already in kbps) into kbps. Returns 0 if unparseable.
+func parseBitrateKbps(s string) int {
+	s = strings.TrimSpace(s)
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "k"), "K")
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+// videoBufsize picks the VP8 rate-control buffer size for a given target
+// bitrate. Scale to ~2x the target bitrate unless VIDEO_BUFSIZE overrides.
+func videoBufsize(vBitrate string) string {
+	if v := os.Getenv("VIDEO_BUFSIZE"); v != "" {
+		return v
+	}
+	if kbps := parseBitrateKbps(vBitrate); kbps > 0 {
+		return fmt.Sprintf("%dk", kbps*2)
+	}
+	return "500k"
 }
 
 func debugLogsEnabled() bool {
@@ -259,6 +284,10 @@ func (s *Sidecar) computeTrackDelay(kind string, ts uint32, now time.Time) time.
 	if observedLatency < 0 {
 		observedLatency = 0
 	}
+	// A single bad RTP timestamp can otherwise poison the EMA and stall pacing.
+	if observedLatency > s.maxTrackDelay {
+		observedLatency = s.maxTrackDelay
+	}
 
 	current.latency = smoothDuration(current.latency, observedLatency)
 
@@ -275,6 +304,9 @@ func (s *Sidecar) computeTrackDelay(kind string, ts uint32, now time.Time) time.
 	delay := targetWall.Sub(now)
 	if delay < 0 {
 		return 0
+	}
+	if delay > s.maxTrackDelay {
+		delay = s.maxTrackDelay
 	}
 
 	return delay
@@ -307,16 +339,16 @@ type createInFlight struct {
 }
 
 type Peer struct {
-	ID              string
-	PC              *webrtc.PeerConnection
-	VideoTrack      *webrtc.TrackLocalStaticRTP
-	AudioTrack      *webrtc.TrackLocalStaticRTP
-	VideoSSRC       uint32
-	AudioSSRC       uint32
-	Active          bool
-	Started         bool
-	mu              sync.Mutex
-	stopSR          chan struct{}
+	ID         string
+	PC         *webrtc.PeerConnection
+	VideoTrack *webrtc.TrackLocalStaticRTP
+	AudioTrack *webrtc.TrackLocalStaticRTP
+	VideoSSRC  uint32
+	AudioSSRC  uint32
+	Active     bool
+	Started    bool
+	mu         sync.Mutex
+	stopSR     chan struct{}
 }
 
 type Sidecar struct {
@@ -335,13 +367,13 @@ type Sidecar struct {
 	running    bool
 
 	// Atomic timestamps for RTCP Sender Report generation
-	lastVideoRTPTs uint64 // atomic: latest video RTP timestamp seen
-	lastAudioRTPTs uint64 // atomic: latest audio RTP timestamp seen
-	videoPktCount  uint64 // atomic
-	videOctetCount uint64 // atomic
-	audioPktCount  uint64 // atomic
+	lastVideoRTPTs  uint64 // atomic: latest video RTP timestamp seen
+	lastAudioRTPTs  uint64 // atomic: latest audio RTP timestamp seen
+	videoPktCount   uint64 // atomic
+	videOctetCount  uint64 // atomic
+	audioPktCount   uint64 // atomic
 	audioOctetCount uint64 // atomic
-	
+
 	videoQueue chan *rtp.Packet
 	audioQueue chan *rtp.Packet
 
@@ -353,19 +385,20 @@ type Sidecar struct {
 	audioTiming    TrackTiming
 	syncBuffer     time.Duration
 	videoBias      time.Duration
+	maxTrackDelay  time.Duration
 }
 
 func NewSidecar() *Sidecar {
 	return &Sidecar{
-		peers:      make(map[string]*Peer),
-		creating:   make(map[string]*createInFlight),
-		syncBuffer: time.Duration(envIntOrDefault("SYNC_PLAYOUT_BUFFER_MS", 50)) * time.Millisecond,
-		videoBias:  time.Duration(envIntOrDefault("SYNC_VIDEO_BIAS_MS", 0)) * time.Millisecond,
-		videoQueue: make(chan *rtp.Packet, envIntOrDefault("VIDEO_QUEUE_SIZE", 1024)),
-		audioQueue: make(chan *rtp.Packet, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
+		peers:         make(map[string]*Peer),
+		creating:      make(map[string]*createInFlight),
+		syncBuffer:    time.Duration(envIntOrDefault("SYNC_PLAYOUT_BUFFER_MS", 50)) * time.Millisecond,
+		videoBias:     time.Duration(envIntOrDefault("SYNC_VIDEO_BIAS_MS", 0)) * time.Millisecond,
+		maxTrackDelay: time.Duration(envIntOrDefault("SYNC_MAX_DELAY_MS", 500)) * time.Millisecond,
+		videoQueue:    make(chan *rtp.Packet, envIntOrDefault("VIDEO_QUEUE_SIZE", 1024)),
+		audioQueue:    make(chan *rtp.Packet, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
 	}
 }
-
 
 func (s *Sidecar) StartRTP() error {
 	var err error
@@ -591,7 +624,7 @@ func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 	}()
 
 	iceServers := []webrtc.ICEServer{}
-    
+
 	for _, stun := range getStunServers() {
 		iceServers = append(iceServers, webrtc.ICEServer{URLs: []string{stun}})
 	}
@@ -875,7 +908,7 @@ func (s *Sidecar) ClosePeer(id string) {
 	s.peersLock.Unlock()
 }
 
-func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string, volume int) {
+func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string, volume int, loop bool) {
 	s.ffmpegLock.Lock()
 	defer s.ffmpegLock.Unlock()
 
@@ -912,7 +945,7 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 	if source != "" {
 		if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 			args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
-		} else {
+		} else if loop {
 			args = append(args, "-stream_loop", "-1")
 		}
 
@@ -922,9 +955,9 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 	}
 
 	vBitrate := strings.TrimSpace(bitrate)
-		if vBitrate == "" {
-			vBitrate = envOrDefault("VIDEO_BITRATE", "1500k")
-		}
+	if vBitrate == "" {
+		vBitrate = envOrDefault("VIDEO_BITRATE", "1500k")
+	}
 	audioDelayMs := envIntOrDefault("AUDIO_DELAY_MS", 0)
 
 	if source != "" {
@@ -940,13 +973,18 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 	args = append(args,
 		"-pix_fmt", "yuv420p",
 		"-c:v", "libvpx",
-		"-cpu-used", "6",
+		// Lower = better quality/bit; 6 was for single-core encode. With -threads/-row-mt
+		// there is headroom to trade some speed for quality (override via VIDEO_CPU_USED).
+		"-cpu-used", envOrDefault("VIDEO_CPU_USED", "4"),
 		"-deadline", "realtime",
+		// libvpx does not auto-scale across cores without these.
+		"-threads", strconv.Itoa(envIntOrDefault("VIDEO_ENCODE_THREADS", runtime.NumCPU())),
+		"-row-mt", "1",
 		"-lag-in-frames", "0",
 		"-error-resilient", "1",
 		"-b:v", vBitrate,
 		"-maxrate", vBitrate,
-		"-bufsize", envOrDefault("VIDEO_BUFSIZE", "500k"),
+		"-bufsize", videoBufsize(vBitrate),
 		"-keyint_min", "15",
 		"-g", "15",
 		"-auto-alt-ref", "0",
@@ -985,7 +1023,6 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 			fmt.Sprintf("rtp://127.0.0.1:%d", s.audioPort),
 		)
 	}
-
 
 	log.Printf("[FFmpeg] Starting: source=%s video=:%d audio=:%d", source, s.videoPort, s.audioPort)
 
@@ -1170,6 +1207,9 @@ func main() {
 			Framerate int    `json:"framerate"`
 			Bitrate   string `json:"bitrate"`
 			Volume    *int   `json:"volume"`
+			// Loop defaults to true (prior behavior for local backgrounds) when omitted;
+			// the backend sets false for on-demand downloaded clips.
+			Loop *bool `json:"loop"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1189,8 +1229,9 @@ func main() {
 				vol = 100
 			}
 		}
-		log.Printf("[API] Setting source: %s (%dx%d @ %dfps vol=%d)", req.Source, req.Width, req.Height, req.Framerate, vol)
-		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate, vol)
+		loop := req.Loop == nil || *req.Loop
+		log.Printf("[API] Setting source: %s (%dx%d @ %dfps vol=%d loop=%v)", req.Source, req.Width, req.Height, req.Framerate, vol, loop)
+		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate, vol, loop)
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 

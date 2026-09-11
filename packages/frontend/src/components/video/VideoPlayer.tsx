@@ -4,6 +4,7 @@
  */
 
 import { useRef, useEffect, useCallback, useState } from 'react';
+import { Volume2, VolumeX } from 'lucide-react';
 import { musicBotsApi } from '@/api/music.api';
 
 interface VideoPlayerProps {
@@ -16,6 +17,9 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Starts muted so autoplay isn't blocked; unmute to check whether audio
+  // issues are server-side (present here too) or specific to the TS client.
+  const [muted, setMuted] = useState(true);
 
   const cleanup = useCallback(() => {
     if (pcRef.current) {
@@ -109,7 +113,7 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
         ref={videoRef}
         autoPlay
         playsInline
-        muted
+        muted={muted}
         className="w-full h-full object-contain"
       />
       {!connected && !error && (
@@ -129,10 +133,20 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
         </div>
       )}
       {connected && (
-        <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/60 px-2 py-1 rounded text-xs">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-white">LIVE</span>
-        </div>
+        <>
+          <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/60 px-2 py-1 rounded text-xs">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+            <span className="text-white">LIVE</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMuted((m) => !m)}
+            className="absolute bottom-2 right-2 rounded bg-black/60 p-1.5 text-white hover:bg-black/80"
+            title={muted ? 'Unmute preview' : 'Mute preview'}
+          >
+            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+          </button>
+        </>
       )}
     </div>
   );

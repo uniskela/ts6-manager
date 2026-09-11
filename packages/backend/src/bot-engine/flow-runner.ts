@@ -149,8 +149,13 @@ export class FlowRunner {
 
       case 'condition': {
         const condData = node.data as ConditionNodeData;
-        const expression = await ctx.resolveTemplate(condData.expression);
-        const result = await ctx.evaluateCondition(expression);
+        // Expression is expr-eval syntax (event.x, var.x, ...) against a safe
+        // scope object — do NOT resolveTemplate first. That does raw string
+        // substitution; if the expression used {{...}} around a reference
+        // (same syntax as other UI fields), live event data (e.g. a chat
+        // message) would be spliced into the expression text and evaluated
+        // as syntax, letting a user manipulate the condition outcome.
+        const result = await ctx.evaluateCondition(condData.expression);
         await this.log(ctx, node, 'info', `Condition '${condData.expression}' → ${result}`);
 
         const handle = result ? 'true' : 'false';

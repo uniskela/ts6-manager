@@ -96,6 +96,8 @@ export class VoiceBot extends EventEmitter {
   private _videoStartedAt: number | null = null;
   private _viewers: Map<number, VideoViewerInfo> = new Map();
   private _videoTempFile: string | null = null;
+  private _videoEndTimer: ReturnType<typeof setTimeout> | null = null;
+  private _videoDurationSec: number | null = null;
   private _videoStreamVolume: number = 100;
   private autoStopTimer: ReturnType<typeof setInterval> | null = null;
   private autoStopEmptySince: number | null = null;
@@ -280,14 +282,55 @@ export class VoiceBot extends EventEmitter {
     this._videoTempFile = null;
   }
 
-  private async resolveStreamSource(source: string, maxHeight: number): Promise<string> {
+  private clearVideoEndTimer(): void {
+    if (!this._videoEndTimer) return;
+    clearTimeout(this._videoEndTimer);
+    this._videoEndTimer = null;
+  }
+
+  /**
+   * Downloaded clips are not looped, so once ffmpeg finishes there is nothing
+   * left to show — but the sidecar cannot notify us. Schedule stop from the
+   * probed duration (+ slack) instead.
+   */
+  private scheduleVideoEndStop(durationSec: number): void {
+    this.clearVideoEndTimer();
+    this._videoEndTimer = setTimeout(() => {
+      this._videoEndTimer = null;
+      console.log(`[VoiceBot ${this.config.id}] Video ended, auto-stopping`);
+      this.stopVideoStream().catch((err) => this.emit('error', err));
+    }, (durationSec + 2) * 1000);
+  }
+
+  /**
+   * Resolve a stream URL/path for the sidecar. On-demand downloads get
+   * `loop: false` and an auto-stop timer; admin-provided local files keep looping.
+   */
+  private async resolveStreamSource(
+    source: string,
+    maxHeight: number,
+  ): Promise<{ path: string; loop: boolean }> {
     const maxDur = this.config.maxVideoDurationSec ?? 900;
-    const filePath = await downloadVideoForStream(source, maxHeight, maxDur);
-    if (filePath.includes('.stream-') && filePath.endsWith('.mp4')) {
+    const { path: filePath, durationSec } = await downloadVideoForStream(source, maxHeight, maxDur);
+    const isDownloadedTemp = filePath.includes('.stream-') && filePath.endsWith('.mp4');
+
+    this.clearVideoEndTimer();
+    this._videoDurationSec = null;
+    if (isDownloadedTemp) {
       this.cleanupVideoTempFile();
       this._videoTempFile = filePath;
+      // Prefer probed duration; if ffprobe fails, fall back to the download
+      // max so a non-looping clip cannot leave the bot "streaming" forever.
+      const stopAfter = durationSec ?? maxDur;
+      this._videoDurationSec = stopAfter;
+      if (durationSec == null) {
+        console.warn(
+          `[VoiceBot ${this.config.id}] Could not probe video duration; auto-stop fallback in ${stopAfter}s`,
+        );
+      }
+      this.scheduleVideoEndStop(stopAfter);
     }
-    return filePath;
+    return { path: filePath, loop: !isDownloadedTemp };
   }
 
   /** Update the TS3 nickname to show what's playing. Max 30 chars. */
@@ -1002,14 +1045,15 @@ export class VoiceBot extends EventEmitter {
     this._videoStartedAt = Date.now();
 
     try {
-      const resolvedSource = await this.resolveStreamSource(source, presetConfig.height);
+      const resolved = await this.resolveStreamSource(source, presetConfig.height);
       await this.sidecarHttp.setSource(
-        resolvedSource,
+        resolved.path,
         presetConfig.width,
         presetConfig.height,
         effectiveFramerate,
         effectiveBitrate,
         this._videoStreamVolume,
+        resolved.loop,
       );
     } catch (err) {
       if (this.signaling && this._activeStreamId) {
@@ -1037,6 +1081,9 @@ export class VoiceBot extends EventEmitter {
   /** Stop video streaming */
   async stopVideoStream(): Promise<void> {
     if (!this._videoStreaming) return;
+
+    this.clearVideoEndTimer();
+    this._videoDurationSec = null;
 
     // Remove all viewers from TS6 stream first
     if (this.signaling && this._activeStreamId) {
@@ -1092,15 +1139,16 @@ export class VoiceBot extends EventEmitter {
     }
     this._videoSource = source;
     const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
-    const resolvedSource = await this.resolveStreamSource(source, currentPreset.height);
+    const resolved = await this.resolveStreamSource(source, currentPreset.height);
 
     await this.sidecarHttp.setSource(
-      resolvedSource,
+      resolved.path,
       currentPreset.width,
       currentPreset.height,
       this._videoFramerate,
       this._videoBitrate,
       this._videoStreamVolume,
+      resolved.loop,
     );
     console.log(`[VoiceBot ${this.config.id}] Video source changed: ${source}`);
     this.emit('videoSourceChanged', source);
@@ -1113,17 +1161,22 @@ export class VoiceBot extends EventEmitter {
     }
     this._videoStreamVolume = Math.max(0, Math.min(100, volume));
     const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
-    const resolvedSource = this._videoTempFile
-      ? (() => {
-          try {
-            return resolvePathUnderMusicDir(this._videoTempFile);
-          } catch {
-            return null;
-          }
-        })()
-      : null;
-    const sourcePath = resolvedSource
-      ?? await this.resolveStreamSource(this._videoSource, currentPreset.height);
+    let sourcePath: string;
+    let loop = true;
+    if (this._videoTempFile) {
+      try {
+        sourcePath = resolvePathUnderMusicDir(this._videoTempFile);
+        loop = false;
+      } catch {
+        const resolved = await this.resolveStreamSource(this._videoSource, currentPreset.height);
+        sourcePath = resolved.path;
+        loop = resolved.loop;
+      }
+    } else {
+      const resolved = await this.resolveStreamSource(this._videoSource, currentPreset.height);
+      sourcePath = resolved.path;
+      loop = resolved.loop;
+    }
     await this.sidecarHttp.setSource(
       sourcePath,
       currentPreset.width,
@@ -1131,7 +1184,13 @@ export class VoiceBot extends EventEmitter {
       this._videoFramerate,
       this._videoBitrate,
       this._videoStreamVolume,
+      loop,
     );
+    // setSource restarts ffmpeg from the beginning for volume changes, so
+    // refresh the auto-stop timer from now for non-looping on-demand clips.
+    if (!loop && this._videoDurationSec != null) {
+      this.scheduleVideoEndStop(this._videoDurationSec);
+    }
     this.emit('videoVolumeChange', this._videoStreamVolume);
   }
 
