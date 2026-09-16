@@ -4,6 +4,7 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
@@ -17,6 +18,13 @@ import {
 } from '../utils/app-settings.js';
 
 const settingsRoutes: Router = Router();
+
+const settingsRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30, // max 30 requests per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Cookie file stored in the backend data directory (persisted in Docker volume)
 const COOKIE_DIR = path.resolve('data');
@@ -36,7 +44,7 @@ function requireAdmin(req: Request, _res: Response, next: Function) {
 }
 
 // GET /api/settings/yt-cookies — Check cookie file status
-settingsRoutes.get('/yt-cookies', requireAdmin, (_req: Request, res: Response) => {
+settingsRoutes.get('/yt-cookies', requireAdmin, settingsRateLimiter, (_req: Request, res: Response) => {
   const exists = fs.existsSync(COOKIE_PATH);
   const activePath = getYtCookieFile();
   res.json({
@@ -48,7 +56,7 @@ settingsRoutes.get('/yt-cookies', requireAdmin, (_req: Request, res: Response) =
 });
 
 // POST /api/settings/yt-cookies — Upload cookie file
-settingsRoutes.post('/yt-cookies', requireAdmin, upload.single('cookies'), (req: Request, res: Response, next) => {
+settingsRoutes.post('/yt-cookies', requireAdmin, settingsRateLimiter, upload.single('cookies'), (req: Request, res: Response, next) => {
   try {
     if (!req.file) {
       // Check if raw text was sent in body
