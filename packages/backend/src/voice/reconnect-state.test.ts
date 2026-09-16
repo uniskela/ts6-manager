@@ -17,7 +17,13 @@ describe('reconnectAttemptBusy', () => {
   });
 
   it('is busy while a retry timer is pending', () => {
-    assert.equal(reconnectAttemptBusy(state({ timer: setTimeout(() => {}, 60_000) })), true);
+    const timer = setTimeout(() => {}, 60_000);
+    timer.unref();
+    try {
+      assert.equal(reconnectAttemptBusy(state({ timer })), true);
+    } finally {
+      clearTimeout(timer);
+    }
   });
 
   it('is busy while a reconnect attempt is already in flight', () => {
