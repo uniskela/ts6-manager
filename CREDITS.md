@@ -49,6 +49,7 @@ Ideas and patches cherry-picked from active community forks (all MIT-licensed). 
 | [simardwtf/ts6-manager](https://github.com/simardwtf/ts6-manager) | [@simardwtf](https://github.com/simardwtf) | IPTV / M3U streaming (`!tv`, `!channels`) | v1.3.9 |
 | [prankroker/ts6-manager](https://github.com/prankroker/ts6-manager) | [@prankroker](https://github.com/prankroker) | YouTube audio stream-without-download (stream-first `!play`) | v1.3.9 |
 | [DomeNinchen/ts6forkmanager](https://github.com/DomeNinchen/ts6forkmanager) | [@DomeNinchen](https://github.com/DomeNinchen) | Condition-expression injection fix, shared music volume for sidecar, non-looping on-demand video + auto-stop, A/V sync clamp, multi-thread VP8 encode tuning, awaited SSH teardown / connect race guards, ServerQuery clients in Channels, preview mute toggle, stream API timeouts | v1.4.0 |
+| [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager) | [@bro-network](https://github.com/bro-network) | `11bb242`: incremental local/downloaded music playback and reconnect-state ideas, adapted here with bounded buffering, FFmpeg `-re` pacing, and fork-specific safeguards | PR #42 |
 
 [joshii-h/ts6-manager](https://github.com/joshii-h/ts6-manager) shares the same author line as coom — credit @coom once; SAML/Discord work intentionally not absorbed.
 
