@@ -16,6 +16,7 @@ export function buildPcmFileArgs(filePath: string, startSeconds = 0): string[] {
     args.push("-ss", startSeconds.toFixed(3));
   }
   args.push(
+    "-re",
     "-i", filePath,
     "-f", "s16le",
     "-acodec", "pcm_s16le",
@@ -80,10 +81,11 @@ export class AudioPipeline {
   }
 
   /**
-   * Decode a local audio file to PCM incrementally.
+   * Decode a local audio file to PCM incrementally at media speed.
    *
-   * The caller consumes stdout frame-by-frame, keeping memory bounded even for
-   * multi-hour tracks. startSeconds is applied before the input for fast seek.
+   * `-re` prevents ffmpeg from racing through a finite file faster than the
+   * 20 ms playback clock, while stream pause/backpressure stops the pipe when
+   * the user pauses. This keeps memory bounded for multi-hour tracks.
    */
   async toPcmFileStream(
     filePath: string,
