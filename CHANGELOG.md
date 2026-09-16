@@ -2,6 +2,33 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.5.0](https://github.com/uniskela/ts6-manager/compare/v1.4.1...v1.5.0) (2026-09-16)
+
+
+### Features
+
+* add incremental local PCM streaming ([bf2b602](https://github.com/uniskela/ts6-manager/commit/bf2b602244a4413e09a0f54b05ae5128cf0385f8))
+
+
+### Bug Fixes
+
+* cache resolved voice host before UDP playback ([6c9866b](https://github.com/uniskela/ts6-manager/commit/6c9866b423db6c35e001beedd446b48d85559f85))
+* carry YouTube stream headers into ffmpeg ([1478bb6](https://github.com/uniskela/ts6-manager/commit/1478bb638c12498da8262e28b54023e35b820381))
+* let manual stop cancel in-flight reconnect grace ([5dc57e3](https://github.com/uniskela/ts6-manager/commit/5dc57e39597aaafa962ef0cf851494438d6e6f47))
+* model reconnect attempts as pending or in-flight ([c7f7ae8](https://github.com/uniskela/ts6-manager/commit/c7f7ae81e62e6591ec3d21b6fb377c81ed31a1ff))
+* pace local ffmpeg decoding at media speed ([25e3fde](https://github.com/uniskela/ts6-manager/commit/25e3fde75fb15fd1c3b65218bb26ea63e2a0c553))
+* pass safe stream headers to ffmpeg ([a2049b3](https://github.com/uniskela/ts6-manager/commit/a2049b3ba0b6625a8b44e37f83c9dcc7aaf9fabf))
+* preserve YouTube stream headers for ffmpeg ([3d0283a](https://github.com/uniskela/ts6-manager/commit/3d0283a157d898233cf6d3fb20bf940cd295146e))
+* preserve yt-dlp stream headers ([591dc6b](https://github.com/uniskela/ts6-manager/commit/591dc6b02954ce34ae212bae048cee59006c9426))
+* prevent overlapping music bot reconnect attempts ([9b739d6](https://github.com/uniskela/ts6-manager/commit/9b739d6af2c84cea931f221f1f4420e9f3473969))
+* resolve voice UDP host once per connection ([049eca3](https://github.com/uniskela/ts6-manager/commit/049eca3531112bcfcdee4d5467dc41ab79fd7aa9))
+* resolve voice UDP target once per connection ([d1e36ad](https://github.com/uniskela/ts6-manager/commit/d1e36adf9eec6a33332daa57bc208f86d75b172a))
+* stream local music playback with bounded memory ([819f635](https://github.com/uniskela/ts6-manager/commit/819f63531a18ed23d030719179eb4225463a45cd))
+* stream local music playback with bounded memory ([5f0bd7e](https://github.com/uniskela/ts6-manager/commit/5f0bd7e1a7d6161e209bdca43cbd38dab4dec57c))
+* terminate local playback loop on ffmpeg errors ([b45a31d](https://github.com/uniskela/ts6-manager/commit/b45a31df12e27f45fa015dc5a5a5a8e30ed344cd))
+* update vulnerable transitive dependencies ([e020a3c](https://github.com/uniskela/ts6-manager/commit/e020a3c193d6121f42498da174f5116e94c42d22))
+* update vulnerable transitive dependencies ([2d8f03d](https://github.com/uniskela/ts6-manager/commit/2d8f03d49b776cabc8bc39048dd2b4946eaf5c6e))
+
 ## [1.4.1](https://github.com/uniskela/ts6-manager/compare/v1.4.0...v1.4.1) (2026-09-16)
 
 
