@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
@@ -9,6 +10,13 @@ import { AppError } from '../middleware/error-handler.js';
 import { validatePassword } from '../utils/validate-password.js';
 
 export const authRoutes: Router = Router();
+
+const passwordChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 authRoutes.post('/login', async (req: Request, res: Response, next) => {
   try {
@@ -138,7 +146,7 @@ authRoutes.get('/me', authMiddleware, async (req: Request, res: Response, next) 
   } catch (err) { next(err); }
 });
 
-authRoutes.put('/password', authMiddleware, async (req: Request, res: Response, next) => {
+authRoutes.put('/password', passwordChangeLimiter, authMiddleware, async (req: Request, res: Response, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
     if (!currentPassword || !newPassword) throw new AppError(400, 'Both passwords required');
