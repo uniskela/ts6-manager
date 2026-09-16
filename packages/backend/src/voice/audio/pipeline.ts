@@ -55,32 +55,6 @@ export class AudioPipeline {
   }
 
   /**
-   * Convert audio file to raw PCM (48kHz, mono, s16le) at full volume.
-   * @deprecated Use toPcmFileStream() so long tracks are not buffered in memory.
-   */
-  toPcm(filePath: string): Promise<Buffer> {
-    return this.ffmpegToPcm(filePath);
-  }
-
-  /**
-   * Split raw PCM buffer into 960-sample frames.
-   * @deprecated File playback should consume toPcmFileStream() incrementally.
-   */
-  splitFrames(pcmData: Buffer): Buffer[] {
-    const frames: Buffer[] = [];
-    for (let offset = 0; offset < pcmData.length; offset += BYTES_PER_FRAME) {
-      let frame = pcmData.subarray(offset, offset + BYTES_PER_FRAME);
-      if (frame.length < BYTES_PER_FRAME) {
-        const padded = Buffer.alloc(BYTES_PER_FRAME, 0);
-        frame.copy(padded);
-        frame = padded;
-      }
-      frames.push(frame);
-    }
-    return frames;
-  }
-
-  /**
    * Decode a local audio file to PCM incrementally at media speed.
    *
    * `-re` prevents ffmpeg from racing through a finite file faster than the
@@ -163,30 +137,5 @@ export class AudioPipeline {
         try { ffmpeg.kill("SIGKILL"); } catch { }
       },
     };
-  }
-
-  private ffmpegToPcm(input: string): Promise<Buffer> {
-    return new Promise((resolve, reject) => {
-      const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(input), { shell: false });
-      const chunks: Buffer[] = [];
-
-      ffmpeg.stdout.on("data", (chunk: Buffer) => {
-        chunks.push(chunk);
-      });
-
-      ffmpeg.stderr.on("data", () => { });
-
-      ffmpeg.on("close", (code) => {
-        if (code === 0) {
-          resolve(Buffer.concat(chunks));
-        } else {
-          reject(new Error(`FFmpeg exited with code ${code}`));
-        }
-      });
-
-      ffmpeg.on("error", (err) => {
-        reject(new Error(`FFmpeg not found or failed to start: ${err.message}`));
-      });
-    });
   }
 }
