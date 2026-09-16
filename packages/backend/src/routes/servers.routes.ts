@@ -5,6 +5,7 @@ import { WebQueryClient, createWebQueryClient } from '../ts-client/webquery-clie
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { testSshConnection } from '../utils/ssh-test.js';
+import { reloadEnabledServerFlows } from './server-connection-refresh.js';
 import {
   assertResolvableTsServerHost,
   sanitizeTsServerHost,
@@ -134,10 +135,15 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
     const pool: ConnectionPool = req.app.locals.connectionPool;
     await pool.refreshClient(id);
 
-    // Force EventBridge SSH reconnect so updated SSH credentials take effect
+    // Force EventBridge SSH reconnect so updated SSH credentials take effect.
+    // Then reload flows using this server so long-running actions/animations stop
+    // holding the destroyed WebQuery client from before the refresh.
     const botEngine = req.app.locals.botEngine;
     if (botEngine?.getEventBridge) {
       await botEngine.getEventBridge().reconnectConfig(id);
+    }
+    if (botEngine?.reloadFlow) {
+      await reloadEnabledServerFlows(prisma, botEngine, id);
     }
 
     res.json({ id: server.id, name: server.name });
