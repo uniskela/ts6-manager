@@ -34,6 +34,10 @@ export declare interface SshQueryClient {
   emit(event: 'close'): boolean;
 }
 
+export function shouldReconnectAfterSshClose(destroyed: boolean, fatalError: boolean): boolean {
+  return !destroyed && !fatalError;
+}
+
 export class SshQueryClient extends EventEmitter {
   private ssh: SSH2Client | null = null;
   private shell: ClientChannel | null = null;
@@ -142,6 +146,8 @@ export class SshQueryClient extends EventEmitter {
         this.rejectAllPending('SSH connection closed');
         if (!this.destroyed && wasConnected) {
           this.emit('close');
+        }
+        if (shouldReconnectAfterSshClose(this.destroyed, this.fatalError)) {
           this.scheduleReconnect();
         }
       });
