@@ -7,7 +7,7 @@ This fork builds on the original [clusterzx/ts6-manager](https://github.com/clus
 ## Upstream project
 
 - **Author / maintainer:** [@clusterzx](https://github.com/clusterzx) and contributors to `clusterzx/ts6-manager`
-- **License:** MIT (see [LICENSE](../LICENSE))
+- **License:** MIT (see [LICENSE](LICENSE))
 
 ## Community issues and pull requests reflected in this fork
 
@@ -60,4 +60,4 @@ Earlier upstream merges that remain in this tree (already present on `main` befo
 
 ## Not absorbed (intentionally)
 
-Large product expansions from [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (Discord bridge, SAML SSO/MFA suite, full multi-language UI) and related requests remain out of scope for this core-focused fork. See [docs/plans/opinionated-fork-roadmap.md](plans/opinionated-fork-roadmap.md).
+Large product expansions from [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (Discord bridge, SAML SSO/MFA suite, full multi-language UI) and related requests remain out of scope for this core-focused fork. See [docs/plans/opinionated-fork-roadmap.md](docs/plans/opinionated-fork-roadmap.md).
