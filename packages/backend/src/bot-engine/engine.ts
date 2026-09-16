@@ -1,238 +1,33 @@
+import cron from 'node-cron';
+import type { WebSocketServer } from 'ws';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
-import { EventBridge } from './event-bridge.js';
-import { FlowRunner } from './flow-runner.js';
-import type { Express, Request, Response } from 'express';
-import type { WebSocketServer } from 'ws';
-import { broadcastScoped } from '../ws/ws-session.js';
-import cron from 'node-cron';
 import type {
-  FlowDefinition, FlowNode, FlowEdge,
-  EventTriggerData, CronTriggerData, WebhookTriggerData, CommandTriggerData,
+  BotFlowData,
+  BotNode,
+  TriggerNodeData,
+  CronTriggerData,
+  WebhookTriggerData,
+  EventTriggerData,
+  CommandTriggerData,
   AnimatedChannelActionData,
 } from '@ts6/common';
-import { AnimationManager } from './animation-manager.js';
-import type { AnimationConfig } from './animation-manager.js';
-import type { MusicCommandHandler } from '../voice/music-command-handler.js';
-import crypto from 'crypto';
+import { FlowRunner } from './flow-runner.js';
+import { EventBridge } from './event-bridge.js';
+import { AnimationManager, type AnimationConfig } from './animation-manager.js';
+import { VoiceBotManager } from '../voice/voice-bot-manager.js';
+import { parseMusicCommandChannelIds } from '../voice/music-command-channels.js';
+import { MusicCommandHandler } from '../voice/music-command-handler.js';
+import { broadcastScoped } from '../ws/ws-session.js';
+import { parseStoredCommandNames } from './command-whitelist.js';
 
-/**
- * Normalize flow data from the frontend editor format to the engine format.
- *
- * Editor format:
- *   node: { id, type: "trigger_event"/"action_kick"/etc, label, config: { eventName, reason, ... }, x, y }
- *   edge: { id, source, sourcePort, target, targetPort }
- *
- * Engine format (matches @ts6/common types):
- *   node: { id, type: "trigger"/"action"/etc, position: {x,y}, data: { triggerType/actionType, label, ...config } }
- *   edge: { id, source, target, sourceHandle }
- *
- * Config field mappings:
- *   trigger_event:   { eventName } → { triggerType:'event', eventName }
- *   trigger_cron:    { cron } → { triggerType:'cron', cronExpression: cron }
- *   trigger_webhook: { path } → { triggerType:'webhook', webhookPath: path }
- *   trigger_command: { command } → { triggerType:'command', commandPrefix:'!', commandName: command }
- *   action_kick:     { reasonid, reason } → { actionType:'kick', reasonId: parseInt(reasonid)||5, reasonMsg: reason }
- *   action_ban:      { time, reason } → { actionType:'ban', duration: time, reason }
- *   action_move:     { channelId } → { actionType:'move', channelId }
- *   action_message:  { targetMode, message } → { actionType:'message', targetMode: modeMap, message }
- *   condition:       { expression } → { nodeType:'condition', expression }
- *   delay:           { delay } → { nodeType:'delay', delayMs: delay }
- *   variable:        { operation, name, value } → { nodeType:'variable', operation, variableName: name, value }
- *   log:             { level, message } → { nodeType:'log', level, message }
- */
-function normalizeFlowData(raw: any): FlowDefinition {
-  const targetModeMap: Record<string, number> = { client: 1, channel: 2, server: 3 };
-
-  const nodes: FlowNode[] = (raw.nodes || []).map((n: any) => {
-    const nodeType: string = n.type || '';
-
-    // Already in engine format?
-    if (n.data && (n.data.triggerType || n.data.actionType || n.data.nodeType)) {
-      return { ...n, position: n.position || { x: n.x || 0, y: n.y || 0 } };
-    }
-
-    const config = n.config || {};
-    const label = n.label || nodeType.replace(/_/g, ' ');
-    const position = n.position || { x: n.x || 0, y: n.y || 0 };
-    let type: string;
-    let data: any;
-
-    if (nodeType === 'trigger_event') {
-      type = 'trigger';
-      data = { triggerType: 'event', label, eventName: config.eventName || '', filters: config.filters };
-    } else if (nodeType === 'trigger_cron') {
-      type = 'trigger';
-      data = { triggerType: 'cron', label, cronExpression: config.cron || config.cronExpression || '', timezone: config.timezone || undefined };
-    } else if (nodeType === 'trigger_webhook') {
-      type = 'trigger';
-      data = { triggerType: 'webhook', label, webhookPath: config.path || config.webhookPath || '', method: config.method || 'POST', secret: config.secret || undefined };
-    } else if (nodeType === 'trigger_command') {
-      type = 'trigger';
-      const cmd = config.command || '';
-      const prefix = cmd.startsWith('!') ? '!' : config.commandPrefix || '!';
-      const name = cmd.startsWith('!') ? cmd.substring(1) : cmd;
-      data = { triggerType: 'command', label, commandPrefix: prefix, commandName: name, channelId: config.channelId ? String(config.channelId) : undefined, };
-    } else if (nodeType === 'action_kick') {
-      type = 'action';
-      data = { actionType: 'kick', label, reasonId: parseInt(config.reasonid) || 5, reasonMsg: config.reason || '' };
-    } else if (nodeType === 'action_ban') {
-      type = 'action';
-      data = { actionType: 'ban', label, duration: config.time || 0, reason: config.reason || '' };
-    } else if (nodeType === 'action_move') {
-      type = 'action';
-      data = { actionType: 'move', label, channelId: config.channelId || config.cid || '' };
-    } else if (nodeType === 'action_message') {
-      type = 'action';
-      data = { actionType: 'message', label, targetMode: targetModeMap[config.targetMode] || 1, message: config.message || '', target: config.target };
-    } else if (nodeType === 'action_poke') {
-      type = 'action';
-      data = { actionType: 'poke', label, message: config.message || '' };
-    } else if (nodeType === 'action_channelCreate') {
-      type = 'action';
-      const params: Record<string, string> = {};
-      if (config.channel_name) params.channel_name = config.channel_name;
-      if (config.cpid) params.cpid = config.cpid;
-      const tmp = String(config.channel_flag_temporary ?? '');
-      const semi = String(config.channel_flag_semi_permanent ?? '');
-      if (tmp === '1') {
-        params.channel_flag_temporary = '1';
-      } else if (semi === '1') {
-        params.channel_flag_semi_permanent = '1';
-      }
-      // If neither flag is '1', channel will be permanent (TS3 default)
-      if (config.channel_topic) params.channel_topic = config.channel_topic;
-      if (config.channel_password) params.channel_password = config.channel_password;
-      data = { actionType: 'channelCreate', label, params: { ...params, ...config.params } };
-    } else if (nodeType === 'action_channelEdit') {
-      type = 'action';
-      const params: Record<string, string> = {};
-      if (config.channel_name) params.channel_name = config.channel_name;
-      if (config.channel_topic) params.channel_topic = config.channel_topic;
-      if (config.channel_description) params.channel_description = config.channel_description;
-      if (config.channel_maxclients) params.channel_maxclients = config.channel_maxclients;
-      if (config.channel_password) params.channel_password = config.channel_password;
-      data = { actionType: 'channelEdit', label, channelId: config.channelId || config.cid || '', params: { ...params, ...config.params } };
-    } else if (nodeType === 'action_channelDelete') {
-      type = 'action';
-      data = { actionType: 'channelDelete', label, channelId: config.channelId || config.cid || '', force: !!config.force };
-    } else if (nodeType === 'action_groupAdd') {
-      type = 'action';
-      data = { actionType: 'groupAddClient', label, groupId: config.groupId || '' };
-    } else if (nodeType === 'action_groupRemove') {
-      type = 'action';
-      data = { actionType: 'groupRemoveClient', label, groupId: config.groupId || '' };
-    } else if (nodeType === 'action_webquery') {
-      type = 'action';
-      data = { actionType: 'webquery', label, command: config.command || '', params: config.params || {}, storeAs: config.storeAs || undefined };
-    } else if (nodeType === 'action_webhook') {
-      type = 'action';
-      data = { actionType: 'webhook', label, url: config.url || '', method: config.method || 'POST', headers: config.headers, body: config.body, storeAs: config.storeAs || undefined };
-    } else if (nodeType === 'action_httpRequest') {
-      type = 'action';
-      data = { actionType: 'httpRequest', label, url: config.url || '', method: config.method || 'GET', headers: config.headers, body: config.body, storeAs: config.storeAs || undefined };
-    } else if (nodeType === 'action_afkMover') {
-      type = 'action';
-      data = { actionType: 'afkMover', label, afkChannelId: config.afkChannelId || '', idleThresholdSeconds: parseInt(config.idleThresholdSeconds) || 300, exemptGroupIds: config.exemptGroupIds || '' };
-    } else if (nodeType === 'action_idleKicker') {
-      type = 'action';
-      data = { actionType: 'idleKicker', label, idleThresholdSeconds: parseInt(config.idleThresholdSeconds) || 1800, reason: config.reason || '', exemptGroupIds: config.exemptGroupIds || '' };
-    } else if (nodeType === 'action_pokeGroup') {
-      type = 'action';
-      data = { actionType: 'pokeGroup', label, groupId: config.groupId || '', message: config.message || '' };
-    } else if (nodeType === 'action_rankCheck') {
-      type = 'action';
-      data = { actionType: 'rankCheck', label, ranks: config.ranks || '[]' };
-    } else if (nodeType === 'action_tempChannelCleanup') {
-      type = 'action';
-      data = { actionType: 'tempChannelCleanup', label, parentChannelId: config.parentChannelId || '', protectedChannelIds: config.protectedChannelIds || '' };
-    } else if (nodeType === 'action_voicePlay') {
-      type = 'action';
-      data = { actionType: 'voicePlay', label, botId: config.botId || '', songId: config.songId || '', playlistId: config.playlistId || '' };
-    } else if (nodeType === 'action_voiceStop') {
-      type = 'action';
-      data = { actionType: 'voiceStop', label, botId: config.botId || '' };
-    } else if (nodeType === 'action_voiceJoinChannel') {
-      type = 'action';
-      data = { actionType: 'voiceJoinChannel', label, botId: config.botId || '', channelId: config.channelId || '', channelPassword: config.channelPassword || '' };
-    } else if (nodeType === 'action_voiceLeaveChannel') {
-      type = 'action';
-      data = { actionType: 'voiceLeaveChannel', label, botId: config.botId || '' };
-    } else if (nodeType === 'action_voiceVolume') {
-      type = 'action';
-      data = { actionType: 'voiceVolume', label, botId: config.botId || '', volume: config.volume || '50' };
-    } else if (nodeType === 'action_voicePauseResume') {
-      type = 'action';
-      data = { actionType: 'voicePauseResume', label, botId: config.botId || '', action: config.action || 'toggle' };
-    } else if (nodeType === 'action_voiceSkip') {
-      type = 'action';
-      data = { actionType: 'voiceSkip', label, botId: config.botId || '', direction: config.direction || 'next' };
-    } else if (nodeType === 'action_voiceSeek') {
-      type = 'action';
-      data = { actionType: 'voiceSeek', label, botId: config.botId || '', position: config.position || '0' };
-    } else if (nodeType === 'action_voiceTts') {
-      type = 'action';
-      data = { actionType: 'voiceTts', label, botId: config.botId || '', text: config.text || '', language: config.language || '' };
-    } else if (nodeType === 'action_animatedChannel') {
-      type = 'action';
-      data = {
-        actionType: 'animatedChannel',
-        label,
-        channelId: config.channelId || '',
-        text: config.text || '',
-        style: config.style || 'scroll',
-        intervalSeconds: config.intervalSeconds || '3',
-        prefix: config.prefix || '[cspacer]',
-        suppressEditEvents: config.suppressEditEvents !== false && config.suppressEditEvents !== 'false',
-      };
-    } else if (nodeType === 'condition') {
-      type = 'condition';
-      data = { nodeType: 'condition', label, expression: config.expression || '' };
-    } else if (nodeType === 'delay') {
-      type = 'delay';
-      data = { nodeType: 'delay', label, delayMs: config.delay || config.delayMs || 1000 };
-    } else if (nodeType === 'variable') {
-      type = 'variable';
-      data = { nodeType: 'variable', label, operation: config.operation || 'set', variableName: config.name || '', value: config.value || '' };
-    } else if (nodeType === 'action_generateCode') { 
-      type = 'action'; 
-      data = { actionType: 'generateCode', label, length: parseInt(config.length, 10) || 5, storeAs: config.storeAs || 'code', numericOnly: config.numericOnly !== false, };
-    } else if (nodeType === 'log') {
-      type = 'log';
-      data = { nodeType: 'log', label, level: config.level || 'info', message: config.message || '' };
-    } else {
-      // Pass through unknown types
-      type = nodeType;
-      data = { label, ...config };
-    }
-
-    return { id: n.id, type, position, data } as FlowNode;
-  });
-
-  const edges: FlowEdge[] = (raw.edges || []).map((e: any) => ({
-    id: e.id,
-    source: e.source,
-    target: e.target,
-    sourceHandle: e.sourceHandle || e.sourcePort || undefined,
-    label: e.label || undefined,
-  }));
-
-  return { nodes, edges };
-}
-
-interface LoadedFlow {
+interface RuntimeFlow {
   id: number;
   name: string;
   serverConfigId: number;
   virtualServerId: number;
-  flowData: FlowDefinition;
-  triggerNodes: FlowNode[];
-}
-
-interface CronEntry {
-  flowId: number;
-  nodeId: string;
-  task: cron.ScheduledTask;
+  flowData: BotFlowData;
+  triggerNodes: BotNode[];
 }
 
 interface WebhookEntry {
@@ -243,281 +38,267 @@ interface WebhookEntry {
   secret?: string;
 }
 
-const MAX_CONCURRENT_PER_FLOW = 20;
-
 export class BotEngine {
-  private flows: Map<number, LoadedFlow> = new Map();
+  private flows: Map<number, RuntimeFlow> = new Map();
   private eventBridge: EventBridge;
   private flowRunner: FlowRunner;
   private animationManager: AnimationManager;
-  private cronJobs: CronEntry[] = [];
+  private cronJobs: Array<{ flowId: number; nodeId: string; task: cron.ScheduledTask }> = [];
   private webhookEntries: WebhookEntry[] = [];
   private executionCounts: Map<number, number> = new Map();
-  private running: boolean = false;
+  private voiceBotManager: VoiceBotManager | null = null;
   private musicCommandHandler: MusicCommandHandler | null = null;
+  private activeMusicCommandListeners = new Set<string>();
+  private stopped = false;
 
   constructor(
     private prisma: PrismaClient,
     private connectionPool: ConnectionPool,
     private wss: WebSocketServer,
-    private app: Express,
   ) {
     this.eventBridge = new EventBridge(prisma);
-    this.flowRunner = new FlowRunner(prisma, connectionPool, wss);
+    this.flowRunner = new FlowRunner(prisma, connectionPool, wss, this.eventBridge);
     this.animationManager = new AnimationManager();
   }
 
-  setVoiceBotManager(manager: any): void {
-    this.flowRunner.setVoiceBotManager(manager);
+  async start(): Promise<void> {
+    this.stopped = false;
+    await this.loadFlows();
+
+    this.eventBridge.on('tsEvent', (configId, sid, eventName, data) => {
+      this.onTsEvent(configId, sid, eventName, data);
+    });
+
+    this.setupSshConnections();
+    this.setupCronJobs();
+    this.buildWebhookRegistry();
+    this.setupAnimations();
+
+    // Music bots run independently of bot flows but share persisted server configs.
+    this.voiceBotManager = new VoiceBotManager(this.prisma, this.eventBridge);
+    await this.voiceBotManager.loadBots();
+    await this.syncAllMusicCommandListeners();
+
+    this.musicCommandHandler = new MusicCommandHandler(
+      this.prisma,
+      this.voiceBotManager,
+      this.eventBridge,
+    );
+    this.musicCommandHandler.register();
+
+    console.log(`[BotEngine] Started with ${this.flows.size} flow(s), ${this.eventBridge.getConnectedKeys().length} SSH connection(s), ${this.cronJobs.length} cron job(s), ${this.webhookEntries.length} webhook(s)`);
   }
 
-  setMusicCommandHandler(handler: MusicCommandHandler): void {
-    this.musicCommandHandler = handler;
+  async stop(): Promise<void> {
+    this.stopped = true;
+    this.teardownCronJobs();
+    this.animationManager.stopAll();
+    this.musicCommandHandler?.destroy();
+    this.musicCommandHandler = null;
+    this.voiceBotManager?.stopAll();
+    this.voiceBotManager = null;
+    this.activeMusicCommandListeners.clear();
+    await this.eventBridge.destroy();
+    this.flows.clear();
+    this.webhookEntries = [];
+    this.executionCounts.clear();
   }
 
   getEventBridge(): EventBridge {
     return this.eventBridge;
   }
 
-  async start(): Promise<void> {
-    if (this.running) return;
-
-    // Always register event listener (even if no flows yet — flows can be enabled later)
-    this.eventBridge.on('tsEvent', this.onTsEvent.bind(this));
-
-    await this.loadFlows();
-
-    if (this.flows.size === 0) {
-      console.log('[BotEngine] No enabled flows found, engine idle (will activate when flows are enabled)');
-      this.running = true;
-      return;
-    }
-
-    // Setup SSH connections for all unique server+vserver pairs (non-blocking)
-    this.setupSshConnections();
-
-    // Setup cron jobs
-    this.setupCronJobs();
-
-    // Build webhook registry
-    this.buildWebhookRegistry();
-
-    // Start animations for all loaded flows
-    for (const flow of this.flows.values()) {
-      this.startAnimationsForFlow(flow.id, flow.serverConfigId, flow.virtualServerId);
-    }
-
-    this.running = true;
-
-    const sshCount = this.eventBridge.getConnectedKeys().length;
-    console.log(`[BotEngine] Started with ${this.flows.size} flow(s), ${sshCount} SSH connection(s), ${this.cronJobs.length} cron job(s), ${this.webhookEntries.length} webhook(s)`);
-
-    this.broadcast('bot:engine:started', { flowCount: this.flows.size });
+  getVoiceBotManager(): VoiceBotManager | null {
+    return this.voiceBotManager;
   }
-
-  async stop(): Promise<void> {
-    this.running = false;
-    this.animationManager.stopAll();
-    this.teardownCronJobs();
-    this.webhookEntries = [];
-    this.eventBridge.removeAllListeners('tsEvent');
-    this.flows.clear();
-    this.executionCounts.clear();
-  }
-
-  async enableFlow(flowId: number): Promise<void> {
-    console.log(`[BotEngine] Enabling flow ${flowId}...`);
-    const dbFlow = await this.prisma.botFlow.findUnique({ where: { id: flowId } });
-    if (!dbFlow || !dbFlow.enabled) {
-      console.log(`[BotEngine] Flow ${flowId} not found or not enabled in DB`);
-      return;
-    }
-
-    try {
-      const raw = JSON.parse(dbFlow.flowData);
-      const flowData = normalizeFlowData(raw);
-      const triggerNodes = flowData.nodes.filter(n => n.type === 'trigger');
-
-      const hasAnimations = flowData.nodes.some(n => n.type === 'action' && (n.data as any).actionType === 'animatedChannel');
-      console.log(`[BotEngine] Flow ${flowId} ('${dbFlow.name}'): ${triggerNodes.length} trigger(s), ${flowData.nodes.length} node(s), ${flowData.edges.length} edge(s)${hasAnimations ? ', has animations' : ''}`);
-
-      if (triggerNodes.length === 0 && !hasAnimations) {
-        console.warn(`[BotEngine] Flow ${flowId} has no trigger nodes and no animations — nothing to activate`);
-      }
-
-      for (const t of triggerNodes) {
-        const td = t.data as any;
-        console.log(`[BotEngine]   Trigger: type=${td.triggerType}, ${td.triggerType === 'event' ? `event=${td.eventName}` : td.triggerType === 'cron' ? `cron=${td.cronExpression}` : td.triggerType === 'command' ? `cmd=${td.commandPrefix}${td.commandName}` : `webhook=${td.webhookPath}`}`);
-      }
-
-      this.flows.set(flowId, {
-        id: dbFlow.id,
-        name: dbFlow.name,
-        serverConfigId: dbFlow.serverConfigId,
-        virtualServerId: dbFlow.virtualServerId,
-        flowData,
-        triggerNodes,
-      });
-
-      // Ensure SSH connection exists for event/command triggers
-      const hasEventTrigger = triggerNodes.some(t => {
-        const td = t.data as any;
-        return td.triggerType === 'event' || td.triggerType === 'command';
-      });
-
-      if (hasEventTrigger) {
-        console.log(`[BotEngine] Flow needs SSH — connecting to server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
-        if (!this.eventBridge.isConnected(dbFlow.serverConfigId, dbFlow.virtualServerId)) {
-          // Non-blocking: SSH connects in background, events will flow once connected
-          this.eventBridge.connectServer(dbFlow.serverConfigId, dbFlow.virtualServerId).catch(err => {
-            console.error(`[BotEngine] SSH connection failed for ${dbFlow.serverConfigId}:${dbFlow.virtualServerId}: ${err.message}`);
-          });
-        } else {
-          console.log(`[BotEngine] SSH already connected for ${dbFlow.serverConfigId}:${dbFlow.virtualServerId}`);
-        }
-        // NEW: start/stop per-channel command listeners for this pair
-        this.syncCommandListenersForPair(dbFlow.serverConfigId, dbFlow.virtualServerId);
-      }
-
-      // Setup cron jobs for this flow
-      this.setupCronJobsForFlow(flowId);
-
-      // Add webhook entries for this flow
-      this.buildWebhookRegistryForFlow(flowId);
-
-      // Start animations for any animatedChannel action nodes
-      this.startAnimationsForFlow(flowId, dbFlow.serverConfigId, dbFlow.virtualServerId);
-
-      console.log(`[BotEngine] Flow ${flowId} ('${dbFlow.name}') enabled successfully`);
-    } catch (err: any) {
-      console.error(`[BotEngine] Failed to enable flow ${flowId}: ${err.message}`);
-    }
-  }
-
-  async disableFlow(flowId: number): Promise<void> {
-    this.animationManager.stopAnimation(flowId);
-    this.teardownCronJobs(flowId);
-    this.webhookEntries = this.webhookEntries.filter(w => w.flowId !== flowId);
-    this.flows.delete(flowId);
-    this.executionCounts.delete(flowId);
-
-    // Check if any remaining flows use the same SSH connections
-    await this.cleanupUnusedSshConnections();
-
-    console.log(`[BotEngine] Flow ${flowId} disabled`);
-  }
-
-  async reloadFlow(flowId: number): Promise<void> {
-    const flow = this.flows.get(flowId);
-    if (flow) {
-      // Flow was active — disable then re-enable
-      await this.disableFlow(flowId);
-      const dbFlow = await this.prisma.botFlow.findUnique({ where: { id: flowId } });
-      if (dbFlow?.enabled) {
-        await this.enableFlow(flowId);
-      }
-    }
-  }
-
-  handleWebhookRequest(req: Request, res: Response): void {
-    const webhookPath = String(req.params.path || req.params[0] || '');
-    const method = req.method.toUpperCase();
-    const providedSecret = String(req.headers['x-webhook-secret'] || req.query.secret || '');
-
-    const matching = this.webhookEntries.filter(w =>
-      w.path === webhookPath && (w.method === method || w.method === 'ANY')
-    );
-
-    // H6: Return same 404 for not-found and invalid-secret (prevent enumeration)
-    if (matching.length === 0) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-
-    let triggered = 0;
-    for (const wh of matching) {
-      // H6: Mandatory webhook secrets — skip webhooks without secrets configured
-      if (!wh.secret) continue;
-
-      // H6: Timing-safe secret comparison
-      const secretBuf = Buffer.from(wh.secret);
-      const providedBuf = Buffer.from(providedSecret);
-      if (secretBuf.length !== providedBuf.length || !crypto.timingSafeEqual(secretBuf, providedBuf)) {
-        continue;
-      }
-
-      const flow = this.flows.get(wh.flowId);
-      if (!flow) continue;
-
-      const webhookData: Record<string, string> = {
-        webhook_path: webhookPath,
-        webhook_method: method,
-        webhook_body: JSON.stringify(req.body || {}),
-        webhook_query: JSON.stringify(req.query || {}),
-      };
-
-      this.executeFlow(flow, wh.nodeId, 'webhook', webhookData);
-      triggered++;
-    }
-
-    // Same response regardless of reason (not found / wrong secret)
-    if (triggered === 0) {
-      res.status(404).json({ error: 'Not found' });
-      return;
-    }
-
-    res.json({ triggered });
-  }
-
-  getFlow(flowId: number): LoadedFlow | undefined {
-    return this.flows.get(flowId);
-  }
-
-  async destroy(): Promise<void> {
-    await this.stop();
-    await this.eventBridge.destroy();
-    this.broadcast('bot:engine:stopped', {});
-  }
-
-  // --- Private Methods ---
 
   private async loadFlows(): Promise<void> {
     const dbFlows = await this.prisma.botFlow.findMany({ where: { enabled: true } });
 
-    for (const dbFlow of dbFlows) {
+    for (const flow of dbFlows) {
       try {
-        const raw = JSON.parse(dbFlow.flowData);
-        const flowData = normalizeFlowData(raw);
+        const flowData: BotFlowData = JSON.parse(flow.flowData);
         const triggerNodes = flowData.nodes.filter(n => n.type === 'trigger');
-        const hasAnimations = flowData.nodes.some(n => n.type === 'action' && (n.data as any).actionType === 'animatedChannel');
-
-        if (triggerNodes.length === 0 && !hasAnimations) {
-          console.warn(`[BotEngine] Flow ${dbFlow.id} ('${dbFlow.name}') has no trigger nodes and no animations, skipping`);
-          continue;
-        }
-
-        this.flows.set(dbFlow.id, {
-          id: dbFlow.id,
-          name: dbFlow.name,
-          serverConfigId: dbFlow.serverConfigId,
-          virtualServerId: dbFlow.virtualServerId,
+        this.flows.set(flow.id, {
+          id: flow.id,
+          name: flow.name,
+          serverConfigId: flow.serverConfigId,
+          virtualServerId: flow.virtualServerId,
           flowData,
           triggerNodes,
         });
       } catch (err: any) {
-        console.error(`[BotEngine] Failed to parse flow ${dbFlow.id}: ${err.message}`);
+        console.error(`[BotEngine] Failed to load flow ${flow.id}: ${err.message}`);
       }
+    }
+  }
+
+  async reloadFlow(flowId: number): Promise<void> {
+    this.teardownCronJobs(flowId);
+    this.animationManager.stopAnimation(flowId);
+    this.webhookEntries = this.webhookEntries.filter(e => e.flowId !== flowId);
+    this.flows.delete(flowId);
+
+    const flow = await this.prisma.botFlow.findUnique({ where: { id: flowId } });
+    if (!flow?.enabled) {
+      await this.cleanupUnusedSshConnections();
+      return;
+    }
+
+    try {
+      const flowData: BotFlowData = JSON.parse(flow.flowData);
+      const triggerNodes = flowData.nodes.filter(n => n.type === 'trigger');
+      this.flows.set(flow.id, {
+        id: flow.id,
+        name: flow.name,
+        serverConfigId: flow.serverConfigId,
+        virtualServerId: flow.virtualServerId,
+        flowData,
+        triggerNodes,
+      });
+
+      const pair = `${flow.serverConfigId}:${flow.virtualServerId}`;
+      if (this.getNeededServerPairs().has(pair) && !this.eventBridge.isConnected(flow.serverConfigId, flow.virtualServerId)) {
+        this.eventBridge.connectServer(flow.serverConfigId, flow.virtualServerId).catch(err => {
+          console.error(`[BotEngine] SSH connection failed for ${pair}: ${err.message}`);
+        });
+      }
+      this.syncCommandListenersForPair(flow.serverConfigId, flow.virtualServerId);
+      this.setupCronJobsForFlow(flow.id);
+      this.buildWebhookRegistryForFlow(flow.id);
+      this.startAnimationsForFlow(flow.id, flow.serverConfigId, flow.virtualServerId);
+    } catch (err: any) {
+      console.error(`[BotEngine] Failed to reload flow ${flowId}: ${err.message}`);
+    }
+  }
+
+  async handleWebhook(
+    path: string,
+    method: string,
+    headers: Record<string, string | string[] | undefined>,
+    body: any,
+    query: Record<string, any>,
+  ): Promise<{ matched: boolean; accepted: boolean }> {
+    const entry = this.webhookEntries.find(
+      e => e.path === path && e.method.toUpperCase() === method.toUpperCase()
+    );
+    if (!entry) return { matched: false, accepted: false };
+
+    if (entry.secret) {
+      const supplied = headers['x-webhook-secret'];
+      const suppliedValue = Array.isArray(supplied) ? supplied[0] : supplied;
+      if (suppliedValue !== entry.secret) return { matched: true, accepted: false };
+    }
+
+    const flow = this.flows.get(entry.flowId);
+    if (!flow) return { matched: true, accepted: false };
+
+    this.executeFlow(flow, entry.nodeId, 'webhook', {
+      body,
+      query,
+      headers,
+    });
+
+    return { matched: true, accepted: true };
+  }
+
+  async triggerFlowManually(flowId: number, data: Record<string, any> = {}): Promise<void> {
+    const flow = this.flows.get(flowId);
+    if (!flow) throw new Error(`Flow ${flowId} is not enabled or not loaded`);
+
+    const manualTrigger = flow.triggerNodes.find(n => (n.data as TriggerNodeData).triggerType === 'manual');
+    if (!manualTrigger) throw new Error(`Flow ${flowId} has no manual trigger`);
+
+    this.executeFlow(flow, manualTrigger.id, 'manual', data);
+  }
+
+  private setupAnimations(): void {
+    for (const flow of this.flows.values()) {
+      this.startAnimationsForFlow(flow.id, flow.serverConfigId, flow.virtualServerId);
+    }
+  }
+
+  private musicListenerKey(configId: number, sid: number, channelId: number): string {
+    return `${configId}:${sid}:cmd:${channelId}`;
+  }
+
+  private syncCommandListenersForPair(configId: number, sid: number): void {
+    void this.syncCommandListenersForPairAsync(configId, sid).catch((err: any) => {
+      console.error(`[BotEngine] Failed to sync command listeners for ${configId}:${sid}: ${err.message}`);
+    });
+  }
+
+  private async syncCommandListenersForPairAsync(configId: number, sid: number): Promise<void> {
+    if (!this.voiceBotManager) return;
+
+    const bots = await this.prisma.musicBot.findMany({
+      where: {
+        serverConfigId: configId,
+        virtualServerId: sid,
+      },
+      select: {
+        id: true,
+        commandChannelIds: true,
+      },
+    });
+
+    const wanted = new Set<string>();
+    for (const bot of bots) {
+      for (const channelId of parseMusicCommandChannelIds(bot.commandChannelIds)) {
+        wanted.add(this.musicListenerKey(configId, sid, channelId));
+      }
+    }
+
+    for (const key of [...this.activeMusicCommandListeners]) {
+      if (!key.startsWith(`${configId}:${sid}:cmd:`) || wanted.has(key)) continue;
+      const channelId = Number(key.split(':').pop());
+      await this.eventBridge.disconnectCommandListener(configId, sid, channelId);
+      this.activeMusicCommandListeners.delete(key);
+    }
+
+    for (const key of wanted) {
+      if (this.activeMusicCommandListeners.has(key)) continue;
+      const channelId = Number(key.split(':').pop());
+      await this.eventBridge.connectCommandListener(configId, sid, channelId);
+      this.activeMusicCommandListeners.add(key);
+    }
+  }
+
+  private async syncAllMusicCommandListeners(): Promise<void> {
+    const pairs = new Set<string>();
+
+    const bots = await this.prisma.musicBot.findMany({
+      select: { serverConfigId: true, virtualServerId: true, commandChannelIds: true },
+    });
+    for (const bot of bots) {
+      if (parseMusicCommandChannelIds(bot.commandChannelIds).length > 0) {
+        pairs.add(`${bot.serverConfigId}:${bot.virtualServerId}`);
+      }
+    }
+
+    for (const pair of pairs) {
+      const [configId, sid] = pair.split(':').map(Number);
+      await this.syncCommandListenersForPairAsync(configId, sid);
     }
   }
 
   private getNeededServerPairs(): Set<string> {
     const pairs = new Set<string>();
     for (const flow of this.flows.values()) {
-      pairs.add(`${flow.serverConfigId}:${flow.virtualServerId}`);
-    }
-    if (this.musicCommandHandler) {
-      for (const pair of this.musicCommandHandler.getNeededServerPairs()) {
-        pairs.add(pair);
+      let needsSsh = false;
+      for (const node of flow.flowData.nodes) {
+        const d: any = node.data;
+        if (node.type === 'trigger' && (d.triggerType === 'event' || d.triggerType === 'command')) {
+          needsSsh = true;
+          break;
+        }
+        if (node.type === 'action' && d.actionType === 'sshCommand') {
+          needsSsh = true;
+          break;
+        }
+      }
+      if (needsSsh) {
+        pairs.add(`${flow.serverConfigId}:${flow.virtualServerId}`);
       }
     }
     return pairs;
@@ -638,85 +419,26 @@ export class BotEngine {
             command_channel_id: data.__cmd_listener_channel_id || cmdTrigger.channelId || data.target || '',
           };
 
-          const invoker =
-            data.clid ||
-            data.invokerid ||
-            data.invoker_id ||
-            data.invokerId ||
-            data.client_id ||
-            data.clientId;
-
-          if (invoker && !data.clid) {
-
-            (enrichedData as any).clid = String(invoker);
-          }
-
           this.executeFlow(flow, triggerNode.id, 'command', enrichedData);
         }
       }
     }
   }
 
-
-  private getNeededCommandChannelIds(configId: number, sid: number): number[] {
-    const ids = new Set<number>();
-
-    for (const flow of this.flows.values()) {
-      if (flow.serverConfigId !== configId || flow.virtualServerId !== sid) continue;
-
-      for (const t of flow.triggerNodes) {
-        const td: any = t.data;
-        if (td?.triggerType === 'command' && td.channelId) {
-          const n = parseInt(String(td.channelId), 10);
-          if (Number.isFinite(n) && n > 0) ids.add(n);
-        }
-      }
-    }
-
-    if (this.musicCommandHandler) {
-      for (const cid of this.musicCommandHandler.getNeededCommandChannelIds(configId, sid)) {
-        ids.add(cid);
-      }
-    }
-
-    return Array.from(ids);
-  }
-
-  private syncCommandListenersForPair(configId: number, sid: number): void {
-    const needed = new Set(this.getNeededCommandChannelIds(configId, sid));
-    const existing = new Set(this.eventBridge.getCommandListenerChannelIds(configId, sid));
-
-    for (const cid of needed) {
-      if (!existing.has(cid)) {
-        this.eventBridge.connectCommandListener(configId, sid, cid).catch(err => {
-          console.error(`[BotEngine] CMD listener connect failed for ${configId}:${sid}:${cid}: ${err.message}`);
-        });
-      }
-    }
-
-    for (const cid of existing) {
-      if (!needed.has(cid)) {
-        this.eventBridge.disconnectCommandListener(configId, sid, cid).catch(() => { });
-      }
-    }
-  }
-
-
-  private executeFlow(flow: LoadedFlow, triggerNodeId: string, triggerType: string, eventData: Record<string, string>): void {
-    console.log(`[BotEngine] Executing flow ${flow.id} ('${flow.name}') triggered by ${triggerType}`);
-
-    // Rate limiting
-    const current = this.executionCounts.get(flow.id) || 0;
-    if (current >= MAX_CONCURRENT_PER_FLOW) {
-      console.warn(`[BotEngine] Flow ${flow.id} rate limited (${current} concurrent executions)`);
+  private executeFlow(
+    flow: RuntimeFlow,
+    triggerNodeId: string,
+    triggerType: string,
+    eventData: Record<string, any>,
+  ): void {
+    const count = this.executionCounts.get(flow.id) || 0;
+    if (count >= 5) {
+      console.warn(`[BotEngine] Flow ${flow.id} concurrency limit reached`);
       return;
     }
-    this.executionCounts.set(flow.id, current + 1);
+    this.executionCounts.set(flow.id, count + 1);
 
-    // Extract timezone from the trigger node (if cron trigger has one)
-    const triggerNode = flow.flowData.nodes.find(n => n.id === triggerNodeId);
-    const triggerData = triggerNode?.data as any;
-    const timezone = triggerData?.timezone as string | undefined;
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
     this.flowRunner.execute(flow, triggerNodeId, triggerType, eventData, timezone)
       .catch(err => {
@@ -808,7 +530,10 @@ export class BotEngine {
     if (animNodes.length === 0) return;
 
     try {
-      const client = this.connectionPool.getClient(serverConfigId);
+      const getClient = () => this.connectionPool.getClient(serverConfigId);
+      // Verify a client exists now; each animation tick resolves it again so a
+      // later connection refresh automatically switches to the replacement.
+      getClient();
 
       for (const node of animNodes) {
         const d = node.data as AnimatedChannelActionData;
@@ -822,7 +547,7 @@ export class BotEngine {
           suppressEditEvents: d.suppressEditEvents !== false,
         };
 
-        this.animationManager.startAnimation(flowId, virtualServerId, config, client);
+        this.animationManager.startAnimation(flowId, virtualServerId, config, getClient);
       }
     } catch (err: any) {
       console.error(`[BotEngine] Failed to start animations for flow ${flowId}: ${err.message}`);
