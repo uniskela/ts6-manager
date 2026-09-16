@@ -10,22 +10,18 @@ import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
 import { loadMaxVideoDuration } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
+import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
 
 const PROGRESS_INTERVAL_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const RECONNECT_GRACE_PERIOD_MS = 5000;
 
-interface ReconnectState {
-  attempts: number;
-  timer: ReturnType<typeof setTimeout> | null;
-}
-
 export class VoiceBotManager extends EventEmitter {
   private bots = new Map<number, VoiceBot>();
   private botServerConfigIds = new Map<number, number>();
   private progressTimers = new Map<number, ReturnType<typeof setInterval>>();
-  private reconnectState = new Map<number, ReconnectState>();
+  private reconnectState = new Map<number, ReconnectAttemptState>();
   private musicCmdHandler: MusicCommandHandler | null = null;
 
   constructor(
@@ -360,7 +356,7 @@ export class VoiceBotManager extends EventEmitter {
 
   async stopAll(): Promise<void> {
     // Clear all reconnect timers first to prevent reconnect during shutdown
-    for (const [id, state] of this.reconnectState) {
+    for (const [, state] of this.reconnectState) {
       if (state.timer) clearTimeout(state.timer);
     }
     this.reconnectState.clear();
@@ -384,13 +380,14 @@ export class VoiceBotManager extends EventEmitter {
 
     let state = this.reconnectState.get(botId);
     if (!state) {
-      state = { attempts: 0, timer: null };
+      state = { attempts: 0, timer: null, inFlight: false };
       this.reconnectState.set(botId, state);
     }
 
-    // Prevent double-scheduling (can happen when both 'disconnected' handler
-    // and attemptReconnect catch block trigger simultaneously)
-    if (state.timer) return;
+    // Prevent double-scheduling when either a retry timer is pending or an
+    // attempt is already awaiting cleanup/start. A disconnect can fire from
+    // inside a failed connect(), so timer-only gating is not sufficient.
+    if (reconnectAttemptBusy(state)) return;
 
     if (state.attempts >= MAX_RECONNECT_ATTEMPTS) {
       console.error(`[VoiceBotManager] Bot ${botId}: max reconnect attempts (${MAX_RECONNECT_ATTEMPTS}) reached, giving up`);
@@ -418,12 +415,12 @@ export class VoiceBotManager extends EventEmitter {
       return;
     }
 
-    // Mark timer as executed so scheduleReconnect can run again
     state.timer = null;
+    state.inFlight = true;
 
     try {
-      // Ensure previous connection is fully cleaned up before reconnecting
-      // This prevents duplicate clients when the TS server restarts
+      // Ensure previous connection is fully cleaned up before reconnecting.
+      // This prevents duplicate clients when the TS server restarts.
       bot.ensureDisconnected();
       await new Promise((r) => setTimeout(r, RECONNECT_GRACE_PERIOD_MS));
 
@@ -432,10 +429,12 @@ export class VoiceBotManager extends EventEmitter {
       this.reconnectState.delete(botId);
     } catch (err: any) {
       console.error(`[VoiceBotManager] Bot ${botId}: reconnect attempt ${state.attempts} failed: ${err.message}`);
-      // Schedule next attempt (guard in scheduleReconnect prevents double-scheduling
-      // if 'disconnected' event also fires from the failed connect)
+      state.inFlight = false;
       this.scheduleReconnect(botId);
+      return;
     }
+
+    state.inFlight = false;
   }
 
   private clearReconnect(botId: number): void {
