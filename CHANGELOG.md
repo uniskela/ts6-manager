@@ -2,6 +2,17 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.4.1](https://github.com/uniskela/ts6-manager/compare/v1.4.0...v1.4.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* keep GHCR sha tags aligned with :latest promote ([996a4e2](https://github.com/uniskela/ts6-manager/commit/996a4e2fc7ead98872e3c48ff85f7fabdcd68f80))
+* rate-limit authenticated profile endpoint ([fbfc270](https://github.com/uniskela/ts6-manager/commit/fbfc270f337aa0dce5ebdba56be223b79225b1a7))
+* rate-limit music library song deletion ([8d88835](https://github.com/uniskela/ts6-manager/commit/8d88835fb705935b95db4598d7e02160b9ae266f))
+* rate-limit YouTube cookie settings routes ([283cf35](https://github.com/uniskela/ts6-manager/commit/283cf350c439305d4d22e29c51d0e65e03f30fa0))
+* refine yt-cookie rate limiting ([a885112](https://github.com/uniskela/ts6-manager/commit/a88511263b9ea4741770ac181ae5a888490b19a6))
+
 ## [Unreleased]
 
 ### Changed
