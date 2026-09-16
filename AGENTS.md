@@ -6,21 +6,29 @@ This repo uses [Release Please](https://github.com/googleapis/release-please) on
 
 | File | Role |
 |------|------|
-| `.github/workflows/release-please.yml` | Runs Release Please on `main`; publishes GHCR images when a release is created |
+| `.github/workflows/release-please.yml` | Runs Release Please on `main`; publishes GHCR images only after Release Please creates a release |
 | `release-please-config.json` | Release type + files to bump |
 | `.release-please-manifest.json` | Last released version |
 | `version.txt` | Simple releaser version source |
 | `packages/*/package.json` | App package versions (`$.version`, via `extra-files`) |
 | `packages/frontend/src/lib/app-version.ts` | UI fallback version (`// x-release-please-version`) |
-| `CHANGELOG.md` | Generated / updated by Release Please |
-| `.github/workflows/publish-images.yml` | GHCR publish on `main` / `v*` tags / Release Please `workflow_call` |
+| `CHANGELOG.md` | Generated / updated by Release Please, with final human curation before merge when needed |
+| `.github/workflows/publish-images.yml` | Reusable GHCR workflow invoked only for an immutable `vX.Y.Z` release; also supports manual recovery for an existing release tag |
+
+Ordinary pushes and PR merges to `main` must **not** publish container images. Image publication is tied to a created GitHub Release so `latest`, semver tags, and SHA tags all point at a deliberate release.
 
 ### Normal flow (agents + humans)
 
 1. Open a **feature PR** into `main` with [Conventional Commits](https://www.conventionalcommits.org/) in the **merge commit or squashed commit message** (GitHub squash uses the PR title by default — set it carefully).
 2. Merge the feature PR.
-3. Release Please opens a **release PR** that bumps versions + `CHANGELOG.md`.
-4. Merge the release PR → GitHub creates tag `vX.Y.Z` and the GitHub Release; the Release Please workflow then publishes matching GHCR images.
+3. Release Please opens or updates a **release PR** that bumps versions + `CHANGELOG.md`.
+4. Finish all intended pre-release feature/docs PRs before doing final release-note curation; another push to `main` may refresh the release PR.
+5. Review the release PR against the **net state of current `main`**:
+   - remove entries for work that was merged and later reverted;
+   - collapse duplicate bullets that describe the same user-facing change;
+   - keep notes focused on shipped behavior, not every intermediate implementation commit.
+6. Merge the release PR → GitHub creates tag `vX.Y.Z` and the GitHub Release; the Release Please workflow then invokes `publish-images.yml` for that exact tag.
+7. Confirm the tag, GitHub Release, and all expected GHCR tags were published from the release commit.
 
 Commit prefixes that matter:
 
@@ -72,11 +80,30 @@ When opening or merging a PR that should release:
 
 ### CHANGELOG notes
 
-Release Please owns versioned sections in [`CHANGELOG.md`](CHANGELOG.md). Prefer conventional-commit subjects that read well in the generated notes. For intentional end-user behavior changes that are not a major bump, call that out in the PR description so reviewers can adjust the release PR notes if needed.
+Release Please owns versioned sections in [`CHANGELOG.md`](CHANGELOG.md). Prefer conventional-commit subjects that read well in the generated notes.
+
+Before merging a release PR, treat its generated changelog as a draft rather than unquestionable truth. Merge-heavy history can surface both an implementation commit and a later merge commit as separate bullets, and a merged-then-reverted change can still appear in generated notes. Compare the release section with current `main`, then curate the release branch so the final `CHANGELOG.md` and PR body describe only what the tag will actually ship.
+
+Do this **after** the last intended pre-release PR has landed, because a subsequent Release Please refresh may overwrite manual release-branch edits.
+
+### Local JavaScript toolchain
+
+CI uses Node.js 20 and pnpm 9. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major.
+
+```bash
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
+pnpm install --frozen-lockfile
+pnpm db:generate
+```
+
+Newer pnpm majors change dependency build-script approval and `pnpm.overrides` handling; do not treat a failure caused only by running an unsupported pnpm major as an application regression.
 
 ### Checklist (agents / maintainers)
 
 - [ ] Feature PR uses a conventional commit title (and `Release-As` in the body when forcing a version)
 - [ ] Do **not** hand-bump versions on the feature PR
-- [ ] After merge: wait for / merge the Release Please release PR
+- [ ] After merge: wait for / review the Release Please release PR
+- [ ] Compare generated notes with current `main`; remove reverted entries and duplicate descriptions
+- [ ] Merge the release PR only after its changelog matches shipped behavior
 - [ ] Confirm tag `vX.Y.Z`, GitHub Release, and GHCR image publish from the Release Please workflow
