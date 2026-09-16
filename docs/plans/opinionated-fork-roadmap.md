@@ -4,15 +4,15 @@ Continuation of `clusterzx/ts6-manager` as `uniskela/ts6-manager` — **core-foc
 
 Community bug reports and PRs that informed this work are listed in [CREDITS.md](../../CREDITS.md).
 
-## Completed phases
+## Implemented phases
 
 1. **Security baseline** — `expr-eval-fork`, dependency bumps, sidecar `SIDECAR_SECRET` auth, internal-only `:9800`, SSRF DNS fail-closed, required `ENCRYPTION_KEY` in production, LICENSE/SECURITY, fork rebrand, password UI alignment.
 2. **Reliability** — BBCode URL strip, unknown escape tolerance, WebQuery test errors, auto-rank persistence, SSH reconnect on edit, music bot delete/clear-queue fixes, connection pool tear-down on refresh.
 3. **Core QoL** — library filesystem scan, bot ID badges, server group membership UI, Spotify→YouTube resolve, AFK exempt channels, offline client permissions + modified-only filter, metadata encoding helpers, radio ID compact, `command_args_list`, safer temp-channel template, yt-dlp auto-update on startup.
 4. **Video / restart reliability (v1.4.0)** — shared music volume for sidecar, non-looping on-demand clips + auto-stop, A/V sync clamp, multi-thread VP8 encode tuning, awaited SSH teardown, ServerQuery visibility in Channels, stream API timeouts (from [DomeNinchen/ts6forkmanager](https://github.com/DomeNinchen/ts6forkmanager)).
-5. **Music-bot transport / memory reliability (v1.5.0)** — resolve the TeamSpeak UDP target once per connection, stream local/downloaded PCM incrementally with bounded memory and FFmpeg real-time pacing, and prevent overlapping reconnect attempts (adapted from [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager)).
+5. **Music-bot transport / memory reliability (targeting v1.5.0)** — resolve the TeamSpeak UDP target once per connection, stream local/downloaded PCM incrementally with bounded memory and FFmpeg real-time pacing, and prevent overlapping reconnect attempts (adapted from [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager)).
 
-The yt-dlp HTTP-header transport subset evaluated in fork PR #45 was **reverted before v1.5.0** and is not part of the shipped phase above. Revisit it only as a fresh, current-main change if runtime evidence still shows temporary YouTube media URLs failing because FFmpeg lacks yt-dlp-selected headers.
+The yt-dlp HTTP-header transport subset evaluated in fork PR #45 was **reverted before the v1.5.0 release** and is not part of the current release-candidate scope. Revisit it only as a fresh, current-main change if runtime evidence still shows temporary YouTube media URLs failing because FFmpeg lacks yt-dlp-selected headers.
 
 ## Backlog after v1.5.0
 
