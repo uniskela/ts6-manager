@@ -467,31 +467,10 @@ export async function downloadYouTube(
   return { filePath, info };
 }
 
-function stringHeaders(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
-  const headers: Record<string, string> = {};
-  for (const [name, headerValue] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof headerValue === "string") headers[name] = headerValue;
-  }
-  return headers;
-}
-
-/** Extract HTTP headers yt-dlp says must accompany the selected temporary media URL. */
-export function extractYtDlpStreamHeaders(data: Record<string, unknown>): Record<string, string> {
-  const topLevel = stringHeaders(data.http_headers);
-  if (Object.keys(topLevel).length > 0) return topLevel;
-
-  const requestedFormats = data.requested_formats;
-  if (!Array.isArray(requestedFormats) || requestedFormats.length === 0) return {};
-  const selected = requestedFormats[0];
-  if (!selected || typeof selected !== "object" || Array.isArray(selected)) return {};
-  return stringHeaders((selected as Record<string, unknown>).http_headers);
-}
-
 /** Resolve a direct audio stream URL for YouTube without downloading (prankroker approach). */
 export async function resolveYouTubeAudioStream(
   url: string,
-): Promise<{ streamUrl: string; streamHeaders: Record<string, string>; info: YouTubeInfo }> {
+): Promise<{ streamUrl: string; info: YouTubeInfo }> {
   const parsed = parseYouTubeUrl(url);
   const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
   const result = await runYtDlp(withMediaUrl([
@@ -516,7 +495,6 @@ export async function resolveYouTubeAudioStream(
 
   const streamUrl = typeof data.url === 'string' ? data.url : '';
   if (!streamUrl) throw new Error('No stream URL in yt-dlp output');
-  const streamHeaders = extractYtDlpStreamHeaders(data);
 
   const info: YouTubeInfo = {
     id: String(data.id ?? parsed.videoId ?? ''),
@@ -527,7 +505,7 @@ export async function resolveYouTubeAudioStream(
     url: mediaUrl,
   };
 
-  return { streamUrl, streamHeaders, info };
+  return { streamUrl, info };
 }
 
 /**

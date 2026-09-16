@@ -9,36 +9,6 @@ export const FRAME_SIZE = 960; // 20ms at 48kHz
 export const BYTES_PER_FRAME = FRAME_SIZE * CHANNELS * 2; // 16-bit = 2 bytes per sample
 export const FRAME_MS = 20;
 const BITRATE = 96000;
-const HTTP_HEADER_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
-
-/** Build ffmpeg arguments for an HTTP(S) PCM stream. */
-export function buildPcmStreamArgs(
-  url: string,
-  httpHeaders: Record<string, string> = {},
-): string[] {
-  const headerBlock = Object.entries(httpHeaders)
-    .filter(([name, value]) => {
-      if (name.toLowerCase() === "cookie") return false;
-      if (!HTTP_HEADER_NAME.test(name)) return false;
-      return !/[\r\n\0]/.test(value);
-    })
-    .map(([name, value]) => `${name}: ${value}`)
-    .join("\r\n");
-
-  return [
-    "-reconnect", "1",
-    "-reconnect_streamed", "1",
-    "-reconnect_delay_max", "5",
-    ...(headerBlock ? ["-headers", `${headerBlock}\r\n`] : []),
-    "-i", url,
-    "-f", "s16le",
-    "-acodec", "pcm_s16le",
-    "-ar", String(SAMPLE_RATE),
-    "-ac", String(CHANNELS),
-    "-loglevel", "error",
-    "pipe:1",
-  ];
-}
 
 export class AudioPipeline {
   private encoder: OpusScript;
@@ -121,20 +91,30 @@ export class AudioPipeline {
   }
 
   /**
-   * Stream audio from a URL to raw PCM (for live radio streams and resolved media URLs).
+   * Stream audio from a URL to raw PCM (for live radio streams).
    * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
    */
-  async toPcmStream(
-    url: string,
-    httpHeaders: Record<string, string> = {},
-  ): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+  async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
     // C4: Validate URL before passing to ffmpeg
     const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
     }
 
-    const ffmpeg = spawn("ffmpeg", buildPcmStreamArgs(url, httpHeaders), { shell: false });
+    const args = [
+      "-reconnect", "1",
+      "-reconnect_streamed", "1",
+      "-reconnect_delay_max", "5",
+      "-i", url,
+      "-f", "s16le",
+      "-acodec", "pcm_s16le",
+      "-ar", String(SAMPLE_RATE),
+      "-ac", String(CHANNELS),
+      "-loglevel", "error",
+      "pipe:1",
+    ];
+
+    const ffmpeg = spawn("ffmpeg", args, { shell: false });
     return {
       stdout: ffmpeg.stdout,
       process: ffmpeg,

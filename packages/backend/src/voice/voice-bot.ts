@@ -477,10 +477,10 @@ export class VoiceBot extends EventEmitter {
         && isYouTubeHostUrl(item.sourceUrl)
       ) {
         try {
-          const { streamUrl, streamHeaders, info } = await resolveYouTubeAudioStream(item.sourceUrl);
+          const { streamUrl, info } = await resolveYouTubeAudioStream(item.sourceUrl);
           item.streamUrl = streamUrl;
           if (!item.duration && info.duration) item.duration = info.duration;
-          await this.playStream(item, streamHeaders);
+          await this.playStream(item);
           return;
         } catch (streamErr: any) {
           console.warn(
@@ -535,7 +535,7 @@ export class VoiceBot extends EventEmitter {
     return dl.filePath;
   }
 
-  async playStream(item: QueueItem, streamHeaders: Record<string, string> = {}): Promise<void> {
+  async playStream(item: QueueItem): Promise<void> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
@@ -555,7 +555,7 @@ export class VoiceBot extends EventEmitter {
     this.startIcyPolling(item.streamUrl);
 
     try {
-      const stream = await this.pipeline.toPcmStream(item.streamUrl, streamHeaders);
+      const stream = await this.pipeline.toPcmStream(item.streamUrl);
       this.streamKill = stream.kill;
       this.streamChunks = [];
       this.streamChunksSize = 0;
