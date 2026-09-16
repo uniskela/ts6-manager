@@ -1,5 +1,7 @@
 # Voice Transport Reliability Implementation Plan
 
+> **Status:** Implemented and merged in fork PR #41. The focused resolver tests, common build, backend typecheck, workspace build, and PR validation passed. A hostname-backed live TeamSpeak smoke test is still a worthwhile operational check after deployment.
+>
 > **Goal:** Stop TeamSpeak voice playback from repeatedly resolving the server hostname for every UDP packet.
 
 **Architecture:** Keep the low-level TeamSpeak protocol client unchanged. Resolve the configured host once at connection start in the `tslib` public wrapper, then pass the resolved IPv4 address to the existing client. A small injectable resolver helper keeps the behaviour unit-testable without real DNS.
@@ -30,10 +32,17 @@
 
 ### Task 3: Verification
 
-1. Run `pnpm --filter @ts6/common build`.
-2. Run `pnpm --filter @ts6/backend typecheck`.
-3. Run `pnpm --filter @ts6/backend exec tsx --test src/voice/tslib/udp-target.test.ts`.
-4. Compare the branch with `main` and confirm only the resolver helper/test, `tslib/index.ts`, and this plan changed.
-5. Runtime smoke test on a hostname-backed TeamSpeak connection: start a music bot, play audio for several minutes, and confirm no DNS-resolution-related disconnect occurs.
+Completed during PR review / CI:
 
-**Environment note:** The ChatGPT execution sandbox could not resolve GitHub, so repository writes were made through the connected GitHub app. Local commands in step 3 must be treated as pending unless an external runner/maintainer executes them; do not claim them as passed without evidence.
+1. `pnpm --filter @ts6/common build`.
+2. `pnpm --filter @ts6/backend typecheck`.
+3. `pnpm --filter @ts6/backend exec tsx --test src/voice/tslib/udp-target.test.ts`.
+4. Workspace build and backend test suite in PR validation.
+
+Runtime smoke check that remains valuable after deployment:
+
+1. Use a hostname-backed TeamSpeak connection.
+2. Start a music bot and play audio for several minutes.
+3. Confirm playback remains connected and there is no repeated-DNS-resolution failure pattern.
+
+**Historical environment note:** The original implementation session could not run repository-local commands in its sandbox, so this plan initially recorded local verification as pending. Those checks were subsequently completed outside that sandbox before/through PR validation; the remaining item is the live hostname-backed smoke test, not the build/test suite.
