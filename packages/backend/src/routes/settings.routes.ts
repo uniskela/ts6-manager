@@ -7,6 +7,7 @@ import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import rateLimit from 'express-rate-limit';
 import { AppError } from '../middleware/error-handler.js';
 import { setYtCookieFile, getYtCookieFile } from '../voice/audio/youtube.js';
 import {
@@ -25,6 +26,13 @@ const COOKIE_PATH = path.join(COOKIE_DIR, 'yt-cookies.txt');
 const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
   storage: multer.memoryStorage(),
+});
+
+const settingsMutationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // Admin-only guard
@@ -48,7 +56,7 @@ settingsRoutes.get('/yt-cookies', requireAdmin, (_req: Request, res: Response) =
 });
 
 // POST /api/settings/yt-cookies — Upload cookie file
-settingsRoutes.post('/yt-cookies', requireAdmin, upload.single('cookies'), (req: Request, res: Response, next) => {
+settingsRoutes.post('/yt-cookies', requireAdmin, settingsMutationLimiter, upload.single('cookies'), (req: Request, res: Response, next) => {
   try {
     if (!req.file) {
       // Check if raw text was sent in body
@@ -71,7 +79,7 @@ settingsRoutes.post('/yt-cookies', requireAdmin, upload.single('cookies'), (req:
 });
 
 // DELETE /api/settings/yt-cookies — Remove cookie file
-settingsRoutes.delete('/yt-cookies', requireAdmin, (_req: Request, res: Response, next) => {
+settingsRoutes.delete('/yt-cookies', requireAdmin, settingsMutationLimiter, (_req: Request, res: Response, next) => {
   try {
     if (fs.existsSync(COOKIE_PATH)) {
       fs.unlinkSync(COOKIE_PATH);
