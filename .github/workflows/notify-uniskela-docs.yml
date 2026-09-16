@@ -1,0 +1,46 @@
+name: Notify Uniskela documentation
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - docs/**
+      - .github/workflows/notify-uniskela-docs.yml
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: notify-uniskela-docs
+  cancel-in-progress: false
+jobs:
+  notify:
+    if: github.repository == 'uniskela/ts6-manager' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check App configuration
+        env:
+          APP_ID: ${{ vars.DOCS_SYNC_APP_ID }}
+          APP_KEY: ${{ secrets.DOCS_SYNC_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo '::error::Configure DOCS_SYNC_APP_ID and DOCS_SYNC_APP_PRIVATE_KEY; see .github/docs-sync.md.'
+            exit 1
+          fi
+      - name: Create short-lived destination token
+        id: app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.DOCS_SYNC_APP_ID }}
+          private-key: ${{ secrets.DOCS_SYNC_APP_PRIVATE_KEY }}
+          owner: uniskela
+          repositories: .com
+          permission-contents: write
+      - name: Notify the documentation receiver
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+        run: |
+          jq -n --arg repository "$SOURCE_REPO" --arg sha "$SOURCE_SHA" --arg ref "$SOURCE_REF" \
+            '{event_type:"docs-source-updated",client_payload:{repository:$repository,sha:$sha,ref:$ref}}' > "$RUNNER_TEMP/docs-dispatch.json"
+          gh api --method POST repos/uniskela/.com/dispatches --input "$RUNNER_TEMP/docs-dispatch.json"
