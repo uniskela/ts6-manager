@@ -25,7 +25,7 @@ const MAX_CHANNEL_NAME = 40;
 const ERROR_LOG_THROTTLE_MS = 15_000;
 const MAX_BACKOFF_MS = 30_000;
 
-function isConnectionError(message: string): boolean {
+export function shouldBackoffAnimationError(message: string): boolean {
   const lower = message.toLowerCase();
   return (
     lower.includes('econnreset') ||
@@ -34,7 +34,9 @@ function isConnectionError(message: string): boolean {
     lower.includes('etimedout') ||
     lower.includes('econnaborted') ||
     lower.includes('connection failed') ||
-    lower.includes('flood')
+    lower.includes('flood') ||
+    lower.includes('invalid apikey') ||
+    lower.includes('invalid api key')
   );
 }
 
@@ -262,8 +264,8 @@ export class AnimationManager {
 
         logError(message);
 
-        // Back off only on connection/socket failures so API errors don't inflate delay.
-        if (isConnectionError(message)) {
+        // Back off on transient connection failures and deterministic credential rejection.
+        if (shouldBackoffAnimationError(message)) {
           state.consecutiveErrors++;
           const backoffMs = Math.min(
             MAX_BACKOFF_MS,
