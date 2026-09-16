@@ -10,6 +10,23 @@ export const BYTES_PER_FRAME = FRAME_SIZE * CHANNELS * 2; // 16-bit = 2 bytes pe
 export const FRAME_MS = 20;
 const BITRATE = 96000;
 
+export function buildPcmFileArgs(filePath: string, startSeconds = 0): string[] {
+  const args: string[] = [];
+  if (startSeconds > 0) {
+    args.push("-ss", startSeconds.toFixed(3));
+  }
+  args.push(
+    "-i", filePath,
+    "-f", "s16le",
+    "-acodec", "pcm_s16le",
+    "-ar", String(SAMPLE_RATE),
+    "-ac", String(CHANNELS),
+    "-loglevel", "error",
+    "pipe:1",
+  );
+  return args;
+}
+
 export class AudioPipeline {
   private encoder: OpusScript;
   private opusPeak = 0;
@@ -38,6 +55,7 @@ export class AudioPipeline {
 
   /**
    * Convert audio file to raw PCM (48kHz, mono, s16le) at full volume.
+   * @deprecated Use toPcmFileStream() so long tracks are not buffered in memory.
    */
   toPcm(filePath: string): Promise<Buffer> {
     return this.ffmpegToPcm(filePath);
@@ -45,6 +63,7 @@ export class AudioPipeline {
 
   /**
    * Split raw PCM buffer into 960-sample frames.
+   * @deprecated File playback should consume toPcmFileStream() incrementally.
    */
   splitFrames(pcmData: Buffer): Buffer[] {
     const frames: Buffer[] = [];
@@ -58,6 +77,26 @@ export class AudioPipeline {
       frames.push(frame);
     }
     return frames;
+  }
+
+  /**
+   * Decode a local audio file to PCM incrementally.
+   *
+   * The caller consumes stdout frame-by-frame, keeping memory bounded even for
+   * multi-hour tracks. startSeconds is applied before the input for fast seek.
+   */
+  async toPcmFileStream(
+    filePath: string,
+    startSeconds = 0,
+  ): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
+    const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(filePath, startSeconds), { shell: false });
+    return {
+      stdout: ffmpeg.stdout,
+      process: ffmpeg,
+      kill: () => {
+        try { ffmpeg.kill("SIGKILL"); } catch { }
+      },
+    };
   }
 
   /**
@@ -126,17 +165,7 @@ export class AudioPipeline {
 
   private ffmpegToPcm(input: string): Promise<Buffer> {
     return new Promise((resolve, reject) => {
-      const args = [
-        "-i", input,
-        "-f", "s16le",
-        "-acodec", "pcm_s16le",
-        "-ar", String(SAMPLE_RATE),
-        "-ac", String(CHANNELS),
-        "-loglevel", "error",
-        "pipe:1",
-      ];
-
-      const ffmpeg = spawn("ffmpeg", args, { shell: false });
+      const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(input), { shell: false });
       const chunks: Buffer[] = [];
 
       ffmpeg.stdout.on("data", (chunk: Buffer) => {
