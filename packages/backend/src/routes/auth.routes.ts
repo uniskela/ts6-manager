@@ -3,12 +3,20 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { nanoid } from 'nanoid';
+import rateLimit from 'express-rate-limit';
 import { config } from '../config.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { AppError } from '../middleware/error-handler.js';
 import { validatePassword } from '../utils/validate-password.js';
 
 export const authRoutes: Router = Router();
+
+const meRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 authRoutes.post('/login', async (req: Request, res: Response, next) => {
   try {
@@ -121,7 +129,7 @@ authRoutes.post('/logout', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
-authRoutes.get('/me', authMiddleware, async (req: Request, res: Response, next) => {
+authRoutes.get('/me', meRateLimiter, authMiddleware, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
