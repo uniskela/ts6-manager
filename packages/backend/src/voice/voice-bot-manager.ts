@@ -424,6 +424,14 @@ export class VoiceBotManager extends EventEmitter {
       bot.ensureDisconnected();
       await new Promise((r) => setTimeout(r, RECONNECT_GRACE_PERIOD_MS));
 
+      // A maintainer may have explicitly stopped/deleted the bot while this
+      // attempt was in the grace period. Clearing reconnect state is the
+      // cancellation signal; never let an already-running attempt undo it.
+      if (this.reconnectState.get(botId) !== state || bot.manuallyStopped) {
+        console.log(`[VoiceBotManager] Bot ${botId}: reconnect cancelled during grace period`);
+        return;
+      }
+
       await bot.start();
       console.log(`[VoiceBotManager] Bot ${botId}: reconnected successfully after ${state.attempts} attempt(s)`);
       this.reconnectState.delete(botId);
