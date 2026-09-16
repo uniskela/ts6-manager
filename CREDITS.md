@@ -35,6 +35,7 @@ Ideas, bug reports, and patches from the upstream tracker that informed or were 
 | [Issue #36](https://github.com/clusterzx/ts6-manager/issues/36) | [@vinookie](https://github.com/vinookie) | yt-dlp auto-update on startup |
 | [PR #72](https://github.com/clusterzx/ts6-manager/pull/72) / [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (reliability subset only) | [@coom](https://github.com/coom) | Connection-pool refresh / self-heal ideas (no Discord/SSO/i18n absorption) |
 | [PR #64](https://github.com/clusterzx/ts6-manager/pull/64) | [@joaobosconff](https://github.com/joaobosconff) | All-in-one Docker image (nginx + backend + sidecar) + first-run login → setup redirect |
+| [PR #83](https://github.com/clusterzx/ts6-manager/pull/83) | [@vibesoftwarecoder](https://github.com/vibesoftwarecoder) | Preserve yt-dlp HTTP headers when FFmpeg opens temporary YouTube media URLs (transport subset only; PO-token / Node 22 changes not absorbed) |
 
 ## Fork contributions
 
