@@ -5,6 +5,7 @@
 
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
+import rateLimit from 'express-rate-limit';
 import fs from 'fs';
 import path from 'path';
 import { AppError } from '../middleware/error-handler.js';
@@ -27,6 +28,13 @@ const upload = multer({
   storage: multer.memoryStorage(),
 });
 
+const ytCookiesLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Admin-only guard
 function requireAdmin(req: Request, _res: Response, next: Function) {
   if ((req as any).user?.role !== 'admin') {
@@ -36,7 +44,7 @@ function requireAdmin(req: Request, _res: Response, next: Function) {
 }
 
 // GET /api/settings/yt-cookies — Check cookie file status
-settingsRoutes.get('/yt-cookies', requireAdmin, (_req: Request, res: Response) => {
+settingsRoutes.get('/yt-cookies', requireAdmin, ytCookiesLimiter, (_req: Request, res: Response) => {
   const exists = fs.existsSync(COOKIE_PATH);
   const activePath = getYtCookieFile();
   res.json({
@@ -48,7 +56,7 @@ settingsRoutes.get('/yt-cookies', requireAdmin, (_req: Request, res: Response) =
 });
 
 // POST /api/settings/yt-cookies — Upload cookie file
-settingsRoutes.post('/yt-cookies', requireAdmin, upload.single('cookies'), (req: Request, res: Response, next) => {
+settingsRoutes.post('/yt-cookies', requireAdmin, ytCookiesLimiter, upload.single('cookies'), (req: Request, res: Response, next) => {
   try {
     if (!req.file) {
       // Check if raw text was sent in body
@@ -71,7 +79,7 @@ settingsRoutes.post('/yt-cookies', requireAdmin, upload.single('cookies'), (req:
 });
 
 // DELETE /api/settings/yt-cookies — Remove cookie file
-settingsRoutes.delete('/yt-cookies', requireAdmin, (_req: Request, res: Response, next) => {
+settingsRoutes.delete('/yt-cookies', requireAdmin, ytCookiesLimiter, (_req: Request, res: Response, next) => {
   try {
     if (fs.existsSync(COOKIE_PATH)) {
       fs.unlinkSync(COOKIE_PATH);
