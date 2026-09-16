@@ -195,6 +195,15 @@ docker compose up -d
 > `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` are **required** in production. The backend refuses to start without them when `NODE_ENV=production`.
 > The sidecar HTTP API is authenticated with `SIDECAR_SECRET` and is not published to the host by default.
 
+### Connection credentials and upgrades
+
+WebQuery API keys and SSH passwords are encrypted before they are stored in the persistent SQLite database. Normal container restarts and image upgrades therefore do **not** require you to re-enter connection credentials, provided the database volume and encryption key are preserved.
+
+- Generate `ENCRYPTION_KEY` once and keep the same value across restarts, upgrades, and redeployments. Changing it prevents TS6 Manager from decrypting credentials that were stored with the previous key.
+- When editing an existing connection, secret inputs such as the WebQuery API key or SSH password are intentionally not populated back into the browser. Leaving one of those fields blank keeps the saved encrypted value unchanged.
+- On startup, TS6 Manager validates restored WebQuery credentials in the background without delaying the WebUI. A log message such as `invalid apikey` means the TeamSpeak server rejected the saved key; it does not mean TS6 Manager forgot or cleared it.
+- Transient SSH closes during the initial handshake are retried automatically. Authentication and host-key failures remain fatal and require the connection settings or server trust configuration to be corrected.
+
 ### All-in-one (single container)
 
 Runs nginx + backend + sidecar in one image (adapted from upstream [PR #64](https://github.com/clusterzx/ts6-manager/pull/64) by [@joaobosconff](https://github.com/joaobosconff)):
@@ -274,7 +283,7 @@ npx prisma db seed
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JWT_SECRET` | — | **Required.** Secret for JWT signing. Must be set in production. |
-| `ENCRYPTION_KEY` | — | **Required in production.** Dedicated key for AES-256-GCM credential encryption. Dev may fall back to `JWT_SECRET`. |
+| `ENCRYPTION_KEY` | — | **Required in production.** Dedicated AES-256-GCM key for stored credentials. Generate it once and keep the same value across restarts/upgrades; dev may fall back to `JWT_SECRET`. |
 | `PORT` | `3001` | Backend port |
 | `DATABASE_URL` | `file:./data/ts6webui.db` | SQLite database path |
 | `JWT_ACCESS_EXPIRY` | `15m` | Access token lifetime |
