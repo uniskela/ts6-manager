@@ -2,6 +2,8 @@
 
 This fork builds on the original [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) project and community reports.
 
+> When a fork PR directly adapts an external patch, finding, or implementation, that PR should update this file so attribution lands with the code that depends on it.
+
 ## Upstream project
 
 - **Author / maintainer:** [@clusterzx](https://github.com/clusterzx) and contributors to `clusterzx/ts6-manager`
