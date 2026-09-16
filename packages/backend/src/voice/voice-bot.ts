@@ -530,9 +530,13 @@ export class VoiceBot extends EventEmitter {
     stream.process.on('close', (code) => {
       if (epoch !== this.loopEpoch) return;
       if (code != null && code !== 0) {
+        this.clearTimer();
         this._fileStreamActive = false;
         this.streamKill = null;
         this.fileStdout = null;
+        this.streamChunks = [];
+        this.streamChunksSize = 0;
+        if (!this._videoStreaming) this.stopAutoStopTimer();
         this._status = 'error';
         this.emit('error', new Error(`FFmpeg file playback exited with code ${code}`));
         this.emit('statusChange', this._status);
@@ -543,9 +547,13 @@ export class VoiceBot extends EventEmitter {
 
     stream.process.on('error', (err) => {
       if (epoch !== this.loopEpoch) return;
+      this.clearTimer();
       this._fileStreamActive = false;
       this.streamKill = null;
       this.fileStdout = null;
+      this.streamChunks = [];
+      this.streamChunksSize = 0;
+      if (!this._videoStreaming) this.stopAutoStopTimer();
       this._status = 'error';
       this.emit('error', err);
       this.emit('statusChange', this._status);
@@ -561,7 +569,7 @@ export class VoiceBot extends EventEmitter {
   }
 
   private fileTick = (): void => {
-    if (this.fileStreamStartEpoch !== this.loopEpoch) return;
+    if (this.fileStreamStartEpoch !== this.loopEpoch || !this._fileStreamActive) return;
 
     const now = performance.now();
     if (now < this.fileNextDue) {
