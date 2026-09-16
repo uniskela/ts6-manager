@@ -15,6 +15,18 @@ export class ConnectionPool {
     for (const server of servers) {
       // H8: Decrypt API key before use
       this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+
+      // Validate restored credentials once during startup so bad/stale keys are
+      // visible immediately instead of first surfacing from background bot traffic.
+      // A failed TeamSpeak connection must not prevent the WebUI itself from booting.
+      try {
+        const result = await this.getClient(server.id).testConnection();
+        if (!result.ok) {
+          console.warn(`[ConnectionPool] WebQuery validation failed for server config ${server.id}: ${result.error}`);
+        }
+      } catch (err: any) {
+        console.warn(`[ConnectionPool] WebQuery validation failed for server config ${server.id}: ${err?.message || String(err)}`);
+      }
     }
 
     console.log(`[ConnectionPool] Initialized ${this.clients.size} server connection(s)`);
