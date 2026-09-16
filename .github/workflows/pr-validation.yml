@@ -1,0 +1,87 @@
+name: PR validation
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: pr-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript build, typecheck, and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @ts6/backend exec prisma generate
+
+      - name: Build common package
+        run: pnpm --filter @ts6/common build
+
+      - name: Typecheck workspace
+        run: pnpm typecheck
+
+      - name: Build workspace
+        run: pnpm build
+
+      - name: Run backend tests
+        working-directory: packages/backend
+        shell: bash
+        run: |
+          mapfile -t tests < <(find src -type f -name '*.test.ts' | sort)
+          if (( ${#tests[@]} == 0 )); then
+            echo 'No backend tests found.' >&2
+            exit 1
+          fi
+          printf 'Running %d backend test files\n' "${#tests[@]}"
+          pnpm exec tsx --test "${tests[@]}"
+
+  sidecar:
+    name: Go sidecar test and vet
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/sidecar
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: packages/sidecar/go.mod
+          cache-dependency-path: packages/sidecar/go.sum
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
