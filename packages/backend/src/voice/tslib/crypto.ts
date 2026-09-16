@@ -134,7 +134,10 @@ export const INIT_VERSION = 1566914096; // 3.5.0 [Stable]
 
 export function hashPassword(password: string): string {
   if (!password) return "";
-  return sha1(Buffer.from(password, "utf-8")).toString("base64");
+  const iterations = 210_000;
+  const salt = crypto.randomBytes(16);
+  const derived = crypto.pbkdf2Sync(password, salt, iterations, 32, "sha256");
+  return `pbkdf2$${iterations}$${salt.toString("base64")}$${derived.toString("base64")}`;
 }
 
 // Per-packet key/nonce derivation
