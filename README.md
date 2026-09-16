@@ -58,9 +58,11 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - Radio station streaming with ICY metadata and live title updates
 - YouTube playback via yt-dlp (search, download, queue)
 - Music library management (upload, organize, playlists)
+- Local/downloaded tracks are decoded incrementally at media speed so memory use stays bounded on long tracks
+- TeamSpeak voice hostnames are resolved once per connection rather than once per UDP packet
 - Volume control, pause, skip, previous, shuffle, repeat
 - Stereo audio support with stable 20ms pacing
-- Auto-reconnect with exponential backoff on disconnect
+- Auto-reconnect with exponential backoff and overlap protection
 - In-channel text commands for hands-free control
 - Music request history tracking
 
@@ -75,8 +77,8 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 ### Bot Flow Engine
 - Visual flow editor with drag-and-drop node canvas
 - Triggers: TS3 events, cron schedules, webhooks (with mandatory secrets), chat commands (global or channel-specific)
-- Actions: kick, ban, move, message, poke, channel create/edit/delete, HTTP requests, WebQuery commands
-- Conditions, variables, delays, loops, logging
+- Actions: kick, ban, move, message, poke, channel create/edit/delete, HTTP requests, WebQuery commands, music-bot controls, and utility actions
+- Conditions, persistent flow variables, execution-local temporary values, delays, and logging
 - Animated channel names (rotating text on a timer)
 - Placeholder system with filters and expressions
 - Pre-built templates for common automation tasks
@@ -151,7 +153,7 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 ## Quick Start (Docker)
 
-Prebuilt images are published to **GitHub Container Registry** on every push to `main` (and on `v*` tags) via [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml):
+Prebuilt images are published to **GitHub Container Registry** only for immutable `vX.Y.Z` releases created by Release Please. Ordinary pushes and PR merges to `main` do **not** publish images. [`.github/workflows/publish-images.yml`](.github/workflows/publish-images.yml) is invoked after a release is created and also has a manual recovery path for republishing an existing release tag.
 
 | Service  | Image |
 |----------|--------|
@@ -241,10 +243,15 @@ networks:
 
 ## Development
 
-Requires: Node.js 20+, pnpm 9+
+Requires: Node.js 20+ and **pnpm 9.x**. CI deliberately uses pnpm 9; newer pnpm majors change dependency build-script/override handling and are not the supported local baseline yet.
+
+For a reproducible local setup with Corepack:
 
 ```bash
-pnpm install
+corepack enable
+corepack prepare pnpm@9.15.9 --activate
+pnpm install --frozen-lockfile
+pnpm db:generate
 pnpm dev          # starts backend + frontend in parallel
 ```
 
@@ -278,19 +285,29 @@ npx prisma db seed
 | `SIDECAR_SECRET` | — | **Required when `SIDECAR_URL` is set in production.** Shared bearer token for sidecar mutating APIs. |
 | `YT_COOKIE_FILE` | — | Optional. Path to a Netscape-format cookies.txt file for yt-dlp. Can also be managed via **Settings → YouTube** in the UI. |
 
-## Environment Variables Sidecar(VideoStreaming)
+## Environment Variables: Sidecar / Video Streaming
+
+Defaults below are the **sidecar code defaults**. Compose files may intentionally override them (for example, the standard split-stack compose raises the RTP queue sizes).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VIDEO_QUEUE_SIZE` | `2048` | Size of the video RTP queue |
-| `AUDIO_QUEUE_SIZE` | `4096` | Size of the audio RTP queue |
-| `SYNC_PLAYOUT_BUFFER_MS` | `4` | Small playout buffer used by the adaptive pacing logic |
-| `SYNC_VIDEO_BIAS_MS` | `4` | Optional extra holdback for video to fine-tune sync |
-| `AUDIO_DELAY_MS` | `0` | Legacy / manual audio delay option With the current pacing logic this is typically expected to stay at 0 |
-| `SIDECAR_DEBUG_LOGS` | `1` | Enables verbose debug logging for high-frequency runtime details |
-| `VIDEO_READ_RTP_BUFFER` | `4194304` | UDP OS-socketbuffer for video port |
-| `AUDIO_READ_RTP_BUFFER` | `1048576` | UDP OS-socketbuffer for audio port |
-| `VIDEO_BUFSIZE` | `1M` | FFmpeg Video Buffer |
+| `VIDEO_QUEUE_SIZE` | `1024` | Size of the video RTP queue |
+| `AUDIO_QUEUE_SIZE` | `2048` | Size of the audio RTP queue |
+| `SYNC_PLAYOUT_BUFFER_MS` | `50` | Small playout buffer used by the adaptive pacing logic |
+| `SYNC_VIDEO_BIAS_MS` | `0` | Optional extra holdback for video to fine-tune sync |
+| `SYNC_MAX_DELAY_MS` | `500` | Maximum pacing delay / latency sample used by the sync clamp |
+| `AUDIO_DELAY_MS` | `0` | Optional manual audio delay; normally leave at `0` with adaptive pacing |
+| `SIDECAR_DEBUG_LOGS` | `0` | Set to `1` to enable verbose high-frequency runtime logs |
+| `VIDEO_RTP_READ_BUFFER` | `4194304` | Requested UDP socket read buffer for video RTP |
+| `AUDIO_RTP_READ_BUFFER` | `1048576` | Requested UDP socket read buffer for audio RTP |
+| `VIDEO_WIDTH` | `1280` | Default output width when not supplied by the API |
+| `VIDEO_HEIGHT` | `720` | Default output height when not supplied by the API |
+| `VIDEO_FRAMERATE` | `30` | Default output frame rate when not supplied by the API |
+| `VIDEO_BITRATE` | `1500k` | Default VP8 target bitrate |
+| `AUDIO_BITRATE` | `128k` | Default Opus target bitrate |
+| `VIDEO_CPU_USED` | `4` | libvpx realtime speed/quality trade-off |
+| `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
+| `VIDEO_BUFSIZE` | auto | Optional override; otherwise approximately `2 × VIDEO_BITRATE` |
 
 ## Music Bot Text Commands
 
@@ -316,8 +333,6 @@ When a music bot is connected to a channel, users in that channel can control it
 - WebQuery API key (generated via `apikeyadd` or server admin tools)
 - SSH access to the TS server (only needed for bot flow event triggers)
 - `yt-dlp` and `ffmpeg` installed on the backend (included in the Docker image)
-
-
 
 ## License
 
