@@ -1,12 +1,8 @@
 name: Publish container images
 
 on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  workflow_dispatch:
-  # Invoked by Release Please after it creates a vX.Y.Z tag (GITHUB_TOKEN
-  # tag/releases do not retrigger this workflow via push/release events).
+  # Release Please calls this reusable workflow only after it creates an
+  # immutable vX.Y.Z release tag. Ordinary pushes to main do not publish images.
   workflow_call:
     inputs:
       tag:
@@ -14,8 +10,16 @@ on:
         required: true
         type: string
 
+  # Manual recovery path for republishing an existing release tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to republish
+        required: true
+        type: string
+
 concurrency:
-  group: ghcr-${{ inputs.tag || github.ref }}
+  group: ghcr-${{ inputs.tag }}
   cancel-in-progress: true
 
 env:
@@ -44,13 +48,7 @@ jobs:
             dockerfile: Dockerfile.sidecar
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-
       - name: Validate release tag
-        if: github.event_name == 'workflow_call'
         env:
           TAG: ${{ inputs.tag }}
         run: |
@@ -60,6 +58,11 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
       - name: Resolve image tags
         id: tags
         env:
@@ -67,23 +70,17 @@ jobs:
           COMPONENT: ${{ matrix.component }}
         run: |
           set -euo pipefail
-          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
+          FULL_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="${FULL_SHA:0:7}"
+          VERSION="${TAG#v}"
+          MAJOR_MINOR="${VERSION%.*}"
           {
+            echo "git_sha=${FULL_SHA}"
             echo "list<<EOF"
             echo "${IMAGE_PREFIX}/${COMPONENT}:sha-${SHORT_SHA}"
-            if [[ -n "${TAG}" ]]; then
-              VERSION="${TAG#v}"
-              MAJOR_MINOR="${VERSION%.*}"
-              echo "${IMAGE_PREFIX}/${COMPONENT}:${TAG}"
-              echo "${IMAGE_PREFIX}/${COMPONENT}:${VERSION}"
-              echo "${IMAGE_PREFIX}/${COMPONENT}:${MAJOR_MINOR}"
-            elif [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
-              VERSION="${GITHUB_REF_NAME#v}"
-              MAJOR_MINOR="${VERSION%.*}"
-              echo "${IMAGE_PREFIX}/${COMPONENT}:${GITHUB_REF_NAME}"
-              echo "${IMAGE_PREFIX}/${COMPONENT}:${VERSION}"
-              echo "${IMAGE_PREFIX}/${COMPONENT}:${MAJOR_MINOR}"
-            fi
+            echo "${IMAGE_PREFIX}/${COMPONENT}:${TAG}"
+            echo "${IMAGE_PREFIX}/${COMPONENT}:${VERSION}"
+            echo "${IMAGE_PREFIX}/${COMPONENT}:${MAJOR_MINOR}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -102,7 +99,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.component }}
-          tags: type=sha,prefix=sha-,format=short
+          tags: type=raw,value=${{ inputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.tags.outputs.git_sha }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -113,7 +112,7 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ steps.tags.outputs.git_sha }}
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
@@ -122,13 +121,7 @@ jobs:
     name: Build all-in-one
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.tag || github.ref }}
-
       - name: Validate release tag
-        if: github.event_name == 'workflow_call'
         env:
           TAG: ${{ inputs.tag }}
         run: |
@@ -138,29 +131,28 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
       - name: Resolve image tags
         id: tags
         env:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
+          FULL_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="${FULL_SHA:0:7}"
+          VERSION="${TAG#v}"
+          MAJOR_MINOR="${VERSION%.*}"
           {
+            echo "git_sha=${FULL_SHA}"
             echo "list<<EOF"
             echo "${IMAGE_PREFIX}/all-in-one:sha-${SHORT_SHA}"
-            if [[ -n "${TAG}" ]]; then
-              VERSION="${TAG#v}"
-              MAJOR_MINOR="${VERSION%.*}"
-              echo "${IMAGE_PREFIX}/all-in-one:${TAG}"
-              echo "${IMAGE_PREFIX}/all-in-one:${VERSION}"
-              echo "${IMAGE_PREFIX}/all-in-one:${MAJOR_MINOR}"
-            elif [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" == v* ]]; then
-              VERSION="${GITHUB_REF_NAME#v}"
-              MAJOR_MINOR="${VERSION%.*}"
-              echo "${IMAGE_PREFIX}/all-in-one:${GITHUB_REF_NAME}"
-              echo "${IMAGE_PREFIX}/all-in-one:${VERSION}"
-              echo "${IMAGE_PREFIX}/all-in-one:${MAJOR_MINOR}"
-            fi
+            echo "${IMAGE_PREFIX}/all-in-one:${TAG}"
+            echo "${IMAGE_PREFIX}/all-in-one:${VERSION}"
+            echo "${IMAGE_PREFIX}/all-in-one:${MAJOR_MINOR}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -179,7 +171,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_PREFIX }}/all-in-one
-          tags: type=sha,prefix=sha-,format=short
+          tags: type=raw,value=${{ inputs.tag }}
+          labels: |
+            org.opencontainers.image.revision=${{ steps.tags.outputs.git_sha }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -190,16 +184,15 @@ jobs:
           tags: ${{ steps.tags.outputs.list }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ steps.tags.outputs.git_sha }}
           cache-from: type=gha,scope=all-in-one
           cache-to: type=gha,mode=max,scope=all-in-one
 
-  # Retag the just-built sha image as :latest only when every split component built successfully.
+  # Promote the successfully built immutable release tag to :latest.
   promote-latest:
     name: Promote ${{ matrix.component }}:latest
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_call' && github.ref == 'refs/heads/main'
     strategy:
       fail-fast: true
       matrix:
@@ -212,13 +205,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag sha as latest
+      - name: Retag release as latest
         env:
+          TAG: ${{ inputs.tag }}
           COMPONENT: ${{ matrix.component }}
         run: |
           set -euo pipefail
-          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
-          SRC="${IMAGE_PREFIX}/${COMPONENT}:sha-${SHORT_SHA}"
+          SRC="${IMAGE_PREFIX}/${COMPONENT}:${TAG}"
           DST="${IMAGE_PREFIX}/${COMPONENT}:latest"
           echo "Promoting ${SRC} → ${DST}"
           docker buildx imagetools create --tag "${DST}" "${SRC}"
@@ -227,7 +220,6 @@ jobs:
     name: Promote all-in-one:latest
     needs: build-all-in-one
     runs-on: ubuntu-latest
-    if: github.event_name != 'workflow_call' && github.ref == 'refs/heads/main'
     steps:
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
@@ -236,11 +228,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Retag sha as latest
+      - name: Retag release as latest
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          SHORT_SHA="$(printf '%.7s' "${GITHUB_SHA}")"
-          SRC="${IMAGE_PREFIX}/all-in-one:sha-${SHORT_SHA}"
+          SRC="${IMAGE_PREFIX}/all-in-one:${TAG}"
           DST="${IMAGE_PREFIX}/all-in-one:latest"
           echo "Promoting ${SRC} → ${DST}"
           docker buildx imagetools create --tag "${DST}" "${SRC}"
