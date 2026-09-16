@@ -298,7 +298,7 @@ export function exportPublicKeyString(pubKey: crypto.KeyObject): string {
   return der.toString("base64");
 }
 
-// ECDH shared secret (P-256) - returns x coordinate, SHA-1 hashed
+// ECDH shared secret (P-256) - returns x coordinate, SHA-256 hashed
 export function getSharedSecret(
   privateKey: crypto.KeyObject,
   serverPublicKeyDer: Buffer
@@ -327,7 +327,7 @@ export function getSharedSecret(
     keyArr = Buffer.alloc(32, 0);
     shared.copy(keyArr, 32 - shared.length);
   }
-  return crypto.createHash("sha1").update(keyArr).digest();
+  return crypto.createHash("sha256").update(keyArr).digest();
 }
 
 // Simple DER parser for libtomcrypt key format
