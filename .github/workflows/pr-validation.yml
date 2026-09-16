@@ -41,6 +41,9 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @ts6/backend exec prisma generate
 
+      - name: Build common package
+        run: pnpm --filter @ts6/common build
+
       - name: Typecheck workspace
         run: pnpm typecheck
 
