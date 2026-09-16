@@ -30,9 +30,10 @@ const upload = multer({
 
 const ytCookiesLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10,
+  max: 30,
   standardHeaders: true,
   legacyHeaders: false,
+  message: { error: 'Too many cookie settings requests, please try again later' },
 });
 
 // Admin-only guard
