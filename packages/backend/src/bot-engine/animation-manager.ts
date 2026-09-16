@@ -196,7 +196,7 @@ export class AnimationManager {
     flowId: number,
     sid: number,
     config: AnimationConfig,
-    client: WebQueryClient,
+    getClient: () => WebQueryClient,
   ): void {
     // Stop existing animation for this flow
     this.stopAnimation(flowId);
@@ -243,7 +243,9 @@ export class AnimationManager {
         const channelName = frames[state.frameIndex % frames.length];
         state.frameIndex++;
 
-        await client.executePost(sid, 'channeledit', {
+        // Resolve the client for every tick. Connection settings can be refreshed
+        // while an animation is running, and the old WebQuery client is destroyed.
+        await getClient().executePost(sid, 'channeledit', {
           cid: config.channelId,
           channel_name: channelName,
         }, { priority: 'low' });
