@@ -412,7 +412,7 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
 });
 
 // DELETE /songs/:id — Delete song
-musicLibraryRoutes.delete('/songs/:id', async (req: Request, res: Response, next) => {
+musicLibraryRoutes.delete('/songs/:id', musicWriteLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const id = parseInt(req.params.id as string);
