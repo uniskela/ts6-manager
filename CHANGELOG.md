@@ -2,6 +2,21 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.5.1](https://github.com/uniskela/ts6-manager/compare/v1.5.0...v1.5.1) (2026-09-16)
+
+
+### Bug Fixes
+
+* back off animations on invalid WebQuery credentials ([a787cd9](https://github.com/uniskela/ts6-manager/commit/a787cd955e717be6ab503f9f2a7f879cf16130c5))
+* refresh animation WebQuery clients ([d78363f](https://github.com/uniskela/ts6-manager/commit/d78363fe66e916d5409ced02802d725dca9daf03))
+* reload flows after server connection refresh ([4a06f46](https://github.com/uniskela/ts6-manager/commit/4a06f4695ae05fa661dd19d25e2eda772d272c7a))
+* resolve active WebQuery client for animations ([f655e45](https://github.com/uniskela/ts6-manager/commit/f655e4586895d46bb19a71af2b99fccee55ea935))
+* restart affected flows after connection updates ([cc80e17](https://github.com/uniskela/ts6-manager/commit/cc80e1790135e1c04359c232dff10e316c1b76ad))
+* restore current bot engine before lifecycle hardening ([0d7e706](https://github.com/uniskela/ts6-manager/commit/0d7e70641d056fb8673547f6fa1b1cc6b9871023))
+* retry initial SSH handshake failures ([a847327](https://github.com/uniskela/ts6-manager/commit/a847327d0716ca2fe19a2366016fe8346d353040))
+* validate restored WebQuery connections ([a438706](https://github.com/uniskela/ts6-manager/commit/a438706ca99a85fe75db8848f2d6c2249937a20f))
+* validate restored WebQuery credentials without blocking startup ([9413ffd](https://github.com/uniskela/ts6-manager/commit/9413ffd7c921717dd8fd7448826d493177dd3fc0))
+
 ## [1.5.0](https://github.com/uniskela/ts6-manager/compare/v1.4.1...v1.5.0) (2026-09-16)
 
 
