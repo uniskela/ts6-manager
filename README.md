@@ -145,7 +145,7 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 **Frontend:** React 18, Vite, TailwindCSS, shadcn/ui, TanStack Query + Table, React Flow, Recharts, Zustand
 
-**Backend:** Node.js, Express, Prisma (SQLite), JWT authentication, WebQuery client, bot engine, voice bots, widgets
+**Backend:** Node.js, Express, Prisma (SQLite), JWT authentication, WebQuery HTTP client, SSH event listener
 
 **Voice/Audio:** Custom TS3 voice protocol client (UDP), Opus encoding, FFmpeg, yt-dlp
 
