@@ -54,7 +54,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - Instance-level settings
 
 ### Music Bots
-- Multiple bots per server, each with independent queue, volume control, and playback state
+- Multiple bots per server, each with independent queue and playback
 - Radio station streaming with ICY metadata and live title updates
 - YouTube playback via yt-dlp (search, download, queue)
 - Music library management (upload, organize, playlists)
@@ -145,11 +145,11 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 **Frontend:** React 18, Vite, TailwindCSS, shadcn/ui, TanStack Query + Table, React Flow, Recharts, Zustand
 
-**Backend:** Node.js, Express, Prisma (SQLite), JWT authentication, WebQuery HTTP client, SSH event listener
+**Backend:** Node.js, Express, Prisma (SQLite), JWT authentication, WebQuery client, bot engine, voice bots, widgets
 
 **Voice/Audio:** Custom TS3 voice protocol client (UDP), Opus encoding, FFmpeg, yt-dlp
 
-**Video Streaming:** Go sidecar with Pion WebRTC v4, RTCP Sender Reports
+**Video Streaming:** Go sidecar with Pion WebRTC v4, RTCP Sender Reports for A/V sync
 
 ## Quick Start (Docker)
 
