@@ -54,7 +54,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - Instance-level settings
 
 ### Music Bots
-- Multiple bots per server, each with independent queue and playback
+- Multiple bots per server, each with independent queue, volume control, and playback state
 - Radio station streaming with ICY metadata and live title updates
 - YouTube playback via yt-dlp (search, download, queue)
 - Music library management (upload, organize, playlists)
@@ -149,7 +149,7 @@ The backend proxies all TeamSpeak API calls. The frontend never has direct acces
 
 **Voice/Audio:** Custom TS3 voice protocol client (UDP), Opus encoding, FFmpeg, yt-dlp
 
-**Video Streaming:** Go sidecar with Pion WebRTC v4, RTCP Sender Reports for A/V sync
+**Video Streaming:** Go sidecar with Pion WebRTC v4, RTCP Sender Reports
 
 ## Quick Start (Docker)
 
@@ -200,6 +200,7 @@ docker compose up -d
 WebQuery API keys and SSH passwords are encrypted before they are stored in the persistent SQLite database. Normal container restarts and image upgrades therefore do **not** require you to re-enter connection credentials, provided the database volume and encryption key are preserved.
 
 - Generate `ENCRYPTION_KEY` once and keep the same value across restarts, upgrades, and redeployments. Changing it prevents TS6 Manager from decrypting credentials that were stored with the previous key.
+- When creating a WebQuery API key manually, include `lifetime=0` if you want a persistent key (for example, `apikeyadd scope=manage lifetime=0 ip=0.0.0.0/0`). Omitting `lifetime` can create a time-limited key that later starts returning `invalid apikey`.
 - When editing an existing connection, secret inputs such as the WebQuery API key or SSH password are intentionally not populated back into the browser. Leaving one of those fields blank keeps the saved encrypted value unchanged.
 - On startup, TS6 Manager validates restored WebQuery credentials in the background without delaying the WebUI. A log message such as `invalid apikey` means the TeamSpeak server rejected the saved key; it does not mean TS6 Manager forgot or cleared it.
 - Transient SSH closes during the initial handshake are retried automatically. Authentication and host-key failures remain fatal and require the connection settings or server trust configuration to be corrected.
