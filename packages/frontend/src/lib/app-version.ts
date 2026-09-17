@@ -4,6 +4,7 @@ const version = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_V
 const sha = typeof __GIT_SHA__ === 'string' ? __GIT_SHA__.trim() : '';
 
 export const APP_VERSION = version;
+export const APP_REPOSITORY_URL = 'https://github.com/uniskela/ts6-manager';
 
 /** Footer label, e.g. `TS6 WEBUI v1.1.0` or `TS6 WEBUI v1.1.0 (6fe21da)`. */
 export const APP_VERSION_LABEL = sha
