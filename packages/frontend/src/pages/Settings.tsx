@@ -23,8 +23,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info } from 'lucide-react';
-import { APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github } from 'lucide-react';
+import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 import { toast } from 'sonner';
 
 export default function Settings() {
@@ -90,6 +90,18 @@ function AboutTab() {
         <div className="flex items-center justify-between">
           <span className="text-muted-foreground">Version</span>
           <Badge variant="secondary" className="font-mono-data">{APP_VERSION}</Badge>
+        </div>
+        <div className="flex items-center justify-between gap-4">
+          <span className="text-muted-foreground">Source</span>
+          <a
+            href={APP_REPOSITORY_URL}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 text-primary hover:underline"
+          >
+            <Github className="h-4 w-4" />
+            GitHub Repository
+          </a>
         </div>
         <p className="text-xs text-muted-foreground font-mono-data">{APP_VERSION_LABEL}</p>
       </CardContent>
