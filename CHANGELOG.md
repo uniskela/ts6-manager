@@ -2,6 +2,15 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.5.2](https://github.com/uniskela/ts6-manager/compare/v1.5.1...v1.5.2) (2026-09-17)
+
+
+### Bug Fixes
+
+* create persistent WebQuery API keys in setup guidance ([241618e](https://github.com/uniskela/ts6-manager/commit/241618e34e936a0f51bf79b39f6cd50e5b697f2c))
+* document persistent WebQuery API keys ([f7a73d3](https://github.com/uniskela/ts6-manager/commit/f7a73d358c5be133504a1d402a2b9aa5f43714c0))
+* prevent WebQuery API keys from expiring ([43c017d](https://github.com/uniskela/ts6-manager/commit/43c017dba1043fa7f804f52375688f460346878b))
+
 ## [1.5.1](https://github.com/uniskela/ts6-manager/compare/v1.5.0...v1.5.1) (2026-09-16)
 
 
