@@ -80,7 +80,7 @@ export const FIELD_HELP = {
   name: 'A friendly label shown in the header server selector.',
   host: 'Hostname or IP address where the TeamSpeak server is reachable from the ts6-manager backend.',
   webqueryPort: 'WebQuery HTTP port on the TS server (default 10080). This is the primary API used by the manager.',
-  apiKey: 'WebQuery API key created on the TS server (via apikeyadd or admin tools). Required for all management features.',
+  apiKey: 'WebQuery API key created on the TS server (via apikeyadd or admin tools). Use lifetime=0 for a non-expiring key. Required for all management features.',
   useHttps: 'Enable if WebQuery is served over HTTPS instead of plain HTTP.',
   sshPort: 'SSH ServerQuery port (default 10022). Used for file browser, bot events, and music bot chat commands.',
   sshUsername: 'ServerQuery SSH username (commonly serveradmin).',
@@ -109,8 +109,8 @@ export const TS_PREP_STEPS = [
   {
     id: 'api-key',
     title: 'Create a WebQuery API key',
-    body: 'Connect via SSH ServerQuery, select your virtual server (use 1), then run apikeyadd. Example:',
-    code: 'use 1\napikeyadd scope=manage ip=0.0.0.0/0',
+    body: 'Connect via SSH ServerQuery, select your virtual server (use 1), then create a non-expiring key with lifetime=0. Example:',
+    code: 'use 1\napikeyadd scope=manage lifetime=0 ip=0.0.0.0/0',
     docs: [
       { label: 'SSH ServerQuery setup', url: TS6_SERVER_DOCS.sshQuery },
       { label: 'Query authentication', url: TS6_SERVER_DOCS.authentication },
