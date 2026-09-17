@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
-  ScrollText, Settings, Bot, Cpu, ChevronLeft, ChevronRight, Music, ListMusic, Tv,
+  ScrollText, Settings, Bot, Cpu, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui.store';
@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
+import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 
 const navSections = [
   {
@@ -178,20 +178,48 @@ export function Sidebar() {
           </button>
 
           {sidebarCollapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <p className="px-1 py-1 text-center text-[9px] font-mono-data text-sidebar-foreground/35 truncate cursor-default">
-                  v{APP_VERSION}
-                </p>
-              </TooltipTrigger>
-              <TooltipContent side="right" className="font-mono-data text-xs">
-                {APP_VERSION_LABEL}
-              </TooltipContent>
-            </Tooltip>
+            <div className="flex flex-col items-center gap-1 pt-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="px-1 text-center text-[9px] font-mono-data text-sidebar-foreground/35 truncate cursor-default">
+                    v{APP_VERSION}
+                  </p>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="font-mono-data text-xs">
+                  {APP_VERSION_LABEL}
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <a
+                    href={APP_REPOSITORY_URL}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label="Open TS6 Manager repository on GitHub"
+                    className="rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                  >
+                    <Github className="h-3.5 w-3.5" />
+                  </a>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="text-xs">View on GitHub</TooltipContent>
+              </Tooltip>
+            </div>
           ) : (
-            <p className="px-2.5 pt-1 pb-0.5 text-[10px] font-mono-data text-sidebar-foreground/40 truncate" title={APP_VERSION_LABEL}>
-              {APP_VERSION_LABEL}
-            </p>
+            <div className="flex items-center gap-2 px-2.5 pt-1 pb-0.5">
+              <p className="min-w-0 flex-1 truncate text-[10px] font-mono-data text-sidebar-foreground/40" title={APP_VERSION_LABEL}>
+                {APP_VERSION_LABEL}
+              </p>
+              <a
+                href={APP_REPOSITORY_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open TS6 Manager repository on GitHub"
+                title="View TS6 Manager on GitHub"
+                className="shrink-0 rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+              >
+                <Github className="h-3.5 w-3.5" />
+              </a>
+            </div>
           )}
         </div>
       </aside>
