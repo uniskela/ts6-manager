@@ -83,24 +83,37 @@ has not been disproved unless explicitly stated.
 | `zlib1g` 1:1.2.13.dfsg-1 | CVE-2023-45853 | CVE concerns contrib/minizip; Debian marks will_not_fix. No app zip writer uses this path; keep vendor finding visible. |
 
 
-## Backend image findings and final scan limitation
+## Final container security workflow result
 
-The initial backend image scan reports 285 OS, 49 bundled Node package and
-22 esbuild Go-runtime high/critical package findings. This scan covered an earlier
-build, not the final rebuilt backend image. All four final Docker image builds
-completed; automatic approval review failed with a service error when requesting
-the final backend/all-in-one scans. Their final scan results remain outstanding.
-Do not interpret the clean production npm audit as a clean container scan.
+PR #55 now includes `.github/workflows/container-security.yml`, which builds the
+same four final Dockerfiles used for release and scans each image with Trivy 0.70.0.
+The workflow uploads a full JSON inventory, prints all HIGH/CRITICAL findings, and
+fails only when Trivy reports a HIGH/CRITICAL finding with an available fix
+(`ignore-unfixed=true` for the gate). No vulnerability ignores are used.
 
-Additional findings beyond the sidecar inventory are listed below. Debian reports
-compatible fixes for libcap2, libgnutls30 and libpcre2; refreshing those installed
-packages and rescanning is still required. Python and SQLite findings have no
-Bookworm fixed version in this scan and need reachability/remediation review.
-Bundled Node findings are in npm/pnpm tooling, not the audited application graph;
-esbuild is copied with workspace dependencies. Neither package installation nor
-esbuild serving is exposed as an application operation, but these tools are
-present in the image. Prefer removing unnecessary build tooling or compatible
-updates with startup/Prisma validation; no suppression has been applied.
+Workflow run 35445751117 produced these release-gate results:
+
+| Image | Full HIGH/CRITICAL inventory | Fixable HIGH/CRITICAL gate | Result |
+|---|---:|---:|---|
+| frontend | no gate findings | 0 | PASS |
+| sidecar | 249 (239 high, 10 critical) | 0 | PASS — current Debian/FFmpeg findings have no Trivy-reported fix |
+| backend | 285 OS + 49 bundled Node + 22 bundled Go-runtime | 9 OS + 49 Node + 22 Go-runtime | FAIL |
+| all-in-one | 295 OS + 49 bundled Node + 22 bundled Go-runtime | 8 OS + 49 Node + 22 Go-runtime | FAIL |
+
+The backend/all-in-one OS gate includes Debian fixes that are available for packages
+such as `libcap2` (backend), `libgnutls30`, and `libpcre2-8-0`. The larger
+runtime-image gate is dominated by build tooling that should not need to ship in
+production: Corepack's pnpm 9.15.9 dependency tree (including `tar`,
+`brace-expansion`, `glob`, `minimatch`, `ip-address`, and `sigstore`) and
+the copied esbuild binary built with an older Go standard library. These findings
+are separate from the audited production application dependency graph.
+
+Python and SQLite findings without a Bookworm fixed version remain visible in the
+full inventory but do not fail the fixable-only gate. The preferred remediation is
+to refresh fixable Debian packages and remove unnecessary package-manager/build
+tooling from production images, then rerun the workflow with backend startup,
+Prisma, media, and all-in-one health validation. Do not suppress or severity-downgrade
+the findings merely to make the gate green.
 
 | Package | Installed | Reported fixed version(s) | Additional advisory IDs |
 |---|---|---|---|
