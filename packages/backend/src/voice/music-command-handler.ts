@@ -328,6 +328,19 @@ export class MusicCommandHandler {
           case 'help':
             await this.handleHelp(botId, bot, userClid);
             break;
+          case 'playlist':
+          case 'pl':
+            await this.handlePlaylist(botId, bot, userClid, args);
+            break;
+          case 'repeat':
+            this.handleRepeat(bot, userClid, args);
+            break;
+          case 'seek':
+            await this.handleSeek(bot, userClid, args);
+            break;
+          case 'remove':
+            this.handleRemove(bot, userClid, args);
+            break;
           case 'radio':
             await this.handleRadio(botId, bot, userClid, args);
             break;
@@ -754,6 +767,89 @@ export class MusicCommandHandler {
     })();
   }
 
+  private async handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    if (!serverConfigId) { this.reply(bot, userClid, 'No server configured.'); return; }
+    const where = { serverConfigId, OR: [{ musicBotId: botId }, { musicBotId: null }] };
+    const playlists = await this.prisma.playlist.findMany({
+      where, select: { id: true, name: true }, orderBy: { name: 'asc' },
+    });
+    const query = args.trim().toLowerCase();
+    if (!query) {
+      this.reply(bot, userClid, playlists.length
+        ? 'Playlists (first 10):\n' + playlists.slice(0, 10).map(p => `[${p.id}] ${p.name.slice(0, 60)}`).join('\n')
+        : 'No playlists configured for this bot/server.');
+      return;
+    }
+    const byId = /^\d+$/.test(query) ? playlists.filter(p => p.id === Number(query)) : [];
+    const exact = playlists.filter(p => p.name.toLowerCase() === query);
+    const matches = byId.length ? byId : exact.length ? exact : playlists.filter(p => p.name.toLowerCase().includes(query));
+    if (matches.length !== 1) {
+      this.reply(bot, userClid, matches.length
+        ? 'Ambiguous playlist; use an ID: ' + matches.slice(0, 5).map(p => `[${p.id}] ${p.name.slice(0, 60)}`).join(', ')
+        : 'Playlist not found. Use !playlist to list.');
+      return;
+    }
+    const playlist = await this.prisma.playlist.findFirst({
+      where: { ...where, id: matches[0].id },
+      include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
+    });
+    if (!playlist?.songs.length) { this.reply(bot, userClid, 'Playlist is empty.'); return; }
+    const items: QueueItem[] = playlist.songs.map(({ song }) => ({
+      id: String(song.id), title: song.title, artist: song.artist ?? undefined,
+      duration: song.duration ?? undefined, filePath: song.filePath,
+      source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined,
+    }));
+    bot.queue.addMany(items);
+    if (bot.status === 'connected' && !bot.nowPlaying) {
+      const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
+      if (first) await bot.play(first); // VoiceBot owns local/stream playlist resolution.
+    }
+    this.reply(bot, userClid, `Queued playlist "${playlist.name.slice(0, 60)}" (${items.length} tracks).`);
+  }
+
+  private handleRepeat(bot: VoiceBot, userClid: number, args: string): void {
+    const mode = args.trim().toLowerCase();
+    if (mode && mode !== 'off' && mode !== 'track' && mode !== 'queue') {
+      this.reply(bot, userClid, 'Usage: !repeat [off|track|queue]'); return;
+    }
+    if (mode === 'off' || mode === 'track' || mode === 'queue') bot.queue.setRepeat(mode);
+    this.reply(bot, userClid, `Repeat mode: ${bot.queue.repeat}`);
+  }
+
+  private async handleSeek(bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    if (!/^[+-]?\d+(?:\.\d+)?$/.test(args) || !Number.isFinite(Number(args))) {
+      this.reply(bot, userClid, 'Usage: !seek <seconds|+seconds|-seconds>'); return;
+    }
+    if (!bot.canSeek) {
+      this.reply(bot, userClid, 'Current source cannot be seeked. Play a local/downloaded track first.'); return;
+    }
+    const progress = bot.playbackProgress;
+    const relative = /^[+-]/.test(args);
+    const target = Math.max(0, Math.min((relative ? (progress?.position ?? 0) : 0) + Number(args),
+      progress?.duration || bot.nowPlaying?.duration || Infinity));
+    await bot.seek(target);
+    this.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
+  }
+
+  private handleRemove(bot: VoiceBot, userClid: number, args: string): void {
+    const query = args.trim().toLowerCase();
+    if (!query) { this.reply(bot, userClid, 'Usage: !remove <text>'); return; }
+    const upcoming = bot.queue.getAll().map((item, index) => ({ item, index }))
+      .filter(({ index }) => index > bot.queue.index);
+    const exact = upcoming.filter(({ item }) => item.title.toLowerCase() === query || item.artist?.toLowerCase() === query);
+    const matches = exact.length ? exact : upcoming.filter(({ item }) =>
+      item.title.toLowerCase().includes(query) || item.artist?.toLowerCase().includes(query));
+    if (matches.length !== 1) {
+      this.reply(bot, userClid, matches.length
+        ? 'Multiple matches; use !queue remove <n>: ' + matches.slice(0, 5).map(({ item, index }) => `#${index + 1} ${item.title.slice(0, 60)}`).join(', ')
+        : 'No upcoming track matches.');
+      return;
+    }
+    bot.queue.removeAt(matches[0].index);
+    this.reply(bot, userClid, `Removed: ${matches[0].item.title.slice(0, 100)}`);
+  }
+
   private showQueue(bot: VoiceBot, userClid: number): void {
     const items = bot.queue.getAll();
     const trackLines = items.map((item) => ({
@@ -782,21 +878,21 @@ export class MusicCommandHandler {
 
     // !queue remove <index>
     if (args.toLowerCase().startsWith('remove ')) {
-      const idx = parseInt(args.substring(7).trim()) - 1; // 1-based to 0-based
+      const idx = (/^[1-9]\d*$/.test(args.substring(7).trim()) ? Number(args.substring(7).trim()) : NaN) - 1; // 1-based to 0-based
       const items = bot.queue.getAll();
       if (isNaN(idx) || idx < 0 || idx >= items.length) {
         this.reply(bot, userClid, `Invalid index. Queue has ${items.length} tracks.`);
         return;
       }
       const removed = items[idx];
-      bot.queue.remove(removed.id);
+      bot.queue.removeAt(idx);
       this.reply(bot, userClid, `Removed #${idx + 1}: ${removed.title}`);
       return;
     }
 
     // !queue play <index>
     if (args.toLowerCase().startsWith('play ')) {
-      const idx = parseInt(args.substring(5).trim()) - 1; // 1-based to 0-based
+      const idx = (/^[1-9]\d*$/.test(args.substring(5).trim()) ? Number(args.substring(5).trim()) : NaN) - 1; // 1-based to 0-based
       const item = bot.queue.playAt(idx);
       if (!item) {
         this.reply(bot, userClid, `Invalid index. Queue has ${bot.queue.length} tracks.`);

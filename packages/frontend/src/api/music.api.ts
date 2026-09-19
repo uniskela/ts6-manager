@@ -61,6 +61,10 @@ export const musicBotsApi = {
 // === Music Library API ===
 
 export const musicLibraryApi = {
+  startDownload: (configId: number, urls: string[], signal: AbortSignal) =>
+    api.post(`/servers/${configId}/music-library/youtube/download-jobs`, { urls }, { signal }).then(r => r.data),
+  downloadStatus: (configId: number, jobId: string, signal: AbortSignal) =>
+    api.get(`/servers/${configId}/music-library/youtube/download-jobs/${jobId}`, { signal }).then(r => r.data),
   songs: (configId: number) => api.get(`/servers/${configId}/music-library/songs`).then((r) => r.data),
   scan: (configId: number) =>
     api.post(`/servers/${configId}/music-library/scan`).then((r) => r.data),

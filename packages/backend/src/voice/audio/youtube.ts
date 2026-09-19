@@ -1,3 +1,4 @@
+import { parseDownloadProgress, type ProgressUpdate } from './download-progress.js';
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -72,7 +73,11 @@ export function getCookieArgs(): string[] {
 function findCachedAudioFile(outputDir: string, videoId: string): string | null {
   if (!fs.existsSync(outputDir)) return null;
   const prefix = `${videoId}.`;
-  const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(prefix));
+  // Interrupted jobs can leave .part/.ytdl files. Never treat them as playable cache hits.
+  const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(prefix)
+    && /\.(opus|ogg|webm|m4a|mp3|aac|flac|wav|mp4)$/i.test(f)
+    && !/\.(part|ytdl|temp|f\d+)\./i.test(f)
+    && fs.statSync(path.join(outputDir, f)).size > 0);
   if (files.length === 0) return null;
   return path.join(outputDir, files[files.length - 1]);
 }
@@ -282,16 +287,29 @@ function withMediaUrl(args: string[], url: string): string[] {
   return [...args, "--", url];
 }
 
-function runYtDlp(args: string[]): Promise<{ code: number | null; stdout: string; stderr: string }> {
+function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const proc = spawn("yt-dlp", args, { shell: false });
+    const proc = spawn("yt-dlp", args, { shell: false, signal, timeout: signal ? 180_000 : undefined, killSignal: "SIGKILL" });
     let stdout = "";
     let stderr = "";
+    const pending = { stdout: '', stderr: '' };
+    const consumeProgress = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
+      if (!onProgress) return;
+      pending[stream] += chunk.toString();
+      const lines = pending[stream].split(/\r?\n/);
+      pending[stream] = (lines.pop() || '').slice(-16384);
+      for (const line of lines) {
+        const progress = parseDownloadProgress(line);
+        if (progress) onProgress(progress);
+      }
+    };
     proc.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString();
+      stdout = (stdout + chunk.toString()).slice(-8 * 1024 * 1024);
+      consumeProgress('stdout', chunk);
     });
     proc.stderr.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
+      stderr = (stderr + chunk.toString()).slice(-65536);
+      consumeProgress('stderr', chunk);
     });
     proc.on("close", (code) => resolve({ code, stdout, stderr }));
     proc.on("error", (err) => reject(new Error(`yt-dlp not found: ${err.message}`)));
@@ -345,7 +363,7 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
  * Download audio from a YouTube URL using yt-dlp.
  * Always canonicalizes Music URLs to www.youtube.com/watch?v=… first.
  */
-async function ytDlpDumpJson(mediaUrl: string): Promise<Record<string, unknown>> {
+async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
   let lastCode: number | null = null;
   let lastStderr = "";
 
@@ -360,7 +378,7 @@ async function ytDlpDumpJson(mediaUrl: string): Promise<Record<string, unknown>>
           "--ignore-no-formats-error",
         ],
         mediaUrl,
-      ),
+      ), undefined, signal,
     );
 
     lastCode = infoResult.code;
@@ -390,6 +408,8 @@ async function ytDlpDownloadAudio(
   outputDir: string,
   outputTemplate: string,
   videoId: string,
+  onProgress?: (p: ProgressUpdate) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const formatStrategies: string[][] = [
     ["-f", YT_AUDIO_FORMAT, "-x", "--audio-quality", "0"],
@@ -407,13 +427,16 @@ async function ytDlpDownloadAudio(
           [
             ...buildYtDlpBaseArgs(clients),
             "--no-warnings",
+            "--newline", "--progress",
+            "--progress-template", 'download:ts6-progress:%(progress)j',
+            "--progress-template", 'postprocess:ts6-processing',
             ...fmtArgs,
             "--no-playlist",
             "-o",
             outputTemplate,
           ],
           mediaUrl,
-        ),
+        ), onProgress, signal,
       );
 
       lastCode = dlResult.code;
@@ -431,6 +454,8 @@ async function ytDlpDownloadAudio(
 export async function downloadYouTube(
   url: string,
   outputDir: string,
+  onProgress?: (p: ProgressUpdate) => void,
+  signal?: AbortSignal,
 ): Promise<{ filePath: string; info: YouTubeInfo }> {
   const parsed = parseYouTubeUrl(url);
   if (parsed.listId && !parsed.videoId) {
@@ -441,7 +466,7 @@ export async function downloadYouTube(
   const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
   const outputTemplate = path.join(outputDir, "%(id)s.%(ext)s");
 
-  const parsedInfo = await ytDlpDumpJson(mediaUrl);
+  const parsedInfo = await ytDlpDumpJson(mediaUrl, signal);
 
   const info: YouTubeInfo = {
     id: String(parsedInfo.id),
@@ -457,7 +482,7 @@ export async function downloadYouTube(
     return { filePath: cached, info };
   }
 
-  await ytDlpDownloadAudio(mediaUrl, outputDir, outputTemplate, info.id);
+  await ytDlpDownloadAudio(mediaUrl, outputDir, outputTemplate, info.id, onProgress, signal);
 
   const filePath = findCachedAudioFile(outputDir, info.id);
   if (!filePath) {

@@ -842,6 +842,10 @@ export class VoiceBot extends EventEmitter {
     }
   }
 
+  get canSeek(): boolean {
+    return (this._status === 'playing' || this._status === 'paused') && this._fileStreamActive && !!this._nowPlaying;
+  }
+
   async seek(seconds: number): Promise<void> {
     if (this._status !== 'playing' && this._status !== 'paused') return;
     if (!this._fileStreamActive || !this._nowPlaying) return;

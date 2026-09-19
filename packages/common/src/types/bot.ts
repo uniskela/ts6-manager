@@ -121,6 +121,7 @@ export interface PokeActionData {
 
 export interface ChannelCreateActionData {
   actionType: 'channelCreate';
+  trackTempChannel?: boolean;
   label: string;
   params: Record<string, string>;
 }

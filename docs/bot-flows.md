@@ -185,3 +185,24 @@ See the Music Bots section in the main README for queue, YouTube, radio, and loc
 - [README.md](../README.md) — feature overview and deployment
 - [CREDITS.md](../CREDITS.md) — upstream and fork attribution
 - [docs/plans/opinionated-fork-roadmap.md](plans/opinionated-fork-roadmap.md) — fork scope and backlog
+
+
+## Safe temporary-channel ownership (v1.6.0)
+
+The Temp Channel Creator template opts its Create Channel node into **Track for this
+flow’s temporary-channel cleanup**. It records each newly created semi-permanent
+channel in a persistent internal BotVariable registry scoped to flow, server
+connection and virtual server, and places a random ownership marker in its description.
+Cleanup requires both the registry and the matching marker, the expected parent,
+semi-permanent status and an empty channel. Non-forced deletion lets TeamSpeak reject
+a client-join race. Unrelated siblings, lobby, parent and other flows’ channels are
+preserved. Missing IDs are removed from tracking; reused IDs without the marker are
+never deleted. Changing the description or moving/promoting a channel prevents cleanup.
+
+**Existing templates:** enable tracking on the Create Channel node (semi-permanent
+mode), or import the updated template. Only subsequently created channels are tracked.
+Previously created/untracked channels must be reviewed and removed manually; the
+manager never adopts channels by name or parent. Deleting a flow removes its registry
+without deleting its channels. Restoring TeamSpeak independently of the manager DB
+may leave orphan channels, which is preferable to deleting administrator-owned data.
+Tracking does not restrict an explicitly configured generic Delete Channel action.

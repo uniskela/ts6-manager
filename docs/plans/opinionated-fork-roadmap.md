@@ -8,7 +8,7 @@ Community bug reports and PRs that informed this work are listed in [CREDITS.md]
 
 1. **Security baseline** — `expr-eval-fork`, dependency bumps, sidecar `SIDECAR_SECRET` auth, internal-only `:9800`, SSRF DNS fail-closed, required `ENCRYPTION_KEY` in production, LICENSE/SECURITY, fork rebrand, password UI alignment.
 2. **Reliability** — BBCode URL strip, unknown escape tolerance, WebQuery test errors, auto-rank persistence, SSH reconnect on edit, music bot delete/clear-queue fixes, connection pool tear-down on refresh.
-3. **Core QoL** — library filesystem scan, bot ID badges, server group membership UI, Spotify→YouTube resolve, AFK exempt channels, offline client permissions + modified-only filter, metadata encoding helpers, radio ID compact, `command_args_list`, safer temp-channel template, yt-dlp auto-update on startup.
+3. **Core QoL** — library filesystem scan, bot ID badges, server group membership UI, Spotify→YouTube resolve, AFK exempt channels, offline client permissions + modified-only filter, metadata encoding helpers, radio ID compact, `command_args_list`, safer temp-channel template, yt-dlp freshness via image rebuilds (no runtime self-update).
 4. **Video / restart reliability (v1.4.0)** — shared music volume for sidecar, non-looping on-demand clips + auto-stop, A/V sync clamp, multi-thread VP8 encode tuning, awaited SSH teardown, ServerQuery visibility in Channels, stream API timeouts (from [DomeNinchen/ts6forkmanager](https://github.com/DomeNinchen/ts6forkmanager)).
 5. **Music-bot transport / memory reliability (targeting v1.5.0)** — resolve the TeamSpeak UDP target once per connection, stream local/downloaded PCM incrementally with bounded memory and FFmpeg real-time pacing, and prevent overlapping reconnect attempts (adapted from [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager)).
 
@@ -52,3 +52,30 @@ Do **not** fold these into opportunistic drive-by PRs; schedule them as dedicate
 - Upstream [#48](https://github.com/clusterzx/ts6-manager/issues/48): flow loop node (feature backlog)
 
 See upstream issue/PR triage in the agent plan for additional skip notes.
+
+
+## Beta13 / v1.6.0 ecosystem review (2026-09-19)
+
+Reviewed current main and recent activity in uniskela (v1.5.2), clusterzx
+(`dd26e57`), LgnRorooo (`4c734a6`), vibesoftwarecoder (`672d3b0`), KorppuJauho
+(`c770824`), DomeNinchen/ts6-managerFork (`a728ab6`, now archived), and coom
+(`83a0635`), plus the recent open upstream issue/PR list. Upstream #42 motivates
+explicit channel ownership; #78 already has connection refresh here and receives
+regression coverage. #79/#77/#66/#58/#70/#64 and coom playlist-import/cap features
+already exist and are not reimported. LgnRorooo’s chat/progress ideas are selectively
+adapted, with attribution in CREDITS. KorppuJauho’s encoder/H.264 experiments and
+DomeNinchen’s CDN/startup-buffer work are outside this release.
+
+Upstream [PR #83](https://github.com/clusterzx/ts6-manager/pull/83) adds bgutil
+PO-token provider 2.0.0, pins an mweb extractor client, preserves media HTTP headers,
+moves to Node 22, and switches playback to ephemeral direct-stream URLs. Its author
+did not build the Linux container locally. PO-token generation may help the current
+YouTube 403/extractor failures (#82/#84), including cached downloads, but effectiveness
+in this fork has not been demonstrated. Evaluate it in a dedicated PR: compare
+current client rotation/cookies with provider-assisted extraction, measure cold start
+and token expiry, audit subprocess/network/header handling and licensing, test seek,
+repeat, reconnect and cache behaviour, and retain SSRF/option-injection safeguards.
+No provider installation, Node migration or playback replacement is included here.
+
+Upstream #80 was assessed against this fork’s actual dependency graph and Trivy
+results, not assumed to apply wholesale. See the release PR validation/security notes.

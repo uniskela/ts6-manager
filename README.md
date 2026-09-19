@@ -344,6 +344,95 @@ When a music bot is connected to a channel, users in that channel can control it
 - SSH access to the TS server (only needed for bot flow event triggers)
 - `yt-dlp` and `ffmpeg` installed on the backend (included in the Docker image)
 
+## TeamSpeak compatibility and beta13 setup
+
+Tested TeamSpeak Server: **6.0.0-beta13** (official image
+`teamspeaksystems/teamspeak6-server:6.0.0-beta13`). Older versions are not
+intentionally excluded; the manual key method below remains available.
+
+Configure these on the **TeamSpeak server/container**, not the TS6 Manager container:
+
+```env
+TSSERVER_QUERY_HTTP_ENABLED=1
+TSSERVER_QUERY_HTTP_ALLOW_GUEST=0
+TSSERVER_QUERY_SSH_ALLOW_GUEST=0
+TSSERVER_QUERY_ADMIN_API_KEY=<secure-stable-key>
+```
+
+Beta13 enables guest HTTP/SSH Query access by default. For administrative deployments,
+we recommend explicitly disabling it: TS6 Manager requires authenticated WebQuery
+and uses optional authenticated SSH. Guest access can remain enabled when you
+intentionally want to expose the Guest Server Query permissions; it is not needed
+by this application. Restrict Query ports to trusted management networks.
+
+On beta13+ Docker, `TSSERVER_QUERY_ADMIN_API_KEY` is the simplest deterministic way
+to provision the built-in `serveradmin` management key. Generate a strong key and
+keep it stable. **Changing it replaces the relevant built-in serveradmin management
+API key.** The previously encrypted key in TS6 Manager then stops authenticating;
+update the API key in the saved connection. Do not log or share the value. TS6
+Manager continues to store connection secrets encrypted; keys remain mandatory.
+
+Alternatively, including on older servers, connect using authenticated SSH Query:
+
+```text
+use 1
+apikeyadd scope=manage lifetime=0 ip=0.0.0.0/0
+```
+
+`lifetime=0` makes the key non-expiring. Narrow the allowed source IP range where
+practical. The bootstrap and manual methods are alternatives, not two required steps.
+
+Beta13 also offers **optional external Prometheus monitoring**. Metrics are disabled
+by default (`TSSERVER_METRICS_ENABLED=0`); the default port is `9187`. The endpoint
+is unauthenticated. Bind it to a restricted interface (`TSSERVER_METRICS_IP`) and
+apply firewall/network restrictions rather than exposing it publicly. Per-packet
+voice diagnostics (`TSSERVER_METRICS_VOICE`) add overhead: benchmark before enabling
+on busy production servers. TS6 Manager neither scrapes nor proxies these metrics.
+
+Server logs default to UTC in beta13. Administrators can select `utc` or `local`
+using `TSSERVER_LOG_TIMEZONE`. TS6 Manager displays raw log text without converting
+its timestamps.
+
+The separate [compatibility workflow](.github/workflows/ts6-compat.yml) runs manually, weekly, and on PRs changing the smoke test or WebQuery client, with an image-tag input for future betas. It starts an isolated official
+server with an ephemeral admin key and guest Query disabled, waits for an online
+virtual server, rejects unauthenticated HTTP access, and exercises the real
+`WebQueryClient`: `version`, `serverinfo`, `clientlist`, `channellist` and
+`serverrequestconnectioninfo`, plus a channel create/info/non-forced delete round-trip.
+It does not certify voice/video playback, public YouTube availability, SSH/file
+transfers, production networking, or every server configuration. It is separate
+from fast PR validation.
+
+## Music chat controls and download progress
+
+| Command | Behaviour |
+|---------|-----------|
+| `!playlist` | List up to ten playlists belonging to this server and bot (or shared on this server) |
+| `!playlist <name-or-id>` / `!pl <name-or-id>` | Exact ID, then case-insensitive exact/partial name; ambiguous matches require an ID. Append; start when connected and idle |
+| `!repeat [off|track|queue]` | Show or set queue repeat mode |
+| `!seek <seconds>` / `!seek +<seconds>` / `!seek -<seconds>` | Absolute/relative seek, clamped to track bounds; requires a seekable local/downloaded source |
+| `!remove <text>` | Match upcoming titles/artists case-insensitively; exact matches take priority; ambiguity requires a queue number |
+| `!queue [show|clear|remove <n>|play <n>|<url>]` | Display/manage the queue using one-based positions; clear also stops playback |
+| `!help` | List built-in and custom commands |
+
+Explicit library downloads (single, selected batch, and playlist “download selected”)
+show current/total items, real yt-dlp percentage, speed, ETA and processing state.
+Jobs run in the background; polling stops on completion/failure or component unmount.
+Progress endpoints require application authentication, admin permissions, and matching
+server and requesting user. Jobs are in memory, capped at 100 retained / four active,
+and expire after ten minutes without updates or thirty minutes total. A backend
+restart loses progress history. Stream-playlist registration retains its existing
+semantics and does not download media eagerly.
+
+### Bundled yt-dlp lifecycle
+
+Production containers do not self-update packages. yt-dlp is installed at image
+build time using pip’s required PEP-668 option; builds check `yt-dlp --version`,
+`ffmpeg -version` and `node --version`. Pull a newly built TS6 Manager image and
+recreate the container to refresh bundled yt-dlp. Rebuilding with a fresh image
+build also refreshes it. No in-app package updater is provided. Extractor tests use
+structured fixtures; a public-video smoke test is deliberately not a release gate
+because availability, rate limits and regional restrictions are outside our control.
+
 ## License
 
 MIT

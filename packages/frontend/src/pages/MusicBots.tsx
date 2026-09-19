@@ -1021,7 +1021,7 @@ function LibraryTab() {
   const handleYtDownload = (url: string) => {
     if (!configId) return;
     ytDownload.mutate({ configId, url }, {
-      onSuccess: () => toast.success('Download started'),
+      onSuccess: () => toast.success('Download complete'),
       onError: () => toast.error('Download failed'),
     });
   };
@@ -1051,7 +1051,7 @@ function LibraryTab() {
     if (!configId || !urlInfo) return;
     const selected = selectedUrlItems(urlInfo.items, selectedUrlIds);
     const urls = selected.map((item) => `https://www.youtube.com/watch?v=${item.id}`);
-    setBatchProgress(`Downloading 0/${urls.length}...`);
+    setBatchProgress('Preparing download…');
     ytBatchDownload.mutate({ configId, urls }, {
       onSuccess: (data: any) => {
         setBatchProgress(null);
@@ -1190,6 +1190,9 @@ function LibraryTab() {
             onClearFirstChange={setImportClearQueue}
           />
           <div className="flex items-center gap-2 flex-wrap">
+            {(ytDownload.progress || ytBatchDownload.progress) && (
+              <p role="status" className="w-full text-xs text-muted-foreground">{ytDownload.isPending ? ytDownload.progress : ytBatchDownload.isPending ? ytBatchDownload.progress : ytDownload.progress || ytBatchDownload.progress}</p>
+            )}
             <div className="relative flex-1">
               <Link className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -1275,7 +1278,7 @@ function LibraryTab() {
                       disabled={selectedUrlIds.size === 0 || ytBatchDownload.isPending}
                     >
                       {ytBatchDownload.isPending ? (
-                        <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> {batchProgress || 'Downloading...'}</>
+                        <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> {ytBatchDownload.progress || batchProgress || 'Downloading...'}</>
                       ) : (
                         <><Download className="h-3 w-3 mr-1" /> Download {selectedUrlIds.size} Selected</>
                       )}
@@ -1706,7 +1709,7 @@ function PlaylistsTab() {
     }
 
     const urls = selectedItems.map((i: any) => `https://www.youtube.com/watch?v=${i.id}`);
-    setAddBatchProgress(`Downloading 0/${urls.length}...`);
+    setAddBatchProgress('Preparing download…');
     ytBatchDownload.mutate(
       { configId: selectedConfigId, urls },
       {
@@ -2194,6 +2197,9 @@ function PlaylistsTab() {
                     onClearFirstChange={setImportClearQueue}
                   />
                   <div className="flex items-center gap-2 flex-wrap">
+                    {(ytDownload.progress || ytBatchDownload.progress) && (
+                      <p role="status" className="w-full text-xs text-muted-foreground">{ytDownload.isPending ? ytDownload.progress : ytBatchDownload.isPending ? ytBatchDownload.progress : ytDownload.progress || ytBatchDownload.progress}</p>
+                    )}
                     <div className="relative flex-1">
                       <Link className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                       <Input
@@ -2295,7 +2301,7 @@ function PlaylistsTab() {
                               {ytBatchDownload.isPending || ytRegister.isPending ? (
                                 <>
                                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />{' '}
-                                  {addBatchProgress || (playlistMode === 'stream' ? 'Adding...' : 'Downloading...')}
+                                  {ytBatchDownload.progress || addBatchProgress || (playlistMode === 'stream' ? 'Adding...' : 'Downloading...')}
                                 </>
                               ) : (
                                 <>

@@ -240,7 +240,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
   {
     id: 'temp-channel-creator',
     name: 'Temp Channel Creator',
-    description: 'Creates a temporary channel when a client joins a lobby channel, then moves them in. Channel is auto-deleted when empty.',
+    description: 'Creates a temporary channel when a client joins a lobby channel, then moves them in. Cleanup deletes only empty channels created and tracked by this flow; existing siblings are preserved.',
     category: 'automation',
     icon: FolderPlus,
     configFields: [
@@ -257,9 +257,9 @@ export const BOT_TEMPLATES: BotTemplate[] = [
           makeNode(n1, 'trigger_event', 'Client Moved', { eventName: 'notifyclientmoved' }, 60, 80),
           makeNode(n2, 'condition', 'Joined Lobby?', { expression: `event.ctid == ${cfg.lobbyChannelId}` }, 300, 80),
           makeNode(n3, 'action_webquery', 'Get Client Info', { command: 'clientinfo clid={{event.clid}}', storeAs: 'client' }, 540, 80),
-          makeNode(n4, 'action_channelCreate', 'Create Channel', { channel_name: "{{temp.client.client_nickname}}'s Channel", cpid: String(cfg.parentChannelId), channel_flag_semi_permanent: '1' }, 780, 80),
+          makeNode(n4, 'action_channelCreate', 'Create Channel', { trackTempChannel: true, channel_name: "{{temp.client.client_nickname}}'s Channel", cpid: String(cfg.parentChannelId), channel_flag_semi_permanent: '1' }, 780, 80),
           makeNode(n5, 'action_move', 'Move to Channel', { cid: '{{temp.lastCreatedChannelId}}' }, 1020, 80),
-          // Cron cleanup: delete empty channels under parent every minute
+          // Cron cleanup: delete only tracked empty channels created by this flow
           // Protect BOTH the lobby and parent so they are never deleted by cleanup
           makeNode(n6, 'trigger_cron', 'Cleanup Timer', { cron: '* * * * *' }, 60, 220),
           makeNode(n7, 'action_tempChannelCleanup', 'Delete Empty Channels', {

@@ -33,8 +33,8 @@ Ideas, bug reports, and patches from the upstream tracker that informed or were 
 | [Issue #46](https://github.com/clusterzx/ts6-manager/issues/46) | [@TheMaxik](https://github.com/TheMaxik) | `command_args_list` for flow chat commands |
 | [Issue #68](https://github.com/clusterzx/ts6-manager/issues/68) / [Issue #59](https://github.com/clusterzx/ts6-manager/issues/59) | [@UIP88](https://github.com/UIP88), [@liqinghan2000](https://github.com/liqinghan2000) | Metadata / non-UTF8 tag handling helpers |
 | [Issue #58](https://github.com/clusterzx/ts6-manager/issues/58) | [@KorppuJauho](https://github.com/KorppuJauho) | Radio station ID compact / reset |
-| [Issue #42](https://github.com/clusterzx/ts6-manager/issues/42) | [@vinookie](https://github.com/vinookie) | Safer temp-channel creator template defaults |
-| [Issue #36](https://github.com/clusterzx/ts6-manager/issues/36) | [@vinookie](https://github.com/vinookie) | yt-dlp auto-update on startup |
+| [Issue #42](https://github.com/clusterzx/ts6-manager/issues/42) | [@vinookie](https://github.com/vinookie) | Temp-channel safety report; persistent per-flow ownership cleanup and non-forced deletion |
+| [Issue #36](https://github.com/clusterzx/ts6-manager/issues/36) | [@vinookie](https://github.com/vinookie) | yt-dlp freshness concern; build-time updates and immutable runtime diagnostics |
 | [PR #72](https://github.com/clusterzx/ts6-manager/pull/72) / [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (reliability subset only) | [@coom](https://github.com/coom) | Connection-pool refresh / self-heal ideas (no Discord/SSO/i18n absorption) |
 | [PR #64](https://github.com/clusterzx/ts6-manager/pull/64) | [@joaobosconff](https://github.com/joaobosconff) | All-in-one Docker image (nginx + backend + sidecar) + first-run login → setup redirect |
 
@@ -44,6 +44,7 @@ Ideas and patches cherry-picked from active community forks (all MIT-licensed). 
 
 | Fork | Author | Commits / area | Adopted in uniskela |
 |------|--------|----------------|---------------------|
+| [LgnRorooo/ts6-manager](https://github.com/LgnRorooo/ts6-manager) | [@LgnRorooo](https://github.com/LgnRorooo) | [`4c734a6`](https://github.com/LgnRorooo/ts6-manager/commit/4c734a62ec65f28a96b134ff56e24bb2b091e773): playlist/repeat/seek/remove chat controls and real download progress | Selectively adapted with server/user scoping, ambiguity handling, bounded jobs and existing playback primitives for v1.6.0 |
 | [coom/ts6-manager](https://github.com/coom/ts6-manager) | [@coom](https://github.com/coom) | Auth refresh single-flight, WebQuery boolean fixes, YouTube playlist import, Aug 2026 security review (RBAC, yt-dlp `--`, WebSocket scoping), playlist-import edge-case fixes, `!lyrics` | Phases 1–2, 4, v1.3.9 |
 | [uniplayer1/ts6-manager](https://github.com/uniplayer1/ts6-manager) | [@uniplayer1](https://github.com/uniplayer1) | Auto-stop when channel empty, TS3 2568 not fatal, video download-then-stream, volume slider, max duration UI, bot-flow docs | Phases 1, 3, 5 |
 | [kytos22/ts6-manager](https://github.com/kytos22/ts6-manager) | [@kytos22](https://github.com/kytos22) | Client avatars + voice-state icons in Channels, per-channel file storage summary | v1.3.9 |

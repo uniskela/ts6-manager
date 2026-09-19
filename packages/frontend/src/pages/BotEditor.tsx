@@ -901,6 +901,11 @@ export default function BotEditor() {
 
                   {selectedNodeData.type === 'action_channelCreate' && (
                     <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-xs">
+                        <input type="checkbox" checked={!!selectedNodeData.config.trackTempChannel}
+                          onChange={(e) => setNodes(prev => prev.map(n => n.id === selectedNode ? { ...n, config: { ...n.config, trackTempChannel: e.target.checked } } : n))} />
+                        Track for this flow’s temporary-channel cleanup (semi-permanent channels only)
+                      </label>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Channel Name</Label>
                         <Input className="h-7 text-xs mt-1" placeholder="[cspacer]Info" value={selectedNodeData.config.channel_name || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, channel_name: e.target.value } } : n))} />
