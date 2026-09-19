@@ -85,80 +85,48 @@ has not been disproved unless explicitly stated.
 
 ## Final container security workflow result
 
-PR #55 now includes `.github/workflows/container-security.yml`, which builds the
-same four final Dockerfiles used for release and scans each image with Trivy 0.70.0.
+PR #55 includes `.github/workflows/container-security.yml`, which builds the same
+four final Dockerfiles used for release and scans each image with Trivy 0.70.0.
 The workflow uploads a full JSON inventory, prints all HIGH/CRITICAL findings, and
 fails only when Trivy reports a HIGH/CRITICAL finding with an available fix
 (`ignore-unfixed=true` for the gate). No vulnerability ignores are used.
 
-Workflow run 35445751117 produced these release-gate results:
+The first release-gate run correctly failed backend and all-in-one because their
+runtime images inherited build tooling (Corepack/pnpm/npm and workspace
+`node_modules`, including esbuild) plus several Debian packages with available
+security updates. The remediation:
+
+- builds with pnpm only in a dedicated build stage;
+- deploys a self-contained backend with production dependencies only;
+- keeps Prisma CLI as an explicit runtime dependency because startup uses
+  `prisma db push`;
+- runs the seed with plain Node instead of tsx;
+- starts production from a fresh Node image and removes npm/Corepack package-manager
+  tooling from that runtime;
+- upgrades Debian packages before installing runtime media dependencies; and
+- validates inside the finished backend/all-in-one images that npm/npx/pnpm/Corepack
+  and esbuild are absent while Prisma schema apply and seeding still succeed.
+
+Workflow run **35447241210** then passed all four image gates:
 
 | Image | Full HIGH/CRITICAL inventory | Fixable HIGH/CRITICAL gate | Result |
 |---|---:|---:|---|
-| frontend | no gate findings | 0 | PASS |
-| sidecar | 249 (239 high, 10 critical) | 0 | PASS — current Debian/FFmpeg findings have no Trivy-reported fix |
-| backend | 285 OS + 49 bundled Node + 22 bundled Go-runtime | 9 OS + 49 Node + 22 Go-runtime | FAIL |
-| all-in-one | 295 OS + 49 bundled Node + 22 bundled Go-runtime | 8 OS + 49 Node + 22 Go-runtime | FAIL |
+| frontend | none reported | 0 | PASS |
+| sidecar | 249 (239 high, 10 critical) | 0 | PASS |
+| backend | 276 (265 high, 11 critical) | 0 | PASS |
+| all-in-one | 287 (276 high, 11 critical) | 0 | PASS |
 
-The backend/all-in-one OS gate includes Debian fixes that are available for packages
-such as `libcap2` (backend), `libgnutls30`, and `libpcre2-8-0`. The larger
-runtime-image gate is dominated by build tooling that should not need to ship in
-production: Corepack's pnpm 9.15.9 dependency tree (including `tar`,
-`brace-expansion`, `glob`, `minimatch`, `ip-address`, and `sigstore`) and
-the copied esbuild binary built with an older Go standard library. These findings
-are separate from the audited production application dependency graph.
+Compared with the failing run, the backend's 9 fixable OS findings and the 49
+bundled Node-tooling + 22 esbuild Go-runtime findings no longer appear as fixable
+runtime findings. The all-in-one image likewise removed its 8 fixable OS findings
+and the same bundled Node/esbuild categories. Build logs confirm the available
+Debian updates for `libcap2`, `libgnutls30`, and `libpcre2-8-0` were installed.
 
-Python and SQLite findings without a Bookworm fixed version remain visible in the
-full inventory but do not fail the fixable-only gate. The preferred remediation is
-to refresh fixable Debian packages and remove unnecessary package-manager/build
-tooling from production images, then rerun the workflow with backend startup,
-Prisma, media, and all-in-one health validation. Do not suppress or severity-downgrade
-the findings merely to make the gate green.
+The remaining HIGH/CRITICAL counts are still retained in the full Trivy artifacts.
+They are primarily Debian/media/Python/SQLite findings for which this scan reports
+no available Bookworm fix, so they do not pass silently: they remain visible for
+future base-image/package updates and reachability review. The sidecar has the same
+policy. No advisory was ignored or severity-downgraded to make the gate pass.
 
-| Package | Installed | Reported fixed version(s) | Additional advisory IDs |
-|---|---|---|---|
-| `brace-expansion` | `2.0.1` | 1.1.18, 2.1.4, 3.0.6, 5.0.9 | CVE-2026-69152 |
-| `brace-expansion` | `2.0.1` | 5.0.7, 1.1.16, 2.1.2 | CVE-2026-13149 |
-| `brace-expansion` | `2.0.1` | 5.0.8, 3.0.3, 2.1.3, 1.1.17 | CVE-2026-14257 |
-| `cross-spawn` | `7.0.3` | 7.0.5, 6.0.6 | CVE-2024-21538 |
-| `glob` | `10.4.2` | 11.1.0, 10.5.0 | CVE-2025-64756 |
-| `glob` | `10.4.5` | 11.1.0, 10.5.0 | CVE-2025-64756 |
-| `ip-address` | `9.0.5` | 10.3.1 | CVE-2026-69192 |
-| `libcap2` | `1:2.66-4+deb12u2+b2` | 1:2.66-4+deb12u3 | CVE-2026-4878 |
-| `libgnutls30` | `3.7.9-2+deb12u6` | 3.7.9-2+deb12u7 | CVE-2026-33845, CVE-2026-33846, CVE-2026-3833, CVE-2026-42009, CVE-2026-42010 |
-| `libpcre2-8-0` | `10.42-1` | 10.42-1+deb12u1 | CVE-2026-86145, CVE-2026-89157, CVE-2026-89161 |
-| `libpython3.11-minimal` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
-| `libpython3.11-stdlib` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
-| `libsqlite3-0` | `3.40.1-2+deb12u2` | Not reported | CVE-2025-7458, CVE-2026-11822, CVE-2026-11824 |
-| `minimatch` | `9.0.5` | 10.2.1, 9.0.6, 8.0.5, 7.4.7, 6.2.1, 5.1.7, 4.2.4, 3.1.3 | CVE-2026-26996 |
-| `minimatch` | `9.0.5` | 10.2.3, 9.0.7, 8.0.6, 7.4.8, 6.2.2, 5.1.8, 4.2.5, 3.1.3 | CVE-2026-27903 |
-| `minimatch` | `9.0.5` | 10.2.3, 9.0.7, 8.0.6, 7.4.8, 6.2.2, 5.1.8, 4.2.5, 3.1.4 | CVE-2026-27904 |
-| `pacote` | `18.0.6` | 21.5.1 | CVE-2026-9496 |
-| `pnpm` | `9.15.9` | 10.26.0 | CVE-2025-69263 |
-| `pnpm` | `9.15.9` | 10.27.0 | CVE-2025-69262 |
-| `pnpm` | `9.15.9` | 10.34.0, 11.4.0 | CVE-2026-50015, CVE-2026-50016 |
-| `pnpm` | `9.15.9` | 10.34.2, 11.5.3 | CVE-2026-55487, CVE-2026-55697, CVE-2026-55698 |
-| `pnpm` | `9.15.9` | 10.34.4, 11.7.0 | GHSA-72r4-9c5j-mj57, GHSA-fr4h-3cph-29xv |
-| `pnpm` | `9.15.9` | 10.34.4, 11.8.0 | GHSA-qrv3-253h-g69c |
-| `pnpm` | `9.15.9` | 10.34.5, 11.11.0 | CVE-2026-82392, CVE-2026-82393 |
-| `python3.11` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
-| `python3.11-minimal` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
-| `sigstore` | `2.3.1` | 4.1.1 | CVE-2026-48815 |
-| `stdlib` | `v1.23.12` | 1.24.11, 1.25.5 | CVE-2025-61729 |
-| `stdlib` | `v1.23.12` | 1.24.12, 1.25.6 | CVE-2025-61726 |
-| `stdlib` | `v1.23.12` | 1.24.13, 1.25.7, 1.26.0-rc.3 | CVE-2025-68121 |
-| `stdlib` | `v1.23.12` | 1.25.10, 1.26.3 | CVE-2026-33811, CVE-2026-33814, CVE-2026-39820, CVE-2026-39836, CVE-2026-42499 |
-| `stdlib` | `v1.23.12` | 1.25.11, 1.26.4 | CVE-2026-27145, CVE-2026-42504 |
-| `stdlib` | `v1.23.12` | 1.25.12, 1.26.5, 1.27.0-rc.2 | CVE-2026-39822 |
-| `stdlib` | `v1.23.12` | 1.25.13, 1.26.6, 1.27.0-rc.3 | CVE-2026-33818, CVE-2026-39821, CVE-2026-56853, CVE-2026-56858, CVE-2026-56859, CVE-2026-56860, CVE-2026-56862 |
-| `stdlib` | `v1.23.12` | 1.25.8, 1.26.1 | CVE-2026-25679 |
-| `stdlib` | `v1.23.12` | 1.25.9, 1.26.2 | CVE-2026-32280, CVE-2026-32281, CVE-2026-32283 |
-| `tar` | `6.2.1` | 7.5.10 | CVE-2026-29786 |
-| `tar` | `6.2.1` | 7.5.11 | CVE-2026-31802 |
-| `tar` | `6.2.1` | 7.5.18 | CVE-2026-59874 |
-| `tar` | `6.2.1` | 7.5.19 | CVE-2026-59873 |
-| `tar` | `6.2.1` | 7.5.21 | CVE-2026-73566 |
-| `tar` | `6.2.1` | 7.5.3 | CVE-2026-23745 |
-| `tar` | `6.2.1` | 7.5.4 | CVE-2026-23950 |
-| `tar` | `6.2.1` | 7.5.7 | CVE-2026-24842 |
-| `tar` | `6.2.1` | 7.5.8 | CVE-2026-26960 |
+Current runtime versions validated during the final backend build are yt-dlp
+2026.08.19, FFmpeg 5.1.9-0+deb12u1, and Node 20.20.2.
