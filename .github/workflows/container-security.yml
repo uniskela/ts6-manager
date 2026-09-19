@@ -63,6 +63,35 @@ jobs:
           cache-from: type=gha,scope=security-${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=security-${{ matrix.component }}
 
+      - name: Validate pruned Node runtime
+        if: matrix.component == 'backend' || matrix.component == 'all-in-one'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ts6-security-${{ matrix.component }}:${{ github.sha }}"
+
+          docker run --rm --entrypoint sh "$IMAGE" -c '
+            set -eu
+            ! command -v npm
+            ! command -v npx
+            ! command -v pnpm
+            ! command -v corepack
+            test ! -e /usr/local/lib/node_modules/npm
+            test ! -e /usr/local/lib/node_modules/corepack
+            test -f /app/packages/backend/node_modules/prisma/build/index.js
+            test -f /app/packages/backend/generated/prisma/index.js
+            test ! -e /app/packages/backend/node_modules/.bin/esbuild
+          '
+
+          docker run --rm --entrypoint sh \
+            -e DATABASE_URL=file:/tmp/runtime-smoke.db \
+            "$IMAGE" -c '
+              set -eu
+              cd /app/packages/backend
+              /usr/local/bin/apply-schema.sh
+              test -s /tmp/runtime-smoke.db
+            '
+
       - name: Record full vulnerability inventory
         uses: aquasecurity/trivy-action@v0.36.0
         with:
