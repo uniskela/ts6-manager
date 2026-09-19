@@ -202,6 +202,9 @@ Tracking does not restrict an explicitly configured generic Delete Channel actio
 
 ## Further reading
 
-- [README.md](../README.md) — feature overview and deployment
+- [Documentation index](index.md) — public guides and reference
+- [Music bots](music-bots.md) — queue, playback, downloads, and chat controls
+- [Security](security.md) — application and deployment security
+- [Architecture](architecture.md) — package and service layout
+- [Roadmap](roadmap.md) — public fork direction
 - [CREDITS.md](../CREDITS.md) — upstream and fork attribution
-- [docs/plans/opinionated-fork-roadmap.md](plans/opinionated-fork-roadmap.md) — fork scope and backlog
