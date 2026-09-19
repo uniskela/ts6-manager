@@ -24,31 +24,29 @@ Bots can reconnect automatically with exponential backoff and overlap protection
 
 When a bot is connected to a configured command channel, users in that channel can use built-in commands.
 
-| Command | Action |
-|---|---|
-| `!help` | Show built-in and custom commands |
-| `!play <url>` | Play supported media |
-| `!play` | Resume paused playback |
-| `!queue [show|clear|remove <n>|play <n>|<url>]` | Show or manage the queue |
-| `!add <url>` | Alias for adding to the queue |
-| `!playlist [name-or-id]` / `!pl <name-or-id>` | List or append a saved playlist |
-| `!repeat [off|track|queue]` | Show or set repeat mode |
-| `!seek <seconds|+seconds|-seconds>` | Seek within local/downloaded media |
-| `!remove <text>` | Remove one unambiguous upcoming match |
-| `!shuffle [on|off]` | Toggle or set shuffle |
-| `!stop` | Stop playback |
-| `!pause` | Toggle pause/resume |
-| `!skip` / `!next` | Advance the queue |
-| `!prev` | Previous track |
-| `!vol [0-100]` / `!volume [0-100]` | Show or set volume |
-| `!np` / `!nowplaying` | Show the current track |
-| `!radio [id]` | List or play radio stations |
-| `!stream <url>` | Start a video stream |
-| `!stopstream` | Stop the active video stream |
-| `!viewers` | List stream viewers |
-| `!channels [search]` | List/search IPTV channels |
-| `!tv <name>` / `!iptv <name>` | Stream an IPTV channel |
-| `!lyrics [artist - title]` | Show/search lyrics |
+- **`!help`** — Show built-in and custom commands
+- **`!play <url>`** — Play supported media
+- **`!play`** — Resume paused playback
+- **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue
+- **`!add <url>`** — Alias for adding to the queue
+- **`!playlist [name-or-id]` / `!pl <name-or-id>`** — List or append a saved playlist
+- **`!repeat [off|track|queue]`** — Show or set repeat mode
+- **`!seek <seconds|+seconds|-seconds>`** — Seek within local/downloaded media
+- **`!remove <text>`** — Remove one unambiguous upcoming match
+- **`!shuffle [on|off]`** — Toggle or set shuffle
+- **`!stop`** — Stop playback
+- **`!pause`** — Toggle pause/resume
+- **`!skip` / `!next`** — Advance the queue
+- **`!prev`** — Previous track
+- **`!vol [0-100]` / `!volume [0-100]`** — Show or set volume
+- **`!np` / `!nowplaying`** — Show the current track
+- **`!radio [id]`** — List or play radio stations
+- **`!stream <url>`** — Start a video stream
+- **`!stopstream`** — Stop the active video stream
+- **`!viewers`** — List stream viewers
+- **`!channels [search]`** — List/search IPTV channels
+- **`!tv <name>` / `!iptv <name>`** — Stream an IPTV channel
+- **`!lyrics [artist - title]`** — Show/search lyrics
 
 Custom chat commands can also be configured.
 
