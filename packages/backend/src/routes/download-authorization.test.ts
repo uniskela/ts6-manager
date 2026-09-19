@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { authMiddleware } from '../middleware/auth.js';
@@ -16,6 +17,9 @@ test('download polling requires authentication, admin RBAC, matching server and 
   process.env.MUSIC_DIR = musicDir;
   const { musicLibraryRoutes } = await import('./music-library.routes.js');
   const app = express();
+  // Mirror the production polling abuse ceiling; this test server is otherwise
+  // a real authenticated Express surface from CodeQL's point of view.
+  app.use(rateLimit({ windowMs: 60_000, max: 1000, standardHeaders: true, legacyHeaders: false }));
   app.locals.prisma = {
     user: { findUnique: async ({ where }: any) => ({ enabled: true, role: where.id === 3 ? 'viewer' : 'admin' }) },
     userServerAccess: { findUnique: async ({ where }: any) => where.userId_serverConfigId.serverConfigId === 1 ? {} : null },
