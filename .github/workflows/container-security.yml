@@ -12,6 +12,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'packages/backend/package.json'
+      - 'packages/backend/prisma.config.mjs'
       - 'packages/frontend/package.json'
       - 'packages/common/package.json'
       - 'packages/sidecar/go.mod'
@@ -29,6 +30,7 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'packages/backend/package.json'
+      - 'packages/backend/prisma.config.mjs'
       - 'packages/frontend/package.json'
       - 'packages/common/package.json'
       - 'packages/sidecar/go.mod'
@@ -100,6 +102,7 @@ jobs:
             test ! -e /usr/local/lib/node_modules/npm
             test ! -e /usr/local/lib/node_modules/corepack
             test -f /app/packages/backend/node_modules/prisma/build/index.js
+            test -f /app/packages/backend/prisma.config.mjs
             test -f /app/packages/backend/generated/prisma/index.js
             test ! -e /app/packages/backend/node_modules/.bin/esbuild
           '
