@@ -27,6 +27,7 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
     test -f /prod/backend/dist/index.js && \
     test -f /prod/backend/generated/prisma/index.js && \
     test -f /prod/backend/node_modules/prisma/build/index.js && \
+    test -f /prod/backend/prisma.config.mjs && \
     test -f /prod/backend/node_modules/@ts6/common/dist/index.js
 
 FROM node:20-slim AS production
@@ -82,4 +83,4 @@ EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
   CMD curl -fsS http://127.0.0.1/api/health >/dev/null && curl -fsS http://127.0.0.1:9800/health >/dev/null || exit 1
 
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
+CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/conf.d/ts6.conf"]
