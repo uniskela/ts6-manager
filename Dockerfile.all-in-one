@@ -23,7 +23,7 @@ RUN pnpm --filter @ts6/common run build
 RUN pnpm --filter @ts6/backend exec prisma generate
 RUN pnpm --filter @ts6/backend run build
 RUN pnpm --filter @ts6/frontend run build
-RUN pnpm --filter @ts6/backend --prod deploy --legacy /prod/backend && \
+RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
     test -f /prod/backend/dist/index.js && \
     test -f /prod/backend/generated/prisma/index.js && \
     test -f /prod/backend/node_modules/prisma/build/index.js && \
