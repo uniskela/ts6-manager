@@ -14,6 +14,20 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+## Documentation
+
+The maintained public documentation is available at **[uniskela.com/docs/ts6-manager](https://uniskela.com/docs/ts6-manager/)** and is sourced from the reviewed Markdown files in [`docs/`](docs/index.md).
+
+Start with:
+
+- [Installation](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [Upgrading](docs/upgrading.md)
+- [TeamSpeak compatibility](docs/teamspeak-compatibility.md)
+- [Music bots](docs/music-bots.md)
+- [Bot flows](docs/bot-flows.md)
+- [Security](docs/security.md)
+- [Troubleshooting](docs/troubleshooting.md)
 ## Screenshots
 
 ### Dashboard

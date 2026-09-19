@@ -2,7 +2,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
-  ScrollText, Settings, Bot, Cpu, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github,
+  ScrollText, Settings, Bot, Cpu, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github, BookOpen,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUiStore } from '@/stores/ui.store';
@@ -10,7 +10,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
+import { APP_DOCUMENTATION_URL, APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 
 const navSections = [
   {
@@ -189,20 +189,36 @@ export function Sidebar() {
                   {APP_VERSION_LABEL}
                 </TooltipContent>
               </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <a
-                    href={APP_REPOSITORY_URL}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label="Open TS6 Manager repository on GitHub"
-                    className="rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
-                  >
-                    <Github className="h-3.5 w-3.5" />
-                  </a>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="text-xs">View on GitHub</TooltipContent>
-              </Tooltip>
+              <div className="flex items-center gap-1">
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <a
+                      href={APP_REPOSITORY_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Open TS6 Manager repository on GitHub"
+                      className="rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                    >
+                      <Github className="h-3.5 w-3.5" />
+                    </a>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="text-xs">View on GitHub</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <a
+                      href={APP_DOCUMENTATION_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Open TS6 Manager documentation"
+                      className="rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+                    >
+                      <BookOpen className="h-3.5 w-3.5" />
+                    </a>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="text-xs">Open documentation</TooltipContent>
+                </Tooltip>
+              </div>
             </div>
           ) : (
             <div className="flex items-center gap-2 px-2.5 pt-1 pb-0.5">
@@ -218,6 +234,16 @@ export function Sidebar() {
                 className="shrink-0 rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
               >
                 <Github className="h-3.5 w-3.5" />
+              </a>
+              <a
+                href={APP_DOCUMENTATION_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open TS6 Manager documentation"
+                title="Open TS6 Manager documentation"
+                className="shrink-0 rounded p-1 text-sidebar-foreground/40 transition-colors hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground"
+              >
+                <BookOpen className="h-3.5 w-3.5" />
               </a>
             </div>
           )}
