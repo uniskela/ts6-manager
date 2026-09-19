@@ -11,11 +11,11 @@ Community bug reports and PRs that informed this work are listed in [CREDITS.md]
 3. **Core QoL** — library filesystem scan, bot ID badges, server group membership UI, Spotify→YouTube resolve, AFK exempt channels, offline client permissions + modified-only filter, metadata encoding helpers, radio ID compact, `command_args_list`, safer temp-channel template, yt-dlp freshness via image rebuilds (no runtime self-update).
 4. **Video / restart reliability (v1.4.0)** — shared music volume for sidecar, non-looping on-demand clips + auto-stop, A/V sync clamp, multi-thread VP8 encode tuning, awaited SSH teardown, ServerQuery visibility in Channels, stream API timeouts (from [DomeNinchen/ts6forkmanager](https://github.com/DomeNinchen/ts6forkmanager)).
 5. **Music-bot transport / memory reliability (v1.5.0)** — resolve the TeamSpeak UDP target once per connection, stream local/downloaded PCM incrementally with bounded memory and FFmpeg real-time pacing, and prevent overlapping reconnect attempts (adapted from [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager)).
-6. **TeamSpeak beta13 / safer operations (v1.6.0)** — authenticated beta13 compatibility smoke testing, explicit guest-Query guidance, persistent per-flow temporary-channel ownership, playlist/repeat/seek/remove chat controls, bounded yt-dlp download progress, queue/shuffle correctness, and dependency/security review.
+6. **TeamSpeak beta13 / safer operations (v1.6.0)** — authenticated beta13 compatibility smoke testing, explicit guest-Query guidance, persistent per-flow temporary-channel ownership, playlist/repeat/seek/remove chat controls, bounded yt-dlp download progress, queue/shuffle correctness, production-runtime pruning, and a four-image Trivy release gate that blocks fixable HIGH/CRITICAL findings.
 
 The yt-dlp HTTP-header transport subset evaluated in fork PR #45 was **reverted before the v1.5.0 release** and is not part of the current release-candidate scope. Revisit it only as a fresh, current-main change if runtime evidence still shows temporary YouTube media URLs failing because FFmpeg lacks yt-dlp-selected headers.
 
-## Backlog after v1.5.0
+## Backlog after v1.6.0
 
 Do **not** fold these into opportunistic drive-by PRs; schedule them as dedicated follow-ups.
 
@@ -27,7 +27,7 @@ Do **not** fold these into opportunistic drive-by PRs; schedule them as dedicate
 
 ### CI / deps hygiene
 
-- Manual Trivy (or equivalent) workflow adapted to our GHCR images
+- Keep the container-security release gate current as base images and Trivy evolve
 - Dependabot enablement beyond what’s already open
 - Frontend dead-dep cleanup (`zod` / `react-hook-form` if still unused)
 - Keep release publishing release-only: ordinary `main` pushes must not publish GHCR images
