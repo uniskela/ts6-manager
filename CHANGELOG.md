@@ -2,6 +2,24 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.6.0](https://github.com/uniskela/ts6-manager/compare/v1.5.2...v1.6.0) (2026-09-19)
+
+
+### Features
+
+* add public documentation URL ([fee8c4f](https://github.com/uniskela/ts6-manager/commit/fee8c4f6287e303cf6e311f0314006d0895aa225))
+* link documentation from the web ui ([528e986](https://github.com/uniskela/ts6-manager/commit/528e986cab5d370b0946383527b2ef202424dbea))
+* support TeamSpeak beta13 and harden server operations ([06af311](https://github.com/uniskela/ts6-manager/commit/06af3115c1f29d1f146c89fcee94041aca4cef17))
+* support TeamSpeak beta13 and harden server operations ([a813e85](https://github.com/uniskela/ts6-manager/commit/a813e85a138ce57baa9f9e022bc8795b3d5fc0c7))
+
+
+### Bug Fixes
+
+* accept valid TeamSpeak image tags in compatibility smoke ([8dc133e](https://github.com/uniskela/ts6-manager/commit/8dc133e9288441b7c83c165682138cab3e2b62f2))
+* address beta13 release review findings ([09c4714](https://github.com/uniskela/ts6-manager/commit/09c4714b15285b285a1c7d5cdf75562fafc20933))
+* prune vulnerable build tooling from runtime images ([46f7303](https://github.com/uniskela/ts6-manager/commit/46f7303769cbc10573e2544d831eacc83f7133ac))
+* use pnpm 9 deploy syntax ([a575737](https://github.com/uniskela/ts6-manager/commit/a57573724e0642755fe09549dbca39898c11a15d))
+
 ## [1.5.2](https://github.com/uniskela/ts6-manager/compare/v1.5.1...v1.5.2) (2026-09-17)
 
 
