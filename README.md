@@ -101,6 +101,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - WebQuery command whitelist in bot flows (blocks destructive commands)
 - Authenticated WebSocket connections
 - Password complexity requirements
+- Production Node images omit npm/npx/pnpm/Corepack and esbuild build tooling; CI rebuilds and Trivy-scans all release images, failing on fixable HIGH/CRITICAL findings
 
 ### Settings & Administration
 - yt-dlp cookie file management for accessing age-restricted or member-only YouTube content
