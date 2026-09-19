@@ -16,6 +16,27 @@ on:
       - 'packages/common/package.json'
       - 'packages/sidecar/go.mod'
       - 'packages/sidecar/go.sum'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/container-security.yml'
+      - 'Dockerfile.backend'
+      - 'Dockerfile.frontend'
+      - 'Dockerfile.sidecar'
+      - 'Dockerfile.all-in-one'
+      - 'docker-commands/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'packages/backend/package.json'
+      - 'packages/frontend/package.json'
+      - 'packages/common/package.json'
+      - 'packages/sidecar/go.mod'
+      - 'packages/sidecar/go.sum'
+  schedule:
+    # Re-scan current release images weekly so newly disclosed vulnerabilities
+    # are caught even when no Docker or dependency files changed.
+    - cron: '17 4 * * 1'
   workflow_dispatch:
 
 concurrency:
@@ -83,9 +104,7 @@ jobs:
             test ! -e /app/packages/backend/node_modules/.bin/esbuild
           '
 
-          docker run --rm --entrypoint sh \
-            -e DATABASE_URL=file:/tmp/runtime-smoke.db \
-            "$IMAGE" -c '
+          docker run --rm --entrypoint sh             -e DATABASE_URL=file:/tmp/runtime-smoke.db             "$IMAGE" -c '
               set -eu
               cd /app/packages/backend
               /usr/local/bin/apply-schema.sh
