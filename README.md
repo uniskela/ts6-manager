@@ -56,7 +56,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 ### Music Bots
 - Multiple bots per server, each with independent queue and playback
 - Radio station streaming with ICY metadata and live title updates
-- YouTube playback via yt-dlp (search, download, queue)
+- YouTube playback via yt-dlp (search, stream/on-demand playback with download fallback, queue and library downloads)
 - Music library management (upload, organize, playlists)
 - Local/downloaded tracks are decoded incrementally at media speed so memory use stays bounded on long tracks
 - TeamSpeak voice hostnames are resolved once per connection rather than once per UDP packet
@@ -321,27 +321,39 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 
 ## Music Bot Text Commands
 
-When a music bot is connected to a channel, users in that channel can control it via chat:
+When a music bot is connected to a configured command channel, users there can control it via chat. These are the built-in commands; custom commands can also be configured.
 
 | Command | Description |
 |---------|-------------|
-| `!radio` | List available radio stations |
-| `!radio <id>` | Play a radio station |
-| `!play <url>` | Play from YouTube URL |
+| `!help` | Show built-in and custom commands |
+| `!play <url>` | Play YouTube, Spotify, or Apple Music media |
 | `!play` | Resume paused playback |
+| `!queue [show|clear|remove <n>|play <n>|<url>]` | Show or manage the queue using one-based positions |
+| `!add <url>` | Alias for `!queue <url>` |
+| `!playlist [name-or-id]` / `!pl <name-or-id>` | List or append a saved playlist; an idle connected bot resumes queue order |
+| `!repeat [off|track|queue]` | Show or set repeat mode |
+| `!seek <seconds|+seconds|-seconds>` | Seek within a local/downloaded track |
+| `!remove <text>` | Remove one unambiguous upcoming title/artist match |
+| `!shuffle [on|off]` | Toggle or set shuffle |
 | `!stop` | Stop playback |
 | `!pause` | Toggle pause/resume |
 | `!skip` / `!next` | Next track in queue |
 | `!prev` | Previous track |
-| `!vol` | Show current volume |
-| `!vol <0-100>` | Set volume |
-| `!np` | Show current track |
+| `!vol [0-100]` / `!volume [0-100]` | Show or set volume |
+| `!np` / `!nowplaying` | Show the current track |
+| `!radio [id]` | List or play radio stations |
+| `!stream <url>` | Start a video stream |
+| `!stopstream` | Stop the active video stream |
+| `!viewers` | List stream viewers |
+| `!channels [search]` | List/search IPTV channels |
+| `!tv <name>` / `!iptv <name>` | Stream an IPTV channel |
+| `!lyrics [artist - title]` | Show lyrics for the current track or search |
 
 ## Requirements
 
 - TeamSpeak server with **WebQuery HTTP** enabled (not raw/telnet)
 - WebQuery API key (generated via `apikeyadd` or server admin tools)
-- SSH access to the TS server (only needed for bot flow event triggers)
+- SSH ServerQuery access to the TS server when using the file browser, bot flow event triggers, or music-bot channel chat commands
 - `yt-dlp` and `ffmpeg` installed on the backend (included in the Docker image)
 
 ## TeamSpeak compatibility and beta13 setup
@@ -402,17 +414,7 @@ It does not certify voice/video playback, public YouTube availability, SSH/file
 transfers, production networking, or every server configuration. It is separate
 from fast PR validation.
 
-## Music chat controls and download progress
-
-| Command | Behaviour |
-|---------|-----------|
-| `!playlist` | List up to ten playlists belonging to this server and bot (or shared on this server) |
-| `!playlist <name-or-id>` / `!pl <name-or-id>` | Exact ID, then case-insensitive exact/partial name; ambiguous matches require an ID. Append; start when connected and idle |
-| `!repeat [off|track|queue]` | Show or set queue repeat mode |
-| `!seek <seconds>` / `!seek +<seconds>` / `!seek -<seconds>` | Absolute/relative seek, clamped to track bounds; requires a seekable local/downloaded source |
-| `!remove <text>` | Match upcoming titles/artists case-insensitively; exact matches take priority; ambiguity requires a queue number |
-| `!queue [show|clear|remove <n>|play <n>|<url>]` | Display/manage the queue using one-based positions; clear also stops playback |
-| `!help` | List built-in and custom commands |
+## Download progress
 
 Explicit library downloads (single, selected batch, and playlist “download selected”)
 show current/total items, real yt-dlp percentage, speed, ETA and processing state.

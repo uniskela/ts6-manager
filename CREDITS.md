@@ -40,7 +40,7 @@ Ideas, bug reports, and patches from the upstream tracker that informed or were 
 
 ## Fork contributions
 
-Ideas and patches cherry-picked from active community forks (all MIT-licensed). See [CHANGELOG.md](CHANGELOG.md) for release notes.
+Ideas and patches adapted or cherry-picked from active community forks (all MIT-licensed). See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 | Fork | Author | Commits / area | Adopted in uniskela |
 |------|--------|----------------|---------------------|

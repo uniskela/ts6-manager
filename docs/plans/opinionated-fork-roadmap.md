@@ -10,7 +10,8 @@ Community bug reports and PRs that informed this work are listed in [CREDITS.md]
 2. **Reliability** — BBCode URL strip, unknown escape tolerance, WebQuery test errors, auto-rank persistence, SSH reconnect on edit, music bot delete/clear-queue fixes, connection pool tear-down on refresh.
 3. **Core QoL** — library filesystem scan, bot ID badges, server group membership UI, Spotify→YouTube resolve, AFK exempt channels, offline client permissions + modified-only filter, metadata encoding helpers, radio ID compact, `command_args_list`, safer temp-channel template, yt-dlp freshness via image rebuilds (no runtime self-update).
 4. **Video / restart reliability (v1.4.0)** — shared music volume for sidecar, non-looping on-demand clips + auto-stop, A/V sync clamp, multi-thread VP8 encode tuning, awaited SSH teardown, ServerQuery visibility in Channels, stream API timeouts (from [DomeNinchen/ts6forkmanager](https://github.com/DomeNinchen/ts6forkmanager)).
-5. **Music-bot transport / memory reliability (targeting v1.5.0)** — resolve the TeamSpeak UDP target once per connection, stream local/downloaded PCM incrementally with bounded memory and FFmpeg real-time pacing, and prevent overlapping reconnect attempts (adapted from [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager)).
+5. **Music-bot transport / memory reliability (v1.5.0)** — resolve the TeamSpeak UDP target once per connection, stream local/downloaded PCM incrementally with bounded memory and FFmpeg real-time pacing, and prevent overlapping reconnect attempts (adapted from [bro-network/ts6-manager](https://github.com/bro-network/ts6-manager)).
+6. **TeamSpeak beta13 / safer operations (v1.6.0)** — authenticated beta13 compatibility smoke testing, explicit guest-Query guidance, persistent per-flow temporary-channel ownership, playlist/repeat/seek/remove chat controls, bounded yt-dlp download progress, queue/shuffle correctness, and dependency/security review.
 
 The yt-dlp HTTP-header transport subset evaluated in fork PR #45 was **reverted before the v1.5.0 release** and is not part of the current release-candidate scope. Revisit it only as a fresh, current-main change if runtime evidence still shows temporary YouTube media URLs failing because FFmpeg lacks yt-dlp-selected headers.
 
@@ -46,7 +47,6 @@ Do **not** fold these into opportunistic drive-by PRs; schedule them as dedicate
 
 ### Follow-up feature PRs
 
-- [LgnRorooo/ts6-manager](https://github.com/LgnRorooo/ts6-manager) QoL: `!playlist` / `!seek` / `!remove` chat commands, yt-dlp download-progress UI, idle-queue auto-start when loading playlists
 - Upstream [#82](https://github.com/clusterzx/ts6-manager/issues/82): verify image builds refresh yt-dlp; retest YouTube `!play` after video/timeout work
 - Upstream [#53](https://github.com/clusterzx/ts6-manager/issues/53) / [#69](https://github.com/clusterzx/ts6-manager/issues/69): validate stream presets actually change delivered resolution after shared volume + encode tuning
 - Upstream [#48](https://github.com/clusterzx/ts6-manager/issues/48): flow loop node (feature backlog)
