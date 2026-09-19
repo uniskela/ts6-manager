@@ -1,55 +1,65 @@
-FROM node:20-slim AS base
-RUN corepack enable && corepack prepare pnpm@9 --activate
+FROM node:20-slim AS build
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
-# Install system deps: openssl (Prisma), ffmpeg (audio), python3+pip (yt-dlp)
+# Build-time prerequisites. Media tooling is deliberately installed only in the
+# runtime stage so it cannot leak package-manager/build dependencies into release images.
 RUN apt-get update && \
+    apt-get install -y --no-install-recommends openssl python3 ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY . .
+RUN pnpm install --frozen-lockfile
+RUN pnpm --filter @ts6/common run build
+RUN pnpm --filter @ts6/backend exec prisma generate
+RUN pnpm --filter @ts6/backend run build
+
+# Produce a portable backend containing production dependencies only. The backend
+# package explicitly includes dist/, generated/, and prisma/ so gitignored build
+# output is retained in the deployment bundle.
+RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
+    test -f /prod/backend/dist/index.js && \
+    test -f /prod/backend/generated/prisma/index.js && \
+    test -f /prod/backend/node_modules/prisma/build/index.js && \
+    test -f /prod/backend/node_modules/@ts6/common/dist/index.js
+
+# Production starts from a fresh Node image: do not inherit Corepack/pnpm or the
+# workspace build tree. Debian packages are upgraded before runtime dependencies
+# are installed so available security fixes are included in every release build.
+FROM node:20-slim AS production
+ARG GIT_SHA=
+ENV NODE_ENV=production \
+    GIT_SHA=$GIT_SHA \
+    SIDECAR_URL=http://ts6-sidecar:9800
+
+RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
       openssl \
       ffmpeg \
       python3 \
       python3-pip \
       ca-certificates \
-    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" \ 
+    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" \
+    && rm -rf /usr/local/lib/node_modules/npm \
+              /usr/local/lib/node_modules/corepack \
+              /root/.cache/node/corepack \
+    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+             /usr/local/bin/pnpm /usr/local/bin/pnpx \
+    && yt-dlp --version \
+    && ffmpeg -version \
+    && node --version \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
-
-# Copy everything at once to avoid BuildKit ordering bug on Windows
-FROM base AS build
-COPY . .
-RUN pnpm install --no-frozen-lockfile
-RUN pnpm --filter @ts6/common run build
-RUN pnpm --filter @ts6/backend exec prisma generate
-RUN pnpm --filter @ts6/backend run build
-
-# Production image
-FROM base AS production
-ARG GIT_SHA=
-ENV NODE_ENV=production \
-    GIT_SHA=$GIT_SHA
-WORKDIR /app
-
-COPY --from=build /app/node_modules ./node_modules
-COPY --from=build /app/package.json ./package.json
-COPY --from=build /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=build /app/packages/common/dist ./packages/common/dist
-COPY --from=build /app/packages/common/package.json ./packages/common/package.json
-COPY --from=build /app/packages/backend/dist ./packages/backend/dist
-COPY --from=build /app/packages/backend/generated ./packages/backend/generated
-COPY --from=build /app/packages/backend/prisma ./packages/backend/prisma
-COPY --from=build /app/packages/backend/package.json ./packages/backend/package.json
-COPY --from=build /app/packages/backend/node_modules ./packages/backend/node_modules
+WORKDIR /app/packages/backend
+COPY --from=build /prod/backend ./
 
 COPY docker-commands/apply-schema.sh /usr/local/bin/apply-schema.sh
 COPY docker-commands/start-backend-standalone.sh /usr/local/bin/start-backend-standalone.sh
-RUN chmod +x /usr/local/bin/apply-schema.sh /usr/local/bin/start-backend-standalone.sh
-
-WORKDIR /app/packages/backend
-RUN mkdir -p data /data/music && \
-    mkdir -p /root/.config/yt-dlp && \
+RUN chmod +x /usr/local/bin/apply-schema.sh /usr/local/bin/start-backend-standalone.sh && \
+    mkdir -p data /data/music /root/.config/yt-dlp && \
     echo "--js-runtimes node" > /root/.config/yt-dlp/config
 
 EXPOSE 3001
-ENV SIDECAR_URL=http://ts6-sidecar:9800
 CMD ["/usr/local/bin/start-backend-standalone.sh"]

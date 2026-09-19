@@ -56,7 +56,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 ### Music Bots
 - Multiple bots per server, each with independent queue and playback
 - Radio station streaming with ICY metadata and live title updates
-- YouTube playback via yt-dlp (search, download, queue)
+- YouTube playback via yt-dlp (search, stream/on-demand playback with download fallback, queue and library downloads)
 - Music library management (upload, organize, playlists)
 - Local/downloaded tracks are decoded incrementally at media speed so memory use stays bounded on long tracks
 - TeamSpeak voice hostnames are resolved once per connection rather than once per UDP packet
@@ -101,6 +101,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - WebQuery command whitelist in bot flows (blocks destructive commands)
 - Authenticated WebSocket connections
 - Password complexity requirements
+- Production Node images omit npm/npx/pnpm/Corepack and esbuild build tooling; CI rebuilds and Trivy-scans all release images, failing on fixable HIGH/CRITICAL findings
 
 ### Settings & Administration
 - yt-dlp cookie file management for accessing age-restricted or member-only YouTube content
@@ -321,28 +322,119 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 
 ## Music Bot Text Commands
 
-When a music bot is connected to a channel, users in that channel can control it via chat:
+When a music bot is connected to a configured command channel, users there can control it via chat. These are the built-in commands; custom commands can also be configured.
 
 | Command | Description |
 |---------|-------------|
-| `!radio` | List available radio stations |
-| `!radio <id>` | Play a radio station |
-| `!play <url>` | Play from YouTube URL |
+| `!help` | Show built-in and custom commands |
+| `!play <url>` | Play YouTube, Spotify, or Apple Music media |
 | `!play` | Resume paused playback |
+| `!queue [show|clear|remove <n>|play <n>|<url>]` | Show or manage the queue using one-based positions |
+| `!add <url>` | Alias for `!queue <url>` |
+| `!playlist [name-or-id]` / `!pl <name-or-id>` | List or append a saved playlist; an idle connected bot resumes queue order |
+| `!repeat [off|track|queue]` | Show or set repeat mode |
+| `!seek <seconds|+seconds|-seconds>` | Seek within a local/downloaded track |
+| `!remove <text>` | Remove one unambiguous upcoming title/artist match |
+| `!shuffle [on|off]` | Toggle or set shuffle |
 | `!stop` | Stop playback |
 | `!pause` | Toggle pause/resume |
 | `!skip` / `!next` | Next track in queue |
 | `!prev` | Previous track |
-| `!vol` | Show current volume |
-| `!vol <0-100>` | Set volume |
-| `!np` | Show current track |
+| `!vol [0-100]` / `!volume [0-100]` | Show or set volume |
+| `!np` / `!nowplaying` | Show the current track |
+| `!radio [id]` | List or play radio stations |
+| `!stream <url>` | Start a video stream |
+| `!stopstream` | Stop the active video stream |
+| `!viewers` | List stream viewers |
+| `!channels [search]` | List/search IPTV channels |
+| `!tv <name>` / `!iptv <name>` | Stream an IPTV channel |
+| `!lyrics [artist - title]` | Show lyrics for the current track or search |
 
 ## Requirements
 
 - TeamSpeak server with **WebQuery HTTP** enabled (not raw/telnet)
 - WebQuery API key (generated via `apikeyadd` or server admin tools)
-- SSH access to the TS server (only needed for bot flow event triggers)
+- SSH ServerQuery access to the TS server when using the file browser, bot flow event triggers, or music-bot channel chat commands
 - `yt-dlp` and `ffmpeg` installed on the backend (included in the Docker image)
+
+## TeamSpeak compatibility and beta13 setup
+
+Tested TeamSpeak Server: **6.0.0-beta13** (official image
+`teamspeaksystems/teamspeak6-server:6.0.0-beta13`). Older versions are not
+intentionally excluded; the manual key method below remains available.
+
+Configure these on the **TeamSpeak server/container**, not the TS6 Manager container:
+
+```env
+TSSERVER_QUERY_HTTP_ENABLED=1
+TSSERVER_QUERY_HTTP_ALLOW_GUEST=0
+TSSERVER_QUERY_SSH_ALLOW_GUEST=0
+TSSERVER_QUERY_ADMIN_API_KEY=<secure-stable-key>
+```
+
+Beta13 enables guest HTTP/SSH Query access by default. For administrative deployments,
+we recommend explicitly disabling it: TS6 Manager requires authenticated WebQuery
+and uses optional authenticated SSH. Guest access can remain enabled when you
+intentionally want to expose the Guest Server Query permissions; it is not needed
+by this application. Restrict Query ports to trusted management networks.
+
+On beta13+ Docker, `TSSERVER_QUERY_ADMIN_API_KEY` is the simplest deterministic way
+to provision the built-in `serveradmin` management key. Generate a strong key and
+keep it stable. **Changing it replaces the relevant built-in serveradmin management
+API key.** The previously encrypted key in TS6 Manager then stops authenticating;
+update the API key in the saved connection. Do not log or share the value. TS6
+Manager continues to store connection secrets encrypted; keys remain mandatory.
+
+Alternatively, including on older servers, connect using authenticated SSH Query:
+
+```text
+use 1
+apikeyadd scope=manage lifetime=0 ip=0.0.0.0/0
+```
+
+`lifetime=0` makes the key non-expiring. Narrow the allowed source IP range where
+practical. The bootstrap and manual methods are alternatives, not two required steps.
+
+Beta13 also offers **optional external Prometheus monitoring**. Metrics are disabled
+by default (`TSSERVER_METRICS_ENABLED=0`); the default port is `9187`. The endpoint
+is unauthenticated. Bind it to a restricted interface (`TSSERVER_METRICS_IP`) and
+apply firewall/network restrictions rather than exposing it publicly. Per-packet
+voice diagnostics (`TSSERVER_METRICS_VOICE`) add overhead: benchmark before enabling
+on busy production servers. TS6 Manager neither scrapes nor proxies these metrics.
+
+Server logs default to UTC in beta13. Administrators can select `utc` or `local`
+using `TSSERVER_LOG_TIMEZONE`. TS6 Manager displays raw log text without converting
+its timestamps.
+
+The separate [compatibility workflow](.github/workflows/ts6-compat.yml) runs manually, weekly, and on PRs changing the smoke test or WebQuery client, with an image-tag input for future betas. It starts an isolated official
+server with an ephemeral admin key and guest Query disabled, waits for an online
+virtual server, rejects unauthenticated HTTP access, and exercises the real
+`WebQueryClient`: `version`, `serverinfo`, `clientlist`, `channellist` and
+`serverrequestconnectioninfo`, plus a channel create/info/non-forced delete round-trip.
+It does not certify voice/video playback, public YouTube availability, SSH/file
+transfers, production networking, or every server configuration. It is separate
+from fast PR validation.
+
+## Download progress
+
+Explicit library downloads (single, selected batch, and playlist “download selected”)
+show current/total items, real yt-dlp percentage, speed, ETA and processing state.
+Jobs run in the background; polling stops on completion/failure or component unmount.
+Progress endpoints require application authentication, admin permissions, and matching
+server and requesting user. Jobs are in memory, capped at 100 retained / four active,
+and expire after ten minutes without updates or thirty minutes total. A backend
+restart loses progress history. Stream-playlist registration retains its existing
+semantics and does not download media eagerly.
+
+### Bundled yt-dlp lifecycle
+
+Production containers do not self-update packages. yt-dlp is installed at image
+build time using pip’s required PEP-668 option; builds check `yt-dlp --version`,
+`ffmpeg -version` and `node --version`. Pull a newly built TS6 Manager image and
+recreate the container to refresh bundled yt-dlp. Rebuilding with a fresh image
+build also refreshes it. No in-app package updater is provided. Extractor tests use
+structured fixtures; a public-video smoke test is deliberately not a release gate
+because availability, rate limits and regional restrictions are outside our control.
 
 ## License
 

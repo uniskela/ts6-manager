@@ -1,3 +1,4 @@
+import { downloadJobs } from '../voice/audio/download-progress.js';
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
@@ -227,6 +228,15 @@ const musicWriteLimiter = rateLimit({
   message: { error: 'Too many library write requests, please try again later' },
 });
 
+/** Polling is expected every ~2s while a job is active, but still needs an abuse ceiling. */
+const downloadStatusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 180,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many download status requests, please try again shortly' },
+});
+
 export const musicLibraryRoutes: Router = Router({ mergeParams: true });
 
 musicLibraryRoutes.use(requireRole('admin'));
@@ -439,6 +449,44 @@ musicLibraryRoutes.post('/youtube/search', async (req: Request, res: Response, n
     const results = await searchYouTube(query, 10);
     res.json(results);
   } catch (err) { next(err); }
+});
+
+// Background explicit downloads: existing auth + admin role + server middleware still apply.
+musicLibraryRoutes.post('/youtube/download-jobs', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
+  try {
+    const configId = Number(req.params.configId);
+    const { urls } = req.body;
+    if (!Array.isArray(urls) || !urls.length || urls.length > 250 || urls.some(url => typeof url !== 'string' || url.length > 4096)) {
+      throw new AppError(400, 'urls must contain 1–250 URLs');
+    }
+    if (!Number.isSafeInteger(configId) || configId < 1) throw new AppError(400, 'Invalid server config ID');
+    let job;
+    try { job = downloadJobs.create(configId, req.user!.id, urls.length); }
+    catch { throw new AppError(429, 'Download capacity reached; try again later'); }
+    const prisma = req.app.locals.prisma;
+    void downloadJobs.run(job, urls, async (url, progress, signal) => {
+      const resolvedUrl = await resolveMediaUrlForYouTubeDownload(url);
+      const parsed = parseYouTubeUrl(resolvedUrl);
+      // Explicit download jobs accept canonical YouTube videos only, never arbitrary
+      // extractor URLs, local files, option-like inputs or redirecting user hosts.
+      if (!parsed.watchUrl) throw new AppError(400, 'A YouTube video URL is required');
+      const mediaUrl = parsed.watchUrl;
+      signal.throwIfAborted();
+      const { filePath, info } = await downloadYouTube(mediaUrl, MUSIC_DIR, progress, signal);
+      signal.throwIfAborted();
+      const data = { title: info.title, artist: info.artist, duration: info.duration, filePath,
+        source: 'youtube', sourceUrl: mediaUrl, fileSize: fs.statSync(filePath).size, serverConfigId: configId };
+      const existing = await prisma.song.findFirst({ where: { sourceUrl: mediaUrl, serverConfigId: configId } });
+      return existing ? prisma.song.update({ where: { id: existing.id }, data }) : prisma.song.create({ data });
+    });
+    res.status(202).json({ jobId: job.id });
+  } catch (err) { next(err); }
+});
+
+musicLibraryRoutes.get('/youtube/download-jobs/:jobId', downloadStatusLimiter, (req: Request, res: Response, next) => {
+  const job = downloadJobs.get(String(req.params.jobId), Number(req.params.configId), req.user!.id);
+  if (!job) return next(new AppError(404, 'Download job not found or expired'));
+  res.json(job);
 });
 
 // POST /youtube/download — Download from YouTube (Apple Music single tracks are resolved first)

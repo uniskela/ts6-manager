@@ -80,7 +80,7 @@ export const FIELD_HELP = {
   name: 'A friendly label shown in the header server selector.',
   host: 'Hostname or IP address where the TeamSpeak server is reachable from the ts6-manager backend.',
   webqueryPort: 'WebQuery HTTP port on the TS server (default 10080). This is the primary API used by the manager.',
-  apiKey: 'WebQuery API key created on the TS server (via apikeyadd or admin tools). Use lifetime=0 for a non-expiring key. Required for all management features.',
+  apiKey: 'Required authenticated WebQuery key. On beta13+ Docker, provision with TSSERVER_QUERY_ADMIN_API_KEY; keep it stable. Alternatively use apikeyadd with lifetime=0. Stored encrypted.',
   useHttps: 'Enable if WebQuery is served over HTTPS instead of plain HTTP.',
   sshPort: 'SSH ServerQuery port (default 10022). Used for file browser, bot events, and music bot chat commands.',
   sshUsername: 'ServerQuery SSH username (commonly serveradmin).',
@@ -107,8 +107,22 @@ export const TS_PREP_STEPS = [
     ],
   },
   {
+    id: 'guest-query',
+    docs: [{ label: 'Query security', url: TS6_SERVER_DOCS.security }],
+    title: 'Beta13: explicitly disable guest Query for administration',
+    body: 'Beta13 enables guest Query by default. TS6 Manager uses authenticated WebQuery and optional authenticated SSH, so it does not need guest access. Leave guest access enabled only when you intentionally want to expose Guest Server Query permissions.',
+    code: 'TSSERVER_QUERY_HTTP_ALLOW_GUEST=0\nTSSERVER_QUERY_SSH_ALLOW_GUEST=0',
+  },
+  {
+    id: 'bootstrap-api-key',
+    docs: [{ label: 'Query authentication', url: TS6_SERVER_DOCS.authentication }],
+    title: 'Beta13+ Docker: provision a stable admin key',
+    body: 'Set this on the TeamSpeak container for deterministic serveradmin management access. Keep it stable: changing it replaces the built-in serveradmin management key. The previously encrypted key saved in TS6 Manager will stop authenticating; update the connection’s API key. Never share this value or put it in logs.',
+    code: 'TSSERVER_QUERY_ADMIN_API_KEY=<secure-stable-key>',
+  },
+  {
     id: 'api-key',
-    title: 'Create a WebQuery API key',
+    title: 'Alternative: create a key manually (also for older servers)',
     body: 'Connect via SSH ServerQuery, select your virtual server (use 1), then create a non-expiring key with lifetime=0. Example:',
     code: 'use 1\napikeyadd scope=manage lifetime=0 ip=0.0.0.0/0',
     docs: [

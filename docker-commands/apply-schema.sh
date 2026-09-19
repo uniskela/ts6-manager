@@ -47,11 +47,17 @@ else
   echo "[schema] Fresh install — applying schema version $CURRENT_VERSION"
 fi
 
-echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"
-npx prisma db push --skip-generate
+PRISMA_CLI="$BACKEND_DIR/node_modules/prisma/build/index.js"
+if [ ! -f "$PRISMA_CLI" ]; then
+  echo "[schema] Prisma CLI not found at $PRISMA_CLI" >&2
+  exit 1
+fi
 
-# Seed is safe to re-run (scripts should upsert / ignore conflicts)
-if npx prisma db seed; then
+echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"
+node "$PRISMA_CLI" db push --skip-generate
+
+# Seed is safe to re-run (script uses upsert / ignores existing values).
+if node prisma/seed.mjs; then
   echo "[schema] Seed completed"
 else
   echo "[schema] Seed skipped or failed (non-fatal)"

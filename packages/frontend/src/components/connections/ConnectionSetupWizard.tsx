@@ -436,6 +436,12 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
               <div>
                 <Label className="text-xs">API Key</Label>
+                {[getTsPrepStep('guest-query'), getTsPrepStep('bootstrap-api-key')].map(guide => (
+                  <WizardGuideCallout key={guide.id} title={guide.title} docs={guide.docs}>
+                    <p>{guide.body}</p>
+                    {'code' in guide && <pre className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] whitespace-pre-wrap">{guide.code}</pre>}
+                  </WizardGuideCallout>
+                ))}
                 <WizardGuideCallout title={apiKeyGuide.title} docs={apiKeyGuide.docs}>
                   <p>{apiKeyGuide.body}</p>
                   {'code' in apiKeyGuide && apiKeyGuide.code && (

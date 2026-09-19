@@ -103,7 +103,7 @@ function normalizeFlowData(raw: any): FlowDefinition {
       // If neither flag is '1', channel will be permanent (TS3 default)
       if (config.channel_topic) params.channel_topic = config.channel_topic;
       if (config.channel_password) params.channel_password = config.channel_password;
-      data = { actionType: 'channelCreate', label, params: { ...params, ...config.params } };
+      data = { actionType: 'channelCreate', label, trackTempChannel: config.trackTempChannel === true || config.trackTempChannel === 'true', params: { ...params, ...config.params } };
     } else if (nodeType === 'action_channelEdit') {
       type = 'action';
       const params: Record<string, string> = {};

@@ -901,13 +901,27 @@ export default function BotEditor() {
 
                   {selectedNodeData.type === 'action_channelCreate' && (
                     <div className="space-y-2">
+                      <label className="flex items-center gap-2 text-xs">
+                        <input
+                          type="checkbox"
+                          checked={!!selectedNodeData.config.trackTempChannel}
+                          disabled={selectedNodeData.config.channel_flag_semi_permanent !== '1' || !selectedNodeData.config.cpid || selectedNodeData.config.cpid === '0'}
+                          onChange={(e) => setNodes(prev => prev.map(n => n.id === selectedNode ? { ...n, config: { ...n.config, trackTempChannel: e.target.checked } } : n))}
+                        />
+                        Track for this flow’s temporary-channel cleanup (requires a parent and semi-permanent lifetime)
+                      </label>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Channel Name</Label>
                         <Input className="h-7 text-xs mt-1" placeholder="[cspacer]Info" value={selectedNodeData.config.channel_name || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, channel_name: e.target.value } } : n))} />
                       </div>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Parent Channel ID</Label>
-                        <Input type="number" className="h-7 text-xs mt-1 font-mono-data" placeholder="0" value={selectedNodeData.config.cpid || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, cpid: e.target.value } } : n))} />
+                        <Input type="number" className="h-7 text-xs mt-1 font-mono-data" placeholder="0" value={selectedNodeData.config.cpid || ''} onChange={(e) => setNodes((prev) => prev.map((n) => {
+                          if (n.id !== selectedNode) return n;
+                          const cfg: any = { ...n.config, cpid: e.target.value };
+                          if (!e.target.value || e.target.value === '0') cfg.trackTempChannel = false;
+                          return { ...n, config: cfg };
+                        }))} />
                       </div>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Channel Password (optional)</Label>
@@ -927,11 +941,11 @@ export default function BotEditor() {
                         />
                       </div>
                       <div>
-                        <Label className="text-[10px] text-muted-foreground">Temporary</Label>
-                        <Select value={selectedNodeData.config.channel_flag_temporary || '0'} onValueChange={(v) => setNodes((prev) => prev.map((n) => { if (n.id !== selectedNode) return n; const cfg: any = { ...n.config }; if (v === '1') { cfg.channel_flag_temporary = '1'; delete cfg.channel_flag_semi_permanent; } else { cfg.channel_flag_temporary = '0'; cfg.channel_flag_semi_permanent = '1'; } return { ...n, config: cfg }; }) ) }>
+                        <Label className="text-[10px] text-muted-foreground">Channel lifetime</Label>
+                        <Select value={selectedNodeData.config.channel_flag_temporary || '0'} onValueChange={(v) => setNodes((prev) => prev.map((n) => { if (n.id !== selectedNode) return n; const cfg: any = { ...n.config }; if (v === '1') { cfg.channel_flag_temporary = '1'; delete cfg.channel_flag_semi_permanent; cfg.trackTempChannel = false; } else { cfg.channel_flag_temporary = '0'; cfg.channel_flag_semi_permanent = '1'; } return { ...n, config: cfg }; }) ) }>
                           <SelectTrigger className="h-7 text-xs mt-1"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="0">Permanent</SelectItem>
+                            <SelectItem value="0">Semi-permanent</SelectItem>
                             <SelectItem value="1">Temporary</SelectItem>
                           </SelectContent>
                         </Select>

@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicLibraryApi } from '../api/music.api';
 
@@ -42,14 +43,50 @@ export function useYouTubeSearch() {
   });
 }
 
-export function useYouTubeDownload() {
+function useDownloadJob(single: boolean) {
   const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ configId, url }: { configId: number; url: string }) =>
-      musicLibraryApi.youtubeDownload(configId, url),
+  const controller = useRef<AbortController | null>(null);
+  const [progress, setProgress] = useState<string | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  const mutation = useMutation({
+    mutationFn: async ({ configId, url, urls }: { configId: number; url?: string; urls?: string[] }) => {
+      controller.current?.abort();
+      const current = new AbortController();
+      controller.current = current;
+      const { signal } = current;
+      setProgress('Preparing download…');
+      try {
+        const { jobId } = await musicLibraryApi.startDownload(configId, urls ?? [url!], signal);
+        for (;;) {
+          signal.throwIfAborted();
+          const job = await musicLibraryApi.downloadStatus(configId, jobId, signal);
+          const details = [job.percentage != null ? `${Math.round(job.percentage)}%` : '',
+            job.speed != null ? `${(job.speed / 1024).toFixed(0)} KiB/s` : '',
+            job.eta != null ? `ETA ${Math.ceil(job.eta)}s` : ''].filter(Boolean).join(' · ');
+          setProgress(`${job.status === 'processing' ? 'Processing…' : 'Downloading'} ${job.currentItem}/${job.totalItems}${details ? ` · ${details}` : ''}`);
+          if (job.status === 'done' || job.status === 'error') {
+            if (job.status === 'error') setProgress(job.error || 'Download failed');
+            else setProgress(null);
+            if (single && job.status === 'error') throw new Error(job.error || 'Download failed');
+            return single ? job.results[0] : job;
+          }
+          await new Promise<void>((resolve, reject) => {
+            const abort = () => { clearTimeout(timer); reject(new DOMException('Cancelled', 'AbortError')); };
+            const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 2000);
+            signal.addEventListener('abort', abort, { once: true });
+          });
+        }
+      } catch (error) {
+        if (!signal.aborted) setProgress(error instanceof Error ? error.message : 'Download failed');
+        throw error;
+      }
+    },
     onSuccess: (_, { configId }) => qc.invalidateQueries({ queryKey: ['songs', configId] }),
   });
+  return { ...mutation, progress };
 }
+
+export function useYouTubeDownload() { return useDownloadJob(true); }
 
 export function useYouTubeInfo() {
   return useMutation({
@@ -58,14 +95,7 @@ export function useYouTubeInfo() {
   });
 }
 
-export function useYouTubeDownloadBatch() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ configId, urls }: { configId: number; urls: string[] }) =>
-      musicLibraryApi.youtubeDownloadBatch(configId, urls),
-    onSuccess: (_, { configId }) => qc.invalidateQueries({ queryKey: ['songs', configId] }),
-  });
-}
+export function useYouTubeDownloadBatch() { return useDownloadJob(false); }
 
 export function useYouTubeRegister() {
   const qc = useQueryClient();

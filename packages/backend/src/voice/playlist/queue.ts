@@ -52,8 +52,9 @@ export class PlayQueue {
   add(item: QueueItem): void {
     this.items.push(item);
     if (this._shuffle) {
-      // Insert new item at random position in shuffle order
-      const pos = Math.floor(Math.random() * (this.shuffleOrder.length + 1));
+      // Insert among upcoming items so appending never changes the current track.
+      const start = this.currentIndex + 1;
+      const pos = start + Math.floor(Math.random() * (this.shuffleOrder.length - start + 1));
       this.shuffleOrder.splice(pos, 0, this.items.length - 1);
     }
   }
@@ -65,8 +66,14 @@ export class PlayQueue {
   }
 
   remove(id: string): boolean {
-    const idx = this.items.findIndex((item) => item.id === id);
-    if (idx < 0) return false;
+    const index = this.getAll().findIndex(item => item.id === id);
+    return this.removeAt(index);
+  }
+
+  /** Remove a displayed queue position, including duplicate song IDs and shuffle. */
+  removeAt(index: number): boolean {
+    if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return false;
+    const idx = this._shuffle ? this.shuffleOrder[index] : index;
 
     this.items.splice(idx, 1);
 
@@ -78,9 +85,9 @@ export class PlayQueue {
     }
 
     // Adjust current index
-    if (idx < this.currentIndex) {
+    if (index < this.currentIndex) {
       this.currentIndex--;
-    } else if (idx === this.currentIndex) {
+    } else if (index === this.currentIndex) {
       this.currentIndex = Math.min(this.currentIndex, this.items.length - 1);
     }
 
@@ -115,7 +122,7 @@ export class PlayQueue {
   }
 
   playAt(index: number): QueueItem | null {
-    if (index < 0 || index >= this.items.length) return null;
+    if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return null;
     this.currentIndex = index;
     return this.current;
   }
@@ -165,10 +172,31 @@ export class PlayQueue {
   }
 
   setShuffle(enabled: boolean): void {
-    this._shuffle = enabled;
+    if (enabled === this._shuffle) return;
+
+    const currentUnderlying = this.currentIndex >= 0
+      ? (this._shuffle ? this.shuffleOrder[this.currentIndex] : this.currentIndex)
+      : -1;
+    const currentPosition = this.currentIndex;
+
     if (enabled) {
-      this.regenerateShuffleOrder();
+      const order = Array.from({ length: this.items.length }, (_, i) => i)
+        .filter(i => i !== currentUnderlying);
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      if (currentUnderlying >= 0) {
+        order.splice(Math.min(Math.max(currentPosition, 0), order.length), 0, currentUnderlying);
+      }
+      this.shuffleOrder = order;
+      this._shuffle = true;
+      return;
     }
+
+    this._shuffle = false;
+    this.shuffleOrder = [];
+    this.currentIndex = currentUnderlying;
   }
 
   private regenerateShuffleOrder(): void {

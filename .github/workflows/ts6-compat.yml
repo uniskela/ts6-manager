@@ -1,0 +1,40 @@
+name: TeamSpeak compatibility
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ts6-compat.yml'
+      - 'packages/backend/scripts/ts6-compat.ts'
+      - 'packages/backend/src/ts-client/webquery-client.ts'
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Official TeamSpeak server image tag
+        default: 6.0.0-beta13
+        required: true
+        type: string
+  schedule:
+    - cron: '23 5 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  webquery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @ts6/common build
+      - name: Exercise authenticated WebQuery against official TeamSpeak
+        env:
+          TS6_IMAGE_TAG: ${{ inputs.image_tag || '6.0.0-beta13' }}
+        run: pnpm --filter @ts6/backend exec tsx scripts/ts6-compat.ts

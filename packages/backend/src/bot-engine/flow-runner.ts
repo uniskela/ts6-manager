@@ -18,6 +18,7 @@ import axios from 'axios';
 import { validateUrl } from '../utils/url-validator.js';
 import { ALLOWED_WEBQUERY_COMMANDS } from './command-whitelist.js';
 import crypto from 'crypto';
+import { createOwnedTempChannel, cleanupOwnedTempChannels } from './temp-channel-ownership.js';
 
 const MAX_NODE_VISITS = 100;
 const MAX_DELAY_MS = 300000; // 5 minutes
@@ -342,7 +343,9 @@ export class FlowRunner {
     for (const [key, val] of Object.entries(data.params || {})) {
       resolved[key] = await ctx.resolveTemplate(val);
     }
-    const result = await client.executePost(ctx.sid, 'channelcreate', resolved);
+    const result = data.trackTempChannel
+      ? await createOwnedTempChannel(this.prisma, ctx, client, resolved)
+      : await client.executePost(ctx.sid, 'channelcreate', resolved);
     if (result?.[0]?.cid) {
       ctx.setTemp('lastCreatedChannelId', result[0].cid);
     }
@@ -621,26 +624,7 @@ export class FlowRunner {
     const protectedStr = data.protectedChannelIds ? await ctx.resolveTemplate(data.protectedChannelIds) : '';
     const protectedSet = new Set(protectedStr.split(',').map(s => s.trim()).filter(Boolean));
 
-    const channels = await client.execute(ctx.sid, 'channellist');
-    if (!Array.isArray(channels)) return;
-
-    let deleted = 0;
-    for (const ch of channels) {
-      const cid = String(ch.cid);
-      const pid = String(ch.pid);
-      const totalClients = parseInt(ch.total_clients) || 0;
-
-      if (pid !== parentCid) continue;
-      if (protectedSet.has(cid)) continue;
-      if (totalClients > 0) continue;
-
-      try {
-        await client.executePost(ctx.sid, 'channeldelete', { cid, force: 1 });
-        deleted++;
-      } catch {
-        // Channel might have clients that joined between list and delete — ignore
-      }
-    }
+    const deleted = await cleanupOwnedTempChannels(this.prisma, ctx, client, parentCid, protectedSet);
     ctx.setTemp('tempChannelsDeleted', deleted);
   }
 
