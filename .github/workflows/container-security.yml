@@ -1,0 +1,110 @@
+name: Container security release gate
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/container-security.yml'
+      - 'Dockerfile.backend'
+      - 'Dockerfile.frontend'
+      - 'Dockerfile.sidecar'
+      - 'Dockerfile.all-in-one'
+      - 'docker-commands/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'packages/backend/package.json'
+      - 'packages/frontend/package.json'
+      - 'packages/common/package.json'
+      - 'packages/sidecar/go.mod'
+      - 'packages/sidecar/go.sum'
+  workflow_dispatch:
+
+concurrency:
+  group: container-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Scan ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: backend
+            dockerfile: Dockerfile.backend
+          - component: frontend
+            dockerfile: Dockerfile.frontend
+          - component: sidecar
+            dockerfile: Dockerfile.sidecar
+          - component: all-in-one
+            dockerfile: Dockerfile.all-in-one
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build final image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          load: true
+          push: false
+          tags: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+          cache-from: type=gha,scope=security-${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=security-${{ matrix.component }}
+
+      - name: Record full vulnerability inventory
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          scanners: vuln
+          format: json
+          output: trivy-${{ matrix.component }}.json
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+          timeout: 10m
+
+      - name: Show all high and critical findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          scanners: vuln
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: '0'
+          timeout: 10m
+
+      - name: Upload Trivy report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.component }}-${{ github.sha }}
+          path: trivy-${{ matrix.component }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Gate on fixable high and critical findings
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          scanners: vuln
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          timeout: 10m
