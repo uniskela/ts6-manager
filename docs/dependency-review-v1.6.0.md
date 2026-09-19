@@ -81,3 +81,71 @@ has not been disproved unless explicitly stated.
 | `libxml2` 2.9.14+dfsg-1.3~deb12u6 | CVE-2026-6653, CVE-2026-74860, CVE-2026-86138, CVE-2026-86139, CVE-2026-86140, CVE-2026-86142, CVE-2026-86143, CVE-2026-86144 | Installed transitive library; full exploit-path reachability not established. No distro fix reported; retained as an unresolved image finding. |
 | `perl-base` 5.36.0-7+deb12u3 | CVE-2026-13221, CVE-2026-42496, CVE-2026-42497, CVE-2026-48962, CVE-2026-57432, CVE-2026-57433, CVE-2026-8376, CVE-2026-9538 | Runtime app does not invoke Perl/archive or terminal tooling on user input. Package-level finding remains; no distro fix reported. |
 | `zlib1g` 1:1.2.13.dfsg-1 | CVE-2023-45853 | CVE concerns contrib/minizip; Debian marks will_not_fix. No app zip writer uses this path; keep vendor finding visible. |
+
+
+## Backend image findings and final scan limitation
+
+The initial backend image scan reports 285 OS, 49 bundled Node package and
+22 esbuild Go-runtime high/critical package findings. This scan covered an earlier
+build, not the final rebuilt backend image. All four final Docker image builds
+completed; automatic approval review failed with a service error when requesting
+the final backend/all-in-one scans. Their final scan results remain outstanding.
+Do not interpret the clean production npm audit as a clean container scan.
+
+Additional findings beyond the sidecar inventory are listed below. Debian reports
+compatible fixes for libcap2, libgnutls30 and libpcre2; refreshing those installed
+packages and rescanning is still required. Python and SQLite findings have no
+Bookworm fixed version in this scan and need reachability/remediation review.
+Bundled Node findings are in npm/pnpm tooling, not the audited application graph;
+esbuild is copied with workspace dependencies. Neither package installation nor
+esbuild serving is exposed as an application operation, but these tools are
+present in the image. Prefer removing unnecessary build tooling or compatible
+updates with startup/Prisma validation; no suppression has been applied.
+
+| Package | Installed | Reported fixed version(s) | Additional advisory IDs |
+|---|---|---|---|
+| `brace-expansion` | `2.0.1` | 1.1.18, 2.1.4, 3.0.6, 5.0.9 | CVE-2026-69152 |
+| `brace-expansion` | `2.0.1` | 5.0.7, 1.1.16, 2.1.2 | CVE-2026-13149 |
+| `brace-expansion` | `2.0.1` | 5.0.8, 3.0.3, 2.1.3, 1.1.17 | CVE-2026-14257 |
+| `cross-spawn` | `7.0.3` | 7.0.5, 6.0.6 | CVE-2024-21538 |
+| `glob` | `10.4.2` | 11.1.0, 10.5.0 | CVE-2025-64756 |
+| `glob` | `10.4.5` | 11.1.0, 10.5.0 | CVE-2025-64756 |
+| `ip-address` | `9.0.5` | 10.3.1 | CVE-2026-69192 |
+| `libcap2` | `1:2.66-4+deb12u2+b2` | 1:2.66-4+deb12u3 | CVE-2026-4878 |
+| `libgnutls30` | `3.7.9-2+deb12u6` | 3.7.9-2+deb12u7 | CVE-2026-33845, CVE-2026-33846, CVE-2026-3833, CVE-2026-42009, CVE-2026-42010 |
+| `libpcre2-8-0` | `10.42-1` | 10.42-1+deb12u1 | CVE-2026-86145, CVE-2026-89157, CVE-2026-89161 |
+| `libpython3.11-minimal` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
+| `libpython3.11-stdlib` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
+| `libsqlite3-0` | `3.40.1-2+deb12u2` | Not reported | CVE-2025-7458, CVE-2026-11822, CVE-2026-11824 |
+| `minimatch` | `9.0.5` | 10.2.1, 9.0.6, 8.0.5, 7.4.7, 6.2.1, 5.1.7, 4.2.4, 3.1.3 | CVE-2026-26996 |
+| `minimatch` | `9.0.5` | 10.2.3, 9.0.7, 8.0.6, 7.4.8, 6.2.2, 5.1.8, 4.2.5, 3.1.3 | CVE-2026-27903 |
+| `minimatch` | `9.0.5` | 10.2.3, 9.0.7, 8.0.6, 7.4.8, 6.2.2, 5.1.8, 4.2.5, 3.1.4 | CVE-2026-27904 |
+| `pacote` | `18.0.6` | 21.5.1 | CVE-2026-9496 |
+| `pnpm` | `9.15.9` | 10.26.0 | CVE-2025-69263 |
+| `pnpm` | `9.15.9` | 10.27.0 | CVE-2025-69262 |
+| `pnpm` | `9.15.9` | 10.34.0, 11.4.0 | CVE-2026-50015, CVE-2026-50016 |
+| `pnpm` | `9.15.9` | 10.34.2, 11.5.3 | CVE-2026-55487, CVE-2026-55697, CVE-2026-55698 |
+| `pnpm` | `9.15.9` | 10.34.4, 11.7.0 | GHSA-72r4-9c5j-mj57, GHSA-fr4h-3cph-29xv |
+| `pnpm` | `9.15.9` | 10.34.4, 11.8.0 | GHSA-qrv3-253h-g69c |
+| `pnpm` | `9.15.9` | 10.34.5, 11.11.0 | CVE-2026-82392, CVE-2026-82393 |
+| `python3.11` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
+| `python3.11-minimal` | `3.11.2-6+deb12u8` | Not reported | CVE-2025-69534, CVE-2026-11940, CVE-2026-15308, CVE-2026-3644, CVE-2026-7210, CVE-2026-8328 |
+| `sigstore` | `2.3.1` | 4.1.1 | CVE-2026-48815 |
+| `stdlib` | `v1.23.12` | 1.24.11, 1.25.5 | CVE-2025-61729 |
+| `stdlib` | `v1.23.12` | 1.24.12, 1.25.6 | CVE-2025-61726 |
+| `stdlib` | `v1.23.12` | 1.24.13, 1.25.7, 1.26.0-rc.3 | CVE-2025-68121 |
+| `stdlib` | `v1.23.12` | 1.25.10, 1.26.3 | CVE-2026-33811, CVE-2026-33814, CVE-2026-39820, CVE-2026-39836, CVE-2026-42499 |
+| `stdlib` | `v1.23.12` | 1.25.11, 1.26.4 | CVE-2026-27145, CVE-2026-42504 |
+| `stdlib` | `v1.23.12` | 1.25.12, 1.26.5, 1.27.0-rc.2 | CVE-2026-39822 |
+| `stdlib` | `v1.23.12` | 1.25.13, 1.26.6, 1.27.0-rc.3 | CVE-2026-33818, CVE-2026-39821, CVE-2026-56853, CVE-2026-56858, CVE-2026-56859, CVE-2026-56860, CVE-2026-56862 |
+| `stdlib` | `v1.23.12` | 1.25.8, 1.26.1 | CVE-2026-25679 |
+| `stdlib` | `v1.23.12` | 1.25.9, 1.26.2 | CVE-2026-32280, CVE-2026-32281, CVE-2026-32283 |
+| `tar` | `6.2.1` | 7.5.10 | CVE-2026-29786 |
+| `tar` | `6.2.1` | 7.5.11 | CVE-2026-31802 |
+| `tar` | `6.2.1` | 7.5.18 | CVE-2026-59874 |
+| `tar` | `6.2.1` | 7.5.19 | CVE-2026-59873 |
+| `tar` | `6.2.1` | 7.5.21 | CVE-2026-73566 |
+| `tar` | `6.2.1` | 7.5.3 | CVE-2026-23745 |
+| `tar` | `6.2.1` | 7.5.4 | CVE-2026-23950 |
+| `tar` | `6.2.1` | 7.5.7 | CVE-2026-24842 |
+| `tar` | `6.2.1` | 7.5.8 | CVE-2026-26960 |
