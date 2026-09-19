@@ -27,9 +27,10 @@ test('persistent ownership isolates flows and protects siblings, lobby, parent, 
     },
   } as any;
   const owner = { flowId: 1, configId: 1, sid: 1 };
-  const create = async (flowId = 1) => String((await createOwnedTempChannel(prisma, { ...owner, flowId }, client,
-    { cpid: '2', channel_flag_semi_permanent: '1' }))[0].cid);
-  const empty = await create();
+  const create = async (flowId = 1, description?: string) => String((await createOwnedTempChannel(prisma, { ...owner, flowId }, client,
+    { cpid: '2', channel_flag_semi_permanent: '1', ...(description ? { channel_description: description } : {}) }))[0].cid);
+  const empty = await create(1, 'Welcome to your channel');
+  assert.match(channels.get(empty).channel_description, /^Welcome to your channel\n\nTS6M-TEMP:/);
   const occupied = await create(); channels.get(occupied).total_clients = 1;
   const stale = await create(); channels.delete(stale);
   const reused = await create(); channels.get(reused).channel_description = 'Administrator channel';

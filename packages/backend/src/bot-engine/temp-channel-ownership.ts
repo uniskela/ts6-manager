@@ -12,9 +12,12 @@ export async function createOwnedTempChannel(
   if (params.channel_flag_semi_permanent !== '1' || !params.cpid || params.cpid === '0') {
     throw new Error('Tracked temp channels require a parent and the semi-permanent flag');
   }
-  const marker = `TS6 Manager temporary channel ${randomUUID()}`;
+  const marker = `TS6M-TEMP:${randomUUID()}`;
+  const description = params.channel_description
+    ? `${params.channel_description}\n\n${marker}`
+    : marker;
   const result = await client.executePost(owner.sid, 'channelcreate', {
-    ...params, channel_description: marker,
+    ...params, channel_description: description,
   });
   const cid = String(result?.[0]?.cid ?? '');
   if (!/^[1-9]\d*$/.test(cid)) throw new Error('Channel creation returned no channel ID');
@@ -51,7 +54,7 @@ export async function cleanupOwnedTempChannels(
     try {
       const info = (await client.execute(owner.sid, 'channelinfo', { cid }))?.[0];
       // The random marker plus registry guards against IDs reused after a server reset.
-      if (!info || info.channel_description !== saved.marker) { await forget(); continue; }
+      if (!info || !String(info.channel_description ?? '').includes(saved.marker)) { await forget(); continue; }
       if (Number(info.channel_flag_semi_permanent) !== 1 || Number(info.channel_flag_permanent) === 1) continue;
       if (String(info.pid) !== parent) continue;
       // Never force: TeamSpeak must reject deletion if a client joined or a child exists.

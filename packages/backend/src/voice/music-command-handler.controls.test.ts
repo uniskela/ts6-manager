@@ -90,3 +90,13 @@ test('remove searches only upcoming tracks, refuses ambiguity and removes duplic
   await f.command('!queue remove 2'); assert.equal(f.bot.queue.current?.title, 'Current');
   await f.command('!queue clear'); assert.equal(f.bot.queue.length, 0);
 });
+
+
+test('idle playlist append resumes existing queue order instead of jumping past queued tracks', async () => {
+  const f = fixture();
+  f.bot.queue.add({ id: 'existing', title: 'Already queued', filePath: '/tmp/existing.ogg', source: 'local' });
+  await f.command('!playlist 3');
+  assert.equal(f.bot.queue.length, 2);
+  assert.equal(f.played.length, 1);
+  assert.equal(f.played[0].title, 'Already queued');
+});

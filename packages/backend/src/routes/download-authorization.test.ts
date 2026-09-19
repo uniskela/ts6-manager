@@ -5,10 +5,16 @@ import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 import { authMiddleware } from '../middleware/auth.js';
 import { requireServerAccess } from '../middleware/server-access.js';
-import { musicLibraryRoutes } from './music-library.routes.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { downloadJobs } from '../voice/audio/download-progress.js';
 
 test('download polling requires authentication, admin RBAC, matching server and requesting user', async () => {
+  const musicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-music-auth-'));
+  const previousMusicDir = process.env.MUSIC_DIR;
+  process.env.MUSIC_DIR = musicDir;
+  const { musicLibraryRoutes } = await import('./music-library.routes.js');
   const app = express();
   app.locals.prisma = {
     user: { findUnique: async ({ where }: any) => ({ enabled: true, role: where.id === 3 ? 'viewer' : 'admin' }) },
@@ -31,5 +37,11 @@ test('download polling requires authentication, admin RBAC, matching server and 
     assert.equal((await get(2, 1)).status, 404);
     assert.equal((await get(1, 2)).status, 404);
     assert.equal((await get(1, 1)).status, 200);
-  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    if (previousMusicDir === undefined) delete process.env.MUSIC_DIR;
+    else process.env.MUSIC_DIR = previousMusicDir;
+    fs.rmSync(musicDir, { recursive: true, force: true });
+  }
 });

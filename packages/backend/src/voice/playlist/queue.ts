@@ -172,10 +172,31 @@ export class PlayQueue {
   }
 
   setShuffle(enabled: boolean): void {
-    this._shuffle = enabled;
+    if (enabled === this._shuffle) return;
+
+    const currentUnderlying = this.currentIndex >= 0
+      ? (this._shuffle ? this.shuffleOrder[this.currentIndex] : this.currentIndex)
+      : -1;
+    const currentPosition = this.currentIndex;
+
     if (enabled) {
-      this.regenerateShuffleOrder();
+      const order = Array.from({ length: this.items.length }, (_, i) => i)
+        .filter(i => i !== currentUnderlying);
+      for (let i = order.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [order[i], order[j]] = [order[j], order[i]];
+      }
+      if (currentUnderlying >= 0) {
+        order.splice(Math.min(Math.max(currentPosition, 0), order.length), 0, currentUnderlying);
+      }
+      this.shuffleOrder = order;
+      this._shuffle = true;
+      return;
     }
+
+    this._shuffle = false;
+    this.shuffleOrder = [];
+    this.currentIndex = currentUnderlying;
   }
 
   private regenerateShuffleOrder(): void {

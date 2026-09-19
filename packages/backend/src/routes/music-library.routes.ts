@@ -228,6 +228,15 @@ const musicWriteLimiter = rateLimit({
   message: { error: 'Too many library write requests, please try again later' },
 });
 
+/** Polling is expected every ~2s while a job is active, but still needs an abuse ceiling. */
+const downloadStatusLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 180,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many download status requests, please try again shortly' },
+});
+
 export const musicLibraryRoutes: Router = Router({ mergeParams: true });
 
 musicLibraryRoutes.use(requireRole('admin'));
@@ -474,7 +483,7 @@ musicLibraryRoutes.post('/youtube/download-jobs', heavyMusicOpLimiter, async (re
   } catch (err) { next(err); }
 });
 
-musicLibraryRoutes.get('/youtube/download-jobs/:jobId', (req: Request, res: Response, next) => {
+musicLibraryRoutes.get('/youtube/download-jobs/:jobId', downloadStatusLimiter, (req: Request, res: Response, next) => {
   const job = downloadJobs.get(String(req.params.jobId), Number(req.params.configId), req.user!.id);
   if (!job) return next(new AppError(404, 'Download job not found or expired'));
   res.json(job);
