@@ -107,7 +107,7 @@ security updates. The remediation:
 - validates inside the finished backend/all-in-one images that npm/npx/pnpm/Corepack
   and esbuild are absent while Prisma schema apply and seeding still succeed.
 
-Workflow run **35447241210** then passed all four image gates:
+Final-head workflow run **35447590364** passed all four image gates:
 
 | Image | Full HIGH/CRITICAL inventory | Fixable HIGH/CRITICAL gate | Result |
 |---|---:|---:|---|
