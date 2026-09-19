@@ -21,6 +21,7 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
     test -f /prod/backend/dist/index.js && \
     test -f /prod/backend/generated/prisma/index.js && \
     test -f /prod/backend/node_modules/prisma/build/index.js && \
+    test -f /prod/backend/prisma.config.mjs && \
     test -f /prod/backend/node_modules/@ts6/common/dist/index.js
 
 # Production starts from a fresh Node image: do not inherit Corepack/pnpm or the
