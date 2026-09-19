@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { createWebQueryClient } from '../src/ts-client/webquery-client.js';
 
 const tag = process.env.TS6_IMAGE_TAG || '6.0.0-beta13';
-if (!/^[\\w.-]+$/.test(tag)) throw new Error('Invalid image tag');
+if (!/^[\w.-]+$/.test(tag)) throw new Error('Invalid image tag');
 const key = randomBytes(32).toString('hex');
 const name = `ts6-compat-${randomBytes(6).toString('hex')}`;
 const docker = (args: string[]) => execFileSync('docker', args, {
