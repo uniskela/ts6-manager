@@ -125,18 +125,22 @@ jobs:
           git commit -m "fix(deps): update yt-dlp to $LATEST"
           git push origin "$BRANCH"
 
+          cat > /tmp/yt-dlp-pr-body.md <<EOF
+          Automated yt-dlp maintenance update.
+
+          - pinned version: $CURRENT → $LATEST
+          - source: latest stable release from yt-dlp/yt-dlp
+          - runtime self-updates remain disabled
+          - merging this PR changes only the version pin; the normal container build/security gates validate the resulting images
+
+          This PR is intentionally not auto-merged. Review CI and media compatibility before merging. Release Please should treat the fix(deps) squash/merge as a patch-release candidate.
+          EOF
+
           PR_URL="$(gh pr create \
             --base main \
             --head "$BRANCH" \
             --title "fix(deps): update yt-dlp to $LATEST" \
-            --body "Automated yt-dlp maintenance update.
-
-          - pinned version: `$CURRENT` → `$LATEST`
-          - source: latest stable release from `yt-dlp/yt-dlp`
-          - runtime self-updates remain disabled
-          - merging this PR changes only the version pin; the normal container build/security gates validate the resulting images
-
-          This PR is intentionally not auto-merged. Review CI and media compatibility before merging. Release Please should treat the `fix(deps)` squash/merge as a patch-release candidate.")"
+            --body-file /tmp/yt-dlp-pr-body.md)"
 
           echo "Opened: $PR_URL"
 
