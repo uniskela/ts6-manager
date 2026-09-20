@@ -255,10 +255,10 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
 
         <div className="flex items-center gap-1.5 ml-1">
           {node.channel_flag_password === 1 && <Lock className="h-3 w-3 text-amber-400/60" />}
-          {(node.total_clients > 0 || humanClients.length > 0) && (
+          {humanClients.length > 0 && (
             <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground font-mono-data" title="Human clients">
               <Users className="h-3 w-3" />
-              {humanClients.length || node.total_clients}
+              {humanClients.length}
             </span>
           )}
         </div>
