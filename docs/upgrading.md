@@ -32,6 +32,14 @@ docker compose -f docker-compose.all-in-one.yml up -d
 
 Release images are produced from immutable Release Please tags. Pulling a newly published release also refreshes bundled runtime tools such as yt-dlp.
 
+### yt-dlp lifecycle
+
+Release images pin the exact yt-dlp version recorded in `.yt-dlp-version`. The backend reports that bundled version at startup but does not update it at runtime, so restarting the same image cannot silently change media-extractor behaviour.
+
+A scheduled GitHub Actions check compares the pin with yt-dlp's latest stable release once a week. When a newer stable version is available, it opens a normal `fix(deps)` pull request instead of changing production automatically. The update PR is expected to pass the application validation and container build/security gates before it is merged. Release Please can then include the dependency refresh in a patch release.
+
+If YouTube changes before the next scheduled check, maintainers can manually run the **Check yt-dlp updates** workflow. Runtime self-updating should remain disabled.
+
 ## Database schema
 
 Every backend container start runs `docker-commands/apply-schema.sh`.
