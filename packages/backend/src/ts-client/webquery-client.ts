@@ -47,7 +47,7 @@ export function isFloodError(error: any): boolean {
   const code = error instanceof TSApiError
     ? error.code
     : error?.response?.data?.status?.code;
-  if (code === 3329 || code === 3331) return true;
+  if (code === 524 || code === 3329 || code === 3331) return true;
   const msg = String(
     error instanceof TSApiError
       ? error.message
