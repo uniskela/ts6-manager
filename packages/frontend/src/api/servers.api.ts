@@ -4,6 +4,7 @@ export const serversApi = {
   list: () => api.get('/servers').then((r) => r.data),
   get: (id: number) => api.get(`/servers/${id}`).then((r) => r.data),
   create: (data: any) => api.post('/servers', data).then((r) => r.data),
+  createDemo: () => api.post('/servers/demo').then((r) => r.data),
   update: (id: number, data: any) => api.put(`/servers/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/servers/${id}`),
   test: (id: number) => api.post(`/servers/${id}/test`).then((r) => r.data),

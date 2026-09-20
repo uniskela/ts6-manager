@@ -51,9 +51,9 @@ export default function BotList() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold">Bot Flows</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
           <Button variant="outline" size="sm" onClick={() => setShowTemplates(true)}><LayoutTemplate className="h-4 w-4 mr-1" /> From Template</Button>
           <Button size="sm" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" /> New Bot</Button>
         </div>
@@ -96,7 +96,7 @@ export default function BotList() {
                   </p>
                 )}
 
-                <div className="flex items-center gap-1 pt-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="touch-action-reveal flex items-center gap-1 pt-1 transition-opacity">
                   <Button variant="outline" size="sm" className="h-7 text-xs flex-1" onClick={() => navigate(`/bots/${bot.id}`)}>
                     <Pencil className="h-3 w-3 mr-1" /> Edit Flow
                   </Button>

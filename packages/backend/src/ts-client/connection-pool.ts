@@ -1,6 +1,7 @@
 import { PrismaClient } from '../../generated/prisma/index.js';
 import { WebQueryClient, createWebQueryClient } from './webquery-client.js';
 import { decrypt } from '../utils/crypto.js';
+import { DemoWebQueryClient } from './demo-webquery-client.js';
 
 export class ConnectionPool {
   private clients: Map<number, WebQueryClient> = new Map();
@@ -13,6 +14,11 @@ export class ConnectionPool {
     });
 
     for (const server of servers) {
+      if (server.isDemo) {
+        this.addDemoClient(server.id);
+        continue;
+      }
+
       // H8: Decrypt API key before use
       this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
 
@@ -38,6 +44,10 @@ export class ConnectionPool {
   addClient(id: number, host: string, port: number, apiKey: string, useHttps: boolean): void {
     const client = createWebQueryClient(host, port, apiKey, useHttps);
     this.clients.set(id, client);
+  }
+
+  addDemoClient(id: number): void {
+    this.clients.set(id, new DemoWebQueryClient());
   }
 
   removeClient(id: number): void {
@@ -68,7 +78,11 @@ export class ConnectionPool {
       where: { id: configId },
     });
     if (server && server.enabled) {
-      this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+      if (server.isDemo) {
+        this.addDemoClient(server.id);
+      } else {
+        this.addClient(server.id, server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
+      }
     }
   }
 

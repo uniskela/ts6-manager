@@ -160,7 +160,7 @@ export default function Files() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">File Browser</h1>
         {selectedCid && (
           <Button size="sm" onClick={() => setShowMkdir(true)}>
@@ -169,9 +169,9 @@ export default function Files() {
         )}
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         {/* Channel Selector */}
-        <Card className="col-span-3">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-muted-foreground">
               <span className="flex items-center gap-1.5"><Hash className="h-3.5 w-3.5" /> Channels</span>
@@ -179,7 +179,7 @@ export default function Files() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <ScrollArea className="h-[500px]">
+            <ScrollArea className="h-[min(20rem,40dvh)] lg:h-[500px]">
               <div className="p-2 space-y-0.5">
                 {channels.map((ch) => {
                   const summary = summariesByChannel.get(ch.cid);
@@ -220,10 +220,10 @@ export default function Files() {
         </Card>
 
         {/* File List */}
-        <Card className="col-span-9">
+        <Card className="min-w-0 lg:col-span-9">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
                 {selectedCid && currentPath !== '/' && (
                   <Button variant="ghost" size="icon" className="h-7 w-7" onClick={goUp}>
                     <ArrowLeft className="h-3.5 w-3.5" />
@@ -254,15 +254,15 @@ export default function Files() {
           </CardHeader>
           <CardContent className="p-0">
             {!selectedCid ? (
-              <div className="flex items-center justify-center h-[400px]">
+              <div className="flex h-[min(400px,50dvh)] min-h-64 items-center justify-center">
                 <p className="text-sm text-muted-foreground">Select a channel to browse files</p>
               </div>
             ) : loadingFiles ? (
-              <div className="flex items-center justify-center h-[400px]">
+              <div className="flex h-[min(400px,50dvh)] min-h-64 items-center justify-center">
                 <PageLoader />
               </div>
             ) : filesError ? (
-              <div className="flex flex-col items-center justify-center h-[400px] gap-3 px-8">
+              <div className="flex h-[min(400px,50dvh)] min-h-64 flex-col items-center justify-center gap-3 px-4 sm:px-8">
                 <AlertTriangle className="h-8 w-8 text-amber-400" />
                 <p className="text-sm font-medium text-foreground">File Browser Unavailable</p>
                 <p className="text-xs text-muted-foreground text-center max-w-md">
@@ -277,7 +277,8 @@ export default function Files() {
                 )}
               </div>
             ) : (
-              <ScrollArea className="h-[460px]">
+              <ScrollArea className="h-[min(460px,55dvh)] min-h-72">
+                <div className="min-w-[36rem]">
                 {/* File table header */}
                 <div className="grid grid-cols-12 gap-2 px-4 py-2 text-[10px] text-muted-foreground uppercase tracking-wider border-b border-border">
                   <div className="col-span-6">Name</div>
@@ -318,7 +319,9 @@ export default function Files() {
                         <div className="col-span-1 flex justify-end">
                           <button
                             onClick={(e) => { e.stopPropagation(); setDeleteTarget(file); }}
-                            className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+                            className="touch-action-reveal flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive"
+                            aria-label={`Delete ${file.name}`}
+                            title={`Delete ${file.name}`}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </button>
@@ -327,6 +330,7 @@ export default function Files() {
                     ))}
                   </div>
                 )}
+                </div>
               </ScrollArea>
             )}
           </CardContent>

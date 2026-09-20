@@ -85,7 +85,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
         <div className="space-y-1">
           <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Stream through bot</Label>
           <Select value={botId} onValueChange={setBotId}>
-            <SelectTrigger className="h-8 text-xs w-48"><SelectValue placeholder={eligibleBots.length ? 'Select bot' : 'No running bots'} /></SelectTrigger>
+            <SelectTrigger className="h-10 w-full min-w-44 text-xs sm:h-8 sm:w-48"><SelectValue placeholder={eligibleBots.length ? 'Select bot' : 'No running bots'} /></SelectTrigger>
             <SelectContent>
               {eligibleBots.map((b) => (
                 <SelectItem key={b.id} value={String(b.id)}>{b.name} ({b.status})</SelectItem>
@@ -96,7 +96,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
         <div className="space-y-1">
           <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Quality</Label>
           <Select value={preset} onValueChange={setPreset}>
-            <SelectTrigger className="h-8 text-xs w-28"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="h-10 w-28 text-xs sm:h-8"><SelectValue /></SelectTrigger>
             <SelectContent>
               {PRESETS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
             </SelectContent>
@@ -132,7 +132,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
         </div>
         {groupList.length > 0 && (
           <Select value={group || '__all__'} onValueChange={(v) => { setGroup(v === '__all__' ? '' : v); setPage(1); }}>
-            <SelectTrigger className="h-8 text-xs w-52"><SelectValue placeholder="All groups" /></SelectTrigger>
+            <SelectTrigger className="h-10 w-full text-xs sm:h-8 sm:w-52"><SelectValue placeholder="All groups" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__all__">All groups</SelectItem>
               {groupList.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
@@ -175,7 +175,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
       )}
 
       {/* Pagination */}
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
         <span>{total.toLocaleString()} channels{isFetching ? ' · updating…' : ''}</span>
         <div className="flex items-center gap-2">
           <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
@@ -285,7 +285,7 @@ export default function Iptv() {
         </div>
         <div className="flex items-center gap-2">
           <Select value={selectedConfigId ? String(selectedConfigId) : ''} onValueChange={(v) => { setServer(parseInt(v)); setSelectedPlaylistId(null); }}>
-            <SelectTrigger className="h-9 w-48"><SelectValue placeholder="Select server" /></SelectTrigger>
+            <SelectTrigger className="h-10 min-w-0 flex-1 sm:h-9 sm:w-48 sm:flex-none"><SelectValue placeholder="Select server" /></SelectTrigger>
             <SelectContent>
               {serverList.map((s: any) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
             </SelectContent>

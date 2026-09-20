@@ -89,16 +89,51 @@ async function getChannelFileSummary(req: Request, cid: number): Promise<Channel
  * Execute a ServerQuery command via the shared SSH connection (EventBridge).
  * Reuses the same SSH session used for bot events — no extra server slots.
  */
+function demoFileCommand(command: string, params: Record<string, string>): Record<string, string>[] {
+  if (command === 'ftgetfilelist') {
+    const path = params.path || '/';
+    if (path === '/') {
+      return [
+        { name: 'README.txt', size: '2048', datetime: '1700000000', type: '0' },
+        { name: 'Shared', size: '0', datetime: '1700000100', type: '1' },
+      ];
+    }
+    if (path === '/Shared') {
+      return [
+        { name: 'sample-notes.txt', size: '4096', datetime: '1700000200', type: '0' },
+        { name: 'example-image.png', size: '32768', datetime: '1700000300', type: '0' },
+      ];
+    }
+    return [];
+  }
+
+  if (command === 'ftcreatedir' || command === 'ftdeletefile') {
+    return [{ success: '1', demo: '1' }];
+  }
+
+  return [];
+}
+
 async function sshExecute(
   req: Request,
   command: string,
   params: Record<string, string>,
 ): Promise<Record<string, string>[]> {
+  const configId = getConfigId(req);
+  const prisma = req.app.locals.prisma;
+  const server = await prisma.tsServerConfig.findUnique({
+    where: { id: configId },
+    select: { isDemo: true },
+  });
+
+  if (server?.isDemo) {
+    return demoFileCommand(command, params);
+  }
+
   const engine: BotEngine = req.app.locals.botEngine;
   if (!engine) throw new AppError(503, 'Bot engine not available');
 
   const bridge = engine.getEventBridge();
-  const configId = getConfigId(req);
   const sid = getSid(req);
 
   // Build raw ServerQuery command string

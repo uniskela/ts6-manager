@@ -55,8 +55,8 @@ export function DataTable<TData, TValue>({
         </div>
       )}
 
-      <div className="rounded-md border border-border overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="max-w-full overflow-x-auto rounded-md border border-border overscroll-x-contain" tabIndex={0} role="region" aria-label="Scrollable data table">
+        <table className="min-w-full w-max text-sm">
           <thead>
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id} className="border-b border-border bg-muted/30">
@@ -111,7 +111,7 @@ export function DataTable<TData, TValue>({
       </div>
 
       {table.getPageCount() > 1 && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-muted-foreground">
             {table.getFilteredRowModel().rows.length} result(s)
           </p>

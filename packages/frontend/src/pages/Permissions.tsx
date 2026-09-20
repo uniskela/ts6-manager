@@ -305,10 +305,10 @@ export default function Permissions() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Permissions</h1>
         {changes.size > 0 && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant="secondary" className="font-mono-data">{changes.size} change(s)</Badge>
             <Button variant="outline" size="sm" onClick={() => setChanges(new Map())}>
               <X className="h-3.5 w-3.5 mr-1" /> Discard
@@ -321,7 +321,7 @@ export default function Permissions() {
       </div>
 
       {/* Layer Tabs */}
-      <div className="flex gap-1 p-1 bg-muted/30 rounded-lg w-fit">
+      <div className="flex max-w-full gap-1 overflow-x-auto rounded-lg bg-muted/30 p-1">
         {LAYERS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
@@ -339,9 +339,9 @@ export default function Permissions() {
         ))}
       </div>
 
-      <div className="grid grid-cols-12 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
         {/* Entity Selector */}
-        <Card className="col-span-3">
+        <Card className="lg:col-span-3">
           <CardHeader className="pb-2">
             <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
               Select {LAYERS.find((l) => l.key === layer)?.label.replace(/s$/, '')}
@@ -356,7 +356,7 @@ export default function Permissions() {
             )}
           </CardHeader>
           <CardContent className="p-0">
-            <ScrollArea className="h-[500px]">
+            <ScrollArea className="h-[min(20rem,40dvh)] lg:h-[500px]">
               <div className="p-2 space-y-0.5">
                 {entities.map((ent: any) => (
                   <button
@@ -369,8 +369,8 @@ export default function Permissions() {
                         : 'text-foreground hover:bg-muted/50',
                     )}
                   >
-                    <span className="truncate">{ent.name}</span>
-                    <span className="text-[10px] font-mono-data text-muted-foreground ml-1">#{ent.id}</span>
+                    <span className="min-w-0 flex-1 truncate">{ent.name}</span>
+                    <span className="ml-1 shrink-0 text-[10px] font-mono-data text-muted-foreground">#{ent.id}</span>
                   </button>
                 ))}
                 {entities.length === 0 && (
@@ -382,14 +382,14 @@ export default function Permissions() {
         </Card>
 
         {/* Permission Editor */}
-        <Card className="col-span-9">
+        <Card className="min-w-0 lg:col-span-9">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
                 {entityId ? `Permissions` : 'Select an entity'}
               </CardTitle>
               {entityId && (
-                <div className="flex items-center gap-3">
+                <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
                   <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
                     <input
                       type="checkbox"
@@ -399,7 +399,7 @@ export default function Permissions() {
                     />
                     Modified only
                   </label>
-                  <div className="relative w-64">
+                  <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
                     <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
                     <Input
                       placeholder="Search permissions..."
@@ -413,17 +413,17 @@ export default function Permissions() {
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <ScrollArea className="h-[500px]">
+            <ScrollArea className="h-[min(500px,60dvh)] min-h-72">
               {!entityId ? (
-                <div className="flex items-center justify-center h-[400px]">
+                <div className="flex h-[min(400px,50dvh)] min-h-64 items-center justify-center">
                   <p className="text-sm text-muted-foreground">Select an entity from the left panel</p>
                 </div>
               ) : loadingPerms ? (
-                <div className="flex items-center justify-center h-[400px]">
+                <div className="flex h-[min(400px,50dvh)] min-h-64 items-center justify-center">
                   <PageLoader />
                 </div>
               ) : (
-                <div className="px-3 pb-3">
+                <div className="min-w-[42rem] px-3 pb-3">
                   {[...categories.entries()].map(([catKey, perms]) => (
                     <div key={catKey} className="mb-1">
                       <button
@@ -470,7 +470,7 @@ export default function Permissions() {
                                         else setPermValue(perm.permsid, 1, 0, 0);
                                       }}
                                       className={cn(
-                                        'h-5 w-5 rounded border flex items-center justify-center transition-colors',
+                                        'flex h-8 w-8 items-center justify-center rounded border transition-colors sm:h-5 sm:w-5',
                                         isSet
                                           ? 'bg-primary border-primary text-primary-foreground'
                                           : 'border-border hover:border-primary/50',
@@ -504,7 +504,7 @@ export default function Permissions() {
                                         setPermValue(perm.permsid, effective?.permvalue || 0, effective?.permnegated || 0, newSkip);
                                       }}
                                       className={cn(
-                                        'h-4 w-4 rounded border flex items-center justify-center text-[9px] transition-colors',
+                                        'flex h-8 w-8 items-center justify-center rounded border text-[9px] transition-colors sm:h-4 sm:w-4',
                                         isSet && effective?.permskip
                                           ? 'bg-amber-500/20 border-amber-500 text-amber-400'
                                           : 'border-border/50',
@@ -524,7 +524,7 @@ export default function Permissions() {
                                         setPermValue(perm.permsid, effective?.permvalue || 0, newNeg, effective?.permskip || 0);
                                       }}
                                       className={cn(
-                                        'h-4 w-4 rounded border flex items-center justify-center text-[9px] transition-colors',
+                                        'flex h-8 w-8 items-center justify-center rounded border text-[9px] transition-colors sm:h-4 sm:w-4',
                                         isSet && effective?.permnegated
                                           ? 'bg-destructive/20 border-destructive text-destructive'
                                           : 'border-border/50',
@@ -535,7 +535,7 @@ export default function Permissions() {
                                     </button>
                                   )}
                                 </div>
-                                <div className="col-span-3 flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <div className="touch-action-reveal col-span-3 flex items-center justify-end gap-1 transition-opacity">
                                   {isSet && (
                                     <button
                                       onClick={() => removePerm(perm.permsid)}

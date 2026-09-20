@@ -22,8 +22,8 @@ export default function MusicRequests() {
 
     return (
         <div className="space-y-4 h-full flex flex-col max-w-5xl mx-auto">
-            <div className="flex items-center justify-between shrink-0">
-                <div>
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+                <div className="min-w-0">
                     <h1 className="text-xl font-semibold flex items-center gap-2">
                         <Music className="w-5 h-5 text-primary" /> Music Request History
                     </h1>

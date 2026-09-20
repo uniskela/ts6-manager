@@ -289,7 +289,7 @@ export default function Clients() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h1 className="text-xl font-semibold">Clients</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{clients.length} online</p>

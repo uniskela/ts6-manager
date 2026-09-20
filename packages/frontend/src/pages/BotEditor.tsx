@@ -204,8 +204,8 @@ export default function BotEditor() {
     setEdges((prev) => prev.filter((e) => e.id !== id));
   };
 
-  // --- Canvas mouse handlers ---
-  const handleCanvasMouseMove = useCallback((e: React.MouseEvent) => {
+  // Pointer events preserve desktop drag behavior and allow touch editing.
+  const handleCanvasMouseMove = useCallback((e: React.PointerEvent) => {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left + e.currentTarget.scrollLeft;
     const y = e.clientY - rect.top + e.currentTarget.scrollTop;
@@ -224,7 +224,7 @@ export default function BotEditor() {
     }
   }, [dragging, connectFrom]);
 
-  const handleCanvasMouseUp = useCallback((e: React.MouseEvent) => {
+  const handleCanvasMouseUp = useCallback((e: React.PointerEvent) => {
     setDragging(null);
 
     // If connecting: check if we released on a valid target
@@ -283,8 +283,7 @@ export default function BotEditor() {
     setConnectFrom(null); // Cancel active connection on empty canvas click
   }, []);
 
-  // --- Node mouse handlers ---
-  const handleNodeMouseDown = useCallback((e: React.MouseEvent, nodeId: string) => {
+  const handleNodeMouseDown = useCallback((e: React.PointerEvent, nodeId: string) => {
     e.stopPropagation();
     if (connectFrom) return; // Don't start drag while connecting
 
@@ -331,8 +330,8 @@ export default function BotEditor() {
     }
   }, [connectFrom, nodes, edges]);
 
-  // --- Output handle click: start connection ---
-  const handleOutputClick = useCallback((e: React.MouseEvent, nodeId: string, port: string) => {
+  // --- Output handle press: start connection ---
+  const handleOutputPointerDown = useCallback((e: React.PointerEvent, nodeId: string, port: string) => {
     e.stopPropagation();
     e.preventDefault();
     const canvas = (e.currentTarget as HTMLElement).closest('.flow-canvas')!;
@@ -369,19 +368,19 @@ export default function BotEditor() {
   if (isLoading) return <PageLoader />;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-8rem)]">
+    <div className="flex h-[calc(100dvh-7.5rem)] min-h-[34rem] flex-col md:h-[calc(100dvh-8rem)]">
       {/* Toolbar */}
-      <div className="flex items-center justify-between pb-3">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/bots')}>
+      <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/bots')} aria-label="Back to bot flows" title="Back to bot flows">
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <Input value={botName} onChange={(e) => setBotName(e.target.value)} className="h-8 w-60 text-sm font-medium" />
-          <Badge variant="outline" className="text-[10px]">{nodes.length} nodes</Badge>
-          <Badge variant="outline" className="text-[10px]">{edges.length} edges</Badge>
+          <Input value={botName} onChange={(e) => setBotName(e.target.value)} className="h-9 min-w-0 flex-1 text-sm font-medium sm:h-8 sm:w-60 sm:flex-none" aria-label="Bot flow name" />
+          <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">{nodes.length} nodes</Badge>
+          <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">{edges.length} edges</Badge>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowHelp(true)} title="Placeholder Reference">
+        <div className="ml-auto flex items-center gap-2">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowHelp(true)} aria-label="Open placeholder reference" title="Placeholder reference">
             <HelpCircle className="h-4 w-4" />
           </Button>
           <Button variant="outline" size="sm" className="h-8" onClick={handleSave} disabled={updateBot.isPending}>
@@ -390,19 +389,19 @@ export default function BotEditor() {
         </div>
       </div>
 
-      <div className="flex flex-1 gap-0 overflow-hidden rounded-lg border border-border">
+      <div className="relative flex min-h-0 flex-1 flex-col gap-0 overflow-hidden rounded-lg border border-border md:flex-row">
         {/* Node Palette */}
-        <div className="w-52 border-r border-border bg-card/50 shrink-0">
+        <div className="h-28 w-full shrink-0 border-b border-border bg-card/50 md:h-auto md:w-52 md:border-b-0 md:border-r">
           <ScrollArea className="h-full">
-            <div className="p-3 space-y-4">
+            <div className="flex w-max gap-4 p-2 md:block md:w-auto md:space-y-4 md:p-3">
               {NODE_CATEGORIES.map((cat) => (
                 <div key={cat.label}>
                   <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground/60 mb-2">{cat.label}</p>
-                  <div className="space-y-1">
+                  <div className="flex gap-1 md:block md:space-y-1">
                     {cat.nodes.map((node) => (
                       <button
                         key={node.type}
-                        className={cn('w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-xs border transition-colors hover:opacity-80', node.color)}
+                        className={cn('flex min-h-10 w-36 items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs transition-colors hover:opacity-80 md:min-h-0 md:w-full', node.color)}
                         onClick={() => addNode(node.type, node.label)}
                       >
                         <node.icon className="h-3.5 w-3.5 shrink-0" />
@@ -419,14 +418,14 @@ export default function BotEditor() {
 
         {/* Canvas */}
         <div
-          className="flex-1 relative bg-zinc-950/30 overflow-auto flow-canvas"
+          className="flow-canvas relative min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto bg-zinc-950/30"
           style={{
             cursor: connectFrom ? 'crosshair' : 'default',
             backgroundImage: 'radial-gradient(circle, hsl(var(--border)) 1px, transparent 1px)',
             backgroundSize: '24px 24px',
           }}
-          onMouseMove={handleCanvasMouseMove}
-          onMouseUp={handleCanvasMouseUp}
+          onPointerMove={handleCanvasMouseMove}
+          onPointerUp={handleCanvasMouseUp}
           onClick={handleCanvasClick}
         >
           <svg className="absolute inset-0 pointer-events-none" style={{ minWidth: 2000, minHeight: 1200, width: '100%', height: '100%' }}>
@@ -511,12 +510,12 @@ export default function BotEditor() {
                 key={node.id}
                 data-node-id={node.id}
                 className={cn(
-                  'flow-node absolute rounded-lg border bg-card/95 backdrop-blur-sm shadow-sm select-none transition-shadow',
+                  'flow-node absolute touch-none select-none rounded-lg border bg-card/95 backdrop-blur-sm shadow-sm transition-shadow',
                   selectedNode === node.id ? 'border-primary ring-1 ring-primary/30 shadow-md' : 'border-border hover:border-muted-foreground/30',
                   dragging === node.id ? 'cursor-grabbing shadow-lg z-20' : 'cursor-grab z-10',
                 )}
                 style={{ left: node.x, top: node.y, width: NODE_W, height: NODE_H }}
-                onMouseDown={(e) => handleNodeMouseDown(e, node.id)}
+                onPointerDown={(e) => handleNodeMouseDown(e, node.id)}
                 onClick={(e) => handleNodeClick(e, node.id)}
               >
                 {/* Header */}
@@ -533,12 +532,13 @@ export default function BotEditor() {
                 {hasInputs && meta.handles.inputs.map((port, i) => {
                   const pos = getInputHandlePos(node, i, meta.handles.inputs.length);
                   return (
-                    <div
+                    <button
+                      type="button"
                       key={`in-${port}`}
                       data-input-port={port}
                       data-node-id={node.id}
                       className={cn(
-                        'absolute rounded-full border-2 border-card transition-colors z-30',
+                        "absolute z-30 rounded-full border-2 border-card transition-colors after:absolute after:-inset-3 after:content-['']",
                         connectFrom ? 'bg-primary hover:bg-primary scale-125' : 'bg-muted-foreground/50 hover:bg-primary',
                       )}
                       style={{
@@ -549,6 +549,7 @@ export default function BotEditor() {
                       }}
                       onClick={(e) => handleInputClick(e, node.id, port)}
                       title={`Input: ${port}`}
+                      aria-label={`Connect to ${node.label} input ${port}`}
                     />
                   );
                 })}
@@ -567,16 +568,18 @@ export default function BotEditor() {
                         top: (pos.y - node.y) - HANDLE_R,
                       }}
                     >
-                      <div
+                      <button
+                        type="button"
                         className={cn(
-                          'rounded-full border-2 border-card cursor-crosshair transition-colors',
+                          "relative cursor-crosshair rounded-full border-2 border-card transition-colors after:absolute after:-inset-3 after:content-['']",
                           isTrue ? 'bg-green-500 hover:bg-green-400' :
                           isFalse ? 'bg-red-500 hover:bg-red-400' :
                           'bg-primary/60 hover:bg-primary',
                         )}
                         style={{ width: HANDLE_R * 2, height: HANDLE_R * 2 }}
-                        onMouseDown={(e) => handleOutputClick(e, node.id, port)}
+                        onPointerDown={(e) => handleOutputPointerDown(e, node.id, port)}
                         title={`Output: ${port}`}
+                        aria-label={`Start connection from ${node.label} output ${port}`}
                       />
                       {outputs.length > 1 && (
                         <span className={cn(
@@ -603,12 +606,12 @@ export default function BotEditor() {
 
         {/* Properties Panel */}
         {selectedNodeData && (
-          <div className="w-64 border-l border-border bg-card/50 shrink-0">
+          <div className="absolute inset-x-0 bottom-0 z-40 max-h-[55%] w-full shrink-0 border-t border-border bg-card/95 shadow-2xl backdrop-blur-sm md:static md:max-h-none md:w-64 md:border-l md:border-t-0 md:bg-card/50 md:shadow-none">
             <ScrollArea className="h-full">
               <div className="p-3 space-y-4">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold">Node Properties</p>
-                  <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => deleteNode(selectedNodeData.id)}>
+                  <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => deleteNode(selectedNodeData.id)} aria-label={`Delete ${selectedNodeData.label}`} title={`Delete ${selectedNodeData.label}`}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>

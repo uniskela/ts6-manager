@@ -41,6 +41,14 @@ Restrict the source network where practical.
 
 TS6 Manager encrypts the saved key. Editing a connection intentionally leaves secret fields blank; leaving a secret field blank preserves the existing encrypted value.
 
+### Demo server for UI testing
+
+The connection setup wizard can create a **Demo TeamSpeak Server** without a real TeamSpeak deployment. Demo mode uses deterministic, generic synthetic channels, clients, groups, permissions, bans, tokens, and logs inside the manager process.
+
+Demo mode does not resolve a TeamSpeak hostname, open a WebQuery or SSH connection, or send commands to a real server. It is intended for UI/UX evaluation, screenshots, and learning the interface. Mutating actions are simulated and the fixture state is not a substitute for a real TeamSpeak server.
+
+Delete the demo connection from **Settings → Connections** when it is no longer needed.
+
 ## SSH Query
 
 Authenticated SSH Query is optional for core WebQuery management, but some features need it, including file browsing, bot-flow event triggers, and music-bot channel chat commands.
