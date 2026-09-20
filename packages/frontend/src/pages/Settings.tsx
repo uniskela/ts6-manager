@@ -307,21 +307,29 @@ function ConnectionsTab() {
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <CardTitle className="min-w-0 break-words text-sm font-medium">{server.name}</CardTitle>
                   <div className="flex flex-wrap items-center gap-1">
-                    <Badge variant="outline" className="text-[10px]">WebQuery</Badge>
-                    <Badge variant={server.hasSshCredentials ? 'default' : 'secondary'} className="text-[10px]">
-                      {server.hasSshCredentials ? 'SSH configured' : 'SSH not configured'}
-                    </Badge>
+                    {server.isDemo ? (
+                      <Badge variant="outline" className="text-[10px] border-primary/40 text-primary">Demo data</Badge>
+                    ) : (
+                      <>
+                        <Badge variant="outline" className="text-[10px]">WebQuery</Badge>
+                        <Badge variant={server.hasSshCredentials ? 'default' : 'secondary'} className="text-[10px]">
+                          {server.hasSshCredentials ? 'SSH configured' : 'SSH not configured'}
+                        </Badge>
+                      </>
+                    )}
                   </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-2">
                 <div className="grid grid-cols-2 gap-2 text-xs">
-                  <span className="text-muted-foreground">Host</span>
-                  <span className="break-all font-mono-data text-right">{server.host}:{server.webqueryPort}</span>
+                  <span className="text-muted-foreground">{server.isDemo ? 'Source' : 'Host'}</span>
+                  <span className={server.isDemo ? 'text-right' : 'break-all font-mono-data text-right'}>
+                    {server.isDemo ? 'Synthetic local fixtures' : `${server.host}:${server.webqueryPort}`}
+                  </span>
                   <span className="text-muted-foreground">Protocol</span>
-                  <span>{server.useHttps ? 'HTTPS' : 'HTTP'}</span>
+                  <span>{server.isDemo ? 'Simulated' : (server.useHttps ? 'HTTPS' : 'HTTP')}</span>
                   <span className="text-muted-foreground">SSH</span>
-                  <span className="font-mono-data">{server.sshPort || '-'}</span>
+                  <span className={server.isDemo ? '' : 'font-mono-data'}>{server.isDemo ? 'Not used' : (server.sshPort || '-')}</span>
                   <span className="text-muted-foreground">Status</span>
                   <span>
                     <Badge variant={server.enabled ? 'default' : 'secondary'} className="text-[10px]">
@@ -330,26 +338,34 @@ function ConnectionsTab() {
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1 pt-2">
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testServer.mutate(server.id, {
-                    onSuccess: (data: any) => {
-                      setWebqueryTestPassed(true);
-                      toast.success(data?.version ? `WebQuery OK (${data.version})` : 'WebQuery connection successful');
-                    },
-                    onError: (err: any) => toast.error(err?.response?.data?.error || 'WebQuery test failed'),
-                  })}>
-                    <TestTube className="h-3 w-3 mr-1" /> Test WebQuery
-                  </Button>
-                  {server.hasSshCredentials && (
-                    <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testSshServer.mutate(server.id, {
-                      onSuccess: () => toast.success('SSH connection successful'),
-                      onError: (err: any) => toast.error(err?.response?.data?.error || 'SSH test failed'),
-                    })}>
-                      <TestTube className="h-3 w-3 mr-1" /> Test SSH
-                    </Button>
+                  {server.isDemo ? (
+                    <span className="mr-auto text-[11px] text-muted-foreground">
+                      No real TeamSpeak connection is used.
+                    </span>
+                  ) : (
+                    <>
+                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testServer.mutate(server.id, {
+                        onSuccess: (data: any) => {
+                          setWebqueryTestPassed(true);
+                          toast.success(data?.version ? `WebQuery OK (${data.version})` : 'WebQuery connection successful');
+                        },
+                        onError: (err: any) => toast.error(err?.response?.data?.error || 'WebQuery test failed'),
+                      })}>
+                        <TestTube className="h-3 w-3 mr-1" /> Test WebQuery
+                      </Button>
+                      {server.hasSshCredentials && (
+                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testSshServer.mutate(server.id, {
+                          onSuccess: () => toast.success('SSH connection successful'),
+                          onError: (err: any) => toast.error(err?.response?.data?.error || 'SSH test failed'),
+                        })}>
+                          <TestTube className="h-3 w-3 mr-1" /> Test SSH
+                        </Button>
+                      )}
+                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openEdit(server)}>
+                        <Pencil className="h-3 w-3 mr-1" /> Edit
+                      </Button>
+                    </>
                   )}
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => openEdit(server)}>
-                    <Pencil className="h-3 w-3 mr-1" /> Edit
-                  </Button>
                   <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(server.id)}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
