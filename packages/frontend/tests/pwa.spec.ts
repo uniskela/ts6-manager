@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { canHandleRequest, isAppNavigation } from '../pwa/cache-policy';
 
@@ -33,6 +33,15 @@ async function controlled(page: Page) {
   await expect(page.getByLabel('Username')).toBeVisible();
   await page.waitForFunction(() => !!navigator.serviceWorker.controller);
   await expect(page.getByRole('button', { name: 'Reload all tabs' })).toHaveCount(0);
+}
+
+async function signInAsAdmin(page: Page, request: APIRequestContext) {
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
 }
 
 test.beforeEach(async ({ request }) => { await request.post('/__test/reset'); });
@@ -220,6 +229,62 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
       if (accent === 'amber') expect(colours.semantic['--warning']).not.toBe(await page.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--primary').trim()));
     }
   }
+});
+
+test('settings sections are URL-backed and restored by browser history', async ({ page, context, request }) => {
+  await signInAsAdmin(page, request);
+  await page.goto('/settings?tab=appearance');
+  await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('data-state', 'active');
+  await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+
+  await page.getByRole('tab', { name: 'About' }).click();
+  await expect(page).toHaveURL('/settings?tab=about');
+  await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Account' }).click();
+  await expect(page).toHaveURL('/settings?tab=account');
+
+  await page.goBack();
+  await expect(page).toHaveURL('/settings?tab=about');
+  await expect(page.getByRole('tab', { name: 'About' })).toHaveAttribute('data-state', 'active');
+  await page.goBack();
+  await expect(page).toHaveURL('/settings?tab=appearance');
+  await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('data-state', 'active');
+
+  const copiedLink = await context.newPage();
+  await copiedLink.goto('/settings?tab=about');
+  await expect(copiedLink.getByRole('tab', { name: 'About' })).toHaveAttribute('data-state', 'active');
+  await expect(copiedLink.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
+  await copiedLink.close();
+});
+
+test('settings appearance controls persist and remain contained on mobile', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signInAsAdmin(page, request);
+  await page.goto('/settings?tab=appearance');
+
+  await page.getByRole('button', { name: 'Black base theme' }).click();
+  await page.getByRole('button', { name: 'Red accent' }).click();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'black');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'red');
+  await expect(page.getByRole('button', { name: 'Black base theme' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Red accent' })).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+
+  await page.reload();
+  await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('data-state', 'active');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'black');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'red');
+  await expect(page.getByRole('button', { name: 'Black base theme' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Red accent' })).toHaveAttribute('aria-pressed', 'true');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('settings connections wizard deep link remains supported', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await page.goto('/settings?tab=connections&wizard=1');
+  await expect(page.getByRole('tab', { name: 'Connections' })).toHaveAttribute('data-state', 'active');
+  await expect(page.getByRole('heading', { name: 'Connection setup wizard' })).toBeVisible();
+  await expect(page).toHaveURL('/settings?tab=connections');
 });
 
 test('real worker caches only public build output; private traffic stays live', async ({ page }) => {
