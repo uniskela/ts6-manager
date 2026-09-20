@@ -107,3 +107,55 @@ Newer pnpm majors change dependency build-script approval and `pnpm.overrides` h
 - [ ] Compare generated notes with current `main`; remove reverted entries and duplicate descriptions
 - [ ] Merge the release PR only after its changelog matches shipped behavior
 - [ ] Confirm tag `vX.Y.Z`, GitHub Release, and GHCR image publish from the Release Please workflow
+
+<!-- adhd-hub:project-agent:start -->
+<!-- adhd-hub:guidance-version:4 -->
+## ADHD Hub continuity
+
+For substantial work in this project:
+
+- If ADHD Hub MCP tools are missing, errored, unauthorized, or otherwise
+  unavailable: on the first substantial Hub-worthy turn after detecting the
+  outage, the **first line** MUST state that Hub MCP is not available, plus a
+  short fix hint (MCP URL → this Hub's `/mcp`, `ADHD_HUB_AUTH_TOKEN`, restart
+  the agent; skip/cancel Auth if it hangs until Hub OAuth is enabled). Repeat
+  only if Hub status changes, a persistence attempt fails again, or the reply
+  could otherwise imply continuity was saved. Then continue the authorized
+  work. Never invent Hub state or claim a Hub write succeeded.
+- **MCP unavailable** is the Hub continuity trigger (not runtime alone). Use
+  the `env-check` skill / `skills/env-check/scripts/check_runtime.sh` for
+  CLOUD_AGENT vs LOCAL_WORKSPACE as supporting context (`CURSOR_AGENT`,
+  container cues — never `$USER=root` alone). When Hub MCP is unreachable,
+  use the forge issue mailbox only when issue-write access is available and
+  the authenticated identity is accepted by Hub Inbox authors. Open/update a
+  GitHub/Gitea issue titled `[ADHD] …` with a short Goal/Focus/Next/Resume
+  cue. Optional labels: `adhd-hub`, `project:<slug>`, `source:cursor`; skip
+  labels if the token cannot set them. Prefer short repository-relative
+  summaries; never invent Hub continuity, progress, or thread state after a forge-only write.
+- CLOUD_AGENT: do not assume machine-installed local skill CLIs (e.g.
+  `graphify`) exist. If missing: one-line notice, continue via repo tools /
+  committed `graphify-out/` when present; never fabricate graph or Hub state.
+  Prefer headless tests and injected env/OIDC over `.env.local`; no native
+  browser/macOS-Windows binaries. Hub MCP down still uses the `[ADHD]` forge
+  mailbox when allowed. LOCAL_WORKSPACE: those local CLIs may be available;
+  local docker / localhost OK; prefer Hub MCP when up.
+- Skip Hub for trivial/read-only/tiny work.
+- Once per meaningful session: `resolve_project`, then `session_digest` with
+  the task query. Reuse resolved context where possible.
+- **One thread = one independently finishable outcome** (not the whole repo).
+  Before updating a thread, compare new work to that thread's Goal; if it does
+  not advance the same outcome, use another thread or create one.
+- Known thread → `upsert_progress(thread_id=...)` with compact structured state
+  (goal / focus / ≤3 next / blocked if any / resume). Do not silently attach
+  to an unrelated open thread.
+- `check_overlap` only before potentially new work; reuse only when the Goal
+  matches. Different goal → separate thread (`force_new_thread` if needed).
+- When leaving mid-task, checkpoint then `pause_thread(thread_id, next_step=...)`
+  with one concrete resume action. `mark_done` only the known completed thread
+  — never close unrelated overlap results.
+- If Hub guidance looks stale (session_digest guidance status, or doctor),
+  mention it once, keep using the current MCP contract, and recommend
+  `adhd-hub setup . --refresh` — do not nag repeatedly or hand-edit AGENTS.md.
+- Summaries only; never secrets, credentials, env files, transcripts, private
+  Hub URLs, internal hosts/IPs, or absolute machine paths in public artifacts.
+<!-- adhd-hub:project-agent:end -->
