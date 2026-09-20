@@ -11,6 +11,7 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
 import { formatBytes, formatUptime } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api-error';
 import { Users, Activity, Clock, Hash, ArrowDownToLine, ArrowUpFromLine, Wifi, Server, LayoutGrid, X } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import { useState, useEffect } from 'react';
@@ -131,10 +132,10 @@ export default function Dashboard() {
 
   if (isLoading) return <PageLoader />;
   if (error || !data) {
-    const detail =
-      (error as any)?.response?.data?.error ||
-      (error as any)?.message ||
-      'Could not connect to the TeamSpeak server. Check your connection settings.';
+    const detail = apiErrorMessage(
+      error,
+      'Could not connect to the TeamSpeak server. Check your connection settings.',
+    );
     return (
       <div className="space-y-4">
         <EmptyState
