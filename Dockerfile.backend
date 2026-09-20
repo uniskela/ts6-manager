@@ -21,6 +21,7 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
     test -f /prod/backend/dist/index.js && \
     test -f /prod/backend/generated/prisma/index.js && \
     test -f /prod/backend/node_modules/prisma/build/index.js && \
+    test -f /prod/backend/prisma.config.mjs && \
     test -f /prod/backend/node_modules/@ts6/common/dist/index.js
 
 # Production starts from a fresh Node image: do not inherit Corepack/pnpm or the
@@ -28,9 +29,11 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
 # are installed so available security fixes are included in every release build.
 FROM node:20-slim AS production
 ARG GIT_SHA=
+# Sidecar connectivity is deployment-specific. Compose files that run a sidecar
+# set SIDECAR_URL and SIDECAR_SECRET explicitly; standalone/local backend images
+# must be able to start with sidecar integration disabled.
 ENV NODE_ENV=production \
-    GIT_SHA=$GIT_SHA \
-    SIDECAR_URL=http://ts6-sidecar:9800
+    GIT_SHA=$GIT_SHA
 
 RUN apt-get update && \
     apt-get upgrade -y && \
