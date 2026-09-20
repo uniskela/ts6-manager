@@ -29,6 +29,7 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
 # are installed so available security fixes are included in every release build.
 FROM node:20-slim AS production
 ARG GIT_SHA=
+COPY .yt-dlp-version /tmp/yt-dlp-version
 # Sidecar connectivity is deployment-specific. Compose files that run a sidecar
 # set SIDECAR_URL and SIDECAR_SECRET explicitly; standalone/local backend images
 # must be able to start with sidecar integration disabled.
@@ -43,7 +44,11 @@ RUN apt-get update && \
       python3 \
       python3-pip \
       ca-certificates \
-    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" \
+    && YT_DLP_VERSION="$(tr -d '[:space:]' < /tmp/yt-dlp-version)" \
+    && test -n "$YT_DLP_VERSION" \
+    && python3 -m pip install --break-system-packages --no-cache-dir "yt-dlp[default]==${YT_DLP_VERSION}" \
+    && test "$(yt-dlp --version)" = "$YT_DLP_VERSION" \
+    && rm -f /tmp/yt-dlp-version \
     && rm -rf /usr/local/lib/node_modules/npm \
               /usr/local/lib/node_modules/corepack \
               /root/.cache/node/corepack \
