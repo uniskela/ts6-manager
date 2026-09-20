@@ -157,7 +157,7 @@ test('appearance migrates old and invalid stored preferences to safe values', as
 
   await page.evaluate(() => localStorage.setItem('ts6-ui', JSON.stringify({
     state: { sidebarCollapsed: false, baseTheme: 'sepia', accent: 'pink' },
-    version: 999,
+    version: 1,
   })));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');

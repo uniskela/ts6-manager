@@ -79,6 +79,7 @@ export const useUiStore = create<UiStore>()(
       name: 'ts6-ui',
       version: 1,
       migrate: migrateUiState,
+      merge: (persisted, current) => ({ ...current, ...migrateUiState(persisted) }),
       partialize: ({ sidebarCollapsed, baseTheme, accent }) => ({ sidebarCollapsed, baseTheme, accent }),
       onRehydrateStorage: () => (state) => {
         applyAppearance(state?.baseTheme ?? DEFAULT_BASE_THEME, state?.accent ?? DEFAULT_ACCENT);
