@@ -2,6 +2,21 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.6.1](https://github.com/uniskela/ts6-manager/compare/v1.6.0...v1.6.1) (2026-09-20)
+
+
+### Bug Fixes
+
+* add Prisma CLI config ([6673b2e](https://github.com/uniskela/ts6-manager/commit/6673b2ea306ce31588321372023769d2206d8c15))
+* align v1.6 startup with immutable runtime policy ([f163349](https://github.com/uniskela/ts6-manager/commit/f1633493ff3fe58b4b2906e05f64f2c4abdb4591))
+* harden all-in-one startup config ([0f4e355](https://github.com/uniskela/ts6-manager/commit/0f4e355ed7b6dedf067e4a2e024c3f0124f9cfe6))
+* make backend sidecar configuration deployment-specific ([f468433](https://github.com/uniskela/ts6-manager/commit/f4684335ffa36fed950925f750ca829c6f69e850))
+* make the management UI mobile friendly ([#63](https://github.com/uniskela/ts6-manager/issues/63)) ([7c10b45](https://github.com/uniskela/ts6-manager/commit/7c10b45a3362bcc0edda2babf8f2b0fac6756da5))
+* make yt-dlp startup check diagnostic-only ([5411a1f](https://github.com/uniskela/ts6-manager/commit/5411a1fd214cba07fdd1c72f0ef54cff8da88bec))
+* migrate Prisma seed config out of package.json ([2ecd190](https://github.com/uniskela/ts6-manager/commit/2ecd1908d184c42d22373cc9d31ab9398c478457))
+* remove runtime yt-dlp self-update ([bd8fab1](https://github.com/uniskela/ts6-manager/commit/bd8fab116809e9d05e78cbf63cb7463a4670695f))
+* remove yt-dlp self-update helper ([c94e4b4](https://github.com/uniskela/ts6-manager/commit/c94e4b4083ee70a73e7fdd41ac0b5774d1080e31))
+
 ## [1.6.0](https://github.com/uniskela/ts6-manager/compare/v1.5.2...v1.6.0) (2026-09-19)
 
 
