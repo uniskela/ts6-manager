@@ -598,7 +598,7 @@ export default function BotEditor() {
 
           {/* Connection hint */}
           {connectFrom && (
-            <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 bg-primary/20 border border-primary/30 text-primary text-xs px-3 py-1.5 rounded-full backdrop-blur-sm">
+            <div className="fixed top-[calc(1rem+env(safe-area-inset-top))] left-1/2 -translate-x-1/2 z-50 bg-primary/20 border border-primary/30 text-primary text-xs px-3 py-1.5 rounded-full backdrop-blur-sm">
               Click an input port or node to connect — ESC to cancel
             </div>
           )}

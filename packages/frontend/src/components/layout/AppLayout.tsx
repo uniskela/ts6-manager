@@ -35,12 +35,12 @@ export function AppLayout() {
   }
 
   return (
-    <div className="flex h-screen h-dvh min-w-0 overflow-hidden">
+    <div className="app-viewport flex h-screen h-dvh min-w-0 overflow-hidden">
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header />
         <main className="grid-bg min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
-          <div className="fade-in min-w-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4 lg:p-5">
+          <div className="fade-in min-w-0 p-3 sm:p-4 lg:p-5" style={{ paddingBottom: 'calc(var(--pwa-status-height, 0px) + max(1.25rem, env(safe-area-inset-bottom)))' }}>
             <Outlet />
           </div>
         </main>

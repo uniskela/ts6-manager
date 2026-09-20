@@ -50,6 +50,12 @@ jobs:
       - name: Build workspace
         run: pnpm build
 
+      - name: Install Chromium for PWA tests
+        run: pnpm --filter @ts6/frontend exec playwright install --with-deps chromium
+
+      - name: Test production PWA
+        run: pnpm --filter @ts6/frontend test
+
       - name: Run backend tests
         working-directory: packages/backend
         shell: bash

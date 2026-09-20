@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { useAuthStore } from '@/stores/auth.store';
+import { PwaStatus } from '@/components/shared/PwaStatus';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const isAdmin = useAuthStore((s) => s.isAdmin());
@@ -18,6 +19,8 @@ const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
       staleTime: 30_000,
     },
+    // Administrative actions must fail offline, never pause and replay later.
+    mutations: { networkMode: 'always', retry: false },
   },
 });
 
@@ -50,6 +53,7 @@ const SetupPage = lazy(() => import('@/pages/SetupPage'));
 export function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <PwaStatus />
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
           <Routes>

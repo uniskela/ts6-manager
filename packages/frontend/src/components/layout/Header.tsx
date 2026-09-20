@@ -12,7 +12,7 @@ export function Header() {
   const logout = useLogout();
 
   return (
-    <header className="grid min-h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 border-b border-border bg-card/50 px-2 py-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-sm sm:gap-3 sm:px-4 md:flex md:h-14 md:justify-between md:px-5 md:py-0 md:pt-0">
+    <header className="grid min-h-14 shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-1.5 border-b border-border bg-card/50 px-2 py-2 backdrop-blur-sm sm:gap-3 sm:px-4 md:flex md:h-14 md:justify-between md:px-5 md:py-0 md:pt-0">
       <MobileNavigation />
       <ServerSelector />
 

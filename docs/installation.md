@@ -58,6 +58,8 @@ Only nginx is published. Backend and sidecar services remain internal to the con
 
 ## Build from source
 
+For Home Screen or desktop app installation after deployment, see [Install TS6 Manager as an app](pwa.md). PWA installation requires HTTPS (except on localhost).
+
 Development and local image builds use Node.js 20+ and pnpm 9.x.
 
 ~~~bash
