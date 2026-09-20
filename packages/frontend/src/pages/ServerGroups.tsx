@@ -140,20 +140,31 @@ export default function ServerGroups() {
                 <div className="space-y-1">
                   {Array.isArray(members) && members.length > 0 ? (
                     members.map((m: any, i: number) => (
-                      <div key={i} className="flex items-center justify-between rounded-md px-3 py-2 hover:bg-muted/30 transition-colors">
-                        <div className="flex items-center gap-2">
-                          <div className="h-6 w-6 rounded-full bg-primary/10 flex items-center justify-center text-[10px] font-mono-data text-primary">
+                      <div
+                        key={i}
+                        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-md px-3 py-2 hover:bg-muted/30 transition-colors"
+                      >
+                        <div className="flex min-w-0 items-center gap-2">
+                          <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[10px] font-mono-data text-primary">
                             {m.client_nickname?.[0]?.toUpperCase() || '?'}
                           </div>
-                          <span className="text-sm">{m.client_nickname || `DBID: ${m.cldbid}`}</span>
+                          <span
+                            className="min-w-0 truncate text-sm"
+                            title={m.client_nickname || `DBID: ${m.cldbid}`}
+                          >
+                            {m.client_nickname || `DBID: ${m.cldbid}`}
+                          </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-muted-foreground font-mono-data">DBID: {m.cldbid}</span>
+                        <div className="flex shrink-0 items-center gap-1 sm:gap-2">
+                          <span className="whitespace-nowrap text-xs text-muted-foreground font-mono-data">
+                            DBID: {m.cldbid}
+                          </span>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 text-destructive"
+                            className="h-9 w-9 shrink-0 text-destructive sm:h-7 sm:w-7"
                             title="Remove from group"
+                            aria-label={`Remove ${m.client_nickname || `DBID ${m.cldbid}`} from group`}
                             onClick={() => removeMember.mutate(
                               { sgid: selectedGroup, cldbid: Number(m.cldbid) },
                               {
