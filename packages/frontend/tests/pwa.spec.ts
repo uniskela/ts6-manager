@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
+import { test, expect, type APIRequestContext, type Locator, type Page } from '@playwright/test';
 import { readFileSync, readdirSync } from 'node:fs';
 import { canHandleRequest, isAppNavigation } from '../pwa/cache-policy';
 
@@ -26,6 +26,31 @@ function contrastRatio(left: string, right: string) {
   const a = luminance(parseRgb(left));
   const b = luminance(parseRgb(right));
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
+
+async function renderedColours(locator: Locator) {
+  return locator.evaluate(element => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1;
+    canvas.height = 1;
+    const context = canvas.getContext('2d', { willReadFrequently: true })!;
+    const sample = (colour: string, behind = 'rgba(0, 0, 0, 0)') => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = behind;
+      context.fillRect(0, 0, 1, 1);
+      context.fillStyle = colour;
+      context.fillRect(0, 0, 1, 1);
+      const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+      return `rgb(${red}, ${green}, ${blue})`;
+    };
+    const computed = getComputedStyle(element);
+    const surface = element.closest('.bg-card') ?? document.body;
+    const surfaceColour = getComputedStyle(surface).backgroundColor;
+    return {
+      foreground: sample(computed.color),
+      background: sample(computed.backgroundColor, surfaceColour),
+    };
+  });
 }
 
 async function controlled(page: Page) {
@@ -118,24 +143,22 @@ test('appearance bootstrap applies a stored black violet preference before first
       state: { sidebarCollapsed: false, baseTheme: 'black', accent: 'violet' },
       version: 1,
     }));
-    requestAnimationFrame(() => {
-      (window as any).__firstAppearance = {
-        theme: document.documentElement.dataset.theme,
-        accent: document.documentElement.dataset.accent,
-        dark: document.documentElement.classList.contains('dark'),
-        black: document.documentElement.classList.contains('black'),
-      };
-    });
   });
 
+  const applicationModule = /\/assets\/index-[^/]+\.js$/;
+  await page.route(applicationModule, route => route.abort());
   await page.goto('/login');
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'black');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'violet');
+  await expect(page.locator('html')).toHaveClass(/\bdark\b/);
+  await expect(page.locator('html')).toHaveClass(/\bblack\b/);
+  await expect(page.locator('#root')).toBeEmpty();
+
+  await page.unroute(applicationModule);
+  await page.reload();
   await expect(page.getByLabel('Username')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => (window as any).__firstAppearance)).toEqual({
-    theme: 'black',
-    accent: 'violet',
-    dark: true,
-    black: true,
-  });
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'black');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'violet');
 });
 
 test('appearance migrates old and invalid stored preferences to safe values', async ({ page }) => {
@@ -185,7 +208,14 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
       await page.reload();
       await expect(page.locator('html')).toHaveAttribute('data-theme', baseTheme);
       await expect(page.locator('html')).toHaveAttribute('data-accent', accent);
-      await page.getByLabel('Username').focus();
+      const username = page.getByLabel('Username');
+      await username.fill('contrast-test');
+      await page.getByLabel('Password', { exact: true }).fill('contrast-test');
+      const restingShadow = await username.evaluate(element => getComputedStyle(element).boxShadow);
+      await username.focus();
+      const focusedShadow = await username.evaluate(element => getComputedStyle(element).boxShadow);
+      await page.getByRole('button', { name: 'Sign In' }).hover();
+      await page.waitForTimeout(250);
 
       const colours = await page.evaluate(() => {
         const root = getComputedStyle(document.documentElement);
@@ -204,7 +234,6 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
           primary: computed.color,
           primaryForeground: computed.backgroundColor,
           ring: computed.borderColor,
-          focusShadow: getComputedStyle(document.querySelector<HTMLInputElement>('#username')!).boxShadow,
           mark: getComputedStyle(document.querySelector<HTMLElement>('[data-brand-mark]')!).backgroundColor,
           neutral: Object.fromEntries(['--background', '--card', '--secondary', '--muted', '--border', '--accent'].map(name => [name, root.getPropertyValue(name).trim()])),
           semantic: Object.fromEntries(['--destructive', '--success', '--warning'].map(name => [name, root.getPropertyValue(name).trim()])),
@@ -213,9 +242,42 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
         return result;
       });
 
+      const buttonColours = await renderedColours(page.getByRole('button', { name: 'Sign In' }));
+      const badgeColours = await page.evaluate(() => {
+        const surface = document.createElement('div');
+        surface.className = 'bg-card';
+        const badge = document.createElement('span');
+        badge.className = 'bg-primary/15 text-primary';
+        badge.textContent = 'Accent status';
+        surface.append(badge);
+        document.body.append(surface);
+        const canvas = document.createElement('canvas');
+        canvas.width = 1;
+        canvas.height = 1;
+        const context = canvas.getContext('2d', { willReadFrequently: true })!;
+        const sample = (colour: string, behind = 'rgba(0, 0, 0, 0)') => {
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = behind;
+          context.fillRect(0, 0, 1, 1);
+          context.fillStyle = colour;
+          context.fillRect(0, 0, 1, 1);
+          const [red, green, blue] = context.getImageData(0, 0, 1, 1).data;
+          return `rgb(${red}, ${green}, ${blue})`;
+        };
+        const computed = getComputedStyle(badge);
+        const result = {
+          foreground: sample(computed.color),
+          background: sample(computed.backgroundColor, getComputedStyle(surface).backgroundColor),
+        };
+        surface.remove();
+        return result;
+      });
+
       expect(contrastRatio(colours.primary, colours.primaryForeground), `${baseTheme}/${accent} primary contrast`).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(colours.ring, colours.background), `${baseTheme}/${accent} focus-ring contrast`).toBeGreaterThanOrEqual(3);
-      expect(colours.focusShadow, `${baseTheme}/${accent} focused input`).not.toBe('none');
+      expect(focusedShadow, `${baseTheme}/${accent} focused input`).not.toBe(restingShadow);
+      expect(contrastRatio(buttonColours.foreground, buttonColours.background), `${baseTheme}/${accent} primary hover contrast`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(badgeColours.foreground, badgeColours.background), `${baseTheme}/${accent} primary badge contrast`).toBeGreaterThanOrEqual(4.5);
       expect(colours.mark, `${baseTheme}/${accent} BrandMark inheritance`).toBe(colours.primary);
 
       neutralBaseline ??= colours.neutral;
@@ -231,24 +293,40 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
   }
 });
 
-test('settings sections are URL-backed and restored by browser history', async ({ page, context, request }) => {
+test('appearance semantic labels stay readable in every base theme', async ({ page, request }) => {
   await signInAsAdmin(page, request);
   await page.goto('/settings?tab=appearance');
+
+  for (const baseTheme of baseThemes) {
+    await page.getByRole('button', { name: `${baseTheme[0].toUpperCase()}${baseTheme.slice(1)} base theme` }).click();
+    for (const label of ['Destructive / error', 'Success', 'Warning']) {
+      const colours = await renderedColours(page.getByText(label, { exact: true }));
+      expect(contrastRatio(colours.foreground, colours.background), `${baseTheme} ${label}`).toBeGreaterThanOrEqual(4.5);
+    }
+  }
+});
+
+test('settings sections are URL-backed and restored by browser history', async ({ page, context, request }) => {
+  await signInAsAdmin(page, request);
+  await page.goto('/settings?tab=appearance&source=copied');
   await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('data-state', 'active');
   await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible();
 
   await page.getByRole('tab', { name: 'About' }).click();
-  await expect(page).toHaveURL('/settings?tab=about');
+  await expect(page).toHaveURL('/settings?tab=about&source=copied');
   await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
   await page.getByRole('tab', { name: 'Account' }).click();
-  await expect(page).toHaveURL('/settings?tab=account');
+  await expect(page).toHaveURL('/settings?tab=account&source=copied');
 
   await page.goBack();
-  await expect(page).toHaveURL('/settings?tab=about');
+  await expect(page).toHaveURL('/settings?tab=about&source=copied');
   await expect(page.getByRole('tab', { name: 'About' })).toHaveAttribute('data-state', 'active');
   await page.goBack();
-  await expect(page).toHaveURL('/settings?tab=appearance');
+  await expect(page).toHaveURL('/settings?tab=appearance&source=copied');
   await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('data-state', 'active');
+  await page.goForward();
+  await expect(page).toHaveURL('/settings?tab=about&source=copied');
+  await expect(page.getByRole('tab', { name: 'About' })).toHaveAttribute('data-state', 'active');
 
   const copiedLink = await context.newPage();
   await copiedLink.goto('/settings?tab=about');
