@@ -503,7 +503,7 @@ export default function Channels() {
 
       {/* Edit Dialog */}
       <Dialog open={!!editTarget} onOpenChange={(v) => { if (!v) setEditTarget(null); }}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg [--dialog-max-height:90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Edit Channel{editTarget ? ` #${editTarget.cid}` : ''}</DialogTitle>
           </DialogHeader>

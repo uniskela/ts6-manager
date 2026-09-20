@@ -277,7 +277,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-lg [--dialog-max-height:90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Connection setup wizard</DialogTitle>
           <p className="text-xs text-muted-foreground">

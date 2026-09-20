@@ -82,7 +82,7 @@ export function ConnectionSetupHelpDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-lg [--dialog-max-height:85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-sm">Connection help</DialogTitle>
           <p className="text-xs text-muted-foreground">
