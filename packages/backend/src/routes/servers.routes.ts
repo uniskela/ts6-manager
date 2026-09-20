@@ -23,6 +23,40 @@ serverRoutes.get('/deployment-check', requireRole('admin'), async (_req: Request
   } catch (err) { next(err); }
 });
 
+// Create or restore the generic in-process demo server. No DNS lookup, socket,
+// WebQuery request, SSH connection, or user-provided environment data is used.
+serverRoutes.post('/demo', requireRole('admin'), async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const pool: ConnectionPool = req.app.locals.connectionPool;
+
+    const existing = await prisma.tsServerConfig.findFirst({ where: { isDemo: true } });
+    if (existing) {
+      if (existing.enabled && !pool.hasClient(existing.id)) {
+        pool.addDemoClient(existing.id);
+      }
+      res.json({ id: existing.id, name: existing.name, isDemo: true, existing: true });
+      return;
+    }
+
+    const server = await prisma.tsServerConfig.create({
+      data: {
+        name: 'Demo TeamSpeak Server',
+        host: 'demo.invalid',
+        webqueryPort: 10080,
+        apiKey: encrypt('demo-mode-not-a-real-api-key'),
+        useHttps: false,
+        sshPort: 10022,
+        enabled: true,
+        isDemo: true,
+      },
+    });
+
+    pool.addDemoClient(server.id);
+    res.status(201).json({ id: server.id, name: server.name, isDemo: true, existing: false });
+  } catch (err) { next(err); }
+});
+
 // List all configured TS server connections
 serverRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
@@ -30,7 +64,7 @@ serverRoutes.get('/', async (req: Request, res: Response, next) => {
     const servers = await prisma.tsServerConfig.findMany({
       select: {
         id: true, name: true, host: true, webqueryPort: true,
-        useHttps: true, sshPort: true, enabled: true,
+        useHttps: true, sshPort: true, enabled: true, isDemo: true,
         createdAt: true, sshUsername: true, sshPassword: true,
       },
       orderBy: { id: 'asc' },
@@ -91,7 +125,7 @@ serverRoutes.get('/:configId', async (req: Request, res: Response, next) => {
       id: server.id, name: server.name, host: server.host,
       webqueryPort: server.webqueryPort, useHttps: server.useHttps,
       sshPort: server.sshPort, hasSshCredentials: !!server.sshUsername && !!server.sshPassword,
-      enabled: server.enabled, createdAt: server.createdAt,
+      enabled: server.enabled, isDemo: server.isDemo, createdAt: server.createdAt,
     });
   } catch (err) { next(err); }
 });
@@ -211,6 +245,10 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
       where: { id: parseInt(String(req.params.configId)) },
     });
     if (!server) throw new AppError(404, 'Server config not found');
+    if (server.isDemo) {
+      res.json({ success: true, version: 'Demo mode' });
+      return;
+    }
 
     const client = createWebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
     const result = await client.testConnection();
@@ -231,6 +269,9 @@ serverRoutes.post('/:configId/test-ssh', requireRole('admin'), async (req: Reque
       where: { id: parseInt(String(req.params.configId)) },
     });
     if (!server) throw new AppError(404, 'Server config not found');
+    if (server.isDemo) {
+      throw new AppError(400, 'SSH is not available for demo servers');
+    }
     if (!server.sshUsername || !server.sshPassword) {
       throw new AppError(400, 'SSH credentials not configured');
     }
