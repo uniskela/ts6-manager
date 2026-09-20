@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useBot, useUpdateBot } from '@/hooks/use-bots';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,18 @@ import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { PlaceholderReference } from '@/components/bots/PlaceholderReference';
 import { Textarea } from '@/components/ui/textarea';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import {
+  buildOrthogonalRoute,
+  computeCanvasExtent,
+  createFlowSnapshot,
+  flowSnapshotsEqual,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+  type FlowEdge,
+  type FlowNode,
+  type FlowSnapshot,
+} from '@/lib/bot-flow';
 
 // --- Node type definitions ---
 type HandleConfig = {
@@ -102,8 +114,8 @@ function getNodeMeta(type: string): NodeTypeDef | undefined {
 }
 
 // --- Constants ---
-const NODE_W = 180;
-const NODE_H = 64;
+const NODE_W = NODE_WIDTH;
+const NODE_H = NODE_HEIGHT;
 const HANDLE_R = 6;
 
 // Calculate handle positions (absolute coords on canvas)
@@ -118,26 +130,10 @@ function getInputHandlePos(node: FlowNode, portIndex: number, portCount: number)
 }
 
 // --- Types ---
-interface FlowNode {
-  id: string;
-  type: string;
-  label: string;
-  config: Record<string, any>;
-  x: number;
-  y: number;
-}
-
-interface FlowEdge {
-  id: string;
-  source: string;
-  sourcePort: string;
-  target: string;
-  targetPort: string;
-}
-
 export default function BotEditor() {
   const { botId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { data: bot, isLoading } = useBot(botId ? parseInt(botId) : null);
   const updateBot = useUpdateBot();
 
@@ -146,6 +142,15 @@ export default function BotEditor() {
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
   const [botName, setBotName] = useState('');
   const [showHelp, setShowHelp] = useState(false);
+  const [savedBaseline, setSavedBaseline] = useState<FlowSnapshot | null>(null);
+  const savedBaselineRef = useRef<FlowSnapshot | null>(null);
+  const acceptedServerSnapshotRef = useRef<FlowSnapshot | null>(null);
+  const saveInFlightRef = useRef(false);
+  const [saveInFlight, setSaveInFlight] = useState(false);
+  const [pendingNavigation, setPendingNavigation] = useState<string | null>(null);
+  const [showDiscardDialog, setShowDiscardDialog] = useState(false);
+  const [canvasViewport, setCanvasViewport] = useState({ width: 0, height: 0 });
+  const canvasRef = useRef<HTMLDivElement | null>(null);
 
   // Drag state
   const [dragging, setDragging] = useState<string | null>(null);
@@ -156,37 +161,123 @@ export default function BotEditor() {
   const [connectFrom, setConnectFrom] = useState<{ nodeId: string; port: string } | null>(null);
   const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
 
-  // Load flow data
-  useEffect(() => {
-    if (bot) {
-      setBotName(bot.name || '');
-      try {
-        const flow = typeof bot.flowData === 'string' ? JSON.parse(bot.flowData) : bot.flowData;
-        const loadedNodes: FlowNode[] = flow?.nodes || [];
-        const loadedEdges: FlowEdge[] = (flow?.edges || []).map((e: any) => ({
-          ...e,
-          sourcePort: e.sourcePort || 'out',
-          targetPort: e.targetPort || 'in',
-        }));
-        setNodes(loadedNodes);
-        setEdges(loadedEdges);
-      } catch {
-        setNodes([]);
-        setEdges([]);
-      }
-    }
-  }, [bot]);
+  const currentSnapshot = useMemo(() => botId
+    ? createFlowSnapshot(parseInt(botId), botName, nodes, edges)
+    : null, [botId, botName, nodes, edges]);
+  const isDirty = Boolean(currentSnapshot && savedBaseline && !flowSnapshotsEqual(currentSnapshot, savedBaseline));
 
-  const handleSave = () => {
-    if (!botId) return;
+  const requestNavigation = useCallback((to: string) => {
+    if (!isDirty) {
+      navigate(to);
+      return;
+    }
+    setPendingNavigation(to);
+    setShowDiscardDialog(true);
+  }, [isDirty, navigate]);
+
+  // BrowserRouter does not expose a supported history blocker. Capture normal
+  // internal links and use the shared confirmation UI; browser Back remains a
+  // documented limitation until a data-router migration is justified.
+  useEffect(() => {
+    const handleInternalLink = (event: MouseEvent) => {
+      if (!isDirty) return;
+      const target = (event.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+      if (!target || target.target === '_blank' || target.hasAttribute('download')) return;
+      const href = new URL(target.href, window.location.href);
+      if (href.origin !== window.location.origin) return;
+      const destination = `${href.pathname}${href.search}${href.hash}`;
+      const current = `${location.pathname}${location.search}${location.hash}`;
+      if (destination === current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setPendingNavigation(destination);
+      setShowDiscardDialog(true);
+    };
+    document.addEventListener('click', handleInternalLink, true);
+    return () => document.removeEventListener('click', handleInternalLink, true);
+  }, [isDirty, location]);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (!isDirty) return;
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isDirty]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const updateViewport = () => setCanvasViewport({ width: canvas.clientWidth, height: canvas.clientHeight });
+    updateViewport();
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, []);
+
+  // Load only clean editors. A refetch is allowed to refresh a clean baseline,
+  // but never replaces an in-progress draft.
+  useEffect(() => {
+    if (!bot || !botId || saveInFlightRef.current) return;
+    const id = parseInt(botId);
+    let flow: { nodes?: FlowNode[]; edges?: FlowEdge[] } = {};
+    try { flow = typeof bot.flowData === 'string' ? JSON.parse(bot.flowData) : bot.flowData; } catch { /* legacy malformed data becomes an empty flow */ }
+    const serverSnapshot = createFlowSnapshot(
+      id,
+      bot.name || '',
+      flow.nodes || [],
+      (flow.edges || []).map((edge: any) => ({ ...edge, sourcePort: edge.sourcePort || 'out', targetPort: edge.targetPort || 'in' })),
+    );
+    const baseline = savedBaselineRef.current;
+    const current = currentSnapshot;
+    if (!baseline || baseline.botId !== id) {
+      savedBaselineRef.current = serverSnapshot;
+      setSavedBaseline(serverSnapshot);
+      acceptedServerSnapshotRef.current = null;
+      setBotName(serverSnapshot.name);
+      setNodes(serverSnapshot.nodes);
+      setEdges(serverSnapshot.edges);
+      return;
+    }
+    if (acceptedServerSnapshotRef.current && flowSnapshotsEqual(serverSnapshot, acceptedServerSnapshotRef.current)) {
+      acceptedServerSnapshotRef.current = null;
+    } else if (acceptedServerSnapshotRef.current) {
+      return;
+    }
+    if (current && !flowSnapshotsEqual(current, baseline)) return;
+    if (!flowSnapshotsEqual(serverSnapshot, baseline)) {
+      savedBaselineRef.current = serverSnapshot;
+      setSavedBaseline(serverSnapshot);
+      setBotName(serverSnapshot.name);
+      setNodes(serverSnapshot.nodes);
+      setEdges(serverSnapshot.edges);
+    }
+  }, [bot, botId, currentSnapshot]);
+
+  const handleSave = useCallback(() => {
+    if (!botId || !currentSnapshot || saveInFlightRef.current) return;
+    const snapshot = createFlowSnapshot(currentSnapshot.botId, currentSnapshot.name, currentSnapshot.nodes, currentSnapshot.edges);
+    saveInFlightRef.current = true;
+    setSaveInFlight(true);
     updateBot.mutate({
-      id: parseInt(botId),
-      data: { name: botName, flowData: { nodes, edges } },
+      id: snapshot.botId,
+      data: { name: snapshot.name, flowData: { nodes: snapshot.nodes, edges: snapshot.edges } },
     }, {
-      onSuccess: () => toast.success('Flow saved'),
-      onError: () => toast.error('Failed to save flow'),
+      onSuccess: () => {
+        savedBaselineRef.current = snapshot;
+        setSavedBaseline(snapshot);
+        acceptedServerSnapshotRef.current = snapshot;
+        toast.success('Flow saved');
+      },
+      onError: () => toast.error('Failed to save flow; your edits are still here'),
+      onSettled: () => {
+        saveInFlightRef.current = false;
+        setSaveInFlight(false);
+      },
     });
-  };
+  }, [botId, currentSnapshot, updateBot]);
 
   const addNode = (type: string, label: string) => {
     const id = `node_${Date.now()}`;
@@ -364,6 +455,29 @@ export default function BotEditor() {
 
   const selectedNodeData = useMemo(() => nodes.find((n) => n.id === selectedNode), [nodes, selectedNode]);
   const nodeTypeMeta = useMemo(() => getNodeMeta(selectedNodeData?.type || ''), [selectedNodeData]);
+  const edgeRoutes = useMemo(() => edges.flatMap((edge) => {
+    const srcNode = nodes.find((node) => node.id === edge.source);
+    const tgtNode = nodes.find((node) => node.id === edge.target);
+    if (!srcNode || !tgtNode) return [];
+    const srcMeta = getNodeMeta(srcNode.type);
+    const tgtMeta = getNodeMeta(tgtNode.type);
+    if (!srcMeta || !tgtMeta) return [];
+    const srcPortIndex = srcMeta.handles.outputs.indexOf(edge.sourcePort);
+    const tgtPortIndex = tgtMeta.handles.inputs.indexOf(edge.targetPort);
+    if (srcPortIndex < 0 || tgtPortIndex < 0) return [];
+    const source = getOutputHandlePos(srcNode, srcPortIndex, srcMeta.handles.outputs.length);
+    const target = getInputHandlePos(tgtNode, tgtPortIndex, tgtMeta.handles.inputs.length);
+    const obstacles = nodes
+      .filter((node) => node.id !== srcNode.id && node.id !== tgtNode.id)
+      .map((node) => ({ x: node.x, y: node.y, width: NODE_W, height: NODE_H }));
+    return [{ edge, source, target, route: buildOrthogonalRoute(source, target, obstacles) }];
+  }), [edges, nodes]);
+  const canvasExtent = useMemo(() => computeCanvasExtent({
+    nodes,
+    routeBounds: edgeRoutes.map(({ route }) => route.bounds),
+    viewportWidth: canvasViewport.width,
+    viewportHeight: canvasViewport.height,
+  }), [canvasViewport, edgeRoutes, nodes]);
 
   if (isLoading) return <PageLoader />;
 
@@ -372,10 +486,11 @@ export default function BotEditor() {
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 pb-3">
         <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => navigate('/bots')} aria-label="Back to bot flows" title="Back to bot flows">
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => requestNavigation('/bots')} aria-label="Back to bot flows" title="Back to bot flows">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <Input value={botName} onChange={(e) => setBotName(e.target.value)} className="h-9 min-w-0 flex-1 text-sm font-medium sm:h-8 sm:w-60 sm:flex-none" aria-label="Bot flow name" />
+          <Badge variant={isDirty ? 'default' : 'outline'} className="hidden text-[10px] sm:inline-flex">{isDirty ? 'Unsaved changes' : 'Saved'}</Badge>
           <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">{nodes.length} nodes</Badge>
           <Badge variant="outline" className="hidden text-[10px] sm:inline-flex">{edges.length} edges</Badge>
         </div>
@@ -383,7 +498,7 @@ export default function BotEditor() {
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowHelp(true)} aria-label="Open placeholder reference" title="Placeholder reference">
             <HelpCircle className="h-4 w-4" />
           </Button>
-          <Button variant="outline" size="sm" className="h-8" onClick={handleSave} disabled={updateBot.isPending}>
+          <Button variant="outline" size="sm" className="h-8" onClick={handleSave} disabled={saveInFlight}>
             <Save className="h-4 w-4 mr-1" /> Save
           </Button>
         </div>
@@ -418,6 +533,7 @@ export default function BotEditor() {
 
         {/* Canvas */}
         <div
+          ref={canvasRef}
           className="flow-canvas relative min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto bg-zinc-950/30"
           style={{
             cursor: connectFrom ? 'crosshair' : 'default',
@@ -428,49 +544,37 @@ export default function BotEditor() {
           onPointerUp={handleCanvasMouseUp}
           onClick={handleCanvasClick}
         >
-          <svg className="absolute inset-0 pointer-events-none" style={{ minWidth: 2000, minHeight: 1200, width: '100%', height: '100%' }}>
+          <div className="relative" style={{ width: canvasExtent.width, height: canvasExtent.height }}>
+          <svg className="absolute inset-0 pointer-events-none" width={canvasExtent.width} height={canvasExtent.height} viewBox={`0 0 ${canvasExtent.width} ${canvasExtent.height}`}>
             {/* Edges */}
-            {edges.map((edge) => {
-              const srcNode = nodes.find((n) => n.id === edge.source);
-              const tgtNode = nodes.find((n) => n.id === edge.target);
-              if (!srcNode || !tgtNode) return null;
-
-              const srcMeta = getNodeMeta(srcNode.type);
-              const tgtMeta = getNodeMeta(tgtNode.type);
-              if (!srcMeta || !tgtMeta) return null;
-
-              const srcPortIdx = srcMeta.handles.outputs.indexOf(edge.sourcePort);
-              const tgtPortIdx = tgtMeta.handles.inputs.indexOf(edge.targetPort);
-              if (srcPortIdx < 0 || tgtPortIdx < 0) return null;
-
-              const src = getOutputHandlePos(srcNode, srcPortIdx, srcMeta.handles.outputs.length);
-              const tgt = getInputHandlePos(tgtNode, tgtPortIdx, tgtMeta.handles.inputs.length);
-
-              const dx = Math.abs(tgt.x - src.x) * 0.5;
+            {edgeRoutes.map(({ edge, source: src, target: tgt, route }) => {
               const isConditionTrue = edge.sourcePort === 'true';
               const isConditionFalse = edge.sourcePort === 'false';
 
               return (
-                <g key={edge.id} className="pointer-events-auto cursor-pointer" onClick={(ev) => { ev.stopPropagation(); deleteEdge(edge.id); }}>
+                <g key={edge.id} className="pointer-events-auto cursor-pointer" aria-label={`${isConditionTrue ? 'True' : isConditionFalse ? 'False' : 'Flow'} connection`} onClick={(ev) => { ev.stopPropagation(); deleteEdge(edge.id); }}>
                   <path
-                    d={`M ${src.x} ${src.y} C ${src.x + dx} ${src.y}, ${tgt.x - dx} ${tgt.y}, ${tgt.x} ${tgt.y}`}
+                    d={route.path}
                     fill="none"
-                    stroke={isConditionTrue ? '#22c55e' : isConditionFalse ? '#ef4444' : 'hsl(var(--primary))'}
+                    stroke={isConditionTrue ? 'hsl(var(--success))' : isConditionFalse ? 'hsl(var(--destructive))' : 'hsl(var(--primary))'}
                     strokeWidth={2}
                     strokeOpacity={0.5}
                   />
                   {/* Invisible wider path for easier click */}
                   <path
-                    d={`M ${src.x} ${src.y} C ${src.x + dx} ${src.y}, ${tgt.x - dx} ${tgt.y}, ${tgt.x} ${tgt.y}`}
+                    d={route.path}
                     fill="none"
                     stroke="transparent"
                     strokeWidth={12}
                   />
                   {/* Arrow at target */}
                   <circle cx={tgt.x} cy={tgt.y} r={3}
-                    fill={isConditionTrue ? '#22c55e' : isConditionFalse ? '#ef4444' : 'hsl(var(--primary))'}
+                    fill={isConditionTrue ? 'hsl(var(--success))' : isConditionFalse ? 'hsl(var(--destructive))' : 'hsl(var(--primary))'}
                     fillOpacity={0.8}
                   />
+                  {(isConditionTrue || isConditionFalse) && (
+                    <text x={src.x + 12} y={src.y - 8} className="text-[10px]" fill={isConditionTrue ? 'hsl(var(--success))' : 'hsl(var(--destructive))'}>{isConditionTrue ? 'True' : 'False'}</text>
+                  )}
                 </g>
               );
             })}
@@ -483,10 +587,10 @@ export default function BotEditor() {
               const idx = srcMeta.handles.outputs.indexOf(connectFrom.port);
               if (idx < 0) return null;
               const src = getOutputHandlePos(srcNode, idx, srcMeta.handles.outputs.length);
-              const dx = Math.abs(mousePos.x - src.x) * 0.4;
+              const previewRoute = buildOrthogonalRoute(src, mousePos, []);
               return (
                 <path
-                  d={`M ${src.x} ${src.y} C ${src.x + dx} ${src.y}, ${mousePos.x - dx} ${mousePos.y}, ${mousePos.x} ${mousePos.y}`}
+                  d={previewRoute.path}
                   fill="none"
                   stroke="hsl(var(--primary))"
                   strokeWidth={2}
@@ -595,6 +699,7 @@ export default function BotEditor() {
               </div>
             );
           })}
+          </div>
 
           {/* Connection hint */}
           {connectFrom && (
@@ -1388,7 +1493,7 @@ export default function BotEditor() {
                         value={selectedNodeData.config.expression || ''}
                         onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, expression: e.target.value } } : n))}
                       />
-                      <p className="text-[9px] text-muted-foreground mt-1">True → green output, False → red output</p>
+                      <p className="text-[9px] text-muted-foreground mt-1">True and False use labelled outputs with distinct semantic colours.</p>
                     </div>
                   )}
 
@@ -1547,6 +1652,22 @@ export default function BotEditor() {
           </div>
         )}
       </div>
+
+      <ConfirmDialog
+        open={showDiscardDialog}
+        onOpenChange={setShowDiscardDialog}
+        title="Discard unsaved flow changes?"
+        description="Your Bot Flow edits have not been saved. Stay to keep editing, or discard them and continue."
+        cancelLabel="Stay"
+        confirmLabel="Discard & continue"
+        destructive
+        onConfirm={() => {
+          const destination = pendingNavigation;
+          setShowDiscardDialog(false);
+          setPendingNavigation(null);
+          if (destination) navigate(destination);
+        }}
+      />
 
       <PlaceholderReference open={showHelp} onOpenChange={setShowHelp} />
     </div>
