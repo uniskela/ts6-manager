@@ -1,10 +1,9 @@
 import axios, { AxiosInstance } from 'axios';
 import http from 'http';
 import https from 'https';
-import { TSApiError } from '../middleware/error-handler.js';
+import { AppError, TeamSpeakFloodError, TSApiError } from '../middleware/error-handler.js';
 import { config } from '../config.js';
 import type { ValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
-import { AppError } from '../middleware/error-handler.js';
 import { createValidatedTsServerEndpoint, isAllowedTsServerHost } from '../utils/validate-ts-host.js';
 
 /** UI / interactive traffic jumps ahead of background bots & animations. */
@@ -17,9 +16,9 @@ const PRIORITY_RANK: Record<WebQueryPriority, number> = {
 };
 
 /** Minimum gap between WebQuery commands — TS flood protection trips without this. */
-const MIN_COMMAND_GAP_MS = 250;
-const FLOOD_BASE_PAUSE_MS = 5_000;
-const FLOOD_MAX_PAUSE_MS = 30_000;
+const MIN_COMMAND_GAP_MS = 350;
+const FLOOD_BASE_PAUSE_MS = 60_000;
+const FLOOD_MAX_PAUSE_MS = 5 * 60_000;
 
 const TRANSIENT_CODES = new Set([
   'ECONNRESET',
@@ -128,6 +127,11 @@ export class WebQueryClient {
    * when channeledit/dashboard/cron fire back-to-back.
    */
   private enqueue<T>(op: () => Promise<T>, priority: WebQueryPriority = 'normal'): Promise<T> {
+    const retryAfterSeconds = this.getFloodCooldownRemainingSeconds();
+    if (retryAfterSeconds > 0) {
+      return Promise.reject(new TeamSpeakFloodError(retryAfterSeconds));
+    }
+
     return new Promise<T>((resolve, reject) => {
       this.queue.push({
         priority,
@@ -138,6 +142,37 @@ export class WebQueryClient {
       });
       void this.pump();
     });
+  }
+
+  getFloodCooldownRemainingMs(): number {
+    return Math.max(0, this.floodPauseUntil - Date.now());
+  }
+
+  private getFloodCooldownRemainingSeconds(): number {
+    const remaining = this.getFloodCooldownRemainingMs();
+    return remaining > 0 ? Math.max(1, Math.ceil(remaining / 1000)) : 0;
+  }
+
+  private enterFloodCooldown(): TeamSpeakFloodError {
+    this.floodStrikes += 1;
+    const pause = Math.min(
+      FLOOD_MAX_PAUSE_MS,
+      FLOOD_BASE_PAUSE_MS * 2 ** Math.min(this.floodStrikes - 1, 3),
+    );
+    this.floodPauseUntil = Date.now() + pause;
+    const error = new TeamSpeakFloodError(Math.ceil(pause / 1000));
+
+    console.warn(
+      `[WebQuery] TeamSpeak flood protection — pausing query traffic for ${pause}ms (strike ${this.floodStrikes})`,
+    );
+
+    // Do not hold a backlog of dashboard/bot/animation requests until the cooldown
+    // expires. Fail them now with Retry-After so callers can render a useful state
+    // and background jobs can back off instead of stampeding the server later.
+    const queued = this.queue.splice(0);
+    for (const item of queued) item.reject(error);
+
+    return error;
   }
 
   private pickNextIndex(): number {
@@ -173,20 +208,14 @@ export class WebQueryClient {
         try {
           const result = await this.withTransientRetry(item.op);
           this.floodStrikes = 0;
+          this.floodPauseUntil = 0;
           item.resolve(result);
         } catch (err) {
           if (isFloodError(err)) {
-            this.floodStrikes += 1;
-            const pause = Math.min(
-              FLOOD_MAX_PAUSE_MS,
-              FLOOD_BASE_PAUSE_MS * 2 ** Math.min(this.floodStrikes - 1, 3),
-            );
-            this.floodPauseUntil = Date.now() + pause;
-            console.warn(
-              `[WebQuery] TeamSpeak flood protection — pausing query traffic for ${pause}ms (strike ${this.floodStrikes})`,
-            );
+            item.reject(this.enterFloodCooldown());
+          } else {
+            item.reject(err);
           }
-          item.reject(err);
         } finally {
           this.nextAllowedAt = Date.now() + MIN_COMMAND_GAP_MS;
         }
