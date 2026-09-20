@@ -59,10 +59,35 @@ async function refreshAccessToken(): Promise<string | null> {
   return refreshPromise;
 }
 
-api.interceptors.request.use((config) => {
-  const token = useAuthStore.getState().accessToken;
+function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
+  try {
+    const payloadPart = token.split('.')[1];
+    if (!payloadPart) return false;
+    const base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
+    const payload = JSON.parse(atob(padded)) as { exp?: number };
+    return typeof payload.exp === 'number'
+      && payload.exp * 1000 <= Date.now() + skewSeconds * 1000;
+  } catch {
+    // Leave malformed/non-JWT tokens to the normal 401 response path.
+    return false;
+  }
+}
+
+api.interceptors.request.use(async (config) => {
+  let token = useAuthStore.getState().accessToken;
+
+  // Persisted access tokens can expire while the app is closed. Refresh before
+  // /servers, /auth/me, and other protected bootstrap requests so a normal
+  // resume does not intentionally generate a burst of 401s first.
+  if (token && accessTokenNeedsRefresh(token)) {
+    token = await refreshAccessToken();
+  }
+
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
+  } else {
+    delete config.headers.Authorization;
   }
   return config;
 });
