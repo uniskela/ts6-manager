@@ -23,6 +23,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { BrandMark } from '@/components/shared/BrandMark';
 import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github } from 'lucide-react';
 import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 import { toast } from 'sonner';
@@ -81,9 +82,9 @@ function AboutTab() {
   return (
     <Card className="max-w-md">
       <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-sm font-medium">
-          <Info className="h-4 w-4 text-primary" />
-          About
+        <CardTitle className="flex items-center gap-3 text-base font-medium">
+          <BrandMark className="h-8 w-8 text-primary" />
+          TS6 Manager
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">

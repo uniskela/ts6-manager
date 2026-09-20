@@ -46,6 +46,40 @@ test('production manifest and icons meet installability requirements', async ({ 
   expect((await cdp.send('Page.getInstallabilityErrors')).installabilityErrors).toEqual([]);
 });
 
+test('canonical brand mark is shared by product surfaces', async ({ page, request }) => {
+  const favicon = await (await request.get('/favicon.svg')).text();
+  expect(favicon).toContain('viewBox="0 0 512 512"');
+  expect(favicon).toContain('currentColor');
+  expect(favicon).not.toMatch(/<text|>TS</i);
+
+  await controlled(page);
+  await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
+  await expect(page.locator('[data-brand-mark]')).toHaveCount(1);
+
+  await request.post('/__test/setup?on');
+  await page.goto('/setup');
+  await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
+  await expect(page.locator('[data-brand-mark]')).toHaveCount(1);
+  await request.post('/__test/setup');
+
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('brand-test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
+
+  const brandLink = page.locator('a[aria-label="TS6 Manager dashboard"]');
+  await expect(brandLink).toBeVisible();
+  await expect(brandLink).toHaveAttribute('href', '/dashboard');
+  await expect(brandLink.locator('[data-brand-mark]')).toHaveCount(1);
+
+  await page.goto('/settings');
+  await page.getByRole('tab', { name: 'About' }).click();
+  await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
+  await expect(page.locator('[data-brand-mark]')).toHaveCount(2);
+});
+
 test('real worker caches only public build output; private traffic stays live', async ({ page }) => {
   await controlled(page);
   for (const path of privatePaths) {

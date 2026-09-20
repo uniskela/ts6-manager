@@ -1,8 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="96" fill="#0b0e13"/>
-  <rect x="64" y="64" width="384" height="384" rx="64" fill="#123137"/>
-  <g fill="none" stroke="#1eb9ca" stroke-width="32" stroke-linecap="square" stroke-linejoin="round">
-    <path d="M136 176h96m-48 0v160"/>
-    <path d="M368 176h-80v80h80v80h-80"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" color="#1eb9ca">
+  <title>TS6 Manager</title>
+  <g fill="none" stroke="currentColor" stroke-width="56" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 128h240M248 128v200"/>
+    <circle cx="328" cy="328" r="80"/>
   </g>
 </svg>
