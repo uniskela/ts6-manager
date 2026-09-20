@@ -32,6 +32,7 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
 
 FROM node:20-slim AS production
 ARG GIT_SHA=
+COPY .yt-dlp-version /tmp/yt-dlp-version
 ENV NODE_ENV=production \
     SIDECAR_URL=http://127.0.0.1:9800 \
     DATABASE_URL=file:/app/packages/backend/data/ts6webui.db \
@@ -49,7 +50,11 @@ RUN apt-get update && \
       supervisor \
       netcat-openbsd \
       curl \
-    && python3 -m pip install --break-system-packages --no-cache-dir -U "yt-dlp[default]" \
+    && YT_DLP_VERSION="$(tr -d '[:space:]' < /tmp/yt-dlp-version)" \
+    && test -n "$YT_DLP_VERSION" \
+    && python3 -m pip install --break-system-packages --no-cache-dir "yt-dlp[default]==${YT_DLP_VERSION}" \
+    && test "$(yt-dlp --version)" = "$YT_DLP_VERSION" \
+    && rm -f /tmp/yt-dlp-version \
     && rm -rf /usr/local/lib/node_modules/npm \
               /usr/local/lib/node_modules/corepack \
               /root/.cache/node/corepack \
