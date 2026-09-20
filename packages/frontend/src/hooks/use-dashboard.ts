@@ -9,8 +9,10 @@ export function useDashboard() {
     queryFn: () => dashboardApi.get(selectedConfigId!, selectedSid!),
     enabled: !!selectedConfigId && !!selectedSid,
     refetchInterval: 10000,
-    // First paint often races AnimationManager / bot traffic on the shared WebQuery socket.
-    retry: 3,
+    // First paint can race background Query traffic. Retry ordinary transient
+    // failures, but a 429 is an intentional TeamSpeak antiflood cooldown; the
+    // normal 10s polling interval becomes the controlled recovery probe.
+    retry: (failureCount, error: any) => error?.response?.status !== 429 && failureCount < 3,
     retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
   });
 }
