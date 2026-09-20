@@ -86,6 +86,21 @@
     min-width: 0;
   }
 
+  /*
+   * iOS Safari automatically zooms focused form controls rendered below 16px.
+   * Keep phone form text at 16px rather than disabling viewport zoom, which
+   * preserves user-controlled pinch zoom/accessibility.
+   */
+  @supports (-webkit-touch-callout: none) {
+    @media screen and (max-width: 639px) {
+      input,
+      textarea,
+      select {
+        font-size: 16px !important;
+      }
+    }
+  }
+
   /* Fix Radix ScrollArea display:table bug preventing scrolling */
   [data-radix-scroll-area-viewport] > div {
     display: block !important;
