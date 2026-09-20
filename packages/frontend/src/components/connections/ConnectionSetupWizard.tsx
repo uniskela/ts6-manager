@@ -91,6 +91,11 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }),
   });
 
+  const createDemoServer = useMutation({
+    mutationFn: () => serversApi.createDemo(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }),
+  });
+
   const testWebqueryDraft = useMutation({
     mutationFn: () => serversApi.testWebqueryDraft({
       host: form.host,
@@ -218,6 +223,19 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
       onError: (err: any) => {
         setSshTestOk(false);
         toast.error(err?.response?.data?.error || 'SSH test failed');
+      },
+    });
+  };
+
+  const handleCreateDemo = () => {
+    createDemoServer.mutate(undefined, {
+      onSuccess: (data) => {
+        toast.success(data?.existing ? 'Demo server is ready' : 'Demo server created');
+        onComplete?.();
+        handleClose(false);
+      },
+      onError: (err: any) => {
+        toast.error(err?.response?.data?.error || 'Failed to create demo server');
       },
     });
   };
@@ -395,6 +413,35 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                 </button>
               );
             })}
+
+            <div className="rounded-md border border-dashed border-primary/40 bg-primary/5 p-3 space-y-2">
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-medium">Demo server — no TeamSpeak required</p>
+                    <Badge variant="outline" className="text-[10px]">Demo</Badge>
+                  </div>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Create a local synthetic server with generic channels, clients, groups, permissions, bans, tokens, and logs for UI/UX testing.
+                  </p>
+                  <p className="mt-1 text-[10px] text-muted-foreground">
+                    No network connection is made and no real TeamSpeak server is changed. Simulated changes reset with the demo data.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleCreateDemo}
+                  disabled={createDemoServer.isPending}
+                >
+                  {createDemoServer.isPending ? (
+                    <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Creating…</>
+                  ) : (
+                    <><TestTube className="h-3 w-3 mr-1" /> Create demo server</>
+                  )}
+                </Button>
+              </div>
+            </div>
           </div>
         )}
 
