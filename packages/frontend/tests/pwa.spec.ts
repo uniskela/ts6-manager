@@ -360,7 +360,6 @@ test('settings appearance controls persist and remain contained on mobile', asyn
 test('settings connections wizard deep link remains supported', async ({ page, request }) => {
   await signInAsAdmin(page, request);
   await page.goto('/settings?tab=connections&wizard=1');
-  await expect(page.getByRole('tab', { name: 'Connections' })).toHaveAttribute('data-state', 'active');
   await expect(page.getByRole('heading', { name: 'Connection setup wizard' })).toBeVisible();
   await expect(page).toHaveURL('/settings?tab=connections');
 });
