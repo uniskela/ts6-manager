@@ -41,7 +41,7 @@ export default function ChannelGroups() {
           <CardTitle className="text-sm font-medium text-muted-foreground">Groups ({groups.length})</CardTitle>
         </CardHeader>
         <CardContent>
-          <ScrollArea className="h-[500px]">
+          <ScrollArea className="h-[min(500px,calc(100dvh-13rem))] min-h-72">
             <div className="space-y-1">
               {groups.map((g: any) => (
                 <div key={g.cgid} className="flex items-center justify-between rounded-md px-3 py-2.5 hover:bg-muted/30 transition-colors">

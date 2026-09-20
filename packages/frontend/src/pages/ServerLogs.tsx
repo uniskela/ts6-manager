@@ -57,20 +57,20 @@ export default function ServerLogs() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Server Logs</h1>
         <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
           <RefreshCw className={cn('h-4 w-4 mr-1', isFetching && 'animate-spin')} /> Refresh
         </Button>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+        <div className="relative min-w-[12rem] flex-1 sm:max-w-sm">
           <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input placeholder="Filter logs..." value={filter} onChange={(e) => setFilter(e.target.value)} className="pl-8 h-9" />
         </div>
         <Select value={levelFilter} onValueChange={setLevelFilter}>
-          <SelectTrigger className="w-[130px] h-9 text-xs"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[calc(50%-0.25rem)] min-w-28 flex-1 text-xs sm:w-[130px] sm:flex-none"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="ALL">All Levels</SelectItem>
             <SelectItem value="ERROR">Error</SelectItem>
@@ -80,7 +80,7 @@ export default function ServerLogs() {
           </SelectContent>
         </Select>
         <Select value={lines} onValueChange={setLines}>
-          <SelectTrigger className="w-[120px] h-9 text-xs"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="h-9 w-[calc(50%-0.25rem)] min-w-28 flex-1 text-xs sm:w-[120px] sm:flex-none"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="50">50 lines</SelectItem>
             <SelectItem value="100">100 lines</SelectItem>
@@ -91,7 +91,7 @@ export default function ServerLogs() {
       </div>
 
       <div className="rounded-md border border-border bg-card overflow-hidden shadow-sm">
-        <ScrollArea className="h-[calc(100vh-260px)]">
+        <ScrollArea className="h-[max(18rem,calc(100dvh-19rem))] sm:h-[calc(100dvh-260px)]">
           <div className="p-3 space-y-0.5">
             {logs.length === 0 ? (
               <p className="text-center text-muted-foreground text-sm py-10">No log entries found.</p>

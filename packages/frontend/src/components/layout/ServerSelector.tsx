@@ -24,13 +24,13 @@ export function ServerSelector() {
   }, [virtualServers, selectedConfigId, selectedSid, setSid]);
 
   return (
-    <div className="flex items-center gap-2">
-      <Server className="h-4 w-4 text-muted-foreground" />
+    <div className="flex min-w-0 flex-1 items-center gap-1.5 md:flex-none md:gap-2">
+      <Server className="hidden h-4 w-4 shrink-0 text-muted-foreground lg:block" />
       <Select
         value={selectedConfigId?.toString() || ''}
         onValueChange={(v) => setServer(parseInt(v))}
       >
-        <SelectTrigger className="w-[180px] h-8 text-xs">
+        <SelectTrigger className="h-10 min-w-0 flex-1 px-2 text-xs sm:px-3 md:h-8 md:w-[180px] md:flex-none" aria-label="Select server connection">
           <SelectValue placeholder="Select server..." />
         </SelectTrigger>
         <SelectContent>
@@ -44,12 +44,12 @@ export function ServerSelector() {
 
       {virtualServers && virtualServers.length > 1 && (
         <>
-          <span className="text-muted-foreground text-xs">/</span>
+          <span className="hidden text-xs text-muted-foreground sm:inline">/</span>
           <Select
             value={selectedSid?.toString() || ''}
             onValueChange={(v) => setSid(parseInt(v))}
           >
-            <SelectTrigger className="w-[160px] h-8 text-xs">
+            <SelectTrigger className="h-10 min-w-0 flex-1 px-2 text-xs sm:px-3 md:h-8 md:w-[160px] md:flex-none" aria-label="Select virtual server">
               <SelectValue placeholder="Virtual server..." />
             </SelectTrigger>
             <SelectContent>

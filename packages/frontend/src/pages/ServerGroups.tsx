@@ -70,7 +70,7 @@ export default function ServerGroups() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Server Groups</h1>
         <Button size="sm" onClick={() => setShowCreate(true)}>
           <Plus className="h-4 w-4 mr-1" /> Create Group
@@ -83,7 +83,7 @@ export default function ServerGroups() {
             <CardTitle className="text-sm font-medium text-muted-foreground">Groups ({groups.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            <ScrollArea className="h-[500px]">
+            <ScrollArea className="h-[min(20rem,40dvh)] lg:h-[500px]">
               <div className="p-2 space-y-0.5">
                 {groups.map((g: any) => (
                   <button
@@ -111,7 +111,7 @@ export default function ServerGroups() {
 
         <Card className="lg:col-span-2">
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
                 <Users className="h-4 w-4 text-primary" />
                 Members
@@ -136,7 +136,7 @@ export default function ServerGroups() {
             {!selectedGroup ? (
               <p className="text-sm text-muted-foreground text-center py-12">Select a group to view its members</p>
             ) : (
-              <ScrollArea className="h-[440px]">
+              <ScrollArea className="h-[min(440px,55dvh)] min-h-64">
                 <div className="space-y-1">
                   {Array.isArray(members) && members.length > 0 ? (
                     members.map((m: any, i: number) => (

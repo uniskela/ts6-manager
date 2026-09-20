@@ -39,7 +39,7 @@ export default function VirtualServers() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <h1 className="text-xl font-semibold">Virtual Servers</h1>
         <Badge variant="secondary" className="font-mono-data">{servers.length} server(s)</Badge>
       </div>
@@ -48,19 +48,19 @@ export default function VirtualServers() {
         {servers.map((vs: any) => (
           <Card key={vs.virtualserver_id} className="hover:border-primary/30 transition-colors">
             <CardContent className="p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
+              <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex min-w-0 items-center gap-3 sm:gap-4">
                   <div className="h-10 w-10 rounded-lg bg-muted flex items-center justify-center">
                     <Server className="h-5 w-5 text-muted-foreground" />
                   </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{vs.virtualserver_name}</span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="break-words font-medium">{vs.virtualserver_name}</span>
                       <Badge variant={vs.virtualserver_status === 'online' ? 'success' : 'secondary'} className="text-[10px]">
                         {vs.virtualserver_status?.toUpperCase()}
                       </Badge>
                     </div>
-                    <div className="flex items-center gap-4 mt-1 text-xs text-muted-foreground">
+                    <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                       <span className="font-mono-data">SID: {vs.virtualserver_id}</span>
                       <span className="font-mono-data">Port: {vs.virtualserver_port}</span>
                       {vs.virtualserver_status === 'online' && (
@@ -72,7 +72,7 @@ export default function VirtualServers() {
                     </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 self-end sm:self-auto">
                   {vs.virtualserver_status === 'online' ? (
                     <Button variant="outline" size="sm" onClick={() => handleStop(vs.virtualserver_id)}>
                       <Square className="h-3 w-3 mr-1" /> Stop

@@ -588,7 +588,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
                     {song.artist && <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>}
                   </div>
                   <span className="text-[10px] text-muted-foreground shrink-0">{formatTime(song.duration)}</span>
-                  <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="touch-action-reveal flex shrink-0 items-center gap-1 transition-opacity">
                     {!isQueueMode && (
                       <Button variant="default" size="sm" className="h-6 text-[10px] px-2"
                         onClick={() => onPlaySong(song.id)}
@@ -619,7 +619,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
                   <p className="text-xs font-medium truncate">{pl.name}</p>
                   <p className="text-[10px] text-muted-foreground">{pl.songCount} song{pl.songCount !== 1 ? 's' : ''}</p>
                 </div>
-                <Button variant="default" size="sm" className="h-6 text-[10px] px-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                <Button variant="default" size="sm" className="touch-action-reveal h-7 px-2 text-[10px] transition-opacity"
                   onClick={() => onLoadPlaylist(pl.id)}
                 >
                   {isQueueMode ? (
@@ -643,7 +643,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-medium truncate" title={req.title}>{req.title}</p>
                 </div>
-                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                <div className="touch-action-reveal flex shrink-0 items-center gap-1 transition-opacity">
                   <Button variant="default" size="sm" className="h-6 text-[10px] px-2"
                     onClick={() => onPlayUrl(req.url)}
                   >
@@ -765,7 +765,7 @@ function BotsTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">{bots.length} music bot{bots.length !== 1 ? 's' : ''}</p>
         <Button size="sm" onClick={() => { resetForm(); setShowCreate(true); }}>
           <Plus className="h-4 w-4 mr-1" /> New Bot
@@ -1408,8 +1408,8 @@ function LibraryTab() {
       {isLoading ? <PageLoader /> : filtered.length === 0 ? (
         <EmptyState icon={Music} title="No songs yet" description="Upload audio files or download from YouTube to build your library." />
       ) : (
-        <div className="border rounded-lg overflow-hidden">
-          <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] gap-2 px-3 py-2 bg-muted/50 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+        <div className="max-w-full overflow-x-auto rounded-lg border">
+          <div className="grid min-w-[38rem] grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] gap-2 bg-muted/50 px-3 py-2 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
             <span>Title</span>
             <span className="w-20 text-right">Duration</span>
             <span className="w-16 text-center">Source</span>
@@ -1418,7 +1418,7 @@ function LibraryTab() {
           </div>
           <div className="max-h-[400px] overflow-y-auto">
             {filtered.map((song) => (
-              <div key={song.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] gap-2 px-3 py-2 hover:bg-muted/30 transition-colors items-center border-t border-border/50">
+              <div key={song.id} className="grid min-w-[38rem] grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] items-center gap-2 border-t border-border/50 px-3 py-2 transition-colors hover:bg-muted/30">
                 <div className="min-w-0">
                   <p className="text-xs font-medium truncate">{song.title}</p>
                   {song.artist && <p className="text-[10px] text-muted-foreground truncate">{song.artist}</p>}
@@ -2590,7 +2590,7 @@ function CommandsTab() {
                 )}
                 <p className="text-[11px] text-muted-foreground/80 line-clamp-2 mt-0.5">{cmd.response}</p>
               </div>
-              <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className="touch-action-reveal flex shrink-0 items-center gap-1 transition-opacity">
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(cmd)}>
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
@@ -2929,7 +2929,7 @@ function RadioTab() {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-destructive hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="touch-action-reveal h-8 w-8 text-destructive transition-opacity hover:text-destructive"
                     onClick={() => setDeleteId(station.id)}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -3103,7 +3103,7 @@ function QueueTab() {
   return (
     <div className="space-y-4">
       {/* Bot selector */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         <Label className="text-xs text-muted-foreground">Bot:</Label>
         <Select value={selectedBot ? String(selectedBot) : ''} onValueChange={(v) => setSelectedBot(parseInt(v))}>
           <SelectTrigger className="w-48 h-8 text-xs"><SelectValue placeholder="Select bot" /></SelectTrigger>
@@ -3113,7 +3113,7 @@ function QueueTab() {
             ))}
           </SelectContent>
         </Select>
-        <div className="flex items-center gap-2 ml-auto">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
           {queue.length > 0 && (
             <Badge variant="secondary" className="text-[10px]">{queue.length} tracks</Badge>
           )}
@@ -3143,10 +3143,10 @@ function QueueTab() {
           </Button>
         </EmptyState>
       ) : (
-        <Card>
+        <Card className="max-w-full overflow-x-auto">
           <CardContent className="p-0">
             {/* Header */}
-            <div className="grid grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_3rem_3rem] gap-2 px-3 py-2 text-[10px] text-muted-foreground uppercase tracking-wider border-b border-border/50">
+            <div className="grid min-w-[40rem] grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_3rem_3rem] gap-2 border-b border-border/50 px-3 py-2 text-[10px] uppercase tracking-wider text-muted-foreground">
               <div>#</div>
               <div>Title</div>
               <div className="text-right">Duration</div>
@@ -3160,7 +3160,7 @@ function QueueTab() {
                 return (
                   <div
                     key={`${item.id}-${i}`}
-                    className={`grid grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_3rem_3rem] gap-2 px-3 py-1.5 items-center group transition-colors ${isActive ? 'bg-primary/10' : 'hover:bg-muted/30'}`}
+                    className={`group grid min-w-[40rem] grid-cols-[2rem_minmax(0,1fr)_5rem_5rem_3rem_3rem] items-center gap-2 px-3 py-1.5 transition-colors ${isActive ? 'bg-primary/10' : 'hover:bg-muted/30'}`}
                   >
                     <div className="text-xs text-muted-foreground font-mono-data">
                       {isActive ? <Play className="h-3 w-3 text-primary" /> : i + 1}
@@ -3181,7 +3181,7 @@ function QueueTab() {
                     <div className="text-right">
                       <Badge variant="outline" className="text-[9px] h-4 px-1">{item.source}</Badge>
                     </div>
-                    <div className="flex flex-col items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="touch-action-reveal flex flex-col items-center gap-0.5 transition-opacity">
                       {i > 0 && (
                         <button
                           className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
@@ -3201,7 +3201,7 @@ function QueueTab() {
                         </button>
                       )}
                     </div>
-                    <div className="opacity-0 group-hover:opacity-100 transition-opacity">
+                    <div className="touch-action-reveal transition-opacity">
                       <button
                         className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive"
                         onClick={() => selectedBot && removeFromQueue.mutate({ botId: selectedBot, index: i })}

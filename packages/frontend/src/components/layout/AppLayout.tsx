@@ -35,20 +35,21 @@ export function AppLayout() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen h-dvh min-w-0 overflow-hidden">
       <Sidebar />
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-auto grid-bg">
-          <div className="p-5 fade-in">
+        <main className="grid-bg min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+          <div className="fade-in min-w-0 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4 lg:p-5">
             <Outlet />
           </div>
         </main>
       </div>
       <Toaster
         position="top-right"
+        mobileOffset={{ top: 'calc(3.5rem + env(safe-area-inset-top))', left: 12, right: 12 }}
         toastOptions={{
-          className: 'bg-popover text-popover-foreground border-border',
+          className: 'bg-popover text-popover-foreground border-border max-w-[calc(100vw-1.5rem)]',
         }}
       />
     </div>

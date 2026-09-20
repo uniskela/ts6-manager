@@ -203,7 +203,7 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
     <div>
       <div
         className={cn(
-          'flex items-center gap-1 py-1 px-2 rounded-sm hover:bg-muted/30 transition-colors group text-sm',
+          'group flex min-h-10 items-center gap-1 rounded-sm px-2 py-1 text-sm transition-colors hover:bg-muted/30 sm:min-h-0',
           isAdmin && 'cursor-grab active:cursor-grabbing',
           dropOver && 'bg-primary/10 ring-1 ring-primary/40',
           draggedCid === node.cid && 'opacity-40',
@@ -217,7 +217,7 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
         onDragEnd={handleDragEnd}
       >
         {hasContent ? (
-          <button onClick={() => setExpanded(!expanded)} className="p-0.5 hover:bg-muted rounded">
+          <button onClick={() => setExpanded(!expanded)} className="flex h-9 w-9 shrink-0 items-center justify-center rounded hover:bg-muted sm:h-5 sm:w-5" aria-label={expanded ? `Collapse ${node.channel_name}` : `Expand ${node.channel_name}`}>
             {expanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" /> : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
           </button>
         ) : (
@@ -231,16 +231,20 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
         <span className="text-[10px] font-mono-data text-muted-foreground/50 shrink-0">#{node.cid}</span>
 
         {isAdmin && (
-          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="touch-action-reveal flex items-center gap-0.5 transition-opacity">
             <button
               onClick={() => onEdit(node)}
-              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7"
+              aria-label={`Edit ${node.channel_name}`}
+              title={`Edit ${node.channel_name}`}
             >
               <Pencil className="h-3 w-3" />
             </button>
             <button
               onClick={() => onDelete(node.cid, node.channel_name)}
-              className="p-1 rounded hover:bg-destructive/20 text-muted-foreground hover:text-destructive transition-colors"
+              className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive sm:h-7 sm:w-7"
+              aria-label={`Delete ${node.channel_name}`}
+              title={`Delete ${node.channel_name}`}
             >
               <Trash2 className="h-3 w-3" />
             </button>
@@ -434,7 +438,7 @@ export default function Channels() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-xl font-semibold">Channels</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
@@ -456,8 +460,8 @@ export default function Channels() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ScrollArea className="h-[600px]">
-            <div className="space-y-0">
+          <ScrollArea className="h-[min(600px,calc(100dvh-15rem))] min-h-72">
+            <div className="min-w-[22rem] space-y-0 pr-2">
               {tree.map((node) => (
                 <ChannelTreeNode
                   key={node.cid}

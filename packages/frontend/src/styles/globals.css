@@ -78,6 +78,12 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Outfit', system-ui, sans-serif;
+    min-width: 320px;
+    overflow-x: hidden;
+  }
+
+  #root {
+    min-width: 0;
   }
 
   /* Fix Radix ScrollArea display:table bug preventing scrolling */
@@ -164,5 +170,36 @@
   @keyframes pulseDot {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.4; }
+  }
+
+  .touch-action-reveal {
+    opacity: 1;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .group .touch-action-reveal {
+      opacity: 0;
+    }
+    .group:hover .touch-action-reveal,
+    .touch-action-reveal:focus-within {
+      opacity: 1;
+    }
+  }
+
+  @media (pointer: coarse) {
+    .touch-action-reveal button,
+    .touch-action-reveal a {
+      min-height: 2.5rem;
+      min-width: 2.5rem;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      scroll-behavior: auto !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
   }
 }

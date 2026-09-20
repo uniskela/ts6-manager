@@ -92,14 +92,14 @@ export default function Dashboard() {
       <div className="space-y-4">
         {showConnectionNudge && (
           <Card className="border-primary/30 bg-primary/5">
-            <CardContent className="py-3 flex items-center justify-between gap-3">
+            <CardContent className="flex flex-col items-start gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm">
                 <p className="font-medium">Connect your TeamSpeak server to get started</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Add a connection under Settings to manage channels, clients, bots, and more.
                 </p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
                 <Button size="sm" asChild>
                   <Link to="/settings?tab=connections&wizard=1">Go to Connections</Link>
                 </Button>
@@ -154,15 +154,15 @@ export default function Dashboard() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">{data.serverName}</h1>
-          <div className="flex items-center gap-2 mt-1">
+      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="break-words text-xl font-semibold">{data.serverName}</h1>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <Badge variant="success" className="font-mono-data text-[10px]">ONLINE</Badge>
-            <span className="text-xs text-muted-foreground font-mono-data">{data.version} / {data.platform}</span>
+            <span className="break-all text-xs text-muted-foreground font-mono-data">{data.version} / {data.platform}</span>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
           {isAdmin && (
             <Button size="sm" variant="outline" onClick={() => setShowWidgets(true)}>
               <LayoutGrid className="h-3.5 w-3.5 mr-1.5" /> Widgets
@@ -250,7 +250,7 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-6 mt-3">
+            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
               <div className="flex items-center gap-2 text-xs">
                 <ArrowDownToLine className="h-3.5 w-3.5 text-primary" />
                 <span className="text-muted-foreground">In:</span>
@@ -290,7 +290,7 @@ export default function Dashboard() {
             <div className="pt-3 border-t border-border space-y-3">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Server Version</span>
-                <span className="font-mono-data text-foreground">{data.version?.split(' ')[0]}</span>
+                <span className="max-w-[60%] break-all text-right font-mono-data text-foreground">{data.version?.split(' ')[0]}</span>
               </div>
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Platform</span>

@@ -87,7 +87,7 @@ function AboutTab() {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-muted-foreground">Version</span>
           <Badge variant="secondary" className="font-mono-data">{APP_VERSION}</Badge>
         </div>
@@ -304,9 +304,9 @@ function ConnectionsTab() {
           {serverList.map((server: any) => (
             <Card key={server.id}>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between gap-2">
-                  <CardTitle className="text-sm font-medium">{server.name}</CardTitle>
-                  <div className="flex items-center gap-1">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <CardTitle className="min-w-0 break-words text-sm font-medium">{server.name}</CardTitle>
+                  <div className="flex flex-wrap items-center gap-1">
                     <Badge variant="outline" className="text-[10px]">WebQuery</Badge>
                     <Badge variant={server.hasSshCredentials ? 'default' : 'secondary'} className="text-[10px]">
                       {server.hasSshCredentials ? 'SSH configured' : 'SSH not configured'}
@@ -317,7 +317,7 @@ function ConnectionsTab() {
               <CardContent className="space-y-2">
                 <div className="grid grid-cols-2 gap-2 text-xs">
                   <span className="text-muted-foreground">Host</span>
-                  <span className="font-mono-data">{server.host}:{server.webqueryPort}</span>
+                  <span className="break-all font-mono-data text-right">{server.host}:{server.webqueryPort}</span>
                   <span className="text-muted-foreground">Protocol</span>
                   <span>{server.useHttps ? 'HTTPS' : 'HTTP'}</span>
                   <span className="text-muted-foreground">SSH</span>
@@ -448,13 +448,13 @@ function UsersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">Manage webapp users and roles</p>
         <Button size="sm" onClick={() => setShowAdd(true)}><Plus className="h-4 w-4 mr-1" /> Add User</Button>
       </div>
 
-      <div className="rounded-md border border-border overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="max-w-full overflow-x-auto rounded-md border border-border" tabIndex={0} role="region" aria-label="Scrollable users table">
+        <table className="w-full min-w-[40rem] text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30">
               <th className="h-10 px-3 text-left font-medium text-muted-foreground">Username</th>
