@@ -17,6 +17,7 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api-error';
 import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
@@ -346,7 +347,7 @@ export default function Channels() {
         <EmptyState
           icon={Hash}
           title="Connection failed"
-          description={(channelsError as any)?.response?.data?.error || (channelsError as any)?.message || 'Could not load channels from the TeamSpeak server.'}
+          description={apiErrorMessage(channelsError, 'Could not load channels from the TeamSpeak server.')}
         />
         <div className="flex justify-center">
           <Button size="sm" variant="outline" onClick={() => refetchChannels()} disabled={channelsFetching}>
