@@ -6,6 +6,7 @@ import { authApi } from '@/api/auth.api';
 import { serversApi } from '@/api/servers.api';
 import { settingsApi } from '@/api/settings.api';
 import { useAuthStore } from '@/stores/auth.store';
+import { ACCENTS, BASE_THEMES, useUiStore, type Accent, type BaseTheme } from '@/stores/ui.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConnectionSetupGuide } from '@/components/connections/ConnectionSetupGuide';
@@ -24,25 +25,36 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { BrandMark } from '@/components/shared/BrandMark';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github, Palette } from 'lucide-react';
 import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 import { toast } from 'sonner';
 
 export default function Settings() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'admin';
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab');
-  const defaultTab = tabParam === 'connections' && isAdmin ? 'connections' : 'account';
+  const availableTabs = isAdmin
+    ? ['connections', 'account', 'appearance', 'users', 'youtube', 'about']
+    : ['account', 'appearance', 'about'];
+  const activeTab = tabParam && availableTabs.includes(tabParam) ? tabParam : 'account';
+
+  const handleTabChange = (tab: string) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', tab);
+    if (tab !== 'connections') next.delete('wizard');
+    setSearchParams(next);
+  };
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       <h1 className="text-xl font-semibold">Settings</h1>
 
-      <Tabs defaultValue={defaultTab} key={defaultTab}>
-        <TabsList>
+      <Tabs value={activeTab} onValueChange={handleTabChange} className="min-w-0 max-w-full">
+        <TabsList className="w-full sm:w-auto">
           {isAdmin && <TabsTrigger value="connections"><Server className="h-3.5 w-3.5 mr-1" /> Connections</TabsTrigger>}
           <TabsTrigger value="account"><Lock className="h-3.5 w-3.5 mr-1" /> Account</TabsTrigger>
+          <TabsTrigger value="appearance"><Palette className="h-3.5 w-3.5 mr-1" /> Appearance</TabsTrigger>
           {isAdmin && <TabsTrigger value="users"><Users className="h-3.5 w-3.5 mr-1" /> Users</TabsTrigger>}
           {isAdmin && <TabsTrigger value="youtube"><Youtube className="h-3.5 w-3.5 mr-1" /> YouTube</TabsTrigger>}
           <TabsTrigger value="about"><Info className="h-3.5 w-3.5 mr-1" /> About</TabsTrigger>
@@ -56,6 +68,10 @@ export default function Settings() {
 
         <TabsContent value="account" className="mt-4">
           <AccountTab />
+        </TabsContent>
+
+        <TabsContent value="appearance" className="mt-4">
+          <AppearanceTab />
         </TabsContent>
 
         {isAdmin && (
@@ -74,6 +90,110 @@ export default function Settings() {
           <AboutTab />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+const BASE_THEME_LABELS: Record<BaseTheme, { label: string; description: string }> = {
+  light: { label: 'Light', description: 'Bright neutral surfaces' },
+  dark: { label: 'Dark', description: 'Low-glare dark surfaces' },
+  black: { label: 'Black', description: 'True-black foundation' },
+};
+
+const ACCENT_LABELS: Record<Accent, string> = {
+  cyan: 'Cyan',
+  violet: 'Violet',
+  red: 'Red',
+  blue: 'Blue',
+  emerald: 'Emerald',
+  amber: 'Amber',
+};
+
+const ACCENT_SWATCHES: Record<Accent, string> = {
+  cyan: 'hsl(186 72% 45%)',
+  violet: 'hsl(267 80% 62%)',
+  red: 'hsl(350 78% 56%)',
+  blue: 'hsl(217 85% 58%)',
+  emerald: 'hsl(160 68% 42%)',
+  amber: 'hsl(35 92% 50%)',
+};
+
+function AppearanceTab() {
+  const { baseTheme, accent, setBaseTheme, setAccent } = useUiStore();
+
+  return (
+    <div className="max-w-2xl space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-3 text-base font-medium">
+            <BrandMark className="h-8 w-8 text-primary" />
+            Appearance
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Appearance is stored only in this browser. Operational status colours keep their meaning in every combination.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Base theme</legend>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {BASE_THEMES.map(value => {
+                const selected = value === baseTheme;
+                const option = BASE_THEME_LABELS[value];
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`${option.label} base theme`}
+                    aria-pressed={selected}
+                    onClick={() => setBaseTheme(value)}
+                    className={`min-w-0 rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
+                  >
+                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
+                      {option.label}
+                      {selected && <Check className="h-4 w-4 text-primary" aria-hidden="true" />}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">{option.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Accent</legend>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {ACCENTS.map(value => {
+                const selected = value === accent;
+                const label = ACCENT_LABELS[value];
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`${label} accent`}
+                    aria-pressed={selected}
+                    onClick={() => setAccent(value)}
+                    className={`flex min-w-0 items-center gap-2 rounded-md border p-3 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
+                  >
+                    <span className="h-4 w-4 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: ACCENT_SWATCHES[value] }} aria-hidden="true" />
+                    <span className="truncate">{label}</span>
+                    {selected && <Check className="ml-auto h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Semantic colours</p>
+            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+              <span className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-destructive">Destructive / error</span>
+              <span className="rounded-md border border-success/30 bg-success/10 px-3 py-2 text-success">Success</span>
+              <span className="rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-warning">Warning</span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

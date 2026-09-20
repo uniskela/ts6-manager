@@ -37,6 +37,14 @@ const server = createServer(async (req, res) => {
       : url.pathname === '/api/auth/me' && allowTestAuth ? {
         user: { id: 1, username: 'admin', displayName: 'Administrator', role: 'admin' },
       }
+      : url.pathname === '/api/servers/deployment-check' && allowTestAuth ? {
+        managerInDocker: false,
+        probes: [],
+        suggestedScenarioId: null,
+        suggestedHost: null,
+        confidence: 'none',
+        reason: 'No local server detected in the production test environment.',
+      }
       : url.pathname === '/api/servers' && allowTestAuth ? []
       : { secret: 'test-only-sensitive-response', timestamp: Date.now() };
     if (url.pathname === '/api/auth/login' && !allowTestAuth) res.statusCode = 401;
