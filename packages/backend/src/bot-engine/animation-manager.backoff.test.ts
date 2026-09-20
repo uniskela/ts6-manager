@@ -8,9 +8,10 @@ describe('shouldBackoffAnimationError', () => {
     assert.equal(shouldBackoffAnimationError('Invalid API key'), true);
   });
 
-  it('keeps backing off transient connection failures', () => {
+  it('keeps backing off transient connection failures and flood responses', () => {
     assert.equal(shouldBackoffAnimationError('socket hang up'), true);
     assert.equal(shouldBackoffAnimationError('ECONNRESET'), true);
+    assert.equal(shouldBackoffAnimationError('TeamSpeak flood protection is active'), true);
   });
 
   it('does not back off unrelated action errors', () => {

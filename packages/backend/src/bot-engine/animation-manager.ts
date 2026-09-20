@@ -203,8 +203,9 @@ export class AnimationManager {
     // Stop existing animation for this flow
     this.stopAnimation(flowId);
 
-    // Floor at 2s — 1s channeledit ticks flood TeamSpeak query anti-spam and starve the WebUI.
-    const intervalMs = Math.max(2_000, config.intervalSeconds * 1000);
+    // Animated channel names are cosmetic background traffic. Keep them well below
+    // TeamSpeak Query anti-spam limits so dashboard/admin traffic has headroom.
+    const intervalMs = Math.max(5_000, config.intervalSeconds * 1000);
 
     // Tick runtime state lives in this closure (not on the map entry) so overlapping
     // setInterval callbacks can skip/backoff without racing the Map record.
@@ -234,6 +235,14 @@ export class AnimationManager {
     const tick = async () => {
       if (state.inFlight) return;
       if (Date.now() < state.pauseUntil) return;
+
+      // WebQuery flood recovery is a circuit breaker, not a queue. Cosmetic
+      // animation frames should simply be skipped while TeamSpeak cools down.
+      const queryCooldownMs = client.getFloodCooldownRemainingMs();
+      if (queryCooldownMs > 0) {
+        state.pauseUntil = Date.now() + queryCooldownMs;
+        return;
+      }
 
       state.inFlight = true;
       try {

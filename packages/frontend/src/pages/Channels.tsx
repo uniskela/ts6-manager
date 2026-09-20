@@ -17,6 +17,7 @@ import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api-error';
 import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
@@ -159,6 +160,7 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
   const [dropOver, setDropOver] = useState(false);
   const hasChildren = node.children.length > 0;
   const clients = clientsByChannel.get(node.cid) || [];
+  const humanClients = clients.filter((client) => client.client_type !== '1');
   const hasContent = hasChildren || clients.length > 0;
   const isSpacer = node.channel_name.startsWith('[spacer') || node.channel_name.startsWith('[*spacer');
 
@@ -253,10 +255,10 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
 
         <div className="flex items-center gap-1.5 ml-1">
           {node.channel_flag_password === 1 && <Lock className="h-3 w-3 text-amber-400/60" />}
-          {(node.total_clients > 0 || clients.length > 0) && (
-            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground font-mono-data">
+          {humanClients.length > 0 && (
+            <span className="flex items-center gap-0.5 text-[10px] text-muted-foreground font-mono-data" title="Human clients">
               <Users className="h-3 w-3" />
-              {clients.length || node.total_clients}
+              {humanClients.length}
             </span>
           )}
         </div>
@@ -345,7 +347,7 @@ export default function Channels() {
         <EmptyState
           icon={Hash}
           title="Connection failed"
-          description={(channelsError as any)?.response?.data?.error || (channelsError as any)?.message || 'Could not load channels from the TeamSpeak server.'}
+          description={apiErrorMessage(channelsError, 'Could not load channels from the TeamSpeak server.')}
         />
         <div className="flex justify-center">
           <Button size="sm" variant="outline" onClick={() => refetchChannels()} disabled={channelsFetching}>
@@ -432,9 +434,11 @@ export default function Channels() {
     });
   };
 
-  const totalClients = clientsByChannel.size > 0
-    ? Array.from(clientsByChannel.values()).reduce((sum, arr) => sum + arr.length, 0)
-    : 0;
+  const allVisibleClients = clientsByChannel.size > 0
+    ? Array.from(clientsByChannel.values()).flat()
+    : [];
+  const totalClients = allVisibleClients.filter((client) => client.client_type !== '1').length;
+  const totalQuerySessions = allVisibleClients.filter((client) => client.client_type === '1').length;
 
   return (
     <div className="space-y-5">
@@ -442,7 +446,8 @@ export default function Channels() {
         <div>
           <h1 className="text-xl font-semibold">Channels</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {Array.isArray(channelData) ? channelData.length : 0} channels · {totalClients} clients online
+            {Array.isArray(channelData) ? channelData.length : 0} channels · {totalClients} users online
+            {totalQuerySessions > 0 ? ` · ${totalQuerySessions} query session${totalQuerySessions === 1 ? '' : 's'}` : ''}
           </p>
         </div>
         {isAdmin && (

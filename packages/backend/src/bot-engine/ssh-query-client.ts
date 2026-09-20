@@ -34,8 +34,23 @@ export declare interface SshQueryClient {
   emit(event: 'close'): boolean;
 }
 
+const SSH_FLOOD_BASE_COOLDOWN_MS = 60_000;
+const SSH_FLOOD_MAX_COOLDOWN_MS = 5 * 60_000;
+
 export function shouldReconnectAfterSshClose(destroyed: boolean, fatalError: boolean): boolean {
   return !destroyed && !fatalError;
+}
+
+export function isSshFloodError(error: unknown): boolean {
+  const message = String((error as any)?.message || error || '').toLowerCase();
+  return message.includes('ts error 524') || message.includes('client is flooding') || message.includes('flooding');
+}
+
+export function sshFloodCooldownMs(strikes: number): number {
+  return Math.min(
+    SSH_FLOOD_MAX_COOLDOWN_MS,
+    SSH_FLOOD_BASE_COOLDOWN_MS * 2 ** Math.min(Math.max(0, strikes - 1), 3),
+  );
 }
 
 export class SshQueryClient extends EventEmitter {
@@ -53,6 +68,9 @@ export class SshQueryClient extends EventEmitter {
   private fatalError: boolean = false;
   private readonly nickSuffix = crypto.randomBytes(3).toString('hex');
   private reconnecting: boolean = false;
+  private floodPauseUntil: number = 0;
+  private floodStrikes: number = 0;
+  private floodDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private options: SshQueryClientOptions) {
     super();
@@ -319,6 +337,10 @@ export class SshQueryClient extends EventEmitter {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+    if (this.floodDisconnectTimer) {
+      clearTimeout(this.floodDisconnectTimer);
+      this.floodDisconnectTimer = null;
+    }
     this.rejectAllPending('Client destroyed');
     if (this.shell) {
       try { this.shell.close(); } catch { /* ignore */ }
@@ -365,6 +387,24 @@ export class SshQueryClient extends EventEmitter {
   }
 
   // --- Internals ---
+
+  private enterFloodCooldown(): void {
+    this.floodStrikes += 1;
+    const cooldownMs = sshFloodCooldownMs(this.floodStrikes);
+    this.floodPauseUntil = Date.now() + cooldownMs;
+    console.warn(
+      `[SshQueryClient] TeamSpeak Query flood protection active for ${this.options.host}:${this.options.port}; pausing reconnect for ${Math.ceil(cooldownMs / 1000)}s (strike ${this.floodStrikes})`,
+    );
+
+    // Stop this Query session immediately, but let scheduleReconnect honour the
+    // cooldown instead of retrying at 1s/2s/4s while TeamSpeak is still blocking it.
+    if (!this.floodDisconnectTimer) {
+      this.floodDisconnectTimer = setTimeout(() => {
+        this.floodDisconnectTimer = null;
+        if (!this.destroyed) this.forceDisconnect();
+      }, 0);
+    }
+  }
 
   private onShellData(data: Buffer): void {
     this.responseBuffer += data.toString('utf-8');
@@ -449,10 +489,22 @@ export class SshQueryClient extends EventEmitter {
     const errorId = parseInt(parsed.id || '0');
 
     if (errorId === 0) {
-      // Success
+      // A successful command after the cooldown proves the Query session is usable again.
+      if (Date.now() >= this.floodPauseUntil) {
+        this.floodPauseUntil = 0;
+        this.floodStrikes = 0;
+      }
       cmd.resolve(cmd.responseLines.join('\n'));
-    } else {
-      cmd.reject(new Error(`TS error ${errorId}: ${parsed.msg || 'Unknown error'}`));
+      this.processQueue();
+      return;
+    }
+
+    const error = new Error(`TS error ${errorId}: ${parsed.msg || 'Unknown error'}`);
+    cmd.reject(error);
+
+    if (errorId === 524 || isSshFloodError(error)) {
+      this.enterFloodCooldown();
+      return;
     }
 
     this.processQueue();
@@ -475,6 +527,13 @@ export class SshQueryClient extends EventEmitter {
         this.executeCommand('whoami', 5000)
           .then(() => { consecutiveFailures = 0; })
           .catch((err) => {
+            if (isSshFloodError(err)) {
+              console.warn(
+                `[SshQueryClient] TeamSpeak flood protection rejected keepalive for ${this.options.host}:${this.options.port}; reconnect will wait for cooldown`,
+              );
+              return;
+            }
+
             consecutiveFailures++;
             console.warn(`[SshQueryClient] Keepalive failed for ${this.options.host}:${this.options.port} (${consecutiveFailures}/3): ${err.message}`);
             if (consecutiveFailures >= 3) {
@@ -502,8 +561,11 @@ export class SshQueryClient extends EventEmitter {
       this.reconnectTimer = null;
     }
 
-    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30000);
-    console.log(`[SshQueryClient] Reconnecting to ${this.options.host}:${this.options.port} in ${delay}ms (attempt ${this.reconnectAttempt + 1})`);
+    const reconnectBackoff = Math.min(1000 * Math.pow(2, this.reconnectAttempt), 30000);
+    const floodCooldown = Math.max(0, this.floodPauseUntil - Date.now());
+    const delay = Math.max(reconnectBackoff, floodCooldown);
+    const reason = floodCooldown > reconnectBackoff ? ' after TeamSpeak flood cooldown' : '';
+    console.log(`[SshQueryClient] Reconnecting to ${this.options.host}:${this.options.port} in ${delay}ms${reason} (attempt ${this.reconnectAttempt + 1})`);
 
     this.reconnectTimer = setTimeout(async () => {
       this.reconnectAttempt++;

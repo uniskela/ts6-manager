@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { shouldReconnectAfterSshClose } from './ssh-query-client.js';
+import { isSshFloodError, shouldReconnectAfterSshClose, sshFloodCooldownMs } from './ssh-query-client.js';
 
 describe('shouldReconnectAfterSshClose', () => {
   it('retries a non-fatal close before the SSH handshake completes', () => {
@@ -13,5 +13,21 @@ describe('shouldReconnectAfterSshClose', () => {
 
   it('does not retry fatal authentication or host-key failures', () => {
     assert.equal(shouldReconnectAfterSshClose(false, true), false);
+  });
+});
+
+
+describe('SSH Query flood recovery', () => {
+  it('recognizes TeamSpeak 524 flooding responses', () => {
+    assert.equal(isSshFloodError(new Error('TS error 524: client is flooding')), true);
+    assert.equal(isSshFloodError(new Error('Connection lost before handshake')), false);
+  });
+
+  it('backs off repeated flood strikes without exceeding five minutes', () => {
+    assert.equal(sshFloodCooldownMs(1), 60_000);
+    assert.equal(sshFloodCooldownMs(2), 120_000);
+    assert.equal(sshFloodCooldownMs(3), 240_000);
+    assert.equal(sshFloodCooldownMs(4), 300_000);
+    assert.equal(sshFloodCooldownMs(10), 300_000);
   });
 });

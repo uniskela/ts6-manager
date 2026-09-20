@@ -10,6 +10,7 @@ import { TSApiError } from '../middleware/error-handler.js';
 
 describe('isFloodError', () => {
   it('detects flooding message and known codes', () => {
+    assert.equal(isFloodError(new TSApiError(524, 'client is flooding')), true);
     assert.equal(isFloodError(new TSApiError(3331, 'client is flooding')), true);
     assert.equal(isFloodError(new TSApiError(3329, 'flood ban')), true);
     assert.equal(isFloodError(new TSApiError(0, 'ok')), false);

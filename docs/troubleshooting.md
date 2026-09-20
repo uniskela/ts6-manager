@@ -19,6 +19,23 @@ Check `ENCRYPTION_KEY`.
 
 The same key must be retained across restarts and upgrades. A different value cannot decrypt credentials stored with the previous key.
 
+## TeamSpeak Query flood protection / error 524
+
+TS6 Manager automatically pauses WebQuery traffic and backs off SSH Query reconnects when TeamSpeak reports flood protection. The UI should show a temporary cooldown message and recover automatically after TeamSpeak accepts Query traffic again.
+
+If this happens repeatedly, verify the TeamSpeak Query allow-list. TeamSpeak 6 uses a **file path** for this setting:
+
+- command line: `--query-ip-allow-list <file>`
+- environment: `TSSERVER_QUERY_ALLOW_LIST=<file>`
+- `tsserver.yaml`: `query.ip-allow-list`
+- default filename: `query_ip_allowlist.txt`
+
+For the official TeamSpeak Docker image, persistent server data is normally mounted at `/var/tsserver`, so the default file will commonly be `/var/tsserver/query_ip_allowlist.txt` unless the setting points elsewhere.
+
+Compare the source IP shown in TeamSpeak's Query logs with the CIDRs loaded at startup. If TS6 Manager comes from a Docker network that is not covered by the allow-list, add the narrowest stable address/CIDR that covers the manager. Prefer a dedicated network/static container address and a `/32` entry when practical instead of exempting an unrelated shared Docker subnet.
+
+After changing the file, restart TeamSpeak and confirm its startup log reports the expected `query_ip_allowlist` entries.
+
 ## SSH features do not work
 
 Core WebQuery management can work while SSH-dependent features fail.
