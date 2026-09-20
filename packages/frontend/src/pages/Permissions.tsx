@@ -1,7 +1,9 @@
-import { useState, useMemo, useCallback, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from 'react-router-dom';
 import { permissionsApi } from '@/api/permissions.api';
 import { useServerStore } from '@/stores/server.store';
+import { useUiStore } from '@/stores/ui.store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,10 +11,11 @@ import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { cn } from '@/lib/utils';
 import {
   Lock, Search, ChevronRight, ChevronDown, Shield, Users, Hash, User, Save,
-  X, Check, Minus,
+  X, Check, Minus, Columns3, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -42,6 +45,15 @@ function getCategoryKey(permsid: string): string {
   return 'other';
 }
 
+function getSimplePermissionLabel(permission: PermDef): string {
+  const description = permission.permdesc.trim();
+  if (description.length >= 3 && description.toLowerCase() !== permission.permsid.toLowerCase()) {
+    return description;
+  }
+  const readable = permission.permsid.replace(/^[bi]_/, '').replace(/_/g, ' ').trim();
+  return readable ? readable.charAt(0).toUpperCase() + readable.slice(1) : permission.permsid;
+}
+
 type PermLayer = 'server-group' | 'channel-group' | 'channel' | 'client';
 
 interface PermDef {
@@ -65,6 +77,103 @@ interface PendingChange {
   action: 'set' | 'remove';
 }
 
+interface DraftOwner {
+  configId: number;
+  sid: number;
+  layer: PermLayer;
+  entityId: number;
+}
+
+interface PermissionDraft {
+  owner: DraftOwner;
+  changes: Map<string, PendingChange>;
+}
+
+interface PendingTransition {
+  description: string;
+  apply: () => void;
+}
+
+interface SaveSnapshot {
+  owner: DraftOwner;
+  mutations: PendingChange[];
+}
+
+class PermissionSaveError extends Error {
+  constructor(
+    readonly snapshot: SaveSnapshot,
+    readonly completed: PendingChange[],
+    readonly cause: unknown,
+  ) {
+    super('Permission save stopped after a sequential write failed');
+  }
+}
+
+const EMPTY_CHANGES = new Map<string, PendingChange>();
+
+function sameContext(left: DraftOwner, right: DraftOwner): boolean {
+  return left.configId === right.configId
+    && left.sid === right.sid
+    && left.layer === right.layer
+    && left.entityId === right.entityId;
+}
+
+function sameChange(left: PendingChange, right: PendingChange): boolean {
+  return left.permsid === right.permsid
+    && left.permvalue === right.permvalue
+    && left.permnegated === right.permnegated
+    && left.permskip === right.permskip
+    && left.action === right.action;
+}
+
+async function writePermissionChange(owner: DraftOwner, change: PendingChange) {
+  const setData = {
+    permsid: change.permsid,
+    permvalue: change.permvalue,
+    permnegated: change.permnegated,
+    permskip: change.permskip,
+  };
+  const removeData = { permsid: change.permsid };
+  if (change.action === 'set') {
+    switch (owner.layer) {
+      case 'server-group': return permissionsApi.addServerGroupPerm(owner.configId, owner.sid, owner.entityId, setData);
+      case 'channel-group': return permissionsApi.addChannelGroupPerm(owner.configId, owner.sid, owner.entityId, setData);
+      case 'channel': return permissionsApi.addChannelPerm(owner.configId, owner.sid, owner.entityId, setData);
+      case 'client': return permissionsApi.addClientPerm(owner.configId, owner.sid, owner.entityId, setData);
+    }
+  }
+  switch (owner.layer) {
+    case 'server-group': return permissionsApi.delServerGroupPerm(owner.configId, owner.sid, owner.entityId, removeData);
+    case 'channel-group': return permissionsApi.delChannelGroupPerm(owner.configId, owner.sid, owner.entityId, removeData);
+    case 'channel': return permissionsApi.delChannelPerm(owner.configId, owner.sid, owner.entityId, removeData);
+    case 'client': return permissionsApi.delClientPerm(owner.configId, owner.sid, owner.entityId, removeData);
+  }
+}
+
+function readEntityPermissions(owner: DraftOwner) {
+  switch (owner.layer) {
+    case 'server-group': return permissionsApi.serverGroupPerms(owner.configId, owner.sid, owner.entityId);
+    case 'channel-group': return permissionsApi.channelGroupPerms(owner.configId, owner.sid, owner.entityId);
+    case 'channel': return permissionsApi.channelPerms(owner.configId, owner.sid, owner.entityId);
+    case 'client': return permissionsApi.clientPerms(owner.configId, owner.sid, owner.entityId);
+  }
+}
+
+function normalizePermissionValues(values: unknown, permIdToName: Map<number, string>): Map<string, PermValue> {
+  const normalized = new Map<string, PermValue>();
+  if (!Array.isArray(values)) return normalized;
+  for (const value of values) {
+    const name = value.permsid || value.permname || permIdToName.get(Number(value.permid)) || `permid_${value.permid}`;
+    normalized.set(name, {
+      permsid: name,
+      permvalue: Number(value.permvalue) || 0,
+      permnegated: Number(value.permnegated) || 0,
+      permskip: Number(value.permskip) || 0,
+    });
+  }
+  return normalized;
+}
+
 const LAYERS: { key: PermLayer; label: string; icon: React.ElementType }[] = [
   { key: 'server-group', label: 'Server Groups', icon: Shield },
   { key: 'channel-group', label: 'Channel Groups', icon: Users },
@@ -72,15 +181,240 @@ const LAYERS: { key: PermLayer; label: string; icon: React.ElementType }[] = [
   { key: 'client', label: 'Client', icon: User },
 ];
 
+interface CompareColumn {
+  id: number;
+  name: string;
+  data: unknown;
+  isLoading: boolean;
+  isError: boolean;
+}
+
+function describePermissionValue(value: PermValue | undefined): string {
+  if (!value) return 'Unset';
+  const parts = [`Value ${value.permvalue}`];
+  if (value.permskip) parts.push('Skip');
+  if (value.permnegated) parts.push('Negate');
+  return parts.join(', ');
+}
+
+function PermissionCompare({
+  permissions,
+  columns,
+  labelMode,
+}: {
+  permissions: PermDef[];
+  columns: CompareColumn[];
+  labelMode: 'simple' | 'technical';
+}) {
+  const [search, setSearch] = useState('');
+  const [setOnAny, setSetOnAny] = useState(false);
+  const [differencesOnly, setDifferencesOnly] = useState(false);
+  const permIdToName = useMemo(() => new Map(permissions.map(permission => [permission.permid, permission.permsid])), [permissions]);
+  const normalizedColumns = useMemo(() => columns.map(column => ({
+    ...column,
+    permissions: normalizePermissionValues(column.data, permIdToName),
+  })), [columns, permIdToName]);
+  const filtered = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    return permissions.filter((permission) => {
+      if (needle && !permission.permsid.toLowerCase().includes(needle) && !permission.permdesc.toLowerCase().includes(needle)) return false;
+      const successful = normalizedColumns.filter(column => !column.isError && !column.isLoading);
+      const values = successful.map(column => column.permissions.get(permission.permsid));
+      if (setOnAny && !values.some(Boolean)) return false;
+      if (differencesOnly) {
+        const states = new Set(values.map(value => value
+          ? `${value.permvalue}:${value.permskip}:${value.permnegated}`
+          : 'unset'));
+        if (states.size < 2) return false;
+      }
+      return true;
+    });
+  }, [differencesOnly, normalizedColumns, permissions, search, setOnAny]);
+
+  return (
+    <div className="space-y-3 p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="flex min-h-9 items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={setOnAny} onChange={event => setSetOnAny(event.target.checked)} />
+          Set on any
+        </label>
+        <label className="flex min-h-9 items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={differencesOnly} onChange={event => setDifferencesOnly(event.target.checked)} />
+          Differences only
+        </label>
+        <div className="relative min-w-0 flex-1 sm:min-w-64">
+          <Search className="absolute left-2 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            value={search}
+            onChange={event => setSearch(event.target.value)}
+            placeholder="Search compared permissions..."
+            className="h-9 pl-7 text-xs"
+          />
+        </div>
+      </div>
+      <div data-testid="permissions-compare" className="max-w-full overflow-x-auto rounded-md border border-border">
+        <table className="w-full border-collapse text-left text-xs" style={{ minWidth: `${Math.max(720, 260 + columns.length * 180)}px` }}>
+          <thead className="bg-muted/40">
+            <tr>
+              <th scope="col" className="sticky left-0 z-10 w-64 border-b border-r border-border bg-muted px-3 py-2">Permission</th>
+              {normalizedColumns.map(column => (
+                <th key={column.id} scope="col" className="min-w-44 border-b border-border px-3 py-2 align-top">
+                  <span className="block font-semibold text-foreground">{column.name}</span>
+                  <span className="font-mono-data text-[10px] text-muted-foreground">#{column.id}</span>
+                  {column.isError && (
+                    <span className="mt-1 flex items-center gap-1 text-destructive" role="status">
+                      <AlertTriangle className="h-3 w-3" /> Failed to load
+                    </span>
+                  )}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map(permission => (
+              <tr key={permission.permsid} className="border-b border-border/60 last:border-b-0">
+                <th scope="row" className="sticky left-0 z-[1] border-r border-border bg-card px-3 py-2 font-normal">
+                  {labelMode === 'simple' ? (
+                    <>
+                      <span className="block font-medium text-foreground">{getSimplePermissionLabel(permission)}</span>
+                      <span className="block font-mono-data text-[10px] text-muted-foreground">{permission.permsid}</span>
+                    </>
+                  ) : (
+                    <span className="font-mono-data text-foreground">{permission.permsid}</span>
+                  )}
+                </th>
+                {normalizedColumns.map(column => {
+                  const value = column.permissions.get(permission.permsid);
+                  const description = column.isError ? 'Failed to load' : column.isLoading ? 'Loading' : describePermissionValue(value);
+                  return (
+                    <td key={column.id} aria-label={`${column.name}: ${description}`} className="px-3 py-2 align-top">
+                      {column.isError ? (
+                        <span className="font-medium text-destructive">Failed to load</span>
+                      ) : column.isLoading ? (
+                        <span className="text-muted-foreground">Loading…</span>
+                      ) : !value ? (
+                        <Badge variant="outline">Unset</Badge>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="font-mono-data font-medium">{value.permvalue}</span>
+                          {!!value.permskip && <Badge variant="secondary">Skip</Badge>}
+                          {!!value.permnegated && <Badge variant="destructive">Negate</Badge>}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {filtered.length === 0 && (
+          <p className="p-8 text-center text-sm text-muted-foreground">No permissions match the Compare filters</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Permissions() {
-  const { selectedConfigId: c, selectedSid: s } = useServerStore();
+  const { selectedConfigId: c, selectedSid: s, setServer } = useServerStore();
+  const { permissionLabelMode, setPermissionLabelMode } = useUiStore();
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const [layer, setLayer] = useState<PermLayer>('server-group');
   const [entityId, setEntityId] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
-  const [changes, setChanges] = useState<Map<string, PendingChange>>(new Map());
+  const [draft, setDraft] = useState<PermissionDraft | null>(null);
+  const [pendingTransition, setPendingTransition] = useState<PendingTransition | null>(null);
+  const [compareSelection, setCompareSelection] = useState<number[]>([]);
+  const [showCompare, setShowCompare] = useState(false);
+  const acceptedServerContext = useRef<{ configId: number; sid: number } | null>(null);
+  const saveLock = useRef(false);
+
+  const editorContext = useMemo<DraftOwner | null>(() => (
+    c && s && entityId ? { configId: c, sid: s, layer, entityId } : null
+  ), [c, s, layer, entityId]);
+  const changes = draft && editorContext && sameContext(draft.owner, editorContext)
+    ? draft.changes
+    : EMPTY_CHANGES;
+  const isDirty = !!draft?.changes.size;
+  const resetCompare = useCallback(() => {
+    setCompareSelection([]);
+    setShowCompare(false);
+  }, []);
+
+  useEffect(() => {
+    if (!c || !s) return;
+    const requested = { configId: c, sid: s };
+    const accepted = acceptedServerContext.current;
+    if (!accepted) {
+      acceptedServerContext.current = requested;
+      return;
+    }
+    if (accepted.configId === requested.configId && accepted.sid === requested.sid) return;
+
+    if (isDirty && draft) {
+      setServer(draft.owner.configId, draft.owner.sid);
+      setPendingTransition({
+        description: 'Discard the draft before switching the TeamSpeak connection or virtual server?',
+        apply: () => {
+          acceptedServerContext.current = requested;
+          setEntityId(null);
+          resetCompare();
+          setServer(requested.configId, requested.sid);
+        },
+      });
+      return;
+    }
+
+    acceptedServerContext.current = requested;
+    setEntityId(null);
+    resetCompare();
+  }, [c, s, draft, isDirty, resetCompare, setServer]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+
+    const protectInAppNavigation = (event: MouseEvent) => {
+      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest('a[href]');
+      if (!(anchor instanceof HTMLAnchorElement) || anchor.target || anchor.hasAttribute('download')) return;
+
+      const destination = new URL(anchor.href, window.location.href);
+      if (destination.origin !== window.location.origin) return;
+      const destinationPath = `${destination.pathname}${destination.search}${destination.hash}`;
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      if (destinationPath === currentPath) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      setPendingTransition({
+        description: 'Discard the draft before leaving Permissions?',
+        apply: () => navigate(destinationPath),
+      });
+    };
+
+    document.addEventListener('click', protectInAppNavigation, true);
+    return () => document.removeEventListener('click', protectInAppNavigation, true);
+  }, [isDirty, navigate]);
+
+  useEffect(() => {
+    if (!isDirty) return;
+
+    const protectUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', protectUnload);
+    return () => {
+      window.removeEventListener('beforeunload', protectUnload);
+    };
+  }, [isDirty]);
 
   // Fetch all permission definitions
   const { data: permDefs, isLoading: loadingDefs } = useQuery({
@@ -116,26 +450,15 @@ export default function Permissions() {
     enabled: !!c && !!s && layer === 'client',
   });
 
-  const [showModifiedOnly, setShowModifiedOnly] = useState(false);
+  const [showSetOnly, setShowSetOnly] = useState(false);
   const [clientSearch, setClientSearch] = useState('');
 
   // Fetch current entity permissions
   const { data: entityPerms, isLoading: loadingPerms } = useQuery({
     queryKey: ['entity-perms', c, s, layer, entityId],
-    queryFn: () => {
-      if (!c || !s || !entityId) return [];
-      switch (layer) {
-        case 'server-group': return permissionsApi.serverGroupPerms(c, s, entityId);
-        case 'channel-group': return permissionsApi.channelGroupPerms(c, s, entityId);
-        case 'channel': return permissionsApi.channelPerms(c, s, entityId);
-        case 'client': return permissionsApi.clientPerms(c, s, entityId);
-      }
-    },
+    queryFn: () => editorContext ? readEntityPermissions(editorContext) : [],
     enabled: !!c && !!s && !!entityId,
   });
-
-  // Reset entity when layer changes
-  useEffect(() => { setEntityId(null); setChanges(new Map()); }, [layer]);
 
   // Parse permission definitions into categorized structure
   // TS WebQuery returns { permid, permname, permdesc } — NOT permsid
@@ -157,22 +480,28 @@ export default function Permissions() {
     return map;
   }, [allPerms]);
 
+  const compareResults = useQueries({
+    queries: compareSelection.map((selectedEntityId) => ({
+      queryKey: ['entity-perms', c, s, layer, selectedEntityId],
+      queryFn: () => readEntityPermissions({
+        configId: c!,
+        sid: s!,
+        layer,
+        entityId: selectedEntityId,
+      }),
+      enabled: showCompare && compareSelection.length >= 2 && !!c && !!s,
+      staleTime: 30_000,
+      refetchOnWindowFocus: false,
+      refetchInterval: false as const,
+      retry: 1,
+    })),
+  });
+
   // Current perm values as map (keyed by permname/permsid)
-  const currentPerms = useMemo(() => {
-    const map = new Map<string, PermValue>();
-    if (!entityPerms || !Array.isArray(entityPerms)) return map;
-    for (const p of entityPerms) {
-      // Entity perms may have permsid, permname, or only numeric permid
-      const name = p.permsid || p.permname || permIdToName.get(Number(p.permid)) || `permid_${p.permid}`;
-      map.set(name, {
-        permsid: name,
-        permvalue: Number(p.permvalue) || 0,
-        permnegated: Number(p.permnegated) || 0,
-        permskip: Number(p.permskip) || 0,
-      });
-    }
-    return map;
-  }, [entityPerms, permIdToName]);
+  const currentPerms = useMemo(
+    () => normalizePermissionValues(entityPerms, permIdToName),
+    [entityPerms, permIdToName],
+  );
 
   // Categorize permissions
   const categories = useMemo(() => {
@@ -181,7 +510,7 @@ export default function Permissions() {
       ? allPerms.filter((p) => p.permsid.toLowerCase().includes(search.toLowerCase()) || p.permdesc.toLowerCase().includes(search.toLowerCase()))
       : allPerms;
 
-    if (showModifiedOnly) {
+    if (showSetOnly) {
       filtered = filtered.filter((p) => currentPerms.has(p.permsid) || changes.has(p.permsid));
     }
 
@@ -191,7 +520,7 @@ export default function Permissions() {
       catMap.get(cat)!.push(perm);
     }
     return catMap;
-  }, [allPerms, search, showModifiedOnly, currentPerms, changes]);
+  }, [allPerms, search, showSetOnly, currentPerms, changes]);
 
   const toggleCat = useCallback((cat: string) => {
     setExpandedCats((prev) => {
@@ -210,57 +539,123 @@ export default function Permissions() {
   }, [changes, currentPerms]);
 
   const setPermValue = useCallback((permsid: string, value: number, negated: number, skip: number) => {
-    setChanges((prev) => {
-      const next = new Map(prev);
+    if (!editorContext) return;
+    setDraft((prev) => {
+      const next = new Map(prev && sameContext(prev.owner, editorContext) ? prev.changes : EMPTY_CHANGES);
       next.set(permsid, { permsid, permvalue: value, permnegated: negated, permskip: skip, action: 'set' });
-      return next;
+      return { owner: editorContext, changes: next };
     });
-  }, []);
+  }, [editorContext]);
 
   const removePerm = useCallback((permsid: string) => {
-    setChanges((prev) => {
-      const next = new Map(prev);
+    if (!editorContext) return;
+    setDraft((prev) => {
+      const next = new Map(prev && sameContext(prev.owner, editorContext) ? prev.changes : EMPTY_CHANGES);
       if (currentPerms.has(permsid)) {
         next.set(permsid, { permsid, permvalue: 0, permnegated: 0, permskip: 0, action: 'remove' });
       } else {
         next.delete(permsid);
       }
-      return next;
+      return next.size > 0 ? { owner: editorContext, changes: next } : null;
     });
-  }, [currentPerms]);
+  }, [currentPerms, editorContext]);
+
+  const requestTransition = useCallback((description: string, apply: () => void) => {
+    if (isDirty) {
+      setPendingTransition({ description, apply });
+      return;
+    }
+    apply();
+  }, [isDirty]);
+
+  const changeLayer = useCallback((nextLayer: PermLayer) => {
+    if (nextLayer === layer) return;
+    requestTransition(`Discard the draft before switching to ${LAYERS.find((item) => item.key === nextLayer)?.label}?`, () => {
+      setLayer(nextLayer);
+      setEntityId(null);
+      resetCompare();
+    });
+  }, [layer, requestTransition, resetCompare]);
+
+  const changeEntity = useCallback((nextEntityId: number, name: string) => {
+    if (nextEntityId === entityId) return;
+    requestTransition(`Discard the draft before editing ${name}?`, () => setEntityId(nextEntityId));
+  }, [entityId, requestTransition]);
+
+  const toggleCompareEntity = useCallback((selectedEntityId: number) => {
+    setCompareSelection((current) => {
+      if (current.includes(selectedEntityId)) {
+        const next = current.filter(id => id !== selectedEntityId);
+        if (next.length < 2) setShowCompare(false);
+        return next;
+      }
+      if (current.length >= 4) {
+        toast.warning('Compare is limited to 4 entities');
+        return current;
+      }
+      return [...current, selectedEntityId];
+    });
+  }, []);
+
+  const clearCompletedChanges = useCallback((snapshot: SaveSnapshot, completed: PendingChange[]) => {
+    setDraft((current) => {
+      if (!current || !sameContext(current.owner, snapshot.owner)) return current;
+      const next = new Map(current.changes);
+      for (const saved of completed) {
+        const live = next.get(saved.permsid);
+        if (live && sameChange(live, saved)) next.delete(saved.permsid);
+      }
+      return next.size > 0 ? { owner: current.owner, changes: next } : null;
+    });
+  }, []);
+
+  const invalidateSavedContext = useCallback((owner: DraftOwner) => (
+    qc.invalidateQueries({ queryKey: ['entity-perms', owner.configId, owner.sid, owner.layer, owner.entityId] })
+  ), [qc]);
 
   const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!c || !s || !entityId) return;
-      const toSet = [...changes.values()].filter((ch) => ch.action === 'set');
-      const toRemove = [...changes.values()].filter((ch) => ch.action === 'remove');
-
-      for (const perm of toSet) {
-        const data = { permsid: perm.permsid, permvalue: perm.permvalue, permnegated: perm.permnegated, permskip: perm.permskip };
-        switch (layer) {
-          case 'server-group': await permissionsApi.addServerGroupPerm(c, s, entityId, data); break;
-          case 'channel-group': await permissionsApi.addChannelGroupPerm(c, s, entityId, data); break;
-          case 'channel': await permissionsApi.addChannelPerm(c, s, entityId, data); break;
-          case 'client': await permissionsApi.addClientPerm(c, s, entityId, data); break;
+    mutationFn: async (snapshot: SaveSnapshot) => {
+      const completed: PendingChange[] = [];
+      for (const mutation of snapshot.mutations) {
+        try {
+          await writePermissionChange(snapshot.owner, mutation);
+          completed.push(mutation);
+        } catch (error) {
+          throw new PermissionSaveError(snapshot, completed, error);
         }
       }
-      for (const perm of toRemove) {
-        const data = { permsid: perm.permsid };
-        switch (layer) {
-          case 'server-group': await permissionsApi.delServerGroupPerm(c, s, entityId, data); break;
-          case 'channel-group': await permissionsApi.delChannelGroupPerm(c, s, entityId, data); break;
-          case 'channel': await permissionsApi.delChannelPerm(c, s, entityId, data); break;
-          case 'client': await permissionsApi.delClientPerm(c, s, entityId, data); break;
-        }
+      return { snapshot, completed };
+    },
+    onSuccess: ({ snapshot, completed }) => {
+      clearCompletedChanges(snapshot, completed);
+      void invalidateSavedContext(snapshot.owner);
+      toast.success('Permissions saved to the original draft context');
+    },
+    onError: (error) => {
+      if (!(error instanceof PermissionSaveError)) {
+        toast.error('Permission save failed. The draft was retained.');
+        return;
+      }
+      clearCompletedChanges(error.snapshot, error.completed);
+      void invalidateSavedContext(error.snapshot.owner);
+      const remaining = error.snapshot.mutations.length - error.completed.length;
+      if (error.completed.length === 0) {
+        toast.error(`No permission changes were saved. ${remaining} ${remaining === 1 ? 'change remains' : 'changes remain'}.`);
+      } else {
+        toast.error(`${error.completed.length} of ${error.snapshot.mutations.length} permission changes saved. ${remaining} ${remaining === 1 ? 'change remains' : 'changes remain'}.`);
       }
     },
-    onSuccess: () => {
-      toast.success('Permissions saved');
-      setChanges(new Map());
-      qc.invalidateQueries({ queryKey: ['entity-perms', c, s, layer, entityId] });
-    },
-    onError: () => toast.error('Failed to save permissions'),
+    onSettled: () => { saveLock.current = false; },
   });
+
+  const saveDraft = useCallback(() => {
+    if (saveLock.current || !draft || draft.changes.size === 0) return;
+    saveLock.current = true;
+    saveMutation.mutate({
+      owner: { ...draft.owner },
+      mutations: [...draft.changes.values()].map((change) => ({ ...change })),
+    });
+  }, [draft, saveMutation]);
 
   if (!c || !s) return <EmptyState icon={Lock} title="No server selected" />;
   if (loadingDefs) return <PageLoader />;
@@ -302,18 +697,44 @@ export default function Permissions() {
       default: return [];
     }
   })();
+  const compareColumns: CompareColumn[] = compareSelection.map((selectedEntityId, index) => ({
+    id: selectedEntityId,
+    name: entities.find(entity => entity.id === selectedEntityId)?.name || `Entity ${selectedEntityId}`,
+    data: compareResults[index]?.data,
+    isLoading: compareResults[index]?.isLoading ?? false,
+    isError: compareResults[index]?.isError ?? false,
+  }));
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Permissions</h1>
-        {changes.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-xl font-semibold">Permissions</h1>
+          <Button
+            variant={showCompare ? 'default' : 'outline'}
+            size="sm"
+            className="min-h-10 sm:min-h-8"
+            disabled={compareSelection.length < 2}
+            aria-label={`Compare ${compareSelection.length} selected entities`}
+            onClick={() => setShowCompare(true)}
+          >
+            <Columns3 className="mr-1 h-3.5 w-3.5" /> Compare ({compareSelection.length})
+          </Button>
+          {showCompare && (
+            <Button variant="ghost" size="sm" className="min-h-10 sm:min-h-8" onClick={() => setShowCompare(false)}>
+              Return to editor
+            </Button>
+          )}
+        </div>
+        {isDirty && (
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="secondary" className="font-mono-data">{changes.size} change(s)</Badge>
-            <Button variant="outline" size="sm" onClick={() => setChanges(new Map())}>
+            <Badge variant="secondary" className="font-mono-data" role="status">
+              {changes.size} unsaved {changes.size === 1 ? 'change' : 'changes'}
+            </Badge>
+            <Button variant="outline" size="sm" className="min-h-10 sm:min-h-8" onClick={() => setDraft(null)}>
               <X className="h-3.5 w-3.5 mr-1" /> Discard
             </Button>
-            <Button size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending}>
+            <Button size="sm" className="min-h-10 sm:min-h-8" onClick={saveDraft} disabled={saveMutation.isPending}>
               <Save className="h-3.5 w-3.5 mr-1" /> Save
             </Button>
           </div>
@@ -325,9 +746,10 @@ export default function Permissions() {
         {LAYERS.map(({ key, label, icon: Icon }) => (
           <button
             key={key}
-            onClick={() => setLayer(key)}
+            onClick={() => changeLayer(key)}
+            aria-pressed={layer === key}
             className={cn(
-              'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+              'flex min-h-10 shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors md:min-h-8',
               layer === key
                 ? 'bg-background text-foreground shadow-sm'
                 : 'text-muted-foreground hover:text-foreground',
@@ -359,19 +781,40 @@ export default function Permissions() {
             <ScrollArea className="h-[min(20rem,40dvh)] lg:h-[500px]">
               <div className="p-2 space-y-0.5">
                 {entities.map((ent: any) => (
-                  <button
+                  <div
                     key={ent.id}
-                    onClick={() => { setEntityId(ent.id); setChanges(new Map()); }}
                     className={cn(
-                      'w-full text-left px-2.5 py-1.5 rounded-md text-sm transition-colors flex items-center justify-between',
-                      entityId === ent.id
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-foreground hover:bg-muted/50',
+                      'flex min-w-0 items-stretch gap-1 rounded-md border p-0.5 transition-colors',
+                      entityId === ent.id ? 'border-primary/50 bg-primary/10' : 'border-transparent hover:bg-muted/50',
                     )}
                   >
-                    <span className="min-w-0 flex-1 truncate">{ent.name}</span>
-                    <span className="ml-1 shrink-0 text-[10px] font-mono-data text-muted-foreground">#{ent.id}</span>
-                  </button>
+                    <button
+                      onClick={() => changeEntity(ent.id, ent.name)}
+                      aria-current={entityId === ent.id ? 'true' : undefined}
+                      className={cn(
+                        'flex min-h-10 min-w-0 flex-1 items-center gap-1 rounded px-2 text-left text-sm',
+                        entityId === ent.id ? 'text-primary' : 'text-foreground',
+                      )}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{ent.name}</span>
+                      {entityId === ent.id && <Badge variant="secondary" className="h-5 text-[9px]">Editing</Badge>}
+                      <span className="shrink-0 font-mono-data text-[10px] text-muted-foreground">#{ent.id}</span>
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Select ${ent.name} for Compare`}
+                      aria-pressed={compareSelection.includes(ent.id)}
+                      onClick={() => toggleCompareEntity(ent.id)}
+                      className={cn(
+                        'min-h-10 shrink-0 rounded border px-2 text-[10px] font-medium',
+                        compareSelection.includes(ent.id)
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border text-muted-foreground hover:text-foreground',
+                      )}
+                    >
+                      Compare
+                    </button>
+                  </div>
                 ))}
                 {entities.length === 0 && (
                   <p className="text-xs text-muted-foreground text-center py-4">No entities found</p>
@@ -386,34 +829,68 @@ export default function Permissions() {
           <CardHeader className="pb-2">
             <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
               <CardTitle className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                {entityId ? `Permissions` : 'Select an entity'}
+                {showCompare ? 'Permissions Compare — read only' : entityId ? 'Permissions' : 'Select an entity'}
               </CardTitle>
-              {entityId && (
+              {(entityId || showCompare) && (
                 <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
-                  <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      checked={showModifiedOnly}
-                      onChange={(e) => setShowModifiedOnly(e.target.checked)}
-                      className="rounded border-border"
-                    />
-                    Modified only
-                  </label>
-                  <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
-                    <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
-                    <Input
-                      placeholder="Search permissions..."
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      className="pl-7 h-8 text-xs"
-                    />
+                  <div className="flex rounded-md border border-border p-0.5" aria-label="Permission label style">
+                    <button
+                      type="button"
+                      aria-label="Simple labels"
+                      aria-pressed={permissionLabelMode === 'simple'}
+                      onClick={() => setPermissionLabelMode('simple')}
+                      className={cn(
+                        'min-h-10 min-w-10 rounded px-2 text-[11px] font-medium sm:min-h-8',
+                        permissionLabelMode === 'simple' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
+                      )}
+                    >
+                      Simple
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Technical labels"
+                      aria-pressed={permissionLabelMode === 'technical'}
+                      onClick={() => setPermissionLabelMode('technical')}
+                      className={cn(
+                        'min-h-10 min-w-10 rounded px-2 text-[11px] font-medium sm:min-h-8',
+                        permissionLabelMode === 'technical' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground',
+                      )}
+                    >
+                      Technical
+                    </button>
                   </div>
+                  {!showCompare && (
+                    <>
+                      <label className="flex min-h-10 items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none sm:min-h-8">
+                        <input
+                          type="checkbox"
+                          checked={showSetOnly}
+                          onChange={(e) => setShowSetOnly(e.target.checked)}
+                          title="Show currently set permissions and staged changes"
+                          className="rounded border-border"
+                        />
+                        Set only
+                      </label>
+                      <div className="relative min-w-0 flex-1 sm:w-64 sm:flex-none">
+                        <Search className="absolute left-2 top-2 h-3.5 w-3.5 text-muted-foreground" />
+                        <Input
+                          placeholder="Search permissions..."
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          className="pl-7 h-8 text-xs"
+                        />
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </div>
           </CardHeader>
           <CardContent className="p-0">
-            <ScrollArea className="h-[min(500px,60dvh)] min-h-72">
+            {showCompare ? (
+              <PermissionCompare permissions={allPerms} columns={compareColumns} labelMode={permissionLabelMode} />
+            ) : (
+              <ScrollArea className="h-[min(500px,60dvh)] min-h-72">
               {!entityId ? (
                 <div className="flex h-[min(400px,50dvh)] min-h-64 items-center justify-center">
                   <p className="text-sm text-muted-foreground">Select an entity from the left panel</p>
@@ -428,6 +905,7 @@ export default function Permissions() {
                     <div key={catKey} className="mb-1">
                       <button
                         onClick={() => toggleCat(catKey)}
+                        aria-expanded={expandedCats.has(catKey)}
                         className="flex items-center gap-1.5 w-full px-2 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors rounded"
                       >
                         {expandedCats.has(catKey) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
@@ -459,18 +937,27 @@ export default function Permissions() {
                                   isSet ? 'text-foreground' : 'text-muted-foreground',
                                 )}
                               >
-                                <div className="col-span-5 truncate" title={perm.permdesc || perm.permsid}>
-                                  <span className="font-mono-data text-[11px]">{perm.permsid}</span>
+                                <div className="col-span-5 min-w-0" title={`${getSimplePermissionLabel(perm)} (${perm.permsid})`}>
+                                  {permissionLabelMode === 'simple' ? (
+                                    <>
+                                      <span className="block truncate text-[11px] font-medium">{getSimplePermissionLabel(perm)}</span>
+                                      <span className="block truncate font-mono-data text-[9px] text-muted-foreground">{perm.permsid}</span>
+                                    </>
+                                  ) : (
+                                    <span className="block truncate font-mono-data text-[11px]">{perm.permsid}</span>
+                                  )}
                                 </div>
                                 <div className="col-span-2 flex justify-center">
                                   {isBoolean ? (
                                     <button
+                                      aria-label={`${getSimplePermissionLabel(perm)} permission`}
+                                      aria-pressed={isSet}
                                       onClick={() => {
                                         if (isSet) removePerm(perm.permsid);
                                         else setPermValue(perm.permsid, 1, 0, 0);
                                       }}
                                       className={cn(
-                                        'flex h-8 w-8 items-center justify-center rounded border transition-colors sm:h-5 sm:w-5',
+                                        'flex h-10 w-10 items-center justify-center rounded border transition-colors sm:h-7 sm:w-7',
                                         isSet
                                           ? 'bg-primary border-primary text-primary-foreground'
                                           : 'border-border hover:border-primary/50',
@@ -481,6 +968,7 @@ export default function Permissions() {
                                   ) : (
                                     <Input
                                       type="number"
+                                      aria-label={`${getSimplePermissionLabel(perm)} value`}
                                       className="h-6 w-20 text-xs text-center font-mono-data px-1"
                                       value={effective?.permvalue ?? ''}
                                       placeholder="—"
@@ -498,15 +986,18 @@ export default function Permissions() {
                                 <div className="col-span-1 flex justify-center">
                                   {!isBoolean && (
                                     <button
+                                      aria-label={`${getSimplePermissionLabel(perm)} Skip`}
+                                      aria-pressed={!!(isSet && effective?.permskip)}
+                                      disabled={!isSet}
                                       onClick={() => {
                                         if (!isSet) return;
                                         const newSkip = (effective?.permskip || 0) ? 0 : 1;
                                         setPermValue(perm.permsid, effective?.permvalue || 0, effective?.permnegated || 0, newSkip);
                                       }}
                                       className={cn(
-                                        'flex h-8 w-8 items-center justify-center rounded border text-[9px] transition-colors sm:h-4 sm:w-4',
+                                        'flex h-10 w-10 items-center justify-center rounded border text-[9px] transition-colors sm:h-7 sm:w-7',
                                         isSet && effective?.permskip
-                                          ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                                          ? 'border-warning bg-warning/20 text-warning'
                                           : 'border-border/50',
                                       )}
                                       title="Skip"
@@ -518,13 +1009,16 @@ export default function Permissions() {
                                 <div className="col-span-1 flex justify-center">
                                   {!isBoolean && (
                                     <button
+                                      aria-label={`${getSimplePermissionLabel(perm)} Negate`}
+                                      aria-pressed={!!(isSet && effective?.permnegated)}
+                                      disabled={!isSet}
                                       onClick={() => {
                                         if (!isSet) return;
                                         const newNeg = (effective?.permnegated || 0) ? 0 : 1;
                                         setPermValue(perm.permsid, effective?.permvalue || 0, newNeg, effective?.permskip || 0);
                                       }}
                                       className={cn(
-                                        'flex h-8 w-8 items-center justify-center rounded border text-[9px] transition-colors sm:h-4 sm:w-4',
+                                        'flex h-10 w-10 items-center justify-center rounded border text-[9px] transition-colors sm:h-7 sm:w-7',
                                         isSet && effective?.permnegated
                                           ? 'bg-destructive/20 border-destructive text-destructive'
                                           : 'border-border/50',
@@ -539,14 +1033,15 @@ export default function Permissions() {
                                   {isSet && (
                                     <button
                                       onClick={() => removePerm(perm.permsid)}
-                                      className="p-0.5 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                                      aria-label={`Remove ${getSimplePermissionLabel(perm)}`}
+                                      className="flex h-10 w-10 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive sm:h-7 sm:w-7"
                                       title="Remove permission"
                                     >
                                       <Minus className="h-3 w-3" />
                                     </button>
                                   )}
                                   {isChanged && (
-                                    <span className="text-[9px] text-primary font-mono-data">modified</span>
+                                    <span className="text-[9px] text-primary font-mono-data">Staged</span>
                                   )}
                                 </div>
                               </div>
@@ -563,10 +1058,28 @@ export default function Permissions() {
                   )}
                 </div>
               )}
-            </ScrollArea>
+              </ScrollArea>
+            )}
           </CardContent>
         </Card>
       </div>
+      <ConfirmDialog
+        open={!!pendingTransition}
+        onOpenChange={(open) => {
+          if (!open) setPendingTransition(null);
+        }}
+        title="Unsaved permission changes"
+        description={pendingTransition?.description || 'Discard this permission draft?'}
+        cancelLabel="Stay"
+        confirmLabel="Discard & continue"
+        destructive
+        onConfirm={() => {
+          const transition = pendingTransition;
+          setDraft(null);
+          setPendingTransition(null);
+          transition?.apply();
+        }}
+      />
     </div>
   );
 }

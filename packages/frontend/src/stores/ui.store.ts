@@ -7,6 +7,7 @@ export const SIDEBAR_SECTION_IDS = ['overview', 'management', 'security', 'conte
 
 export type BaseTheme = (typeof BASE_THEMES)[number];
 export type Accent = (typeof ACCENTS)[number];
+export type PermissionLabelMode = 'simple' | 'technical';
 export type SidebarSectionId = (typeof SIDEBAR_SECTION_IDS)[number];
 export type SidebarSections = Record<SidebarSectionId, boolean>;
 
@@ -27,6 +28,10 @@ function isBaseTheme(value: unknown): value is BaseTheme {
 
 function isAccent(value: unknown): value is Accent {
   return typeof value === 'string' && ACCENTS.includes(value as Accent);
+}
+
+function isPermissionLabelMode(value: unknown): value is PermissionLabelMode {
+  return value === 'simple' || value === 'technical';
 }
 
 function migrateSidebarSections(value: unknown): SidebarSections {
@@ -58,6 +63,7 @@ function migrateUiState(persisted: unknown) {
     sidebarSections: migrateSidebarSections(state.sidebarSections),
     baseTheme: isBaseTheme(state.baseTheme) ? state.baseTheme : legacyTheme ?? DEFAULT_BASE_THEME,
     accent: isAccent(state.accent) ? state.accent : DEFAULT_ACCENT,
+    permissionLabelMode: isPermissionLabelMode(state.permissionLabelMode) ? state.permissionLabelMode : 'simple',
   };
 }
 
@@ -66,12 +72,14 @@ interface UiStore {
   sidebarSections: SidebarSections;
   baseTheme: BaseTheme;
   accent: Accent;
+  permissionLabelMode: PermissionLabelMode;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebarSection: (sectionId: SidebarSectionId) => void;
   toggleTheme: () => void;
   setBaseTheme: (theme: BaseTheme) => void;
   setAccent: (accent: Accent) => void;
+  setPermissionLabelMode: (mode: PermissionLabelMode) => void;
 }
 
 export const useUiStore = create<UiStore>()(
@@ -81,6 +89,7 @@ export const useUiStore = create<UiStore>()(
       sidebarSections: { ...DEFAULT_SIDEBAR_SECTIONS },
       baseTheme: DEFAULT_BASE_THEME,
       accent: DEFAULT_ACCENT,
+      permissionLabelMode: 'simple',
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       toggleSidebarSection: (sectionId) => set(state => ({
@@ -102,17 +111,19 @@ export const useUiStore = create<UiStore>()(
         set({ accent });
         applyAppearance(get().baseTheme, accent);
       },
+      setPermissionLabelMode: (permissionLabelMode) => set({ permissionLabelMode }),
     }),
     {
       name: 'ts6-ui',
-      version: 2,
+      version: 3,
       migrate: migrateUiState,
       merge: (persisted, current) => ({ ...current, ...migrateUiState(persisted) }),
-      partialize: ({ sidebarCollapsed, sidebarSections, baseTheme, accent }) => ({
+      partialize: ({ sidebarCollapsed, sidebarSections, baseTheme, accent, permissionLabelMode }) => ({
         sidebarCollapsed,
         sidebarSections,
         baseTheme,
         accent,
+        permissionLabelMode,
       }),
       onRehydrateStorage: () => (state) => {
         applyAppearance(state?.baseTheme ?? DEFAULT_BASE_THEME, state?.accent ?? DEFAULT_ACCENT);
