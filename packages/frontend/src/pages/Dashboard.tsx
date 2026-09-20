@@ -1,55 +1,92 @@
+import { useEffect, useMemo, useState, type ElementType, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  Clock,
+  Gauge,
+  Hash,
+  LayoutGrid,
+  Radio,
+  Server,
+  Wifi,
+  X,
+} from 'lucide-react';
+import { Area, AreaChart, ResponsiveContainer, Tooltip as ReTooltip, XAxis, YAxis } from 'recharts';
 import { useDashboard } from '@/hooks/use-dashboard';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { NUDGE_DISMISS_STORAGE_KEY } from '@/content/connection-setup';
-import { Link } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { DataPanel } from '@/components/shared/DataPanel';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
 import { formatBytes, formatUptime } from '@/lib/utils';
+import { formatLocalTime } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
-import { Users, Activity, Clock, Hash, ArrowDownToLine, ArrowUpFromLine, Wifi, Server, LayoutGrid, X } from 'lucide-react';
-import { AreaChart, Area, XAxis, YAxis, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
-import { useState, useEffect } from 'react';
 
-interface StatsCardProps {
-  icon: React.ElementType;
-  label: string;
-  value: string | number;
-  sub?: string;
-  accentColor?: string;
+interface DashboardData {
+  serverName: string;
+  platform: string;
+  version: string;
+  onlineUsers: number;
+  maxClients: number;
+  uptime: number;
+  channelCount: number;
+  bandwidth: { incoming: number; outgoing: number };
+  packetloss: number;
+  ping: number;
 }
 
-function StatsCard({ icon: Icon, label, value, sub, accentColor = 'text-primary' }: StatsCardProps) {
+interface BandwidthSample {
+  context: string;
+  time: string;
+  incoming: number;
+  outgoing: number;
+}
+
+const chartColours = {
+  incoming: 'hsl(var(--chart-1))',
+  outgoing: 'hsl(var(--chart-3))',
+  muted: 'hsl(var(--muted-foreground))',
+  popover: 'hsl(var(--popover))',
+  popoverForeground: 'hsl(var(--popover-foreground))',
+  border: 'hsl(var(--border))',
+};
+
+function Metric({ label, value, icon: Icon }: { label: string; value: string | number; icon: ElementType }) {
   return (
-    <Card className="relative overflow-hidden">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{label}</p>
-            <p className={`text-2xl font-bold font-mono-data ${accentColor}`}>{value}</p>
-            {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-          </div>
-          <div className="rounded-lg bg-muted p-2.5">
-            <Icon className={`h-5 w-5 ${accentColor}`} />
-          </div>
-        </div>
-      </CardContent>
-      <div className={`absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-transparent ${accentColor === 'text-primary' ? 'via-primary/50' : accentColor === 'text-emerald-400' ? 'via-emerald-500/50' : accentColor === 'text-amber-400' ? 'via-amber-500/50' : 'via-violet-500/50'} to-transparent`} />
-    </Card>
+    <div className="min-w-0 rounded-lg border border-border/70 bg-muted/30 p-3">
+      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+        <Icon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
+        <span>{label}</span>
+      </div>
+      <p className="break-words font-mono-data text-lg font-semibold text-foreground">{value}</p>
+    </div>
+  );
+}
+
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="grid min-w-0 gap-1 border-b border-border/70 py-3 last:border-0 sm:grid-cols-[minmax(7rem,0.4fr)_minmax(0,1fr)] sm:gap-4">
+      <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+      <dd className="min-w-0 break-words [overflow-wrap:anywhere] font-mono-data text-sm text-foreground sm:text-right">{children}</dd>
+    </div>
   );
 }
 
 export default function Dashboard() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const { data: servers } = useServers();
-  const { data, isLoading, error, refetch, isFetching } = useDashboard();
-  const isAdmin = useAuthStore((s) => s.isAdmin());
-  const [bandwidthHistory, setBandwidthHistory] = useState<any[]>([]);
+  const query = useDashboard();
+  const data = query.data as DashboardData | undefined;
+  const isAdmin = useAuthStore((state) => state.isAdmin());
+  const [bandwidthHistory, setBandwidthHistory] = useState<BandwidthSample[]>([]);
   const [showWidgets, setShowWidgets] = useState(false);
   const [nudgeDismissed, setNudgeDismissed] = useState(() => {
     try {
@@ -59,34 +96,39 @@ export default function Dashboard() {
     }
   });
 
+  const context = `${selectedConfigId ?? 'none'}:${selectedSid ?? 'none'}`;
+  const visibleHistory = useMemo(
+    () => bandwidthHistory.filter((sample) => sample.context === context),
+    [bandwidthHistory, context],
+  );
   const hasNoConnections = isAdmin && Array.isArray(servers) && servers.length === 0;
   const showConnectionNudge = hasNoConnections && !nudgeDismissed;
+
+  useEffect(() => {
+    setBandwidthHistory([]);
+  }, [context]);
+
+  useEffect(() => {
+    if (!data) return;
+    setBandwidthHistory((previous) => [
+      ...previous.filter((sample) => sample.context === context),
+      {
+        context,
+        time: formatLocalTime(Date.now()),
+        incoming: data.bandwidth.incoming,
+        outgoing: data.bandwidth.outgoing,
+      },
+    ].slice(-30));
+  }, [context, data]);
 
   const dismissNudge = () => {
     setNudgeDismissed(true);
     try {
       localStorage.setItem(NUDGE_DISMISS_STORAGE_KEY, '1');
     } catch {
-      // ignore
+      // Browser privacy modes may reject local storage; dismissal still works for this session.
     }
   };
-
-  // Build bandwidth history from periodic data
-  useEffect(() => {
-    if (data) {
-      setBandwidthHistory((prev) => {
-        const next = [
-          ...prev,
-          {
-            time: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-            in: data.bandwidth.incoming,
-            out: data.bandwidth.outgoing,
-          },
-        ];
-        return next.slice(-30); // Keep last 30 data points
-      });
-    }
-  }, [data]);
 
   if (!selectedConfigId || !selectedSid) {
     return (
@@ -96,7 +138,7 @@ export default function Dashboard() {
             <CardContent className="flex flex-col items-start gap-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="text-sm">
                 <p className="font-medium">Connect your TeamSpeak server to get started</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
+                <p className="mt-0.5 text-xs text-muted-foreground">
                   Add a connection under Settings to manage channels, clients, bots, and more.
                 </p>
               </div>
@@ -114,11 +156,9 @@ export default function Dashboard() {
         <EmptyState
           icon={Server}
           title={hasNoConnections ? 'No server connection configured' : 'No server selected'}
-          description={
-            hasNoConnections
-              ? 'Use the setup wizard in Settings → Connections to add your TeamSpeak server.'
-              : 'Select a server connection from the header to view the dashboard.'
-          }
+          description={hasNoConnections
+            ? 'Use the setup wizard in Settings → Connections to add your TeamSpeak server.'
+            : 'Select a server connection from the header to view the dashboard.'}
         >
           {hasNoConnections && (
             <Button size="sm" asChild>
@@ -130,184 +170,166 @@ export default function Dashboard() {
     );
   }
 
-  if (isLoading) return <PageLoader />;
-  if (error || !data) {
-    const detail = apiErrorMessage(
-      error,
-      'Could not connect to the TeamSpeak server. Check your connection settings.',
-    );
+  if (query.isLoading && !data) return <PageLoader />;
+
+  if (!data) {
+    const detail = apiErrorMessage(query.error, 'Could not connect to the TeamSpeak server. Check your connection settings.');
     return (
       <div className="space-y-4">
-        <EmptyState
-          icon={Wifi}
-          title="Connection failed"
-          description={detail}
-        />
+        <EmptyState icon={Wifi} title="Connection failed" description={detail} />
         <div className="flex justify-center">
-          <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? 'Retrying…' : 'Retry connection'}
+          <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
+            {query.isFetching ? 'Retrying…' : 'Retry connection'}
           </Button>
         </div>
       </div>
     );
   }
 
+  const utilisation = data.maxClients > 0
+    ? Math.min(Math.max((data.onlineUsers / data.maxClients) * 100, 0), 100)
+    : 0;
+  const roundedUtilisation = Math.round(utilisation);
+  const availableSlots = Math.max(data.maxClients - data.onlineUsers, 0);
+  const backgroundError = query.error
+    ? apiErrorMessage(query.error, 'Live data refresh failed. The last successful snapshot is still displayed.')
+    : null;
+
   return (
-    <div className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="min-w-0 space-y-5">
+      <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <h1 className="break-words text-xl font-semibold">{data.serverName}</h1>
-          <div className="mt-1 flex flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 className="min-w-0 break-words [overflow-wrap:anywhere] text-xl font-semibold">{data.serverName}</h1>
             <Badge variant="success" className="font-mono-data text-[10px]">ONLINE</Badge>
-            <span className="break-all text-xs text-muted-foreground font-mono-data">{data.version} / {data.platform}</span>
           </div>
+          <p className="mt-1 text-sm text-muted-foreground">Live TeamSpeak server overview</p>
         </div>
-        <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
+        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
           {isAdmin && (
             <Button size="sm" variant="outline" onClick={() => setShowWidgets(true)}>
-              <LayoutGrid className="h-3.5 w-3.5 mr-1.5" /> Widgets
+              <LayoutGrid className="mr-1.5 h-3.5 w-3.5" /> Widgets
             </Button>
           )}
-          <div className="text-right">
-            <p className="text-[10px] text-muted-foreground font-mono-data uppercase tracking-widest">Live Monitoring</p>
-            <div className="flex items-center gap-1 justify-end mt-0.5">
-              <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 pulse-dot" />
-              <span className="text-[10px] text-emerald-400 font-mono-data">ACTIVE</span>
-            </div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+            <span className="h-1.5 w-1.5 rounded-full bg-success pulse-dot" aria-hidden="true" />
+            {query.isFetching ? 'Refreshing live data…' : 'Live monitoring active'}
           </div>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatsCard
-          icon={Users}
-          label="Online Users"
-          value={data.onlineUsers}
-          sub={`of ${data.maxClients} slots`}
-          accentColor="text-primary"
-        />
-        <StatsCard
-          icon={Hash}
-          label="Channels"
-          value={data.channelCount}
-          accentColor="text-violet-400"
-        />
-        <StatsCard
-          icon={Clock}
-          label="Uptime"
-          value={formatUptime(data.uptime)}
-          accentColor="text-emerald-400"
-        />
-        <StatsCard
-          icon={Activity}
-          label="Ping"
-          value={`${parseFloat(String(data.ping || 0)).toFixed(1)}ms`}
-          sub={`Loss: ${(parseFloat(String(data.packetloss || 0)) * 100).toFixed(2)}%`}
-          accentColor="text-amber-400"
-        />
-      </div>
+      {backgroundError && (
+        <div role="status" className="flex min-w-0 flex-col gap-3 rounded-lg border border-warning/35 bg-warning/10 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
+            <p className="min-w-0 break-words text-foreground">{backgroundError}</p>
+          </div>
+          <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching} className="shrink-0">
+            {query.isFetching ? 'Retrying…' : 'Retry refresh'}
+          </Button>
+        </div>
+      )}
 
-      {/* Bandwidth + Detail panels */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Bandwidth Chart */}
-        <Card className="lg:col-span-2">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-              <Activity className="h-4 w-4 text-primary" />
-              Bandwidth
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[200px]">
-              {bandwidthHistory.length > 1 ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={bandwidthHistory}>
-                    <defs>
-                      <linearGradient id="inGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="hsl(186, 72%, 42%)" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="hsl(186, 72%, 42%)" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="outGrad" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="hsl(280, 55%, 60%)" stopOpacity={0.3} />
-                        <stop offset="100%" stopColor="hsl(280, 55%, 60%)" stopOpacity={0} />
-                      </linearGradient>
-                    </defs>
-                    <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'hsl(215, 16%, 50%)' }} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fontSize: 10, fill: 'hsl(215, 16%, 50%)' }} axisLine={false} tickLine={false} tickFormatter={(v) => formatBytes(v)} width={60} />
-                    <ReTooltip
-                      contentStyle={{ background: 'hsl(218, 28%, 10%)', border: '1px solid hsl(215, 22%, 14%)', borderRadius: '6px', fontSize: '12px' }}
-                      labelStyle={{ color: 'hsl(213, 20%, 85%)' }}
-                      formatter={(value: number, name: string) => [formatBytes(value) + '/s', name === 'in' ? 'Download' : 'Upload']}
-                    />
-                    <Area type="monotone" dataKey="in" stroke="hsl(186, 72%, 42%)" fill="url(#inGrad)" strokeWidth={2} />
-                    <Area type="monotone" dataKey="out" stroke="hsl(280, 55%, 60%)" fill="url(#outGrad)" strokeWidth={2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-full text-sm text-muted-foreground font-mono-data">
-                  Collecting data...
-                </div>
-              )}
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-x-6 gap-y-2">
-              <div className="flex items-center gap-2 text-xs">
-                <ArrowDownToLine className="h-3.5 w-3.5 text-primary" />
-                <span className="text-muted-foreground">In:</span>
-                <span className="font-mono-data text-primary">{formatBytes(data.bandwidth.incoming)}/s</span>
+      <DataPanel
+        title="Server Status"
+        description="Availability, utilisation, and connection health"
+        status={<Badge variant="success">Online</Badge>}
+      >
+        <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+          <div className="min-w-0 rounded-lg border border-primary/20 bg-primary/5 p-4 sm:p-5">
+            <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Online users</p>
+                <p className="mt-1 font-mono-data text-3xl font-bold text-primary">{data.onlineUsers} / {data.maxClients}</p>
               </div>
-              <div className="flex items-center gap-2 text-xs">
-                <ArrowUpFromLine className="h-3.5 w-3.5 text-violet-400" />
-                <span className="text-muted-foreground">Out:</span>
-                <span className="font-mono-data text-violet-400">{formatBytes(data.bandwidth.outgoing)}/s</span>
-              </div>
+              <p className="font-mono-data text-sm text-muted-foreground">{roundedUtilisation}% utilised</p>
             </div>
-          </CardContent>
-        </Card>
+            <div
+              role="progressbar"
+              aria-label="User slot utilisation"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={roundedUtilisation}
+              className="mt-4 h-2.5 overflow-hidden rounded-full bg-muted"
+            >
+              <div
+                className="h-full rounded-full bg-primary transition-[width] duration-500"
+                style={{ width: `${utilisation}%` }}
+              />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              {availableSlots} {availableSlots === 1 ? 'slot' : 'slots'} available
+            </p>
+          </div>
 
-        {/* Capacity */}
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Server Capacity</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between text-xs mb-1.5">
-                <span className="text-muted-foreground">User Slots</span>
-                <span className="font-mono-data">{data.onlineUsers} / {data.maxClients}</span>
-              </div>
-              <div className="h-2 rounded-full bg-muted overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-gradient-to-r from-primary to-primary/60 transition-all duration-500"
-                  style={{ width: `${Math.min((data.onlineUsers / data.maxClients) * 100, 100)}%` }}
-                />
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1 font-mono-data">
-                {((data.onlineUsers / data.maxClients) * 100).toFixed(1)}% utilized
-              </p>
-            </div>
+          <div className="grid min-w-0 grid-cols-2 gap-3">
+            <Metric icon={Hash} label="Channels" value={data.channelCount} />
+            <Metric icon={Clock} label="Uptime" value={formatUptime(data.uptime)} />
+            <Metric icon={Gauge} label="Ping" value={`${Number(data.ping || 0).toFixed(1)} ms`} />
+            <Metric icon={Radio} label="Packet loss" value={`${(Number(data.packetloss || 0) * 100).toFixed(2)}%`} />
+          </div>
+        </div>
+      </DataPanel>
 
-            <div className="pt-3 border-t border-border space-y-3">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Server Version</span>
-                <span className="max-w-[60%] break-all text-right font-mono-data text-foreground">{data.version?.split(' ')[0]}</span>
+      <div className="grid min-w-0 gap-4 lg:grid-cols-3">
+        <DataPanel
+          title="Traffic"
+          description="Incoming and outgoing bandwidth over the latest local samples"
+          className="lg:col-span-2"
+        >
+          <div className="h-[240px] min-w-0">
+            {visibleHistory.length > 1 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={visibleHistory} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="dashboard-incoming" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={chartColours.incoming} stopOpacity={0.3} />
+                      <stop offset="100%" stopColor={chartColours.incoming} stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="dashboard-outgoing" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={chartColours.outgoing} stopOpacity={0.28} />
+                      <stop offset="100%" stopColor={chartColours.outgoing} stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <XAxis dataKey="time" tick={{ fontSize: 10, fill: chartColours.muted }} axisLine={false} tickLine={false} minTickGap={24} />
+                  <YAxis tick={{ fontSize: 10, fill: chartColours.muted }} axisLine={false} tickLine={false} tickFormatter={formatBytes} width={56} />
+                  <ReTooltip
+                    contentStyle={{ background: chartColours.popover, border: `1px solid ${chartColours.border}`, borderRadius: '6px', fontSize: '12px' }}
+                    labelStyle={{ color: chartColours.popoverForeground }}
+                    formatter={(value: number, name: string) => [`${formatBytes(value)}/s`, name === 'incoming' ? 'Incoming' : 'Outgoing']}
+                  />
+                  <Area type="monotone" dataKey="incoming" stroke={chartColours.incoming} fill="url(#dashboard-incoming)" strokeWidth={2} isAnimationActive={false} />
+                  <Area type="monotone" dataKey="outgoing" stroke={chartColours.outgoing} fill="url(#dashboard-outgoing)" strokeWidth={2} isAnimationActive={false} />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-full items-center justify-center text-center text-sm text-muted-foreground">
+                Collecting bandwidth samples…
               </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Platform</span>
-                <span className="font-mono-data text-foreground">{data.platform}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Channels</span>
-                <span className="font-mono-data text-foreground">{data.channelCount}</span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Uptime</span>
-                <span className="font-mono-data text-emerald-400">{formatUptime(data.uptime)}</span>
-              </div>
+            )}
+          </div>
+          <div className="mt-3 grid gap-2 border-t border-border pt-3 sm:grid-cols-2">
+            <div data-traffic-series="incoming" className="flex min-w-0 items-center gap-2 text-primary">
+              <ArrowDownToLine className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="text-xs text-muted-foreground">Incoming</span>
+              <span className="ml-auto font-mono-data text-sm">{formatBytes(data.bandwidth.incoming)}/s</span>
             </div>
-          </CardContent>
-        </Card>
+            <div data-traffic-series="outgoing" className="flex min-w-0 items-center gap-2 [color:hsl(var(--chart-3))]">
+              <ArrowUpFromLine className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="text-xs text-muted-foreground">Outgoing</span>
+              <span className="ml-auto font-mono-data text-sm">{formatBytes(data.bandwidth.outgoing)}/s</span>
+            </div>
+          </div>
+        </DataPanel>
+
+        <DataPanel title="Runtime & Capacity" description="Runtime identity and available capacity">
+          <dl className="min-w-0">
+            <DetailRow label="Server version">{data.version || 'Unknown'}</DetailRow>
+            <DetailRow label="Platform">{data.platform || 'Unknown'}</DetailRow>
+            <DetailRow label="Total slots">{data.maxClients}</DetailRow>
+            <DetailRow label="Available slots">{availableSlots}</DetailRow>
+          </dl>
+        </DataPanel>
       </div>
 
       <WidgetManagerModal open={showWidgets} onOpenChange={setShowWidgets} />
