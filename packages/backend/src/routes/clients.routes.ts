@@ -24,6 +24,7 @@ const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const MAX_CACHED_AVATARS = 256;
 const avatarCache = new Map<string, AvatarCacheEntry>();
 const avatarDownloads = new Map<string, Promise<AvatarCacheEntry>>();
+const missingAvatarUntil = new Map<string, number>();
 
 function avatarContentType(data: Buffer): string {
   if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png';
@@ -123,6 +124,14 @@ clientRoutes.get('/:clid/avatar', async (req: Request, res: Response, next) => {
       select: { isDemo: true },
     });
 
+    const missingKey = `${req.params.configId}:${getSid(req)}:${clid}`;
+    const missingUntil = missingAvatarUntil.get(missingKey) || 0;
+    if (missingUntil > Date.now()) {
+      res.status(404).json({ error: 'This client has no TeamSpeak profile avatar' });
+      return;
+    }
+    if (missingUntil) missingAvatarUntil.delete(missingKey);
+
     const info = (await getClient(req).execute(getSid(req), 'clientinfo', { clid: String(clid) }))[0] || {};
 
     if (server?.isDemo) {
@@ -144,7 +153,12 @@ clientRoutes.get('/:clid/avatar', async (req: Request, res: Response, next) => {
     }
 
     const avatarUrl = parseMyTeamSpeakAvatar(info.client_myteamspeak_avatar);
-    if (!avatarUrl) throw new AppError(404, 'This client has no TeamSpeak profile avatar');
+    if (!avatarUrl) {
+      missingAvatarUntil.set(missingKey, Date.now() + AVATAR_CACHE_TTL_MS);
+      res.status(404).json({ error: 'This client has no TeamSpeak profile avatar' });
+      return;
+    }
+    missingAvatarUntil.delete(missingKey);
 
     const cacheKey = `${req.params.configId}:${getSid(req)}:${info.client_unique_identifier || clid}:${avatarUrl.href}`;
     let entry = avatarCache.get(cacheKey);
