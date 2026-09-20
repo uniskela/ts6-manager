@@ -7,13 +7,17 @@ const dist = new URL('../dist/', import.meta.url);
 let generation = 0;
 let unavailable = false;
 let mutations = 0;
+let needsSetup = false;
+let allowTestAuth = false;
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   res.setHeader('Cache-Control', 'no-store');
   if (url.pathname.startsWith('/__test/')) {
     if (url.pathname === '/__test/update') generation++;
-    if (url.pathname === '/__test/reset') { unavailable = false; mutations = 0; }
+    if (url.pathname === '/__test/reset') { unavailable = false; mutations = 0; needsSetup = false; allowTestAuth = false; }
     if (url.pathname === '/__test/unavailable') unavailable = url.searchParams.has('on');
+    if (url.pathname === '/__test/setup') needsSetup = url.searchParams.has('on');
+    if (url.pathname === '/__test/auth') allowTestAuth = url.searchParams.has('on');
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ mutations }));
     return;
@@ -23,10 +27,19 @@ const server = createServer(async (req, res) => {
     if (req.method !== 'GET') mutations++;
     if (unavailable) { res.writeHead(503); res.end('{"error":"unavailable"}'); return; }
     const data = url.pathname === '/api/health' ? { status: 'ok' }
-      : url.pathname === '/api/setup/status' ? { needsSetup: false }
+      : url.pathname === '/api/setup/status' ? { needsSetup }
+      : url.pathname === '/api/auth/login' && allowTestAuth ? {
+        accessToken: 'brand-test-access-token',
+        refreshToken: 'brand-test-refresh-token',
+        user: { id: 1, username: 'admin', displayName: 'Administrator', role: 'admin' },
+      }
       : url.pathname === '/api/auth/login' ? { error: 'Invalid credentials' }
+      : url.pathname === '/api/auth/me' && allowTestAuth ? {
+        user: { id: 1, username: 'admin', displayName: 'Administrator', role: 'admin' },
+      }
+      : url.pathname === '/api/servers' && allowTestAuth ? []
       : { secret: 'test-only-sensitive-response', timestamp: Date.now() };
-    if (url.pathname === '/api/auth/login') res.statusCode = 401;
+    if (url.pathname === '/api/auth/login' && !allowTestAuth) res.statusCode = 401;
     res.end(JSON.stringify(data));
     return;
   }

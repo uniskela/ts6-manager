@@ -86,6 +86,12 @@
     min-width: 0;
   }
 
+  .brand-mark {
+    background-color: currentColor;
+    -webkit-mask: url('/favicon.svg') center / contain no-repeat;
+    mask: url('/favicon.svg') center / contain no-repeat;
+  }
+
   /* Apply safe areas at container edges, including landscape and iPad. */
   .app-viewport {
     padding-top: env(safe-area-inset-top);

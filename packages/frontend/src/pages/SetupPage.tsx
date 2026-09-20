@@ -4,8 +4,9 @@ import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Loader2, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertCircle } from 'lucide-react';
 import axios from 'axios';
+import { BrandMark } from '@/components/shared/BrandMark';
 import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function SetupPage() {
@@ -63,11 +64,9 @@ export default function SetupPage() {
 
       <div className="w-full max-w-sm mx-4 relative">
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-14 w-14 rounded-xl bg-primary/10 border border-primary/20 mb-4">
-            <ShieldCheck className="h-7 w-7 text-primary" />
-          </div>
-          <h1 className="text-xl font-semibold text-foreground">Initial Setup</h1>
-          <p className="text-sm text-muted-foreground mt-1">Create your administrator account</p>
+          <BrandMark className="mx-auto mb-4 h-16 w-16 text-primary" />
+          <h1 className="text-xl font-semibold text-foreground">TS6 Manager</h1>
+          <p className="text-sm text-muted-foreground mt-1">Initial setup · Create your administrator account</p>
         </div>
 
         <Card className="border-border/50 backdrop-blur-sm">

@@ -6,11 +6,33 @@ const require = createRequire(new URL('../../backend/package.json', import.meta.
 const { Resvg } = require('@resvg/resvg-js');
 const root = new URL('../public/', import.meta.url);
 const svg = readFileSync(new URL('favicon.svg', root), 'utf8');
-for (const [name, size] of [['icon-192', 192], ['icon-512', 512], ['apple-touch-icon', 180], ['maskable-512', 512]]) {
-  // Opaque full-bleed background for platform masks. The TS strokes fit inside
-  // the central radius-204.8 safe circle of the 512px maskable canvas.
-  const artwork = svg.replace('rx="96"', 'rx="0"');
-  writeFileSync(new URL(`icons/${name}.png`, root), new Resvg(artwork, {
+
+const DEFAULT_ACCENT = '#1eb9ca';
+const NEUTRAL_BACKGROUND = '#0b0e13';
+const source = svg.match(/<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/i)?.[1]
+  ?.replace(/<title>[\s\S]*?<\/title>/i, '')
+  .trim();
+
+if (!source || !svg.includes('viewBox="0 0 512 512"') || !svg.includes('currentColor')) {
+  throw new Error('favicon.svg must be a currentColor mark with viewBox="0 0 512 512"');
+}
+
+const renderSource = (scale) => {
+  const offset = (512 - 512 * scale) / 2;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" color="${DEFAULT_ACCENT}">
+    <rect width="512" height="512" fill="${NEUTRAL_BACKGROUND}"/>
+    <g transform="translate(${offset} ${offset}) scale(${scale})">${source}</g>
+  </svg>`;
+};
+
+for (const [name, size, scale] of [
+  ['icon-192', 192, 0.86],
+  ['icon-512', 512, 0.86],
+  ['apple-touch-icon', 180, 0.82],
+  // Keep all meaningful artwork inside the maskable radius-204.8 safe circle.
+  ['maskable-512', 512, 0.78],
+]) {
+  writeFileSync(new URL(`icons/${name}.png`, root), new Resvg(renderSource(scale), {
     fitTo: { mode: 'width', value: size },
   }).render().asPng());
 }

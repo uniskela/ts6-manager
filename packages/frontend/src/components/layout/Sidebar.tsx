@@ -13,6 +13,7 @@ import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { BrandMark } from '@/components/shared/BrandMark';
 import { APP_DOCUMENTATION_URL, APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 
 const navSections = [
@@ -220,19 +221,26 @@ function DesktopSidebarFooter({ collapsed }: { collapsed: boolean }) {
   );
 }
 
-function Logo({ compact = false }: { compact?: boolean }) {
+function Logo({ compact = false, onNavigate }: { compact?: boolean; onNavigate?: () => void }) {
   return (
-    <div className={cn('flex items-center gap-2.5', compact && 'justify-center')}>
-      <div className="h-7 w-7 rounded-md bg-primary/20 flex items-center justify-center">
-        <span className="text-primary font-bold text-xs font-mono-data">TS</span>
-      </div>
+    <NavLink
+      to="/dashboard"
+      onClick={onNavigate}
+      aria-label="TS6 Manager dashboard"
+      title={compact ? 'TS6 Manager dashboard' : undefined}
+      className={cn(
+        'flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+        compact && 'justify-center',
+      )}
+    >
+      <BrandMark className="h-7 w-7 text-primary" />
       {!compact && (
         <div>
           <span className="text-sm font-semibold text-sidebar-accent-foreground">TS6</span>
           <span className="text-sm text-sidebar-foreground ml-1">Manager</span>
         </div>
       )}
-    </div>
+    </NavLink>
   );
 }
 
@@ -275,7 +283,7 @@ export function MobileNavigation() {
         <SheetTitle className="sr-only">TS6 Manager navigation</SheetTitle>
         <SheetDescription className="sr-only">Choose a page to navigate to.</SheetDescription>
         <div className="flex min-h-14 items-center border-b border-sidebar-border px-4 pr-14 pt-[env(safe-area-inset-top)]">
-          <Logo />
+          <Logo onNavigate={() => setOpen(false)} />
         </div>
         <TooltipProvider delayDuration={0}>
           <NavigationContent mobile onNavigate={() => setOpen(false)} />

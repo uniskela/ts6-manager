@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useLogin } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth.store';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { BrandMark } from '@/components/shared/BrandMark';
 import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function Login() {
@@ -77,10 +78,8 @@ export default function Login() {
       <div className="w-full max-w-sm mx-4 relative">
         {/* Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center h-14 w-14 rounded-xl bg-primary/10 border border-primary/20 mb-4">
-            <span className="text-primary font-bold text-xl font-mono-data text-glow">TS</span>
-          </div>
-          <h1 className="text-xl font-semibold text-foreground">TeamSpeak 6 Manager</h1>
+          <BrandMark className="mx-auto mb-4 h-16 w-16 text-primary" />
+          <h1 className="text-xl font-semibold text-foreground">TS6 Manager</h1>
           <p className="text-sm text-muted-foreground mt-1">Server Administration Panel</p>
         </div>
 
