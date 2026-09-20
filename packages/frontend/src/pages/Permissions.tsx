@@ -187,6 +187,7 @@ interface CompareColumn {
   data: unknown;
   isLoading: boolean;
   isError: boolean;
+  errorStatus?: number;
 }
 
 function describePermissionValue(value: PermValue | undefined): string {
@@ -263,7 +264,8 @@ function PermissionCompare({
                   <span className="font-mono-data text-[10px] text-muted-foreground">#{column.id}</span>
                   {column.isError && (
                     <span className="mt-1 flex items-center gap-1 text-destructive" role="status">
-                      <AlertTriangle className="h-3 w-3" /> Failed to load
+                      <AlertTriangle className="h-3 w-3" />
+                      {column.errorStatus === 429 ? 'Query cooldown active' : 'Failed to load'}
                     </span>
                   )}
                 </th>
@@ -285,11 +287,12 @@ function PermissionCompare({
                 </th>
                 {normalizedColumns.map(column => {
                   const value = column.permissions.get(permission.permsid);
-                  const description = column.isError ? 'Failed to load' : column.isLoading ? 'Loading' : describePermissionValue(value);
+                  const failureDescription = column.errorStatus === 429 ? 'Query cooldown active' : 'Failed to load';
+                  const description = column.isError ? failureDescription : column.isLoading ? 'Loading' : describePermissionValue(value);
                   return (
                     <td key={column.id} aria-label={`${column.name}: ${description}`} className="px-3 py-2 align-top">
                       {column.isError ? (
-                        <span className="font-medium text-destructive">Failed to load</span>
+                        <span className="font-medium text-destructive">{failureDescription}</span>
                       ) : column.isLoading ? (
                         <span className="text-muted-foreground">Loading…</span>
                       ) : !value ? (
@@ -493,7 +496,8 @@ export default function Permissions() {
       staleTime: 30_000,
       refetchOnWindowFocus: false,
       refetchInterval: false as const,
-      retry: 1,
+      retry: (failureCount: number, error: any) => error?.response?.status !== 429 && failureCount < 1,
+      retryDelay: (attempt: number) => Math.min(1500, 300 * 2 ** attempt),
     })),
   });
 
@@ -703,6 +707,7 @@ export default function Permissions() {
     data: compareResults[index]?.data,
     isLoading: compareResults[index]?.isLoading ?? false,
     isError: compareResults[index]?.isError ?? false,
+    errorStatus: (compareResults[index]?.error as any)?.response?.status,
   }));
 
   return (

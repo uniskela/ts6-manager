@@ -318,3 +318,24 @@ test('Compare keeps a failed entity distinct and contains narrow horizontal scro
   const state = await request.get('/__test/permissions').then(response => response.json());
   expect(state.permissionRequests.filter((entry: { method: string }) => entry.method !== 'GET')).toHaveLength(0);
 });
+
+test('Compare reports Query cooldown without retrying 429 or hiding successful columns', async ({ page, request }) => {
+  await signInForPermissions(page, request);
+  await request.post('/__test/permissions?scenario=compare-429');
+  await selectForCompare(page, ['Administrators', 'Operators']);
+  await page.getByRole('button', { name: 'Compare 2 selected entities' }).click();
+  const compare = page.getByTestId('permissions-compare');
+
+  const cooldownHeader = compare.getByRole('columnheader', { name: /Operators/ });
+  await expect(cooldownHeader.getByText('Query cooldown active')).toBeVisible();
+  await page.getByPlaceholder('Search compared permissions...').fill('Needed channel modify power');
+  await expect(compare.getByRole('cell', { name: 'Administrators: Value 0' })).toBeVisible();
+  await expect(compare.getByRole('cell', { name: 'Operators: Query cooldown active' })).toBeVisible();
+
+  const state = await request.get('/__test/permissions').then(response => response.json());
+  const cooldownRequests = state.permissionRequests.filter((entry: { method: string; path: string }) => (
+    entry.method === 'GET' && entry.path === '/api/servers/1/vs/1/server-groups/40/permissions'
+  ));
+  expect(cooldownRequests).toHaveLength(1);
+  expect(state.permissionRequests.filter((entry: { method: string }) => entry.method !== 'GET')).toHaveLength(0);
+});

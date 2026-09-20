@@ -141,6 +141,11 @@ const server = createServer(async (req, res) => {
       const key = `${entityType}:${entityId}`;
       if (req.method === 'GET') {
         permissionRequests.push({ method: req.method, path: url.pathname });
+        if (permissionScenario === 'compare-429' && entityId === '40') {
+          res.writeHead(429);
+          res.end('{"error":"Query flood protection active","details":"Retry after the TeamSpeak cooldown"}');
+          return;
+        }
         if (permissionScenario === 'compare-failure' && entityId === '40') {
           res.writeHead(503);
           res.end('{"error":"Operator permissions unavailable"}');
