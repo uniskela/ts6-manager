@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/container-security.yml'
+      - '.yt-dlp-version'
       - 'Dockerfile.backend'
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
@@ -22,6 +23,7 @@ on:
       - main
     paths:
       - '.github/workflows/container-security.yml'
+      - '.yt-dlp-version'
       - 'Dockerfile.backend'
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
@@ -106,6 +108,14 @@ jobs:
             test -f /app/packages/backend/generated/prisma/index.js
             test ! -e /app/packages/backend/node_modules/.bin/esbuild
           '
+
+          EXPECTED_YT_DLP_VERSION="$(tr -d '[:space:]' < .yt-dlp-version)"
+          ACTUAL_YT_DLP_VERSION="$(docker run --rm --entrypoint yt-dlp "$IMAGE" --version | tr -d '[:space:]')"
+          if [[ "$ACTUAL_YT_DLP_VERSION" != "$EXPECTED_YT_DLP_VERSION" ]]; then
+            echo "Expected yt-dlp $EXPECTED_YT_DLP_VERSION, got $ACTUAL_YT_DLP_VERSION" >&2
+            exit 1
+          fi
+          echo "Validated pinned yt-dlp: $ACTUAL_YT_DLP_VERSION"
 
           docker run --rm --entrypoint sh             -e DATABASE_URL=file:/tmp/runtime-smoke.db             "$IMAGE" -c '
               set -eu
