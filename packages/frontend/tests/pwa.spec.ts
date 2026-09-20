@@ -4,6 +4,29 @@ import { canHandleRequest, isAppNavigation } from '../pwa/cache-policy';
 
 const routes = ['/dashboard', '/channels', '/clients', '/permissions', '/server-groups', '/channel-groups', '/music-bots', '/bots', '/bots/1', '/files', '/settings', '/login', '/setup'];
 const privatePaths = ['/api', '/api/health', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me', '/api/setup/status', '/api/servers/1/clients', '/api/servers/1/files', '/api/servers/1/tokens', '/api/servers/1/bans', '/api/music-bots', '/api/bots/1/logs', '/ws', '/ws/live'];
+const baseThemes = ['light', 'dark', 'black'] as const;
+const accents = ['cyan', 'violet', 'red', 'blue', 'emerald', 'amber'] as const;
+
+type Rgb = [number, number, number];
+
+function parseRgb(value: string): Rgb {
+  const channels = value.match(/[\d.]+/g)?.slice(0, 3).map(Number);
+  if (!channels || channels.length !== 3) throw new Error(`Expected an RGB colour, received ${value}`);
+  return channels as Rgb;
+}
+
+function contrastRatio(left: string, right: string) {
+  const luminance = (rgb: Rgb) => {
+    const channels = rgb.map(value => {
+      const normalized = value / 255;
+      return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const a = luminance(parseRgb(left));
+  const b = luminance(parseRgb(right));
+  return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+}
 
 async function controlled(page: Page) {
   await page.goto('/login');
@@ -78,6 +101,125 @@ test('canonical brand mark is shared by product surfaces', async ({ page, reques
   await page.getByRole('tab', { name: 'About' }).click();
   await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
   await expect(page.locator('[data-brand-mark]')).toHaveCount(2);
+});
+
+test('appearance bootstrap applies a stored black violet preference before first paint', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('ts6-ui', JSON.stringify({
+      state: { sidebarCollapsed: false, baseTheme: 'black', accent: 'violet' },
+      version: 1,
+    }));
+    requestAnimationFrame(() => {
+      (window as any).__firstAppearance = {
+        theme: document.documentElement.dataset.theme,
+        accent: document.documentElement.dataset.accent,
+        dark: document.documentElement.classList.contains('dark'),
+        black: document.documentElement.classList.contains('black'),
+      };
+    });
+  });
+
+  await page.goto('/login');
+  await expect(page.getByLabel('Username')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => (window as any).__firstAppearance)).toEqual({
+    theme: 'black',
+    accent: 'violet',
+    dark: true,
+    black: true,
+  });
+});
+
+test('appearance migrates old and invalid stored preferences to safe values', async ({ page }) => {
+  await page.goto('/login');
+  await expect(page.getByLabel('Username')).toBeVisible();
+
+  await page.evaluate(() => localStorage.setItem('ts6-ui', JSON.stringify({
+    state: { sidebarCollapsed: true, theme: 'light' },
+    version: 0,
+  })));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'cyan');
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state)).toMatchObject({
+    sidebarCollapsed: true,
+    baseTheme: 'light',
+    accent: 'cyan',
+  });
+
+  await page.evaluate(() => localStorage.setItem('ts6-ui', JSON.stringify({
+    state: { sidebarCollapsed: false, baseTheme: 'sepia', accent: 'pink' },
+    version: 999,
+  })));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'cyan');
+
+  await page.evaluate(() => localStorage.setItem('ts6-ui', '{not-json'));
+  await page.reload();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('html')).toHaveAttribute('data-accent', 'cyan');
+});
+
+test('appearance combinations preserve neutral and semantic tokens with visible focus', async ({ page }) => {
+  await page.goto('/login');
+  await expect(page.getByLabel('Username')).toBeVisible();
+
+  for (const baseTheme of baseThemes) {
+    let neutralBaseline: Record<string, string> | undefined;
+    let semanticBaseline: Record<string, string> | undefined;
+
+    for (const accent of accents) {
+      await page.evaluate(({ baseTheme, accent }) => localStorage.setItem('ts6-ui', JSON.stringify({
+        state: { sidebarCollapsed: false, baseTheme, accent },
+        version: 1,
+      })), { baseTheme, accent });
+      await page.reload();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', baseTheme);
+      await expect(page.locator('html')).toHaveAttribute('data-accent', accent);
+      await page.getByLabel('Username').focus();
+
+      const colours = await page.evaluate(() => {
+        const root = getComputedStyle(document.documentElement);
+        const probe = document.createElement('span');
+        probe.style.cssText = [
+          'position:fixed',
+          'pointer-events:none',
+          'color:hsl(var(--primary))',
+          'background-color:hsl(var(--primary-foreground))',
+          'border-color:hsl(var(--ring))',
+        ].join(';');
+        document.body.append(probe);
+        const computed = getComputedStyle(probe);
+        const result = {
+          background: getComputedStyle(document.body).backgroundColor,
+          primary: computed.color,
+          primaryForeground: computed.backgroundColor,
+          ring: computed.borderColor,
+          focusShadow: getComputedStyle(document.querySelector<HTMLInputElement>('#username')!).boxShadow,
+          mark: getComputedStyle(document.querySelector<HTMLElement>('[data-brand-mark]')!).backgroundColor,
+          neutral: Object.fromEntries(['--background', '--card', '--secondary', '--muted', '--border', '--accent'].map(name => [name, root.getPropertyValue(name).trim()])),
+          semantic: Object.fromEntries(['--destructive', '--success', '--warning'].map(name => [name, root.getPropertyValue(name).trim()])),
+        };
+        probe.remove();
+        return result;
+      });
+
+      expect(contrastRatio(colours.primary, colours.primaryForeground), `${baseTheme}/${accent} primary contrast`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(colours.ring, colours.background), `${baseTheme}/${accent} focus-ring contrast`).toBeGreaterThanOrEqual(3);
+      expect(colours.focusShadow, `${baseTheme}/${accent} focused input`).not.toBe('none');
+      expect(colours.mark, `${baseTheme}/${accent} BrandMark inheritance`).toBe(colours.primary);
+
+      neutralBaseline ??= colours.neutral;
+      semanticBaseline ??= colours.semantic;
+      expect(colours.neutral, `${baseTheme}/${accent} neutral tokens`).toEqual(neutralBaseline);
+      expect(colours.semantic, `${baseTheme}/${accent} semantic tokens`).toEqual(semanticBaseline);
+      expect(colours.semantic['--destructive']).not.toBe('');
+      expect(colours.semantic['--success']).not.toBe('');
+      expect(colours.semantic['--warning']).not.toBe('');
+      if (accent === 'emerald') expect(colours.semantic['--success']).not.toBe(await page.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--primary').trim()));
+      if (accent === 'amber') expect(colours.semantic['--warning']).not.toBe(await page.locator('html').evaluate(el => getComputedStyle(el).getPropertyValue('--primary').trim()));
+    }
+  }
 });
 
 test('real worker caches only public build output; private traffic stays live', async ({ page }) => {
