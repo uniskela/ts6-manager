@@ -2,6 +2,14 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.6.2](https://github.com/uniskela/ts6-manager/compare/v1.6.1...v1.6.2) (2026-09-20)
+
+
+### Bug Fixes
+
+* pin and automate yt-dlp updates ([#66](https://github.com/uniskela/ts6-manager/issues/66)) ([95cd7ea](https://github.com/uniskela/ts6-manager/commit/95cd7ea4b740200836db86359d594d24ef4dc6f9))
+* recover cleanly from TeamSpeak Query flood protection ([#67](https://github.com/uniskela/ts6-manager/issues/67)) ([6c8afbc](https://github.com/uniskela/ts6-manager/commit/6c8afbc86266bfbdc4578ca0f512dbf108d844e4))
+
 ## [1.6.1](https://github.com/uniskela/ts6-manager/compare/v1.6.0...v1.6.1) (2026-09-20)
 
 
