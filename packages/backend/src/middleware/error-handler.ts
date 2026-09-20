@@ -40,8 +40,9 @@ const QUIET_TS_API_CODES = new Set([
 export function errorHandler(err: Error, _req: Request, res: Response, _next: NextFunction) {
   const quietTs =
     err instanceof TSApiError && QUIET_TS_API_CODES.has(err.code);
+  const quietFlood = err instanceof TeamSpeakFloodError;
 
-  if (!quietTs) {
+  if (!quietTs && !quietFlood) {
     console.error(`[Error] ${err.name}: ${err.message}`);
   }
 
