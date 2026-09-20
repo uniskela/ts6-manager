@@ -369,8 +369,8 @@ export default function Permissions() {
                         : 'text-foreground hover:bg-muted/50',
                     )}
                   >
-                    <span className="truncate">{ent.name}</span>
-                    <span className="text-[10px] font-mono-data text-muted-foreground ml-1">#{ent.id}</span>
+                    <span className="min-w-0 flex-1 truncate">{ent.name}</span>
+                    <span className="ml-1 shrink-0 text-[10px] font-mono-data text-muted-foreground">#{ent.id}</span>
                   </button>
                 ))}
                 {entities.length === 0 && (
