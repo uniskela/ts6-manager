@@ -1,5 +1,7 @@
 # Development
 
+See [PWA maintenance and validation](pwa-maintenance.md) for static cache boundaries, service-worker updates, deployment headers, and device QA.
+
 Local development targets Node.js 20+ and pnpm 9.x. CI deliberately stays on pnpm 9 because newer pnpm majors change dependency build-script and override behavior.
 
 ## Setup

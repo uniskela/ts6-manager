@@ -56,7 +56,7 @@ export function ConnectionFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-w-md [--dialog-max-height:90vh] overflow-y-auto">
         <TooltipProvider delayDuration={200}>
           <DialogHeader>
             <DialogTitle>{editId ? 'Edit Connection' : 'Add Connection'}</DialogTitle>

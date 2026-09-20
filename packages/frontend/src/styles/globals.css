@@ -86,6 +86,38 @@
     min-width: 0;
   }
 
+  /* Apply safe areas at container edges, including landscape and iPad. */
+  .app-viewport {
+    padding-top: env(safe-area-inset-top);
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .auth-viewport {
+    padding: max(1rem, env(safe-area-inset-top)) env(safe-area-inset-right)
+      calc(var(--pwa-status-height, 0px) + max(1rem, env(safe-area-inset-bottom))) env(safe-area-inset-left);
+  }
+
+  .app-dialog {
+    --dialog-gap: 1rem;
+    top: calc(var(--visual-top, 0px) + (var(--visual-height, 100dvh) + env(safe-area-inset-top) - env(safe-area-inset-bottom)) / 2);
+    left: calc((100vw + env(safe-area-inset-left) - env(safe-area-inset-right)) / 2);
+    width: calc(100vw - var(--dialog-gap) - env(safe-area-inset-left) - env(safe-area-inset-right));
+    max-height: min(var(--dialog-max-height, 100dvh), calc(var(--visual-height, 100dvh) - var(--dialog-gap) - env(safe-area-inset-top) - env(safe-area-inset-bottom)));
+  }
+
+  @media (min-width: 640px) {
+    .app-dialog { --dialog-gap: 2rem; }
+  }
+
+  .pwa-status {
+    position: fixed;
+    z-index: 40;
+    right: max(0.75rem, env(safe-area-inset-right));
+    bottom: max(0.75rem, env(safe-area-inset-bottom));
+    max-width: min(24rem, calc(100vw - 1.5rem - env(safe-area-inset-left) - env(safe-area-inset-right)));
+  }
+
   /*
    * iOS Safari automatically zooms focused form controls rendered below 16px.
    * Keep phone form text at 16px rather than disabling viewport zoom, which

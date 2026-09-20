@@ -27,7 +27,7 @@ export default function SetupPage() {
 
   if (checking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="auth-viewport min-h-screen min-h-dvh flex items-center justify-center bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
@@ -58,7 +58,7 @@ export default function SetupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background grid-bg">
+    <div className="auth-viewport min-h-screen min-h-dvh flex items-center justify-center bg-background grid-bg">
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
 
       <div className="w-full max-w-sm mx-4 relative">

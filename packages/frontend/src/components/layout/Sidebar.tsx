@@ -243,7 +243,7 @@ export function Sidebar() {
     <TooltipProvider delayDuration={0}>
       <aside
         className={cn(
-          'relative hidden flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-300 ease-in-out lg:flex',
+          'relative hidden pb-[env(safe-area-inset-bottom)] flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-all duration-300 ease-in-out lg:flex',
           sidebarCollapsed ? 'w-16' : 'w-56',
         )}
       >

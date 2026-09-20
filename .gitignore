@@ -14,3 +14,5 @@ packages/backend/data/
 packages/backend/prisma/migrations/
 .claude/
 build-and-push.ps1
+packages/frontend/test-results/
+packages/frontend/playwright-report/

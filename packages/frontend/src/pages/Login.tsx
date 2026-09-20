@@ -58,7 +58,7 @@ export default function Login() {
 
   if (checkingSetup) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
+      <div className="auth-viewport min-h-screen min-h-dvh flex items-center justify-center bg-background">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
       </div>
     );
@@ -70,7 +70,7 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background grid-bg">
+    <div className="auth-viewport min-h-screen min-h-dvh flex items-center justify-center bg-background grid-bg">
       {/* Ambient glow */}
       <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[120px] pointer-events-none" />
 
@@ -116,7 +116,9 @@ export default function Login() {
               {login.isError && (
                 <div className="flex items-center gap-2 text-destructive text-xs bg-destructive/10 rounded-md px-3 py-2">
                   <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                  <span>Invalid credentials. Please try again.</span>
+                  <span>{axios.isAxiosError(login.error) && login.error.response?.status === 401
+                    ? 'Invalid credentials. Please try again.'
+                    : 'Unable to sign in. Check your connection and try again.'}</span>
                 </div>
               )}
 

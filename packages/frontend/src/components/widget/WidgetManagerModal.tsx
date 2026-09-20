@@ -126,7 +126,7 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setView('list'); }}>
-      <DialogContent className="max-w-2xl max-h-[85vh] flex flex-col">
+      <DialogContent className="max-w-2xl [--dialog-max-height:85vh] flex flex-col">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {view !== 'list' && (

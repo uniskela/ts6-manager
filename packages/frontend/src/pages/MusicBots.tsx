@@ -529,7 +529,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
 
   return (
     <Dialog open={botId !== null} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-lg max-h-[80vh] flex flex-col">
+      <DialogContent className="max-w-lg [--dialog-max-height:80vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>{isQueueMode ? 'Add to Queue' : 'Play Music'}</DialogTitle>
           <DialogDescription>
@@ -2973,7 +2973,7 @@ function RadioTab() {
 
       {/* Presets Dialog */}
       <Dialog open={showPresets} onOpenChange={setShowPresets}>
-        <DialogContent className="max-w-lg max-h-[80vh] flex flex-col overflow-auto">
+        <DialogContent className="max-w-lg [--dialog-max-height:80vh] flex flex-col overflow-auto">
           <DialogHeader>
             <DialogTitle>Radio Presets</DialogTitle>
             <DialogDescription>Add popular radio stations with one click.</DialogDescription>

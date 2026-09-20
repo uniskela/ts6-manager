@@ -7,6 +7,7 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 ## Start here
 
 - [Installation](installation.md) — deploy the split stack or all-in-one image
+- [Install as an app](pwa.md) — iPhone/iPad, Android and desktop installation, updates and offline limits
 - [Configuration](configuration.md) — required secrets, TeamSpeak connection setup, and application settings
 - [Environment variables](environment-variables.md) — backend, frontend, and sidecar settings
 - [Upgrading](upgrading.md) — update containers without losing credentials or database state
