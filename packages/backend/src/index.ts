@@ -8,7 +8,7 @@ import { VoiceBotManager } from './voice/voice-bot-manager.js';
 import { MusicCommandHandler } from './voice/music-command-handler.js';
 import { config } from './config.js';
 import { setYtCookieFile } from './voice/audio/youtube.js';
-import { updateYtDlpInBackground } from './voice/audio/yt-dlp-update.js';
+import { logYtDlpVersionInBackground } from './voice/audio/yt-dlp-diagnostics.js';
 import jwt from 'jsonwebtoken';
 import { setWsSession } from './ws/ws-session.js';
 import type { JwtPayload } from '@ts6/common';
@@ -51,8 +51,8 @@ async function main() {
     console.warn(`[yt-dlp] Cookie file not found: ${cookiePath}`);
   }
 
-  // Non-blocking yt-dlp self-update (opt out with YT_DLP_AUTO_UPDATE=0)
-  updateYtDlpInBackground();
+  // Non-blocking diagnostic only. Production images never self-update bundled tools.
+  logYtDlpVersionInBackground();
 
   const prisma = new PrismaClient();
   const app = createApp();

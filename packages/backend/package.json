@@ -48,12 +48,10 @@
     "tsx": "^4.19.0",
     "typescript": "^5.4.0"
   },
-  "prisma": {
-    "seed": "node prisma/seed.mjs"
-  },
   "files": [
     "dist",
     "generated",
-    "prisma"
+    "prisma",
+    "prisma.config.mjs"
   ]
 }
