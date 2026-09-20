@@ -116,7 +116,33 @@ clientRoutes.get('/:clid/avatar', async (req: Request, res: Response, next) => {
     const clid = Number(req.params.clid);
     if (!Number.isInteger(clid) || clid <= 0) throw new AppError(400, 'A valid connected client ID is required');
 
+    const configId = Number(req.params.configId);
+    const prisma = req.app.locals.prisma;
+    const server = await prisma.tsServerConfig.findUnique({
+      where: { id: configId },
+      select: { isDemo: true },
+    });
+
     const info = (await getClient(req).execute(getSid(req), 'clientinfo', { clid: String(clid) }))[0] || {};
+
+    if (server?.isDemo) {
+      const nickname = String(info.client_nickname || 'Demo User');
+      const initial = (nickname.trim().charAt(0).toUpperCase() || '?').replace(/[^A-Z0-9?]/g, '?');
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><rect width="64" height="64" rx="32" fill="#1f2937"/><text x="32" y="39" text-anchor="middle" font-family="system-ui,sans-serif" font-size="26" font-weight="600" fill="#f9fafb">${initial}</text></svg>`;
+      const data = Buffer.from(svg, 'utf8');
+      const etag = `"${createHash('sha256').update(data).digest('base64url')}"`;
+      res.set({
+        'Content-Type': 'image/svg+xml; charset=utf-8',
+        'Content-Length': String(data.length),
+        'Cache-Control': 'private, max-age=300, must-revalidate',
+        ETag: etag,
+        'X-Content-Type-Options': 'nosniff',
+      });
+      if (req.headers['if-none-match'] === etag) return res.status(304).end();
+      res.send(data);
+      return;
+    }
+
     const avatarUrl = parseMyTeamSpeakAvatar(info.client_myteamspeak_avatar);
     if (!avatarUrl) throw new AppError(404, 'This client has no TeamSpeak profile avatar');
 
