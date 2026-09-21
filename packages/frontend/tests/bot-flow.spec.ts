@@ -222,8 +222,11 @@ test('property edits, touch connections, and scrolled dragging remain draft-safe
   await page.mouse.move(box.x + 60, box.y + 50);
   await page.mouse.up();
   const after = await far.evaluate((element) => ({ left: parseFloat((element as HTMLElement).style.left), top: parseFloat((element as HTMLElement).style.top) }));
-  expect(after.left).toBe(before.left + 40);
-  expect(after.top).toBe(before.top + 30);
+  // Browser layout and synthesized pointer events can differ by a subpixel
+  // across runners. Keep this strict enough to catch scroll-coordinate drift
+  // while accepting normal CSS pixel rounding.
+  expect(after.left).toBeCloseTo(before.left + 40, 0);
+  expect(after.top).toBeCloseTo(before.top + 30, 0);
 });
 
 test('adding and removing nodes are visible dirty edits without changing the saved JSON contract', async ({ page, request }) => {
