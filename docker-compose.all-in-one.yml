@@ -1,5 +1,3 @@
-version: "3.8"
-
 # One container: UI (nginx :80) + API (:3001) + sidecar (:9800) on loopback.
 # Adapted from upstream PR #64 by @joaobosconff.
 

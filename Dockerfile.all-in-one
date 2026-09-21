@@ -78,9 +78,13 @@ RUN rm -f /etc/nginx/sites-enabled/default
 COPY docker-commands/supervisord-all-in-one.conf /etc/supervisor/conf.d/ts6.conf
 COPY docker-commands/apply-schema.sh /usr/local/bin/apply-schema.sh
 COPY docker-commands/start-backend.sh /usr/local/bin/start-backend.sh
-RUN chmod +x /usr/local/bin/apply-schema.sh /usr/local/bin/start-backend.sh /usr/local/bin/sidecar && \
-    mkdir -p /app/packages/backend/data /data/music /root/.config/yt-dlp && \
-    echo "--js-runtimes node" > /root/.config/yt-dlp/config
+RUN sed -i 's/\r$//' /usr/local/bin/apply-schema.sh \
+      /usr/local/bin/start-backend.sh \
+ && chmod +x /usr/local/bin/apply-schema.sh \
+      /usr/local/bin/start-backend.sh \
+      /usr/local/bin/sidecar \
+ && mkdir -p /app/packages/backend/data /data/music /root/.config/yt-dlp \
+ && echo "--js-runtimes node" > /root/.config/yt-dlp/config
 
 # Only publish nginx (:80) from compose. Backend/sidecar stay loopback-only inside the container.
 EXPOSE 80

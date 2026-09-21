@@ -65,9 +65,12 @@ COPY --from=build /prod/backend ./
 
 COPY docker-commands/apply-schema.sh /usr/local/bin/apply-schema.sh
 COPY docker-commands/start-backend-standalone.sh /usr/local/bin/start-backend-standalone.sh
-RUN chmod +x /usr/local/bin/apply-schema.sh /usr/local/bin/start-backend-standalone.sh && \
-    mkdir -p data /data/music /root/.config/yt-dlp && \
-    echo "--js-runtimes node" > /root/.config/yt-dlp/config
+RUN sed -i 's/\r$//' /usr/local/bin/apply-schema.sh \
+      /usr/local/bin/start-backend-standalone.sh \
+ && chmod +x /usr/local/bin/apply-schema.sh \
+      /usr/local/bin/start-backend-standalone.sh \
+ && mkdir -p data /data/music /root/.config/yt-dlp \
+ && echo "--js-runtimes node" > /root/.config/yt-dlp/config
 
 EXPOSE 3001
 CMD ["/usr/local/bin/start-backend-standalone.sh"]
