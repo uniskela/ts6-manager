@@ -27,6 +27,31 @@ export function useVirtualServerInfo() {
   });
 }
 
+interface VirtualServerActionInput {
+  configId: number;
+  sid: number;
+}
+
+export function useStartVirtualServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ configId, sid }: VirtualServerActionInput) =>
+      serversApi.startVirtual(configId, sid),
+    onSuccess: (_data, { configId }) =>
+      qc.invalidateQueries({ queryKey: ['virtual-servers', configId] }),
+  });
+}
+
+export function useStopVirtualServer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ configId, sid }: VirtualServerActionInput) =>
+      serversApi.stopVirtual(configId, sid),
+    onSuccess: (_data, { configId }) =>
+      qc.invalidateQueries({ queryKey: ['virtual-servers', configId] }),
+  });
+}
+
 export function useCreateServer() {
   const qc = useQueryClient();
   return useMutation({

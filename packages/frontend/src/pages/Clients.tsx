@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useClients, useKickClient, useBanClient, usePokeClient } from '@/hooks/use-clients';
 import { useMusicBots, usePlayUrl } from '@/hooks/use-music-bots';
 import { useRadioStations, usePlayRadio } from '@/hooks/use-radio-stations';
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -21,12 +21,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { formatUptime } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api-error';
 import { Users, MoreHorizontal, LogOut, Ban, Zap, Youtube, Radio, Copy } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import type { MusicBotSummary, RadioStationInfo } from '@ts6/common';
 
 type PlayDialogMode = 'youtube' | 'radio' | null;
+
+type ClientActionTarget = {
+  configId: number;
+  sid: number;
+  clid: number;
+  name: string;
+};
 
 export default function Clients() {
   const { selectedConfigId, selectedSid } = useServerStore();
@@ -43,8 +51,22 @@ export default function Clients() {
   const playUrl = usePlayUrl();
   const playRadio = usePlayRadio();
 
-  const [pokeTarget, setPokeTarget] = useState<{ clid: number; name: string } | null>(null);
+  const [kickTarget, setKickTarget] = useState<ClientActionTarget | null>(null);
+  const [kickReason, setKickReason] = useState('Kicked by admin');
+  const [kickError, setKickError] = useState('');
+  const [banTarget, setBanTarget] = useState<ClientActionTarget | null>(null);
+  const [banDuration, setBanDuration] = useState('3600');
+  const [banReason, setBanReason] = useState('Banned by admin');
+  const [banError, setBanError] = useState('');
+  const [pokeTarget, setPokeTarget] = useState<ClientActionTarget | null>(null);
   const [pokeMsg, setPokeMsg] = useState('');
+  const [pokeError, setPokeError] = useState('');
+  const kickSubmitting = useRef(false);
+  const banSubmitting = useRef(false);
+  const pokeSubmitting = useRef(false);
+  const kickReasonInput = useRef<HTMLInputElement>(null);
+  const banReasonInput = useRef<HTMLInputElement>(null);
+  const pokeMessageInput = useRef<HTMLInputElement>(null);
   const [playMode, setPlayMode] = useState<PlayDialogMode>(null);
   const [playClientName, setPlayClientName] = useState('');
   const [selectedBotId, setSelectedBotId] = useState<string>('');
@@ -90,6 +112,104 @@ export default function Clients() {
     setPlayMode(null);
     setPlayClientName('');
     setYtUrl('');
+  };
+
+  const closeKickDialog = () => {
+    setKickTarget(null);
+    setKickReason('Kicked by admin');
+    setKickError('');
+  };
+
+  const closeBanDialog = () => {
+    setBanTarget(null);
+    setBanDuration('3600');
+    setBanReason('Banned by admin');
+    setBanError('');
+  };
+
+  const closePokeDialog = () => {
+    setPokeTarget(null);
+    setPokeMsg('');
+    setPokeError('');
+  };
+
+  const handleKick = () => {
+    if (!kickTarget || kickSubmitting.current) return;
+    const target = kickTarget;
+    kickSubmitting.current = true;
+    setKickError('');
+    kickClient.mutate(
+      {
+        configId: target.configId,
+        sid: target.sid,
+        clid: target.clid,
+        reasonid: 5,
+        reasonmsg: kickReason.trim(),
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Kicked ${target.name}`);
+          closeKickDialog();
+        },
+        onError: (error) => {
+          const message = `Could not kick ${target.name}: ${apiErrorMessage(error, 'The server did not accept the request')}`;
+          setKickError(message);
+          toast.error(message);
+        },
+        onSettled: () => { kickSubmitting.current = false; },
+      },
+    );
+  };
+
+  const handleBan = () => {
+    if (!banTarget || banSubmitting.current) return;
+    const target = banTarget;
+    banSubmitting.current = true;
+    setBanError('');
+    banClient.mutate(
+      {
+        configId: target.configId,
+        sid: target.sid,
+        clid: target.clid,
+        time: Number(banDuration),
+        banreason: banReason.trim(),
+      },
+      {
+        onSuccess: () => {
+          toast.success(`Banned ${target.name}`);
+          closeBanDialog();
+        },
+        onError: (error) => {
+          const message = `Could not ban ${target.name}: ${apiErrorMessage(error, 'The server did not accept the request')}`;
+          setBanError(message);
+          toast.error(message);
+        },
+        onSettled: () => { banSubmitting.current = false; },
+      },
+    );
+  };
+
+  const handlePoke = () => {
+    if (!pokeTarget || !pokeMsg.trim() || pokeSubmitting.current) return;
+    const target = pokeTarget;
+    const messageText = pokeMsg.trim();
+    pokeSubmitting.current = true;
+    setPokeError('');
+    pokeClient.mutate(
+      { configId: target.configId, sid: target.sid, clid: target.clid, msg: messageText },
+      {
+        onSuccess: () => {
+          toast.success(`Poked ${target.name}`);
+          closePokeDialog();
+        },
+        onError: (error) => {
+          const message = `Could not poke ${target.name}: ${apiErrorMessage(error, 'The server did not accept the request')}`;
+          setPokeError(message);
+          toast.error(message);
+        },
+        onSettled: () => { pokeSubmitting.current = false; },
+      },
+    );
   };
 
   const handlePlayYouTube = () => {
@@ -223,7 +343,12 @@ export default function Clients() {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   className="cursor-pointer"
-                  onClick={() => { setPokeTarget({ clid: c.clid, name: c.client_nickname }); setPokeMsg(''); }}
+                  onClick={() => {
+                    if (!selectedConfigId || !selectedSid) return;
+                    setPokeTarget({ configId: selectedConfigId, sid: selectedSid, clid: c.clid, name: c.client_nickname });
+                    setPokeMsg('');
+                    setPokeError('');
+                  }}
                 >
                   <Zap className="mr-2 h-4 w-4" /> Poke
                 </DropdownMenuItem>
@@ -243,8 +368,10 @@ export default function Clients() {
                 <DropdownMenuItem
                   className="cursor-pointer"
                   onClick={() => {
-                    kickClient.mutate({ clid: c.clid, reasonid: 5, reasonmsg: 'Kicked by admin' });
-                    toast.success(`Kicked ${c.client_nickname}`);
+                    if (!selectedConfigId || !selectedSid) return;
+                    setKickTarget({ configId: selectedConfigId, sid: selectedSid, clid: c.clid, name: c.client_nickname });
+                    setKickReason('Kicked by admin');
+                    setKickError('');
                   }}
                 >
                   <LogOut className="mr-2 h-4 w-4" /> Kick from Server
@@ -252,11 +379,14 @@ export default function Clients() {
                 <DropdownMenuItem
                   className="text-destructive focus:text-destructive cursor-pointer"
                   onClick={() => {
-                    banClient.mutate({ clid: c.clid, time: 3600, banreason: 'Banned by admin' });
-                    toast.success(`Banned ${c.client_nickname}`);
+                    if (!selectedConfigId || !selectedSid) return;
+                    setBanTarget({ configId: selectedConfigId, sid: selectedSid, clid: c.clid, name: c.client_nickname });
+                    setBanDuration('3600');
+                    setBanReason('Banned by admin');
+                    setBanError('');
                   }}
                 >
-                  <Ban className="mr-2 h-4 w-4" /> Ban (1 hour)
+                  <Ban className="mr-2 h-4 w-4" /> Ban client
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -265,7 +395,7 @@ export default function Clients() {
       });
     }
     return cols;
-  }, [isAdmin, kickClient.mutate, banClient.mutate]);
+  }, [isAdmin, selectedConfigId, selectedSid]);
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
   if (isLoading) return <PageLoader />;
@@ -308,26 +438,138 @@ export default function Clients() {
         filteredEmptyText="No clients match your search"
       />
 
+      {/* Kick confirmation */}
+      <Dialog
+        open={!!kickTarget}
+        onOpenChange={(open) => { if (!open && !kickClient.isPending) closeKickDialog(); }}
+      >
+        <DialogContent onOpenAutoFocus={(event) => { event.preventDefault(); kickReasonInput.current?.focus(); }}>
+          <DialogHeader>
+            <DialogTitle>Kick from Server</DialogTitle>
+            <DialogDescription>
+              Kick <span className="font-medium text-foreground">{kickTarget?.name}</span> from the current virtual server. They may reconnect unless separately banned.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="kick-reason">Reason</Label>
+            <Input
+              id="kick-reason"
+              ref={kickReasonInput}
+              value={kickReason}
+              onChange={(event) => setKickReason(event.target.value)}
+              autoFocus
+              disabled={kickClient.isPending}
+            />
+          </div>
+          {kickError && <p role="alert" className="text-sm text-destructive">{kickError}</p>}
+          <DialogFooter>
+            <Button className="min-h-10" variant="outline" onClick={closeKickDialog} disabled={kickClient.isPending}>Cancel</Button>
+            <Button
+              className="min-h-10"
+              variant="destructive"
+              onClick={handleKick}
+              disabled={kickClient.isPending}
+              aria-busy={kickClient.isPending}
+            >
+              <LogOut className="h-4 w-4 mr-1" />
+              {kickClient.isPending ? 'Kicking…' : 'Kick from Server'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ban confirmation */}
+      <Dialog
+        open={!!banTarget}
+        onOpenChange={(open) => { if (!open && !banClient.isPending) closeBanDialog(); }}
+      >
+        <DialogContent onOpenAutoFocus={(event) => { event.preventDefault(); banReasonInput.current?.focus(); }}>
+          <DialogHeader>
+            <DialogTitle>Ban client</DialogTitle>
+            <DialogDescription>
+              This will disconnect <span className="font-medium text-foreground">{banTarget?.name}</span> and prevent them from reconnecting for the selected duration.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="ban-duration">Duration</Label>
+              <Select value={banDuration} onValueChange={setBanDuration} disabled={banClient.isPending}>
+                <SelectTrigger id="ban-duration" aria-label="Duration">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="3600">1 hour</SelectItem>
+                  <SelectItem value="86400">1 day</SelectItem>
+                  <SelectItem value="604800">1 week</SelectItem>
+                  <SelectItem value="2592000">30 days</SelectItem>
+                  <SelectItem value="0">Permanent</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="ban-reason">Reason</Label>
+              <Input
+                id="ban-reason"
+                ref={banReasonInput}
+                value={banReason}
+                onChange={(event) => setBanReason(event.target.value)}
+                autoFocus
+                disabled={banClient.isPending}
+              />
+            </div>
+          </div>
+          {banError && <p role="alert" className="text-sm text-destructive">{banError}</p>}
+          <DialogFooter>
+            <Button className="min-h-10" variant="outline" onClick={closeBanDialog} disabled={banClient.isPending}>Cancel</Button>
+            <Button
+              className="min-h-10"
+              variant="destructive"
+              onClick={handleBan}
+              disabled={banClient.isPending}
+              aria-busy={banClient.isPending}
+            >
+              <Ban className="h-4 w-4 mr-1" />
+              {banClient.isPending ? 'Banning…' : 'Ban client'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Poke Dialog */}
-      <Dialog open={!!pokeTarget} onOpenChange={() => setPokeTarget(null)}>
-        <DialogContent>
+      <Dialog
+        open={!!pokeTarget}
+        onOpenChange={(open) => { if (!open && !pokeClient.isPending) closePokeDialog(); }}
+      >
+        <DialogContent onOpenAutoFocus={(event) => { event.preventDefault(); pokeMessageInput.current?.focus(); }}>
           <DialogHeader>
             <DialogTitle>Poke {pokeTarget?.name}</DialogTitle>
+            <DialogDescription>
+              Send a short notification to {pokeTarget?.name}. The dialog stays open if the server rejects it.
+            </DialogDescription>
           </DialogHeader>
-          <div>
-            <Label className="text-xs">Message</Label>
-            <Input value={pokeMsg} onChange={(e) => setPokeMsg(e.target.value)} placeholder="Hey!" autoFocus />
+          <div className="space-y-2">
+            <Label htmlFor="poke-message">Message</Label>
+            <Input
+              id="poke-message"
+              ref={pokeMessageInput}
+              value={pokeMsg}
+              onChange={(e) => setPokeMsg(e.target.value)}
+              placeholder="Hey!"
+              autoFocus
+              disabled={pokeClient.isPending}
+            />
           </div>
+          {pokeError && <p role="alert" className="text-sm text-destructive">{pokeError}</p>}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPokeTarget(null)}>Cancel</Button>
-            <Button onClick={() => {
-              if (pokeTarget && pokeMsg) {
-                pokeClient.mutate({ clid: pokeTarget.clid, msg: pokeMsg });
-                toast.success(`Poked ${pokeTarget.name}`);
-                setPokeTarget(null);
-              }
-            }}>
-              <Zap className="h-4 w-4 mr-1" /> Poke
+            <Button className="min-h-10" variant="outline" onClick={closePokeDialog} disabled={pokeClient.isPending}>Cancel</Button>
+            <Button
+              className="min-h-10"
+              onClick={handlePoke}
+              disabled={!pokeMsg.trim() || pokeClient.isPending}
+              aria-busy={pokeClient.isPending}
+            >
+              <Zap className="h-4 w-4 mr-1" />
+              {pokeClient.isPending ? 'Sending…' : 'Send poke'}
             </Button>
           </DialogFooter>
         </DialogContent>
