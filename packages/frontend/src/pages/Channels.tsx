@@ -17,9 +17,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api-error';
+import { formatNumber } from '@/lib/formatting';
 import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal, MoveRight } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
@@ -422,7 +425,8 @@ export default function Channels() {
   }, [clientData]);
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Hash} title="No server selected" />;
-  if (channelsError) {
+  const hasChannelData = Array.isArray(channelData);
+  if (channelsError && !hasChannelData) {
     return (
       <div className="space-y-4">
         <EmptyState
@@ -438,7 +442,7 @@ export default function Channels() {
       </div>
     );
   }
-  if (channelsLoading) return <PageLoader />;
+  if (channelsLoading && !hasChannelData) return <PageLoader />;
 
   const handleCreate = () => {
     if (!newName.trim()) return;
@@ -552,23 +556,31 @@ export default function Channels() {
     : [];
   const totalClients = allVisibleClients.filter((client) => client.client_type !== '1').length;
   const totalQuerySessions = allVisibleClients.filter((client) => client.client_type === '1').length;
+  const backgroundError = channelsError
+    ? apiErrorMessage(channelsError, 'Channel refresh failed. The last successful channel tree is still displayed.')
+    : null;
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">Channels</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {Array.isArray(channelData) ? channelData.length : 0} channels · {totalClients} users online
-            {showQueryClients && totalQuerySessions > 0 ? ` · ${totalQuerySessions} query session${totalQuerySessions === 1 ? '' : 's'}` : ''}
-          </p>
-        </div>
-        {isAdmin && (
+      <PageHeader
+        title="Channels"
+        icon={Hash}
+        description={`${formatNumber(hasChannelData ? channelData.length : 0)} channels · ${formatNumber(totalClients)} users online${showQueryClients && totalQuerySessions > 0 ? ` · ${formatNumber(totalQuerySessions)} query session${totalQuerySessions === 1 ? '' : 's'}` : ''}`}
+        actions={isAdmin ? (
           <Button size="sm" onClick={() => setShowCreate(true)}>
             <Plus className="h-4 w-4 mr-1" /> Create Channel
           </Button>
-        )}
-      </div>
+        ) : undefined}
+        metadata={<RefreshStatus isRefreshing={channelsFetching} idleLabel="Live channel updates active" refreshingLabel="Refreshing channels…" />}
+      />
+
+      {backgroundError && (
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={() => { void refetchChannels(); }}
+          isRetrying={channelsFetching}
+        />
+      )}
 
       <Card>
         <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 pb-2">

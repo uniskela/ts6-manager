@@ -20,7 +20,10 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { formatUptime } from '@/lib/utils';
+import { formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
 import { Users, MoreHorizontal, LogOut, Ban, Zap, Youtube, Radio, Copy } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
@@ -397,9 +400,10 @@ export default function Clients() {
     return cols;
   }, [isAdmin, selectedConfigId, selectedSid]);
 
+  const hasClientData = Array.isArray(data);
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
-  if (isLoading) return <PageLoader />;
-  if (error) {
+  if (isLoading && !hasClientData) return <PageLoader />;
+  if (error && !hasClientData) {
     return (
       <div className="space-y-4">
         <EmptyState
@@ -415,15 +419,26 @@ export default function Clients() {
       </div>
     );
   }
+  const backgroundError = error
+    ? apiErrorMessage(error, 'Client refresh failed. The last successful client list is still displayed.')
+    : null;
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">Clients</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">{clients.length} online</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Clients"
+        icon={Users}
+        description={`${formatNumber(clients.length)} online`}
+        metadata={<RefreshStatus isRefreshing={isFetching} idleLabel="Live client updates active" refreshingLabel="Refreshing clients…" />}
+      />
+
+      {backgroundError && (
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={() => { void refetch(); }}
+          isRetrying={isFetching}
+        />
+      )}
 
       <DataTable
         columns={columns}

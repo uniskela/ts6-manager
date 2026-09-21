@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ElementType, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
   Clock,
@@ -25,9 +24,11 @@ import { Card, CardContent } from '@/components/ui/card';
 import { DataPanel } from '@/components/shared/DataPanel';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
 import { formatBytes, formatUptime } from '@/lib/utils';
-import { formatLocalTime } from '@/lib/formatting';
+import { formatLocalTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
 
 interface DashboardData {
@@ -146,7 +147,7 @@ export default function Dashboard() {
                 <Button size="sm" asChild>
                   <Link to="/settings?tab=connections&wizard=1">Go to Connections</Link>
                 </Button>
-                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={dismissNudge} aria-label="Dismiss">
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={dismissNudge} aria-label="Dismiss connection setup suggestion">
                   <X className="h-4 w-4" />
                 </Button>
               </div>
@@ -197,37 +198,30 @@ export default function Dashboard() {
 
   return (
     <div className="min-w-0 space-y-5">
-      <div className="flex min-w-0 flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h1 className="min-w-0 break-words [overflow-wrap:anywhere] text-xl font-semibold">{data.serverName}</h1>
-            <Badge variant="success" className="font-mono-data text-[10px]">ONLINE</Badge>
-          </div>
-          <p className="mt-1 text-sm text-muted-foreground">Live TeamSpeak server overview</p>
-        </div>
-        <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:justify-end">
-          {isAdmin && (
-            <Button size="sm" variant="outline" onClick={() => setShowWidgets(true)}>
-              <LayoutGrid className="mr-1.5 h-3.5 w-3.5" /> Widgets
-            </Button>
-          )}
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
-            <span className="h-1.5 w-1.5 rounded-full bg-success pulse-dot" aria-hidden="true" />
-            {query.isFetching ? 'Refreshing live data…' : 'Live monitoring active'}
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        title={data.serverName}
+        description="Live TeamSpeak server overview"
+        badge={<Badge variant="success" className="font-mono-data text-[10px]">ONLINE</Badge>}
+        actions={isAdmin ? (
+          <Button size="sm" variant="outline" onClick={() => setShowWidgets(true)}>
+            <LayoutGrid className="mr-1.5 h-3.5 w-3.5" /> Widgets
+          </Button>
+        ) : undefined}
+        metadata={(
+          <RefreshStatus
+            isRefreshing={query.isFetching}
+            idleLabel="Live monitoring active"
+            refreshingLabel="Refreshing live data…"
+          />
+        )}
+      />
 
       {backgroundError && (
-        <div role="status" className="flex min-w-0 flex-col gap-3 rounded-lg border border-warning/35 bg-warning/10 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" aria-hidden="true" />
-            <p className="min-w-0 break-words text-foreground">{backgroundError}</p>
-          </div>
-          <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching} className="shrink-0">
-            {query.isFetching ? 'Retrying…' : 'Retry refresh'}
-          </Button>
-        </div>
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={() => { void query.refetch(); }}
+          isRetrying={query.isFetching}
+        />
       )}
 
       <DataPanel
@@ -240,7 +234,7 @@ export default function Dashboard() {
             <div className="flex min-w-0 flex-wrap items-end justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Online users</p>
-                <p className="mt-1 font-mono-data text-3xl font-bold text-primary">{data.onlineUsers} / {data.maxClients}</p>
+                <p className="mt-1 font-mono-data text-3xl font-bold text-primary">{formatNumber(data.onlineUsers)} / {formatNumber(data.maxClients)}</p>
               </div>
               <p className="font-mono-data text-sm text-muted-foreground">{roundedUtilisation}% utilised</p>
             </div>
@@ -258,12 +252,12 @@ export default function Dashboard() {
               />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              {availableSlots} {availableSlots === 1 ? 'slot' : 'slots'} available
+              {formatNumber(availableSlots)} {availableSlots === 1 ? 'slot' : 'slots'} available
             </p>
           </div>
 
           <div className="grid min-w-0 grid-cols-2 gap-3">
-            <Metric icon={Hash} label="Channels" value={data.channelCount} />
+            <Metric icon={Hash} label="Channels" value={formatNumber(data.channelCount)} />
             <Metric icon={Clock} label="Uptime" value={formatUptime(data.uptime)} />
             <Metric icon={Gauge} label="Ping" value={`${Number(data.ping || 0).toFixed(1)} ms`} />
             <Metric icon={Radio} label="Packet loss" value={`${(Number(data.packetloss || 0) * 100).toFixed(2)}%`} />
@@ -326,8 +320,8 @@ export default function Dashboard() {
           <dl className="min-w-0">
             <DetailRow label="Server version">{data.version || 'Unknown'}</DetailRow>
             <DetailRow label="Platform">{data.platform || 'Unknown'}</DetailRow>
-            <DetailRow label="Total slots">{data.maxClients}</DetailRow>
-            <DetailRow label="Available slots">{availableSlots}</DetailRow>
+            <DetailRow label="Total slots">{formatNumber(data.maxClients)}</DetailRow>
+            <DetailRow label="Available slots">{formatNumber(availableSlots)}</DetailRow>
           </dl>
         </DataPanel>
       </div>
