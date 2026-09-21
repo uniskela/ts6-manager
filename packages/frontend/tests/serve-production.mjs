@@ -13,6 +13,31 @@ let dashboardScenario = 'no-connections';
 let dashboardRequests = 0;
 let permissionScenario = 'normal';
 let permissionRequests = [];
+let botScenario = 'normal';
+let botUpdateRequests = [];
+const initialBots = [
+  {
+    id: 1,
+    name: 'Large Flow',
+    description: 'A deterministic editor fixture',
+    enabled: true,
+    serverConfigId: 1,
+    virtualServerId: 1,
+    flowData: {
+      nodes: [
+        { id: 'trigger', type: 'trigger_event', label: 'Trigger', config: {}, x: 80, y: 80 },
+        { id: 'condition', type: 'condition', label: 'Condition', config: {}, x: 380, y: 180 },
+        { id: 'far', type: 'action_message', label: 'Far action', config: { message: 'legacy' }, x: 2200, y: 1300 },
+      ],
+      edges: [
+        { id: 'edge-trigger-condition', source: 'trigger', sourcePort: 'out', target: 'condition', targetPort: 'in' },
+        { id: 'edge-condition-far', source: 'condition', sourcePort: 'true', target: 'far', targetPort: 'in' },
+      ],
+    },
+    updatedAt: '2026-09-20T00:00:00.000Z',
+  },
+];
+let bots = structuredClone(initialBots);
 
 const permissionDefinitions = [
   { permid: 1, permname: 'b_virtualserver_modify_name', permdesc: 'Modify the virtual server name' },
@@ -117,6 +142,9 @@ const server = createServer(async (req, res) => {
       permissionScenario = 'normal';
       permissionRequests = [];
       permissionValues = structuredClone(initialPermissionValues);
+      botScenario = 'normal';
+      botUpdateRequests = [];
+      bots = structuredClone(initialBots);
     }
     if (url.pathname === '/__test/unavailable') unavailable = url.searchParams.has('on');
     if (url.pathname === '/__test/setup') needsSetup = url.searchParams.has('on');
@@ -126,8 +154,13 @@ const server = createServer(async (req, res) => {
       permissionScenario = url.searchParams.get('scenario') || 'normal';
       permissionRequests = [];
     }
+    if (url.pathname === '/__test/bots' && url.searchParams.has('scenario')) {
+      botScenario = url.searchParams.get('scenario') || 'normal';
+      botUpdateRequests = [];
+      if (botScenario === 'server-update') bots[0].name = 'Server refreshed';
+    }
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests }));
+    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests }));
     return;
   }
   if (/^\/(api|ws)(\/|$)/.test(url.pathname)) {
@@ -203,6 +236,14 @@ const server = createServer(async (req, res) => {
         reason: 'No local server detected in the production test environment.',
       }
       : url.pathname === '/api/widgets' && allowTestAuth ? []
+      : url.pathname === '/api/bots' && allowTestAuth ? bots
+      : /^\/api\/bots\/(\d+)$/.test(url.pathname) && allowTestAuth
+        ? (() => {
+            const id = Number(url.pathname.split('/').pop());
+            const bot = bots.find((item) => item.id === id);
+            if (req.method === 'GET') return bot || { error: 'Bot not found' };
+            return bot;
+          })()
       : url.pathname === '/api/servers' && allowTestAuth ? (dashboardScenario === 'no-connections' ? [] : connections)
       : /^\/api\/servers\/\d+\/virtual-servers$/.test(url.pathname) && allowTestAuth
         ? (dashboardScenario === 'no-selection' ? [] : url.pathname.includes('/2/') ? [
@@ -248,6 +289,18 @@ const server = createServer(async (req, res) => {
           })()
       : { secret: 'test-only-sensitive-response', timestamp: Date.now() };
     if (url.pathname === '/api/auth/login' && !allowTestAuth) res.statusCode = 401;
+    const botUpdate = url.pathname.match(/^\/api\/bots\/(\d+)$/) && req.method === 'PUT' && allowTestAuth;
+    if (botUpdate) {
+      const id = Number(url.pathname.split('/').pop());
+      const body = await readJson(req);
+      botUpdateRequests.push(body);
+      if (botScenario === 'slow-save') await new Promise(resolve => setTimeout(resolve, 600));
+      if (botScenario === 'failed-save') { res.statusCode = 503; res.end('{"error":"Bot save rejected"}'); return; }
+      const index = bots.findIndex((item) => item.id === id);
+      if (index >= 0) bots[index] = { ...bots[index], ...body, flowData: body.flowData || bots[index].flowData, updatedAt: new Date().toISOString() };
+      res.end(JSON.stringify(bots[index]));
+      return;
+    }
     res.end(JSON.stringify(data));
     return;
   }
