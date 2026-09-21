@@ -16,6 +16,9 @@ let permissionRequests = [];
 let botScenario = 'normal';
 let botUpdateRequests = [];
 let dataTableScenario = 'normal';
+let adminActionScenario = 'normal';
+let adminActionRequests = [];
+let virtualServerListRequests = 0;
 const initialBots = [
   {
     id: 1,
@@ -57,6 +60,18 @@ const dataTableComplaints = [
   { fname: 'Ada', tname: 'Reported target A', message: 'First complaint', timestamp: 1_726_800_100 },
   { fname: 'Mira', tname: 'Reported target B', message: 'Second complaint', timestamp: 1_726_800_200 },
 ];
+
+const initialVirtualServers = {
+  1: [
+    { virtualserver_id: 1, virtualserver_name: 'Operations Voice', virtualserver_status: 'online', virtualserver_clientsonline: 18, virtualserver_queryclientsonline: 1, virtualserver_maxclients: 32, virtualserver_port: 9987, virtualserver_uptime: 183845 },
+    { virtualserver_id: 11, virtualserver_name: 'Operations Staging', virtualserver_status: 'online', virtualserver_clientsonline: 2, virtualserver_queryclientsonline: 0, virtualserver_maxclients: 16, virtualserver_port: 9988, virtualserver_uptime: 3600 },
+  ],
+  2: [
+    { virtualserver_id: 2, virtualserver_name: 'Backup Voice', virtualserver_status: 'online', virtualserver_clientsonline: 1, virtualserver_queryclientsonline: 0, virtualserver_maxclients: 4, virtualserver_port: 9987, virtualserver_uptime: 95 },
+    { virtualserver_id: 22, virtualserver_name: 'Backup Staging', virtualserver_status: 'online', virtualserver_clientsonline: 0, virtualserver_queryclientsonline: 0, virtualserver_maxclients: 8, virtualserver_port: 9988, virtualserver_uptime: 120 },
+  ],
+};
+let virtualServers = structuredClone(initialVirtualServers);
 
 function dataTableRows(rows) {
   return dataTableScenario === 'populated' ? rows : [];
@@ -169,6 +184,10 @@ const server = createServer(async (req, res) => {
       botUpdateRequests = [];
       bots = structuredClone(initialBots);
       dataTableScenario = 'normal';
+      adminActionScenario = 'normal';
+      adminActionRequests = [];
+      virtualServerListRequests = 0;
+      virtualServers = structuredClone(initialVirtualServers);
     }
     if (url.pathname === '/__test/unavailable') unavailable = url.searchParams.has('on');
     if (url.pathname === '/__test/setup') needsSetup = url.searchParams.has('on');
@@ -186,14 +205,52 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/__test/data-table' && url.searchParams.has('scenario')) {
       dataTableScenario = url.searchParams.get('scenario') || 'normal';
     }
+    if (url.pathname === '/__test/admin-actions' && url.searchParams.has('scenario')) {
+      adminActionScenario = url.searchParams.get('scenario') || 'normal';
+      adminActionRequests = [];
+    }
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests }));
+    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests }));
     return;
   }
   if (/^\/(api|ws)(\/|$)/.test(url.pathname)) {
     res.setHeader('Content-Type', 'application/json');
     if (req.method !== 'GET') mutations++;
     if (unavailable) { res.writeHead(503); res.end('{"error":"unavailable"}'); return; }
+
+    const clientAction = url.pathname.match(/^\/api\/servers\/(\d+)\/vs\/(\d+)\/clients\/(\d+)\/(kick|ban|poke)$/);
+    const virtualServerAction = url.pathname.match(/^\/api\/servers\/(\d+)\/virtual-servers\/(\d+)\/(start|stop)$/);
+    if (allowTestAuth && req.method === 'POST' && (clientAction || virtualServerAction)) {
+      const match = clientAction || virtualServerAction;
+      const action = match[4] || match[3];
+      const body = await readJson(req);
+      adminActionRequests.push({
+        method: req.method,
+        path: url.pathname,
+        configId: Number(match[1]),
+        sid: clientAction ? Number(match[2]) : Number(match[2]),
+        targetId: clientAction ? Number(match[3]) : Number(match[2]),
+        action,
+        body,
+      });
+      if (adminActionScenario === `${action}-slow`) await new Promise(resolve => setTimeout(resolve, 1500));
+      if (adminActionScenario === `${action}-failure`) {
+        res.writeHead(403);
+        res.end(JSON.stringify({ error: `insufficient permission to ${action}`, details: 'Check the ServerQuery permission assigned to this account' }));
+        return;
+      }
+      if (virtualServerAction) {
+        const configId = Number(match[1]);
+        const sid = Number(match[2]);
+        virtualServers[configId] = (virtualServers[configId] || []).map(server => (
+          server.virtualserver_id === sid
+            ? { ...server, virtualserver_status: action === 'stop' ? 'offline' : 'online' }
+            : server
+        ));
+      }
+      res.end(JSON.stringify({ success: true }));
+      return;
+    }
 
     const permissionContext = url.pathname.match(/^\/api\/servers\/(\d+)\/vs\/(\d+)\/(server-groups|channel-groups|channels|clients)\/(\d+)\/permissions$/);
     if (allowTestAuth && permissionContext) {
@@ -273,13 +330,12 @@ const server = createServer(async (req, res) => {
           })()
       : url.pathname === '/api/servers' && allowTestAuth ? (dashboardScenario === 'no-connections' ? [] : connections)
       : /^\/api\/servers\/\d+\/virtual-servers$/.test(url.pathname) && allowTestAuth
-        ? (dashboardScenario === 'no-selection' ? [] : url.pathname.includes('/2/') ? [
-            { virtualserver_id: 2, virtualserver_name: 'Backup Voice', virtualserver_status: 'online', virtualserver_clients_online: 1, virtualserver_maxclients: 4 },
-            { virtualserver_id: 22, virtualserver_name: 'Backup Staging', virtualserver_status: 'online', virtualserver_clients_online: 0, virtualserver_maxclients: 8 },
-          ] : [
-            { virtualserver_id: 1, virtualserver_name: 'Operations Voice', virtualserver_status: 'online', virtualserver_clients_online: 18, virtualserver_maxclients: 32 },
-            { virtualserver_id: 11, virtualserver_name: 'Operations Staging', virtualserver_status: 'online', virtualserver_clients_online: 2, virtualserver_maxclients: 16 },
-          ])
+        ? (() => {
+            virtualServerListRequests++;
+            if (dashboardScenario === 'no-selection') return [];
+            const configId = Number(url.pathname.split('/')[3]);
+            return virtualServers[configId] || [];
+          })()
       : /^\/api\/servers\/\d+\/vs\/\d+\/permissions$/.test(url.pathname) && allowTestAuth ? permissionDefinitions
       : /^\/api\/servers\/\d+\/vs\/\d+\/server-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['server-groups']
       : /^\/api\/servers\/\d+\/vs\/\d+\/channel-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['channel-groups']

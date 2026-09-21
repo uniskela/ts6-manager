@@ -2,6 +2,26 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientsApi } from '../api/clients.api';
 import { useServerStore } from '../stores/server.store';
 
+export interface ClientActionContext {
+  configId: number;
+  sid: number;
+  clid: number;
+}
+
+export interface KickClientInput extends ClientActionContext {
+  reasonid: number;
+  reasonmsg?: string;
+}
+
+export interface BanClientInput extends ClientActionContext {
+  time?: number;
+  banreason?: string;
+}
+
+export interface PokeClientInput extends ClientActionContext {
+  msg: string;
+}
+
 export function useClients() {
   const { selectedConfigId: c, selectedSid: s } = useServerStore();
   return useQuery({
@@ -25,21 +45,21 @@ export function useClientDatabase() {
 
 export function useKickClient() {
   const qc = useQueryClient();
-  const { selectedConfigId: c, selectedSid: s } = useServerStore();
   return useMutation({
-    mutationFn: ({ clid, reasonid, reasonmsg }: { clid: number; reasonid: number; reasonmsg?: string }) =>
-      clientsApi.kick(c!, s!, clid, reasonid, reasonmsg),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['clients'] }),
+    mutationFn: ({ configId, sid, clid, reasonid, reasonmsg }: KickClientInput) =>
+      clientsApi.kick(configId, sid, clid, reasonid, reasonmsg),
+    onSuccess: (_data, { configId, sid }) =>
+      qc.invalidateQueries({ queryKey: ['clients', configId, sid] }),
   });
 }
 
 export function useBanClient() {
   const qc = useQueryClient();
-  const { selectedConfigId: c, selectedSid: s } = useServerStore();
   return useMutation({
-    mutationFn: ({ clid, time, banreason }: { clid: number; time?: number; banreason?: string }) =>
-      clientsApi.ban(c!, s!, clid, time, banreason),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['clients'] }),
+    mutationFn: ({ configId, sid, clid, time, banreason }: BanClientInput) =>
+      clientsApi.ban(configId, sid, clid, time, banreason),
+    onSuccess: (_data, { configId, sid }) =>
+      qc.invalidateQueries({ queryKey: ['clients', configId, sid] }),
   });
 }
 
@@ -54,9 +74,8 @@ export function useMoveClient() {
 }
 
 export function usePokeClient() {
-  const { selectedConfigId: c, selectedSid: s } = useServerStore();
   return useMutation({
-    mutationFn: ({ clid, msg }: { clid: number; msg: string }) =>
-      clientsApi.poke(c!, s!, clid, msg),
+    mutationFn: ({ configId, sid, clid, msg }: PokeClientInput) =>
+      clientsApi.poke(configId, sid, clid, msg),
   });
 }
