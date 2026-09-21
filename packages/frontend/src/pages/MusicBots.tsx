@@ -20,6 +20,8 @@ import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -48,6 +50,8 @@ import { useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteC
 import { settingsApi } from '@/api/settings.api';
 import { TS6_CHAT_RESPONSE_EXAMPLE } from '@/lib/ts6-chat-format';
 import { Ts6ChatResponseEditor } from '@/components/Ts6ChatResponseEditor';
+import { apiErrorMessage } from '@/lib/api-error';
+import { formatNumber } from '@/lib/formatting';
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -264,7 +268,7 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
             <Badge variant="secondary" className="text-[9px] font-mono-data shrink-0">ID {bot.id}</Badge>
           </div>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7" title="Player Widget"
+            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Open player widget for ${bot.name}`}
               onClick={() => {
                 musicBotsApi.playerWidgetToken(bot.id).then(setWidgetData);
                 setShowWidget(true);
@@ -272,10 +276,10 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
             >
               <Link className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
+            <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Edit ${bot.name}`} onClick={onEdit}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={onDelete}>
+            <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" aria-label={`Delete ${bot.name}`} onClick={onDelete}>
               <Trash2 className="h-3.5 w-3.5" />
             </Button>
           </div>
@@ -334,34 +338,36 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
             <div className="flex items-center justify-center gap-1">
               <Button
                 variant="ghost" size="icon" className="h-7 w-7"
+                aria-label={`${state.shuffle ? 'Disable' : 'Enable'} shuffle for ${bot.name}`}
+                aria-pressed={state.shuffle}
                 onClick={() => shuffleMut.mutate({ botId: bot.id, enabled: !state.shuffle })}
               >
                 <Shuffle className={`h-3.5 w-3.5 ${state.shuffle ? 'text-primary' : ''}`} />
               </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7"
+              <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Previous track for ${bot.name}`}
                 onClick={() => previousTrack.mutate(bot.id)}
               >
                 <SkipBack className="h-3.5 w-3.5" />
               </Button>
               {isPlaying ? (
-                <Button variant="outline" size="icon" className="h-8 w-8"
+                <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Pause ${bot.name}`}
                   onClick={() => pausePlayback.mutate(bot.id)}
                 >
                   <Pause className="h-4 w-4" />
                 </Button>
               ) : (
-                <Button variant="outline" size="icon" className="h-8 w-8"
+                <Button variant="outline" size="icon" className="h-8 w-8" aria-label={`Resume ${bot.name}`}
                   onClick={() => resumePlayback.mutate(bot.id)}
                 >
                   <Play className="h-4 w-4 ml-0.5" />
                 </Button>
               )}
-              <Button variant="ghost" size="icon" className="h-7 w-7"
+              <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Next track for ${bot.name}`}
                 onClick={() => skipTrack.mutate(bot.id)}
               >
                 <SkipForward className="h-3.5 w-3.5" />
               </Button>
-              <Button variant="ghost" size="icon" className="h-7 w-7"
+              <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Change repeat mode for ${bot.name}`}
                 onClick={() => {
                   const modes = ['off', 'track', 'queue'] as const;
                   const idx = modes.indexOf(state.repeat);
@@ -766,7 +772,7 @@ function BotsTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{bots.length} music bot{bots.length !== 1 ? 's' : ''}</p>
+        <p className="text-sm text-muted-foreground">{formatNumber(bots.length)} music bot{bots.length !== 1 ? 's' : ''}</p>
         <Button size="sm" onClick={() => { resetForm(); setShowCreate(true); }}>
           <Plus className="h-4 w-4 mr-1" /> New Bot
         </Button>
@@ -1248,7 +1254,7 @@ function LibraryTab() {
               </>
             )}
             {urlInfo && (
-              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setUrlInfo(null); setYtUrl(''); }}>
+              <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Clear URL details" onClick={() => { setUrlInfo(null); setYtUrl(''); }}>
                 <X className="h-4 w-4" />
               </Button>
             )}
@@ -1375,7 +1381,7 @@ function LibraryTab() {
           <CardHeader className="py-2 px-3">
             <div className="flex items-center justify-between">
               <CardTitle className="text-xs">YouTube Results ({ytResults.length})</CardTitle>
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowYt(false)}>
+              <Button variant="ghost" size="icon" className="h-6 w-6" aria-label="Close YouTube results" onClick={() => setShowYt(false)}>
                 <X className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -1430,6 +1436,7 @@ function LibraryTab() {
                 <span className="text-xs text-muted-foreground w-16 text-right">{song.fileSize ? formatBytes(song.fileSize) : '-'}</span>
                 <div className="w-16 flex justify-end">
                   <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive"
+                    aria-label={`Delete ${song.title}`}
                     onClick={() => setDeleteId(song.id)}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -1843,6 +1850,7 @@ function PlaylistsTab() {
                   variant="ghost"
                   size="icon"
                   className="h-6 w-6 text-destructive hover:text-destructive shrink-0"
+                  aria-label={`Delete playlist ${pl.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
                     setDeleteId(pl.id);
@@ -1914,6 +1922,7 @@ function PlaylistsTab() {
                         variant="ghost"
                         size="icon"
                         className="h-6 w-6 text-destructive hover:text-destructive"
+                        aria-label={`Remove ${song.title} from playlist`}
                         onClick={() =>
                           removeSong.mutate(
                             { playlistId: selectedId, songId: song.id },
@@ -2591,13 +2600,14 @@ function CommandsTab() {
                 <p className="text-[11px] text-muted-foreground/80 line-clamp-2 mt-0.5">{cmd.response}</p>
               </div>
               <div className="touch-action-reveal flex shrink-0 items-center gap-1 transition-opacity">
-                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => openEdit(cmd)}>
+                <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Edit command ${cmd.name}`} onClick={() => openEdit(cmd)}>
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
                   className="h-7 w-7 text-destructive"
+                  aria-label={`Delete command ${cmd.name}`}
                   onClick={() => setDeleteId(cmd.id)}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -2921,6 +2931,7 @@ function RadioTab() {
                     variant="default"
                     size="icon"
                     className="h-8 w-8"
+                    aria-label={`Play ${station.name}`}
                     onClick={() => handlePlay(station.id)}
                     disabled={!selectedBotId || playRadio.isPending}
                   >
@@ -2930,6 +2941,7 @@ function RadioTab() {
                     variant="ghost"
                     size="icon"
                     className="touch-action-reveal h-8 w-8 text-destructive transition-opacity hover:text-destructive"
+                    aria-label={`Delete ${station.name}`}
                     onClick={() => setDeleteId(station.id)}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -3255,14 +3267,29 @@ function QueueTab() {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function MusicBots() {
+  const botQuery = useMusicBots();
+  const botCount = Array.isArray(botQuery.data) ? botQuery.data.length : 0;
+  const backgroundError = botQuery.error
+    ? apiErrorMessage(botQuery.error, 'Music bot refresh failed. The last successful state is still displayed where available.')
+    : null;
+
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <Music className="h-5 w-5 text-primary" />
-          <h1 className="text-xl font-semibold">Music Bots</h1>
-        </div>
-      </div>
+      <PageHeader
+        title="Music Bots"
+        icon={Music}
+        description="Manage voice bots, playback, queues, media, and radio."
+        badge={<Badge variant="secondary">{formatNumber(botCount)} configured</Badge>}
+        metadata={<RefreshStatus isRefreshing={botQuery.isFetching} idleLabel="Live bot status active" refreshingLabel="Refreshing bot status…" />}
+      />
+
+      {backgroundError && (
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={() => { void botQuery.refetch(); }}
+          isRetrying={botQuery.isFetching}
+        />
+      )}
 
       <Tabs defaultValue="bots" className="space-y-4">
         <TabsList>

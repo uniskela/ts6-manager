@@ -9,6 +9,8 @@ import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -19,6 +21,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tv, Plus, Trash2, RefreshCw, Play, Square, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage } from '@ts6/common';
+import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
+import { apiErrorMessage } from '@/lib/api-error';
 
 const PRESETS = [
   { value: '480p', label: '480p' },
@@ -124,6 +128,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
         <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
+            aria-label="Search IPTV channels"
             placeholder="Search channels..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -165,7 +170,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
                 className="h-7 w-7 shrink-0"
                 onClick={() => doStream(c)}
                 disabled={stream.isPending || !botId}
-                title="Stream this channel"
+                aria-label={`Stream ${c.name}`}
               >
                 <Play className="h-3.5 w-3.5" />
               </Button>
@@ -176,13 +181,13 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
 
       {/* Pagination */}
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>{total.toLocaleString()} channels{isFetching ? ' · updating…' : ''}</span>
+        <span>{formatNumber(total)} channels{isFetching ? ' · updating…' : ''}</span>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="icon" className="h-7 w-7" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Previous channel page" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             <ChevronLeft className="h-3.5 w-3.5" />
           </Button>
           <span className="tabular-nums">{page} / {totalPages}</span>
-          <Button variant="outline" size="icon" className="h-7 w-7" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
+          <Button variant="outline" size="icon" className="h-7 w-7" aria-label="Next channel page" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
             <ChevronRight className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -207,7 +212,7 @@ function AddPlaylistDialog({ open, onClose, serverConfigId }: { open: boolean; o
       {
         onSuccess: (res: any) => {
           if (res?.refreshError) toast.warning(`Playlist added, but refresh failed: ${res.refreshError}`);
-          else toast.success(`Playlist added — ${res?.channelCount ?? 0} channels`);
+          else toast.success(`Playlist added — ${formatNumber(Number(res?.channelCount ?? 0))} channels`);
           setName(''); setUrl(''); setRefresh('0');
           onClose();
         },
@@ -225,22 +230,22 @@ function AddPlaylistDialog({ open, onClose, serverConfigId }: { open: boolean; o
         </DialogHeader>
         <div className="space-y-3 py-1">
           <div className="space-y-1.5">
-            <Label className="text-xs">Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="My IPTV" />
+            <Label htmlFor="iptv-playlist-name" className="text-xs">Name</Label>
+            <Input id="iptv-playlist-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My IPTV" autoFocus />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">M3U URL</Label>
-            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://provider/get.php?...&type=m3u_plus" />
+            <Label htmlFor="iptv-playlist-url" className="text-xs">M3U URL</Label>
+            <Input id="iptv-playlist-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://provider/get.php?...&type=m3u_plus" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-xs">Auto-refresh (minutes, 0 = manual)</Label>
-            <Input type="number" min={0} value={refresh} onChange={(e) => setRefresh(e.target.value)} />
+            <Label htmlFor="iptv-playlist-refresh" className="text-xs">Auto-refresh (minutes, 0 = manual)</Label>
+            <Input id="iptv-playlist-refresh" type="number" min={0} value={refresh} onChange={(e) => setRefresh(e.target.value)} />
           </div>
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={create.isPending}>
-            {create.isPending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />} Add & Load
+          <Button onClick={submit} disabled={create.isPending} aria-busy={create.isPending}>
+            {create.isPending ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Adding…</> : 'Add & Load'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -260,7 +265,7 @@ export default function Iptv() {
     if (!selectedConfigId && serverList.length > 0) setServer(serverList[0].id);
   }, [serverList, selectedConfigId, setServer]);
 
-  const { data: playlists, isLoading } = useIptvPlaylists(selectedConfigId ?? undefined);
+  const { data: playlists, isLoading, error, refetch, isFetching } = useIptvPlaylists(selectedConfigId ?? undefined);
   const { data: bots } = useMusicBots();
   const botList = Array.isArray(bots) ? bots : [];
 
@@ -269,23 +274,39 @@ export default function Iptv() {
 
   const [addOpen, setAddOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<IptvPlaylistSummary | null>(null);
+  const [deleteError, setDeleteError] = useState('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<number | null>(null);
 
-  if (isLoading) return <PageLoader />;
+  if (isLoading && playlists === undefined) return <PageLoader />;
+  if (error && playlists === undefined) {
+    return (
+      <div className="space-y-4">
+        <EmptyState icon={Tv} title="Could not load IPTV playlists" description={apiErrorMessage(error, 'Check the selected connection and try again.')} />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => { void refetch(); }} disabled={isFetching} aria-busy={isFetching}>
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const playlistList: IptvPlaylistSummary[] = Array.isArray(playlists) ? playlists : [];
   const selectedPlaylist = playlistList.find((p) => p.id === selectedPlaylistId) ?? playlistList[0] ?? null;
+  const backgroundError = error
+    ? apiErrorMessage(error, 'Playlist refresh failed. The last successful list is still displayed.')
+    : null;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-xl font-semibold flex items-center gap-2"><Tv className="h-5 w-5" /> IPTV</h1>
-          <p className="text-sm text-muted-foreground">Stream live IPTV channels into TeamSpeak via a Music Bot's video sidecar.</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <PageHeader
+        title="IPTV"
+        icon={Tv}
+        description="Stream live IPTV channels into TeamSpeak via a Music Bot's video sidecar."
+        actions={(
+          <>
           <Select value={selectedConfigId ? String(selectedConfigId) : ''} onValueChange={(v) => { setServer(parseInt(v)); setSelectedPlaylistId(null); }}>
-            <SelectTrigger className="h-10 min-w-0 flex-1 sm:h-9 sm:w-48 sm:flex-none"><SelectValue placeholder="Select server" /></SelectTrigger>
+            <SelectTrigger aria-label="IPTV server" className="h-10 min-w-0 flex-1 sm:h-9 sm:w-48 sm:flex-none"><SelectValue placeholder="Select server" /></SelectTrigger>
             <SelectContent>
               {serverList.map((s: any) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
             </SelectContent>
@@ -293,8 +314,14 @@ export default function Iptv() {
           <Button onClick={() => setAddOpen(true)} disabled={!selectedConfigId}>
             <Plus className="h-4 w-4 mr-1.5" /> Add Playlist
           </Button>
-        </div>
-      </div>
+          </>
+        )}
+        metadata={<RefreshStatus isRefreshing={isFetching} idleLabel="Playlist data up to date" refreshingLabel="Refreshing playlists…" />}
+      />
+
+      {backgroundError && (
+        <StaleDataNotice message={backgroundError} onRetry={() => { void refetch(); }} isRetrying={isFetching} />
+      )}
 
       {playlistList.length === 0 ? (
         <EmptyState
@@ -313,6 +340,15 @@ export default function Iptv() {
                 key={p.id}
                 className={`cursor-pointer transition-colors ${selectedPlaylist?.id === p.id ? 'border-primary/50' : 'hover:border-primary/30'}`}
                 onClick={() => setSelectedPlaylistId(p.id)}
+                onKeyDown={(event) => {
+                  if (event.target !== event.currentTarget || (event.key !== 'Enter' && event.key !== ' ')) return;
+                  event.preventDefault();
+                  setSelectedPlaylistId(p.id);
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label={`View ${p.name} channels`}
+                aria-pressed={selectedPlaylist?.id === p.id}
               >
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -321,18 +357,18 @@ export default function Iptv() {
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7"
                         onClick={(e) => { e.stopPropagation(); refreshPlaylist.mutate(p.id, {
-                          onSuccess: (r: any) => toast.success(`Refreshed — ${r.channelCount} channels`),
+                          onSuccess: (r: any) => toast.success(`Refreshed — ${formatNumber(Number(r.channelCount))} channels`),
                           onError: (err: any) => toast.error(err?.response?.data?.error || 'Refresh failed'),
                         }); }}
                         disabled={refreshPlaylist.isPending}
-                        title="Refresh channels"
+                        aria-label={`Refresh ${p.name}`}
                       >
                         <RefreshCw className={`h-3.5 w-3.5 ${refreshPlaylist.isPending ? 'animate-spin' : ''}`} />
                       </Button>
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7 text-destructive"
                         onClick={(e) => { e.stopPropagation(); setDeleteTarget(p); }}
-                        title="Delete playlist"
+                        aria-label={`Delete ${p.name}`}
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
@@ -341,12 +377,12 @@ export default function Iptv() {
                 </CardHeader>
                 <CardContent className="space-y-1.5">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="secondary" className="text-[10px]">{p.channelCount.toLocaleString()} channels</Badge>
+                    <Badge variant="secondary" className="text-[10px]">{formatNumber(p.channelCount)} channels</Badge>
                     {p.autoRefreshMinutes > 0 && <Badge variant="outline" className="text-[10px]">auto {p.autoRefreshMinutes}m</Badge>}
                   </div>
                   {p.lastError
                     ? <p className="text-[10px] text-destructive truncate flex items-center gap-1"><AlertCircle className="h-3 w-3 shrink-0" /> {p.lastError}</p>
-                    : <p className="text-[10px] text-muted-foreground">{p.lastRefreshedAt ? `Updated ${new Date(p.lastRefreshedAt).toLocaleString()}` : 'Not refreshed yet'}</p>}
+                    : <p className="text-[10px] text-muted-foreground">{p.lastRefreshedAt ? `Updated ${formatLocalDateTime(p.lastRefreshedAt)}` : 'Not refreshed yet'}</p>}
                 </CardContent>
               </Card>
             ))}
@@ -370,16 +406,27 @@ export default function Iptv() {
 
       <ConfirmDialog
         open={!!deleteTarget}
-        onOpenChange={(o) => !o && setDeleteTarget(null)}
+        onOpenChange={(o) => { if (!o) { setDeleteTarget(null); setDeleteError(''); } }}
         title="Delete playlist?"
         description={`This removes "${deleteTarget?.name}" and all its channels.`}
         confirmLabel="Delete"
         destructive
+        loading={deletePlaylist.isPending}
+        error={deleteError}
         onConfirm={() => {
           if (deleteTarget) {
+            setDeleteError('');
             deletePlaylist.mutate(deleteTarget.id, {
-              onSuccess: () => { toast.success('Playlist deleted'); setDeleteTarget(null); },
-              onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to delete'),
+              onSuccess: () => {
+                toast.success('Playlist deleted');
+                setDeleteError('');
+                setDeleteTarget(null);
+              },
+              onError: (e: unknown) => {
+                const message = apiErrorMessage(e, 'Failed to delete playlist');
+                setDeleteError(message);
+                toast.error(message);
+              },
             });
           }
         }}

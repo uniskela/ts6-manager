@@ -22,6 +22,7 @@ let virtualServerListRequests = 0;
 let channelScenario = 'normal';
 let channelsEnabled = false;
 let channelRequests = [];
+let iptvScenario = 'empty';
 let channelRows = [
   { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
   { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
@@ -207,6 +208,7 @@ const server = createServer(async (req, res) => {
       channelScenario = 'normal';
       channelsEnabled = false;
       channelRequests = [];
+      iptvScenario = 'empty';
       channelRows = structuredClone([
         { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
         { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
@@ -239,6 +241,9 @@ const server = createServer(async (req, res) => {
       channelScenario = url.searchParams.get('scenario') || 'normal';
       channelsEnabled = true;
       channelRequests = [];
+    }
+    if (url.pathname === '/__test/iptv' && url.searchParams.has('scenario')) {
+      iptvScenario = url.searchParams.get('scenario') || 'empty';
     }
     if (url.pathname === '/__test/auth' && url.searchParams.has('role')) {
       testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
@@ -354,6 +359,21 @@ const server = createServer(async (req, res) => {
         reason: 'No local server detected in the production test environment.',
       }
       : url.pathname === '/api/widgets' && allowTestAuth ? []
+      : url.pathname === '/api/iptv/playlists' && allowTestAuth
+        ? (iptvScenario === 'populated' ? [{
+            id: 41,
+            name: 'Local News & Events',
+            url: 'https://example.test/playlist.m3u8',
+            serverConfigId: 1,
+            autoRefreshMinutes: 30,
+            lastRefreshedAt: '2026-09-21T01:23:45.000Z',
+            lastError: null,
+            channelCount: 1234,
+            createdAt: '2026-09-20T00:00:00.000Z',
+          }] : [])
+      : /^\/api\/iptv\/playlists\/\d+\/groups$/.test(url.pathname) && allowTestAuth ? []
+      : /^\/api\/iptv\/playlists\/\d+\/channels$/.test(url.pathname) && allowTestAuth
+        ? { total: 1234, page: 1, pageSize: 24, channels: [] }
       : url.pathname === '/api/bots' && allowTestAuth ? bots
       : /^\/api\/bots\/(\d+)$/.test(url.pathname) && allowTestAuth
         ? (() => {
@@ -373,7 +393,14 @@ const server = createServer(async (req, res) => {
       : /^\/api\/servers\/\d+\/vs\/\d+\/permissions$/.test(url.pathname) && allowTestAuth ? permissionDefinitions
       : /^\/api\/servers\/\d+\/vs\/\d+\/server-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['server-groups']
       : /^\/api\/servers\/\d+\/vs\/\d+\/channel-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['channel-groups']
-      : /^\/api\/servers\/\d+\/vs\/\d+\/channels$/.test(url.pathname) && allowTestAuth && channelsEnabled ? channelRows
+      : /^\/api\/servers\/\d+\/vs\/\d+\/channels$/.test(url.pathname) && allowTestAuth && channelsEnabled
+        ? (() => {
+            if (channelScenario === 'refresh-failure') {
+              res.statusCode = 503;
+              return { error: 'Channel refresh failed', details: 'The last successful channel tree is still available' };
+            }
+            return channelRows;
+          })()
       : /^\/api\/servers\/\d+\/vs\/\d+\/channels\/\d+$/.test(url.pathname) && allowTestAuth && channelsEnabled
         ? channelRows.find((channel) => channel.cid === url.pathname.split('/').pop()) || { error: 'Channel not found' }
       : /^\/api\/servers\/\d+\/vs\/\d+\/clients$/.test(url.pathname) && allowTestAuth && channelsEnabled
@@ -400,6 +427,12 @@ const server = createServer(async (req, res) => {
             }
             const [, configId, sid] = url.pathname.match(/^\/api\/servers\/(\d+)\/vs\/(\d+)\/dashboard$/) || [];
             const base = dashboards[`${configId}:${sid}`] || dashboards['1:1'];
+            if (dashboardScenario === 'long-name') {
+              return {
+                ...base,
+                serverName: 'Operations Voice with an intentionally long server name that must wrap without overflowing the page header',
+              };
+            }
             if (dashboardScenario === 'zero-capacity') {
               return { ...base, onlineUsers: 0, maxClients: 0, bandwidth: { incoming: 0, outgoing: 0 }, packetloss: 0, ping: 0 };
             }

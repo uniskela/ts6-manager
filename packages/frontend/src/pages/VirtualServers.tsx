@@ -6,7 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { PageHeader } from '@/components/shared/PageHeader';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { formatUptime } from '@/lib/utils';
+import { formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
 import { Server, Play, Square, Users, Clock } from 'lucide-react';
 import { toast } from 'sonner';
@@ -20,7 +23,7 @@ type StopTarget = {
 
 export default function VirtualServers() {
   const { selectedConfigId } = useServerStore();
-  const { data, isLoading } = useVirtualServers();
+  const { data, isLoading, error, refetch, isFetching } = useVirtualServers();
   const startServer = useStartVirtualServer();
   const stopServer = useStopVirtualServer();
   const [startingSid, setStartingSid] = useState<number | null>(null);
@@ -30,9 +33,25 @@ export default function VirtualServers() {
   const stopCancelButton = useRef<HTMLButtonElement>(null);
 
   if (!selectedConfigId) return <EmptyState icon={Server} title="No server selected" />;
-  if (isLoading) return <PageLoader />;
+  if (isLoading && data === undefined) return <PageLoader />;
+  if (error && data === undefined) {
+    return (
+      <div className="space-y-4">
+        <EmptyState icon={Server} title="Connection failed" description={apiErrorMessage(error, 'Could not load virtual servers.')} />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={() => { void refetch(); }} disabled={isFetching} aria-busy={isFetching}>
+            {isFetching ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const servers = Array.isArray(data) ? data : [];
+  const onlineServers = servers.filter((server: any) => server.virtualserver_status === 'online').length;
+  const backgroundError = error
+    ? apiErrorMessage(error, 'Virtual server refresh failed. The last successful list is still displayed.')
+    : null;
 
   const handleStart = (sid: number, name: string) => {
     const configId = selectedConfigId;
@@ -84,10 +103,21 @@ export default function VirtualServers() {
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <h1 className="text-xl font-semibold">Virtual Servers</h1>
-        <Badge variant="secondary" className="font-mono-data">{servers.length} server(s)</Badge>
-      </div>
+      <PageHeader
+        title="Virtual Servers"
+        icon={Server}
+        description={`${formatNumber(servers.length)} servers in this connection`}
+        badge={<Badge variant="secondary" className="font-mono-data">{formatNumber(onlineServers)} online</Badge>}
+        metadata={<RefreshStatus isRefreshing={isFetching} idleLabel="Server list up to date" refreshingLabel="Refreshing servers…" />}
+      />
+
+      {backgroundError && (
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={() => { void refetch(); }}
+          isRetrying={isFetching}
+        />
+      )}
 
       <div className="grid gap-3">
         {servers.map((vs: any) => (
