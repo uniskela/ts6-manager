@@ -14,6 +14,21 @@ permissions:
   contents: read
 
 jobs:
+  repo-hygiene:
+    name: Repo hygiene (CRLF, shell, compose)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Compose
+        uses: docker/setup-compose-action@v2
+
+      - name: Run repo hygiene checks
+        run: ./scripts/ci/repo-hygiene.sh
+
   typescript:
     name: TypeScript build, typecheck, and tests
     runs-on: ubuntu-latest

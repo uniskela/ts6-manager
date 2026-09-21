@@ -4,12 +4,14 @@ on:
   pull_request:
     paths:
       - '.github/workflows/container-security.yml'
+      - '.gitattributes'
       - '.yt-dlp-version'
       - 'Dockerfile.backend'
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
       - 'Dockerfile.all-in-one'
       - 'docker-commands/**'
+      - 'scripts/ci/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'packages/backend/package.json'
@@ -23,12 +25,14 @@ on:
       - main
     paths:
       - '.github/workflows/container-security.yml'
+      - '.gitattributes'
       - '.yt-dlp-version'
       - 'Dockerfile.backend'
       - 'Dockerfile.frontend'
       - 'Dockerfile.sidecar'
       - 'Dockerfile.all-in-one'
       - 'docker-commands/**'
+      - 'scripts/ci/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'packages/backend/package.json'
@@ -94,8 +98,15 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="ts6-security-${{ matrix.component }}:${{ github.sha }}"
+          COMPONENT="${{ matrix.component }}"
 
-          docker run --rm --entrypoint sh "$IMAGE" -c '
+          if [[ "$COMPONENT" == 'backend' ]]; then
+            ENTRYPOINT_SCRIPTS='/usr/local/bin/apply-schema.sh /usr/local/bin/start-backend-standalone.sh'
+          else
+            ENTRYPOINT_SCRIPTS='/usr/local/bin/apply-schema.sh /usr/local/bin/start-backend.sh'
+          fi
+
+          docker run --rm --entrypoint sh "$IMAGE" -c "
             set -eu
             ! command -v npm
             ! command -v npx
@@ -107,7 +118,23 @@ jobs:
             test -f /app/packages/backend/prisma.config.mjs
             test -f /app/packages/backend/generated/prisma/index.js
             test ! -e /app/packages/backend/node_modules/.bin/esbuild
-          '
+
+            for script in $ENTRYPOINT_SCRIPTS; do
+              test -f \"\$script\"
+              test -x \"\$script\"
+              first_line=\$(head -n1 \"\$script\")
+              if [ \"\$first_line\" != '#!/bin/sh' ]; then
+                echo \"Unexpected shebang in \$script: \$first_line\" >&2
+                exit 1
+              fi
+              # Portable CR detection (dash has no \$'\\r' ANSI-C quoting).
+              if grep -Fq \"\$(printf '\\r')\" \"\$script\"; then
+                echo \"CRLF found in \$script\" >&2
+                exit 1
+              fi
+              echo \"Validated entrypoint script: \$script\"
+            done
+          "
 
           EXPECTED_YT_DLP_VERSION="$(tr -d '[:space:]' < .yt-dlp-version)"
           ACTUAL_YT_DLP_VERSION="$(docker run --rm --entrypoint yt-dlp "$IMAGE" --version | tr -d '[:space:]')"
