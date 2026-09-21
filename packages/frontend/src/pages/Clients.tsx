@@ -171,8 +171,7 @@ export default function Clients() {
                     <Button
                       variant="ghost"
                       size="icon"
-                      className="h-6 w-6"
-                      aria-label="Copy IP"
+                      aria-label={`Copy IP ${ip}`}
                       onClick={() => copyIp(ip)}
                     >
                       <Copy className="h-3 w-3" />
@@ -211,13 +210,13 @@ export default function Clients() {
     if (isAdmin) {
       cols.push({
         id: 'actions',
-        header: '',
+        header: () => <span className="sr-only">Actions</span>,
         cell: ({ row }) => {
           const c = row.original;
           return (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7 cursor-pointer">
+                <Button variant="ghost" size="icon" className="cursor-pointer" aria-label={`Actions for ${c.client_nickname}`}>
                   <MoreHorizontal className="h-4 w-4" />
                 </Button>
               </DropdownMenuTrigger>
@@ -266,7 +265,7 @@ export default function Clients() {
       });
     }
     return cols;
-  }, [isAdmin, kickClient, banClient]);
+  }, [isAdmin, kickClient.mutate, banClient.mutate]);
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
   if (isLoading) return <PageLoader />;
@@ -296,7 +295,18 @@ export default function Clients() {
         </div>
       </div>
 
-      <DataTable columns={columns} data={clients} searchKey="client_nickname" searchPlaceholder="Search clients..." />
+      <DataTable
+        columns={columns}
+        data={clients}
+        searchEnabled
+        searchLabel="Search clients"
+        searchPlaceholder="Search clients..."
+        tableLabel="Clients table"
+        density="compact"
+        stickyHeader
+        emptyText="No clients found"
+        filteredEmptyText="No clients match your search"
+      />
 
       {/* Poke Dialog */}
       <Dialog open={!!pokeTarget} onOpenChange={() => setPokeTarget(null)}>

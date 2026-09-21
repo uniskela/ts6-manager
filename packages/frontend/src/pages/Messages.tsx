@@ -43,13 +43,13 @@ export default function Messages() {
       );
     }},
     {
-      id: 'actions', header: '',
+      id: 'actions', header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setShowView(row.original)}>
+          <Button variant="ghost" size="icon" aria-label={`View message ${row.original.subject || ''}`.trim()} onClick={() => setShowView(row.original)}>
             <Eye className="h-3.5 w-3.5" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => {
+          <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label={`Delete message ${row.original.subject || ''}`.trim()} onClick={() => {
             deleteMutation.mutate(row.original.msgid, { onSuccess: () => toast.success('Message deleted') });
           }}>
             <Trash2 className="h-3.5 w-3.5" />
@@ -57,7 +57,7 @@ export default function Messages() {
         </div>
       ),
     },
-  ], [deleteMutation]);
+  ], [deleteMutation.mutate]);
 
   if (!c || !s) return <EmptyState icon={Mail} title="No server selected" />;
   if (isLoading) return <PageLoader />;
@@ -76,7 +76,18 @@ export default function Messages() {
         <Button size="sm" onClick={() => setShowCompose(true)}><Plus className="h-4 w-4 mr-1" /> Compose</Button>
       </div>
 
-      <DataTable columns={columns} data={messages} searchKey="subject" searchPlaceholder="Search messages..." />
+      <DataTable
+        columns={columns}
+        data={messages}
+        searchEnabled
+        searchLabel="Search offline messages"
+        searchPlaceholder="Search messages..."
+        tableLabel="Offline messages table"
+        density="compact"
+        stickyHeader
+        emptyText="No offline messages found"
+        filteredEmptyText="No offline messages match your search"
+      />
 
       {/* View Message Dialog */}
       <Dialog open={!!showView} onOpenChange={() => setShowView(null)}>

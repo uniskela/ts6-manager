@@ -36,16 +36,22 @@ export default function Bans() {
     { accessorKey: 'created', header: 'Created', cell: ({ getValue }) => <span className="text-xs text-muted-foreground">{timeAgo(getValue() as number)}</span> },
     { accessorKey: 'invokername', header: 'By', cell: ({ getValue }) => <span className="text-xs">{(getValue() as string) || '-'}</span> },
     {
-      id: 'actions', header: '',
+      id: 'actions', header: () => <span className="sr-only">Actions</span>,
       cell: ({ row }) => (
-        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => {
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-destructive hover:text-destructive"
+          aria-label={`Remove ban for ${row.original.lastnickname || row.original.ip || 'entry'}`}
+          onClick={() => {
           deleteBan.mutate(row.original.banid, { onSuccess: () => toast.success('Ban removed') });
-        }}>
+          }}
+        >
           <Trash2 className="h-3.5 w-3.5" />
         </Button>
       ),
     },
-  ], [deleteBan]);
+  ], [deleteBan.mutate]);
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Ban} title="No server selected" />;
   if (isLoading) return <PageLoader />;
@@ -66,7 +72,18 @@ export default function Bans() {
         <Button size="sm" onClick={() => setShowAdd(true)}><Plus className="h-4 w-4 mr-1" /> Add Ban</Button>
       </div>
 
-      <DataTable columns={columns} data={bans} searchKey="lastnickname" searchPlaceholder="Search bans..." />
+      <DataTable
+        columns={columns}
+        data={bans}
+        searchEnabled
+        searchLabel="Search bans"
+        searchPlaceholder="Search bans..."
+        tableLabel="Bans table"
+        density="compact"
+        stickyHeader
+        emptyText="No bans found"
+        filteredEmptyText="No bans match your search"
+      />
 
       <Dialog open={showAdd} onOpenChange={setShowAdd}>
         <DialogContent>

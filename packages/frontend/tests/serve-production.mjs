@@ -15,6 +15,7 @@ let permissionScenario = 'normal';
 let permissionRequests = [];
 let botScenario = 'normal';
 let botUpdateRequests = [];
+let dataTableScenario = 'normal';
 const initialBots = [
   {
     id: 1,
@@ -38,6 +39,28 @@ const initialBots = [
   },
 ];
 let bots = structuredClone(initialBots);
+
+const dataTableClients = Array.from({ length: 25 }, (_, index) => ({
+  clid: index + 1,
+  client_nickname: index === 0 ? 'Ada Admin' : `Client ${String(index + 1).padStart(2, '0')}`,
+  client_country: index % 2 === 0 ? 'AU' : 'FI',
+  connection_client_ip: `10.0.0.${index + 1}`,
+  client_idle_time: index * 1000,
+  client_away: index % 5 === 0 ? 1 : 0,
+  client_output_muted: 0,
+  client_input_muted: index % 4 === 0 ? 1 : 0,
+  client_type: 0,
+}));
+
+const dataTableComplaints = [
+  { fname: 'Zoe', tname: 'Reported target C', message: 'Third complaint', timestamp: 1_726_800_300 },
+  { fname: 'Ada', tname: 'Reported target A', message: 'First complaint', timestamp: 1_726_800_100 },
+  { fname: 'Mira', tname: 'Reported target B', message: 'Second complaint', timestamp: 1_726_800_200 },
+];
+
+function dataTableRows(rows) {
+  return dataTableScenario === 'populated' ? rows : [];
+}
 
 const permissionDefinitions = [
   { permid: 1, permname: 'b_virtualserver_modify_name', permdesc: 'Modify the virtual server name' },
@@ -145,6 +168,7 @@ const server = createServer(async (req, res) => {
       botScenario = 'normal';
       botUpdateRequests = [];
       bots = structuredClone(initialBots);
+      dataTableScenario = 'normal';
     }
     if (url.pathname === '/__test/unavailable') unavailable = url.searchParams.has('on');
     if (url.pathname === '/__test/setup') needsSetup = url.searchParams.has('on');
@@ -158,6 +182,9 @@ const server = createServer(async (req, res) => {
       botScenario = url.searchParams.get('scenario') || 'normal';
       botUpdateRequests = [];
       if (botScenario === 'server-update') bots[0].name = 'Server refreshed';
+    }
+    if (url.pathname === '/__test/data-table' && url.searchParams.has('scenario')) {
+      dataTableScenario = url.searchParams.get('scenario') || 'normal';
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests }));
@@ -258,7 +285,10 @@ const server = createServer(async (req, res) => {
       : /^\/api\/servers\/\d+\/vs\/\d+\/channel-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['channel-groups']
       : /^\/api\/servers\/\d+\/vs\/\d+\/channels$/.test(url.pathname) && allowTestAuth ? permissionEntities.channels
       : /^\/api\/servers\/\d+\/vs\/\d+\/clients\/database$/.test(url.pathname) && allowTestAuth ? permissionEntities.database
-      : /^\/api\/servers\/\d+\/vs\/\d+\/clients$/.test(url.pathname) && allowTestAuth ? permissionEntities.clients
+      : /^\/api\/servers\/\d+\/vs\/\d+\/clients$/.test(url.pathname) && allowTestAuth
+        ? (dataTableScenario === 'normal' ? permissionEntities.clients : dataTableRows(dataTableClients))
+      : /^\/api\/servers\/\d+\/vs\/\d+\/complaints$/.test(url.pathname) && allowTestAuth
+        ? dataTableRows(dataTableComplaints)
       : /^\/api\/servers\/(\d+)\/vs\/(\d+)\/dashboard$/.test(url.pathname) && allowTestAuth
         ? (() => {
             dashboardRequests++;
