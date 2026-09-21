@@ -42,6 +42,20 @@ v1.6 adds:
 
 Planned work remains intentionally separated into dedicated changes.
 
+### Observability and operations — v1.8 direction
+
+A dedicated [v1.8 Observability & Operations tracker](https://github.com/uniskela/ts6-manager/issues/91) groups the next operator-focused improvements after the current UI/UX work.
+
+The direction includes:
+
+- optional use of TeamSpeak native metrics as a richer dashboard data source, with authenticated WebQuery fallback;
+- staged connection diagnostics that distinguish reachability, authentication, usable permissions, and virtual-server access;
+- a Server Logs 2.0 pass focused on context, time presentation, filtering, and mobile-safe operation;
+- bounded admin audit and TeamSpeak activity history without recording secrets; and
+- demand-driven health/diagnostic checks that avoid unnecessary permanent polling.
+
+This work should preserve the existing security model: metrics and diagnostics remain backend-mediated, access-controlled, tightly scoped to configured TeamSpeak servers, and safe to disable without reducing normal management functionality. It is not intended to add a bundled monitoring stack or long-term time-series platform.
+
 ### Framework modernization
 
 Future major upgrades may include newer React, Vite, Tailwind, React Router, TypeScript, Express, Prisma, Node, and pnpm generations. These should be upgraded deliberately rather than bundled into unrelated features.
