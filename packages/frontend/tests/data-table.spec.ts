@@ -115,12 +115,16 @@ test('sticky headers remain visible within vertical table scrolling', async ({ p
 
   const table = page.getByRole('region', { name: 'Clients table' });
   const header = table.getByRole('columnheader', { name: /Nickname/ });
-  const before = await header.boundingBox();
   expect(await table.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
   await table.evaluate(element => { element.scrollTop = 300; });
   await expect.poll(() => table.evaluate(element => element.scrollTop)).toBeGreaterThan(0);
-  const after = await header.boundingBox();
-  expect(Math.abs((after?.y ?? 0) - (before?.y ?? 0))).toBeLessThanOrEqual(1);
+  const scrollport = await table.boundingBox();
+  const pinnedHeader = await header.boundingBox();
+  const borderWidth = await table.evaluate(element => element.clientTop);
+  expect(scrollport).not.toBeNull();
+  expect(pinnedHeader).not.toBeNull();
+  expect(pinnedHeader!.y).toBeGreaterThanOrEqual(scrollport!.y);
+  expect(pinnedHeader!.y).toBeLessThanOrEqual(scrollport!.y + borderWidth + 1);
 });
 
 test('mobile overflow stays contained, announces directions, and keeps row actions tappable', async ({ page, request }) => {
