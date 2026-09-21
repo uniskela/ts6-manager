@@ -20,7 +20,7 @@
     "dotenv": "^16.4.0",
     "expr-eval-fork": "^3.0.3",
     "express": "^4.21.0",
-    "express-rate-limit": "^7.4.0",
+    "express-rate-limit": "^8.7.0",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "libsodium-wrappers-sumo": "^0.8.2",
