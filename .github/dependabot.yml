@@ -1,0 +1,37 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:10"
+      timezone: Australia/Sydney
+    open-pull-requests-limit: 5
+    groups:
+      javascript-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: "/packages/sidecar"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:20"
+      timezone: Australia/Sydney
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:30"
+      timezone: Australia/Sydney
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns: ["*"]
