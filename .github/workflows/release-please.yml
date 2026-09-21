@@ -44,3 +44,39 @@ jobs:
     with:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
+
+
+  notify-docs:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check documentation App configuration
+        env:
+          APP_ID: ${{ vars.DOCS_SYNC_APP_ID }}
+          APP_KEY: ${{ secrets.DOCS_SYNC_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo '::error::Configure DOCS_SYNC_APP_ID and DOCS_SYNC_APP_PRIVATE_KEY; see .github/docs-sync.md.'
+            exit 1
+          fi
+      - name: Create short-lived destination token
+        id: docs_app
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ vars.DOCS_SYNC_APP_ID }}
+          private-key: ${{ secrets.DOCS_SYNC_APP_PRIVATE_KEY }}
+          owner: uniskela
+          repositories: .com
+          permission-contents: write
+      - name: Notify versioned documentation receiver
+        env:
+          GH_TOKEN: ${{ steps.docs_app.outputs.token }}
+          SOURCE_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          jq -n --arg repository "$SOURCE_REPO" --arg sha "$SOURCE_SHA" --arg ref "refs/heads/main" --arg release "$RELEASE_TAG" \
+            '{event_type:"docs-source-updated",client_payload:{repository:$repository,sha:$sha,ref:$ref,release:$release}}' > "$RUNNER_TEMP/docs-dispatch.json"
+          gh api --method POST repos/uniskela/.com/dispatches --input "$RUNNER_TEMP/docs-dispatch.json"

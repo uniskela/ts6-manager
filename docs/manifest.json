@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "pages": [
+    {
+      "source": "README.md",
+      "slug": "readme",
+      "kind": "readme"
+    },
+    {
+      "source": "docs/index.md",
+      "slug": "index",
+      "title": "Overview",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/installation.md",
+      "slug": "installation",
+      "title": "Installation",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/pwa.md",
+      "slug": "pwa",
+      "title": "Install as an app",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/configuration.md",
+      "slug": "configuration",
+      "title": "Configuration",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/upgrading.md",
+      "slug": "upgrading",
+      "title": "Upgrading",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/server-management.md",
+      "slug": "server-management",
+      "title": "Server management",
+      "group": "Using TS6 Manager",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/music-bots.md",
+      "slug": "music-bots",
+      "title": "Music bots",
+      "group": "Using TS6 Manager",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/bot-flows.md",
+      "slug": "bot-flows",
+      "title": "Bot flows",
+      "group": "Using TS6 Manager",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/video-streaming.md",
+      "slug": "video-streaming",
+      "title": "Video streaming",
+      "group": "Using TS6 Manager",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/environment-variables.md",
+      "slug": "environment-variables",
+      "title": "Environment variables",
+      "group": "Deploy & operate",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/reverse-proxy.md",
+      "slug": "reverse-proxy",
+      "title": "Reverse proxy",
+      "group": "Deploy & operate",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/troubleshooting.md",
+      "slug": "troubleshooting",
+      "title": "Troubleshooting",
+      "group": "Deploy & operate",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/security.md",
+      "slug": "security",
+      "title": "Security",
+      "group": "Security & compatibility",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/teamspeak-compatibility.md",
+      "slug": "teamspeak-compatibility",
+      "title": "TeamSpeak compatibility",
+      "group": "Security & compatibility",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/architecture.md",
+      "slug": "architecture",
+      "title": "Architecture",
+      "group": "Project",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/development.md",
+      "slug": "development",
+      "title": "Development",
+      "group": "Project",
+      "kind": "doc"
+    },
+    {
+      "source": "docs/roadmap.md",
+      "slug": "roadmap",
+      "title": "Roadmap",
+      "group": "Project",
+      "kind": "doc"
+    }
+  ]
+}
