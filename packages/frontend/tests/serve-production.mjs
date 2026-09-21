@@ -19,6 +19,22 @@ let dataTableScenario = 'normal';
 let adminActionScenario = 'normal';
 let adminActionRequests = [];
 let virtualServerListRequests = 0;
+let channelScenario = 'normal';
+let channelsEnabled = false;
+let channelRequests = [];
+let channelRows = [
+  { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+  { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+  { cid: '3', pid: '2', channel_name: 'Nested support', channel_topic: '', total_clients: '0', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+  { cid: '4', pid: '0', channel_name: 'Diagnostics', channel_topic: '', total_clients: '0', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+];
+const channelClients = [
+  { clid: 101, cid: 1, client_nickname: 'Alice', client_type: 0, client_away: 0, client_input_hardware: 1, client_output_hardware: 1 },
+  { clid: 102, cid: 1, client_nickname: 'serveradmin', client_type: 1, client_away: 0, client_input_hardware: 1, client_output_hardware: 1 },
+  { clid: 103, cid: 1, client_nickname: 'TS6-WebUI Query', client_type: 1, client_away: 0, client_input_hardware: 1, client_output_hardware: 1 },
+  { clid: 104, cid: 2, client_nickname: 'Music Bot', client_type: 0, client_away: 0, client_input_hardware: 1, client_output_hardware: 1 },
+];
+let testRole = 'admin';
 const initialBots = [
   {
     id: 1,
@@ -188,6 +204,16 @@ const server = createServer(async (req, res) => {
       adminActionRequests = [];
       virtualServerListRequests = 0;
       virtualServers = structuredClone(initialVirtualServers);
+      channelScenario = 'normal';
+      channelsEnabled = false;
+      channelRequests = [];
+      channelRows = structuredClone([
+        { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+        { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+        { cid: '3', pid: '2', channel_name: 'Nested support', channel_topic: '', total_clients: '0', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+        { cid: '4', pid: '0', channel_name: 'Diagnostics', channel_topic: '', total_clients: '0', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
+      ]);
+      testRole = 'admin';
     }
     if (url.pathname === '/__test/unavailable') unavailable = url.searchParams.has('on');
     if (url.pathname === '/__test/setup') needsSetup = url.searchParams.has('on');
@@ -209,8 +235,16 @@ const server = createServer(async (req, res) => {
       adminActionScenario = url.searchParams.get('scenario') || 'normal';
       adminActionRequests = [];
     }
+    if (url.pathname === '/__test/channels' && url.searchParams.has('scenario')) {
+      channelScenario = url.searchParams.get('scenario') || 'normal';
+      channelsEnabled = true;
+      channelRequests = [];
+    }
+    if (url.pathname === '/__test/auth' && url.searchParams.has('role')) {
+      testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
+    }
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests }));
+    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests, channelScenario, channelRequests }));
     return;
   }
   if (/^\/(api|ws)(\/|$)/.test(url.pathname)) {
@@ -305,11 +339,11 @@ const server = createServer(async (req, res) => {
       : url.pathname === '/api/auth/login' && allowTestAuth ? {
         accessToken: 'brand-test-access-token',
         refreshToken: 'brand-test-refresh-token',
-        user: { id: 1, username: 'admin', displayName: 'Administrator', role: 'admin' },
+        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
       }
       : url.pathname === '/api/auth/login' ? { error: 'Invalid credentials' }
       : url.pathname === '/api/auth/me' && allowTestAuth ? {
-        user: { id: 1, username: 'admin', displayName: 'Administrator', role: 'admin' },
+        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
       }
       : url.pathname === '/api/servers/deployment-check' && allowTestAuth ? {
         managerInDocker: false,
@@ -339,7 +373,11 @@ const server = createServer(async (req, res) => {
       : /^\/api\/servers\/\d+\/vs\/\d+\/permissions$/.test(url.pathname) && allowTestAuth ? permissionDefinitions
       : /^\/api\/servers\/\d+\/vs\/\d+\/server-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['server-groups']
       : /^\/api\/servers\/\d+\/vs\/\d+\/channel-groups$/.test(url.pathname) && allowTestAuth ? permissionEntities['channel-groups']
-      : /^\/api\/servers\/\d+\/vs\/\d+\/channels$/.test(url.pathname) && allowTestAuth ? permissionEntities.channels
+      : /^\/api\/servers\/\d+\/vs\/\d+\/channels$/.test(url.pathname) && allowTestAuth && channelsEnabled ? channelRows
+      : /^\/api\/servers\/\d+\/vs\/\d+\/channels\/\d+$/.test(url.pathname) && allowTestAuth && channelsEnabled
+        ? channelRows.find((channel) => channel.cid === url.pathname.split('/').pop()) || { error: 'Channel not found' }
+      : /^\/api\/servers\/\d+\/vs\/\d+\/clients$/.test(url.pathname) && allowTestAuth && channelsEnabled
+        ? channelClients
       : /^\/api\/servers\/\d+\/vs\/\d+\/clients\/database$/.test(url.pathname) && allowTestAuth ? permissionEntities.database
       : /^\/api\/servers\/\d+\/vs\/\d+\/clients$/.test(url.pathname) && allowTestAuth
         ? (dataTableScenario === 'normal' ? permissionEntities.clients : dataTableRows(dataTableClients))
@@ -374,6 +412,17 @@ const server = createServer(async (req, res) => {
             };
           })()
       : { secret: 'test-only-sensitive-response', timestamp: Date.now() };
+    const channelMove = url.pathname.match(/^\/api\/servers\/(\d+)\/vs\/(\d+)\/channels\/(\d+)\/move$/) && req.method === 'POST' && allowTestAuth && channelsEnabled;
+    if (channelMove) {
+      const [, configId, sid, cid] = url.pathname.match(/^\/api\/servers\/(\d+)\/vs\/(\d+)\/channels\/(\d+)\/move$/);
+      const body = await readJson(req);
+      channelRequests.push({ method: req.method, configId: Number(configId), sid: Number(sid), cid: Number(cid), body });
+      if (channelScenario === 'move-failure') { res.statusCode = 503; res.end('{"error":"TeamSpeak rejected this channel move"}'); return; }
+      const channel = channelRows.find((row) => row.cid === cid);
+      if (channel) channel.pid = String(body.cpid);
+      res.end('{"success":true}');
+      return;
+    }
     if (url.pathname === '/api/auth/login' && !allowTestAuth) res.statusCode = 401;
     const botUpdate = url.pathname.match(/^\/api\/bots\/(\d+)$/) && req.method === 'PUT' && allowTestAuth;
     if (botUpdate) {

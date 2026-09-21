@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientsApi } from '../api/clients.api';
 import { useServerStore } from '../stores/server.store';
+import { useVirtualServers } from './use-servers';
 
 export interface ClientActionContext {
   configId: number;
@@ -24,10 +25,12 @@ export interface PokeClientInput extends ClientActionContext {
 
 export function useClients() {
   const { selectedConfigId: c, selectedSid: s } = useServerStore();
+  const { data: virtualServers } = useVirtualServers();
+  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === s);
   return useQuery({
     queryKey: ['clients', c, s],
     queryFn: () => clientsApi.list(c!, s!),
-    enabled: !!c && !!s,
+    enabled: !!c && !!s && contextIsValid,
     refetchInterval: 10000,
     retry: 3,
     retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),

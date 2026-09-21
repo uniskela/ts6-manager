@@ -11,10 +11,12 @@ export function useServers() {
 
 export function useVirtualServers() {
   const { selectedConfigId } = useServerStore();
+  const { data: servers } = useServers();
+  const connectionIsKnown = !!selectedConfigId && servers?.some((server: any) => Number(server.id) === selectedConfigId);
   return useQuery({
     queryKey: ['virtual-servers', selectedConfigId],
     queryFn: () => serversApi.listVirtual(selectedConfigId!),
-    enabled: !!selectedConfigId,
+    enabled: !!connectionIsKnown,
   });
 }
 
