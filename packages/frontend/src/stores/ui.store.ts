@@ -64,6 +64,7 @@ function migrateUiState(persisted: unknown) {
     baseTheme: isBaseTheme(state.baseTheme) ? state.baseTheme : legacyTheme ?? DEFAULT_BASE_THEME,
     accent: isAccent(state.accent) ? state.accent : DEFAULT_ACCENT,
     permissionLabelMode: isPermissionLabelMode(state.permissionLabelMode) ? state.permissionLabelMode : 'simple',
+    showQueryClients: state.showQueryClients === true,
   };
 }
 
@@ -73,6 +74,7 @@ interface UiStore {
   baseTheme: BaseTheme;
   accent: Accent;
   permissionLabelMode: PermissionLabelMode;
+  showQueryClients: boolean;
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   toggleSidebarSection: (sectionId: SidebarSectionId) => void;
@@ -80,6 +82,7 @@ interface UiStore {
   setBaseTheme: (theme: BaseTheme) => void;
   setAccent: (accent: Accent) => void;
   setPermissionLabelMode: (mode: PermissionLabelMode) => void;
+  setShowQueryClients: (show: boolean) => void;
 }
 
 export const useUiStore = create<UiStore>()(
@@ -90,6 +93,7 @@ export const useUiStore = create<UiStore>()(
       baseTheme: DEFAULT_BASE_THEME,
       accent: DEFAULT_ACCENT,
       permissionLabelMode: 'simple',
+      showQueryClients: false,
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
       setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
       toggleSidebarSection: (sectionId) => set(state => ({
@@ -112,18 +116,20 @@ export const useUiStore = create<UiStore>()(
         applyAppearance(get().baseTheme, accent);
       },
       setPermissionLabelMode: (permissionLabelMode) => set({ permissionLabelMode }),
+      setShowQueryClients: (showQueryClients) => set({ showQueryClients }),
     }),
     {
       name: 'ts6-ui',
-      version: 3,
+      version: 4,
       migrate: migrateUiState,
       merge: (persisted, current) => ({ ...current, ...migrateUiState(persisted) }),
-      partialize: ({ sidebarCollapsed, sidebarSections, baseTheme, accent, permissionLabelMode }) => ({
+      partialize: ({ sidebarCollapsed, sidebarSections, baseTheme, accent, permissionLabelMode, showQueryClients }) => ({
         sidebarCollapsed,
         sidebarSections,
         baseTheme,
         accent,
         permissionLabelMode,
+        showQueryClients,
       }),
       onRehydrateStorage: () => (state) => {
         applyAppearance(state?.baseTheme ?? DEFAULT_BASE_THEME, state?.accent ?? DEFAULT_ACCENT);

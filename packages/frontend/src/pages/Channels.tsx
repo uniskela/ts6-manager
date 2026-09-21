@@ -4,6 +4,7 @@ import { useClients } from '@/hooks/use-clients';
 import { channelsApi } from '@/api/channels.api';
 import { useServerStore } from '@/stores/server.store';
 import { useAuthStore } from '@/stores/auth.store';
+import { useUiStore } from '@/stores/ui.store';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -11,14 +12,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { apiErrorMessage } from '@/lib/api-error';
-import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal } from 'lucide-react';
+import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal, MoveRight } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
 
@@ -96,6 +98,41 @@ function buildTree(channels: any[]): ChannelNode[] {
   return roots;
 }
 
+interface ChannelDestination {
+  cid: number;
+  pid: number;
+  label: string;
+}
+
+function flattenTree(nodes: ChannelNode[], ancestors: string[] = []): ChannelDestination[] {
+  return nodes.flatMap((node) => {
+    const path = [...ancestors, node.channel_name];
+    return [
+      { cid: node.cid, pid: node.pid, label: `${path.join(' / ')} (#${node.cid})` },
+      ...flattenTree(node.children, path),
+    ];
+  });
+}
+
+function collectDescendantCids(node: ChannelNode): Set<number> {
+  const descendants = new Set<number>();
+  const visit = (children: ChannelNode[]) => children.forEach((child) => {
+    descendants.add(child.cid);
+    visit(child.children);
+  });
+  visit(node.children);
+  return descendants;
+}
+
+function findChannel(nodes: ChannelNode[], cid: number): ChannelNode | undefined {
+  for (const node of nodes) {
+    if (node.cid === cid) return node;
+    const child = findChannel(node.children, cid);
+    if (child) return child;
+  }
+  return undefined;
+}
+
 function ClientEntry({ client, depth, configId, sid }: { client: ClientInfo; depth: number; configId: number; sid: number }) {
   const isQuery = client.client_type === '1';
   return (
@@ -147,21 +184,24 @@ interface TreeNodeProps {
   isAdmin: boolean;
   configId: number;
   sid: number;
+  showQueryClients: boolean;
   clientsByChannel: Map<number, ClientInfo[]>;
   onDelete: (cid: number, name: string) => void;
   onEdit: (node: ChannelNode) => void;
+  onMove: (node: ChannelNode) => void;
   onDrop: (draggedCid: number, targetCid: number) => void;
   draggedCid: number | null;
   setDraggedCid: (cid: number | null) => void;
 }
 
-function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByChannel, onDelete, onEdit, onDrop, draggedCid, setDraggedCid }: TreeNodeProps) {
+function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, showQueryClients, clientsByChannel, onDelete, onEdit, onMove, onDrop, draggedCid, setDraggedCid }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const [dropOver, setDropOver] = useState(false);
   const hasChildren = node.children.length > 0;
   const clients = clientsByChannel.get(node.cid) || [];
   const humanClients = clients.filter((client) => client.client_type !== '1');
-  const hasContent = hasChildren || clients.length > 0;
+  const queryClients = clients.filter((client) => client.client_type === '1');
+  const hasContent = hasChildren || humanClients.length > 0 || (showQueryClients && queryClients.length > 0);
   const isSpacer = node.channel_name.startsWith('[spacer') || node.channel_name.startsWith('[*spacer');
 
   if (isSpacer) {
@@ -235,6 +275,14 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
         {isAdmin && (
           <div className="touch-action-reveal flex items-center gap-0.5 transition-opacity">
             <button
+              onClick={() => onMove(node)}
+              className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7"
+              aria-label={`Move ${node.channel_name}`}
+              title={`Move ${node.channel_name}`}
+            >
+              <MoveRight className="h-3 w-3" />
+            </button>
+            <button
               onClick={() => onEdit(node)}
               className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7"
               aria-label={`Edit ${node.channel_name}`}
@@ -266,9 +314,26 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
 
       {expanded && (
         <>
-          {clients.map((client) => (
+          {humanClients.map((client) => (
             <ClientEntry key={client.clid} client={client} depth={depth + 1} configId={configId} sid={sid} />
           ))}
+          {showQueryClients && queryClients.length > 0 && (
+            <div
+              className="my-1 border-l border-border/60 text-muted-foreground"
+              style={{ marginLeft: `${(depth + 1) * 16 + 12}px` }}
+              aria-label={`Query sessions in ${node.channel_name}`}
+            >
+              <div className="px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+                Query sessions ({queryClients.length})
+              </div>
+              {queryClients.map((client) => (
+                <ClientEntry key={client.clid} client={client} depth={depth + 1} configId={configId} sid={sid} />
+              ))}
+              {queryClients.length > 1 && (
+                <div className="px-2 pb-1 text-[10px]">Multiple Query sessions</div>
+              )}
+            </div>
+          )}
           {node.children.map((child) => (
             <ChannelTreeNode
               key={child.cid}
@@ -277,9 +342,11 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
               isAdmin={isAdmin}
               configId={configId}
               sid={sid}
+              showQueryClients={showQueryClients}
               clientsByChannel={clientsByChannel}
               onDelete={onDelete}
               onEdit={onEdit}
+              onMove={onMove}
               onDrop={onDrop}
               draggedCid={draggedCid}
               setDraggedCid={setDraggedCid}
@@ -294,6 +361,9 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, clientsByCha
 export default function Channels() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const isAdmin = useAuthStore((s) => s.isAdmin());
+  const storedShowQueryClients = useUiStore((s) => s.showQueryClients);
+  const setShowQueryClients = useUiStore((s) => s.setShowQueryClients);
+  const showQueryClients = isAdmin && storedShowQueryClients;
   const { data: channelData, isLoading: channelsLoading, error: channelsError, refetch: refetchChannels, isFetching: channelsFetching } = useChannels();
   const { data: clientData } = useClients();
   const createChannel = useCreateChannel();
@@ -308,11 +378,22 @@ export default function Channels() {
   const [editLoading, setEditLoading] = useState(false);
   const [newName, setNewName] = useState('');
   const [draggedCid, setDraggedCid] = useState<number | null>(null);
+  const [dragContext, setDragContext] = useState<{ configId: number; sid: number; cid: number } | null>(null);
+  const [moveTarget, setMoveTarget] = useState<{ node: ChannelNode; configId: number; sid: number } | null>(null);
+  const [moveDestination, setMoveDestination] = useState('');
 
   const tree = useMemo(() => {
     if (!channelData || !Array.isArray(channelData)) return [];
     return buildTree(channelData);
   }, [channelData]);
+
+  const channelDestinations = useMemo(() => flattenTree(tree), [tree]);
+  const validMoveDestinations = useMemo(() => {
+    if (!moveTarget) return [];
+    const excluded = collectDescendantCids(moveTarget.node);
+    excluded.add(moveTarget.node.cid);
+    return channelDestinations.filter((destination) => !excluded.has(destination.cid));
+  }, [channelDestinations, moveTarget]);
 
   const clientsByChannel = useMemo(() => {
     const map = new Map<number, ClientInfo[]>();
@@ -427,10 +508,42 @@ export default function Channels() {
     });
   };
 
+  const handleMoveOpen = (node: ChannelNode) => {
+    if (!selectedConfigId || !selectedSid) return;
+    moveChannel.reset();
+    setMoveDestination('');
+    setMoveTarget({ node, configId: selectedConfigId, sid: selectedSid });
+  };
+
+  const handleMoveConfirm = () => {
+    if (!moveTarget || moveChannel.isPending || moveDestination === '') return;
+    const destinationCid = Number(moveDestination);
+    if (destinationCid === moveTarget.node.pid) return;
+    moveChannel.mutate({
+      configId: moveTarget.configId,
+      sid: moveTarget.sid,
+      cid: moveTarget.node.cid,
+      data: { cpid: destinationCid },
+    }, {
+      onSuccess: () => {
+        toast.success('Channel moved');
+        setMoveTarget(null);
+        setMoveDestination('');
+      },
+      onError: (error) => toast.error(apiErrorMessage(error, 'Could not move the channel. Check the destination and try again.')),
+    });
+  };
+
   const handleDrop = (draggedCid: number, targetCid: number) => {
-    moveChannel.mutate({ cid: draggedCid, data: { cpid: targetCid } }, {
+    if (!dragContext || dragContext.cid !== draggedCid || moveChannel.isPending) return;
+    const source = findChannel(tree, draggedCid);
+    if (!source || source.pid === targetCid || collectDescendantCids(source).has(targetCid)) {
+      toast.error('Choose a different parent channel. A channel cannot move into itself, a descendant, or its current parent.');
+      return;
+    }
+    moveChannel.mutate({ ...dragContext, data: { cpid: targetCid } }, {
       onSuccess: () => toast.success('Channel moved'),
-      onError: () => toast.error('Failed to move channel'),
+      onError: (error) => toast.error(apiErrorMessage(error, 'Could not move the channel. Check the destination and try again.')),
     });
   };
 
@@ -447,7 +560,7 @@ export default function Channels() {
           <h1 className="text-xl font-semibold">Channels</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {Array.isArray(channelData) ? channelData.length : 0} channels · {totalClients} users online
-            {totalQuerySessions > 0 ? ` · ${totalQuerySessions} query session${totalQuerySessions === 1 ? '' : 's'}` : ''}
+            {showQueryClients && totalQuerySessions > 0 ? ` · ${totalQuerySessions} query session${totalQuerySessions === 1 ? '' : 's'}` : ''}
           </p>
         </div>
         {isAdmin && (
@@ -458,11 +571,24 @@ export default function Channels() {
       </div>
 
       <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-            <Volume2 className="h-4 w-4 text-primary" />
-            Channel Tree
+        <CardHeader className="flex-row items-center justify-between gap-3 space-y-0 pb-2">
+          <CardTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+            <Volume2 className="h-4 w-4 text-primary" /> Channel Tree
           </CardTitle>
+          {isAdmin && (
+            <div className="flex min-w-0 items-center gap-2">
+              <Label htmlFor="show-query-clients" className="truncate text-xs text-muted-foreground" title="Show ServerQuery sessions for diagnostics">
+                Show Query clients
+              </Label>
+              <Switch
+                id="show-query-clients"
+                checked={showQueryClients}
+                onCheckedChange={setShowQueryClients}
+                aria-label="Show Query clients"
+                title="Show ServerQuery sessions for diagnostics"
+              />
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[min(600px,calc(100dvh-15rem))] min-h-72">
@@ -474,18 +600,94 @@ export default function Channels() {
                   isAdmin={isAdmin}
                   configId={selectedConfigId!}
                   sid={selectedSid!}
+                  showQueryClients={showQueryClients}
                   clientsByChannel={clientsByChannel}
                   onDelete={(cid, name) => setDeleteTarget({ cid, name })}
                   onEdit={handleEditOpen}
+                  onMove={handleMoveOpen}
                   onDrop={handleDrop}
                   draggedCid={draggedCid}
-                  setDraggedCid={setDraggedCid}
+                  setDraggedCid={(cid) => {
+                    setDraggedCid(cid);
+                    setDragContext(cid === null ? null : { configId: selectedConfigId, sid: selectedSid, cid });
+                  }}
                 />
               ))}
             </div>
           </ScrollArea>
         </CardContent>
       </Card>
+
+      {/* Move Dialog */}
+      <Dialog
+        open={!!moveTarget}
+        onOpenChange={(open) => {
+          if (!open && !moveChannel.isPending) {
+            setMoveTarget(null);
+            setMoveDestination('');
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Move Channel</DialogTitle>
+            <DialogDescription>
+              Choose a new parent for {moveTarget?.node.channel_name} (CID {moveTarget?.node.cid}).
+            </DialogDescription>
+          </DialogHeader>
+          {moveTarget && (
+            <div className="space-y-4">
+              <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 rounded-md border border-border/70 bg-muted/20 p-3 text-sm">
+                <dt className="text-muted-foreground">Source</dt>
+                <dd className="truncate font-medium">{moveTarget.node.channel_name} (#{moveTarget.node.cid})</dd>
+                <dt className="text-muted-foreground">Current parent</dt>
+                <dd className="truncate">
+                  {moveTarget.node.pid === 0
+                    ? 'Top level'
+                    : channelDestinations.find((destination) => destination.cid === moveTarget.node.pid)?.label ?? `CID ${moveTarget.node.pid}`}
+                </dd>
+              </dl>
+              <div className="space-y-1.5">
+                <Label htmlFor="move-channel-destination">Destination channel</Label>
+                <Select value={moveDestination} onValueChange={setMoveDestination} disabled={moveChannel.isPending}>
+                  <SelectTrigger id="move-channel-destination" aria-label="Destination channel">
+                    <SelectValue placeholder="Select a new parent" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0" disabled={moveTarget.node.pid === 0}>Top level / root</SelectItem>
+                    {validMoveDestinations.map((destination) => (
+                      <SelectItem
+                        key={destination.cid}
+                        value={String(destination.cid)}
+                        disabled={destination.cid === moveTarget.node.pid}
+                      >
+                        {destination.label}{destination.cid === moveTarget.node.pid ? ' (current parent)' : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {moveDestination !== '' && Number(moveDestination) === moveTarget.node.pid && (
+                  <p className="text-xs text-muted-foreground">This channel is already under that parent.</p>
+                )}
+              </div>
+              {moveChannel.isError && (
+                <p role="alert" className="text-sm text-destructive">
+                  {apiErrorMessage(moveChannel.error, 'Could not move the channel. Check the destination and try again.')}
+                </p>
+              )}
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMoveTarget(null)} disabled={moveChannel.isPending}>Cancel</Button>
+            <Button
+              onClick={handleMoveConfirm}
+              disabled={moveChannel.isPending || moveDestination === '' || Number(moveDestination) === moveTarget?.node.pid}
+            >
+              {moveChannel.isPending ? 'Moving…' : 'Move Channel'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Create Dialog */}
       <Dialog open={showCreate} onOpenChange={setShowCreate}>

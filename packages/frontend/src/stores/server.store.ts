@@ -5,7 +5,7 @@ interface ServerStore {
   selectedConfigId: number | null;
   selectedSid: number | null;
   setServer: (configId: number, sid?: number) => void;
-  setSid: (sid: number) => void;
+  setSid: (sid: number | null) => void;
   clearServer: () => void;
 }
 
