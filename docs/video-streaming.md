@@ -8,6 +8,12 @@ The streaming path can accept supported YouTube, Twitch, direct media URLs, and 
 
 The UI exposes quality presets such as 480p, 720p, and 1080p.
 
+## IPTV playlists
+
+The IPTV page manages M3U/M3U8 **playlist URLs** for the selected server. Administrators can add, refresh, and delete a source; browse or search its parsed channels; filter by group; choose a running music bot and quality preset; then start or stop that channel's stream. Playlist-file upload and other source-storage workflows are not part of this screen.
+
+![IPTV playlist and channel browser](iptv.png)
+
 ## Architecture
 
 The backend coordinates media preparation and session state. The Go sidecar handles the WebRTC/media relay.

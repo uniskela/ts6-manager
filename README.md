@@ -31,7 +31,7 @@ Start with:
 ## Screenshots
 
 ### Dashboard
-Live overview of your server: online users, channel count, uptime, ping, bandwidth graph, and server capacity at a glance.
+Live overview of your selected server, organized into Server Status, Traffic, and Runtime & Capacity with current refresh state.
 
 ![Dashboard](docs/dashboard.png)
 
@@ -40,8 +40,13 @@ Run multiple music bots per server. Each bot has its own queue, volume control, 
 
 ![Music Bots](docs/musicbots.png)
 
+### Video Streaming / IPTV
+Browse channels from configured M3U/M3U8 playlist URLs and stream a selected channel through a running music bot and the video sidecar.
+
+![Video Streaming and IPTV](docs/iptv.png)
+
 ### Bot Flow Engine
-Visual node-based editor for building automated server workflows. Drag triggers, conditions, and actions onto the canvas, connect them, and deploy. Supports TS3 events, cron schedules, webhooks, and chat commands as triggers.
+Visual node-based editor for building automated server workflows. Readable orthogonal routes, labelled condition branches, and a canvas sized from the real flow keep larger automations navigable. Unsaved drafts are protected from normal in-app navigation and query refreshes.
 
 ![Flow Editor](docs/flow-editor.png)
 
@@ -50,15 +55,20 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 
 ![Flow Templates](docs/flow-templates.png)
 
+### Permissions Compare
+Compare two to four entities from the same permission layer in a read-only table. Simple or technical labels and Set on any / Differences only filters make raw values, unset states, Skip, and Negate flags easier to review.
+
+![Permissions Compare](docs/permissions-compare.png)
+
 ## Features
 
 ### Server Management
-- Dashboard with live server stats, bandwidth graph, and capacity overview
+- Dashboard with Server Status, Traffic, and Runtime & Capacity hierarchy
 - Virtual server list with start/stop controls
-- Channel tree with drag-and-drop ordering
-- Client list with kick, ban, move, poke actions
+- Channel tree with drag-and-drop ordering plus touch/keyboard move controls
+- Client list with confirmed, pending-safe kick and ban actions plus move and poke
 - Server & channel group management
-- Permission editor (server, channel, client, group-level)
+- Permission editor (server, channel, client, group-level) with context-safe drafts, Simple/Technical labels, and read-only same-layer Compare for up to four entities
 - Ban list management
 - Token / privilege key management
 - Complaint viewer
@@ -84,12 +94,13 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - Live video streaming from YouTube, Twitch, or direct URLs to TeamSpeak channels
 - WebRTC-based with Go sidecar relay (Pion) for low-latency delivery
 - Quality presets (480p, 720p, 1080p)
+- M3U/M3U8 playlist URL management, channel browsing/filtering, and music-bot streaming controls
 - In-browser preview with WebRTC playback
 - A/V synchronization via RTCP Sender Reports
 - Runs as a Docker sidecar container alongside the backend
 
 ### Bot Flow Engine
-- Visual flow editor with drag-and-drop node canvas
+- Visual flow editor with drag-and-drop nodes, dynamic canvas extents, rounded orthogonal routes, and labelled True/False branches
 - Triggers: TS3 events, cron schedules, webhooks (with mandatory secrets), chat commands (global or channel-specific)
 - Actions: kick, ban, move, message, poke, channel create/edit/delete, HTTP requests, WebQuery commands, music-bot controls, and utility actions
 - Conditions, persistent flow variables, execution-local temporary values, delays, and logging
@@ -118,6 +129,7 @@ Get started quickly with pre-built flow templates. Covers common use cases like 
 - Production Node images omit npm/npx/pnpm/Corepack and esbuild build tooling; CI rebuilds and Trivy-scans all release images, failing on fixable HIGH/CRITICAL findings
 
 ### Settings & Administration
+- Browser-local appearance controls with Light, Dark, or Black base themes and Cyan, Violet, Red, Blue, Emerald, or Amber accents
 - yt-dlp cookie file management for accessing age-restricted or member-only YouTube content
 - Upload cookies via file or paste directly in the UI
 - Admin-only settings panel

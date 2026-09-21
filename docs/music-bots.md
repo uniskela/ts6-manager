@@ -2,6 +2,10 @@
 
 TS6 Manager can run multiple TeamSpeak music bots per server. Each bot has independent playback, queue, and volume state.
 
+The Bots view shows live connection/playback status, current media, progress, volume, queue context, and normal playback controls without exposing provider credentials.
+
+![Populated Music Bots view](musicbots.png)
+
 ## Sources
 
 Music bots support:

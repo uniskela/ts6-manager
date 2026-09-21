@@ -23,6 +23,7 @@ let channelScenario = 'normal';
 let channelsEnabled = false;
 let channelRequests = [];
 let iptvScenario = 'empty';
+let docsScenario = false;
 let channelRows = [
   { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
   { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
@@ -59,6 +60,82 @@ const initialBots = [
   },
 ];
 let bots = structuredClone(initialBots);
+
+const docsBots = [
+  {
+    id: 1,
+    name: 'Welcome & Support Router',
+    description: 'Greets new visitors and routes support requests.',
+    enabled: true,
+    serverConfigId: 1,
+    virtualServerId: 1,
+    flowData: {
+      nodes: [
+        { id: 'join', type: 'trigger_event', label: 'Client Joined', config: { eventName: 'notifycliententerview' }, x: 40, y: 120 },
+        { id: 'needs-help', type: 'condition', label: 'Needs Help?', config: { expression: 'event.channel_id == 2' }, x: 270, y: 120 },
+        { id: 'welcome', type: 'action_message', label: 'Send Welcome', config: { message: 'Welcome to the demo server!' }, x: 510, y: 40 },
+        { id: 'delay', type: 'delay', label: 'Brief Delay', config: { seconds: 2 }, x: 510, y: 220 },
+        { id: 'support-log', type: 'log', label: 'Log Support Visit', config: { message: 'Support visitor greeted' }, x: 750, y: 40 },
+        { id: 'general-log', type: 'log', label: 'Log General Visit', config: { message: 'General visitor joined' }, x: 750, y: 220 },
+      ],
+      edges: [
+        { id: 'join-condition', source: 'join', sourcePort: 'out', target: 'needs-help', targetPort: 'in' },
+        { id: 'condition-welcome', source: 'needs-help', sourcePort: 'true', target: 'welcome', targetPort: 'in' },
+        { id: 'condition-delay', source: 'needs-help', sourcePort: 'false', target: 'delay', targetPort: 'in' },
+        { id: 'welcome-log', source: 'welcome', sourcePort: 'out', target: 'support-log', targetPort: 'in' },
+        { id: 'delay-log', source: 'delay', sourcePort: 'out', target: 'general-log', targetPort: 'in' },
+      ],
+    },
+    updatedAt: '2026-09-21T00:00:00.000Z',
+  },
+];
+
+const docsMusicBots = [
+  {
+    id: 7,
+    name: 'Aurora Radio',
+    serverConfigId: 1,
+    serverConfig: { id: 1, name: 'Demo Voice Lab', host: 'demo.invalid' },
+    nickname: 'Aurora DJ',
+    serverPassword: null,
+    defaultChannel: 'Music Lounge',
+    commandChannelIds: ['5'],
+    virtualServerId: 1,
+    channelPassword: null,
+    voicePort: 9987,
+    volume: 62,
+    autoStart: true,
+    status: 'playing',
+    nowPlaying: { id: 'demo-track-1', title: 'Neon Skyline', artist: 'Demo Ensemble', duration: 248, source: 'local' },
+    createdAt: '2026-09-20T00:00:00.000Z',
+  },
+];
+
+const docsPlaybackState = {
+  status: 'playing',
+  nowPlaying: { id: 'demo-track-1', title: 'Neon Skyline', artist: 'Demo Ensemble', duration: 248, source: 'local' },
+  position: 96,
+  duration: 248,
+  volume: 62,
+  queue: [
+    { id: 'demo-track-2', title: 'Morning Circuit', artist: 'Sample Collective', duration: 213, source: 'local' },
+    { id: 'demo-track-3', title: 'Quiet Orbit', artist: 'Studio Fixtures', duration: 187, source: 'local' },
+    { id: 'demo-track-4', title: 'Northern Lights', artist: 'Demo Ensemble', duration: 242, source: 'local' },
+  ],
+  currentIndex: 0,
+  shuffle: false,
+  repeat: 'queue',
+  isStreaming: false,
+};
+
+const docsIptvChannels = [
+  { id: 501, playlistId: 41, name: 'Community News', url: 'https://media.example.test/live/community-news.m3u8', logo: null, groupTitle: 'Community', tvgId: 'demo-news', position: 1 },
+  { id: 502, playlistId: 41, name: 'Local Events', url: 'https://media.example.test/live/local-events.m3u8', logo: null, groupTitle: 'Community', tvgId: 'demo-events', position: 2 },
+  { id: 503, playlistId: 41, name: 'Science Lab', url: 'https://media.example.test/live/science-lab.m3u8', logo: null, groupTitle: 'Learning', tvgId: 'demo-science', position: 3 },
+  { id: 504, playlistId: 41, name: 'History Workshop', url: 'https://media.example.test/live/history-workshop.m3u8', logo: null, groupTitle: 'Learning', tvgId: 'demo-history', position: 4 },
+  { id: 505, playlistId: 41, name: 'Ambient Sessions', url: 'https://media.example.test/live/ambient-sessions.m3u8', logo: null, groupTitle: 'Music', tvgId: 'demo-ambient', position: 5 },
+  { id: 506, playlistId: 41, name: 'Demo Concert Hall', url: 'https://media.example.test/live/concert-hall.m3u8', logo: null, groupTitle: 'Music', tvgId: 'demo-concert', position: 6 },
+];
 
 const dataTableClients = Array.from({ length: 25 }, (_, index) => ({
   clid: index + 1,
@@ -209,6 +286,7 @@ const server = createServer(async (req, res) => {
       channelsEnabled = false;
       channelRequests = [];
       iptvScenario = 'empty';
+      docsScenario = false;
       channelRows = structuredClone([
         { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
         { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
@@ -244,6 +322,10 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === '/__test/iptv' && url.searchParams.has('scenario')) {
       iptvScenario = url.searchParams.get('scenario') || 'empty';
+    }
+    if (url.pathname === '/__test/docs') {
+      docsScenario = url.searchParams.has('on');
+      bots = structuredClone(docsScenario ? docsBots : initialBots);
     }
     if (url.pathname === '/__test/auth' && url.searchParams.has('role')) {
       testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
@@ -360,20 +442,25 @@ const server = createServer(async (req, res) => {
       }
       : url.pathname === '/api/widgets' && allowTestAuth ? []
       : url.pathname === '/api/iptv/playlists' && allowTestAuth
-        ? (iptvScenario === 'populated' ? [{
+        ? (docsScenario || iptvScenario === 'populated' ? [{
             id: 41,
-            name: 'Local News & Events',
-            url: 'https://example.test/playlist.m3u8',
+            name: docsScenario ? 'Demo Community Channels' : 'Local News & Events',
+            url: 'https://media.example.test/fixtures/community.m3u',
             serverConfigId: 1,
             autoRefreshMinutes: 30,
             lastRefreshedAt: '2026-09-21T01:23:45.000Z',
             lastError: null,
-            channelCount: 1234,
+            channelCount: docsScenario ? docsIptvChannels.length : 1234,
             createdAt: '2026-09-20T00:00:00.000Z',
           }] : [])
-      : /^\/api\/iptv\/playlists\/\d+\/groups$/.test(url.pathname) && allowTestAuth ? []
+      : /^\/api\/iptv\/playlists\/\d+\/groups$/.test(url.pathname) && allowTestAuth
+        ? (docsScenario ? ['Community', 'Learning', 'Music'] : [])
       : /^\/api\/iptv\/playlists\/\d+\/channels$/.test(url.pathname) && allowTestAuth
-        ? { total: 1234, page: 1, pageSize: 24, channels: [] }
+        ? (docsScenario
+            ? { total: docsIptvChannels.length, page: 1, pageSize: 24, channels: docsIptvChannels }
+            : { total: 1234, page: 1, pageSize: 24, channels: [] })
+      : url.pathname === '/api/music-bots' && allowTestAuth ? (docsScenario ? docsMusicBots : [])
+      : url.pathname === '/api/music-bots/7/state' && allowTestAuth && docsScenario ? docsPlaybackState
       : url.pathname === '/api/bots' && allowTestAuth ? bots
       : /^\/api\/bots\/(\d+)$/.test(url.pathname) && allowTestAuth
         ? (() => {
