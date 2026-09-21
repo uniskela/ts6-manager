@@ -126,6 +126,7 @@ test('Ban sends selected duration and reason, maps permanent to zero, and closes
   await page.getByRole('option', { name: 'Permanent' }).click();
   await dialog.getByRole('button', { name: 'Ban client' }).focus();
   await page.keyboard.press('Enter');
+  await expect.poll(async () => (await actionRequests(request)).length).toBe(1);
   writes = await actionRequests(request);
   expect(writes).toHaveLength(1);
   expect(writes[0].body).toMatchObject({ time: 0, banreason: 'Banned by admin' });
