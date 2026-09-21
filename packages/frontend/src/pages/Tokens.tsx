@@ -22,18 +22,25 @@ export default function Tokens() {
     { accessorKey: 'token', header: 'Token', cell: ({ getValue }) => (
       <div className="flex items-center gap-1">
         <span className="font-mono-data text-xs truncate max-w-[200px]">{getValue() as string}</span>
-        <button onClick={() => { navigator.clipboard.writeText(getValue() as string); toast.success('Copied'); }} className="p-1 hover:bg-muted rounded"><Copy className="h-3 w-3 text-muted-foreground" /></button>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Copy privilege key"
+          onClick={() => { void navigator.clipboard.writeText(getValue() as string); toast.success('Copied'); }}
+        >
+          <Copy className="h-3 w-3 text-muted-foreground" />
+        </Button>
       </div>
     )},
     { accessorKey: 'token_type', header: 'Type', cell: ({ getValue }) => <span className="text-xs">{(getValue() as number) === 0 ? 'Server Group' : 'Channel Group'}</span> },
     { accessorKey: 'token_id1', header: 'Group ID', cell: ({ getValue }) => <span className="font-mono-data text-xs">{getValue() as number}</span> },
     { accessorKey: 'token_description', header: 'Description', cell: ({ getValue }) => <span className="text-xs">{(getValue() as string) || '-'}</span> },
-    { id: 'actions', header: '', cell: ({ row }) => (
-      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => deleteToken.mutate(row.original.token, { onSuccess: () => toast.success('Token deleted') })}>
+    { id: 'actions', header: () => <span className="sr-only">Actions</span>, cell: ({ row }) => (
+      <Button variant="ghost" size="icon" className="text-destructive hover:text-destructive" aria-label="Delete privilege key" onClick={() => deleteToken.mutate(row.original.token, { onSuccess: () => toast.success('Token deleted') })}>
         <Trash2 className="h-3.5 w-3.5" />
       </Button>
     )},
-  ], [deleteToken]);
+  ], [deleteToken.mutate]);
 
   if (!c || !s) return <EmptyState icon={KeyRound} title="No server selected" />;
   if (isLoading) return <PageLoader />;
@@ -41,7 +48,18 @@ export default function Tokens() {
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold">Privilege Keys</h1>
-      <DataTable columns={columns} data={tokens} searchKey="token_description" searchPlaceholder="Search tokens..." />
+      <DataTable
+        columns={columns}
+        data={tokens}
+        searchEnabled
+        searchLabel="Search privilege keys"
+        searchPlaceholder="Search tokens..."
+        tableLabel="Privilege keys table"
+        density="compact"
+        stickyHeader
+        emptyText="No privilege keys found"
+        filteredEmptyText="No privilege keys match your search"
+      />
     </div>
   );
 }

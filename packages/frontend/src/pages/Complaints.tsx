@@ -27,7 +27,17 @@ export default function Complaints() {
   return (
     <div className="space-y-5">
       <h1 className="text-xl font-semibold">Complaints</h1>
-      <DataTable columns={columns} data={complaints} searchKey="message" searchPlaceholder="Search complaints..." />
+      <DataTable
+        columns={columns}
+        data={complaints}
+        searchEnabled
+        searchLabel="Search complaints"
+        searchPlaceholder="Search complaints..."
+        tableLabel="Complaints table"
+        density="comfortable"
+        emptyText="No complaints found"
+        filteredEmptyText="No complaints match your search"
+      />
     </div>
   );
 }
