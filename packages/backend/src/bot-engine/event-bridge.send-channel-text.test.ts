@@ -54,16 +54,44 @@ test('sendChannelText remounts with clientid fallbacks then sends', async () => 
   assert.ok(executed.some((c) => c.startsWith('sendtextmessage')));
 });
 
-test('sendChannelText sets helper nickname before posting', async () => {
+test('sendChannelText sets unique helper nickname then restores cmd nick', async () => {
   const { bridge, executed } = makeBridgeWithCmdListener({
-    whoami: 'clid=7 client_nickname=Cmd',
+    whoami: 'clid=7 client_nickname=TS6-WebUI-Cmd-20-ab12',
   });
   const ok = await bridge.sendChannelText(9, 1, 20, 'help text', {
     helperNickname: 'TS6 Helper',
   });
   assert.equal(ok, true);
-  assert.ok(executed.some((c) => c.includes('clientupdate') && c.includes('TS6')));
-  const nickIdx = executed.findIndex((c) => c.startsWith('clientupdate'));
+  const helperIdx = executed.findIndex(
+    (c) => c.startsWith('clientupdate') && c.includes('TS6\\sHelper-20'),
+  );
   const msgIdx = executed.findIndex((c) => c.startsWith('sendtextmessage'));
-  assert.ok(nickIdx >= 0 && msgIdx > nickIdx);
+  const restoreIdx = executed.findIndex(
+    (c) => c.startsWith('clientupdate') && c.includes('TS6-WebUI-Cmd-20-ab12'),
+  );
+  assert.ok(helperIdx >= 0, 'unique helper nick per channel');
+  assert.ok(msgIdx > helperIdx, 'message after helper rename');
+  assert.ok(restoreIdx > msgIdx, 'restore unique cmd nick after send');
+});
+
+test('sendChannelText helper nicks differ by channel id', async () => {
+  const executedA: string[] = [];
+  const executedB: string[] = [];
+  const makeClient = (executed: string[], nick: string) => ({
+    isConnected: true,
+    executeCommand: async (cmd: string) => {
+      executed.push(cmd);
+      if (cmd === 'whoami') return `clid=7 client_nickname=${nick}`;
+      return '';
+    },
+  });
+  const bridge = new EventBridge({} as any) as any;
+  bridge.commandListeners.set('9:1:cmd:20', makeClient(executedA, 'TS6-WebUI-Cmd-20-aa'));
+  bridge.commandListeners.set('9:1:cmd:30', makeClient(executedB, 'TS6-WebUI-Cmd-30-bb'));
+  await (bridge as EventBridge).sendChannelText(9, 1, 20, 'a', { helperNickname: 'TS6 Helper' });
+  await (bridge as EventBridge).sendChannelText(9, 1, 30, 'b', { helperNickname: 'TS6 Helper' });
+  assert.ok(executedA.some((c) => c.includes('TS6\\sHelper-20')));
+  assert.ok(executedB.some((c) => c.includes('TS6\\sHelper-30')));
+  assert.ok(!executedA.some((c) => c.includes('TS6\\sHelper-30')));
+  assert.ok(!executedB.some((c) => c.includes('TS6\\sHelper-20')));
 });

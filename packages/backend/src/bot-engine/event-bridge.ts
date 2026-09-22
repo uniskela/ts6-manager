@@ -317,19 +317,42 @@ export class EventBridge extends EventEmitter {
         return false;
       }
       await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
-      const helperNick = opts?.helperNickname?.trim();
-      if (helperNick) {
+
+      // Capture unique Cmd nick before any helper rename so we can restore it.
+      // TeamSpeak requires unique nicknames — a shared "TS6 Helper" would collide
+      // across concurrent command listeners.
+      const previousNick = (me.client_nickname || '').trim();
+      const helperBase = opts?.helperNickname?.trim();
+      let helperApplied = false;
+      if (helperBase) {
+        const uniqueHelper = `${helperBase}-${channelId}`.slice(0, 30);
         try {
           await client.executeCommand(
-            `clientupdate client_nickname=${tsEscape(helperNick.slice(0, 30))}`,
+            `clientupdate client_nickname=${tsEscape(uniqueHelper)}`,
           );
+          helperApplied = true;
         } catch (err: any) {
           console.warn(
             `[EventBridge] helper nickname update failed for ${key}: ${err.message}`,
           );
         }
       }
-      await client.executeCommand(`sendtextmessage targetmode=2 msg=${tsEscape(msg)}`);
+
+      try {
+        await client.executeCommand(`sendtextmessage targetmode=2 msg=${tsEscape(msg)}`);
+      } finally {
+        if (helperApplied && previousNick) {
+          try {
+            await client.executeCommand(
+              `clientupdate client_nickname=${tsEscape(previousNick.slice(0, 30))}`,
+            );
+          } catch (err: any) {
+            console.warn(
+              `[EventBridge] failed to restore cmd nickname for ${key}: ${err.message}`,
+            );
+          }
+        }
+      }
       return true;
     } catch (err: any) {
       console.error(
