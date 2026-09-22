@@ -445,7 +445,9 @@ const server = createServer(async (req, res) => {
         ? (docsScenario || iptvScenario === 'populated' ? [{
             id: 41,
             name: docsScenario ? 'Demo Community Channels' : 'Local News & Events',
+            sourceType: 'url',
             url: 'https://media.example.test/fixtures/community.m3u',
+            originalFilename: null,
             serverConfigId: 1,
             autoRefreshMinutes: 30,
             lastRefreshedAt: '2026-09-21T01:23:45.000Z',

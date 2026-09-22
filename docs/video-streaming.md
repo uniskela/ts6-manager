@@ -10,7 +10,16 @@ The UI exposes quality presets such as 480p, 720p, and 1080p.
 
 ## IPTV playlists
 
-The IPTV page manages M3U/M3U8 **playlist URLs** for the selected server. Administrators can add, refresh, and delete a source; browse or search its parsed channels; filter by group; choose a running music bot and quality preset; then start or stop that channel's stream. Playlist-file upload and other source-storage workflows are not part of this screen.
+The IPTV page manages M3U/M3U8 playlist sources for the selected server. Administrators can add a source as either a **remote playlist URL** or an **uploaded playlist file** (`.m3u`, `.m3u8`, or `.txt` with valid M3U content), then refresh, replace (uploads), or delete it; browse or search its parsed channels; filter by group; choose a running music bot and quality preset; then start or stop that channel's stream.
+
+### URL vs uploaded source
+
+| Source | Refresh | Auto-refresh | Storage |
+|--------|---------|--------------|---------|
+| Playlist URL | Re-fetches over HTTP(S) | Optional (minutes) | URL only in the database |
+| Uploaded file | Re-reads/re-parses the stored file | Off by default (file does not change on its own) | File under backend `data/iptv/` + metadata in the database |
+
+Uploaded sources are stored as application assets on the backend data volume (not TeamSpeak channel file storage). A full restore of uploaded playlists needs both the database and the `backend-data` volume. XMLTV/EPG upload, Xtream credential forms, and source export remain separate follow-ups.
 
 ![IPTV playlist and channel browser](iptv.png)
 
