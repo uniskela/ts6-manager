@@ -284,6 +284,7 @@ export class EventBridge extends EventEmitter {
     sid: number,
     channelId: number,
     msg: string,
+    opts?: { helperNickname?: string },
   ): Promise<boolean> {
     const key = this.makeCmdKey(configId, sid, channelId);
     const client = this.commandListeners.get(key);
@@ -316,6 +317,18 @@ export class EventBridge extends EventEmitter {
         return false;
       }
       await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
+      const helperNick = opts?.helperNickname?.trim();
+      if (helperNick) {
+        try {
+          await client.executeCommand(
+            `clientupdate client_nickname=${tsEscape(helperNick.slice(0, 30))}`,
+          );
+        } catch (err: any) {
+          console.warn(
+            `[EventBridge] helper nickname update failed for ${key}: ${err.message}`,
+          );
+        }
+      }
       await client.executeCommand(`sendtextmessage targetmode=2 msg=${tsEscape(msg)}`);
       return true;
     } catch (err: any) {

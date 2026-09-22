@@ -56,6 +56,9 @@ function fixture(bots: ReturnType<typeof makeBot>[]) {
           ? { id: where.id, serverConfigId: 9, commandChannelIds: '[]', defaultChannel: '10', virtualServerId: 1 }
           : null,
     },
+    chatCommand: {
+      findMany: async () => [],
+    },
   } as any;
 
   const voiceBotManager = {
@@ -155,13 +158,25 @@ test('!here refuses to summon a bot without a TS client id', async () => {
 });
 
 test('!here prefers a bot already in the requester channel', async () => {
+  // Sole summonable bot already here → confirm presence.
+  const here = makeBot(1, { name: 'Here', channelId: 20, peers: 1 });
+  const f = fixture([here]);
+  await f.command(1, '!here', 20);
+  assert.equal(here._joins.length, 0);
+  assert.match(f.replies.at(-1)!, /already here/i);
+});
+
+test('!here lists when one bot is already here and another is idle elsewhere', async () => {
   const here = makeBot(1, { name: 'Here', channelId: 20, peers: 1 });
   const elsewhere = makeBot(2, { name: 'Away', channelId: 10, peers: 0 });
   const f = fixture([here, elsewhere]);
   await f.command(1, '!here', 20);
   assert.equal(here._joins.length, 0);
   assert.equal(elsewhere._joins.length, 0);
-  assert.match(f.replies.at(-1)!, /already here/i);
+  assert.match(f.replies.at(-1)!, /Available bots/i);
+  assert.match(f.replies.at(-1)!, /\[1\] Here \(already here\)/);
+  assert.match(f.replies.at(-1)!, /\[2\] Away/);
+  assert.doesNotMatch(f.replies.at(-1)!, /Here \[#1\] is already here\./);
 });
 
 test('!here prefers an idle bot over one occupied by other humans', async () => {
@@ -415,4 +430,45 @@ test('!here does not hide humans behind stale disconnected bot clids', async () 
   assert.equal(occupied._joins.length, 0);
   assert.deepEqual(idle._joins, [20]);
   assert.match(f.replies.at(-1)!, /Idle \[#3\].*joining/i);
+});
+
+test('cross-channel !help posts via SSH helper when no voice bot is in channel', async () => {
+  const bot = makeBot(1, { channelId: 10 });
+  const f = fixture([bot]);
+  const key = '9:1:20';
+  f.handler.channelToBots.set(key, new Set([1]));
+  const sent: Array<{ msg: string; nick?: string }> = [];
+  f.handler.eventBridge = {
+    sendChannelText: async (
+      _c: number,
+      _s: number,
+      _cid: number,
+      msg: string,
+      opts?: { helperNickname?: string },
+    ) => {
+      sent.push({ msg, nick: opts?.helperNickname });
+      return true;
+    },
+  };
+  await f.handler.onCrossChannelTextMessage(9, 1, 20, { invokerid: '2', msg: '!help' });
+  assert.equal(bot._joins.length, 0);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0]!.msg, /!here/i);
+  assert.equal(sent[0]!.nick, 'TS6 Helper');
+});
+
+test('cross-channel !help is skipped when a voice bot is already in the channel', async () => {
+  const home = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([home]);
+  const key = '9:1:20';
+  f.handler.channelToBots.set(key, new Set([1]));
+  const sent: string[] = [];
+  f.handler.eventBridge = {
+    sendChannelText: async (_c: number, _s: number, _cid: number, msg: string) => {
+      sent.push(msg);
+      return true;
+    },
+  };
+  await f.handler.onCrossChannelTextMessage(9, 1, 20, { invokerid: '2', msg: '!help' });
+  assert.equal(sent.length, 0);
 });

@@ -447,6 +447,24 @@ export class MusicCommandHandler {
         await this.handleHereCrossChannel(configId, sid, channelId, data, rawArgs);
         return;
       }
+      if (command === 'help') {
+        const voiceBotInChannel = [...botIds].some((id) => {
+          const bot = this.voiceBotManager.getBot(id);
+          return (
+            !!bot &&
+            isBotSummonable(bot) &&
+            bot.getCurrentChannelId() === channelId
+          );
+        });
+        if (voiceBotInChannel) {
+          console.log(
+            `[MusicCmd] Cross-channel !help skipped: voice bot already in cid=${channelId}`,
+          );
+          return;
+        }
+        await this.handleHelpCrossChannel(configId, sid, channelId, data);
+        return;
+      }
     }
 
     const botId = [...botIds].find((id) => {
@@ -658,6 +676,53 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, formatHelpMessage(BUILTIN_COMMAND_HELP, custom));
   }
 
+  /**
+   * Cross-channel !help when no music bot is in the requester channel.
+   * Posts via SSH Query as "TS6 Helper" (brief channel presence) — not a full voice bot.
+   */
+  private async handleHelpCrossChannel(
+    configId: number,
+    sid: number,
+    channelId: number,
+    data: Record<string, string>,
+  ): Promise<void> {
+    const userClid = parseInt(data.invokerid || '0', 10);
+    if (!userClid || channelId <= 0) return;
+
+    // Reuse help cooldown key space via a synthetic bot id of 0 for this channel.
+    if (isChatReplyCoolingDown(0, userClid)) return;
+    markChatReplyCooldown(0, userClid);
+
+    console.log(
+      `[MusicCmd] Cross-channel !help (config=${configId} sid=${sid} cid=${channelId} clid=${userClid})`,
+    );
+
+    let custom: Array<{ name: string; description: string | null }> = [];
+    try {
+      custom = await this.prisma.chatCommand.findMany({
+        where: { serverConfigId: configId, enabled: true },
+        orderBy: { name: 'asc' },
+        select: { name: true, description: true },
+      });
+    } catch (err: any) {
+      console.warn(`[MusicCmd] !help custom command lookup failed: ${err.message}`);
+    }
+
+    const msg = formatHelpMessage(BUILTIN_COMMAND_HELP, custom);
+    if (!this.eventBridge) {
+      console.warn(`[MusicCmd] Cross-channel !help: no eventBridge (cid=${channelId})`);
+      return;
+    }
+    const ok = await this.eventBridge.sendChannelText(configId, sid, channelId, msg, {
+      helperNickname: 'TS6 Helper',
+    });
+    if (!ok) {
+      console.warn(
+        `[MusicCmd] Cross-channel !help failed to post in cid=${channelId} (SSH listener?)`,
+      );
+    }
+  }
+
   private async handleCustomCommand(
     botId: number,
     bot: VoiceBot,
@@ -709,6 +774,7 @@ export class MusicCommandHandler {
         cfg.virtualServerId,
         replyChannelId,
         msg,
+        { helperNickname: 'TS6 Helper' },
       );
       if (!ok) {
         console.warn(
@@ -833,9 +899,16 @@ export class MusicCommandHandler {
 
   private formatHereBotList(
     bots: Array<{ id: number; name: string }>,
-    opts?: { busy?: boolean },
+    opts?: { busy?: boolean; hereIds?: Set<number>; idleIds?: Set<number> },
   ): string {
-    const lines = bots.map((b) => `[${b.id}] ${b.name}`);
+    const hereIds = opts?.hereIds;
+    const idleIds = opts?.idleIds;
+    const lines = bots.map((b) => {
+      let tag = '';
+      if (hereIds?.has(b.id)) tag = ' (already here)';
+      else if (idleIds && !idleIds.has(b.id) && !opts?.busy) tag = ' (busy)';
+      return `[${b.id}] ${b.name}${tag}`;
+    });
     if (opts?.busy) {
       return (
         `All music bots are busy with other users:\n${lines.join('\n')}\n` +
@@ -860,9 +933,10 @@ export class MusicCommandHandler {
 
   /**
    * Non-disruptive summon selection:
-   * 1) bots already in the requester channel
-   * 2) idle bots (no other humans in their channel — prefer SSH clientlist snapshot)
-   * 3) otherwise do not auto-steal — caller lists busy bots
+   * 1) sole bot already in channel → "already here"
+   * 2) one+ already here AND other idle bots elsewhere → list (do not hide the others)
+   * 3) idle bots (no other humans); sole idle → summon; several → list
+   * 4) otherwise do not auto-steal — caller lists busy bots
    */
   private async resolveSummonCandidate(
     candidates: Array<{ id: number; name: string; bot: VoiceBot }>,
@@ -871,27 +945,52 @@ export class MusicCommandHandler {
     virtualServerId: number,
   ): Promise<
     | { kind: 'summon'; target: { id: number; name: string; bot: VoiceBot } }
-    | { kind: 'list'; bots: Array<{ id: number; name: string }>; busy: boolean }
+    | {
+        kind: 'list';
+        bots: Array<{ id: number; name: string }>;
+        busy: boolean;
+        hereIds?: Set<number>;
+        idleIds?: Set<number>;
+      }
   > {
     const alreadyHere = candidates.filter((c) => c.bot.getCurrentChannelId() === channelId);
-    if (alreadyHere.length === 1) {
-      return { kind: 'summon', target: alreadyHere[0] };
-    }
-    if (alreadyHere.length > 1) {
-      return { kind: 'list', bots: alreadyHere, busy: false };
-    }
-
     const idle: Array<{ id: number; name: string; bot: VoiceBot }> = [];
     for (const c of candidates) {
       if (await this.isBotIdleForSummon(c.bot, serverConfigId, virtualServerId)) {
         idle.push(c);
       }
     }
+    const idleIds = new Set(idle.map((c) => c.id));
+    const hereIds = new Set(alreadyHere.map((c) => c.id));
+    const idleElsewhere = idle.filter((c) => !hereIds.has(c.id));
+
+    // One bot already here and nobody else idle to offer → confirm presence.
+    if (alreadyHere.length === 1 && idleElsewhere.length === 0 && candidates.length === 1) {
+      return { kind: 'summon', target: alreadyHere[0] };
+    }
+    // Someone is here but other idle bots exist — list so the user can pick.
+    if (alreadyHere.length >= 1 && idleElsewhere.length > 0) {
+      return {
+        kind: 'list',
+        bots: [...alreadyHere, ...idleElsewhere],
+        busy: false,
+        hereIds,
+        idleIds,
+      };
+    }
+    if (alreadyHere.length > 1 && idleElsewhere.length === 0) {
+      return { kind: 'list', bots: alreadyHere, busy: false, hereIds, idleIds };
+    }
+    // Sole already-here among busy-only others → confirm; user can !here <id> to steal.
+    if (alreadyHere.length === 1 && idleElsewhere.length === 0) {
+      return { kind: 'summon', target: alreadyHere[0] };
+    }
+
     if (idle.length === 1) {
       return { kind: 'summon', target: idle[0] };
     }
     if (idle.length > 1) {
-      return { kind: 'list', bots: idle, busy: false };
+      return { kind: 'list', bots: idle, busy: false, idleIds };
     }
 
     return { kind: 'list', bots: candidates, busy: true };
@@ -1111,7 +1210,11 @@ export class MusicCommandHandler {
       await this.reply(
         bot,
         userClid,
-        this.formatHereBotList(resolved.bots, { busy: resolved.busy }),
+        this.formatHereBotList(resolved.bots, {
+          busy: resolved.busy,
+          hereIds: resolved.hereIds,
+          idleIds: resolved.idleIds,
+        }),
       );
       return;
     }
@@ -1177,6 +1280,7 @@ export class MusicCommandHandler {
           sid,
           channelId,
           noneMsg,
+          { helperNickname: 'TS6 Helper' },
         );
         if (!ok) {
           console.warn(
@@ -1219,7 +1323,11 @@ export class MusicCommandHandler {
         await this.reply(
           replyBot,
           userClid,
-          this.formatHereBotList(resolved.bots, { busy: resolved.busy }),
+          this.formatHereBotList(resolved.bots, {
+            busy: resolved.busy,
+            hereIds: resolved.hereIds,
+            idleIds: resolved.idleIds,
+          }),
         );
         return;
       }

@@ -53,3 +53,17 @@ test('sendChannelText remounts with clientid fallbacks then sends', async () => 
   assert.ok(executed.some((c) => c === 'clientmove clid=42 cid=20'));
   assert.ok(executed.some((c) => c.startsWith('sendtextmessage')));
 });
+
+test('sendChannelText sets helper nickname before posting', async () => {
+  const { bridge, executed } = makeBridgeWithCmdListener({
+    whoami: 'clid=7 client_nickname=Cmd',
+  });
+  const ok = await bridge.sendChannelText(9, 1, 20, 'help text', {
+    helperNickname: 'TS6 Helper',
+  });
+  assert.equal(ok, true);
+  assert.ok(executed.some((c) => c.includes('clientupdate') && c.includes('TS6')));
+  const nickIdx = executed.findIndex((c) => c.startsWith('clientupdate'));
+  const msgIdx = executed.findIndex((c) => c.startsWith('sendtextmessage'));
+  assert.ok(nickIdx >= 0 && msgIdx > nickIdx);
+});
