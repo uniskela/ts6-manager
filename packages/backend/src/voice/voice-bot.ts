@@ -207,6 +207,11 @@ export class VoiceBot extends EventEmitter {
     return this.client.setCurrentChannelIdIfUnknown(channelId);
   }
 
+  /** Discover home cid via the voice socket (no SSH). */
+  ensureHomeChannelDiscovered(timeoutMs?: number): Promise<number> {
+    return this.client.ensureHomeChannelDiscovered(timeoutMs);
+  }
+
   /** Other non-query voice clients currently in this bot's channel (excludes the bot itself). */
   getHumanChannelPeerCount(): number {
     return this.client.getChannelUserCount();

@@ -164,3 +164,38 @@ test('enter-view before initserver is applied once aclid is known', () => {
     (client as any).pingTimer = null;
   }
 });
+
+test('ensureHomeChannelDiscovered returns known cid without sending clientlist', async () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 34;
+  (client as any).state = 'connected';
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  assert.equal(await client.ensureHomeChannelDiscovered(200), 34);
+  assert.equal(sent.length, 0);
+});
+
+test('ensureHomeChannelDiscovered waits for clientlist to set home cid', async () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 0;
+  (client as any).state = 'connected';
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+    if (cmd === 'clientlist' || cmd.startsWith('clientlist')) {
+      setTimeout(() => {
+        feed(
+          client,
+          'clientlist clid=9 cid=34 client_type=0|clid=3 cid=34 client_type=0',
+        );
+      }, 20);
+    }
+  };
+  const home = await client.ensureHomeChannelDiscovered(1000);
+  assert.equal(home, 34);
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+});

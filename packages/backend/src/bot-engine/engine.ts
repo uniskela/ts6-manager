@@ -677,11 +677,8 @@ export class BotEngine {
       }
     }
 
-    if (this.musicCommandHandler) {
-      for (const cid of this.musicCommandHandler.getNeededCommandChannelIds(configId, sid)) {
-        ids.add(cid);
-      }
-    }
+    // Music commands use the main EventBridge SSH roaming helper — do not open
+    // per-channel CMD listener sessions for music (Query 524 flood on bot join).
 
     return Array.from(ids);
   }

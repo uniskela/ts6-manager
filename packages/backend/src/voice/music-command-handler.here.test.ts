@@ -12,6 +12,8 @@ function makeBot(
     ts3ClientId?: number;
     peers?: number;
     peerClids?: number[];
+    /** When set, ensureHomeChannelDiscovered resolves to this cid (voice path). */
+    ensureHomeCid?: number;
   } = {},
 ) {
   let channelId = opts.channelId ?? 10;
@@ -27,6 +29,14 @@ function makeBot(
       if (cid <= 0 || channelId > 0) return false;
       channelId = cid;
       return true;
+    },
+    ensureHomeChannelDiscovered: async () => {
+      if (channelId > 0) return channelId;
+      if (opts.ensureHomeCid && opts.ensureHomeCid > 0) {
+        channelId = opts.ensureHomeCid;
+        return channelId;
+      }
+      return channelId || 0;
     },
     getHumanChannelPeerCount: () => opts.peers ?? peerClids.length,
     getHumanChannelPeerClids: () => {
@@ -255,18 +265,17 @@ test('!come is an alias for !here', async () => {
   assert.deepEqual(bot._joins, [30]);
 });
 
-test('getNeededCommandChannelIds does not treat defaultChannel as home when voice cid is 0', () => {
+test('getNeededCommandChannelIds always returns empty (no music CMD listeners)', () => {
   const bot = makeBot(1, { channelId: 0 });
   const f = fixture([bot]);
-  // Command channel 20 equals defaultChannel in fixture config — previously skipped SSH.
   f.handler.botChannelConfig.set(1, {
     serverConfigId: 9,
     virtualServerId: 1,
     defaultChannel: '20',
-    commandChannelIds: ['20'],
+    commandChannelIds: ['20', '34'],
   });
-  const needed = f.handler.getNeededCommandChannelIds(9, 1);
-  assert.deepEqual(needed, [20]);
+  f.handler.autoCommandChannels.set('9:1', [34]);
+  assert.deepEqual(f.handler.getNeededCommandChannelIds(9, 1), []);
 });
 
 test('getNeededServerPairs includes music bots even without commandChannelIds', () => {
@@ -281,7 +290,7 @@ test('getNeededServerPairs includes music bots even without commandChannelIds', 
   assert.deepEqual(f.handler.getNeededServerPairs(), ['9:1']);
 });
 
-test('empty commandChannelIds opens SSH helpers only for occupied human channels', async () => {
+test('empty commandChannelIds parks main helper without connectCommandListener', async () => {
   const bot = makeBot(1, { channelId: 1, ts3ClientId: 101 }); // Default Channel home
   const f = fixture([bot]);
   f.handler.botChannelConfig.set(1, {
@@ -292,6 +301,7 @@ test('empty commandChannelIds opens SSH helpers only for occupied human channels
   });
 
   const connected: number[] = [];
+  const parked: number[] = [];
   const commands: string[] = [];
   f.handler.eventBridge = {
     getCommandListenerChannelIds: () => [...connected],
@@ -302,10 +312,15 @@ test('empty commandChannelIds opens SSH helpers only for occupied human channels
       const i = connected.indexOf(cid);
       if (i >= 0) connected.splice(i, 1);
     },
+    ensureHelperInChannel: async (_c: number, _s: number, cid: number) => {
+      parked.push(cid);
+      return true;
+    },
+    getMainHelperChannelId: () => parked.at(-1) || 0,
     executeCommand: async (_c: number, _s: number, cmd: string) => {
       commands.push(cmd);
       assert.equal(cmd, 'clientlist');
-      // Music bot clid=101 in Default must not open a helper; human in Test4 (34) should.
+      // Music bot clid=101 in Default must not open a helper; human in Test4 (34) should park.
       return [
         'clid=101 cid=1 client_type=0',
         'clid=2 cid=34 client_type=0',
@@ -316,8 +331,40 @@ test('empty commandChannelIds opens SSH helpers only for occupied human channels
 
   await f.handler.syncCommandListenersForPair(9, 1);
   assert.deepEqual(commands, ['clientlist']);
-  assert.deepEqual(connected, [34]);
+  assert.deepEqual(connected, [], 'must not open per-channel CMD listeners');
+  assert.deepEqual(parked, [34]);
   assert.ok(f.handler.channelToBots.get('9:1:34')?.has(1));
+});
+
+test('sync disconnects leftover CMD listeners without reconnecting them', async () => {
+  const bot = makeBot(1, { channelId: 1, ts3ClientId: 101 });
+  const f = fixture([bot]);
+  f.handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '1',
+    commandChannelIds: [],
+  });
+  const connected = [34, 99];
+  const parked: number[] = [];
+  f.handler.eventBridge = {
+    getCommandListenerChannelIds: () => [...connected],
+    connectCommandListener: async () => {
+      throw new Error('connectCommandListener must not be called');
+    },
+    disconnectCommandListener: async (_c: number, _s: number, cid: number) => {
+      const i = connected.indexOf(cid);
+      if (i >= 0) connected.splice(i, 1);
+    },
+    ensureHelperInChannel: async (_c: number, _s: number, cid: number) => {
+      parked.push(cid);
+      return true;
+    },
+    executeCommand: async () => 'clid=2 cid=34 client_type=0|clid=101 cid=1 client_type=0',
+  };
+  await f.handler.syncCommandListenersForPair(9, 1);
+  assert.deepEqual(connected, []);
+  assert.deepEqual(parked, [34]);
 });
 
 test('!here treats unknown homeCid as idle instead of all-busy', async () => {
@@ -366,12 +413,13 @@ test('SSH then voice !here for same message only summons once', async () => {
   assert.equal(f.replies.filter((r) => /joining/i.test(r)).length, 1);
 });
 
-test('voice !here soft-notifies unknown channel when SSH is connected but has no cmd listener', async () => {
+test('voice !here soft-notifies unknown channel when SSH is connected but helper not parked', async () => {
   const bot = makeBot(1, { channelId: 0 });
   const f = fixture([bot]);
-  // Main SSH up ≠ helper will answer (no auto-discovered listeners).
+  // Main SSH up ≠ helper will answer (not parked in a channel).
   f.handler.eventBridge = {
     isConnected: () => true,
+    getMainHelperChannelId: () => 0,
     getCommandListenerChannelIds: () => [],
     executeCommand: async () => {
       throw new Error('SSH clientlist unavailable');
@@ -389,6 +437,7 @@ test('voice !here soft-notifies when SSH exists but is disconnected', async () =
   const f = fixture([bot]);
   f.handler.eventBridge = {
     isConnected: () => false,
+    getMainHelperChannelId: () => 20,
     getCommandListenerChannelIds: () => [20],
     executeCommand: async () => {
       throw new Error('SSH not connected');
@@ -410,13 +459,42 @@ test('voice !here soft-notifies unknown channel only when SSH cannot own the lin
   assert.match(bot._channelMessages[0]!, /Could not determine this channel/i);
 });
 
-test('voice !here resolves unknown homeCid via invoker clientlist', async () => {
+test('voice !here with homeCid=0 resolves via ensureHome without SSH clientlist', async () => {
+  const bot = makeBot(1, { channelId: 0, name: 'Alpha', ensureHomeCid: 34 });
+  const f = fixture([bot]);
+  let sshClientlist = 0;
+  f.handler.eventBridge = {
+    isConnected: () => true,
+    getMainHelperChannelId: () => 0,
+    executeCommand: async () => {
+      sshClientlist += 1;
+      throw new Error('SSH clientlist must not be used when voice ensureHome works');
+    },
+  };
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
+  assert.equal(sshClientlist, 0);
+  assert.equal(bot.getCurrentChannelId(), 34);
+  assert.deepEqual(bot._joins, [34]);
+  assert.match(f.replies.at(-1)!, /joining/i);
+});
+
+test('voice !here resolves unknown homeCid via invoker clientlist when ensureHome fails', async () => {
   const bot = makeBot(1, { channelId: 0, name: 'Alpha' });
   const f = fixture([bot]);
   f.handler.eventBridge = {
     executeCommand: async () => 'clid=2 cid=34 client_type=0|clid=101 cid=1 client_type=0',
   };
   await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
+  assert.deepEqual(bot._joins, [34]);
+  assert.match(f.replies.at(-1)!, /joining/i);
+});
+
+test('cross-channel text falls back to all bots on pair when channelToBots empty', async () => {
+  const bot = makeBot(1, { channelId: 10 });
+  const f = fixture([bot]);
+  // No channelToBots mapping — empty commandChannelIds + roaming helper race.
+  f.handler.channelToBots.clear();
+  await f.handler.onCrossChannelTextMessage(9, 1, 34, { invokerid: '2', msg: '!here' });
   assert.deepEqual(bot._joins, [34]);
   assert.match(f.replies.at(-1)!, /joining/i);
 });
@@ -548,11 +626,12 @@ test('voice !help with homeCid=0 resolves invoker channel so claim matches SSH',
   assert.equal(sent.length, 0);
 });
 
-test('voice !help with unknown channel replies when SSH is connected but has no cmd listener', async () => {
+test('voice !help with unknown channel replies when SSH is connected but helper not parked', async () => {
   const bot = makeBot(1, { name: 'A', channelId: 0 });
   const f = fixture([bot]);
   f.handler.eventBridge = {
     isConnected: () => true,
+    getMainHelperChannelId: () => 0,
     getCommandListenerChannelIds: () => [],
     executeCommand: async () => {
       throw new Error('SSH clientlist unavailable');

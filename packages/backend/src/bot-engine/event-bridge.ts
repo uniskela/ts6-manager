@@ -17,6 +17,10 @@ export declare interface EventBridge {
 
 export class EventBridge extends EventEmitter {
   private connections: Map<string, SshQueryClient> = new Map();
+  /** Channel the main SSH Query client currently occupies for music text (roaming helper). */
+  private mainHelperChannel = new Map<string, number>();
+  /** Serialize helper moves / sends on the main SSH to avoid Query floods. */
+  private mainHelperChain: Promise<void> = Promise.resolve();
 
   constructor(private prisma: PrismaClient) {
     super();
@@ -278,7 +282,91 @@ export class EventBridge extends EventEmitter {
     return Array.from(this.commandListeners.keys());
   }
 
-  /** Send channel chat in a channel with an active command listener (query client is in that channel). */
+  /** Channel id the main SSH Query client is parked in for music chat (0 = unknown). */
+  getMainHelperChannelId(configId: number, sid: number): number {
+    return this.mainHelperChannel.get(this.makeKey(configId, sid)) || 0;
+  }
+
+  private enqueueMainHelperWork(fn: () => Promise<void>): Promise<void> {
+    const run = this.mainHelperChain.then(fn, fn);
+    this.mainHelperChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  /**
+   * Park the main EventBridge SSH Query client in `channelId` so it can hear
+   * channel chat there (TS Query textchannel is view-scoped). One connection —
+   * no second CMD-listener SSH login.
+   */
+  async ensureHelperInChannel(configId: number, sid: number, channelId: number): Promise<boolean> {
+    if (channelId <= 0) return false;
+    let ok = false;
+    await this.enqueueMainHelperWork(async () => {
+      ok = await this.moveMainHelperToChannel(configId, sid, channelId);
+    });
+    return ok;
+  }
+
+  private async moveMainHelperToChannel(
+    configId: number,
+    sid: number,
+    channelId: number,
+  ): Promise<boolean> {
+    const pairKey = this.makeKey(configId, sid);
+    if (this.mainHelperChannel.get(pairKey) === channelId && this.isConnected(configId, sid)) {
+      return true;
+    }
+
+    try {
+      if (!this.isConnected(configId, sid)) {
+        await this.connectServer(configId, sid);
+      }
+      const client = this.connections.get(pairKey);
+      if (!client?.isConnected) {
+        console.warn(`[EventBridge] ensureHelperInChannel skipped ${pairKey}: SSH not connected`);
+        return false;
+      }
+
+      const { parseQueryResponse } = await import('@ts6/common');
+      await client.executeCommand(`use sid=${sid}`);
+      const who = await client.executeCommand('whoami');
+      const first = (who.split('\n')[0] || '').trim();
+      const me = parseQueryResponse(first)[0] || {};
+      const clid =
+        me.clid ??
+        me.client_id ??
+        me.clientid ??
+        me.clientId ??
+        (() => {
+          const m = first.match(/(?:clid|client_id)=(\d+)/);
+          return m?.[1];
+        })();
+      if (!clid) {
+        console.warn(`[EventBridge] ensureHelperInChannel ${pairKey}: whoami has no clid`);
+        return false;
+      }
+      const myCid = parseInt(String(me.cid || me.client_channel_id || me.client_cid || '0'), 10);
+      if (!Number.isFinite(myCid) || myCid !== channelId) {
+        await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
+      }
+      this.mainHelperChannel.set(pairKey, channelId);
+      console.log(`[EventBridge] Main SSH helper parked in cid=${channelId} for ${pairKey}`);
+      return true;
+    } catch (err: any) {
+      console.warn(
+        `[EventBridge] ensureHelperInChannel failed for ${pairKey} cid=${channelId}: ${err.message}`,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Send channel chat via the main SSH connection (hop into the channel if needed).
+   * Does not require a per-channel CMD listener SSH session.
+   */
   async sendChannelText(
     configId: number,
     sid: number,
@@ -286,17 +374,34 @@ export class EventBridge extends EventEmitter {
     msg: string,
     opts?: { helperNickname?: string },
   ): Promise<boolean> {
-    const key = this.makeCmdKey(configId, sid, channelId);
-    const client = this.commandListeners.get(key);
-    if (!client?.isConnected) {
-      console.warn(`[EventBridge] sendChannelText skipped for ${key}: listener not connected`);
-      return false;
-    }
+    let ok = false;
+    await this.enqueueMainHelperWork(async () => {
+      ok = await this.sendChannelTextOnMain(configId, sid, channelId, msg, opts);
+    });
+    return ok;
+  }
 
-    const { tsEscape } = await import('../voice/tslib/commands.js');
-    const { parseQueryResponse } = await import('@ts6/common');
+  private async sendChannelTextOnMain(
+    configId: number,
+    sid: number,
+    channelId: number,
+    msg: string,
+    opts?: { helperNickname?: string },
+  ): Promise<boolean> {
+    const pairKey = this.makeKey(configId, sid);
     try {
-      // `use` can reset the query client to the default channel — move back before sending.
+      if (!this.isConnected(configId, sid)) {
+        await this.connectServer(configId, sid);
+      }
+      const client = this.connections.get(pairKey);
+      if (!client?.isConnected) {
+        console.warn(`[EventBridge] sendChannelText skipped for ${pairKey}: main SSH not connected`);
+        return false;
+      }
+
+      const { tsEscape } = await import('../voice/tslib/commands.js');
+      const { parseQueryResponse } = await import('@ts6/common');
+
       await client.executeCommand(`use sid=${sid}`);
       const who = await client.executeCommand('whoami');
       const first = (who.split('\n')[0] || '').trim();
@@ -312,7 +417,7 @@ export class EventBridge extends EventEmitter {
         })();
       if (!clid) {
         console.warn(
-          `[EventBridge] sendChannelText failed for ${key}: whoami returned no clid; not sending`,
+          `[EventBridge] sendChannelText failed for ${pairKey}: whoami returned no clid; not sending`,
         );
         return false;
       }
@@ -320,15 +425,12 @@ export class EventBridge extends EventEmitter {
         String(me.cid || me.client_channel_id || me.client_cid || '0'),
         10,
       );
-      // `use` can bounce the query client to default; remount only when needed.
       // TS error 770 (already member) is treated as success by SshQueryClient.
       if (!Number.isFinite(myCid) || myCid !== channelId) {
         await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
       }
+      this.mainHelperChannel.set(pairKey, channelId);
 
-      // Capture unique Cmd nick before any helper rename so we can restore it.
-      // TeamSpeak requires unique nicknames — a shared "TS6 Helper" would collide
-      // across concurrent command listeners.
       const previousNick = (me.client_nickname || '').trim();
       const helperBase = opts?.helperNickname?.trim();
       let helperApplied = false;
@@ -341,7 +443,7 @@ export class EventBridge extends EventEmitter {
           helperApplied = true;
         } catch (err: any) {
           console.warn(
-            `[EventBridge] helper nickname update failed for ${key}: ${err.message}`,
+            `[EventBridge] helper nickname update failed for ${pairKey}: ${err.message}`,
           );
         }
       }
@@ -356,7 +458,7 @@ export class EventBridge extends EventEmitter {
             );
           } catch (err: any) {
             console.warn(
-              `[EventBridge] failed to restore cmd nickname for ${key}: ${err.message}`,
+              `[EventBridge] failed to restore nickname for ${pairKey}: ${err.message}`,
             );
           }
         }
@@ -364,7 +466,7 @@ export class EventBridge extends EventEmitter {
       return true;
     } catch (err: any) {
       console.error(
-        `[EventBridge] sendChannelText failed for ${key}: ${err.message}`,
+        `[EventBridge] sendChannelText failed for ${pairKey} cid=${channelId}: ${err.message}`,
       );
       return false;
     }
@@ -377,6 +479,7 @@ export class EventBridge extends EventEmitter {
       closing.push(client.destroy());
     }
     this.connections.clear();
+    this.mainHelperChannel.clear();
 
     for (const client of this.commandListeners.values()) {
       closing.push(client.destroy());

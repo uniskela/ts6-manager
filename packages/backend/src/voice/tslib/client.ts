@@ -163,6 +163,24 @@ export class Ts3Client extends EventEmitter {
     return true;
   }
 
+  /**
+   * Ensure we know which channel this voice client occupies.
+   * Uses the voice socket `clientlist` only — no SSH Query.
+   * Same-channel chat already proves presence; we just need the cid.
+   */
+  async ensureHomeChannelDiscovered(timeoutMs = 2000): Promise<number> {
+    if (this.currentChannelId > 0) return this.currentChannelId;
+    if (!this.clientId || this.state !== 'connected') return this.currentChannelId || 0;
+
+    this.sendCommand(buildCommand('clientlist', {}));
+    const deadline = Date.now() + Math.max(100, timeoutMs);
+    while (Date.now() < deadline) {
+      if (this.currentChannelId > 0) return this.currentChannelId;
+      await new Promise<void>((resolve) => setTimeout(resolve, 40));
+    }
+    return this.currentChannelId || 0;
+  }
+
   /** Move this voice client into a channel by ID (no-op if already there). */
   moveToChannel(channelId: number): void {
     if (!this.clientId || channelId <= 0) return;
