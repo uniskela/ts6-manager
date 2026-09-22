@@ -85,8 +85,13 @@ function markChatReplyCooldown(botId: number, clid: number): void {
   chatReplyCooldownUntil.set(chatReplyCooldownKey(botId, clid), Date.now() + CHAT_REPLY_COOLDOWN_MS);
 }
 
-function helpActionKey(serverConfigId: number, virtualServerId: number, userClid: number): string {
-  return `${serverConfigId}:${virtualServerId}:${userClid}`;
+function helpActionKey(
+  serverConfigId: number,
+  virtualServerId: number,
+  channelId: number,
+  userClid: number,
+): string {
+  return `${serverConfigId}:${virtualServerId}:${channelId}:${userClid}`;
 }
 
 /** Returns true if this caller should post !help; false if a duplicate. */
@@ -677,10 +682,14 @@ export class MusicCommandHandler {
     const cfg = this.botChannelConfig.get(botId);
     const serverConfigId = cfg?.serverConfigId ?? bot.currentConfig.serverConfigId;
     const virtualServerId = cfg?.virtualServerId ?? 1;
-    const helpKey = helpActionKey(serverConfigId, virtualServerId, userClid);
+    const channelId =
+      this.activeReplyChannel.get(`${botId}:${userClid}`) ||
+      bot.getCurrentChannelId() ||
+      0;
+    const helpKey = helpActionKey(serverConfigId, virtualServerId, channelId, userClid);
     if (!claimHelpAction(helpKey)) {
       console.log(
-        `[MusicCmd] !help deduped (bot=${botId} config=${serverConfigId} clid=${userClid})`,
+        `[MusicCmd] !help deduped (bot=${botId} cid=${channelId} clid=${userClid})`,
       );
       return;
     }
@@ -715,7 +724,7 @@ export class MusicCommandHandler {
     const userClid = parseInt(data.invokerid || '0', 10);
     if (!userClid || channelId <= 0) return;
 
-    const helpKey = helpActionKey(configId, sid, userClid);
+    const helpKey = helpActionKey(configId, sid, channelId, userClid);
     if (!claimHelpAction(helpKey)) {
       console.log(
         `[MusicCmd] Cross-channel !help deduped (cid=${channelId} clid=${userClid})`,
@@ -1246,11 +1255,15 @@ export class MusicCommandHandler {
     }
 
     // Unknown command channel → do not claim with cid=0 (would miss SSH dedupe).
-    // Try to tell the user instead of failing silently when every voice bot has homeCid=0.
+    // Soft notice only when SSH cannot own the line; otherwise the cmd-listener
+    // still summons and a "could not determine" message races the join announce.
     if (channelId <= 0) {
       console.warn(
         `[MusicCmd] !here skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
+      if (this.eventBridge) {
+        return;
+      }
       const softKey = hereActionKey(serverConfigId, virtualServerId, 0, userClid, `unknown:${args}`);
       if (!claimHereAction(softKey)) return;
       try {

@@ -314,14 +314,30 @@ test('SSH then voice !here for same message only summons once', async () => {
 test('voice !here with unknown homeCid does not claim; SSH still summons', async () => {
   const bot = makeBot(1, { channelId: 0 });
   const f = fixture([bot]);
+  // eventBridge present → SSH may own the line; voice must stay silent (no soft notice).
+  f.handler.eventBridge = {
+    executeCommand: async () => {
+      throw new Error('SSH clientlist unavailable');
+    },
+    sendChannelText: async () => true,
+  };
   await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
   assert.equal(bot._joins.length, 0);
-  // One soft notice in-channel instead of total silence when cid is unknown.
-  assert.equal(bot._channelMessages.length, 1);
-  assert.match(bot._channelMessages[0]!, /Could not determine this channel/i);
+  assert.equal(bot._channelMessages.length, 0);
+  assert.equal(f.replies.length, 0);
   await f.handler.handleHereCrossChannel(9, 1, 20, { invokerid: '2', msg: '!here' }, '');
   assert.deepEqual(bot._joins, [20]);
   assert.match(f.replies.at(-1)!, /joining/i);
+});
+
+test('voice !here soft-notifies unknown channel only when SSH cannot own the line', async () => {
+  const bot = makeBot(1, { channelId: 0 });
+  const f = fixture([bot]);
+  // No eventBridge → pure voice path; tell the user instead of total silence.
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
+  assert.equal(bot._joins.length, 0);
+  assert.equal(bot._channelMessages.length, 1);
+  assert.match(bot._channelMessages[0]!, /Could not determine this channel/i);
 });
 
 test('voice !here resolves unknown homeCid via invoker clientlist', async () => {
@@ -345,6 +361,14 @@ test('only one bot replies to !help when both hear the same line', async () => {
   ]);
   assert.equal(f.replies.length, 1);
   assert.match(f.replies[0]!, /Music bot commands/i);
+});
+
+test('!help in different channels is not collapsed by same-user dedupe', async () => {
+  const bot = makeBot(1, { name: 'A', channelId: 20 });
+  const f = fixture([bot]);
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 34);
+  assert.equal(f.replies.length, 2);
 });
 
 test('!here prefers idle from clientlist even when voice peer count is stale zero', async () => {
