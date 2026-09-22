@@ -19,6 +19,11 @@ export class EventBridge extends EventEmitter {
   private connections: Map<string, SshQueryClient> = new Map();
   /** Channel the main SSH Query client currently occupies for music text (roaming helper). */
   private mainHelperChannel = new Map<string, number>();
+  /**
+   * Last known park target retained across SSH close/reconnect so we can remount
+   * after `registerEvents` (`use sid=` drops Query back to the default channel).
+   */
+  private mainHelperRemountAfterReconnect = new Map<string, number>();
   /** Serialize helper moves / sends on the main SSH to avoid Query floods. */
   private mainHelperChain: Promise<void> = Promise.resolve();
 
@@ -28,6 +33,34 @@ export class EventBridge extends EventEmitter {
 
   private makeKey(configId: number, sid: number): string {
     return `${configId}:${sid}`;
+  }
+
+  /**
+   * Drop the trusted helper-channel cache for a config:sid pair.
+   * After SSH close / `use sid=`, Query is no longer in the cached channel — keeping
+   * the cache would make `moveMainHelperToChannel` skip remount and attribute chat wrong.
+   */
+  private forgetMainHelperLocation(key: string, opts?: { retainRemountTarget?: boolean }): void {
+    const last = this.mainHelperChannel.get(key) || 0;
+    this.mainHelperChannel.delete(key);
+    if (opts?.retainRemountTarget !== false && last > 0) {
+      this.mainHelperRemountAfterReconnect.set(key, last);
+    }
+  }
+
+  private async remountMainHelperAfterReconnect(configId: number, sid: number): Promise<void> {
+    const key = this.makeKey(configId, sid);
+    const parkCid = this.mainHelperRemountAfterReconnect.get(key) || 0;
+    if (parkCid <= 0) return;
+    this.mainHelperRemountAfterReconnect.delete(key);
+    await this.enqueueMainHelperWork(async () => {
+      const ok = await this.moveMainHelperToChannel(configId, sid, parkCid);
+      if (ok) {
+        console.log(
+          `[EventBridge] Remounted main SSH helper in cid=${parkCid} for ${key} after reconnect`,
+        );
+      }
+    });
   }
 
   private buildSshOptions(serverConfig: {
@@ -85,6 +118,14 @@ export class EventBridge extends EventEmitter {
       console.log(`[EventBridge] SSH connected to ${serverConfig.host}:${serverConfig.sshPort} for sid=${sid}`);
       try {
         await client.registerEvents(sid);
+        // `use sid=` parks Query in the default channel — remount if we had a helper park.
+        try {
+          await this.remountMainHelperAfterReconnect(configId, sid);
+        } catch (remountErr: any) {
+          console.warn(
+            `[EventBridge] Helper remount after reconnect failed for ${key}: ${remountErr.message}`,
+          );
+        }
         this.emit('sshConnected', configId, sid);
       } catch (err: any) {
         console.error(`[EventBridge] Failed to register events for ${key}: ${err.message}`);
@@ -102,6 +143,8 @@ export class EventBridge extends EventEmitter {
 
     client.on('close', () => {
       console.log(`[EventBridge] SSH disconnected for ${key}`);
+      // Cache is stale: Query will land in default channel on next registerEvents.
+      this.forgetMainHelperLocation(key);
       this.emit('sshDisconnected', configId, sid);
     });
 
@@ -113,6 +156,8 @@ export class EventBridge extends EventEmitter {
       console.error(`[EventBridge] Initial SSH connection failed for ${key}: ${err.message}`);
       // Auto-reconnect is handled internally by SshQueryClient (unless fatal)
       if (client.hasFatalError) {
+        this.forgetMainHelperLocation(key, { retainRemountTarget: false });
+        this.mainHelperRemountAfterReconnect.delete(key);
         this.connections.delete(key);
       }
     }
@@ -121,6 +166,9 @@ export class EventBridge extends EventEmitter {
   async disconnectServer(configId: number, sid: number): Promise<void> {
     const key = this.makeKey(configId, sid);
     const client = this.connections.get(key);
+    // Clear trusted location before destroy; retain remount target so reconnectConfig
+    // (and SSH auto-reconnect) can park again after registerEvents.
+    this.forgetMainHelperLocation(key);
     if (client) {
       await client.destroy();
       this.connections.delete(key);
@@ -141,6 +189,7 @@ export class EventBridge extends EventEmitter {
       // Skip cmd listener keys if they ever share the map (they don't)
       const sid = parseInt(key.slice(prefix.length), 10);
       if (!Number.isNaN(sid)) sidsToReconnect.push(sid);
+      // disconnectServer clears mainHelperChannel and retains remount targets
       await this.disconnectServer(configId, sid);
     }
 
@@ -353,6 +402,7 @@ export class EventBridge extends EventEmitter {
         await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
       }
       this.mainHelperChannel.set(pairKey, channelId);
+      this.mainHelperRemountAfterReconnect.delete(pairKey);
       console.log(`[EventBridge] Main SSH helper parked in cid=${channelId} for ${pairKey}`);
       return true;
     } catch (err: any) {
@@ -430,6 +480,7 @@ export class EventBridge extends EventEmitter {
         await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
       }
       this.mainHelperChannel.set(pairKey, channelId);
+      this.mainHelperRemountAfterReconnect.delete(pairKey);
 
       const previousNick = (me.client_nickname || '').trim();
       const helperBase = opts?.helperNickname?.trim();
@@ -480,6 +531,7 @@ export class EventBridge extends EventEmitter {
     }
     this.connections.clear();
     this.mainHelperChannel.clear();
+    this.mainHelperRemountAfterReconnect.clear();
 
     for (const client of this.commandListeners.values()) {
       closing.push(client.destroy());

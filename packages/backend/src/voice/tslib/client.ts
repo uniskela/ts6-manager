@@ -1051,6 +1051,9 @@ export class Ts3Client extends EventEmitter {
     this.state = "connected";
 
     // Apply enter-view that raced ahead of aclid, then discover home if still unknown.
+    // Match the live enter-view path: once home is known, request clientlist so peers
+    // that arrived before aclid (and were only buffered, not seeded) enter channelMembers.
+    let learnedHomeFromBufferedEnterView = false;
     if (this.clientId > 0 && this.pendingEnterViews.length > 0) {
       for (const ev of this.pendingEnterViews) {
         if (ev.clid === this.clientId && ev.cid > 0 && this.currentChannelId <= 0) {
@@ -1058,14 +1061,19 @@ export class Ts3Client extends EventEmitter {
           this.channelMembers.clear();
           this.queryMembers.clear();
           this.emit("debug", `Home channel from buffered enter-view: cid=${ev.cid}`);
+          learnedHomeFromBufferedEnterView = true;
         }
       }
       this.pendingEnterViews = [];
     }
 
     // Don't wait only on channellistfinished — empty defaultChannel never moves, and
-    // enter-view can be missed. clientlist learns cid from our own row.
-    if (this.clientId > 0 && this.currentChannelId <= 0) {
+    // enter-view can be missed. clientlist learns cid from our own row — or seeds peers
+    // when home was learned from a buffered own enter-view (live path does the same).
+    if (
+      this.clientId > 0 &&
+      (this.currentChannelId <= 0 || learnedHomeFromBufferedEnterView)
+    ) {
       this.sendCommand(buildCommand("clientlist", {}));
     }
 

@@ -95,3 +95,68 @@ test('ensureHelperInChannel parks main SSH without a second login', async () => 
   assert.ok(executed.some((c) => c === 'clientmove clid=7 cid=34'));
   assert.equal(bridge.getMainHelperChannelId(9, 1), 34);
 });
+
+test('ensureHelperInChannel skips remount when cache matches and still connected', async () => {
+  const { bridge, executed } = makeBridgeWithMainSsh({
+    whoami: 'clid=7 cid=34 client_nickname=Main',
+  });
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  const movesAfterPark = executed.filter((c) => c.startsWith('clientmove')).length;
+  assert.equal(movesAfterPark, 0, 'already in cid per whoami — no move on first park');
+  executed.length = 0;
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  assert.equal(
+    executed.filter((c) => c.startsWith('clientmove')).length,
+    0,
+    'cache hit skips second whoami/clientmove',
+  );
+  assert.equal(executed.length, 0);
+});
+
+test('disconnectServer clears mainHelperChannel cache', async () => {
+  const { bridge, client } = makeBridgeWithMainSsh({
+    whoami: 'clid=7 cid=1 client_nickname=Main',
+  });
+  (client as any).destroy = async () => undefined;
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 34);
+  await bridge.disconnectServer(9, 1);
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 0);
+  assert.equal(
+    (bridge as any).mainHelperRemountAfterReconnect.get('9:1'),
+    34,
+    'retain remount target for reconnect',
+  );
+});
+
+test('ensureHelperInChannel remounts after reconnect clears helper cache', async () => {
+  const { bridge, executed } = makeBridgeWithMainSsh({
+    whoami: 'clid=7 cid=1 client_nickname=Main',
+  });
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  assert.ok(executed.some((c) => c === 'clientmove clid=7 cid=34'));
+  // Simulate SSH close/reconnect: Query is back in default channel but without
+  // clearing cache, ensureHelper would skip remount (Bugbot stale-helper finding).
+  (bridge as any).forgetMainHelperLocation('9:1');
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 0);
+  executed.length = 0;
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  assert.ok(
+    executed.some((c) => c === 'clientmove clid=7 cid=34'),
+    'must clientmove again after cache clear',
+  );
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 34);
+});
+
+test('remountMainHelperAfterReconnect parks helper after registerEvents', async () => {
+  const { bridge, executed } = makeBridgeWithMainSsh({
+    whoami: 'clid=7 cid=1 client_nickname=Main',
+  });
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  (bridge as any).forgetMainHelperLocation('9:1');
+  executed.length = 0;
+  await (bridge as any).remountMainHelperAfterReconnect(9, 1);
+  assert.ok(executed.some((c) => c === 'clientmove clid=7 cid=34'));
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 34);
+  assert.equal((bridge as any).mainHelperRemountAfterReconnect.get('9:1'), undefined);
+});

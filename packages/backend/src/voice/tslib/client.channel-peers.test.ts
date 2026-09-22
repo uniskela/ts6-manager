@@ -159,6 +159,35 @@ test('enter-view before initserver is applied once aclid is known', () => {
   (client as any).handleInitServer({ aclid: '9' });
   assert.equal(client.getClientId(), 9);
   assert.equal(client.getCurrentChannelId(), 34);
+  // Align with live enter-view: seed peers via clientlist after buffered home learn.
+  assert.ok(
+    sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')),
+    'buffered enter-view must request clientlist peer seed',
+  );
+  if ((client as any).pingTimer) {
+    clearInterval((client as any).pingTimer);
+    (client as any).pingTimer = null;
+  }
+});
+
+test('buffered enter-view clientlist seed populates channelMembers for idle checks', () => {
+  const client = new Ts3Client();
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  feed(client, 'notifycliententerview clid=9 ctid=34 client_type=0');
+  // Peer enter-views before aclid are dropped with pendingEnterViews — only self is buffered.
+  feed(client, 'notifycliententerview clid=3 ctid=34 client_type=0');
+  (client as any).handleInitServer({ aclid: '9' });
+  assert.equal(client.getCurrentChannelId(), 34);
+  assert.equal(client.getChannelUserCount(), 0, 'peers not in buffer — need clientlist');
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+  feed(
+    client,
+    'clientlist clid=9 cid=34 client_type=0|clid=3 cid=34 client_type=0|clid=4 cid=34 client_type=0',
+  );
+  assert.equal(client.getChannelUserCount(), 2);
   if ((client as any).pingTimer) {
     clearInterval((client as any).pingTimer);
     (client as any).pingTimer = null;
