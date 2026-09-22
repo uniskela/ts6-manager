@@ -94,7 +94,19 @@ test('!commands lists only enabled customs', async () => {
 });
 
 test('multi-bot same channel dedupes !help to a single reply', async () => {
-  const handler = makeHandler([]);
+  const handler = makeHandler([]) as any;
+  handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '5',
+    commandChannelIds: [],
+  });
+  handler.botChannelConfig.set(2, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '5',
+    commandChannelIds: [],
+  });
   const a = makeBot(1, 5);
   const b = makeBot(2, 5);
   await handler.onTextMessage(1, a.bot, { invokerid: '7', msg: '!help' }, 5);
@@ -107,13 +119,47 @@ test('multi-bot same channel dedupes !help to a single reply', async () => {
 test('multi-bot same channel dedupes custom preset replies', async () => {
   const handler = makeHandler([
     { name: 'links', response: '## Links\n- site', enabled: true },
-  ]);
+  ]) as any;
+  handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '5',
+    commandChannelIds: [],
+  });
+  handler.botChannelConfig.set(2, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '5',
+    commandChannelIds: [],
+  });
   const a = makeBot(1, 5);
   const b = makeBot(2, 5);
   await handler.onTextMessage(1, a.bot, { invokerid: '7', msg: '!links' }, 5);
   await handler.onTextMessage(2, b.bot, { invokerid: '7', msg: '!links' }, 5);
   assert.equal(a.replies.length, 1);
   assert.equal(b.replies.length, 0);
+});
+
+test('same channel/clid on different virtual servers do not suppress each other', async () => {
+  const handler = makeHandler([]) as any;
+  handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '5',
+    commandChannelIds: [],
+  });
+  handler.botChannelConfig.set(2, {
+    serverConfigId: 9,
+    virtualServerId: 2,
+    defaultChannel: '5',
+    commandChannelIds: [],
+  });
+  const a = makeBot(1, 5);
+  const b = makeBot(2, 5);
+  await handler.onTextMessage(1, a.bot, { invokerid: '7', msg: '!help' }, 5);
+  await handler.onTextMessage(2, b.bot, { invokerid: '7', msg: '!help' }, 5);
+  assert.equal(a.replies.length, 1);
+  assert.equal(b.replies.length, 1);
 });
 
 test('cross-channel listener picks one bot for custom presets', async () => {
