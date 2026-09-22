@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError, TeamSpeakFloodError } from '../middleware/error-handler.js';
-import { WebQueryClient, createWebQueryClient } from '../ts-client/webquery-client.js';
+import { createWebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
 import { testSshConnection } from '../utils/ssh-test.js';
@@ -11,6 +11,10 @@ import {
   sanitizeTsServerHost,
   validateTsServerPort,
 } from '../utils/validate-ts-host.js';
+import {
+  buildFloodDiagnosticReport,
+  buildFullSuccessReport,
+} from '../ts-client/connection-diagnostics.js';
 
 function throwIfSharedQueryFlooded(req: Request, configId: number): void {
   const pool: ConnectionPool | undefined = req.app.locals.connectionPool;
@@ -213,7 +217,7 @@ serverRoutes.delete('/:configId', requireRole('admin'), async (req: Request, res
   } catch (err) { next(err); }
 });
 
-// Test WebQuery with draft credentials (not persisted)
+// Test WebQuery with draft credentials (not persisted) — staged diagnostics (#91 Slice 2)
 serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const { host, webqueryPort, apiKey, useHttps } = req.body;
@@ -223,13 +227,15 @@ serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, r
     const safePort = validateTsServerPort(webqueryPort, 10080);
 
     const client = createWebQueryClient(safeHost, safePort, apiKey, useHttps || false);
-    const result = await client.testConnection();
-    client.destroy();
-
-    if (!result.ok) {
-      return res.status(502).json({ success: false, error: result.error });
+    try {
+      // Always probe default virtual server 1 — do not accept request-body sid
+      // (would taint the WebQuery path / re-open CodeQL request-forgery).
+      const report = await client.diagnoseConnection();
+      // Always HTTP 200 so the UI can render partial stage results.
+      res.json(report);
+    } finally {
+      client.destroy();
     }
-    res.json({ success: true, version: result.version });
   } catch (err) { next(err); }
 });
 
@@ -252,7 +258,7 @@ serverRoutes.post('/test-ssh', requireRole('admin'), async (req: Request, res: R
   } catch (err) { next(err); }
 });
 
-// Test connection
+// Test connection — staged diagnostics (#91 Slice 2); SSH endpoints stay binary
 serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
@@ -262,20 +268,28 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
     });
     if (!server) throw new AppError(404, 'Server config not found');
     if (server.isDemo) {
-      res.json({ success: true, version: 'Demo mode' });
+      res.json(buildFullSuccessReport('Demo mode'));
       return;
     }
 
-    throwIfSharedQueryFlooded(req, configId);
+    try {
+      throwIfSharedQueryFlooded(req, configId);
+    } catch (err) {
+      if (err instanceof TeamSpeakFloodError) {
+        res.json(buildFloodDiagnosticReport(err.retryAfterSeconds));
+        return;
+      }
+      throw err;
+    }
 
     const client = createWebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
-    const result = await client.testConnection();
-    client.destroy(); // Close the temporary TCP connection immediately
-
-    if (!result.ok) {
-      return res.status(502).json({ success: false, error: result.error });
+    try {
+      // Default virtual server 1 only — selected-sid belongs on persisted config later.
+      const report = await client.diagnoseConnection();
+      res.json(report);
+    } finally {
+      client.destroy(); // Close the temporary TCP connection immediately
     }
-    res.json({ success: true, version: result.version });
   } catch (err) { next(err); }
 });
 

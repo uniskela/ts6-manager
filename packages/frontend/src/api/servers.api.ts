@@ -1,4 +1,15 @@
 import api from './client';
+import type { ConnectionDiagnosticReport } from '@ts6/common';
+
+export type { ConnectionDiagnosticReport, DiagnosticStageResult, DiagnosticStageId } from '@ts6/common';
+
+/**
+ * Staged WebQuery diagnostics (`diagnoseConnection`) use a 20s overall backend
+ * budget across four probes. Per-call axios timeouts must exceed that so a slow
+ * TS host still returns the staged report instead of a generic client timeout
+ * (shared axios default is 15s).
+ */
+export const CONNECTION_DIAGNOSTICS_TIMEOUT_MS = 30_000;
 
 export const serversApi = {
   list: () => api.get('/servers').then((r) => r.data),
@@ -7,10 +18,15 @@ export const serversApi = {
   createDemo: () => api.post('/servers/demo').then((r) => r.data),
   update: (id: number, data: any) => api.put(`/servers/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/servers/${id}`),
-  test: (id: number) => api.post(`/servers/${id}/test`).then((r) => r.data),
+  test: (id: number) =>
+    api
+      .post(`/servers/${id}/test`, undefined, { timeout: CONNECTION_DIAGNOSTICS_TIMEOUT_MS })
+      .then((r) => r.data as ConnectionDiagnosticReport),
   testSsh: (id: number) => api.post(`/servers/${id}/test-ssh`).then((r) => r.data),
   testWebqueryDraft: (data: { host: string; webqueryPort: number; apiKey: string; useHttps?: boolean }) =>
-    api.post('/servers/test-webquery', data).then((r) => r.data),
+    api
+      .post('/servers/test-webquery', data, { timeout: CONNECTION_DIAGNOSTICS_TIMEOUT_MS })
+      .then((r) => r.data as ConnectionDiagnosticReport),
   testSshDraft: (data: { host: string; sshPort: number; sshUsername: string; sshPassword: string }) =>
     api.post('/servers/test-ssh', data).then((r) => r.data),
   detectDeployment: () => api.get('/servers/deployment-check').then((r) => r.data),

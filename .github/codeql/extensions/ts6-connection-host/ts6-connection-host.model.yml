@@ -1,5 +1,5 @@
-# Marks TeamSpeak host validation helpers as request-forgery barriers so CodeQL
-# recognizes sanitized origins before axios/http outbound calls.
+# Marks TeamSpeak host/path validation helpers as request-forgery barriers so CodeQL
+# recognizes sanitized origins and WebQuery paths before axios/http outbound calls.
 extensions:
   - addsTo:
       pack: codeql/javascript-all
@@ -11,6 +11,9 @@ extensions:
       - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[ValidatedTsServerEndpoint].Member[fromHostPort].ReturnValue", "request-forgery"]
       - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[ValidatedTsServerEndpoint].Member[fromHostPort].ReturnValue.Member[origin]", "request-forgery"]
       - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[ValidatedTsServerEndpoint].Member[fromHostPort].ReturnValue.Member[host]", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[validateTsQueryServerId].ReturnValue", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[sanitizeWebQueryCommand].ReturnValue", "request-forgery"]
+      - ["file:packages/backend/src/utils/validate-ts-host.ts", "Member[buildWebQueryPath].ReturnValue", "request-forgery"]
   - addsTo:
       pack: codeql/javascript-all
       extensible: barrierGuardModel

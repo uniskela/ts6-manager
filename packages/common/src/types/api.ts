@@ -64,6 +64,31 @@ export interface UpdateServerConfig {
   enabled?: boolean;
 }
 
+/** Staged WebQuery connection diagnostics (#91 Slice 2). */
+export type DiagnosticStageId =
+  | 'reachability'
+  | 'authentication'
+  | 'permissions'
+  | 'virtual_server';
+
+export type DiagnosticStageStatus = 'ok' | 'fail' | 'skipped';
+export type DiagnosticOverall = 'ok' | 'partial' | 'fail';
+
+export interface DiagnosticStageResult {
+  id: DiagnosticStageId;
+  status: DiagnosticStageStatus;
+  message: string;
+  code?: string;
+}
+
+export interface ConnectionDiagnosticReport {
+  success: boolean;
+  partial: boolean;
+  overall: DiagnosticOverall;
+  stages: DiagnosticStageResult[];
+  version?: string;
+}
+
 // Dashboard
 export interface DashboardData {
   serverName: string;

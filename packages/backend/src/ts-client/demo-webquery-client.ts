@@ -1,5 +1,10 @@
 import { WebQueryClient } from './webquery-client.js';
 import { createValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
+import {
+  buildFullSuccessReport,
+  type ConnectionDiagnosticReport,
+  type DiagnoseConnectionOptions,
+} from './connection-diagnostics.js';
 
 const DEMO_VERSION = [{
   version: '6.0.0-demo',
@@ -277,6 +282,12 @@ export class DemoWebQueryClient extends WebQueryClient {
 
   override async testConnection(): Promise<{ ok: true; version: unknown }> {
     return { ok: true, version: 'Demo mode' };
+  }
+
+  override async diagnoseConnection(
+    _options?: DiagnoseConnectionOptions,
+  ): Promise<ConnectionDiagnosticReport> {
+    return buildFullSuccessReport('Demo mode');
   }
 
   override destroy(): void {
