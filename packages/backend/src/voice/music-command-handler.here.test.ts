@@ -361,30 +361,58 @@ test('!here summons when only sibling music bots share the channel', async () =>
 });
 
 test('!here summons the only idle bot when its channel mate is another music bot', async () => {
-  const idle = makeBot(1, { name: 'Idle', channelId: 10, ts3ClientId: 201, peerClids: [202] });
+  const idle = makeBot(1, { name: 'Idle', channelId: 10, ts3ClientId: 201, peerClids: [] });
   const mate = makeBot(2, { name: 'Mate', channelId: 10, ts3ClientId: 202, peerClids: [201] });
   const busy = makeBot(3, { name: 'Busy', channelId: 11, ts3ClientId: 203, peers: 2 });
-  // Make mate "busy" by putting a human with it — move mate to 11 with humans in clientlist.
-  // Simpler: only idle+mate in channel 10 (siblings); busy alone with humans in 11.
-  // Wait — idle and mate both idle then. Need exactly one idle: idle alone with mate clid
-  // still in channel but mate bot reports channel 99 (stale) — still exclude mate clid.
   const f = fixture([idle, mate, busy]);
-  // Override mate channel so resolve doesn't treat mate as already-here elsewhere;
-  // occupancy for idle's channel still lists mate's clid.
+  // Mate disconnected → gone from clientlist; leftover mate.ts3ClientId must not mask anyone.
+  mate.status = 'stopped';
   f.handler.eventBridge = {
     executeCommand: async () =>
       [
         'clid=201 cid=10 client_type=0',
-        'clid=202 cid=10 client_type=0',
         'clid=203 cid=11 client_type=0',
         'clid=50 cid=11 client_type=0',
         'clid=51 cid=11 client_type=0',
       ].join('|'),
   };
-  // mate is also in cid 10 per clientlist → both idle → list. Change mate home to 10 is already.
-  // To get a single summon: stop mate so only idle is summonable.
-  mate.status = 'stopped';
   await f.command(1, '!here', 20);
   assert.deepEqual(idle._joins, [20]);
   assert.match(f.replies.at(-1)!, /Idle \[#1\].*joining/i);
+});
+
+test('!here does not hide humans behind stale disconnected bot clids', async () => {
+  // Stopped bot left ts3ClientId=55; a human now occupies that clid with the live bot.
+  // Without a live-connection gate, 55 is excluded and Occupied looks idle → wrong pick.
+  const occupied = makeBot(1, {
+    name: 'Occupied',
+    channelId: 10,
+    ts3ClientId: 101,
+    peerClids: [55],
+  });
+  const dead = makeBot(2, {
+    name: 'Dead',
+    channelId: 10,
+    ts3ClientId: 55,
+    status: 'stopped',
+  });
+  const idle = makeBot(3, {
+    name: 'Idle',
+    channelId: 11,
+    ts3ClientId: 102,
+    peers: 0,
+  });
+  const f = fixture([occupied, dead, idle]);
+  f.handler.eventBridge = {
+    executeCommand: async () =>
+      [
+        'clid=101 cid=10 client_type=0',
+        'clid=55 cid=10 client_type=0',
+        'clid=102 cid=11 client_type=0',
+      ].join('|'),
+  };
+  await f.command(1, '!here', 20);
+  assert.equal(occupied._joins.length, 0);
+  assert.deepEqual(idle._joins, [20]);
+  assert.match(f.replies.at(-1)!, /Idle \[#3\].*joining/i);
 });

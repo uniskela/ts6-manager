@@ -932,7 +932,11 @@ export class MusicCommandHandler {
     }
   }
 
-  /** TS client IDs for music bots on this virtual server (connected ones). */
+  /**
+   * TS client IDs for music bots on this virtual server that still have a live voice session.
+   * Discarded/disconnected bots can leave a leftover `ts3ClientId`; that clid may later be
+   * reused by a human, so only exclude clids while the bot is actually connected.
+   */
   private musicBotClidsOnServer(serverConfigId: number, virtualServerId: number): Set<number> {
     const clids = new Set<number>();
     for (const [botId, cfg] of this.botChannelConfig) {
@@ -940,7 +944,8 @@ export class MusicCommandHandler {
         continue;
       }
       const b = this.voiceBotManager.getBot(botId);
-      const clid = b?.ts3ClientId || 0;
+      if (!b || !isBotSummonable(b)) continue;
+      const clid = b.ts3ClientId || 0;
       if (clid > 0) clids.add(clid);
     }
     return clids;

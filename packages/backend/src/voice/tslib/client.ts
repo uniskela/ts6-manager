@@ -278,6 +278,11 @@ export class Ts3Client extends EventEmitter {
 
   private cleanup(): void {
     this.state = "disconnected";
+    // Drop assigned clid so callers do not treat a recycled human clid as this bot.
+    this.clientId = 0;
+    this.currentChannelId = 0;
+    this.channelMembers.clear();
+    this.queryMembers.clear();
     if (this.resendTimer) clearInterval(this.resendTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.resendTimer = null;
