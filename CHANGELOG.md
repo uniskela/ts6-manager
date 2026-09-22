@@ -22,6 +22,7 @@ All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://
 
 ### Bug Fixes
 
+* keep close Bot Flow routes direct ([#104](https://github.com/uniskela/ts6-manager/issues/104)) ([ca9a9f4](https://github.com/uniskela/ts6-manager/commit/ca9a9f437efb860a824bc5074e0e0934d003aa1d))
 * harden Docker scripts against CRLF checkouts ([#88](https://github.com/uniskela/ts6-manager/issues/88)) ([bd31836](https://github.com/uniskela/ts6-manager/commit/bd318366f9e0c55d3a5052cbbf11ae9aed8ec700))
 
 ## [1.6.2](https://github.com/uniskela/ts6-manager/compare/v1.6.1...v1.6.2) (2026-09-20)
