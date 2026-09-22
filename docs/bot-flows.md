@@ -14,6 +14,18 @@ Bot flows are visual workflows stored per TeamSpeak server connection. Each flow
 
 Flows run in the backend **bot engine**, which maintains the relevant TeamSpeak connections and executes connected nodes in order. Flow management/read routes are admin-only because flow data can contain secrets such as webhook tokens and outbound request configuration.
 
+## Editor and templates
+
+The editor uses rounded orthogonal connections and labelled **True** / **False** condition paths. Its drawing surface grows from the actual node and route extents, so wider saved flows are not clipped by a fixed canvas. Keep flows readable rather than relying on extreme spacing.
+
+An unsaved editor draft is protected from normal in-app navigation, browser unload, and query refresh replacement. The saved baseline advances only after a successful save.
+
+![Bot Flow Editor with condition branches](flow-editor.png)
+
+**From Template** opens the maintained template gallery on the Bot Flows page. Choosing a template creates an ordinary editable flow after its required fields are configured; templates are not a separate route.
+
+![Flow Templates gallery](flow-templates.png)
+
 ## Triggers
 
 | Trigger | Description |
