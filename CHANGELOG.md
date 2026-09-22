@@ -2,6 +2,13 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.7.1](https://github.com/uniskela/ts6-manager/compare/v1.7.0...v1.7.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* stop Query flood from breaking Instance page ([#106](https://github.com/uniskela/ts6-manager/issues/106)) ([d9e5517](https://github.com/uniskela/ts6-manager/commit/d9e5517032a9698f8adc1d9c8f150bf667a9c24d))
+
 ## [1.7.0](https://github.com/uniskela/ts6-manager/compare/v1.6.2...v1.7.0) (2026-09-22)
 
 
