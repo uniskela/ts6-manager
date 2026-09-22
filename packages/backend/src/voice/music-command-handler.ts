@@ -85,15 +85,6 @@ function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
 }
 
-/** Idle = no other human clients in the bot's channel (safe to move without disrupting others). */
-function isBotIdleForSummon(bot: VoiceBot): boolean {
-  try {
-    return bot.getHumanChannelPeerCount() === 0;
-  } catch {
-    return bot.status === 'connected';
-  }
-}
-
 function hereActionKey(
   serverConfigId: number,
   virtualServerId: number,
@@ -870,15 +861,18 @@ export class MusicCommandHandler {
   /**
    * Non-disruptive summon selection:
    * 1) bots already in the requester channel
-   * 2) idle bots (no other humans in their channel)
+   * 2) idle bots (no other humans in their channel — prefer SSH clientlist snapshot)
    * 3) otherwise do not auto-steal — caller lists busy bots
    */
-  private resolveSummonCandidate(
+  private async resolveSummonCandidate(
     candidates: Array<{ id: number; name: string; bot: VoiceBot }>,
     channelId: number,
-  ):
+    serverConfigId: number,
+    virtualServerId: number,
+  ): Promise<
     | { kind: 'summon'; target: { id: number; name: string; bot: VoiceBot } }
-    | { kind: 'list'; bots: Array<{ id: number; name: string }>; busy: boolean } {
+    | { kind: 'list'; bots: Array<{ id: number; name: string }>; busy: boolean }
+  > {
     const alreadyHere = candidates.filter((c) => c.bot.getCurrentChannelId() === channelId);
     if (alreadyHere.length === 1) {
       return { kind: 'summon', target: alreadyHere[0] };
@@ -887,7 +881,12 @@ export class MusicCommandHandler {
       return { kind: 'list', bots: alreadyHere, busy: false };
     }
 
-    const idle = candidates.filter((c) => isBotIdleForSummon(c.bot));
+    const idle: Array<{ id: number; name: string; bot: VoiceBot }> = [];
+    for (const c of candidates) {
+      if (await this.isBotIdleForSummon(c.bot, serverConfigId, virtualServerId)) {
+        idle.push(c);
+      }
+    }
     if (idle.length === 1) {
       return { kind: 'summon', target: idle[0] };
     }
@@ -896,6 +895,66 @@ export class MusicCommandHandler {
     }
 
     return { kind: 'list', bots: candidates, busy: true };
+  }
+
+  /**
+   * Idle = no other human clients in the bot's channel.
+   * Prefer a ServerQuery clientlist snapshot (accurate after join/move); fall back to
+   * the voice client's peer set. Unknown channel → not idle (do not steal).
+   */
+  private async isBotIdleForSummon(
+    bot: VoiceBot,
+    serverConfigId: number,
+    virtualServerId: number,
+  ): Promise<boolean> {
+    const homeCid = bot.getCurrentChannelId();
+    if (homeCid <= 0) return false;
+
+    const fromList = await this.countHumanPeersViaClientList(
+      serverConfigId,
+      virtualServerId,
+      homeCid,
+      bot.ts3ClientId || 0,
+    );
+    if (fromList != null) return fromList === 0;
+
+    try {
+      return bot.getHumanChannelPeerCount() === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Returns human (non-query) clients in channel excluding excludeClid, or null if unknown. */
+  private async countHumanPeersViaClientList(
+    configId: number,
+    sid: number,
+    channelId: number,
+    excludeClid: number,
+  ): Promise<number | null> {
+    if (!this.eventBridge || channelId <= 0) return null;
+    try {
+      const raw = await this.eventBridge.executeCommand(configId, sid, 'clientlist');
+      const { parseQueryResponse } = await import('@ts6/common');
+      let count = 0;
+      for (const line of raw.split(/\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('error ')) continue;
+        for (const entry of parseQueryResponse(trimmed)) {
+          const cid = parseInt(entry.cid || '0', 10);
+          const clid = parseInt(entry.clid || '0', 10);
+          if (cid !== channelId || !clid || clid === excludeClid) continue;
+          if (String(entry.client_type || '0') === '1') continue;
+          count++;
+        }
+      }
+      return count;
+    } catch (err: any) {
+      console.warn(
+        `[MusicCmd] clientlist occupancy check failed for ${configId}:${sid} cid=${channelId}: ${err.message}`,
+      );
+      return null;
+    }
   }
 
   private async summonBotToChannel(
@@ -975,6 +1034,15 @@ export class MusicCommandHandler {
       bot.getCurrentChannelId() ||
       0;
 
+    // Unknown command channel → do not claim (claim key would be cid=0 and miss SSH dedupe).
+    // Cross-channel SSH path owns the real listener cid in that race.
+    if (channelId <= 0) {
+      console.warn(
+        `[MusicCmd] !here skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
+      );
+      return;
+    }
+
     if (
       !claimHereAction(hereActionKey(serverConfigId, virtualServerId, channelId, userClid, args))
     ) {
@@ -995,7 +1063,12 @@ export class MusicCommandHandler {
         await this.summonBotToChannel(candidates[0], channelId, bot, userClid);
         return;
       }
-      const resolved = this.resolveSummonCandidate(candidates, channelId);
+      const resolved = await this.resolveSummonCandidate(
+        candidates,
+        channelId,
+        serverConfigId,
+        virtualServerId,
+      );
       if (resolved.kind === 'summon') {
         await this.summonBotToChannel(resolved.target, channelId, bot, userClid);
         return;
@@ -1050,6 +1123,11 @@ export class MusicCommandHandler {
       return;
     }
 
+    if (channelId <= 0) {
+      console.warn(`[MusicCmd] Cross-channel !here ignored: invalid cid=${channelId}`);
+      return;
+    }
+
     if (!claimHereAction(hereActionKey(configId, sid, channelId, userClid, args))) {
       console.log(
         `[MusicCmd] Cross-channel !here deduped (cid=${channelId} clid=${userClid} args=${JSON.stringify(args)})`,
@@ -1093,7 +1171,12 @@ export class MusicCommandHandler {
           await this.summonBotToChannel(candidates[0], channelId, replyBot, userClid);
           return;
         }
-        const resolved = this.resolveSummonCandidate(candidates, channelId);
+        const resolved = await this.resolveSummonCandidate(
+          candidates,
+          channelId,
+          configId,
+          sid,
+        );
         if (resolved.kind === 'summon') {
           await this.summonBotToChannel(resolved.target, channelId, replyBot, userClid);
           return;

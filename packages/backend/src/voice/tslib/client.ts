@@ -160,6 +160,9 @@ export class Ts3Client extends EventEmitter {
     this.queryMembers.clear();
     this.emit("debug", `Moving to channel cid=${channelId}`);
     this.sendCommand(moveCmd);
+    // Seed occupants already in the target channel (enter-view events alone are racy
+    // with notifyclientmoved clearing peers). TS3 replies with clientlist entries.
+    this.sendCommand(buildCommand("clientlist", {}));
   }
 
   async connect(opts: Ts3ClientOptions): Promise<void> {
@@ -797,9 +800,17 @@ export class Ts3Client extends EventEmitter {
         const clid = parseInt(parsed.params.clid || "0");
         const toCid = parseInt(parsed.params.ctid || "0");
         if (clid && clid === this.clientId) {
-          this.currentChannelId = toCid;
-          this.channelMembers.clear();
-          this.queryMembers.clear();
+          // moveToChannel already set currentChannelId and may have received
+          // notifycliententerview for occupants before this confirmation.
+          // Clearing again would wipe those peers and leave idle checks wrong.
+          if (this.currentChannelId !== toCid) {
+            this.currentChannelId = toCid;
+            this.channelMembers.clear();
+            this.queryMembers.clear();
+            this.sendCommand(buildCommand("clientlist", {}));
+          } else {
+            this.currentChannelId = toCid;
+          }
           break;
         }
         const fromCid = parseInt(parsed.params.cfid || "0");
@@ -814,6 +825,10 @@ export class Ts3Client extends EventEmitter {
       case "notifytextmessage":
         this.emit("textMessage", parsed.params);
         break;
+      case "clientlist": {
+        this.seedChannelMembersFromClientList(parsed);
+        break;
+      }
       case "error": {
         this.emit("ts3error", parsed.params);
         // Fatal TS3 errors: reject connect promise and disconnect immediately
@@ -989,6 +1004,31 @@ export class Ts3Client extends EventEmitter {
       }
     }
     this.emit("debug", `channellist: +${entries.length} channels (total: ${this.channelMap.size})`);
+  }
+
+  /** Populate channelMembers from a clientlist snapshot for the current channel. */
+  private seedChannelMembersFromClientList(parsed: ParsedCommand): void {
+    if (!this.currentChannelId) return;
+    const entries = parsed.groups ?? [parsed.params];
+    let added = 0;
+    for (const entry of entries) {
+      const clid = parseInt(entry.clid || "0");
+      if (!clid || clid === this.clientId) continue;
+      const cid = parseInt(entry.cid || entry.client_channel_id || "0");
+      // Some snapshots omit cid; only trust explicit matches to our channel.
+      if (cid && cid !== this.currentChannelId) continue;
+      if (!cid) continue;
+      if (String(entry.client_type) === "1") {
+        this.queryMembers.add(clid);
+      } else {
+        this.channelMembers.add(clid);
+        added++;
+      }
+    }
+    this.emit(
+      "debug",
+      `clientlist seed: +${added} human peer(s) in cid=${this.currentChannelId} (total=${this.channelMembers.size})`,
+    );
   }
 
   private handleChannelListFinished(): void {

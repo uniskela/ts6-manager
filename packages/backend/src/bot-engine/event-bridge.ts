@@ -297,25 +297,25 @@ export class EventBridge extends EventEmitter {
     try {
       // `use` can reset the query client to the default channel — move back before sending.
       await client.executeCommand(`use sid=${sid}`);
-      try {
-        const who = await client.executeCommand('whoami');
-        const first = (who.split('\n')[0] || '').trim();
-        const me = parseQueryResponse(first)[0] || {};
-        const clid =
-          me.clid ??
-          me.client_id ??
-          (() => {
-            const m = first.match(/(?:clid|client_id)=(\d+)/);
-            return m?.[1];
-          })();
-        if (clid) {
-          await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
-        }
-      } catch (moveErr: any) {
+      const who = await client.executeCommand('whoami');
+      const first = (who.split('\n')[0] || '').trim();
+      const me = parseQueryResponse(first)[0] || {};
+      const clid =
+        me.clid ??
+        me.client_id ??
+        me.clientid ??
+        me.clientId ??
+        (() => {
+          const m = first.match(/(?:clid|client_id)=(\d+)/);
+          return m?.[1];
+        })();
+      if (!clid) {
         console.warn(
-          `[EventBridge] sendChannelText remount to cid=${channelId} failed: ${moveErr.message}`,
+          `[EventBridge] sendChannelText failed for ${key}: whoami returned no clid; not sending`,
         );
+        return false;
       }
+      await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
       await client.executeCommand(`sendtextmessage targetmode=2 msg=${tsEscape(msg)}`);
       return true;
     } catch (err: any) {
