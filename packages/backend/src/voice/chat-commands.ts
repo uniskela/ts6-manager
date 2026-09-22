@@ -44,7 +44,7 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   {
     name: 'here',
     usage: '!here [id]',
-    blurb: 'Move a music bot to this channel (lists IDs when more than one is available)',
+    blurb: 'Summon a music bot here (prefers idle bots; use !here <id> to target one)',
   },
   { name: 'come', usage: '!come [id]', blurb: 'Alias for !here' },
   {

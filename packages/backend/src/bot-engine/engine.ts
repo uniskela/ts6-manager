@@ -273,6 +273,10 @@ export class BotEngine {
 
   setMusicCommandHandler(handler: MusicCommandHandler): void {
     this.musicCommandHandler = handler;
+    // Music bots may need SSH (command listeners / auto-discovery) even with no flows.
+    if (this.running) {
+      this.setupSshConnections();
+    }
   }
 
   getEventBridge(): EventBridge {

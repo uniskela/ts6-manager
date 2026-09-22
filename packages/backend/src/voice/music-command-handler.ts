@@ -58,6 +58,16 @@ const chatReplyCooldownUntil = new Map<string, number>();
 const HERE_LIST_COOLDOWN_MS = 2000;
 const hereListCooldownUntil = new Map<string, number>();
 
+/**
+ * One chat line can hit SSH cmd-listener and/or several voice bots in the same
+ * channel. Claim the summon/list action once so we do not announce+join twice.
+ */
+const HERE_ACTION_DEDUP_MS = 1500;
+const hereActionUntil = new Map<string, number>();
+
+/** Cap auto-discovered SSH command listeners when commandChannelIds is empty. */
+const MAX_AUTO_COMMAND_CHANNELS = 24;
+
 function chatReplyCooldownKey(botId: number, clid: number): string {
   return `${botId}:${clid}`;
 }
@@ -73,6 +83,39 @@ function markChatReplyCooldown(botId: number, clid: number): void {
 
 function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
+}
+
+/** Idle = no other human clients in the bot's channel (safe to move without disrupting others). */
+function isBotIdleForSummon(bot: VoiceBot): boolean {
+  try {
+    return bot.getHumanChannelPeerCount() === 0;
+  } catch {
+    return bot.status === 'connected';
+  }
+}
+
+function hereActionKey(
+  serverConfigId: number,
+  virtualServerId: number,
+  channelId: number,
+  userClid: number,
+  args: string,
+): string {
+  return `${serverConfigId}:${virtualServerId}:${channelId}:${userClid}:${args}`;
+}
+
+/** Returns true if this caller should run the !here action; false if a duplicate. */
+function claimHereAction(key: string): boolean {
+  const until = hereActionUntil.get(key) ?? 0;
+  if (Date.now() < until) return false;
+  hereActionUntil.set(key, Date.now() + HERE_ACTION_DEDUP_MS);
+  return true;
+}
+
+/** Test helper: clear !here dedupe/list cooldowns between cases. */
+export function resetHereDedupForTests(): void {
+  hereActionUntil.clear();
+  hereListCooldownUntil.clear();
 }
 
 function isSpotifyShareUrl(url: string): boolean {
@@ -102,6 +145,8 @@ export class MusicCommandHandler {
   private botChannelConfig = new Map<number, BotChannelConfig>();
   private channelToBots = new Map<string, Set<number>>();
   private activeReplyChannel = new Map<string, number>();
+  /** Auto-discovered command channels when bots have none configured (key: configId:sid). */
+  private autoCommandChannels = new Map<string, number[]>();
 
   constructor(
     private prisma: PrismaClient,
@@ -115,7 +160,19 @@ export class MusicCommandHandler {
       bridge.on('tsEvent', (configId, sid, eventName, data) => {
         if (eventName !== 'notifytextmessage') return;
         const listenerCid = data.__cmd_listener_channel_id;
-        if (!listenerCid) return;
+        if (!listenerCid) {
+          // Main SSH connection text events have no channel marker — music cmds need CMD listeners.
+          const preview = (data.msg || '').slice(0, 40);
+          console.log(
+            `[MusicCmd] SSH textmessage without cmd-listener marker ignored ` +
+              `(config=${configId} sid=${sid} msg=${JSON.stringify(preview)})`,
+          );
+          return;
+        }
+        console.log(
+          `[MusicCmd] SSH cmd-listener textmessage config=${configId} sid=${sid} ` +
+            `cid=${listenerCid} clid=${data.invokerid || '?'} msg=${JSON.stringify((data.msg || '').slice(0, 60))}`,
+        );
         this.onCrossChannelTextMessage(configId, sid, parseInt(listenerCid, 10), data).catch(
           (err) => {
             console.error(`[MusicCmd] Cross-channel message error: ${err.message}`);
@@ -163,6 +220,18 @@ export class MusicCommandHandler {
       this.channelToBots.get(key)!.add(botId);
     }
 
+    if (commandChannelIds.length === 0) {
+      console.warn(
+        `[MusicCmd] Bot ${botId}: no commandChannelIds configured — ` +
+          `will auto-discover channels via SSH when available (same-channel voice cmds still work)`,
+      );
+    } else {
+      console.log(
+        `[MusicCmd] Bot ${botId}: command channels=[${commandChannelIds.join(',')}] ` +
+          `vs=${cfg.virtualServerId} config=${cfg.serverConfigId}`,
+      );
+    }
+
     await this.syncCommandListenersForPair(cfg.serverConfigId, cfg.virtualServerId);
     if (
       prevCfg &&
@@ -175,10 +244,44 @@ export class MusicCommandHandler {
 
   /** Connect/disconnect SSH textchannel listeners to match active command-channel config. */
   async syncCommandListenersForPair(configId: number, sid: number): Promise<void> {
-    if (!this.eventBridge) return;
+    if (!this.eventBridge) {
+      console.warn(
+        `[MusicCmd] syncCommandListeners skipped ${configId}:${sid}: no eventBridge`,
+      );
+      return;
+    }
 
     const needed = new Set(this.getNeededCommandChannelIds(configId, sid));
+    const pairKey = `${configId}:${sid}`;
+    const hasExplicit = this.pairHasExplicitCommandChannels(configId, sid);
+
+    if (!hasExplicit) {
+      const discovered = await this.discoverChannelsForCommands(configId, sid);
+      this.autoCommandChannels.set(pairKey, discovered);
+      for (const channelId of discovered) {
+        needed.add(channelId);
+      }
+      this.mapBotsToAutoChannels(configId, sid, discovered);
+      if (discovered.length === 0) {
+        console.warn(
+          `[MusicCmd] No SSH command listeners for ${pairKey}: ` +
+            `empty commandChannelIds and channel discovery returned none ` +
+            `(check SSH credentials; !commands only work in the bot's current voice channel)`,
+        );
+      } else {
+        console.log(
+          `[MusicCmd] Auto command channels for ${pairKey}: [${discovered.join(',')}]`,
+        );
+      }
+    } else {
+      this.autoCommandChannels.delete(pairKey);
+    }
+
     const existing = new Set(this.eventBridge.getCommandListenerChannelIds(configId, sid));
+    console.log(
+      `[MusicCmd] Syncing SSH cmd listeners ${pairKey}: needed=[${[...needed].join(',')}] ` +
+        `existing=[${[...existing].join(',')}]`,
+    );
 
     for (const channelId of needed) {
       if (existing.has(channelId)) continue;
@@ -201,6 +304,64 @@ export class MusicCommandHandler {
     }
   }
 
+  private pairHasExplicitCommandChannels(configId: number, sid: number): boolean {
+    for (const cfg of this.botChannelConfig.values()) {
+      if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
+      if (cfg.commandChannelIds.length > 0) return true;
+    }
+    return false;
+  }
+
+  private mapBotsToAutoChannels(configId: number, sid: number, channelIds: number[]): void {
+    const botIds: number[] = [];
+    for (const [botId, cfg] of this.botChannelConfig) {
+      if (cfg.serverConfigId === configId && cfg.virtualServerId === sid) {
+        botIds.push(botId);
+      }
+    }
+    for (const channelId of channelIds) {
+      const key = channelListenerKey(configId, sid, channelId);
+      if (!this.channelToBots.has(key)) this.channelToBots.set(key, new Set());
+      for (const botId of botIds) {
+        this.channelToBots.get(key)!.add(botId);
+      }
+    }
+  }
+
+  private async discoverChannelsForCommands(
+    configId: number,
+    sid: number,
+  ): Promise<number[]> {
+    if (!this.eventBridge) return [];
+    try {
+      const raw = await this.eventBridge.executeCommand(configId, sid, 'channellist');
+      const { parseQueryResponse } = await import('@ts6/common');
+      const ids: number[] = [];
+      for (const line of raw.split(/\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('error ')) continue;
+        for (const entry of parseQueryResponse(trimmed)) {
+          const cid = parseInt(entry.cid || '0', 10);
+          if (cid > 0 && !ids.includes(cid)) ids.push(cid);
+        }
+      }
+      ids.sort((a, b) => a - b);
+      if (ids.length > MAX_AUTO_COMMAND_CHANNELS) {
+        console.warn(
+          `[MusicCmd] Auto-discover capped at ${MAX_AUTO_COMMAND_CHANNELS} channels ` +
+            `(found ${ids.length} on ${configId}:${sid}); configure commandChannelIds to target specific ones`,
+        );
+        return ids.slice(0, MAX_AUTO_COMMAND_CHANNELS);
+      }
+      return ids;
+    } catch (err: any) {
+      console.warn(
+        `[MusicCmd] Channel discovery failed for ${configId}:${sid}: ${err.message}`,
+      );
+      return [];
+    }
+  }
+
   private unregisterBotChannels(botId: number): void {
     this.botChannelConfig.delete(botId);
     for (const bots of this.channelToBots.values()) {
@@ -213,10 +374,17 @@ export class MusicCommandHandler {
    * Called by VoiceBotManager whenever a bot is created/started.
    */
   registerBot(botId: number, bot: VoiceBot): void {
-    if (this.registeredBots.has(botId)) return;
+    if (this.registeredBots.has(botId)) {
+      console.log(`[MusicCmd] Bot ${botId} already registered for text commands`);
+      return;
+    }
     this.registeredBots.add(botId);
 
     bot.on('textMessage', (data: Record<string, string>) => {
+      console.log(
+        `[MusicCmd] Voice textmessage bot=${botId} clid=${data.invokerid || '?'} ` +
+          `homeCid=${bot.getCurrentChannelId()} msg=${JSON.stringify((data.msg || '').slice(0, 60))}`,
+      );
       const replyCid = bot.getCurrentChannelId();
       this.onTextMessage(botId, bot, data, replyCid > 0 ? replyCid : undefined).catch(err => {
         console.error(`[MusicCmd] Error processing text message on bot ${botId}: ${err.message}`);
@@ -241,7 +409,7 @@ export class MusicCommandHandler {
   getNeededServerPairs(): string[] {
     const pairs = new Set<string>();
     for (const cfg of this.botChannelConfig.values()) {
-      if (cfg.commandChannelIds.length === 0) continue;
+      // Always request SSH for music bots so command listeners / auto-discovery can run.
       pairs.add(`${cfg.serverConfigId}:${cfg.virtualServerId}`);
     }
     return Array.from(pairs);
@@ -255,13 +423,35 @@ export class MusicCommandHandler {
   ): Promise<void> {
     const key = channelListenerKey(configId, sid, channelId);
     const botIds = this.channelToBots.get(key);
-    if (!botIds || botIds.size === 0) return;
+    if (!botIds || botIds.size === 0) {
+      console.warn(
+        `[MusicCmd] Cross-channel text in cid=${channelId} but no bots mapped ` +
+          `(config=${configId} sid=${sid}); msg=${JSON.stringify((data.msg || '').slice(0, 40))}`,
+      );
+      return;
+    }
 
     const msg = (data.msg || '').trim();
     if (msg.startsWith(CMD_PREFIX)) {
       const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
       const command = (parts[0] || '').toLowerCase();
       if (command === 'here' || command === 'come') {
+        // Prefer the in-channel voice path when a music bot is already here —
+        // otherwise SSH + voice both announce/join for the same chat line.
+        const voiceBotInChannel = [...botIds].some((id) => {
+          const bot = this.voiceBotManager.getBot(id);
+          return (
+            !!bot &&
+            isBotSummonable(bot) &&
+            bot.getCurrentChannelId() === channelId
+          );
+        });
+        if (voiceBotInChannel) {
+          console.log(
+            `[MusicCmd] Cross-channel !here skipped: voice bot already in cid=${channelId}`,
+          );
+          return;
+        }
         const rawArgs = parts.slice(1).join(' ').trim();
         await this.handleHereCrossChannel(configId, sid, channelId, data, rawArgs);
         return;
@@ -271,13 +461,17 @@ export class MusicCommandHandler {
     const botId = [...botIds].find((id) => {
       const bot = this.voiceBotManager.getBot(id);
       if (!bot || bot.status === 'stopped' || bot.status === 'error') return false;
-      const cfg = this.botChannelConfig.get(id);
-      const homeCid =
-        bot.getCurrentChannelId() || parseInt(cfg?.defaultChannel || '0', 10) || 0;
+      // Only skip SSH routing when the voice client is *actually* in this channel.
+      const homeCid = bot.getCurrentChannelId();
       if (homeCid > 0 && channelId === homeCid) return false;
       return true;
     });
-    if (!botId) return;
+    if (!botId) {
+      console.log(
+        `[MusicCmd] Cross-channel text cid=${channelId} ignored: all mapped bots are home or stopped`,
+      );
+      return;
+    }
 
     const bot = this.voiceBotManager.getBot(botId)!;
     await this.onTextMessage(botId, bot, data, channelId);
@@ -289,15 +483,35 @@ export class MusicCommandHandler {
     for (const [botId, cfg] of this.botChannelConfig) {
       if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
       const bot = this.voiceBotManager.getBot(botId);
-      const homeCid =
-        bot?.getCurrentChannelId() || parseInt(cfg.defaultChannel || '0', 10) || 0;
+      // Use actual presence only — defaultChannel fallback previously skipped SSH listeners
+      // when getCurrentChannelId() was still 0, leaving cross-channel commands silent.
+      const homeCid = bot?.getCurrentChannelId() || 0;
       for (const cidStr of cfg.commandChannelIds) {
         const channelId = parseInt(cidStr, 10);
         if (!channelId) continue;
-        if (bot && bot.status !== 'stopped' && bot.status !== 'error' && channelId === homeCid) {
+        if (
+          bot &&
+          bot.status !== 'stopped' &&
+          bot.status !== 'error' &&
+          homeCid > 0 &&
+          channelId === homeCid
+        ) {
           continue;
         }
         ids.add(channelId);
+      }
+    }
+    // Include previously auto-discovered channels so sync doesn't tear them down mid-flight
+    // before rediscovery (explicit configs clear autoCommandChannels in sync).
+    const auto = this.autoCommandChannels.get(`${configId}:${sid}`);
+    if (auto) {
+      for (const channelId of auto) {
+        const botHome = [...this.botChannelConfig.entries()].some(([botId, cfg]) => {
+          if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) return false;
+          const bot = this.voiceBotManager.getBot(botId);
+          return !!bot && bot.getCurrentChannelId() === channelId;
+        });
+        if (!botHome) ids.add(channelId);
       }
     }
     return Array.from(ids);
@@ -489,14 +703,15 @@ export class MusicCommandHandler {
     const botId = bot.currentConfig.id;
     const replyChannelId = this.activeReplyChannel.get(`${botId}:${targetClid}`);
     const cfg = this.botChannelConfig.get(botId);
-    const homeCid =
-      bot.getCurrentChannelId() || parseInt(cfg?.defaultChannel || '0', 10) || 0;
+    // Actual voice presence only — defaultChannel fallback made cross-channel
+    // replies take the home-channel path while the bot was still elsewhere.
+    const homeCid = bot.getCurrentChannelId() || 0;
 
     if (
       replyChannelId &&
       cfg &&
       this.eventBridge &&
-      replyChannelId !== homeCid
+      (homeCid <= 0 || replyChannelId !== homeCid)
     ) {
       const ok = await this.eventBridge.sendChannelText(
         cfg.serverConfigId,
@@ -627,8 +842,15 @@ export class MusicCommandHandler {
 
   private formatHereBotList(
     bots: Array<{ id: number; name: string }>,
+    opts?: { busy?: boolean },
   ): string {
     const lines = bots.map((b) => `[${b.id}] ${b.name}`);
+    if (opts?.busy) {
+      return (
+        `All music bots are busy with other users:\n${lines.join('\n')}\n` +
+        `Use !here <id> to move a specific bot (may leave their channel).`
+      );
+    }
     return `Available bots:\n${lines.join('\n')}\nUse: !here <id>`;
   }
 
@@ -643,6 +865,37 @@ export class MusicCommandHandler {
     if (Date.now() < until) return false;
     hereListCooldownUntil.set(key, Date.now() + HERE_LIST_COOLDOWN_MS);
     return true;
+  }
+
+  /**
+   * Non-disruptive summon selection:
+   * 1) bots already in the requester channel
+   * 2) idle bots (no other humans in their channel)
+   * 3) otherwise do not auto-steal — caller lists busy bots
+   */
+  private resolveSummonCandidate(
+    candidates: Array<{ id: number; name: string; bot: VoiceBot }>,
+    channelId: number,
+  ):
+    | { kind: 'summon'; target: { id: number; name: string; bot: VoiceBot } }
+    | { kind: 'list'; bots: Array<{ id: number; name: string }>; busy: boolean } {
+    const alreadyHere = candidates.filter((c) => c.bot.getCurrentChannelId() === channelId);
+    if (alreadyHere.length === 1) {
+      return { kind: 'summon', target: alreadyHere[0] };
+    }
+    if (alreadyHere.length > 1) {
+      return { kind: 'list', bots: alreadyHere, busy: false };
+    }
+
+    const idle = candidates.filter((c) => isBotIdleForSummon(c.bot));
+    if (idle.length === 1) {
+      return { kind: 'summon', target: idle[0] };
+    }
+    if (idle.length > 1) {
+      return { kind: 'list', bots: idle, busy: false };
+    }
+
+    return { kind: 'list', bots: candidates, busy: true };
   }
 
   private async summonBotToChannel(
@@ -722,6 +975,15 @@ export class MusicCommandHandler {
       bot.getCurrentChannelId() ||
       0;
 
+    if (
+      !claimHereAction(hereActionKey(serverConfigId, virtualServerId, channelId, userClid, args))
+    ) {
+      console.log(
+        `[MusicCmd] !here deduped (bot=${botId} cid=${channelId} clid=${userClid} args=${JSON.stringify(args)})`,
+      );
+      return;
+    }
+
     const candidates = await this.listSummonableBots(serverConfigId, virtualServerId);
     if (candidates.length === 0) {
       await this.reply(bot, userClid, 'No music bots are available right now.');
@@ -733,10 +995,22 @@ export class MusicCommandHandler {
         await this.summonBotToChannel(candidates[0], channelId, bot, userClid);
         return;
       }
-      if (!this.shouldSpeakHereList(serverConfigId, virtualServerId, channelId, userClid)) {
+      const resolved = this.resolveSummonCandidate(candidates, channelId);
+      if (resolved.kind === 'summon') {
+        await this.summonBotToChannel(resolved.target, channelId, bot, userClid);
         return;
       }
-      await this.reply(bot, userClid, this.formatHereBotList(candidates));
+      if (!this.shouldSpeakHereList(serverConfigId, virtualServerId, channelId, userClid)) {
+        console.log(
+          `[MusicCmd] !here list suppressed by cooldown (config=${serverConfigId} cid=${channelId} clid=${userClid})`,
+        );
+        return;
+      }
+      await this.reply(
+        bot,
+        userClid,
+        this.formatHereBotList(resolved.bots, { busy: resolved.busy }),
+      );
       return;
     }
 
@@ -756,6 +1030,7 @@ export class MusicCommandHandler {
       return;
     }
 
+    // Explicit id = intentional, even if the bot is busy with other users.
     await this.summonBotToChannel(target, channelId, bot, userClid);
   }
 
@@ -771,6 +1046,13 @@ export class MusicCommandHandler {
     if (!userClid) {
       console.warn(
         `[MusicCmd] Cross-channel !here ignored: missing invokerid (cid=${channelId})`,
+      );
+      return;
+    }
+
+    if (!claimHereAction(hereActionKey(configId, sid, channelId, userClid, args))) {
+      console.log(
+        `[MusicCmd] Cross-channel !here deduped (cid=${channelId} clid=${userClid} args=${JSON.stringify(args)})`,
       );
       return;
     }
@@ -811,8 +1093,22 @@ export class MusicCommandHandler {
           await this.summonBotToChannel(candidates[0], channelId, replyBot, userClid);
           return;
         }
-        if (!this.shouldSpeakHereList(configId, sid, channelId, userClid)) return;
-        await this.reply(replyBot, userClid, this.formatHereBotList(candidates));
+        const resolved = this.resolveSummonCandidate(candidates, channelId);
+        if (resolved.kind === 'summon') {
+          await this.summonBotToChannel(resolved.target, channelId, replyBot, userClid);
+          return;
+        }
+        if (!this.shouldSpeakHereList(configId, sid, channelId, userClid)) {
+          console.log(
+            `[MusicCmd] Cross-channel !here list suppressed by cooldown (cid=${channelId} clid=${userClid})`,
+          );
+          return;
+        }
+        await this.reply(
+          replyBot,
+          userClid,
+          this.formatHereBotList(resolved.bots, { busy: resolved.busy }),
+        );
         return;
       }
 

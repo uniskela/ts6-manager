@@ -202,6 +202,11 @@ export class VoiceBot extends EventEmitter {
     return this.client.getCurrentChannelId();
   }
 
+  /** Other non-query voice clients currently in this bot's channel (excludes the bot itself). */
+  getHumanChannelPeerCount(): number {
+    return this.client.getChannelUserCount();
+  }
+
   /** Join a channel by ID (for following !play / playback commands). */
   joinChannel(channelId: number): void {
     if (this._status === 'stopped' || this._status === 'error' || this._status === 'starting') {

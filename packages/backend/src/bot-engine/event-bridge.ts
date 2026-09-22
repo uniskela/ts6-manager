@@ -214,7 +214,13 @@ export class EventBridge extends EventEmitter {
     if (this.commandListeners.has(key)) return;
 
     const serverConfig = await this.prisma.tsServerConfig.findUnique({ where: { id: configId } });
-    if (!serverConfig?.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) return;
+    if (!serverConfig?.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) {
+      console.warn(
+        `[EventBridge] CMD listener skipped for ${key}: server config missing SSH credentials ` +
+          `(music !commands outside the bot's voice channel require SSH ServerQuery)`,
+      );
+      return;
+    }
 
     const client = new SshQueryClient(this.buildSshOptions({
       id: serverConfig.id,
@@ -281,11 +287,35 @@ export class EventBridge extends EventEmitter {
   ): Promise<boolean> {
     const key = this.makeCmdKey(configId, sid, channelId);
     const client = this.commandListeners.get(key);
-    if (!client?.isConnected) return false;
+    if (!client?.isConnected) {
+      console.warn(`[EventBridge] sendChannelText skipped for ${key}: listener not connected`);
+      return false;
+    }
 
     const { tsEscape } = await import('../voice/tslib/commands.js');
+    const { parseQueryResponse } = await import('@ts6/common');
     try {
+      // `use` can reset the query client to the default channel — move back before sending.
       await client.executeCommand(`use sid=${sid}`);
+      try {
+        const who = await client.executeCommand('whoami');
+        const first = (who.split('\n')[0] || '').trim();
+        const me = parseQueryResponse(first)[0] || {};
+        const clid =
+          me.clid ??
+          me.client_id ??
+          (() => {
+            const m = first.match(/(?:clid|client_id)=(\d+)/);
+            return m?.[1];
+          })();
+        if (clid) {
+          await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
+        }
+      } catch (moveErr: any) {
+        console.warn(
+          `[EventBridge] sendChannelText remount to cid=${channelId} failed: ${moveErr.message}`,
+        );
+      }
       await client.executeCommand(`sendtextmessage targetmode=2 msg=${tsEscape(msg)}`);
       return true;
     } catch (err: any) {

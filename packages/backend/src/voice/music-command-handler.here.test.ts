@@ -1,9 +1,18 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { MusicCommandHandler } from './music-command-handler.js';
+import { MusicCommandHandler, resetHereDedupForTests } from './music-command-handler.js';
 import { isReservedChatCommandName, BUILTIN_COMMAND_HELP } from './chat-commands.js';
 
-function makeBot(id: number, opts: { status?: string; channelId?: number; name?: string; ts3ClientId?: number } = {}) {
+function makeBot(
+  id: number,
+  opts: {
+    status?: string;
+    channelId?: number;
+    name?: string;
+    ts3ClientId?: number;
+    peers?: number;
+  } = {},
+) {
   let channelId = opts.channelId ?? 10;
   const joins: number[] = [];
   return {
@@ -11,6 +20,7 @@ function makeBot(id: number, opts: { status?: string; channelId?: number; name?:
     ts3ClientId: opts.ts3ClientId ?? 100 + id,
     status: opts.status ?? 'connected',
     getCurrentChannelId: () => channelId,
+    getHumanChannelPeerCount: () => opts.peers ?? 0,
     joinChannel: (cid: number) => {
       joins.push(cid);
       channelId = cid;
@@ -21,6 +31,7 @@ function makeBot(id: number, opts: { status?: string; channelId?: number; name?:
 }
 
 function fixture(bots: ReturnType<typeof makeBot>[]) {
+  resetHereDedupForTests();
   const replies: string[] = [];
   const replyOrder: string[] = [];
   const dbRows = bots.map((b) => ({
@@ -76,7 +87,9 @@ function fixture(bots: ReturnType<typeof makeBot>[]) {
 test('here/come are reserved and documented', () => {
   assert.ok(isReservedChatCommandName('here'));
   assert.ok(isReservedChatCommandName('COME'));
-  assert.ok(BUILTIN_COMMAND_HELP.some((h) => h.name === 'here'));
+  const hereHelp = BUILTIN_COMMAND_HELP.find((h) => h.name === 'here');
+  assert.ok(hereHelp);
+  assert.match(hereHelp!.blurb, /idle/i);
   assert.ok(BUILTIN_COMMAND_HELP.some((h) => h.name === 'come'));
 });
 
@@ -133,9 +146,40 @@ test('!here refuses to summon a bot without a TS client id', async () => {
   assert.match(f.replies.at(-1)!, /not fully connected/i);
 });
 
-test('!here lists bots when more than one is available', async () => {
-  const a = makeBot(1, { name: 'Alpha' });
-  const b = makeBot(2, { name: 'Beta' });
+test('!here prefers a bot already in the requester channel', async () => {
+  const here = makeBot(1, { name: 'Here', channelId: 20, peers: 1 });
+  const elsewhere = makeBot(2, { name: 'Away', channelId: 10, peers: 0 });
+  const f = fixture([here, elsewhere]);
+  await f.command(1, '!here', 20);
+  assert.equal(here._joins.length, 0);
+  assert.equal(elsewhere._joins.length, 0);
+  assert.match(f.replies.at(-1)!, /already here/i);
+});
+
+test('!here prefers an idle bot over one occupied by other humans', async () => {
+  const busy = makeBot(1, { name: 'Busy', channelId: 10, peers: 2 });
+  const idle = makeBot(2, { name: 'Idle', channelId: 11, peers: 0 });
+  const f = fixture([busy, idle]);
+  await f.command(1, '!here', 20);
+  assert.equal(busy._joins.length, 0);
+  assert.deepEqual(idle._joins, [20]);
+  assert.match(f.replies.at(-1)!, /Idle \[#2\].*joining/i);
+});
+
+test('!here does not auto-steal when every bot has other humans', async () => {
+  const a = makeBot(1, { name: 'Alpha', channelId: 10, peers: 1 });
+  const b = makeBot(2, { name: 'Beta', channelId: 11, peers: 3 });
+  const f = fixture([a, b]);
+  await f.command(1, '!here', 20);
+  assert.equal(a._joins.length, 0);
+  assert.equal(b._joins.length, 0);
+  assert.match(f.replies.at(-1)!, /busy with other users/i);
+  assert.match(f.replies.at(-1)!, /!here <id>/);
+});
+
+test('!here lists idle bots when more than one is idle', async () => {
+  const a = makeBot(1, { name: 'Alpha', peers: 0 });
+  const b = makeBot(2, { name: 'Beta', peers: 0 });
   const f = fixture([a, b]);
   await f.command(1, '!here', 20);
   assert.equal(a._joins.length, 0);
@@ -144,9 +188,9 @@ test('!here lists bots when more than one is available', async () => {
   assert.match(f.replies.at(-1)!, /!here <id>/);
 });
 
-test('!here <id> summons the requested bot', async () => {
-  const a = makeBot(1, { name: 'Alpha', channelId: 10 });
-  const b = makeBot(2, { name: 'Beta', channelId: 11 });
+test('!here <id> summons the requested bot even when busy', async () => {
+  const a = makeBot(1, { name: 'Alpha', channelId: 10, peers: 0 });
+  const b = makeBot(2, { name: 'Beta', channelId: 11, peers: 4 });
   const f = fixture([a, b]);
   await f.command(1, '!here 2', 20);
   assert.equal(a._joins.length, 0);
@@ -177,4 +221,65 @@ test('!come is an alias for !here', async () => {
   const f = fixture([bot]);
   await f.command(1, '!come', 30);
   assert.deepEqual(bot._joins, [30]);
+});
+
+test('getNeededCommandChannelIds does not treat defaultChannel as home when voice cid is 0', () => {
+  const bot = makeBot(1, { channelId: 0 });
+  const f = fixture([bot]);
+  // Command channel 20 equals defaultChannel in fixture config — previously skipped SSH.
+  f.handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '20',
+    commandChannelIds: ['20'],
+  });
+  const needed = f.handler.getNeededCommandChannelIds(9, 1);
+  assert.deepEqual(needed, [20]);
+});
+
+test('getNeededServerPairs includes music bots even without commandChannelIds', () => {
+  const bot = makeBot(1);
+  const f = fixture([bot]);
+  f.handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '10',
+    commandChannelIds: [],
+  });
+  assert.deepEqual(f.handler.getNeededServerPairs(), ['9:1']);
+});
+
+test('SSH !here is skipped when a voice bot is already in the command channel', async () => {
+  const home = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([home]);
+  const key = '9:1:20';
+  f.handler.channelToBots.set(key, new Set([1]));
+  await f.handler.onCrossChannelTextMessage(9, 1, 20, { invokerid: '2', msg: '!here' });
+  assert.equal(home._joins.length, 0);
+  assert.equal(f.replies.length, 0);
+});
+
+test('duplicate voice !here from two bots only summons once', async () => {
+  const a = makeBot(1, { name: 'Alpha', channelId: 10, peers: 0 });
+  const b = makeBot(2, { name: 'Beta', channelId: 11, peers: 0 });
+  // Make only Alpha idle-preference winner by putting Beta busy... actually both idle → list.
+  // Use single-idle pair: Alpha idle, Beta busy — first voice handler summons; second dedupes.
+  const busy = makeBot(2, { name: 'Beta', channelId: 11, peers: 2 });
+  const f = fixture([a, busy]);
+  await Promise.all([
+    f.command(1, '!here', 20),
+    f.command(2, '!here', 20),
+  ]);
+  assert.deepEqual(a._joins, [20]);
+  assert.equal(busy._joins.length, 0);
+  assert.equal(f.replies.filter((r) => /joining/i.test(r)).length, 1);
+});
+
+test('SSH then voice !here for same message only summons once', async () => {
+  const bot = makeBot(1, { channelId: 10 });
+  const f = fixture([bot]);
+  await f.handler.handleHereCrossChannel(9, 1, 20, { invokerid: '2', msg: '!here' }, '');
+  await f.command(1, '!here', 20);
+  assert.deepEqual(bot._joins, [20]);
+  assert.equal(f.replies.filter((r) => /joining/i.test(r)).length, 1);
 });
