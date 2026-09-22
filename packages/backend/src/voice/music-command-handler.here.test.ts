@@ -445,6 +445,21 @@ test('in-flight SSH !help failure lets waiting voice reply', async () => {
   assert.match(f.replies[0]!, /Music bot commands/i);
 });
 
+test('thrown SSH !help still settles flight so voice can reply', async () => {
+  const bot = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([bot]);
+  f.handler.eventBridge = {
+    sendChannelText: async () => {
+      throw new Error('dynamic import boom');
+    },
+  };
+  const ssh = f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
+  const voice = f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  await Promise.all([ssh, voice]);
+  assert.equal(f.replies.length, 1);
+  assert.match(f.replies[0]!, /Music bot commands/i);
+});
+
 test('voice !help with homeCid=0 resolves invoker channel so claim matches SSH', async () => {
   const bot = makeBot(1, { name: 'A', channelId: 0 });
   const f = fixture([bot]);

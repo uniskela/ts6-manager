@@ -832,36 +832,46 @@ export class MusicCommandHandler {
       return;
     }
 
-    console.log(
-      `[MusicCmd] Cross-channel !help (config=${configId} sid=${sid} cid=${channelId} clid=${userClid})`,
-    );
-
-    let custom: Array<{ name: string; description: string | null }> = [];
+    let posted = false;
     try {
-      custom = await this.prisma.chatCommand.findMany({
-        where: { serverConfigId: configId, enabled: true },
-        orderBy: { name: 'asc' },
-        select: { name: true, description: true },
-      });
-    } catch (err: any) {
-      console.warn(`[MusicCmd] !help custom command lookup failed: ${err.message}`);
-    }
-
-    const msg = formatHelpMessage(BUILTIN_COMMAND_HELP, custom);
-    if (!this.eventBridge) {
-      console.warn(`[MusicCmd] Cross-channel !help: no eventBridge (cid=${channelId})`);
-      completeHelpAction(helpKey, false);
-      return;
-    }
-    const ok = await this.eventBridge.sendChannelText(configId, sid, channelId, msg, {
-      helperNickname: 'TS6 Helper',
-    });
-    if (!ok) {
-      console.warn(
-        `[MusicCmd] Cross-channel !help failed to post in cid=${channelId} (SSH listener?)`,
+      console.log(
+        `[MusicCmd] Cross-channel !help (config=${configId} sid=${sid} cid=${channelId} clid=${userClid})`,
       );
+
+      let custom: Array<{ name: string; description: string | null }> = [];
+      try {
+        custom = await this.prisma.chatCommand.findMany({
+          where: { serverConfigId: configId, enabled: true },
+          orderBy: { name: 'asc' },
+          select: { name: true, description: true },
+        });
+      } catch (err: any) {
+        console.warn(`[MusicCmd] !help custom command lookup failed: ${err.message}`);
+      }
+
+      const msg = formatHelpMessage(BUILTIN_COMMAND_HELP, custom);
+      if (!this.eventBridge) {
+        console.warn(`[MusicCmd] Cross-channel !help: no eventBridge (cid=${channelId})`);
+        return;
+      }
+      const ok = await this.eventBridge.sendChannelText(configId, sid, channelId, msg, {
+        helperNickname: 'TS6 Helper',
+      });
+      if (!ok) {
+        console.warn(
+          `[MusicCmd] Cross-channel !help failed to post in cid=${channelId} (SSH listener?)`,
+        );
+        return;
+      }
+      posted = true;
+    } catch (err: any) {
+      console.warn(
+        `[MusicCmd] Cross-channel !help threw for cid=${channelId}: ${err?.message || err}`,
+      );
+    } finally {
+      // Always settle so waiters are not stuck if sendChannelText throws.
+      completeHelpAction(helpKey, posted);
     }
-    completeHelpAction(helpKey, ok);
   }
 
   private async handleCustomCommand(
