@@ -128,9 +128,6 @@ const hereListCooldownUntil = new Map<string, number>();
 const HERE_ACTION_DEDUP_MS = 1500;
 const hereActionUntil = new Map<string, number>();
 
-/** Cap auto-discovered SSH command listeners when commandChannelIds is empty. */
-const MAX_AUTO_COMMAND_CHANNELS = 24;
-
 function chatReplyCooldownKey(botId: number, clid: number): string {
   return `${botId}:${clid}`;
 }
@@ -280,7 +277,7 @@ export class MusicCommandHandler {
     if (commandChannelIds.length === 0) {
       console.warn(
         `[MusicCmd] Bot ${botId}: no commandChannelIds configured — ` +
-          `will auto-discover channels via SSH when available (same-channel voice cmds still work)`,
+          `same-channel voice cmds work without SSH; set commandChannelIds for cross-channel !here/!help`,
       );
     } else {
       console.log(
@@ -312,26 +309,16 @@ export class MusicCommandHandler {
     const pairKey = `${configId}:${sid}`;
     const hasExplicit = this.pairHasExplicitCommandChannels(configId, sid);
 
+    // Never channellist + open N SSH textchannel listeners when commandChannelIds
+    // is empty. That floods Query on create/start (524) and can abort the create
+    // HTTP response. Same-channel voice cmds work without SSH; cross-channel
+    // requires explicit commandChannelIds.
+    this.autoCommandChannels.delete(pairKey);
     if (!hasExplicit) {
-      const discovered = await this.discoverChannelsForCommands(configId, sid);
-      this.autoCommandChannels.set(pairKey, discovered);
-      for (const channelId of discovered) {
-        needed.add(channelId);
-      }
-      this.mapBotsToAutoChannels(configId, sid, discovered);
-      if (discovered.length === 0) {
-        console.warn(
-          `[MusicCmd] No SSH command listeners for ${pairKey}: ` +
-            `empty commandChannelIds and channel discovery returned none ` +
-            `(check SSH credentials; !commands only work in the bot's current voice channel)`,
-        );
-      } else {
-        console.log(
-          `[MusicCmd] Auto command channels for ${pairKey}: [${discovered.join(',')}]`,
-        );
-      }
-    } else {
-      this.autoCommandChannels.delete(pairKey);
+      console.log(
+        `[MusicCmd] No SSH cmd listeners for ${pairKey}: empty commandChannelIds ` +
+          `(same-channel voice cmds only; configure commandChannelIds for cross-channel)`,
+      );
     }
 
     const existing = new Set(this.eventBridge.getCommandListenerChannelIds(configId, sid));
@@ -367,56 +354,6 @@ export class MusicCommandHandler {
       if (cfg.commandChannelIds.length > 0) return true;
     }
     return false;
-  }
-
-  private mapBotsToAutoChannels(configId: number, sid: number, channelIds: number[]): void {
-    const botIds: number[] = [];
-    for (const [botId, cfg] of this.botChannelConfig) {
-      if (cfg.serverConfigId === configId && cfg.virtualServerId === sid) {
-        botIds.push(botId);
-      }
-    }
-    for (const channelId of channelIds) {
-      const key = channelListenerKey(configId, sid, channelId);
-      if (!this.channelToBots.has(key)) this.channelToBots.set(key, new Set());
-      for (const botId of botIds) {
-        this.channelToBots.get(key)!.add(botId);
-      }
-    }
-  }
-
-  private async discoverChannelsForCommands(
-    configId: number,
-    sid: number,
-  ): Promise<number[]> {
-    if (!this.eventBridge) return [];
-    try {
-      const raw = await this.eventBridge.executeCommand(configId, sid, 'channellist');
-      const { parseQueryResponse } = await import('@ts6/common');
-      const ids: number[] = [];
-      for (const line of raw.split(/\n/)) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('error ')) continue;
-        for (const entry of parseQueryResponse(trimmed)) {
-          const cid = parseInt(entry.cid || '0', 10);
-          if (cid > 0 && !ids.includes(cid)) ids.push(cid);
-        }
-      }
-      ids.sort((a, b) => a - b);
-      if (ids.length > MAX_AUTO_COMMAND_CHANNELS) {
-        console.warn(
-          `[MusicCmd] Auto-discover capped at ${MAX_AUTO_COMMAND_CHANNELS} channels ` +
-            `(found ${ids.length} on ${configId}:${sid}); configure commandChannelIds to target specific ones`,
-        );
-        return ids.slice(0, MAX_AUTO_COMMAND_CHANNELS);
-      }
-      return ids;
-    } catch (err: any) {
-      console.warn(
-        `[MusicCmd] Channel discovery failed for ${configId}:${sid}: ${err.message}`,
-      );
-      return [];
-    }
   }
 
   private unregisterBotChannels(botId: number): void {
@@ -466,7 +403,8 @@ export class MusicCommandHandler {
   getNeededServerPairs(): string[] {
     const pairs = new Set<string>();
     for (const cfg of this.botChannelConfig.values()) {
-      // Always request SSH for music bots so command listeners / auto-discovery can run.
+      // Request SSH when bots exist so clientlist / explicit command listeners can run.
+      // Empty commandChannelIds no longer auto-open listeners for every channel.
       pairs.add(`${cfg.serverConfigId}:${cfg.virtualServerId}`);
     }
     return Array.from(pairs);
@@ -756,14 +694,15 @@ export class MusicCommandHandler {
 
     // Do not own with cid=0 — that key never matches the SSH helper's real listener
     // cid, so voice + cross-channel both post. Align with !here: resolve first; if
-    // still unknown and SSH can own the line, leave it to the helper.
+    // still unknown and SSH is connected, leave it to the helper.
     if (channelId <= 0) {
       if (ownedKey) completeHelpAction(ownedKey, false);
       console.warn(
         `[MusicCmd] !help skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
-      if (this.eventBridge) return;
-      // Pure voice (no Query): own cid=0 so sibling bots still collapse to one reply.
+      const sshOwnsLine = !!this.eventBridge?.isConnected(serverConfigId, virtualServerId);
+      if (sshOwnsLine) return;
+      // Pure voice or SSH down: own cid=0 so sibling bots still collapse to one reply.
     }
 
     const helpKey = helpActionKey(
@@ -1367,20 +1306,19 @@ export class MusicCommandHandler {
     }
 
     // Unknown command channel → do not claim with cid=0 (would miss SSH dedupe).
-    // Soft notice only when SSH cannot own the line; otherwise the cmd-listener
-    // still summons and a "could not determine" message races the join announce.
+    // Soft notice when SSH cannot own the line (disconnected / flooding). If SSH
+    // is connected, leave the cross-channel helper to summon.
     if (channelId <= 0) {
       console.warn(
         `[MusicCmd] !here skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
-      if (this.eventBridge) {
-        return;
-      }
+      const sshOwnsLine = !!this.eventBridge?.isConnected(serverConfigId, virtualServerId);
+      if (sshOwnsLine) return;
       const softKey = hereActionKey(serverConfigId, virtualServerId, 0, userClid, `unknown:${args}`);
       if (!claimHereAction(softKey)) return;
       try {
         bot.sendChannelMessage(
-          'Could not determine this channel yet. Wait a second and try !here again.',
+          'Could not determine this channel yet (Query offline). Wait a second and try !here again, or set command channels for cross-channel summon.',
         );
       } catch (err: any) {
         console.warn(`[MusicCmd] !here unknown-channel notice failed: ${err.message}`);

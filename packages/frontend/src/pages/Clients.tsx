@@ -45,6 +45,7 @@ export default function Clients() {
   const isAdmin = useAuthStore((s) => s.isAdmin());
   const { data, isLoading, error, refetch, isFetching } = useClients();
   const {
+    data: virtualServers,
     error: virtualServersError,
     isLoading: virtualServersLoading,
     isFetching: virtualServersFetching,
@@ -409,6 +410,7 @@ export default function Clients() {
 
   const hasClientData = Array.isArray(data);
   const gateError = error || virtualServersError;
+  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === selectedSid);
   const isFetchingGate = isFetching || virtualServersFetching;
   const retryGate = () => {
     void refetchVirtualServers();
@@ -416,7 +418,6 @@ export default function Clients() {
   };
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
-  if ((isLoading || virtualServersLoading) && !hasClientData) return <PageLoader />;
   if (gateError && !hasClientData) {
     return (
       <div className="space-y-4">
@@ -438,6 +439,10 @@ export default function Clients() {
       </div>
     );
   }
+  // Match Channels: invalid/unknown selected sid is not-ready, not an empty Live table.
+  if ((isLoading || virtualServersLoading || !contextIsValid) && !hasClientData) {
+    return <PageLoader />;
+  }
   const backgroundError = gateError
     ? apiErrorMessage(
       gateError,
@@ -446,7 +451,9 @@ export default function Clients() {
         : 'Client refresh failed. The last successful client list is still displayed.',
     )
     : null;
-  const refreshTone = teamSpeakRefreshTone(gateError);
+  const refreshTone = !contextIsValid && !gateError
+    ? 'starting'
+    : teamSpeakRefreshTone(gateError);
 
   return (
     <div className="space-y-5">

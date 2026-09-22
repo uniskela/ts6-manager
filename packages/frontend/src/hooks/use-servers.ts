@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { serversApi } from '../api/servers.api';
 import { useServerStore } from '../stores/server.store';
-import { teamSpeakQueryRetry, teamSpeakQueryRetryDelay } from '@/lib/api-error';
+import { teamSpeakQueryRetry, teamSpeakQueryRetryDelay, isTeamSpeakStarting } from '@/lib/api-error';
 
 export function useServers() {
   return useQuery({
@@ -24,9 +24,8 @@ export function useVirtualServers() {
       const err = query.state.error;
       if (!err) return false;
       // Keep probing while Query is still coming up after compose.
-      const status = (err as any)?.response?.status;
-      if (status === 503 || status === 502) return 5_000;
-      if (status === 429) return 15_000;
+      if (isTeamSpeakStarting(err)) return 5_000;
+      if ((err as any)?.response?.status === 429) return 15_000;
       return false;
     },
   });

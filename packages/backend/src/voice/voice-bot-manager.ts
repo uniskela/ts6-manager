@@ -284,8 +284,15 @@ export class VoiceBotManager extends EventEmitter {
     this.bots.set(dbBot.id, bot);
     this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 
+    // registerBot already schedules refreshBotChannels; do not await SSH
+    // listener sync here — identity work already took seconds and blocking
+    // the HTTP 201 leaves the create modal open (proxy 499) while Query floods.
     if (this.musicCmdHandler) {
-      await this.musicCmdHandler.refreshBotChannels(dbBot.id);
+      void this.musicCmdHandler.refreshBotChannels(dbBot.id).catch((err: any) => {
+        console.warn(
+          `[VoiceBotManager] Background command-channel refresh after create ${dbBot.id}: ${err?.message || err}`,
+        );
+      });
     }
 
     return { id: dbBot.id };
