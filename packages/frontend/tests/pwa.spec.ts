@@ -3,7 +3,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { canHandleRequest, isAppNavigation } from '../pwa/cache-policy';
 
 const routes = ['/dashboard', '/channels', '/clients', '/permissions', '/server-groups', '/channel-groups', '/music-bots', '/bots', '/bots/1', '/files', '/settings', '/login', '/setup'];
-const privatePaths = ['/api', '/api/health', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me', '/api/setup/status', '/api/servers/1/clients', '/api/servers/1/files', '/api/servers/1/tokens', '/api/servers/1/bans', '/api/music-bots', '/api/bots/1/logs', '/ws', '/ws/live'];
+const privatePaths = ['/api', '/api/health', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me', '/api/setup/status', '/api/servers/1/clients', '/api/servers/1/files', '/api/servers/1/tokens', '/api/servers/1/bans', '/api/music-bots', '/api/bots/1/logs', '/api/iptv/playlists/upload', '/api/iptv/playlists/1/replace', '/ws', '/ws/live'];
 const baseThemes = ['light', 'dark', 'black'] as const;
 const accents = ['cyan', 'violet', 'red', 'blue', 'emerald', 'amber'] as const;
 

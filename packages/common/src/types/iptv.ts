@@ -1,9 +1,15 @@
 // === IPTV Types ===
 
+export type IptvSourceType = 'url' | 'upload';
+
 export interface IptvPlaylistSummary {
   id: number;
   name: string;
-  url: string;
+  sourceType: IptvSourceType;
+  /** Remote URL when sourceType=url; null for uploads */
+  url: string | null;
+  /** Original filename when sourceType=upload */
+  originalFilename: string | null;
   serverConfigId: number;
   autoRefreshMinutes: number;
   lastRefreshedAt: string | null;
@@ -35,4 +41,9 @@ export interface CreateIptvPlaylistRequest {
   url: string;
   serverConfigId: number;
   autoRefreshMinutes?: number;
+}
+
+export interface CreateIptvPlaylistUploadRequest {
+  name: string;
+  serverConfigId: number;
 }

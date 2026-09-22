@@ -7,6 +7,7 @@ TS6 Manager is designed so normal container upgrades retain the application data
 Preserve:
 
 - the persistent backend database volume;
+- uploaded IPTV playlist source files under that volume (`data/iptv/`);
 - the current `ENCRYPTION_KEY`;
 - `JWT_SECRET` and `SIDECAR_SECRET`;
 - any media/library volume you want to retain; and

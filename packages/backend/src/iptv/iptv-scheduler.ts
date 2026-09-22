@@ -13,8 +13,13 @@ export function startIptvAutoRefresh(prisma: PrismaClient): () => void {
     if (running) return;
     running = true;
     try {
+      // Auto-refresh only applies to remote URL sources; uploaded files do not
+      // change on their own (use Replace file / manual re-parse instead).
       const playlists = await prisma.iptvPlaylist.findMany({
-        where: { autoRefreshMinutes: { gt: 0 } },
+        where: {
+          autoRefreshMinutes: { gt: 0 },
+          sourceType: 'url',
+        },
         select: { id: true, autoRefreshMinutes: true, lastRefreshedAt: true },
       });
 

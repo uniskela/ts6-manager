@@ -17,6 +17,28 @@ export function useCreateIptvPlaylist() {
   });
 }
 
+export function useUploadIptvPlaylist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { name: string; serverConfigId: number; file: File }) =>
+      iptvApi.uploadPlaylist(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['iptv-playlists'] }),
+  });
+}
+
+export function useReplaceIptvPlaylistFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, file }: { id: number; file: File }) =>
+      iptvApi.replacePlaylistFile(id, file),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['iptv-playlists'] });
+      qc.invalidateQueries({ queryKey: ['iptv-channels'] });
+      qc.invalidateQueries({ queryKey: ['iptv-groups'] });
+    },
+  });
+}
+
 export function useUpdateIptvPlaylist() {
   const qc = useQueryClient();
   return useMutation({
@@ -41,6 +63,7 @@ export function useRefreshIptvPlaylist() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['iptv-playlists'] });
       qc.invalidateQueries({ queryKey: ['iptv-channels'] });
+      qc.invalidateQueries({ queryKey: ['iptv-groups'] });
     },
   });
 }

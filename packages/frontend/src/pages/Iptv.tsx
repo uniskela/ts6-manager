@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
-  useIptvPlaylists, useCreateIptvPlaylist, useDeleteIptvPlaylist, useRefreshIptvPlaylist,
+  useIptvPlaylists, useCreateIptvPlaylist, useUploadIptvPlaylist, useReplaceIptvPlaylistFile,
+  useDeleteIptvPlaylist, useRefreshIptvPlaylist,
   useIptvGroups, useIptvChannels, useIptvStream, useIptvStop,
 } from '@/hooks/use-iptv';
 import { useMusicBots } from '@/hooks/use-music-bots';
@@ -18,7 +19,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tv, Plus, Trash2, RefreshCw, Play, Square, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tv, Plus, Trash2, RefreshCw, Play, Square, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle, Upload, Link2, FileUp } from 'lucide-react';
 import { toast } from 'sonner';
 import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage } from '@ts6/common';
 import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
@@ -29,6 +31,14 @@ const PRESETS = [
   { value: '720p', label: '720p' },
   { value: '1080p', label: '1080p' },
 ];
+
+const ACCEPT_PLAYLIST = '.m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain';
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 // ─── Channel browser ─────────────────────────────────────────────────────────
 
@@ -200,52 +210,197 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
 
 function AddPlaylistDialog({ open, onClose, serverConfigId }: { open: boolean; onClose: () => void; serverConfigId: number | null }) {
   const create = useCreateIptvPlaylist();
+  const upload = useUploadIptvPlaylist();
+  const [source, setSource] = useState<'url' | 'upload'>('url');
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [refresh, setRefresh] = useState('0');
+  const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const pending = create.isPending || upload.isPending;
+
+  const reset = () => {
+    setName('');
+    setUrl('');
+    setRefresh('0');
+    setFile(null);
+    setSource('url');
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
   const submit = () => {
     if (!serverConfigId) { toast.error('Select a server first'); return; }
-    if (!name.trim() || !url.trim()) { toast.error('Name and M3U URL are required'); return; }
-    create.mutate(
-      { name: name.trim(), url: url.trim(), serverConfigId, autoRefreshMinutes: parseInt(refresh) || 0 },
+    if (!name.trim()) { toast.error('Name is required'); return; }
+
+    if (source === 'url') {
+      if (!url.trim()) { toast.error('M3U URL is required'); return; }
+      create.mutate(
+        { name: name.trim(), url: url.trim(), serverConfigId, autoRefreshMinutes: parseInt(refresh) || 0 },
+        {
+          onSuccess: (res: any) => {
+            if (res?.refreshError) toast.warning(`Playlist added, but refresh failed: ${res.refreshError}`);
+            else toast.success(`Playlist added — ${formatNumber(Number(res?.channelCount ?? 0))} channels`);
+            reset();
+            onClose();
+          },
+          onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to add playlist'),
+        },
+      );
+      return;
+    }
+
+    if (!file) { toast.error('Choose a playlist file to upload'); return; }
+    upload.mutate(
+      { name: name.trim(), serverConfigId, file },
       {
         onSuccess: (res: any) => {
-          if (res?.refreshError) toast.warning(`Playlist added, but refresh failed: ${res.refreshError}`);
-          else toast.success(`Playlist added — ${formatNumber(Number(res?.channelCount ?? 0))} channels`);
-          setName(''); setUrl(''); setRefresh('0');
+          toast.success(`Playlist uploaded — ${formatNumber(Number(res?.channelCount ?? 0))} channels`);
+          reset();
           onClose();
         },
-        onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to add playlist'),
+        onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to upload playlist'),
       },
     );
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { reset(); onClose(); } }}>
       <DialogContent className="max-w-md">
         <DialogHeader>
           <DialogTitle>Add IPTV Playlist</DialogTitle>
-          <DialogDescription>Paste an M3U/M3U8 playlist URL (Xtream, Threadfin, Dispatcharr, etc.).</DialogDescription>
+          <DialogDescription>
+            Add a remote M3U/M3U8 URL or upload a playlist file stored on this manager.
+          </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-1">
+          <Tabs value={source} onValueChange={(v) => setSource(v as 'url' | 'upload')}>
+            <TabsList className="w-full">
+              <TabsTrigger value="url" className="flex-1">
+                <Link2 className="h-3.5 w-3.5 mr-1.5" /> Playlist URL
+              </TabsTrigger>
+              <TabsTrigger value="upload" className="flex-1">
+                <Upload className="h-3.5 w-3.5 mr-1.5" /> Upload file
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           <div className="space-y-1.5">
             <Label htmlFor="iptv-playlist-name" className="text-xs">Name</Label>
             <Input id="iptv-playlist-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My IPTV" autoFocus />
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="iptv-playlist-url" className="text-xs">M3U URL</Label>
-            <Input id="iptv-playlist-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://provider/get.php?...&type=m3u_plus" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="iptv-playlist-refresh" className="text-xs">Auto-refresh (minutes, 0 = manual)</Label>
-            <Input id="iptv-playlist-refresh" type="number" min={0} value={refresh} onChange={(e) => setRefresh(e.target.value)} />
-          </div>
+
+          {source === 'url' ? (
+            <>
+              <div className="space-y-1.5">
+                <Label htmlFor="iptv-playlist-url" className="text-xs">M3U URL</Label>
+                <Input id="iptv-playlist-url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="http://provider/get.php?...&type=m3u_plus" />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="iptv-playlist-refresh" className="text-xs">Auto-refresh (minutes, 0 = manual)</Label>
+                <Input id="iptv-playlist-refresh" type="number" min={0} value={refresh} onChange={(e) => setRefresh(e.target.value)} />
+              </div>
+            </>
+          ) : (
+            <div className="space-y-1.5">
+              <Label htmlFor="iptv-playlist-file" className="text-xs">Playlist file</Label>
+              <Input
+                id="iptv-playlist-file"
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPT_PLAYLIST}
+                className="cursor-pointer text-xs file:mr-3"
+                onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Accepts .m3u, .m3u8, or .txt containing valid M3U entries. Max 64 MB.
+              </p>
+              {file && (
+                <p className="text-[11px] text-muted-foreground truncate">
+                  Selected: {file.name} ({formatFileSize(file.size)})
+                </p>
+              )}
+            </div>
+          )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit} disabled={create.isPending} aria-busy={create.isPending}>
-            {create.isPending ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Adding…</> : 'Add & Load'}
+          <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
+          <Button onClick={submit} disabled={pending} aria-busy={pending}>
+            {pending
+              ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> {source === 'upload' ? 'Uploading…' : 'Adding…'}</>
+              : (source === 'upload' ? 'Upload & Load' : 'Add & Load')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─── Replace uploaded file dialog ────────────────────────────────────────────
+
+function ReplaceFileDialog({
+  playlist,
+  open,
+  onClose,
+}: {
+  playlist: IptvPlaylistSummary | null;
+  open: boolean;
+  onClose: () => void;
+}) {
+  const replace = useReplaceIptvPlaylistFile();
+  const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const reset = () => {
+    setFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const submit = () => {
+    if (!playlist || !file) { toast.error('Choose a playlist file'); return; }
+    replace.mutate(
+      { id: playlist.id, file },
+      {
+        onSuccess: (res: any) => {
+          toast.success(`File replaced — ${formatNumber(Number(res?.channelCount ?? 0))} channels`);
+          reset();
+          onClose();
+        },
+        onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to replace file'),
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { if (!o) { reset(); onClose(); } }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Replace playlist file</DialogTitle>
+          <DialogDescription>
+            Upload a new M3U/M3U8 file for “{playlist?.name}”. Channels are re-parsed after a successful upload.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-1.5 py-1">
+          <Label htmlFor="iptv-replace-file" className="text-xs">New playlist file</Label>
+          <Input
+            id="iptv-replace-file"
+            ref={fileInputRef}
+            type="file"
+            accept={ACCEPT_PLAYLIST}
+            className="cursor-pointer text-xs file:mr-3"
+            onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+          />
+          {file && (
+            <p className="text-[11px] text-muted-foreground truncate">
+              Selected: {file.name} ({formatFileSize(file.size)})
+            </p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { reset(); onClose(); }}>Cancel</Button>
+          <Button onClick={submit} disabled={!file || replace.isPending} aria-busy={replace.isPending}>
+            {replace.isPending
+              ? <><Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> Replacing…</>
+              : 'Replace & Refresh'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -273,6 +428,7 @@ export default function Iptv() {
   const refreshPlaylist = useRefreshIptvPlaylist();
 
   const [addOpen, setAddOpen] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState<IptvPlaylistSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IptvPlaylistSummary | null>(null);
   const [deleteError, setDeleteError] = useState('');
   const [selectedPlaylistId, setSelectedPlaylistId] = useState<number | null>(null);
@@ -327,7 +483,7 @@ export default function Iptv() {
         <EmptyState
           icon={Tv}
           title="No IPTV playlists"
-          description="Add an M3U/M3U8 playlist to browse channels and stream them into a TeamSpeak channel."
+          description="Add an M3U/M3U8 playlist URL or upload a playlist file to browse channels and stream them into a TeamSpeak channel."
         >
           <Button onClick={() => setAddOpen(true)} disabled={!selectedConfigId}><Plus className="h-4 w-4 mr-1.5" /> Add Playlist</Button>
         </EmptyState>
@@ -335,7 +491,9 @@ export default function Iptv() {
         <>
           {/* Playlist cards */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {playlistList.map((p) => (
+            {playlistList.map((p) => {
+              const isUpload = p.sourceType === 'upload';
+              return (
               <Card
                 key={p.id}
                 className={`cursor-pointer transition-colors ${selectedPlaylist?.id === p.id ? 'border-primary/50' : 'hover:border-primary/30'}`}
@@ -354,6 +512,16 @@ export default function Iptv() {
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-sm truncate">{p.name}</CardTitle>
                     <div className="flex items-center gap-1">
+                      {isUpload && (
+                        <Button
+                          variant="ghost" size="icon" className="h-7 w-7"
+                          onClick={(e) => { e.stopPropagation(); setReplaceTarget(p); }}
+                          aria-label={`Replace file for ${p.name}`}
+                          title="Replace file"
+                        >
+                          <FileUp className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                       <Button
                         variant="ghost" size="icon" className="h-7 w-7"
                         onClick={(e) => { e.stopPropagation(); refreshPlaylist.mutate(p.id, {
@@ -362,6 +530,7 @@ export default function Iptv() {
                         }); }}
                         disabled={refreshPlaylist.isPending}
                         aria-label={`Refresh ${p.name}`}
+                        title={isUpload ? 'Re-parse stored file' : 'Re-fetch URL'}
                       >
                         <RefreshCw className={`h-3.5 w-3.5 ${refreshPlaylist.isPending ? 'animate-spin' : ''}`} />
                       </Button>
@@ -378,14 +547,25 @@ export default function Iptv() {
                 <CardContent className="space-y-1.5">
                   <div className="flex items-center gap-2 flex-wrap">
                     <Badge variant="secondary" className="text-[10px]">{formatNumber(p.channelCount)} channels</Badge>
-                    {p.autoRefreshMinutes > 0 && <Badge variant="outline" className="text-[10px]">auto {p.autoRefreshMinutes}m</Badge>}
+                    <Badge variant="outline" className="text-[10px]">
+                      {isUpload ? 'Uploaded file' : 'URL'}
+                    </Badge>
+                    {isUpload && p.originalFilename && (
+                      <Badge variant="outline" className="text-[10px] max-w-[10rem] truncate" title={p.originalFilename}>
+                        {p.originalFilename}
+                      </Badge>
+                    )}
+                    {!isUpload && p.autoRefreshMinutes > 0 && (
+                      <Badge variant="outline" className="text-[10px]">auto {p.autoRefreshMinutes}m</Badge>
+                    )}
                   </div>
                   {p.lastError
                     ? <p className="text-[10px] text-destructive truncate flex items-center gap-1"><AlertCircle className="h-3 w-3 shrink-0" /> {p.lastError}</p>
                     : <p className="text-[10px] text-muted-foreground">{p.lastRefreshedAt ? `Updated ${formatLocalDateTime(p.lastRefreshedAt)}` : 'Not refreshed yet'}</p>}
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
 
           {/* Channel browser for selected playlist */}
@@ -403,12 +583,17 @@ export default function Iptv() {
       )}
 
       <AddPlaylistDialog open={addOpen} onClose={() => setAddOpen(false)} serverConfigId={selectedConfigId} />
+      <ReplaceFileDialog
+        playlist={replaceTarget}
+        open={!!replaceTarget}
+        onClose={() => setReplaceTarget(null)}
+      />
 
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={(o) => { if (!o) { setDeleteTarget(null); setDeleteError(''); } }}
         title="Delete playlist?"
-        description={`This removes "${deleteTarget?.name}" and all its channels.`}
+        description={`This removes "${deleteTarget?.name}" and all its channels${deleteTarget?.sourceType === 'upload' ? ', including the stored playlist file' : ''}.`}
         confirmLabel="Delete"
         destructive
         loading={deletePlaylist.isPending}
