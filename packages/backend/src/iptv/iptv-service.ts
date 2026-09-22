@@ -151,15 +151,34 @@ export async function replaceUploadedPlaylist(
   const newRelative = writeIptvSourceFile(content, originalFilename);
 
   try {
-    await replaceChannels(prisma, playlist.id, parsed);
-    await prisma.iptvPlaylist.update({
-      where: { id: playlist.id },
-      data: {
-        sourcePath: newRelative,
-        originalFilename,
-        lastRefreshedAt: new Date(),
-        lastError: null,
-      },
+    // Keep previous sourcePath + channels until this transaction commits so a
+    // mid-replace failure does not leave new channels pointing at a deleted file.
+    await prisma.$transaction(async (tx) => {
+      await tx.iptvChannel.deleteMany({ where: { playlistId: playlist.id } });
+      const batches = chunk(parsed, 1000);
+      for (let ci = 0; ci < batches.length; ci++) {
+        const batch = batches[ci];
+        await tx.iptvChannel.createMany({
+          data: batch.map((c, i) => ({
+            playlistId: playlist.id,
+            name: c.name,
+            url: c.url,
+            logo: c.logo ?? null,
+            groupTitle: c.groupTitle ?? null,
+            tvgId: c.tvgId ?? null,
+            position: ci * 1000 + i,
+          })),
+        });
+      }
+      await tx.iptvPlaylist.update({
+        where: { id: playlist.id },
+        data: {
+          sourcePath: newRelative,
+          originalFilename,
+          lastRefreshedAt: new Date(),
+          lastError: null,
+        },
+      });
     });
   } catch (err: any) {
     deleteIptvSourceFile(newRelative);
