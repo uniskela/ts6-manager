@@ -129,3 +129,38 @@ test('channellistfinished without defaultChannel requests clientlist', () => {
   (client as any).handleChannelListFinished();
   assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
 });
+
+test('handleInitServer requests clientlist when home cid still unknown', () => {
+  const client = new Ts3Client();
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  (client as any).handleInitServer({ aclid: '9' });
+  assert.equal(client.getClientId(), 9);
+  assert.equal(client.getCurrentChannelId(), 0);
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+  // Stop ping timer started by handleInitServer so the test runner can exit.
+  if ((client as any).pingTimer) {
+    clearInterval((client as any).pingTimer);
+    (client as any).pingTimer = null;
+  }
+});
+
+test('enter-view before initserver is applied once aclid is known', () => {
+  const client = new Ts3Client();
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  // Race: enter-view arrives before initserver assigns clientId.
+  feed(client, 'notifycliententerview clid=9 ctid=34 client_type=0');
+  assert.equal(client.getCurrentChannelId(), 0);
+  (client as any).handleInitServer({ aclid: '9' });
+  assert.equal(client.getClientId(), 9);
+  assert.equal(client.getCurrentChannelId(), 34);
+  if ((client as any).pingTimer) {
+    clearInterval((client as any).pingTimer);
+    (client as any).pingTimer = null;
+  }
+});

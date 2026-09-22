@@ -29,6 +29,7 @@ import {
   channelListenerKey,
   parseCommandChannelIds,
 } from './music-command-channels.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 interface BotChannelConfig {
   serverConfigId: number;
@@ -36,6 +37,13 @@ interface BotChannelConfig {
   defaultChannel: string | null;
   commandChannelIds: string[];
 }
+
+/** Cap occupied-channel SSH helpers — never channellist-open-all (Query flood). */
+const MAX_AUTO_OCCUPIED_CHANNELS = 8;
+/** Space sequential cmd-listener SSH connects to stay under flood thresholds. */
+const CMD_LISTENER_CONNECT_GAP_MS = 400;
+/** Debounce occupied rediscovery when humans move between channels. */
+const OCCUPIED_REFRESH_DEBOUNCE_MS = 1500;
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
@@ -199,8 +207,9 @@ export class MusicCommandHandler {
   private botChannelConfig = new Map<number, BotChannelConfig>();
   private channelToBots = new Map<string, Set<number>>();
   private activeReplyChannel = new Map<string, number>();
-  /** Auto-discovered command channels when bots have none configured (key: configId:sid). */
+  /** Auto-discovered occupied channels when bots have empty commandChannelIds (key: configId:sid). */
   private autoCommandChannels = new Map<string, number[]>();
+  private occupiedSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
     private prisma: PrismaClient,
@@ -212,6 +221,13 @@ export class MusicCommandHandler {
     if (!this.eventBridgeListening) {
       this.eventBridgeListening = true;
       bridge.on('tsEvent', (configId, sid, eventName, data) => {
+        // When humans join/move, rediscover occupied channels for empty-commandChannelIds bots.
+        if (
+          (eventName === 'notifycliententerview' || eventName === 'notifyclientmoved') &&
+          !data.__cmd_listener_channel_id
+        ) {
+          this.scheduleOccupiedListenerRefresh(configId, sid);
+        }
         if (eventName !== 'notifytextmessage') return;
         const listenerCid = data.__cmd_listener_channel_id;
         if (!listenerCid) {
@@ -275,9 +291,9 @@ export class MusicCommandHandler {
     }
 
     if (commandChannelIds.length === 0) {
-      console.warn(
-        `[MusicCmd] Bot ${botId}: no commandChannelIds configured — ` +
-          `same-channel voice cmds work without SSH; set commandChannelIds for cross-channel !here/!help`,
+      console.log(
+        `[MusicCmd] Bot ${botId}: empty commandChannelIds — ` +
+          `same-channel voice cmds + SSH helpers on occupied channels for cross-channel`,
       );
     } else {
       console.log(
@@ -309,16 +325,28 @@ export class MusicCommandHandler {
     const pairKey = `${configId}:${sid}`;
     const hasExplicit = this.pairHasExplicitCommandChannels(configId, sid);
 
-    // Never channellist + open N SSH textchannel listeners when commandChannelIds
-    // is empty. That floods Query on create/start (524) and can abort the create
-    // HTTP response. Same-channel voice cmds work without SSH; cross-channel
-    // requires explicit commandChannelIds.
-    this.autoCommandChannels.delete(pairKey);
     if (!hasExplicit) {
-      console.log(
-        `[MusicCmd] No SSH cmd listeners for ${pairKey}: empty commandChannelIds ` +
-          `(same-channel voice cmds only; configure commandChannelIds for cross-channel)`,
-      );
+      // Occupied-channel discovery (clientlist), NOT channellist-open-all.
+      // Fresh installs get cross-channel !here/!help without inventing commandChannelIds,
+      // while avoiding the Query flood that caused create 499 / 60s flood pause.
+      const discovered = await this.discoverOccupiedCommandChannels(configId, sid);
+      this.autoCommandChannels.set(pairKey, discovered);
+      for (const channelId of discovered) {
+        needed.add(channelId);
+      }
+      this.mapBotsToAutoChannels(configId, sid, discovered);
+      if (discovered.length === 0) {
+        console.log(
+          `[MusicCmd] No occupied-channel SSH helpers for ${pairKey} yet ` +
+            `(empty commandChannelIds; will retry when clients join)`,
+        );
+      } else {
+        console.log(
+          `[MusicCmd] Occupied command channels for ${pairKey}: [${discovered.join(',')}]`,
+        );
+      }
+    } else {
+      this.autoCommandChannels.delete(pairKey);
     }
 
     const existing = new Set(this.eventBridge.getCommandListenerChannelIds(configId, sid));
@@ -336,6 +364,7 @@ export class MusicCommandHandler {
           `[MusicCmd] Command listener connect ${configId}:${sid}:${channelId}: ${err.message}`,
         );
       }
+      await delay(CMD_LISTENER_CONNECT_GAP_MS);
     }
 
     for (const channelId of existing) {
@@ -348,12 +377,104 @@ export class MusicCommandHandler {
     }
   }
 
+  private scheduleOccupiedListenerRefresh(configId: number, sid: number): void {
+    if (this.pairHasExplicitCommandChannels(configId, sid)) return;
+    let hasBots = false;
+    for (const cfg of this.botChannelConfig.values()) {
+      if (cfg.serverConfigId === configId && cfg.virtualServerId === sid) {
+        hasBots = true;
+        break;
+      }
+    }
+    if (!hasBots) return;
+
+    const pairKey = `${configId}:${sid}`;
+    const prev = this.occupiedSyncTimers.get(pairKey);
+    if (prev) clearTimeout(prev);
+    this.occupiedSyncTimers.set(
+      pairKey,
+      setTimeout(() => {
+        this.occupiedSyncTimers.delete(pairKey);
+        void this.syncCommandListenersForPair(configId, sid).catch((err: any) => {
+          console.warn(
+            `[MusicCmd] Occupied listener refresh ${pairKey}: ${err?.message || err}`,
+          );
+        });
+      }, OCCUPIED_REFRESH_DEBOUNCE_MS),
+    );
+  }
+
   private pairHasExplicitCommandChannels(configId: number, sid: number): boolean {
     for (const cfg of this.botChannelConfig.values()) {
       if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
       if (cfg.commandChannelIds.length > 0) return true;
     }
     return false;
+  }
+
+  private mapBotsToAutoChannels(configId: number, sid: number, channelIds: number[]): void {
+    const botIds: number[] = [];
+    for (const [botId, cfg] of this.botChannelConfig) {
+      if (cfg.serverConfigId === configId && cfg.virtualServerId === sid) {
+        botIds.push(botId);
+      }
+    }
+    for (const channelId of channelIds) {
+      const key = channelListenerKey(configId, sid, channelId);
+      if (!this.channelToBots.has(key)) this.channelToBots.set(key, new Set());
+      for (const botId of botIds) {
+        this.channelToBots.get(key)!.add(botId);
+      }
+    }
+  }
+
+  /**
+   * Discover channels that currently have human clients (not Query clients).
+   * Prefer this over channellist — empty channels never need SSH helpers, and
+   * opening N listeners for every cid floods Query on fresh installs.
+   */
+  private async discoverOccupiedCommandChannels(
+    configId: number,
+    sid: number,
+  ): Promise<number[]> {
+    if (!this.eventBridge) return [];
+    try {
+      const botHomes = new Set<number>();
+      for (const [botId, cfg] of this.botChannelConfig) {
+        if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
+        const bot = this.voiceBotManager.getBot(botId);
+        const home = bot?.getCurrentChannelId() || 0;
+        if (home > 0) botHomes.add(home);
+      }
+
+      const raw = await this.eventBridge.executeCommand(configId, sid, 'clientlist');
+      const { parseQueryResponse } = await import('@ts6/common');
+      const ids: number[] = [];
+      for (const line of raw.split(/\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('error ')) continue;
+        for (const entry of parseQueryResponse(trimmed)) {
+          if (String(entry.client_type) === '1') continue; // Query / SSH helpers
+          const cid = parseInt(entry.cid || entry.client_channel_id || '0', 10);
+          if (cid <= 0 || botHomes.has(cid)) continue;
+          if (!ids.includes(cid)) ids.push(cid);
+        }
+      }
+      ids.sort((a, b) => a - b);
+      if (ids.length > MAX_AUTO_OCCUPIED_CHANNELS) {
+        console.warn(
+          `[MusicCmd] Occupied-channel helpers capped at ${MAX_AUTO_OCCUPIED_CHANNELS} ` +
+            `(found ${ids.length} on ${configId}:${sid}); set commandChannelIds for more`,
+        );
+        return ids.slice(0, MAX_AUTO_OCCUPIED_CHANNELS);
+      }
+      return ids;
+    } catch (err: any) {
+      console.warn(
+        `[MusicCmd] Occupied-channel discovery failed for ${configId}:${sid}: ${err.message}`,
+      );
+      return [];
+    }
   }
 
   private unregisterBotChannels(botId: number): void {
@@ -403,8 +524,7 @@ export class MusicCommandHandler {
   getNeededServerPairs(): string[] {
     const pairs = new Set<string>();
     for (const cfg of this.botChannelConfig.values()) {
-      // Request SSH when bots exist so clientlist / explicit command listeners can run.
-      // Empty commandChannelIds no longer auto-open listeners for every channel.
+      // Always request SSH so occupied-channel helpers / explicit listeners can run.
       pairs.add(`${cfg.serverConfigId}:${cfg.virtualServerId}`);
     }
     return Array.from(pairs);
@@ -1240,8 +1360,8 @@ export class MusicCommandHandler {
 
   /**
    * True only when a command-channel SSH helper is listening on this cid.
-   * Main SSH connected is not enough — empty commandChannelIds no longer
-   * auto-open listeners, so deferring to SSH would leave same-channel voice silent.
+   * Main SSH connected is not enough — deferring to SSH without a cmd listener
+   * leaves same-channel voice silent (empty commandChannelIds uses occupied helpers).
    */
   private sshHelperOwnsChannel(configId: number, sid: number, channelId: number): boolean {
     if (channelId <= 0 || !this.eventBridge) return false;
@@ -1322,7 +1442,7 @@ export class MusicCommandHandler {
 
     // Unknown command channel → do not claim with cid=0 (would miss SSH dedupe).
     // Soft notice unless a cmd listener actually covers this channel (connected
-    // main SSH alone is not enough after dropping empty-commandChannelIds auto-discover).
+    // main SSH alone is not enough — need occupied/explicit cmd helpers).
     if (channelId <= 0) {
       console.warn(
         `[MusicCmd] !here skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
@@ -1332,7 +1452,7 @@ export class MusicCommandHandler {
       if (!claimHereAction(softKey)) return;
       try {
         bot.sendChannelMessage(
-          'Could not determine this channel yet. Wait a second and try !here again, or set command channels for cross-channel summon.',
+          'Could not determine this channel yet. Wait a second and try !here again.',
         );
       } catch (err: any) {
         console.warn(`[MusicCmd] !here unknown-channel notice failed: ${err.message}`);

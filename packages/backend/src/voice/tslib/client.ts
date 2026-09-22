@@ -124,6 +124,8 @@ export class Ts3Client extends EventEmitter {
   private currentChannelId = 0;
   private channelMembers = new Set<number>();
   private queryMembers = new Set<number>();
+  /** Own enter-view can arrive before initserver sets clientId — apply once aclid is known. */
+  private pendingEnterViews: Array<{ clid: number; cid: number }> = [];
 
   constructor() {
     super();
@@ -190,6 +192,7 @@ export class Ts3Client extends EventEmitter {
     this.currentChannelId = 0;
     this.channelMembers.clear();
     this.queryMembers.clear();
+    this.pendingEnterViews = [];
 
     return new Promise((resolve, reject) => {
       this.socket = dgram.createSocket("udp4");
@@ -283,6 +286,7 @@ export class Ts3Client extends EventEmitter {
     this.currentChannelId = 0;
     this.channelMembers.clear();
     this.queryMembers.clear();
+    this.pendingEnterViews = [];
     if (this.resendTimer) clearInterval(this.resendTimer);
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.resendTimer = null;
@@ -793,6 +797,10 @@ export class Ts3Client extends EventEmitter {
         // learn home channel from our own enter-view only while still unknown.
         // Never overwrite a known home (optimistic moveToChannel / prior discover) —
         // stale enter-view can race and clear peers mid-summon.
+        if (clid && cid > 0 && !this.clientId) {
+          this.pendingEnterViews.push({ clid, cid });
+          break;
+        }
         if (clid && clid === this.clientId && cid > 0) {
           if (this.currentChannelId <= 0) {
             this.currentChannelId = cid;
@@ -1013,6 +1021,25 @@ export class Ts3Client extends EventEmitter {
 
     this.state = "connected";
 
+    // Apply enter-view that raced ahead of aclid, then discover home if still unknown.
+    if (this.clientId > 0 && this.pendingEnterViews.length > 0) {
+      for (const ev of this.pendingEnterViews) {
+        if (ev.clid === this.clientId && ev.cid > 0 && this.currentChannelId <= 0) {
+          this.currentChannelId = ev.cid;
+          this.channelMembers.clear();
+          this.queryMembers.clear();
+          this.emit("debug", `Home channel from buffered enter-view: cid=${ev.cid}`);
+        }
+      }
+      this.pendingEnterViews = [];
+    }
+
+    // Don't wait only on channellistfinished — empty defaultChannel never moves, and
+    // enter-view can be missed. clientlist learns cid from our own row.
+    if (this.clientId > 0 && this.currentChannelId <= 0) {
+      this.sendCommand(buildCommand("clientlist", {}));
+    }
+
     // Start ping timer (every 1 second)
     this.pingTimer = setInterval(() => {
       if (this.state === "connected") {
@@ -1047,12 +1074,18 @@ export class Ts3Client extends EventEmitter {
     for (const entry of entries) {
       const clid = parseInt(entry.clid || "0");
       if (clid !== this.clientId) continue;
-      const cid = parseInt(entry.cid || entry.client_channel_id || "0");
+      const cid = parseInt(
+        entry.cid || entry.client_channel_id || entry.ctid || entry.channel_id || "0",
+      );
       if (cid > 0) {
         this.currentChannelId = cid;
         this.emit("debug", `Home channel from clientlist: cid=${cid}`);
         return true;
       }
+      this.emit(
+        "debug",
+        `clientlist found self (clid=${clid}) but no channel id fields — home still unknown`,
+      );
       return false;
     }
     return false;

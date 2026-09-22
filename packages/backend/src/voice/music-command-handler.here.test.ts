@@ -276,6 +276,45 @@ test('getNeededServerPairs includes music bots even without commandChannelIds', 
   assert.deepEqual(f.handler.getNeededServerPairs(), ['9:1']);
 });
 
+test('empty commandChannelIds opens SSH helpers only for occupied human channels', async () => {
+  const bot = makeBot(1, { channelId: 1 }); // Default Channel home
+  const f = fixture([bot]);
+  f.handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '1',
+    commandChannelIds: [],
+  });
+
+  const connected: number[] = [];
+  const commands: string[] = [];
+  f.handler.eventBridge = {
+    getCommandListenerChannelIds: () => [...connected],
+    connectCommandListener: async (_c: number, _s: number, cid: number) => {
+      connected.push(cid);
+    },
+    disconnectCommandListener: async (_c: number, _s: number, cid: number) => {
+      const i = connected.indexOf(cid);
+      if (i >= 0) connected.splice(i, 1);
+    },
+    executeCommand: async (_c: number, _s: number, cmd: string) => {
+      commands.push(cmd);
+      assert.equal(cmd, 'clientlist');
+      // Human in Test4 (cid=34); bot home cid=1 must be excluded; query client ignored.
+      return [
+        'clid=9 cid=1 client_type=0',
+        'clid=2 cid=34 client_type=0',
+        'clid=50 cid=99 client_type=1',
+      ].join('|');
+    },
+  };
+
+  await f.handler.syncCommandListenersForPair(9, 1);
+  assert.deepEqual(commands, ['clientlist']);
+  assert.deepEqual(connected, [34]);
+  assert.ok(f.handler.channelToBots.get('9:1:34')?.has(1));
+});
+
 test('SSH !here is skipped when a voice bot is already in the command channel', async () => {
   const home = makeBot(1, { name: 'Home', channelId: 20 });
   const f = fixture([home]);
