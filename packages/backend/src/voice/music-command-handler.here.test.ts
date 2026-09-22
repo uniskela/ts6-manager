@@ -11,16 +11,24 @@ function makeBot(
     name?: string;
     ts3ClientId?: number;
     peers?: number;
+    peerClids?: number[];
   } = {},
 ) {
   let channelId = opts.channelId ?? 10;
   const joins: number[] = [];
+  const peerClids = opts.peerClids ?? [];
   return {
     currentConfig: { id, serverConfigId: 9, name: opts.name ?? `Bot ${id}` },
     ts3ClientId: opts.ts3ClientId ?? 100 + id,
     status: opts.status ?? 'connected',
     getCurrentChannelId: () => channelId,
-    getHumanChannelPeerCount: () => opts.peers ?? 0,
+    getHumanChannelPeerCount: () => opts.peers ?? peerClids.length,
+    getHumanChannelPeerClids: () => {
+      if (peerClids.length > 0) return peerClids.slice();
+      const n = opts.peers ?? 0;
+      // Synthetic human clids when tests only set peers=N (must not collide with bot clids).
+      return Array.from({ length: n }, (_, i) => 9000 + id * 10 + i);
+    },
     joinChannel: (cid: number) => {
       joins.push(cid);
       channelId = cid;
@@ -311,4 +319,72 @@ test('!here prefers idle from clientlist even when voice peer count is stale zer
   assert.equal(busy._joins.length, 0);
   assert.deepEqual(idle._joins, [20]);
   assert.match(f.replies.at(-1)!, /Idle \[#2\].*joining/i);
+});
+
+test('!here does not treat sibling music bots as human occupants', async () => {
+  const a = makeBot(1, { name: 'Alpha', channelId: 10, ts3ClientId: 101, peerClids: [102] });
+  const b = makeBot(2, { name: 'Beta', channelId: 10, ts3ClientId: 102, peerClids: [101] });
+  const busy = makeBot(3, { name: 'Busy', channelId: 11, ts3ClientId: 103, peers: 1 });
+  const f = fixture([a, b, busy]);
+  f.handler.eventBridge = {
+    executeCommand: async () =>
+      [
+        'clid=101 cid=10 client_type=0',
+        'clid=102 cid=10 client_type=0',
+        'clid=103 cid=11 client_type=0',
+        'clid=77 cid=11 client_type=0',
+      ].join('|'),
+  };
+  await f.command(1, '!here', 20);
+  assert.equal(busy._joins.length, 0);
+  // Parked siblings are idle (only each other); busy has a human → list idle bots, not "all busy".
+  assert.match(f.replies.at(-1)!, /Available bots/i);
+  assert.match(f.replies.at(-1)!, /\[1\] Alpha/);
+  assert.match(f.replies.at(-1)!, /\[2\] Beta/);
+  assert.doesNotMatch(f.replies.at(-1)!, /busy with other users/i);
+});
+
+test('!here summons when only sibling music bots share the channel', async () => {
+  // Two music bots parked together with no humans — both idle, so bare !here lists (not "all busy").
+  const parked = makeBot(1, { name: 'Parked', channelId: 10, ts3ClientId: 201, peerClids: [202] });
+  const sibling = makeBot(2, { name: 'Sibling', channelId: 10, ts3ClientId: 202, peerClids: [201] });
+  const f = fixture([parked, sibling]);
+  f.handler.eventBridge = {
+    executeCommand: async () =>
+      ['clid=201 cid=10 client_type=0', 'clid=202 cid=10 client_type=0'].join('|'),
+  };
+  await f.command(1, '!here', 20);
+  assert.equal(parked._joins.length, 0);
+  assert.equal(sibling._joins.length, 0);
+  assert.match(f.replies.at(-1)!, /Available bots/i);
+  assert.doesNotMatch(f.replies.at(-1)!, /busy with other users/i);
+});
+
+test('!here summons the only idle bot when its channel mate is another music bot', async () => {
+  const idle = makeBot(1, { name: 'Idle', channelId: 10, ts3ClientId: 201, peerClids: [202] });
+  const mate = makeBot(2, { name: 'Mate', channelId: 10, ts3ClientId: 202, peerClids: [201] });
+  const busy = makeBot(3, { name: 'Busy', channelId: 11, ts3ClientId: 203, peers: 2 });
+  // Make mate "busy" by putting a human with it — move mate to 11 with humans in clientlist.
+  // Simpler: only idle+mate in channel 10 (siblings); busy alone with humans in 11.
+  // Wait — idle and mate both idle then. Need exactly one idle: idle alone with mate clid
+  // still in channel but mate bot reports channel 99 (stale) — still exclude mate clid.
+  const f = fixture([idle, mate, busy]);
+  // Override mate channel so resolve doesn't treat mate as already-here elsewhere;
+  // occupancy for idle's channel still lists mate's clid.
+  f.handler.eventBridge = {
+    executeCommand: async () =>
+      [
+        'clid=201 cid=10 client_type=0',
+        'clid=202 cid=10 client_type=0',
+        'clid=203 cid=11 client_type=0',
+        'clid=50 cid=11 client_type=0',
+        'clid=51 cid=11 client_type=0',
+      ].join('|'),
+  };
+  // mate is also in cid 10 per clientlist → both idle → list. Change mate home to 10 is already.
+  // To get a single summon: stop mate so only idle is summonable.
+  mate.status = 'stopped';
+  await f.command(1, '!here', 20);
+  assert.deepEqual(idle._joins, [20]);
+  assert.match(f.replies.at(-1)!, /Idle \[#1\].*joining/i);
 });

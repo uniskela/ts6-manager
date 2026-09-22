@@ -898,7 +898,7 @@ export class MusicCommandHandler {
   }
 
   /**
-   * Idle = no other human clients in the bot's channel.
+   * Idle = no other *human* clients in the bot's channel (sibling music bots do not count).
    * Prefer a ServerQuery clientlist snapshot (accurate after join/move); fall back to
    * the voice client's peer set. Unknown channel → not idle (do not steal).
    */
@@ -910,27 +910,51 @@ export class MusicCommandHandler {
     const homeCid = bot.getCurrentChannelId();
     if (homeCid <= 0) return false;
 
+    const musicClids = this.musicBotClidsOnServer(serverConfigId, virtualServerId);
     const fromList = await this.countHumanPeersViaClientList(
       serverConfigId,
       virtualServerId,
       homeCid,
-      bot.ts3ClientId || 0,
+      musicClids,
     );
     if (fromList != null) return fromList === 0;
 
     try {
-      return bot.getHumanChannelPeerCount() === 0;
+      const peers = bot.getHumanChannelPeerClids();
+      const humans = peers.filter((clid) => !musicClids.has(clid));
+      return humans.length === 0;
     } catch {
-      return false;
+      try {
+        return bot.getHumanChannelPeerCount() === 0;
+      } catch {
+        return false;
+      }
     }
   }
 
-  /** Returns human (non-query) clients in channel excluding excludeClid, or null if unknown. */
+  /** TS client IDs for music bots on this virtual server (connected ones). */
+  private musicBotClidsOnServer(serverConfigId: number, virtualServerId: number): Set<number> {
+    const clids = new Set<number>();
+    for (const [botId, cfg] of this.botChannelConfig) {
+      if (cfg.serverConfigId !== serverConfigId || cfg.virtualServerId !== virtualServerId) {
+        continue;
+      }
+      const b = this.voiceBotManager.getBot(botId);
+      const clid = b?.ts3ClientId || 0;
+      if (clid > 0) clids.add(clid);
+    }
+    return clids;
+  }
+
+  /**
+   * Returns human (non-query, non-music-bot) clients in channel, or null if unknown.
+   * `excludeClids` should include all known music-bot voice clids on this server.
+   */
   private async countHumanPeersViaClientList(
     configId: number,
     sid: number,
     channelId: number,
-    excludeClid: number,
+    excludeClids: Set<number>,
   ): Promise<number | null> {
     if (!this.eventBridge || channelId <= 0) return null;
     try {
@@ -943,7 +967,7 @@ export class MusicCommandHandler {
         for (const entry of parseQueryResponse(trimmed)) {
           const cid = parseInt(entry.cid || '0', 10);
           const clid = parseInt(entry.clid || '0', 10);
-          if (cid !== channelId || !clid || clid === excludeClid) continue;
+          if (cid !== channelId || !clid || excludeClids.has(clid)) continue;
           if (String(entry.client_type || '0') === '1') continue;
           count++;
         }

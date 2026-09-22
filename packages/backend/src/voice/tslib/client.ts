@@ -141,6 +141,11 @@ export class Ts3Client extends EventEmitter {
     return this.channelMembers.size;
   }
 
+  /** Non-query client IDs currently tracked in this channel (excludes self). */
+  getChannelMemberClids(): number[] {
+    return Array.from(this.channelMembers);
+  }
+
   getCurrentChannelId(): number {
     return this.currentChannelId;
   }
