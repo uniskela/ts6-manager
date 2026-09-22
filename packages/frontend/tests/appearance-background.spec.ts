@@ -177,6 +177,53 @@ test('backgrounds cause no document-level overflow, no pointer interception, and
   await expect(page.getByRole('heading', { name: 'Add User' })).toHaveCount(0);
 });
 
+async function sampleNoiseGrain(page: Page) {
+  return mainBackground(page).evaluate(async (el) => {
+    const match = getComputedStyle(el).backgroundImage.match(/url\((["']?)(.*?)\1\)/);
+    if (!match) return null;
+    const image = new Image();
+    image.src = match[2];
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+    ctx.drawImage(image, 0, 0);
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let maxAlpha = 0;
+    let rgbAtMaxAlpha: [number, number, number] = [0, 0, 0];
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i + 3] > maxAlpha) {
+        maxAlpha = data[i + 3];
+        rgbAtMaxAlpha = [data[i], data[i + 1], data[i + 2]];
+      }
+    }
+    return { maxAlpha, rgb: rgbAtMaxAlpha };
+  });
+}
+
+test('noise grain is visible and appropriately tinted on both Light and Dark/Black themes', async ({ page, request }) => {
+  await goToAppearance(page, request);
+  await page.getByRole('button', { name: 'Noise background', exact: true }).click();
+
+  await page.getByRole('button', { name: 'Light base theme' }).click();
+  const lightGrain = await sampleNoiseGrain(page);
+  expect(lightGrain, 'light theme noise should render visible grain').not.toBeNull();
+  expect(lightGrain!.maxAlpha).toBeGreaterThan(0);
+  expect(lightGrain!.rgb, 'light theme grain should be dark-tinted').toEqual([0, 0, 0]);
+
+  await page.getByRole('button', { name: 'Dark base theme' }).click();
+  const darkGrain = await sampleNoiseGrain(page);
+  expect(darkGrain, 'dark theme noise should render visible grain').not.toBeNull();
+  expect(darkGrain!.maxAlpha).toBeGreaterThan(0);
+  expect(darkGrain!.rgb, 'dark theme grain should be light-tinted so it is visible').toEqual([255, 255, 255]);
+
+  await page.getByRole('button', { name: 'Black base theme' }).click();
+  const blackGrain = await sampleNoiseGrain(page);
+  expect(blackGrain!.maxAlpha).toBeGreaterThan(0);
+  expect(blackGrain!.rgb).toEqual([255, 255, 255]);
+});
+
 test('background combinations preserve readable contrast across Light, Dark and Black themes', async ({ page, request }) => {
   await signInAsAdmin(page, request);
   await page.goto('/settings?tab=appearance');
