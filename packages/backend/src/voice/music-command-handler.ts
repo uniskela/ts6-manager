@@ -102,9 +102,9 @@ function claimHelpAction(key: string): boolean {
   return true;
 }
 
-function isHelpActionClaimed(key: string): boolean {
-  const until = helpActionUntil.get(key) ?? 0;
-  return Date.now() < until;
+/** Drop an in-flight claim so another path can answer after a failed send. */
+function releaseHelpAction(key: string): void {
+  helpActionUntil.delete(key);
 }
 
 function isBotSummonable(bot: VoiceBot): boolean {
@@ -691,6 +691,20 @@ export class MusicCommandHandler {
       this.activeReplyChannel.get(`${botId}:${userClid}`) ||
       bot.getCurrentChannelId() ||
       0;
+
+    // When the channel is already known, claim before any await so an in-flight SSH
+    // helper cannot also start posting for the same key.
+    let claimedKey: string | null = null;
+    if (hinted > 0) {
+      claimedKey = helpActionKey(serverConfigId, virtualServerId, hinted, userClid);
+      if (!claimHelpAction(claimedKey)) {
+        console.log(
+          `[MusicCmd] !help deduped (bot=${botId} cid=${hinted} clid=${userClid})`,
+        );
+        return;
+      }
+    }
+
     const channelId = await this.resolveCommandChannelId(
       botId,
       bot,
@@ -706,6 +720,7 @@ export class MusicCommandHandler {
     // cid, so voice + cross-channel both post. Align with !here: resolve first; if
     // still unknown and SSH can own the line, leave it to the helper.
     if (channelId <= 0) {
+      if (claimedKey) releaseHelpAction(claimedKey);
       console.warn(
         `[MusicCmd] !help skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
@@ -720,11 +735,17 @@ export class MusicCommandHandler {
       channelId > 0 ? channelId : 0,
       userClid,
     );
-    if (!claimHelpAction(helpKey)) {
-      console.log(
-        `[MusicCmd] !help deduped (bot=${botId} cid=${channelId || 0} clid=${userClid})`,
-      );
-      return;
+    if (claimedKey && claimedKey !== helpKey) {
+      releaseHelpAction(claimedKey);
+      claimedKey = null;
+    }
+    if (!claimedKey) {
+      if (!claimHelpAction(helpKey)) {
+        console.log(
+          `[MusicCmd] !help deduped (bot=${botId} cid=${channelId || 0} clid=${userClid})`,
+        );
+        return;
+      }
     }
 
     const dbBot = await this.prisma.musicBot.findUnique({
@@ -758,9 +779,9 @@ export class MusicCommandHandler {
     if (!userClid || channelId <= 0) return;
 
     const helpKey = helpActionKey(configId, sid, channelId, userClid);
-    // Peek only — claim after a successful post so a failed/missing SSH send never
-    // blocks an in-channel voice bot that shares this channel key.
-    if (isHelpActionClaimed(helpKey)) {
+    // Claim immediately (in-flight) so a concurrent voice resolve / second helper
+    // cannot also post during sendChannelText. Release on failure so voice can retry.
+    if (!claimHelpAction(helpKey)) {
       console.log(
         `[MusicCmd] Cross-channel !help deduped (cid=${channelId} clid=${userClid})`,
       );
@@ -785,6 +806,7 @@ export class MusicCommandHandler {
     const msg = formatHelpMessage(BUILTIN_COMMAND_HELP, custom);
     if (!this.eventBridge) {
       console.warn(`[MusicCmd] Cross-channel !help: no eventBridge (cid=${channelId})`);
+      releaseHelpAction(helpKey);
       return;
     }
     const ok = await this.eventBridge.sendChannelText(configId, sid, channelId, msg, {
@@ -794,9 +816,8 @@ export class MusicCommandHandler {
       console.warn(
         `[MusicCmd] Cross-channel !help failed to post in cid=${channelId} (SSH listener?)`,
       );
-      return;
+      releaseHelpAction(helpKey);
     }
-    claimHelpAction(helpKey);
   }
 
   private async handleCustomCommand(

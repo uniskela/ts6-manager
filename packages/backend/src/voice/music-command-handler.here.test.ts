@@ -398,6 +398,28 @@ test('successful SSH !help still suppresses a later voice reply on that channel'
   assert.equal(f.replies.length, 0);
 });
 
+test('in-flight SSH !help claim blocks concurrent voice during send', async () => {
+  const bot = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([bot]);
+  let releaseSend!: () => void;
+  const sendGate = new Promise<void>((resolve) => {
+    releaseSend = resolve;
+  });
+  f.handler.eventBridge = {
+    sendChannelText: async () => {
+      await sendGate;
+      return true;
+    },
+  };
+  const ssh = f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
+  // Voice runs while SSH send is still in flight — must see the early claim.
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  assert.equal(f.replies.length, 0);
+  releaseSend();
+  await ssh;
+  assert.equal(f.replies.length, 0);
+});
+
 test('voice !help with homeCid=0 resolves invoker channel so claim matches SSH', async () => {
   const bot = makeBot(1, { name: 'A', channelId: 0 });
   const f = fixture([bot]);
