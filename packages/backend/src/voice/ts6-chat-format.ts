@@ -126,6 +126,22 @@ export function formatHelpMessage(
   return lines.join('\n');
 }
 
+/** Compact list of enabled custom commands for !commands. */
+export function formatCustomCommandsMessage(custom: CustomHelpLine[]): string {
+  if (custom.length === 0) {
+    return '_No custom chat commands are enabled. Ask an admin to seed presets in Music Bots → Commands._';
+  }
+
+  const lines: string[] = ['## Custom commands', ''];
+  for (const c of custom) {
+    const blurb = c.description?.trim() || 'Custom reply';
+    lines.push(`- **!${c.name}** — ${blurb}`);
+  }
+  lines.push('');
+  lines.push('_Type `!help` for built-in music commands._');
+  return lines.join('\n');
+}
+
 /** Markdown queue listing for !queue show. */
 export function formatQueueMessage(
   items: TrackLine[],

@@ -10,6 +10,23 @@ export function useChatCommands(configId: number | null) {
   });
 }
 
+export function useChatCommandPresets(configId: number | null) {
+  return useQuery({
+    queryKey: ['chat-command-presets', configId],
+    queryFn: () => chatCommandsApi.presets(configId!),
+    enabled: !!configId,
+    staleTime: 60_000,
+  });
+}
+
+export function useSeedChatCommandPresets() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (configId: number) => chatCommandsApi.seedPresets(configId),
+    onSuccess: (_, configId) => qc.invalidateQueries({ queryKey: ['chat-commands', configId] }),
+  });
+}
+
 export function useCreateChatCommand() {
   const qc = useQueryClient();
   return useMutation({
