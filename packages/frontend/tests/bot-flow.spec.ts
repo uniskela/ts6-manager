@@ -49,15 +49,15 @@ test('ordinary and vertically offset forward routes are deterministic rounded or
   expect(offset.path).not.toContain('C');
 });
 
-test('close and backward routes leave source right and enter target left without crossing node rectangles', () => {
-  const sourceRect = { x: 0, y: 0, width: 180, height: 64 };
-  const closeTarget = { x: 220, y: 100, width: 180, height: 64 };
-  const close = buildOrthogonalRoute({ x: 180, y: 32 }, { x: 220, y: 132 }, [sourceRect, closeTarget]);
+test('close forward routes stay in the gap instead of dropping below the flow', () => {
+  const close = buildOrthogonalRoute({ x: 180, y: 32 }, { x: 220, y: 132 }, []);
   expect(close.points).toEqual([
-    { x: 180, y: 32 }, { x: 212, y: 32 }, { x: 212, y: 196 },
-    { x: 188, y: 196 }, { x: 188, y: 132 }, { x: 220, y: 132 },
+    { x: 180, y: 32 }, { x: 200, y: 32 },
+    { x: 200, y: 132 }, { x: 220, y: 132 },
   ]);
+});
 
+test('backward routes leave source right and enter target left without crossing node rectangles', () => {
   const backwardTarget = { x: 40, y: 100, width: 180, height: 64 };
   const backward = buildOrthogonalRoute({ x: 380, y: 32 }, { x: 40, y: 132 }, [
     { x: 200, y: 0, width: 180, height: 64 }, backwardTarget,

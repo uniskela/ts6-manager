@@ -108,7 +108,7 @@ function roundedPath(points: Point[]): string {
 export function buildOrthogonalRoute(source: Point, target: Point, obstacles: Rect[]): OrthogonalRoute {
   const sourceExit = { x: source.x + ROUTING_CLEARANCE, y: source.y };
   const targetEntry = { x: Math.max(0, target.x - ROUTING_CLEARANCE), y: target.y };
-  const forward = target.x - source.x > ROUTING_CLEARANCE * 2;
+  const forward = target.x > source.x;
   const direct: Point[] = forward && source.y === target.y
     ? [source, target]
     : forward
