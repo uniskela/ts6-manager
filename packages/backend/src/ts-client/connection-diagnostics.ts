@@ -50,6 +50,9 @@ export interface DiagnosticWebQueryClient {
   ): Promise<unknown>;
 }
 
+/** Overall budget across all diagnostic stages. Frontend `test` /
+ * `testWebqueryDraft` use CONNECTION_DIAGNOSTICS_TIMEOUT_MS (30s) so the
+ * axios client does not abort before this deadline returns a staged report. */
 const DEFAULT_OVERALL_TIMEOUT_MS = 20_000;
 const STAGE_LABEL: Record<DiagnosticStageId, string> = {
   reachability: 'Endpoint reachability',
