@@ -23,6 +23,31 @@ test('notifyclientmoved does not wipe peers already seeded after optimistic move
   assert.equal(client.getChannelUserCount(), 2);
 });
 
+test('own notifycliententerview sets home channel when still unknown', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 0;
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  feed(client, 'notifycliententerview clid=9 ctid=34 client_type=0');
+  assert.equal(client.getCurrentChannelId(), 34);
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+});
+
+test('clientlist discovers home channel when currentChannelId is 0', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 0;
+  feed(
+    client,
+    'clientlist clid=9 cid=34 client_type=0|clid=3 cid=34 client_type=0|clid=5 cid=99 client_type=0',
+  );
+  assert.equal(client.getCurrentChannelId(), 34);
+  assert.equal(client.getChannelUserCount(), 1);
+});
+
 test('clientlist seeds human peers for current channel', () => {
   const client = new Ts3Client();
   (client as any).clientId = 9;
@@ -45,5 +70,18 @@ test('moveToChannel requests clientlist after move', () => {
   };
   client.moveToChannel(20);
   assert.ok(sent.some((c) => c.startsWith('clientmove')));
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+});
+
+test('channellistfinished without defaultChannel requests clientlist', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 0;
+  (client as any).opts = { defaultChannel: '' };
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  (client as any).handleChannelListFinished();
   assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
 });

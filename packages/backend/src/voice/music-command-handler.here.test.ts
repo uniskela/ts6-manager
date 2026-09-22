@@ -16,6 +16,7 @@ function makeBot(
 ) {
   let channelId = opts.channelId ?? 10;
   const joins: number[] = [];
+  const channelMessages: string[] = [];
   const peerClids = opts.peerClids ?? [];
   return {
     currentConfig: { id, serverConfigId: 9, name: opts.name ?? `Bot ${id}` },
@@ -33,8 +34,11 @@ function makeBot(
       joins.push(cid);
       channelId = cid;
     },
-    sendChannelMessage: () => {},
+    sendChannelMessage: (msg: string) => {
+      channelMessages.push(msg);
+    },
     _joins: joins,
+    _channelMessages: channelMessages,
   };
 }
 
@@ -312,10 +316,35 @@ test('voice !here with unknown homeCid does not claim; SSH still summons', async
   const f = fixture([bot]);
   await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
   assert.equal(bot._joins.length, 0);
-  assert.equal(f.replies.length, 0);
+  // One soft notice in-channel instead of total silence when cid is unknown.
+  assert.equal(bot._channelMessages.length, 1);
+  assert.match(bot._channelMessages[0]!, /Could not determine this channel/i);
   await f.handler.handleHereCrossChannel(9, 1, 20, { invokerid: '2', msg: '!here' }, '');
   assert.deepEqual(bot._joins, [20]);
   assert.match(f.replies.at(-1)!, /joining/i);
+});
+
+test('voice !here resolves unknown homeCid via invoker clientlist', async () => {
+  const bot = makeBot(1, { channelId: 0, name: 'Alpha' });
+  const f = fixture([bot]);
+  f.handler.eventBridge = {
+    executeCommand: async () => 'clid=2 cid=34 client_type=0|clid=101 cid=1 client_type=0',
+  };
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
+  assert.deepEqual(bot._joins, [34]);
+  assert.match(f.replies.at(-1)!, /joining/i);
+});
+
+test('only one bot replies to !help when both hear the same line', async () => {
+  const a = makeBot(1, { name: 'A', channelId: 20 });
+  const b = makeBot(2, { name: 'B', channelId: 20 });
+  const f = fixture([a, b]);
+  await Promise.all([
+    f.handler.onTextMessage(1, a, { invokerid: '2', msg: '!help' }, 20),
+    f.handler.onTextMessage(2, b, { invokerid: '2', msg: '!help' }, 20),
+  ]);
+  assert.equal(f.replies.length, 1);
+  assert.match(f.replies[0]!, /Music bot commands/i);
 });
 
 test('!here prefers idle from clientlist even when voice peer count is stale zero', async () => {

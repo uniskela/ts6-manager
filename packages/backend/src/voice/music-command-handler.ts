@@ -50,9 +50,13 @@ function invalidateChatPlaylistExpansion(botId: number): void {
 
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 
-/** Per bot+user cooldown for !help / custom replies (ms). */
+/** Per bot+user cooldown for custom replies (ms). */
 const CHAT_REPLY_COOLDOWN_MS = 2500;
 const chatReplyCooldownUntil = new Map<string, number>();
+
+/** Collapse duplicate !help when several bots hear the same channel message. */
+const HELP_ACTION_DEDUP_MS = 2500;
+const helpActionUntil = new Map<string, number>();
 
 /** Collapse duplicate !here lists when several bots hear the same channel message. */
 const HERE_LIST_COOLDOWN_MS = 2000;
@@ -81,6 +85,18 @@ function markChatReplyCooldown(botId: number, clid: number): void {
   chatReplyCooldownUntil.set(chatReplyCooldownKey(botId, clid), Date.now() + CHAT_REPLY_COOLDOWN_MS);
 }
 
+function helpActionKey(serverConfigId: number, virtualServerId: number, userClid: number): string {
+  return `${serverConfigId}:${virtualServerId}:${userClid}`;
+}
+
+/** Returns true if this caller should post !help; false if a duplicate. */
+function claimHelpAction(key: string): boolean {
+  const until = helpActionUntil.get(key) ?? 0;
+  if (Date.now() < until) return false;
+  helpActionUntil.set(key, Date.now() + HELP_ACTION_DEDUP_MS);
+  return true;
+}
+
 function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
 }
@@ -103,10 +119,12 @@ function claimHereAction(key: string): boolean {
   return true;
 }
 
-/** Test helper: clear !here dedupe/list cooldowns between cases. */
+/** Test helper: clear !here / !help dedupe/list cooldowns between cases. */
 export function resetHereDedupForTests(): void {
   hereActionUntil.clear();
   hereListCooldownUntil.clear();
+  helpActionUntil.clear();
+  chatReplyCooldownUntil.clear();
 }
 
 function isSpotifyShareUrl(url: string): boolean {
@@ -656,8 +674,16 @@ export class MusicCommandHandler {
   }
 
   private async handleHelp(botId: number, bot: VoiceBot, userClid: number): Promise<void> {
-    if (isChatReplyCoolingDown(botId, userClid)) return;
-    markChatReplyCooldown(botId, userClid);
+    const cfg = this.botChannelConfig.get(botId);
+    const serverConfigId = cfg?.serverConfigId ?? bot.currentConfig.serverConfigId;
+    const virtualServerId = cfg?.virtualServerId ?? 1;
+    const helpKey = helpActionKey(serverConfigId, virtualServerId, userClid);
+    if (!claimHelpAction(helpKey)) {
+      console.log(
+        `[MusicCmd] !help deduped (bot=${botId} config=${serverConfigId} clid=${userClid})`,
+      );
+      return;
+    }
 
     const dbBot = await this.prisma.musicBot.findUnique({
       where: { id: botId },
@@ -689,9 +715,13 @@ export class MusicCommandHandler {
     const userClid = parseInt(data.invokerid || '0', 10);
     if (!userClid || channelId <= 0) return;
 
-    // Reuse help cooldown key space via a synthetic bot id of 0 for this channel.
-    if (isChatReplyCoolingDown(0, userClid)) return;
-    markChatReplyCooldown(0, userClid);
+    const helpKey = helpActionKey(configId, sid, userClid);
+    if (!claimHelpAction(helpKey)) {
+      console.log(
+        `[MusicCmd] Cross-channel !help deduped (cid=${channelId} clid=${userClid})`,
+      );
+      return;
+    }
 
     console.log(
       `[MusicCmd] Cross-channel !help (config=${configId} sid=${sid} cid=${channelId} clid=${userClid})`,
@@ -1148,6 +1178,49 @@ export class MusicCommandHandler {
     }
   }
 
+  /**
+   * Resolve the channel the user typed in. Prefer an explicit reply/listener cid,
+   * then the bot's tracked home channel, then SSH clientlist for the invoker.
+   */
+  private async resolveCommandChannelId(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    hintChannelId?: number,
+  ): Promise<number> {
+    if (hintChannelId && hintChannelId > 0) return hintChannelId;
+
+    const homeCid = bot.getCurrentChannelId();
+    if (homeCid > 0) return homeCid;
+
+    const cfg = this.botChannelConfig.get(botId);
+    if (!cfg || !this.eventBridge || userClid <= 0) return 0;
+
+    try {
+      const raw = await this.eventBridge.executeCommand(
+        cfg.serverConfigId,
+        cfg.virtualServerId,
+        'clientlist',
+      );
+      const { parseQueryResponse } = await import('@ts6/common');
+      for (const line of raw.split(/\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('error ')) continue;
+        for (const entry of parseQueryResponse(trimmed)) {
+          const clid = parseInt(entry.clid || '0', 10);
+          if (clid !== userClid) continue;
+          const cid = parseInt(entry.cid || '0', 10);
+          if (cid > 0) return cid;
+        }
+      }
+    } catch (err: any) {
+      console.warn(
+        `[MusicCmd] Invoker channel lookup failed for bot=${botId} clid=${userClid}: ${err.message}`,
+      );
+    }
+    return 0;
+  }
+
   private async handleHere(
     botId: number,
     bot: VoiceBot,
@@ -1157,17 +1230,36 @@ export class MusicCommandHandler {
     const cfg = this.botChannelConfig.get(botId);
     const serverConfigId = cfg?.serverConfigId ?? bot.currentConfig.serverConfigId;
     const virtualServerId = cfg?.virtualServerId ?? 1;
-    const channelId =
+    const hinted =
       this.activeReplyChannel.get(`${botId}:${userClid}`) ||
       bot.getCurrentChannelId() ||
       0;
+    const channelId = await this.resolveCommandChannelId(
+      botId,
+      bot,
+      userClid,
+      hinted > 0 ? hinted : undefined,
+    );
 
-    // Unknown command channel → do not claim (claim key would be cid=0 and miss SSH dedupe).
-    // Cross-channel SSH path owns the real listener cid in that race.
+    if (channelId > 0) {
+      this.activeReplyChannel.set(`${botId}:${userClid}`, channelId);
+    }
+
+    // Unknown command channel → do not claim with cid=0 (would miss SSH dedupe).
+    // Try to tell the user instead of failing silently when every voice bot has homeCid=0.
     if (channelId <= 0) {
       console.warn(
         `[MusicCmd] !here skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
+      const softKey = hereActionKey(serverConfigId, virtualServerId, 0, userClid, `unknown:${args}`);
+      if (!claimHereAction(softKey)) return;
+      try {
+        bot.sendChannelMessage(
+          'Could not determine this channel yet. Wait a second and try !here again.',
+        );
+      } catch (err: any) {
+        console.warn(`[MusicCmd] !here unknown-channel notice failed: ${err.message}`);
+      }
       return;
     }
 
