@@ -102,6 +102,11 @@ function claimHelpAction(key: string): boolean {
   return true;
 }
 
+function isHelpActionClaimed(key: string): boolean {
+  const until = helpActionUntil.get(key) ?? 0;
+  return Date.now() < until;
+}
+
 function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
 }
@@ -725,7 +730,9 @@ export class MusicCommandHandler {
     if (!userClid || channelId <= 0) return;
 
     const helpKey = helpActionKey(configId, sid, channelId, userClid);
-    if (!claimHelpAction(helpKey)) {
+    // Peek only — claim after a successful post so a failed/missing SSH send never
+    // blocks an in-channel voice bot that shares this channel key.
+    if (isHelpActionClaimed(helpKey)) {
       console.log(
         `[MusicCmd] Cross-channel !help deduped (cid=${channelId} clid=${userClid})`,
       );
@@ -759,7 +766,9 @@ export class MusicCommandHandler {
       console.warn(
         `[MusicCmd] Cross-channel !help failed to post in cid=${channelId} (SSH listener?)`,
       );
+      return;
     }
+    claimHelpAction(helpKey);
   }
 
   private async handleCustomCommand(

@@ -40,12 +40,39 @@ test('clientlist discovers home channel when currentChannelId is 0', () => {
   const client = new Ts3Client();
   (client as any).clientId = 9;
   (client as any).currentChannelId = 0;
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
   feed(
     client,
     'clientlist clid=9 cid=34 client_type=0|clid=3 cid=34 client_type=0|clid=5 cid=99 client_type=0',
   );
   assert.equal(client.getCurrentChannelId(), 34);
   assert.equal(client.getChannelUserCount(), 1);
+  // Match enter-view: request a fresh snapshot after learning home cid.
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+});
+
+test('clientlist home discover refresh seeds peers that arrived while cid was 0', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 0;
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  // First snapshot: only self (peers entered while cid was unknown and were ignored).
+  feed(client, 'clientlist clid=9 cid=34 client_type=0');
+  assert.equal(client.getCurrentChannelId(), 34);
+  assert.equal(client.getChannelUserCount(), 0);
+  assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
+  // Fresh snapshot from the follow-up request.
+  feed(
+    client,
+    'clientlist clid=9 cid=34 client_type=0|clid=3 cid=34 client_type=0|clid=4 cid=34 client_type=0',
+  );
+  assert.equal(client.getChannelUserCount(), 2);
 });
 
 test('clientlist seeds human peers for current channel', () => {

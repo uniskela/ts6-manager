@@ -848,8 +848,13 @@ export class Ts3Client extends EventEmitter {
         this.emit("textMessage", parsed.params);
         break;
       case "clientlist": {
-        this.discoverHomeChannelFromClientList(parsed);
+        const newlyDiscovered = this.discoverHomeChannelFromClientList(parsed);
         this.seedChannelMembersFromClientList(parsed);
+        // Enter-view requests a fresh clientlist after learning home cid so peers that
+        // arrived while currentChannelId was 0 are not permanently missing from idle.
+        if (newlyDiscovered) {
+          this.sendCommand(buildCommand("clientlist", {}));
+        }
         break;
       }
       case "error": {
@@ -1032,9 +1037,10 @@ export class Ts3Client extends EventEmitter {
   /**
    * When we connected without an explicit move (empty defaultChannel), discover
    * our channel from our own clientlist row so currentChannelId is not stuck at 0.
+   * @returns true when home cid was learned from this snapshot (caller should refresh).
    */
-  private discoverHomeChannelFromClientList(parsed: ParsedCommand): void {
-    if (this.currentChannelId > 0 || !this.clientId) return;
+  private discoverHomeChannelFromClientList(parsed: ParsedCommand): boolean {
+    if (this.currentChannelId > 0 || !this.clientId) return false;
     const entries = parsed.groups ?? [parsed.params];
     for (const entry of entries) {
       const clid = parseInt(entry.clid || "0");
@@ -1043,9 +1049,11 @@ export class Ts3Client extends EventEmitter {
       if (cid > 0) {
         this.currentChannelId = cid;
         this.emit("debug", `Home channel from clientlist: cid=${cid}`);
+        return true;
       }
-      return;
+      return false;
     }
+    return false;
   }
 
   /** Populate channelMembers from a clientlist snapshot for the current channel. */

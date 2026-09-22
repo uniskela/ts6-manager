@@ -371,6 +371,33 @@ test('!help in different channels is not collapsed by same-user dedupe', async (
   assert.equal(f.replies.length, 2);
 });
 
+test('failed SSH !help does not block voice reply on the same channel', async () => {
+  const bot = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([bot]);
+  const key = '9:1:20';
+  f.handler.channelToBots.set(key, new Set([1]));
+  f.handler.eventBridge = {
+    sendChannelText: async () => false,
+  };
+  // Force SSH path even though a voice bot is in-channel (simulates homeCid race).
+  await f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
+  assert.equal(f.replies.length, 0);
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  assert.equal(f.replies.length, 1);
+  assert.match(f.replies[0]!, /Music bot commands/i);
+});
+
+test('successful SSH !help still suppresses a later voice reply on that channel', async () => {
+  const bot = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([bot]);
+  f.handler.eventBridge = {
+    sendChannelText: async () => true,
+  };
+  await f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  assert.equal(f.replies.length, 0);
+});
+
 test('!here prefers idle from clientlist even when voice peer count is stale zero', async () => {
   const busy = makeBot(1, { name: 'Busy', channelId: 10, peers: 0, ts3ClientId: 101 });
   const idle = makeBot(2, { name: 'Idle', channelId: 11, peers: 0, ts3ClientId: 102 });
