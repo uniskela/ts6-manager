@@ -694,15 +694,15 @@ export class MusicCommandHandler {
 
     // Do not own with cid=0 — that key never matches the SSH helper's real listener
     // cid, so voice + cross-channel both post. Align with !here: resolve first; if
-    // still unknown and SSH is connected, leave it to the helper.
+    // still unknown, only leave it to SSH when a cmd listener covers that channel
+    // (main SSH connected ≠ helper will answer after empty-commandChannelIds).
     if (channelId <= 0) {
       if (ownedKey) completeHelpAction(ownedKey, false);
       console.warn(
         `[MusicCmd] !help skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
-      const sshOwnsLine = !!this.eventBridge?.isConnected(serverConfigId, virtualServerId);
-      if (sshOwnsLine) return;
-      // Pure voice or SSH down: own cid=0 so sibling bots still collapse to one reply.
+      if (this.sshHelperOwnsChannel(serverConfigId, virtualServerId, channelId)) return;
+      // Pure voice, SSH down, or no cmd listener for this channel: own cid=0.
     }
 
     const helpKey = helpActionKey(
@@ -1239,6 +1239,21 @@ export class MusicCommandHandler {
   }
 
   /**
+   * True only when a command-channel SSH helper is listening on this cid.
+   * Main SSH connected is not enough — empty commandChannelIds no longer
+   * auto-open listeners, so deferring to SSH would leave same-channel voice silent.
+   */
+  private sshHelperOwnsChannel(configId: number, sid: number, channelId: number): boolean {
+    if (channelId <= 0 || !this.eventBridge) return false;
+    if (!this.eventBridge.isConnected(configId, sid)) return false;
+    try {
+      return this.eventBridge.getCommandListenerChannelIds(configId, sid).includes(channelId);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Resolve the channel the user typed in. Prefer an explicit reply/listener cid,
    * then the bot's tracked home channel, then SSH clientlist for the invoker.
    */
@@ -1306,19 +1321,18 @@ export class MusicCommandHandler {
     }
 
     // Unknown command channel → do not claim with cid=0 (would miss SSH dedupe).
-    // Soft notice when SSH cannot own the line (disconnected / flooding). If SSH
-    // is connected, leave the cross-channel helper to summon.
+    // Soft notice unless a cmd listener actually covers this channel (connected
+    // main SSH alone is not enough after dropping empty-commandChannelIds auto-discover).
     if (channelId <= 0) {
       console.warn(
         `[MusicCmd] !here skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
-      const sshOwnsLine = !!this.eventBridge?.isConnected(serverConfigId, virtualServerId);
-      if (sshOwnsLine) return;
+      if (this.sshHelperOwnsChannel(serverConfigId, virtualServerId, channelId)) return;
       const softKey = hereActionKey(serverConfigId, virtualServerId, 0, userClid, `unknown:${args}`);
       if (!claimHereAction(softKey)) return;
       try {
         bot.sendChannelMessage(
-          'Could not determine this channel yet (Query offline). Wait a second and try !here again, or set command channels for cross-channel summon.',
+          'Could not determine this channel yet. Wait a second and try !here again, or set command channels for cross-channel summon.',
         );
       } catch (err: any) {
         console.warn(`[MusicCmd] !here unknown-channel notice failed: ${err.message}`);

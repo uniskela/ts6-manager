@@ -311,12 +311,13 @@ test('SSH then voice !here for same message only summons once', async () => {
   assert.equal(f.replies.filter((r) => /joining/i.test(r)).length, 1);
 });
 
-test('voice !here with unknown homeCid stays silent when SSH is connected', async () => {
+test('voice !here soft-notifies unknown channel when SSH is connected but has no cmd listener', async () => {
   const bot = makeBot(1, { channelId: 0 });
   const f = fixture([bot]);
-  // Connected SSH may own the line; voice must stay silent (no soft notice).
+  // Main SSH up ≠ helper will answer (no auto-discovered listeners).
   f.handler.eventBridge = {
     isConnected: () => true,
+    getCommandListenerChannelIds: () => [],
     executeCommand: async () => {
       throw new Error('SSH clientlist unavailable');
     },
@@ -324,11 +325,8 @@ test('voice !here with unknown homeCid stays silent when SSH is connected', asyn
   };
   await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
   assert.equal(bot._joins.length, 0);
-  assert.equal(bot._channelMessages.length, 0);
-  assert.equal(f.replies.length, 0);
-  await f.handler.handleHereCrossChannel(9, 1, 20, { invokerid: '2', msg: '!here' }, '');
-  assert.deepEqual(bot._joins, [20]);
-  assert.match(f.replies.at(-1)!, /joining/i);
+  assert.equal(bot._channelMessages.length, 1);
+  assert.match(bot._channelMessages[0]!, /Could not determine this channel/i);
 });
 
 test('voice !here soft-notifies when SSH exists but is disconnected', async () => {
@@ -336,6 +334,7 @@ test('voice !here soft-notifies when SSH exists but is disconnected', async () =
   const f = fixture([bot]);
   f.handler.eventBridge = {
     isConnected: () => false,
+    getCommandListenerChannelIds: () => [20],
     executeCommand: async () => {
       throw new Error('SSH not connected');
     },
@@ -494,18 +493,20 @@ test('voice !help with homeCid=0 resolves invoker channel so claim matches SSH',
   assert.equal(sent.length, 0);
 });
 
-test('voice !help with unknown channel skips when SSH is connected', async () => {
+test('voice !help with unknown channel replies when SSH is connected but has no cmd listener', async () => {
   const bot = makeBot(1, { name: 'A', channelId: 0 });
   const f = fixture([bot]);
   f.handler.eventBridge = {
     isConnected: () => true,
+    getCommandListenerChannelIds: () => [],
     executeCommand: async () => {
       throw new Error('SSH clientlist unavailable');
     },
     sendChannelText: async () => true,
   };
   await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, undefined);
-  assert.equal(f.replies.length, 0);
+  assert.equal(f.replies.length, 1);
+  assert.match(f.replies[0]!, /Music bot commands/i);
 });
 
 test('voice !help with unknown channel still replies when SSH is disconnected', async () => {
@@ -513,6 +514,7 @@ test('voice !help with unknown channel still replies when SSH is disconnected', 
   const f = fixture([bot]);
   f.handler.eventBridge = {
     isConnected: () => false,
+    getCommandListenerChannelIds: () => [20],
     executeCommand: async () => {
       throw new Error('SSH not connected');
     },
