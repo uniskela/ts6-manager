@@ -499,6 +499,13 @@ export class SshQueryClient extends EventEmitter {
       return;
     }
 
+    // 770 = already member of channel — clientmove no-op success (listener already there).
+    if (errorId === 770 && /^\s*clientmove\b/i.test(cmd.command)) {
+      cmd.resolve(cmd.responseLines.join('\n'));
+      this.processQueue();
+      return;
+    }
+
     const error = new Error(`TS error ${errorId}: ${parsed.msg || 'Unknown error'}`);
     cmd.reject(error);
 

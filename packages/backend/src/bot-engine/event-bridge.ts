@@ -316,7 +316,15 @@ export class EventBridge extends EventEmitter {
         );
         return false;
       }
-      await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
+      const myCid = parseInt(
+        String(me.cid || me.client_channel_id || me.client_cid || '0'),
+        10,
+      );
+      // `use` can bounce the query client to default; remount only when needed.
+      // TS error 770 (already member) is treated as success by SshQueryClient.
+      if (!Number.isFinite(myCid) || myCid !== channelId) {
+        await client.executeCommand(`clientmove clid=${clid} cid=${channelId}`);
+      }
 
       // Capture unique Cmd nick before any helper rename so we can restore it.
       // TeamSpeak requires unique nicknames — a shared "TS6 Helper" would collide

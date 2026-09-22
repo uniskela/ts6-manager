@@ -152,6 +152,17 @@ export class Ts3Client extends EventEmitter {
     return this.currentChannelId;
   }
 
+  /**
+   * Learn home channel from an out-of-band snapshot (e.g. SSH clientlist) when
+   * enter-view/clientlist on the voice socket never set currentChannelId.
+   */
+  setCurrentChannelIdIfUnknown(channelId: number): boolean {
+    if (channelId <= 0 || this.currentChannelId > 0) return false;
+    this.currentChannelId = channelId;
+    this.emit('debug', `Home channel from external snapshot: cid=${channelId}`);
+    return true;
+  }
+
   /** Move this voice client into a channel by ID (no-op if already there). */
   moveToChannel(channelId: number): void {
     if (!this.clientId || channelId <= 0) return;

@@ -202,6 +202,11 @@ export class VoiceBot extends EventEmitter {
     return this.client.getCurrentChannelId();
   }
 
+  /** Apply home cid from SSH clientlist when voice discovery left homeCid=0. */
+  setCurrentChannelIdIfUnknown(channelId: number): boolean {
+    return this.client.setCurrentChannelIdIfUnknown(channelId);
+  }
+
   /** Other non-query voice clients currently in this bot's channel (excludes the bot itself). */
   getHumanChannelPeerCount(): number {
     return this.client.getChannelUserCount();

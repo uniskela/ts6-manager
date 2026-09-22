@@ -44,6 +44,49 @@ test('sendChannelText returns false when clientmove fails', async () => {
   assert.ok(!executed.some((c) => c.startsWith('sendtextmessage')));
 });
 
+test('sendChannelText treats clientmove 770 as already-in-channel and still sends', async () => {
+  const executed: string[] = [];
+  const client = {
+    isConnected: true,
+    executeCommand: async (cmd: string) => {
+      executed.push(cmd);
+      if (cmd.startsWith('use ')) return '';
+      if (cmd === 'whoami') return 'clid=7 cid=20 client_nickname=Cmd';
+      if (cmd.startsWith('clientmove')) {
+        throw new Error('TS error 770: already member of channel');
+      }
+      if (cmd.startsWith('sendtextmessage')) return '';
+      return '';
+    },
+  };
+  // whoami already reports cid=20 — send path should skip clientmove entirely.
+  const bridge = new EventBridge({} as any) as any;
+  bridge.commandListeners.set('9:1:cmd:20', client);
+  const ok = await (bridge as EventBridge).sendChannelText(9, 1, 20, 'hello');
+  assert.equal(ok, true);
+  assert.ok(!executed.some((c) => c.startsWith('clientmove')));
+  assert.ok(executed.some((c) => c.startsWith('sendtextmessage')));
+});
+
+test('sendChannelText continues after clientmove 770 when whoami cid differs', async () => {
+  // Simulate SshQueryClient treating 770 as resolve (already member) — executeCommand succeeds.
+  const executed: string[] = [];
+  const client = {
+    isConnected: true,
+    executeCommand: async (cmd: string) => {
+      executed.push(cmd);
+      if (cmd === 'whoami') return 'clid=7 cid=1 client_nickname=Cmd';
+      return '';
+    },
+  };
+  const bridge = new EventBridge({} as any) as any;
+  bridge.commandListeners.set('9:1:cmd:20', client);
+  const ok = await (bridge as EventBridge).sendChannelText(9, 1, 20, 'hello');
+  assert.equal(ok, true);
+  assert.ok(executed.some((c) => c === 'clientmove clid=7 cid=20'));
+  assert.ok(executed.some((c) => c.startsWith('sendtextmessage')));
+});
+
 test('sendChannelText remounts with clientid fallbacks then sends', async () => {
   const { bridge, executed } = makeBridgeWithCmdListener({
     whoami: 'clientid=42 virtualserver_status=online',

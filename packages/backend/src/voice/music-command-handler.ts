@@ -39,11 +39,11 @@ interface BotChannelConfig {
 }
 
 /** Cap occupied-channel SSH helpers — never channellist-open-all (Query flood). */
-const MAX_AUTO_OCCUPIED_CHANNELS = 8;
+const MAX_AUTO_OCCUPIED_CHANNELS = 4;
 /** Space sequential cmd-listener SSH connects to stay under flood thresholds. */
-const CMD_LISTENER_CONNECT_GAP_MS = 400;
+const CMD_LISTENER_CONNECT_GAP_MS = 2500;
 /** Debounce occupied rediscovery when humans move between channels. */
-const OCCUPIED_REFRESH_DEBOUNCE_MS = 1500;
+const OCCUPIED_REFRESH_DEBOUNCE_MS = 3000;
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
@@ -210,6 +210,8 @@ export class MusicCommandHandler {
   /** Auto-discovered occupied channels when bots have empty commandChannelIds (key: configId:sid). */
   private autoCommandChannels = new Map<string, number[]>();
   private occupiedSyncTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Serialize all cmd-listener connects globally to avoid Query 524 floods. */
+  private cmdListenerConnectChain: Promise<void> = Promise.resolve();
 
   constructor(
     private prisma: PrismaClient,
@@ -357,14 +359,16 @@ export class MusicCommandHandler {
 
     for (const channelId of needed) {
       if (existing.has(channelId)) continue;
-      try {
-        await this.eventBridge.connectCommandListener(configId, sid, channelId);
-      } catch (err: any) {
-        console.warn(
-          `[MusicCmd] Command listener connect ${configId}:${sid}:${channelId}: ${err.message}`,
-        );
-      }
-      await delay(CMD_LISTENER_CONNECT_GAP_MS);
+      await this.enqueueCmdListenerConnect(async () => {
+        try {
+          await this.eventBridge!.connectCommandListener(configId, sid, channelId);
+        } catch (err: any) {
+          console.warn(
+            `[MusicCmd] Command listener connect ${configId}:${sid}:${channelId}: ${err.message}`,
+          );
+        }
+        await delay(CMD_LISTENER_CONNECT_GAP_MS);
+      });
     }
 
     for (const channelId of existing) {
@@ -375,6 +379,15 @@ export class MusicCommandHandler {
         /* ignore */
       }
     }
+  }
+
+  private enqueueCmdListenerConnect(fn: () => Promise<void>): Promise<void> {
+    const run = this.cmdListenerConnectChain.then(fn, fn);
+    this.cmdListenerConnectChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private scheduleOccupiedListenerRefresh(configId: number, sid: number): void {
@@ -429,7 +442,7 @@ export class MusicCommandHandler {
   }
 
   /**
-   * Discover channels that currently have human clients (not Query clients).
+   * Discover channels that currently have human clients (not Query clients, not music bots).
    * Prefer this over channellist — empty channels never need SSH helpers, and
    * opening N listeners for every cid floods Query on fresh installs.
    */
@@ -446,21 +459,26 @@ export class MusicCommandHandler {
         const home = bot?.getCurrentChannelId() || 0;
         if (home > 0) botHomes.add(home);
       }
+      const musicClids = this.musicBotClidsOnServer(configId, sid);
 
       const raw = await this.eventBridge.executeCommand(configId, sid, 'clientlist');
+      await this.absorbHomeChannelsFromClientList(configId, sid, raw);
+
       const { parseQueryResponse } = await import('@ts6/common');
-      const ids: number[] = [];
+      const humanCids = new Set<number>();
       for (const line of raw.split(/\n/)) {
         const trimmed = line.trim();
         if (!trimmed || trimmed.startsWith('error ')) continue;
         for (const entry of parseQueryResponse(trimmed)) {
           if (String(entry.client_type) === '1') continue; // Query / SSH helpers
+          const clid = parseInt(entry.clid || '0', 10);
+          if (clid > 0 && musicClids.has(clid)) continue; // parked music bots ≠ human occupancy
           const cid = parseInt(entry.cid || entry.client_channel_id || '0', 10);
           if (cid <= 0 || botHomes.has(cid)) continue;
-          if (!ids.includes(cid)) ids.push(cid);
+          humanCids.add(cid);
         }
       }
-      ids.sort((a, b) => a - b);
+      const ids = Array.from(humanCids).sort((a, b) => a - b);
       if (ids.length > MAX_AUTO_OCCUPIED_CHANNELS) {
         console.warn(
           `[MusicCmd] Occupied-channel helpers capped at ${MAX_AUTO_OCCUPIED_CHANNELS} ` +
@@ -474,6 +492,40 @@ export class MusicCommandHandler {
         `[MusicCmd] Occupied-channel discovery failed for ${configId}:${sid}: ${err.message}`,
       );
       return [];
+    }
+  }
+
+  /** When voice left homeCid=0, learn each bot's channel from an SSH clientlist snapshot. */
+  private async absorbHomeChannelsFromClientList(
+    configId: number,
+    sid: number,
+    raw: string,
+  ): Promise<void> {
+    const { parseQueryResponse } = await import('@ts6/common');
+    const byClid = new Map<number, number>();
+    for (const line of raw.split(/\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('error ')) continue;
+      for (const entry of parseQueryResponse(trimmed)) {
+        const clid = parseInt(entry.clid || '0', 10);
+        const cid = parseInt(entry.cid || entry.client_channel_id || '0', 10);
+        if (clid > 0 && cid > 0) byClid.set(clid, cid);
+      }
+    }
+    for (const [botId, cfg] of this.botChannelConfig) {
+      if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
+      const bot = this.voiceBotManager.getBot(botId);
+      if (!bot || bot.getCurrentChannelId() > 0) continue;
+      const clid = bot.ts3ClientId || 0;
+      if (clid <= 0) continue;
+      const cid = byClid.get(clid);
+      if (
+        cid &&
+        typeof bot.setCurrentChannelIdIfUnknown === 'function' &&
+        bot.setCurrentChannelIdIfUnknown(cid)
+      ) {
+        console.log(`[MusicCmd] Bot ${botId}: learned homeCid=${cid} from SSH clientlist`);
+      }
     }
   }
 
@@ -1209,15 +1261,29 @@ export class MusicCommandHandler {
   /**
    * Idle = no other *human* clients in the bot's channel (sibling music bots do not count).
    * Prefer a ServerQuery clientlist snapshot (accurate after join/move); fall back to
-   * the voice client's peer set. Unknown channel → not idle (do not steal).
+   * the voice client's peer set. Unknown homeCid → try learn from clientlist; if still
+   * unknown, treat as idle so bare !here does not falsely report "all busy".
    */
   private async isBotIdleForSummon(
     bot: VoiceBot,
     serverConfigId: number,
     virtualServerId: number,
   ): Promise<boolean> {
-    const homeCid = bot.getCurrentChannelId();
-    if (homeCid <= 0) return false;
+    let homeCid = bot.getCurrentChannelId();
+    if (homeCid <= 0 && this.eventBridge) {
+      try {
+        const raw = await this.eventBridge.executeCommand(
+          serverConfigId,
+          virtualServerId,
+          'clientlist',
+        );
+        await this.absorbHomeChannelsFromClientList(serverConfigId, virtualServerId, raw);
+        homeCid = bot.getCurrentChannelId();
+      } catch {
+        /* flood / timeout — fall through */
+      }
+    }
+    if (homeCid <= 0) return true;
 
     const musicClids = this.musicBotClidsOnServer(serverConfigId, virtualServerId);
     const fromList = await this.countHumanPeersViaClientList(
@@ -1236,7 +1302,7 @@ export class MusicCommandHandler {
       try {
         return bot.getHumanChannelPeerCount() === 0;
       } catch {
-        return false;
+        return true;
       }
     }
   }
@@ -1385,8 +1451,8 @@ export class MusicCommandHandler {
   ): Promise<number> {
     if (hintChannelId && hintChannelId > 0) return hintChannelId;
 
-    const homeCid = bot.getCurrentChannelId();
-    if (homeCid > 0) return homeCid;
+    const homeBefore = bot.getCurrentChannelId();
+    if (homeBefore > 0) return homeBefore;
 
     const cfg = this.botChannelConfig.get(botId);
     if (!cfg || !this.eventBridge || userClid <= 0) return 0;
@@ -1397,6 +1463,14 @@ export class MusicCommandHandler {
         cfg.virtualServerId,
         'clientlist',
       );
+      // Learn bot homes for later idle/summon checks, but for THIS message prefer the
+      // invoker channel — absorb must not turn a homeCid=0 voice path into "reply at bot home".
+      await this.absorbHomeChannelsFromClientList(
+        cfg.serverConfigId,
+        cfg.virtualServerId,
+        raw,
+      );
+
       const { parseQueryResponse } = await import('@ts6/common');
       for (const line of raw.split(/\n/)) {
         const trimmed = line.trim();
@@ -1404,7 +1478,7 @@ export class MusicCommandHandler {
         for (const entry of parseQueryResponse(trimmed)) {
           const clid = parseInt(entry.clid || '0', 10);
           if (clid !== userClid) continue;
-          const cid = parseInt(entry.cid || '0', 10);
+          const cid = parseInt(entry.cid || entry.client_channel_id || '0', 10);
           if (cid > 0) return cid;
         }
       }
@@ -1413,7 +1487,7 @@ export class MusicCommandHandler {
         `[MusicCmd] Invoker channel lookup failed for bot=${botId} clid=${userClid}: ${err.message}`,
       );
     }
-    return 0;
+    return bot.getCurrentChannelId() || 0;
   }
 
   private async handleHere(
