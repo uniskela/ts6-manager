@@ -151,6 +151,19 @@ export interface ChatCommandInfo {
   updatedAt: string;
 }
 
+/** Recommended canned-reply template (not yet stored for a server). */
+export interface ChatCommandPreset {
+  name: string;
+  description: string;
+  response: string;
+}
+
+export interface SeedChatCommandPresetsResult {
+  created: number;
+  createdNames: string[];
+  commands: ChatCommandInfo[];
+}
+
 export interface CreateChatCommandRequest {
   name: string;
   response: string;

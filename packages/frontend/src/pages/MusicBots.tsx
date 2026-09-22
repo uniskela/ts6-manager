@@ -44,8 +44,14 @@ import {
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
-import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo } from '@ts6/common';
-import { useChatCommands, useCreateChatCommand, useUpdateChatCommand, useDeleteChatCommand,
+import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo, ChatCommandPreset } from '@ts6/common';
+import {
+  useChatCommands,
+  useChatCommandPresets,
+  useSeedChatCommandPresets,
+  useCreateChatCommand,
+  useUpdateChatCommand,
+  useDeleteChatCommand,
 } from '@/hooks/use-chat-commands';
 import { settingsApi } from '@/api/settings.api';
 import { TS6_CHAT_RESPONSE_EXAMPLE } from '@/lib/ts6-chat-format';
@@ -2450,17 +2456,23 @@ function CommandsTab() {
   const configId = serverId || selectedConfigId;
 
   const { data: commands, isLoading } = useChatCommands(configId);
+  const { data: presets } = useChatCommandPresets(configId);
+  const seedPresets = useSeedChatCommandPresets();
   const createCommand = useCreateChatCommand();
   const updateCommand = useUpdateChatCommand();
   const deleteCommand = useDeleteChatCommand();
 
   const [showAdd, setShowAdd] = useState(false);
+  const [showPresets, setShowPresets] = useState(false);
   const [editCmd, setEditCmd] = useState<ChatCommandInfo | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [form, setForm] = useState({ name: '', response: '', description: '', enabled: true });
 
   const serverList = Array.isArray(servers) ? servers : [];
   const commandList = (Array.isArray(commands) ? commands : []) as ChatCommandInfo[];
+  const presetList = (Array.isArray(presets) ? presets : []) as ChatCommandPreset[];
+  const existingNames = new Set(commandList.map((c) => c.name));
+  const missingPresetCount = presetList.filter((p) => !existingNames.has(p.name)).length;
 
   const resetForm = () => setForm({ name: '', response: '', description: '', enabled: true });
 
@@ -2472,6 +2484,48 @@ function CommandsTab() {
       description: cmd.description || '',
       enabled: cmd.enabled,
     });
+  };
+
+  const handleSeedPresets = () => {
+    if (!configId) return;
+    seedPresets.mutate(configId, {
+      onSuccess: (result: { created: number; createdNames: string[] }) => {
+        if (result.created === 0) {
+          toast.message('All recommended presets are already present');
+        } else {
+          toast.success(
+            `Added ${result.created} preset${result.created === 1 ? '' : 's'} (disabled until you edit & enable)`,
+          );
+        }
+        setShowPresets(false);
+      },
+      onError: (err: any) =>
+        toast.error(err?.response?.data?.error || 'Failed to seed presets'),
+    });
+  };
+
+  const handleCreateFromPreset = (preset: ChatCommandPreset) => {
+    if (!configId) return;
+    if (existingNames.has(preset.name)) {
+      toast.message(`!${preset.name} already exists`);
+      return;
+    }
+    createCommand.mutate(
+      {
+        configId,
+        data: {
+          name: preset.name,
+          response: preset.response,
+          description: preset.description,
+          enabled: false,
+        },
+      },
+      {
+        onSuccess: () => toast.success(`Added !${preset.name} (disabled)`),
+        onError: (err: any) =>
+          toast.error(err?.response?.data?.error || `Failed to add !${preset.name}`),
+      },
+    );
   };
 
   const handleCreate = () => {
@@ -2552,6 +2606,14 @@ function CommandsTab() {
           </SelectContent>
         </Select>
         <div className="flex-1" />
+        <Button variant="outline" size="sm" onClick={() => setShowPresets(true)}>
+          <MessageSquare className="h-4 w-4 mr-1" /> Presets
+          {missingPresetCount > 0 && (
+            <Badge variant="secondary" className="ml-1.5 text-[10px]">
+              {missingPresetCount}
+            </Badge>
+          )}
+        </Button>
         <Button
           size="sm"
           onClick={() => {
@@ -2564,9 +2626,10 @@ function CommandsTab() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Users type <code className="text-[11px]">!help</code> in the music bot&apos;s channel chat for built-in
-        commands (Markdown formatted). <code className="text-[11px]">!np</code> shows now playing with an expandable
-        controls hint. Custom responses below support TS6 Markdown — see the formatting guide when editing.
+        Users type <code className="text-[11px]">!help</code> for built-in music commands or{' '}
+        <code className="text-[11px]">!commands</code> for enabled custom replies. Seed recommended
+        presets (!rules, !links, !discord, !info, !about), edit the text, then enable. Custom
+        responses support TS6 Markdown.
       </p>
 
       {isLoading ? (
@@ -2575,8 +2638,12 @@ function CommandsTab() {
         <EmptyState
           icon={MessageSquare}
           title="No custom commands"
-          description="Add a command like !rules that replies with fixed text in chat."
-        />
+          description="Seed recommended presets or add a command like !rules that replies with fixed text in chat."
+        >
+          <Button size="sm" variant="outline" onClick={() => setShowPresets(true)}>
+            Browse presets
+          </Button>
+        </EmptyState>
       ) : (
         <div className="space-y-1">
           {commandList.map((cmd) => (
@@ -2617,6 +2684,65 @@ function CommandsTab() {
           ))}
         </div>
       )}
+
+      <Dialog open={showPresets} onOpenChange={setShowPresets}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Recommended command presets</DialogTitle>
+            <DialogDescription>
+              Seed server-scoped canned replies. New presets are created disabled so you can edit
+              placeholder text before enabling. Built-in <code>!commands</code> lists enabled
+              customs (no seed needed).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-80 overflow-y-auto">
+            {presetList.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">No presets available.</p>
+            ) : (
+              presetList.map((preset) => {
+                const exists = existingNames.has(preset.name);
+                return (
+                  <div
+                    key={preset.name}
+                    className="flex items-start gap-2 py-2 px-2 rounded hover:bg-muted/30"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium">!{preset.name}</p>
+                      <p className="text-[11px] text-muted-foreground">{preset.description}</p>
+                    </div>
+                    {exists ? (
+                      <Badge variant="secondary" className="text-[10px] shrink-0">
+                        Added
+                      </Badge>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="shrink-0 h-7"
+                        disabled={createCommand.isPending}
+                        onClick={() => handleCreateFromPreset(preset)}
+                      >
+                        Add
+                      </Button>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowPresets(false)}>
+              Close
+            </Button>
+            <Button
+              onClick={handleSeedPresets}
+              disabled={seedPresets.isPending || missingPresetCount === 0}
+            >
+              {seedPresets.isPending ? 'Seeding…' : `Seed missing (${missingPresetCount})`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={showAdd}
