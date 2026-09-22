@@ -50,16 +50,25 @@ export class EventBridge extends EventEmitter {
 
   private async remountMainHelperAfterReconnect(configId: number, sid: number): Promise<void> {
     const key = this.makeKey(configId, sid);
-    const parkCid = this.mainHelperRemountAfterReconnect.get(key) || 0;
-    if (parkCid <= 0) return;
-    this.mainHelperRemountAfterReconnect.delete(key);
+    // Snapshot only to know whether a remount is worth enqueueing. Do **not**
+    // delete the park target here — a concurrent `ensureHelperInChannel` may
+    // park elsewhere first; deleting early would also prevent retry on failure.
+    if ((this.mainHelperRemountAfterReconnect.get(key) || 0) <= 0) return;
     await this.enqueueMainHelperWork(async () => {
+      // Re-read under the helper lock: a newer park may have cleared or replaced
+      // the target while we were queued. Follow the latest target, or no-op.
+      const parkCid = this.mainHelperRemountAfterReconnect.get(key) || 0;
+      if (parkCid <= 0) {
+        return;
+      }
       const ok = await this.moveMainHelperToChannel(configId, sid, parkCid);
       if (ok) {
+        // moveMainHelperToChannel clears the remount target on success.
         console.log(
           `[EventBridge] Remounted main SSH helper in cid=${parkCid} for ${key} after reconnect`,
         );
       }
+      // On failure leave mainHelperRemountAfterReconnect so a later retry can remount.
     });
   }
 

@@ -8,6 +8,7 @@ function makeBridgeWithMainSsh(opts: {
   connected?: boolean;
 }) {
   const executed: string[] = [];
+  const state = { failMove: opts.failMove === true };
   const client = {
     isConnected: opts.connected !== false,
     executeCommand: async (cmd: string) => {
@@ -18,7 +19,7 @@ function makeBridgeWithMainSsh(opts: {
         return opts.whoami ?? 'clid=7 client_nickname=MainBot cid=1';
       }
       if (cmd.startsWith('clientmove')) {
-        if (opts.failMove) throw new Error('move denied');
+        if (state.failMove) throw new Error('move denied');
         return '';
       }
       if (cmd.startsWith('sendtextmessage')) return '';
@@ -27,7 +28,7 @@ function makeBridgeWithMainSsh(opts: {
   };
   const bridge = new EventBridge({} as any) as any;
   bridge.connections.set('9:1', client);
-  return { bridge: bridge as EventBridge, executed, client };
+  return { bridge: bridge as EventBridge, executed, client, state };
 }
 
 test('sendChannelText returns false when whoami has no clid', async () => {
@@ -154,6 +155,66 @@ test('remountMainHelperAfterReconnect parks helper after registerEvents', async 
   });
   assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
   (bridge as any).forgetMainHelperLocation('9:1');
+  executed.length = 0;
+  await (bridge as any).remountMainHelperAfterReconnect(9, 1);
+  assert.ok(executed.some((c) => c === 'clientmove clid=7 cid=34'));
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 34);
+  assert.equal((bridge as any).mainHelperRemountAfterReconnect.get('9:1'), undefined);
+});
+
+test('queued remount does not overwrite a newer park that ran first', async () => {
+  const { bridge, executed } = makeBridgeWithMainSsh({
+    whoami: 'clid=7 cid=1 client_nickname=Main',
+  });
+  assert.equal(await bridge.ensureHelperInChannel(9, 1, 34), true);
+  (bridge as any).forgetMainHelperLocation('9:1');
+  assert.equal((bridge as any).mainHelperRemountAfterReconnect.get('9:1'), 34);
+  executed.length = 0;
+
+  // Hold the helper queue so ensureHelper (newer park) is enqueued before remount runs.
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+  const blocked = (bridge as any).enqueueMainHelperWork(async () => {
+    await gate;
+  });
+
+  const parkPromise = bridge.ensureHelperInChannel(9, 1, 50);
+  const remountPromise = (bridge as any).remountMainHelperAfterReconnect(9, 1);
+
+  release();
+  await blocked;
+  await parkPromise;
+  await remountPromise;
+
+  assert.ok(
+    executed.some((c) => c === 'clientmove clid=7 cid=50'),
+    'newer park must clientmove to cid=50',
+  );
+  assert.ok(
+    !executed.some((c) => c === 'clientmove clid=7 cid=34'),
+    'stale remount must not overwrite newer park',
+  );
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 50);
+  assert.equal((bridge as any).mainHelperRemountAfterReconnect.get('9:1'), undefined);
+});
+
+test('failed remount leaves park target for retry', async () => {
+  const { bridge, executed, state } = makeBridgeWithMainSsh({
+    whoami: 'clid=7 cid=1 client_nickname=Main',
+    failMove: true,
+  });
+  (bridge as any).mainHelperRemountAfterReconnect.set('9:1', 34);
+  await (bridge as any).remountMainHelperAfterReconnect(9, 1);
+  assert.equal(
+    (bridge as any).mainHelperRemountAfterReconnect.get('9:1'),
+    34,
+    'failed remount must retain target',
+  );
+  assert.equal(bridge.getMainHelperChannelId(9, 1), 0);
+
+  state.failMove = false;
   executed.length = 0;
   await (bridge as any).remountMainHelperAfterReconnect(9, 1);
   assert.ok(executed.some((c) => c === 'clientmove clid=7 cid=34'));
