@@ -15,6 +15,7 @@ import type { JwtPayload } from '@ts6/common';
 import fs from 'fs';
 import path from 'path';
 import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
+import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -113,6 +114,9 @@ async function main() {
   // Initialize TS connection pool
   const connectionPool = new ConnectionPool(prisma);
   await connectionPool.initialize();
+
+  // Optional local-only seed (pr-test compose). Gated; never crashes boot.
+  await bootstrapLocalDevConnection(prisma, connectionPool);
 
   // Make services available via app.locals
   app.locals.prisma = prisma;

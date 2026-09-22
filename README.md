@@ -246,14 +246,18 @@ Open `http://localhost:3000` (override with `HOST_PORT`). Only port 80 is publis
 
 ### Building from Source
 
+**Full local stack with TeamSpeak 6 (beta13)** — preferred happy path:
+
 ```bash
 git clone https://github.com/uniskela/ts6-manager.git
 cd ts6-manager
-echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env
-echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
-echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env
-docker compose -f docker-compose.local.yml up -d --build
+cp .env.pr-test.example .env
+docker compose -f docker-compose.pr-test.yml up --build
 ```
+
+Then open `http://localhost:3000/setup`, create the first admin, and log in. The bundled TeamSpeak connection is already present (WebQuery + SSH Query). Demo mode remains available separately.
+
+**Manager only (no TeamSpeak):** use `docker compose -f docker-compose.local.yml up -d --build` after writing `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` into `.env`.
 
 > This repository is an opinionated continuation of the original [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager) project.
 
