@@ -72,7 +72,14 @@ pnpm db:generate
 pnpm dev
 ~~~
 
-For a local Docker build:
+For a local Docker build **with TeamSpeak 6 (beta13)**:
+
+~~~bash
+cp .env.pr-test.example .env
+docker compose -f docker-compose.pr-test.yml up --build
+~~~
+
+Manager-only (no TeamSpeak container):
 
 ~~~bash
 docker compose -f docker-compose.local.yml up -d --build
