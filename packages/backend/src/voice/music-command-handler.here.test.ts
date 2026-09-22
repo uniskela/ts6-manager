@@ -471,11 +471,12 @@ test('voice !here with homeCid=0 resolves via ensureHome without SSH clientlist'
       throw new Error('SSH clientlist must not be used when voice ensureHome works');
     },
   };
+  // Same-channel voice chat: ensureHome learns cid=34; bot is already there.
   await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!here' }, undefined);
   assert.equal(sshClientlist, 0);
   assert.equal(bot.getCurrentChannelId(), 34);
-  assert.deepEqual(bot._joins, [34]);
-  assert.match(f.replies.at(-1)!, /joining/i);
+  assert.equal(bot._joins.length, 0);
+  assert.match(f.replies.at(-1)!, /already here/i);
 });
 
 test('voice !here resolves unknown homeCid via invoker clientlist when ensureHome fails', async () => {
