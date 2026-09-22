@@ -2,6 +2,28 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.7.0](https://github.com/uniskela/ts6-manager/compare/v1.6.2...v1.7.0) (2026-09-22)
+
+
+### Features
+
+* add accessible channel moves and safe server context ([#90](https://github.com/uniskela/ts6-manager/issues/90)) ([4d0899a](https://github.com/uniskela/ts6-manager/commit/4d0899adfc134b5a0e1b73aa8452e980cfe40002))
+* add appearance themes and settings deep links ([#76](https://github.com/uniskela/ts6-manager/issues/76)) ([9102e71](https://github.com/uniskela/ts6-manager/commit/9102e717bd108de163e4dda1d9778f559e5c99cc))
+* add installable PWA experience ([#69](https://github.com/uniskela/ts6-manager/issues/69)) ([b3541e8](https://github.com/uniskela/ts6-manager/commit/b3541e8284361d95d026057f6047e9f3b3cc476a))
+* add persistent sidebar section navigation ([#77](https://github.com/uniskela/ts6-manager/issues/77)) ([c8e7fef](https://github.com/uniskela/ts6-manager/commit/c8e7fefe6d50eae9bdb85a907e75b268eb175e35))
+* introduce canonical TS6 brand identity ([#75](https://github.com/uniskela/ts6-manager/issues/75)) ([9a5facb](https://github.com/uniskela/ts6-manager/commit/9a5facb3a4d2526c226d23a5d1c5252d33592cca))
+* make admin actions truthful and safe ([#85](https://github.com/uniskela/ts6-manager/issues/85)) ([e2622a1](https://github.com/uniskela/ts6-manager/commit/e2622a1694076f0ac4b5425b12ac5817992876d1))
+* make permission editing context safe ([#79](https://github.com/uniskela/ts6-manager/issues/79)) ([7c98f23](https://github.com/uniskela/ts6-manager/commit/7c98f238ef9804241331d8bd16783b6566ba5ee3))
+* polish shared data tables ([#82](https://github.com/uniskela/ts6-manager/issues/82)) ([19bc25a](https://github.com/uniskela/ts6-manager/commit/19bc25aaf71b37334fac68f8a46369dad473b7b7))
+* protect and reroute bot flows ([#80](https://github.com/uniskela/ts6-manager/issues/80)) ([aa804e1](https://github.com/uniskela/ts6-manager/commit/aa804e1dc841bc82accc002e8b32139f46df57fb))
+* recompose dashboard status hierarchy ([#78](https://github.com/uniskela/ts6-manager/issues/78)) ([a4129f6](https://github.com/uniskela/ts6-manager/commit/a4129f6451537540657950e585d5388225bbb461))
+* unify page headers and refresh states ([#102](https://github.com/uniskela/ts6-manager/issues/102)) ([6506132](https://github.com/uniskela/ts6-manager/commit/6506132d333d623fb1af653a2d61edf2bccea583))
+
+
+### Bug Fixes
+
+* harden Docker scripts against CRLF checkouts ([#88](https://github.com/uniskela/ts6-manager/issues/88)) ([bd31836](https://github.com/uniskela/ts6-manager/commit/bd318366f9e0c55d3a5052cbbf11ae9aed8ec700))
+
 ## [1.6.2](https://github.com/uniskela/ts6-manager/compare/v1.6.1...v1.6.2) (2026-09-20)
 
 
