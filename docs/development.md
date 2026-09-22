@@ -51,7 +51,16 @@ Docker production startup uses `docker-commands/apply-schema.sh` instead of requ
 
 ## Containers
 
-To build the local compose stack from source:
+**Full local stack with TeamSpeak 6 (beta13)** — preferred clone / PR happy path:
+
+~~~bash
+cp .env.pr-test.example .env
+docker compose -f docker-compose.pr-test.yml up --build
+~~~
+
+Then open `http://localhost:3000/setup`, create the first admin, and log in. The bundled TeamSpeak connection (WebQuery + SSH Query) is seeded automatically when `LOCAL_DEV_BOOTSTRAP_CONNECTION=1`. Demo mode remains available separately.
+
+**Manager only (no TeamSpeak container):**
 
 ~~~bash
 docker compose -f docker-compose.local.yml up -d --build

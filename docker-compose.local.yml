@@ -1,3 +1,6 @@
+# Manager-only local build (backend + frontend). For a full stack with TeamSpeak 6,
+# use docker-compose.pr-test.yml instead (see .env.pr-test.example).
+
 services:
   backend:
     build:

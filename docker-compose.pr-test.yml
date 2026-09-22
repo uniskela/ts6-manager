@@ -1,25 +1,18 @@
 # Local stack for testing a PR branch (builds from the current checkout).
 #
-# Includes a TeamSpeak 6 server on the same Docker network as ts6-manager.
+# Includes a TeamSpeak 6 server (pinned beta13) on the same Docker network as ts6-manager.
+# Backend auto-seeds the bundled connection when LOCAL_DEV_BOOTSTRAP_CONNECTION=1
+# (see .env.pr-test.example). Demo mode remains available separately and is not replaced.
 #
-# Quick start:
+# Happy path:
 #   cp .env.pr-test.example .env
 #   docker compose -f docker-compose.pr-test.yml up --build
 #
-# Then open http://localhost:3000/setup and complete admin setup.
-# Settings → Connections → Start setup wizard:
-#   Scenario: "Both in Docker (separate stacks)"
-#   Host: teamspeak
-#   WebQuery port: 10080
-#   API key: create on the TS server (see below)
-#
-# TeamSpeak query login (for creating an API key):
-#   Username: serveradmin
-#   Password: value of TS_PR_TEST_ADMIN_PASSWORD in .env (default: testadmin)
-#   Check TS logs for the initial privilege key on first boot:
-#     docker compose -f docker-compose.pr-test.yml logs teamspeak
+# Then open http://localhost:3000/setup → create admin → log in.
+# Settings → Connections already lists the bundled TeamSpeak host (WebQuery + SSH Query).
 #
 # Optional: connect a TS client to voice on UDP 9987.
+# Manager-only (no TeamSpeak): use docker-compose.local.yml instead.
 #
 # Tear down:
 #   docker compose -f docker-compose.pr-test.yml down
@@ -27,22 +20,25 @@
 
 services:
   teamspeak:
-    image: teamspeaksystems/teamspeak6-server:latest
+    image: teamspeaksystems/teamspeak6-server:6.0.0-beta13
     container_name: ts6-pr-teamspeak
     restart: unless-stopped
     environment:
       TSSERVER_LICENSE_ACCEPTED: accept
       TSSERVER_QUERY_HTTP_ENABLED: "1"
       TSSERVER_QUERY_HTTP_PORT: "10080"
+      TSSERVER_QUERY_HTTP_ALLOW_GUEST: "0"
       TSSERVER_QUERY_SSH_ENABLED: "1"
       TSSERVER_QUERY_SSH_PORT: "10022"
+      TSSERVER_QUERY_SSH_ALLOW_GUEST: "0"
       TSSERVER_QUERY_ADMIN_PASSWORD: ${TS_PR_TEST_ADMIN_PASSWORD:-testadmin}
+      TSSERVER_QUERY_ADMIN_API_KEY: ${TS_PR_TEST_API_KEY:-local-pr-test-webquery-api-key-not-for-prod}
     volumes:
       - pr-test-teamspeak-data:/var/tsserver
     ports:
       - "9987:9987/udp"
       - "30033:30033/tcp"
-      - "10022:10022/tcp"   # SSH ServerQuery — create API keys from your host
+      - "10022:10022/tcp"   # SSH ServerQuery (not Linux sshd)
     networks:
       - ts6-pr-test
 
@@ -68,6 +64,15 @@ services:
       MUSIC_DIR: /data/music
       TS_ALLOW_SELF_SIGNED: ${TS_ALLOW_SELF_SIGNED:-true}
       TS_ALLOW_PRIVATE_HOSTS: ${TS_ALLOW_PRIVATE_HOSTS:-true}
+      # Local-only gated seed of the bundled TeamSpeak connection (never wire into prod compose)
+      LOCAL_DEV_BOOTSTRAP_CONNECTION: ${LOCAL_DEV_BOOTSTRAP_CONNECTION:-1}
+      TS_BOOTSTRAP_HOST: ${TS_BOOTSTRAP_HOST:-teamspeak}
+      TS_BOOTSTRAP_WEBQUERY_PORT: ${TS_BOOTSTRAP_WEBQUERY_PORT:-10080}
+      TS_BOOTSTRAP_API_KEY: ${TS_PR_TEST_API_KEY:-local-pr-test-webquery-api-key-not-for-prod}
+      TS_BOOTSTRAP_NAME: ${TS_BOOTSTRAP_NAME:-Local TeamSpeak 6}
+      TS_BOOTSTRAP_SSH_PORT: ${TS_BOOTSTRAP_SSH_PORT:-10022}
+      TS_BOOTSTRAP_SSH_USER: ${TS_BOOTSTRAP_SSH_USER:-serveradmin}
+      TS_BOOTSTRAP_SSH_PASSWORD: ${TS_PR_TEST_ADMIN_PASSWORD:-testadmin}
     volumes:
       - pr-test-backend-data:/app/packages/backend/data
       - pr-test-music-data:/data/music
