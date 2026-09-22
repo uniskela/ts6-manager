@@ -479,7 +479,13 @@ export class MusicCommandHandler {
     this.reply(bot, userClid, custom.response);
   }
 
-  private reply(bot: VoiceBot, targetClid: number, msg: string): void {
+  /**
+   * Send a command reply. When the command came from another channel, prefers the
+   * SSH command-channel listener so the user sees the message where they typed.
+   * Await this before joinChannel/refreshBotChannels — those disconnect the
+   * listener and optimistically change the bot's channel id.
+   */
+  private async reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void> {
     const botId = bot.currentConfig.id;
     const replyChannelId = this.activeReplyChannel.get(`${botId}:${targetClid}`);
     const cfg = this.botChannelConfig.get(botId);
@@ -492,20 +498,22 @@ export class MusicCommandHandler {
       this.eventBridge &&
       replyChannelId !== homeCid
     ) {
-      void this.eventBridge
-        .sendChannelText(cfg.serverConfigId, cfg.virtualServerId, replyChannelId, msg)
-        .then((ok) => {
-          if (!ok) {
-            console.warn(
-              `[MusicCmd] Cross-channel reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
-            );
-            try {
-              bot.sendChannelMessage(msg);
-            } catch (err: any) {
-              console.error(`[MusicCmd] Failed to send reply: ${err.message}`);
-            }
-          }
-        });
+      const ok = await this.eventBridge.sendChannelText(
+        cfg.serverConfigId,
+        cfg.virtualServerId,
+        replyChannelId,
+        msg,
+      );
+      if (!ok) {
+        console.warn(
+          `[MusicCmd] Cross-channel reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
+        );
+        try {
+          bot.sendChannelMessage(msg);
+        } catch (err: any) {
+          console.error(`[MusicCmd] Failed to send reply: ${err.message}`);
+        }
+      }
       return;
     }
 
@@ -644,25 +652,59 @@ export class MusicCommandHandler {
     userClid: number,
   ): Promise<void> {
     if (!channelId || channelId <= 0) {
-      this.reply(replyBot, userClid, 'Could not determine this channel.');
+      await this.reply(replyBot, userClid, 'Could not determine this channel.');
       return;
     }
 
     if (target.bot.getCurrentChannelId() === channelId) {
-      this.reply(replyBot, userClid, `${target.name} [#${target.id}] is already here.`);
+      await this.reply(
+        replyBot,
+        userClid,
+        `${target.name} [#${target.id}] is already here.`,
+      );
       return;
     }
 
+    if (!isBotSummonable(target.bot) || !target.bot.ts3ClientId) {
+      await this.reply(
+        replyBot,
+        userClid,
+        `Could not move ${target.name} [#${target.id}]: bot is not fully connected.`,
+      );
+      return;
+    }
+
+    // Announce *before* joinChannel / refreshBotChannels. joinChannel
+    // optimistically sets currentChannelId, and refresh disconnects the SSH
+    // command-channel listener once that channel looks like "home" — so a
+    // post-move reply often never reaches the channel where the user typed.
+    await this.reply(
+      replyBot,
+      userClid,
+      `${target.name} [#${target.id}] is joining.`,
+    );
+
     try {
       target.bot.joinChannel(channelId);
+      if (target.bot.getCurrentChannelId() !== channelId) {
+        await this.reply(
+          replyBot,
+          userClid,
+          `Could not move ${target.name} [#${target.id}]: move did not apply.`,
+        );
+        return;
+      }
       console.log(
         `[MusicCmd] Bot ${target.id}: summoned to channel ${channelId} by clid=${userClid}`,
       );
       await this.refreshBotChannels(target.id);
-      this.reply(replyBot, userClid, `${target.name} [#${target.id}] is joining.`);
     } catch (err: any) {
       console.warn(`[MusicCmd] Bot ${target.id}: summon failed: ${err.message}`);
-      this.reply(replyBot, userClid, `Could not move ${target.name} [#${target.id}]: ${err.message}`);
+      await this.reply(
+        replyBot,
+        userClid,
+        `Could not move ${target.name} [#${target.id}]: ${err.message}`,
+      );
     }
   }
 
@@ -682,7 +724,7 @@ export class MusicCommandHandler {
 
     const candidates = await this.listSummonableBots(serverConfigId, virtualServerId);
     if (candidates.length === 0) {
-      this.reply(bot, userClid, 'No music bots are available right now.');
+      await this.reply(bot, userClid, 'No music bots are available right now.');
       return;
     }
 
@@ -694,19 +736,19 @@ export class MusicCommandHandler {
       if (!this.shouldSpeakHereList(serverConfigId, virtualServerId, channelId, userClid)) {
         return;
       }
-      this.reply(bot, userClid, this.formatHereBotList(candidates));
+      await this.reply(bot, userClid, this.formatHereBotList(candidates));
       return;
     }
 
     const targetId = parseInt(args, 10);
     if (isNaN(targetId) || String(targetId) !== args.trim()) {
-      this.reply(bot, userClid, 'Usage: !here [id] — Use !here to list bots.');
+      await this.reply(bot, userClid, 'Usage: !here [id] — Use !here to list bots.');
       return;
     }
 
     const target = candidates.find((c) => c.id === targetId);
     if (!target) {
-      this.reply(
+      await this.reply(
         bot,
         userClid,
         `Bot #${targetId} is not available. Use !here to list bots.`,
@@ -726,16 +768,35 @@ export class MusicCommandHandler {
     args: string,
   ): Promise<void> {
     const userClid = parseInt(data.invokerid || '0', 10);
-    if (!userClid) return;
+    if (!userClid) {
+      console.warn(
+        `[MusicCmd] Cross-channel !here ignored: missing invokerid (cid=${channelId})`,
+      );
+      return;
+    }
+
+    console.log(
+      `[MusicCmd] Cross-channel !here ${args} (config=${configId} sid=${sid} cid=${channelId} clid=${userClid})`,
+    );
 
     const candidates = await this.listSummonableBots(configId, sid);
     if (candidates.length === 0) {
+      const noneMsg = 'No music bots are available right now.';
       if (this.eventBridge) {
-        await this.eventBridge.sendChannelText(
+        const ok = await this.eventBridge.sendChannelText(
           configId,
           sid,
           channelId,
-          'No music bots are available right now.',
+          noneMsg,
+        );
+        if (!ok) {
+          console.warn(
+            `[MusicCmd] !here: no summonable bots; failed to reply in cid=${channelId}`,
+          );
+        }
+      } else {
+        console.warn(
+          `[MusicCmd] !here: no summonable bots and no eventBridge to reply (cid=${channelId})`,
         );
       }
       return;
@@ -751,19 +812,19 @@ export class MusicCommandHandler {
           return;
         }
         if (!this.shouldSpeakHereList(configId, sid, channelId, userClid)) return;
-        this.reply(replyBot, userClid, this.formatHereBotList(candidates));
+        await this.reply(replyBot, userClid, this.formatHereBotList(candidates));
         return;
       }
 
       const targetId = parseInt(args, 10);
       if (isNaN(targetId) || String(targetId) !== args.trim()) {
-        this.reply(replyBot, userClid, 'Usage: !here [id] — Use !here to list bots.');
+        await this.reply(replyBot, userClid, 'Usage: !here [id] — Use !here to list bots.');
         return;
       }
 
       const target = candidates.find((c) => c.id === targetId);
       if (!target) {
-        this.reply(
+        await this.reply(
           replyBot,
           userClid,
           `Bot #${targetId} is not available. Use !here to list bots.`,
