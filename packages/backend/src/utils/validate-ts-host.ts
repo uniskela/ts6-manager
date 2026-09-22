@@ -133,6 +133,40 @@ export function validateTsServerPort(port: unknown, fallback: number): number {
   return value;
 }
 
+/**
+ * Validate a TeamSpeak virtual-server / Query sid used in WebQuery paths.
+ * Instance-level commands use sid=0; virtual servers are 1..65535.
+ */
+export function validateTsQueryServerId(sid: unknown): number {
+  const value = typeof sid === 'number' ? sid : Number(sid);
+  if (!Number.isInteger(value) || value < 0 || value > 65535) {
+    throw new AppError(400, 'Server id must be an integer between 0 and 65535');
+  }
+  return value;
+}
+
+/**
+ * Validate a WebQuery command segment so it cannot alter the request host/path
+ * (no slashes, schemes, or `//` open-redirect style paths).
+ */
+export function sanitizeWebQueryCommand(command: unknown): string {
+  const normalized = String(command ?? '').trim();
+  if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(normalized)) {
+    throw new AppError(400, 'Invalid WebQuery command');
+  }
+  return normalized;
+}
+
+/**
+ * Build a relative WebQuery path from sanitized sid + command only.
+ * Always returns a same-origin relative path starting with `/` (never `//`).
+ */
+export function buildWebQueryPath(sid: unknown, command: unknown): string {
+  const safeSid = validateTsQueryServerId(sid);
+  const safeCommand = sanitizeWebQueryCommand(command);
+  return safeSid > 0 ? `/${safeSid}/${safeCommand}` : `/${safeCommand}`;
+}
+
 /** Build an origin URL from validated host/port only (no user-controlled URL parsing). */
 function buildOriginFromSanitizedParts(safeHost: string, safePort: number, useHttps: boolean): string {
   const protocol = useHttps ? 'https' : 'http';

@@ -16,11 +16,6 @@ import {
   buildFullSuccessReport,
 } from '../ts-client/connection-diagnostics.js';
 
-function parseDiagnosticSid(raw: unknown): number {
-  const sid = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
-  return Number.isFinite(sid) && sid > 0 ? sid : 1;
-}
-
 function throwIfSharedQueryFlooded(req: Request, configId: number): void {
   const pool: ConnectionPool | undefined = req.app.locals.connectionPool;
   if (!pool) return;
@@ -233,7 +228,9 @@ serverRoutes.post('/test-webquery', requireRole('admin'), async (req: Request, r
 
     const client = createWebQueryClient(safeHost, safePort, apiKey, useHttps || false);
     try {
-      const report = await client.diagnoseConnection({ sid: parseDiagnosticSid(req.body?.sid) });
+      // Always probe default virtual server 1 — do not accept request-body sid
+      // (would taint the WebQuery path / re-open CodeQL request-forgery).
+      const report = await client.diagnoseConnection();
       // Always HTTP 200 so the UI can render partial stage results.
       res.json(report);
     } finally {
@@ -287,7 +284,8 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
 
     const client = createWebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
     try {
-      const report = await client.diagnoseConnection({ sid: parseDiagnosticSid(req.body?.sid) });
+      // Default virtual server 1 only — selected-sid belongs on persisted config later.
+      const report = await client.diagnoseConnection();
       res.json(report);
     } finally {
       client.destroy(); // Close the temporary TCP connection immediately

@@ -1,4 +1,5 @@
 import { TeamSpeakFloodError, TSApiError } from '../middleware/error-handler.js';
+import { validateTsQueryServerId } from '../utils/validate-ts-host.js';
 
 /** Staged WebQuery connection diagnostic stages (#91 Slice 2). */
 export const DIAGNOSTIC_STAGE_IDS = [
@@ -358,7 +359,14 @@ export async function diagnoseConnection(
   client: DiagnosticWebQueryClient,
   options: DiagnoseConnectionOptions = {},
 ): Promise<ConnectionDiagnosticReport> {
-  const sid = options.sid && options.sid > 0 ? options.sid : 1;
+  // Default virtual server 1. Callers (routes) must not pass request-body sid —
+  // that re-taints the WebQuery path for CodeQL request-forgery.
+  const virtualSid = options.sid === undefined
+    ? 1
+    : (() => {
+        const parsed = validateTsQueryServerId(options.sid);
+        return parsed > 0 ? parsed : 1;
+      })();
   const deadline = Date.now() + (options.overallTimeoutMs ?? DEFAULT_OVERALL_TIMEOUT_MS);
   const stages: DiagnosticStageResult[] = [];
   let version: string | undefined;
@@ -511,13 +519,13 @@ export async function diagnoseConnection(
   // --- Stage 4: virtual server (serverinfo on selected sid) ---
   try {
     await withDeadline(
-      client.execute(sid, 'serverinfo', undefined, { priority: 'high' }),
+      client.execute(virtualSid, 'serverinfo', undefined, { priority: 'high' }),
       deadline,
     );
     stages.push({
       id: 'virtual_server',
       status: 'ok',
-      message: `Virtual server ${sid} is accessible.`,
+      message: `Virtual server ${virtualSid} is accessible.`,
     });
   } catch (error) {
     const classified = classifyDiagnosticError(error);
@@ -528,7 +536,7 @@ export async function diagnoseConnection(
       id: 'virtual_server',
       status: 'fail',
       message: classified.kind === 'permission' || classified.kind === 'unknown'
-        ? `Virtual server ${sid} is not accessible with this API key.`
+        ? `Virtual server ${virtualSid} is not accessible with this API key.`
         : classified.message,
       code: classified.kind === 'timeout'
         ? 'timeout'

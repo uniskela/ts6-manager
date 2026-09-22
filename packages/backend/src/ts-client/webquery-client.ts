@@ -4,7 +4,7 @@ import https from 'https';
 import { AppError, TeamSpeakFloodError, TSApiError } from '../middleware/error-handler.js';
 import { config } from '../config.js';
 import type { ValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
-import { createValidatedTsServerEndpoint, isAllowedTsServerHost } from '../utils/validate-ts-host.js';
+import { createValidatedTsServerEndpoint, isAllowedTsServerHost, buildWebQueryPath } from '../utils/validate-ts-host.js';
 import {
   diagnoseConnection as runDiagnoseConnection,
   type ConnectionDiagnosticReport,
@@ -121,6 +121,10 @@ export class WebQueryClient {
       baseURL,
       headers: { 'x-api-key': apiKey },
       timeout: 15000,
+      // Stay on the validated TeamSpeak origin — never follow redirects off-host.
+      maxRedirects: 0,
+      maxContentLength: 2 * 1024 * 1024,
+      maxBodyLength: 2 * 1024 * 1024,
       httpAgent: useHttpsResolved ? undefined : this.agent,
       httpsAgent: useHttpsResolved ? this.agent : undefined,
     });
@@ -264,9 +268,8 @@ export class WebQueryClient {
     options?: { priority?: WebQueryPriority },
   ): Promise<any> {
     return this.enqueue(async () => {
-      // WebQuery URL pattern: /{sid}/{command}
-      // For instance-level commands (sid=0): /{command}
-      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+      // Path is built only from sanitized sid + command; baseURL is a validated origin.
+      const path = buildWebQueryPath(sid, command);
 
       const response = await this.http.get(path, {
         params: this.cleanParams(params),
@@ -289,7 +292,7 @@ export class WebQueryClient {
     options?: { priority?: WebQueryPriority },
   ): Promise<any> {
     return this.enqueue(async () => {
-      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+      const path = buildWebQueryPath(sid, command);
       const response = await this.http.post(path, null, {
         params: this.cleanParams(params),
       });
