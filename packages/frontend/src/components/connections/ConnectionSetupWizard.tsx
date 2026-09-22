@@ -9,6 +9,10 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Badge } from '@/components/ui/badge';
 import { SetupDocLinks } from '@/components/connections/SetupDocLinks';
 import {
+  ConnectionDiagnosticStages,
+  diagnosticToastMessage,
+} from '@/components/connections/ConnectionDiagnosticStages';
+import {
   DEFAULT_CONNECTION_FORM,
   DEPLOYMENT_SCENARIOS,
   FIELD_HELP,
@@ -21,6 +25,7 @@ import { ArrowLeft, ArrowRight, Check, Loader2, Radar, Sparkles, TestTube } from
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
+import type { ConnectionDiagnosticReport } from '@ts6/common';
 
 const STEPS = [
   'Where is your TeamSpeak server?',
@@ -71,6 +76,8 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   const [form, setForm] = useState<ConnectionFormState>(DEFAULT_CONNECTION_FORM);
   const [skipSsh, setSkipSsh] = useState(false);
   const [webqueryTestOk, setWebqueryTestOk] = useState<boolean | null>(null);
+  const [webqueryPartial, setWebqueryPartial] = useState(false);
+  const [webqueryDiagnostic, setWebqueryDiagnostic] = useState<ConnectionDiagnosticReport | null>(null);
   const [sshTestOk, setSshTestOk] = useState<boolean | null>(null);
   const [detection, setDetection] = useState<DeploymentCheckResult | null>(null);
   const [detectionApplied, setDetectionApplied] = useState(false);
@@ -141,6 +148,8 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     setForm(DEFAULT_CONNECTION_FORM);
     setSkipSsh(false);
     setWebqueryTestOk(null);
+    setWebqueryPartial(false);
+    setWebqueryDiagnostic(null);
     setSshTestOk(null);
     setDetection(null);
     setDetectionApplied(false);
@@ -204,12 +213,23 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
   const handleTestWebquery = () => {
     testWebqueryDraft.mutate(undefined, {
-      onSuccess: (data) => {
-        setWebqueryTestOk(!!data?.success);
-        toast.success(data?.version ? `WebQuery OK (${data.version})` : 'WebQuery connection successful');
+      onSuccess: (data: ConnectionDiagnosticReport) => {
+        setWebqueryDiagnostic(data);
+        const complete = data?.success === true;
+        setWebqueryTestOk(complete);
+        setWebqueryPartial(!!data?.partial && !complete);
+        if (complete) {
+          toast.success(diagnosticToastMessage(data));
+        } else if (data?.partial) {
+          toast.message(diagnosticToastMessage(data));
+        } else {
+          toast.error(diagnosticToastMessage(data));
+        }
       },
       onError: (err: any) => {
         setWebqueryTestOk(false);
+        setWebqueryPartial(false);
+        setWebqueryDiagnostic(null);
         toast.error(apiErrorMessage(err, 'WebQuery test failed'));
       },
     });
@@ -261,7 +281,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
         try {
           if (data?.id) {
             const testResult = await serversApi.test(data.id);
-            webqueryOk = !!testResult?.success;
+            webqueryOk = testResult?.success === true;
           }
         } catch {
           // Connection was created; test can be retried from the card.
@@ -526,8 +546,17 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                 Test WebQuery
               </Button>
               {webqueryTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">WebQuery OK</Badge>}
-              {webqueryTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery failed</Badge>}
+              {webqueryPartial && <Badge variant="outline" className="text-amber-400 border-amber-500/30">Partial</Badge>}
+              {webqueryTestOk === false && !webqueryPartial && (
+                <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery failed</Badge>
+              )}
             </div>
+            {(webqueryDiagnostic || testWebqueryDraft.isPending) && (
+              <ConnectionDiagnosticStages
+                pending={testWebqueryDraft.isPending}
+                report={webqueryDiagnostic}
+              />
+            )}
           </div>
         )}
 
@@ -594,13 +623,19 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
               </p>
             </div>
 
-            {(webqueryTestOk !== null || sshTestOk !== null) && (
+            {(webqueryTestOk !== null || webqueryPartial || sshTestOk !== null) && (
               <div className="flex flex-wrap gap-2">
                 {webqueryTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">WebQuery tested</Badge>}
-                {webqueryTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery test failed</Badge>}
+                {webqueryPartial && <Badge variant="outline" className="text-amber-400 border-amber-500/30">WebQuery partial</Badge>}
+                {webqueryTestOk === false && !webqueryPartial && (
+                  <Badge variant="outline" className="text-destructive border-destructive/30">WebQuery test failed</Badge>
+                )}
                 {sshTestOk === true && <Badge variant="outline" className="text-emerald-400 border-emerald-500/30">SSH tested</Badge>}
                 {sshTestOk === false && <Badge variant="outline" className="text-destructive border-destructive/30">SSH test failed</Badge>}
               </div>
+            )}
+            {webqueryDiagnostic && (
+              <ConnectionDiagnosticStages compact report={webqueryDiagnostic} />
             )}
           </div>
         )}

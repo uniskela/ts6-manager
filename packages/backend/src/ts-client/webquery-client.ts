@@ -5,6 +5,11 @@ import { AppError, TeamSpeakFloodError, TSApiError } from '../middleware/error-h
 import { config } from '../config.js';
 import type { ValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
 import { createValidatedTsServerEndpoint, isAllowedTsServerHost } from '../utils/validate-ts-host.js';
+import {
+  diagnoseConnection as runDiagnoseConnection,
+  type ConnectionDiagnosticReport,
+  type DiagnoseConnectionOptions,
+} from './connection-diagnostics.js';
 
 /** UI / interactive traffic jumps ahead of background bots & animations. */
 export type WebQueryPriority = 'high' | 'normal' | 'low';
@@ -319,6 +324,14 @@ export class WebQueryClient {
       if (err instanceof TeamSpeakFloodError) throw err;
       return { ok: false, error: err?.message || String(err) };
     }
+  }
+
+  /**
+   * Staged read-only WebQuery diagnostics (reachability → auth → permissions → virtual server).
+   * Prefer this over testConnection() for operator-facing connection tests.
+   */
+  async diagnoseConnection(options?: DiagnoseConnectionOptions): Promise<ConnectionDiagnosticReport> {
+    return runDiagnoseConnection(this, options);
   }
 
   destroy(): void {

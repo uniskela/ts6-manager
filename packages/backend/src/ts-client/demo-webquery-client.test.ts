@@ -23,6 +23,12 @@ describe('DemoWebQueryClient', () => {
     const client = new DemoWebQueryClient();
     try {
       assert.deepEqual(await client.testConnection(), { ok: true, version: 'Demo mode' });
+      const diagnostic = await client.diagnoseConnection();
+      assert.equal(diagnostic.success, true);
+      assert.equal(diagnostic.overall, 'ok');
+      assert.equal(diagnostic.version, 'Demo mode');
+      assert.equal(diagnostic.stages.length, 4);
+      assert.ok(diagnostic.stages.every((stage) => stage.status === 'ok'));
     } finally {
       client.destroy();
     }
