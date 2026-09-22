@@ -4,12 +4,18 @@ import { useQuery } from '@tanstack/react-query';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { useAuthStore } from '@/stores/auth.store';
+import { useUiStore } from '@/stores/ui.store';
+import { useResolvedBackgroundMotion } from '@/hooks/use-resolved-background-motion';
 import { authApi } from '@/api/auth.api';
 import { Toaster } from 'sonner';
 
 export function AppLayout() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated());
   const setUser = useAuthStore((s) => s.setUser);
+  const background = useUiStore((s) => s.background);
+  const backgroundMotion = useUiStore((s) => s.backgroundMotion);
+  const backgroundIntensity = useUiStore((s) => s.backgroundIntensity);
+  const resolvedMotion = useResolvedBackgroundMotion(backgroundMotion);
 
   const { data: me } = useQuery({
     queryKey: ['me'],
@@ -39,7 +45,12 @@ export function AppLayout() {
       <Sidebar />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Header />
-        <main className="grid-bg min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
+        <main
+          className="app-background-surface min-w-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain"
+          data-background={background}
+          data-intensity={backgroundIntensity}
+          data-motion-resolved={resolvedMotion}
+        >
           <div className="fade-in min-w-0 p-3 sm:p-4 lg:p-5" style={{ paddingBottom: 'calc(var(--pwa-status-height, 0px) + max(1.25rem, env(safe-area-inset-bottom)))' }}>
             <Outlet />
           </div>

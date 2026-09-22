@@ -287,6 +287,71 @@
     background-size: 24px 24px;
   }
 
+  /*
+   * Decorative app background (Settings → Appearance → Background). Implemented as the
+   * scroll container's own background-image so it never adds DOM nodes, never intercepts
+   * pointer events, never causes layout shift or document-level overflow, and is invisible
+   * to assistive technology (CSS backgrounds are not exposed in the accessibility tree).
+   * "grid" intentionally matches the pattern .grid-bg already shipped, so existing users
+   * who have never touched this preference see no visual change.
+   */
+  .app-background-surface {
+    --app-bg-alpha: 1;
+  }
+  .app-background-surface[data-intensity='subtle'] { --app-bg-alpha: 0.55; }
+  .app-background-surface[data-intensity='normal'] { --app-bg-alpha: 1; }
+  .app-background-surface[data-intensity='strong'] { --app-bg-alpha: 1.6; }
+
+  .app-background-surface[data-background='grid'] {
+    background-image:
+      linear-gradient(hsl(var(--primary) / calc(0.03 * var(--app-bg-alpha))) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--primary) / calc(0.03 * var(--app-bg-alpha))) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .app-background-surface[data-background='dots'] {
+    background-image: radial-gradient(circle, hsl(var(--primary) / calc(0.14 * var(--app-bg-alpha))) 1.5px, transparent 1.5px);
+    background-size: 20px 20px;
+  }
+
+  .app-background-surface[data-background='glow'] {
+    background-image:
+      radial-gradient(circle at 12% -10%, hsl(var(--primary) / calc(0.18 * var(--app-bg-alpha))), transparent 55%),
+      radial-gradient(circle at 88% 110%, hsl(var(--primary) / calc(0.10 * var(--app-bg-alpha))), transparent 60%);
+    background-repeat: no-repeat;
+  }
+
+  .app-background-surface[data-background='aurora'] {
+    background-image:
+      radial-gradient(circle at 15% 15%, hsl(var(--primary) / calc(0.16 * var(--app-bg-alpha))), transparent 45%),
+      radial-gradient(circle at 85% 25%, hsl(var(--chart-3) / calc(0.12 * var(--app-bg-alpha))), transparent 50%),
+      radial-gradient(circle at 50% 90%, hsl(var(--primary) / calc(0.08 * var(--app-bg-alpha))), transparent 55%);
+    background-repeat: no-repeat;
+    background-size: 160% 160%;
+    background-position: 0% 0%;
+  }
+  .app-background-surface[data-background='aurora'][data-motion-resolved='on'] {
+    animation: app-aurora-drift 36s ease-in-out infinite alternate;
+  }
+  @keyframes app-aurora-drift {
+    0% { background-position: 0% 0%; }
+    100% { background-position: 100% 60%; }
+  }
+
+  .app-background-surface[data-background='noise'] {
+    background-repeat: repeat;
+    background-size: 160px 160px;
+  }
+  .app-background-surface[data-background='noise'][data-intensity='subtle'] {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .app-background-surface[data-background='noise'][data-intensity='normal'] {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.07 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .app-background-surface[data-background='noise'][data-intensity='strong'] {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.12 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
   .scan-line {
     position: relative;
     overflow: hidden;

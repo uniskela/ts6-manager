@@ -6,7 +6,11 @@ import { authApi } from '@/api/auth.api';
 import { serversApi } from '@/api/servers.api';
 import { settingsApi } from '@/api/settings.api';
 import { useAuthStore } from '@/stores/auth.store';
-import { ACCENTS, BASE_THEMES, useUiStore, type Accent, type BaseTheme } from '@/stores/ui.store';
+import {
+  ACCENTS, BASE_THEMES, BACKGROUNDS, BACKGROUND_MOTIONS, BACKGROUND_INTENSITIES, useUiStore,
+  type Accent, type BaseTheme, type Background, type BackgroundMotion, type BackgroundIntensity,
+} from '@/stores/ui.store';
+import { useResolvedBackgroundMotion } from '@/hooks/use-resolved-background-motion';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConnectionSetupGuide } from '@/components/connections/ConnectionSetupGuide';
@@ -119,8 +123,33 @@ const ACCENT_SWATCHES: Record<Accent, string> = {
   amber: 'hsl(35 92% 50%)',
 };
 
+const BACKGROUND_LABELS: Record<Background, { label: string; description: string }> = {
+  none: { label: 'None', description: 'Plain theme background' },
+  grid: { label: 'Grid', description: 'Technical grid lines' },
+  dots: { label: 'Dots', description: 'Subtle dot matrix' },
+  glow: { label: 'Glow', description: 'Soft accent-coloured glow' },
+  aurora: { label: 'Aurora', description: 'Slow-moving accent gradient' },
+  noise: { label: 'Noise', description: 'Subtle static texture' },
+};
+
+const MOTION_LABELS: Record<BackgroundMotion, { label: string; description: string }> = {
+  system: { label: 'System', description: 'Follows your device\'s reduced-motion setting' },
+  off: { label: 'Off', description: 'No decorative background animation' },
+  on: { label: 'On', description: 'Allow decorative background animation' },
+};
+
+const INTENSITY_LABELS: Record<BackgroundIntensity, string> = {
+  subtle: 'Subtle',
+  normal: 'Normal',
+  strong: 'Strong',
+};
+
 function AppearanceTab() {
-  const { baseTheme, accent, setBaseTheme, setAccent } = useUiStore();
+  const {
+    baseTheme, accent, setBaseTheme, setAccent,
+    background, setBackground, backgroundMotion, setBackgroundMotion, backgroundIntensity, setBackgroundIntensity,
+  } = useUiStore();
+  const resolvedMotion = useResolvedBackgroundMotion(backgroundMotion);
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -179,6 +208,101 @@ function AppearanceTab() {
                     <span className="h-4 w-4 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: ACCENT_SWATCHES[value] }} aria-hidden="true" />
                     <span className="truncate">{label}</span>
                     {selected && <Check className="ml-auto h-4 w-4 shrink-0 text-primary" aria-hidden="true" />}
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Background</legend>
+            <p className="text-xs text-muted-foreground">
+              Sits behind content and never affects readability or interaction.
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {BACKGROUNDS.map(value => {
+                const selected = value === background;
+                const option = BACKGROUND_LABELS[value];
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`${option.label} background`}
+                    aria-pressed={selected}
+                    onClick={() => setBackground(value)}
+                    className={`min-w-0 rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="app-background-surface mb-2 block h-8 w-full rounded border border-border/60"
+                      data-background={value}
+                      data-intensity="normal"
+                      data-motion-resolved="off"
+                    />
+                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
+                      {option.label}
+                      {selected && <Check className="h-4 w-4 text-primary" aria-hidden="true" />}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">{option.description}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+
+          {background !== 'none' && (
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium">Background intensity</legend>
+              <div className="grid grid-cols-3 gap-2">
+                {BACKGROUND_INTENSITIES.map(value => {
+                  const selected = value === backgroundIntensity;
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      aria-label={`${INTENSITY_LABELS[value]} background intensity`}
+                      aria-pressed={selected}
+                      onClick={() => setBackgroundIntensity(value)}
+                      className={`min-w-0 rounded-md border p-2 text-center text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
+                    >
+                      <span className="flex items-center justify-center gap-1.5">
+                        {INTENSITY_LABELS[value]}
+                        {selected && <Check className="h-3.5 w-3.5 text-primary" aria-hidden="true" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
+
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Motion</legend>
+            <p className="text-xs text-muted-foreground">
+              Decorative motion is never required to understand application state.
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {BACKGROUND_MOTIONS.map(value => {
+                const selected = value === backgroundMotion;
+                const option = MOTION_LABELS[value];
+                const showResolvedHint = value === 'system';
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`${option.label} motion`}
+                    aria-pressed={selected}
+                    onClick={() => setBackgroundMotion(value)}
+                    className={`min-w-0 rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
+                  >
+                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
+                      {option.label}
+                      {selected && <Check className="h-4 w-4 text-primary" aria-hidden="true" />}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {option.description}
+                      {showResolvedHint ? ` — currently ${resolvedMotion}` : ''}
+                    </span>
                   </button>
                 );
               })}
