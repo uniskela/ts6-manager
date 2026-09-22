@@ -27,6 +27,7 @@ import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { BrandMark } from '@/components/shared/BrandMark';
 import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github, Palette } from 'lucide-react';
 import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
+import { apiErrorMessage } from '@/lib/api-error';
 import { toast } from 'sonner';
 
 export default function Settings() {
@@ -470,14 +471,14 @@ function ConnectionsTab() {
                           setWebqueryTestPassed(true);
                           toast.success(data?.version ? `WebQuery OK (${data.version})` : 'WebQuery connection successful');
                         },
-                        onError: (err: any) => toast.error(err?.response?.data?.error || 'WebQuery test failed'),
+                        onError: (err: any) => toast.error(apiErrorMessage(err, 'WebQuery test failed')),
                       })}>
                         <TestTube className="h-3 w-3 mr-1" /> Test WebQuery
                       </Button>
                       {server.hasSshCredentials && (
                         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testSshServer.mutate(server.id, {
                           onSuccess: () => toast.success('SSH connection successful'),
-                          onError: (err: any) => toast.error(err?.response?.data?.error || 'SSH test failed'),
+                          onError: (err: any) => toast.error(apiErrorMessage(err, 'SSH test failed')),
                         })}>
                           <TestTube className="h-3 w-3 mr-1" /> Test SSH
                         </Button>

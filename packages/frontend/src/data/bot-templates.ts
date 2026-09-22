@@ -139,13 +139,11 @@ export const BOT_TEMPLATES: BotTemplate[] = [
         { label: 'Wave (Decorative)', value: 'wave' },
         { label: 'Alternate Case', value: 'alternateCase' },
       ] },
-      { key: 'intervalSeconds', label: 'Speed', type: 'select', defaultValue: '3', options: [
-        { label: 'Slow (5s)', value: '5' },
-        { label: 'Medium (3s)', value: '3' },
-        { label: 'Fast (2s)', value: '2' },
-        { label: 'Very Fast (1s)', value: '1' },
-        { label: 'Ultra (0.5s)', value: '0.5' },
-        { label: 'Insane (0.25s)', value: '0.25' },
+      { key: 'intervalSeconds', label: 'Speed', type: 'select', defaultValue: '10', options: [
+        { label: 'Normal (10s)', value: '10' },
+        { label: 'Relaxed (15s)', value: '15' },
+        { label: 'Calm (30s)', value: '30' },
+        { label: 'Slow (60s)', value: '60' },
       ] },
       { key: 'prefix', label: 'Channel Name Prefix', type: 'text', placeholder: '[cspacer]', defaultValue: '[cspacer]' },
       {
@@ -168,7 +166,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
             channelId: cfg.channelId,
             text: cfg.text || 'Welcome to MyServer',
             style: cfg.style || 'scroll',
-            intervalSeconds: cfg.intervalSeconds || '3',
+            intervalSeconds: cfg.intervalSeconds || '10',
             prefix: cfg.prefix || '[cspacer]',
             suppressEditEvents: cfg.suppressEditEvents !== 'false',
           }, 200, 100),

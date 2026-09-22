@@ -181,7 +181,7 @@ function normalizeFlowData(raw: any): FlowDefinition {
         channelId: config.channelId || '',
         text: config.text || '',
         style: config.style || 'scroll',
-        intervalSeconds: config.intervalSeconds || '3',
+        intervalSeconds: config.intervalSeconds || '10',
         prefix: config.prefix || '[cspacer]',
         suppressEditEvents: config.suppressEditEvents !== false && config.suppressEditEvents !== 'false',
       };
@@ -817,7 +817,7 @@ export class BotEngine {
           channelId: d.channelId,
           text: d.text,
           style: d.style || 'scroll',
-          intervalSeconds: Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 3,
+          intervalSeconds: Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 10,
           prefix: d.prefix || '[cspacer]',
           suppressEditEvents: d.suppressEditEvents !== false,
         };

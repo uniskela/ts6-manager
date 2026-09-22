@@ -16,6 +16,7 @@ export interface AnimationConfig {
 
 interface ActiveAnimation {
   timer: ReturnType<typeof setInterval>;
+  startTimer?: ReturnType<typeof setTimeout>;
   sid: number;
   channelId: string;
   suppressEditEvents: boolean;
@@ -23,7 +24,23 @@ interface ActiveAnimation {
 
 const MAX_CHANNEL_NAME = 40;
 const ERROR_LOG_THROTTLE_MS = 15_000;
-const MAX_BACKOFF_MS = 30_000;
+const MAX_BACKOFF_MS = 60_000;
+
+/**
+ * Floor for animated-channel ticks. Cosmetic renames must leave Query headroom
+ * for Instance/Dashboard/SSH traffic; values below this are clamped.
+ */
+export const MIN_ANIMATION_INTERVAL_MS = 10_000;
+
+/** Minimum gap between any two channeledit frames across all active animations. */
+export const MIN_GLOBAL_CHANNEL_EDIT_GAP_MS = 3_000;
+
+export function effectiveAnimationIntervalMs(intervalSeconds: number): number {
+  const requested = Number.isFinite(intervalSeconds) && intervalSeconds > 0
+    ? intervalSeconds * 1000
+    : MIN_ANIMATION_INTERVAL_MS;
+  return Math.max(MIN_ANIMATION_INTERVAL_MS, requested);
+}
 
 export function shouldBackoffAnimationError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -193,6 +210,8 @@ function resolveTimeVars(text: string, timezone?: string): string {
 
 export class AnimationManager {
   private animations: Map<number, ActiveAnimation> = new Map();
+  /** Shared across all flows so concurrent wave/scroll timers cannot cluster channeledits. */
+  private lastGlobalChannelEditAt = 0;
 
   startAnimation(
     flowId: number,
@@ -205,7 +224,9 @@ export class AnimationManager {
 
     // Animated channel names are cosmetic background traffic. Keep them well below
     // TeamSpeak Query anti-spam limits so dashboard/admin traffic has headroom.
-    const intervalMs = Math.max(5_000, config.intervalSeconds * 1000);
+    const intervalMs = effectiveAnimationIntervalMs(config.intervalSeconds);
+    // Stagger startup so enabling several flows does not burst channeledit at t=0.
+    const startDelayMs = this.animations.size * MIN_GLOBAL_CHANNEL_EDIT_GAP_MS;
 
     // Tick runtime state lives in this closure (not on the map entry) so overlapping
     // setInterval callbacks can skip/backoff without racing the Map record.
@@ -244,6 +265,12 @@ export class AnimationManager {
         return;
       }
 
+      const sinceGlobal = Date.now() - this.lastGlobalChannelEditAt;
+      if (this.lastGlobalChannelEditAt > 0 && sinceGlobal < MIN_GLOBAL_CHANNEL_EDIT_GAP_MS) {
+        state.pauseUntil = Date.now() + (MIN_GLOBAL_CHANNEL_EDIT_GAP_MS - sinceGlobal);
+        return;
+      }
+
       state.inFlight = true;
       try {
         // Resolve {{time.*}} in text each tick (for dynamic content)
@@ -253,6 +280,9 @@ export class AnimationManager {
 
         const channelName = frames[state.frameIndex % frames.length];
         state.frameIndex++;
+
+        // Reserve the global slot before awaiting so overlapping timers skip.
+        this.lastGlobalChannelEditAt = Date.now();
 
         await client.executePost(sid, 'channeledit', {
           cid: config.channelId,
@@ -287,24 +317,26 @@ export class AnimationManager {
       }
     };
 
-    // Run first tick immediately
-    tick();
-
     const timer = setInterval(tick, intervalMs);
+    const startTimer = setTimeout(() => { void tick(); }, startDelayMs);
+    startTimer.unref?.();
+
     this.animations.set(flowId, {
       timer,
       sid,
       channelId: String(config.channelId),
       suppressEditEvents: config.suppressEditEvents !== false,
+      startTimer,
     });
 
-    console.log(`[AnimationManager] Started animation for flow ${flowId}: style=${config.style}, interval=${config.intervalSeconds}s (effective ${intervalMs}ms), channel=${config.channelId}, suppressEditEvents=${config.suppressEditEvents !== false}`);
+    console.log(`[AnimationManager] Started animation for flow ${flowId}: style=${config.style}, interval=${config.intervalSeconds}s (effective ${intervalMs}ms), startDelay=${startDelayMs}ms, channel=${config.channelId}, suppressEditEvents=${config.suppressEditEvents !== false}`);
   }
 
   stopAnimation(flowId: number): void {
     const anim = this.animations.get(flowId);
     if (anim) {
       clearInterval(anim.timer);
+      if (anim.startTimer) clearTimeout(anim.startTimer);
       this.animations.delete(flowId);
       console.log(`[AnimationManager] Stopped animation for flow ${flowId}`);
     }
@@ -313,6 +345,7 @@ export class AnimationManager {
   stopAll(): void {
     for (const [, anim] of this.animations) {
       clearInterval(anim.timer);
+      if (anim.startTimer) clearTimeout(anim.startTimer);
     }
     this.animations.clear();
   }
