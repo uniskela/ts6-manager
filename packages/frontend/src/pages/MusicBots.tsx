@@ -81,6 +81,17 @@ function youtubeInfoErrorMessage(err: unknown): string {
   return 'Failed to load URL info';
 }
 
+/** Create can succeed server-side while the browser sees timeout / proxy 499. */
+function isMusicBotCreateTransportFailure(err: unknown): boolean {
+  if (!axios.isAxiosError(err)) return false;
+  if (err.code === 'ECONNABORTED' || err.code === 'ERR_CANCELED') return true;
+  const status = err.response?.status;
+  if (status === 499 || status === 408 || status === 504) return true;
+  // Aborted before a status body (nginx 499 often surfaces as network error)
+  if (!err.response) return true;
+  return false;
+}
+
 function urlInfoPlaylistLabel(info: UrlLoadInfo): string {
   if (info.type !== 'playlist') return 'Single Video';
   if (info.sourceTrackCount != null && info.matchedCount != null) {
@@ -672,6 +683,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
 // ─── Bots Tab ────────────────────────────────────────────────────────────────
 
 function BotsTab() {
+  const queryClient = useQueryClient();
   const { data, isLoading } = useMusicBots();
   const { data: servers } = useServers();
   const { selectedConfigId } = useServerStore();
@@ -717,8 +729,10 @@ function BotsTab() {
   const handleCreate = () => {
     const configId = parseInt(form.serverConfigId);
     if (!configId) { toast.error('Please select a server'); return; }
+    const createdName = form.name;
+    const knownIds = new Set(bots.map((b) => b.id));
     createBot.mutate({
-      name: form.name,
+      name: createdName,
       serverConfigId: configId,
       nickname: form.nickname || 'MusicBot',
       serverPassword: form.serverPassword || undefined,
@@ -731,7 +745,30 @@ function BotsTab() {
       autoStart: form.autoStart,
     }, {
       onSuccess: () => { toast.success('Music bot created'); setShowCreate(false); resetForm(); },
-      onError: () => toast.error('Failed to create bot'),
+      onError: async (err) => {
+        // Proxy/client often abort (499 / timeout) while the bot row already exists.
+        if (isMusicBotCreateTransportFailure(err)) {
+          try {
+            const list = await queryClient.fetchQuery({
+              queryKey: ['music-bots'],
+              queryFn: musicBotsApi.list,
+            });
+            const latest = Array.isArray(list) ? list : [];
+            const appeared = latest.some(
+              (b: MusicBotSummary) => b.name === createdName && !knownIds.has(b.id),
+            );
+            if (appeared) {
+              toast.success('Music bot created');
+              setShowCreate(false);
+              resetForm();
+              return;
+            }
+          } catch {
+            // fall through to failure toast
+          }
+        }
+        toast.error('Failed to create bot');
+      },
     });
   };
 

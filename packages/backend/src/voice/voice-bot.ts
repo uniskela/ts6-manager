@@ -414,6 +414,14 @@ export class VoiceBot extends EventEmitter {
     this.lastStreamTitle = '';
   }
 
+  /** Apply a persisted/generated identity before connect (create may finish keygen later). */
+  setIdentity(identity: IdentityData): void {
+    this.config.identity = identity;
+    if (this._status === 'stopped') {
+      this.identity = identity;
+    }
+  }
+
   async start(): Promise<void> {
     if (this._status === 'connected' || this._status === 'playing' || this._status === 'paused') {
       throw new Error('Bot is already running');

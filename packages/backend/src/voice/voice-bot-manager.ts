@@ -3,7 +3,7 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
 import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus } from './voice-bot.js';
-import { generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
+import { generateIdentity, generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
 import type { QueueItem } from './playlist/queue.js';
 import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
@@ -22,6 +22,8 @@ export class VoiceBotManager extends EventEmitter {
   private botServerConfigIds = new Map<number, number>();
   private progressTimers = new Map<number, ReturnType<typeof setInterval>>();
   private reconnectState = new Map<number, ReconnectAttemptState>();
+  /** In-flight security-level-23 identity jobs keyed by bot id (create returns before these finish). */
+  private identityJobs = new Map<number, Promise<void>>();
   private musicCmdHandler: MusicCommandHandler | null = null;
 
   constructor(
@@ -232,17 +234,17 @@ export class VoiceBotManager extends EventEmitter {
       throw new Error(`Music bot limit reached (${limit}). Adjust the limit in Settings.`);
     }
 
-    // Generate identity with security level high enough for most servers (default minimum is 8, many use 21+)
-    // Uses worker thread to avoid blocking the event loop (~5s of SHA1 brute-force)
-    const identity = await generateIdentityAsync(23);
-    // H8: Encrypt identity data at rest
-    const identityData = encrypt(JSON.stringify(identity, (_key, value) =>
-      typeof value === 'bigint' ? value.toString() : value
-    ));
-
     // Get server config for host
     const serverConfig = await this.prisma.tsServerConfig.findUnique({ where: { id: data.serverConfigId } });
     if (!serverConfig) throw new Error('Server config not found');
+
+    // Fast placeholder identity (security level 0 = keypair only, no SHA1 grind).
+    // Level-23 upgrade runs in the background so create can return 201 before the
+    // cold ~5–30s keygen that was causing proxy/client 499 on first create.
+    const quickIdentity = generateIdentity(0);
+    const quickIdentityData = encrypt(JSON.stringify(quickIdentity, (_key, value) =>
+      typeof value === 'bigint' ? value.toString() : value
+    ));
 
     const dbBot = await this.prisma.musicBot.create({
       data: {
@@ -257,7 +259,7 @@ export class VoiceBotManager extends EventEmitter {
         voicePort: data.voicePort ?? 9987,
         volume: data.volume ?? 50,
         autoStart: data.autoStart ?? false,
-        identityData,
+        identityData: quickIdentityData,
       },
     });
 
@@ -272,7 +274,7 @@ export class VoiceBotManager extends EventEmitter {
       defaultChannel: dbBot.defaultChannel ?? undefined,
       channelPassword: dbBot.channelPassword ?? undefined,
       volume: dbBot.volume,
-      identity,
+      identity: quickIdentity,
       sidecarBinaryPath: process.env.SIDECAR_BINARY_PATH,
       sidecarPort: 9800,
       streamPreset: '720p',
@@ -284,9 +286,9 @@ export class VoiceBotManager extends EventEmitter {
     this.bots.set(dbBot.id, bot);
     this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 
-    // registerBot already schedules refreshBotChannels; do not await SSH
-    // listener sync here — identity work already took seconds and blocking
-    // the HTTP 201 leaves the create modal open (proxy 499) while Query floods.
+    this.scheduleIdentityUpgrade(dbBot.id, bot);
+
+    // Do not await SSH listener sync on the create HTTP path.
     if (this.musicCmdHandler) {
       void this.musicCmdHandler.refreshBotChannels(dbBot.id).catch((err: any) => {
         console.warn(
@@ -298,6 +300,37 @@ export class VoiceBotManager extends EventEmitter {
     return { id: dbBot.id };
   }
 
+  /**
+   * Upgrade placeholder identity to security level 23 off the HTTP path.
+   * Only attaches to the in-memory bot while it is still stopped — a running
+   * connection already used the placeholder keys.
+   */
+  private scheduleIdentityUpgrade(botId: number, bot: VoiceBot): void {
+    const job = (async () => {
+      try {
+        const identity = await generateIdentityAsync(23);
+        const identityData = encrypt(JSON.stringify(identity, (_key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        ));
+        await this.prisma.musicBot.update({
+          where: { id: botId },
+          data: { identityData },
+        });
+        // Always refresh config.identity for the next start(); setIdentity keeps
+        // the live connection keys if the bot is already running.
+        bot.setIdentity(identity);
+        console.log(`[VoiceBotManager] Identity upgraded to level 23 for bot ${botId}`);
+      } catch (err: any) {
+        console.warn(
+          `[VoiceBotManager] Background identity upgrade for bot ${botId}: ${err?.message || err}`,
+        );
+      } finally {
+        this.identityJobs.delete(botId);
+      }
+    })();
+    this.identityJobs.set(botId, job);
+  }
+
   getBot(id: number): VoiceBot | undefined {
     return this.bots.get(id);
   }
@@ -305,6 +338,7 @@ export class VoiceBotManager extends EventEmitter {
   async removeBot(id: number): Promise<void> {
     this.clearReconnect(id);
     this.stopProgressBroadcast(id);
+    this.identityJobs.delete(id);
     this.musicCmdHandler?.unregisterBot(id);
 
     const bot = this.bots.get(id);
@@ -348,6 +382,8 @@ export class VoiceBotManager extends EventEmitter {
     const bot = this.bots.get(id);
     if (!bot) throw new Error(`Music bot ${id} not found`);
     this.clearReconnect(id);
+    // Do not await level-23 upgrade here — create already attached a fast
+    // placeholder identity so Start cannot inherit the old create 499 hang.
     await bot.start();
     if (this.musicCmdHandler) {
       await this.musicCmdHandler.refreshBotChannels(id);
