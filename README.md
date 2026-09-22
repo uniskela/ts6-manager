@@ -351,6 +351,7 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 When a music bot is connected to a configured command channel, users there can control it via chat. These are the built-in commands; custom commands can also be configured.
 
 - **`!help`** — Show built-in and custom commands
+- **`!here [id]`** / **`!come [id]`** — Move a music bot to this channel; with more than one bot available, lists IDs first
 - **`!play <url>`** — Play YouTube, Spotify, or Apple Music media
 - **`!play`** — Resume paused playback
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue using one-based positions

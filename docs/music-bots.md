@@ -29,6 +29,7 @@ Bots can reconnect automatically with exponential backoff and overlap protection
 When a bot is connected to a configured command channel, users in that channel can use built-in commands.
 
 - **`!help`** — Show built-in and custom commands
+- **`!here [id]`** / **`!come [id]`** — Move a music bot to this channel; with more than one bot available, lists IDs first
 - **`!play <url>`** — Play supported media
 - **`!play`** — Resume paused playback
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue

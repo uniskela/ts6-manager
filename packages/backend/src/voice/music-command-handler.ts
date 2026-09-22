@@ -54,6 +54,10 @@ const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 const CHAT_REPLY_COOLDOWN_MS = 2500;
 const chatReplyCooldownUntil = new Map<string, number>();
 
+/** Collapse duplicate !here lists when several bots hear the same channel message. */
+const HERE_LIST_COOLDOWN_MS = 2000;
+const hereListCooldownUntil = new Map<string, number>();
+
 function chatReplyCooldownKey(botId: number, clid: number): string {
   return `${botId}:${clid}`;
 }
@@ -65,6 +69,10 @@ function isChatReplyCoolingDown(botId: number, clid: number): boolean {
 
 function markChatReplyCooldown(botId: number, clid: number): void {
   chatReplyCooldownUntil.set(chatReplyCooldownKey(botId, clid), Date.now() + CHAT_REPLY_COOLDOWN_MS);
+}
+
+function isBotSummonable(bot: VoiceBot): boolean {
+  return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
 }
 
 function isSpotifyShareUrl(url: string): boolean {
@@ -249,6 +257,17 @@ export class MusicCommandHandler {
     const botIds = this.channelToBots.get(key);
     if (!botIds || botIds.size === 0) return;
 
+    const msg = (data.msg || '').trim();
+    if (msg.startsWith(CMD_PREFIX)) {
+      const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
+      const command = (parts[0] || '').toLowerCase();
+      if (command === 'here' || command === 'come') {
+        const rawArgs = parts.slice(1).join(' ').trim();
+        await this.handleHereCrossChannel(configId, sid, channelId, data, rawArgs);
+        return;
+      }
+    }
+
     const botId = [...botIds].find((id) => {
       const bot = this.voiceBotManager.getBot(id);
       if (!bot || bot.status === 'stopped' || bot.status === 'error') return false;
@@ -327,6 +346,10 @@ export class MusicCommandHandler {
         switch (command) {
           case 'help':
             await this.handleHelp(botId, bot, userClid);
+            break;
+          case 'here':
+          case 'come':
+            await this.handleHere(botId, bot, userClid, args);
             break;
           case 'playlist':
           case 'pl':
@@ -566,6 +589,191 @@ export class MusicCommandHandler {
       await this.refreshBotChannels(botId);
     } catch (err: any) {
       console.warn(`[MusicCmd] Bot ${botId}: could not join channel ${channelId}: ${err.message}`);
+    }
+  }
+
+  private async listSummonableBots(
+    serverConfigId: number,
+    virtualServerId: number,
+  ): Promise<Array<{ id: number; name: string; bot: VoiceBot }>> {
+    const dbBots = await this.prisma.musicBot.findMany({
+      where: { serverConfigId },
+      select: { id: true, name: true, nickname: true, virtualServerId: true },
+      orderBy: { id: 'asc' },
+    });
+
+    const result: Array<{ id: number; name: string; bot: VoiceBot }> = [];
+    for (const row of dbBots) {
+      const sid = row.virtualServerId ?? 1;
+      if (sid !== virtualServerId) continue;
+      const bot = this.voiceBotManager.getBot(row.id);
+      if (!bot || !isBotSummonable(bot)) continue;
+      result.push({
+        id: row.id,
+        name: (row.name || row.nickname || `Bot ${row.id}`).slice(0, 60),
+        bot,
+      });
+    }
+    return result;
+  }
+
+  private formatHereBotList(
+    bots: Array<{ id: number; name: string }>,
+  ): string {
+    const lines = bots.map((b) => `[${b.id}] ${b.name}`);
+    return `Available bots:\n${lines.join('\n')}\nUse: !here <id>`;
+  }
+
+  private shouldSpeakHereList(
+    serverConfigId: number,
+    virtualServerId: number,
+    channelId: number,
+    userClid: number,
+  ): boolean {
+    const key = `${serverConfigId}:${virtualServerId}:${channelId}:${userClid}`;
+    const until = hereListCooldownUntil.get(key) ?? 0;
+    if (Date.now() < until) return false;
+    hereListCooldownUntil.set(key, Date.now() + HERE_LIST_COOLDOWN_MS);
+    return true;
+  }
+
+  private async summonBotToChannel(
+    target: { id: number; name: string; bot: VoiceBot },
+    channelId: number,
+    replyBot: VoiceBot,
+    userClid: number,
+  ): Promise<void> {
+    if (!channelId || channelId <= 0) {
+      this.reply(replyBot, userClid, 'Could not determine this channel.');
+      return;
+    }
+
+    if (target.bot.getCurrentChannelId() === channelId) {
+      this.reply(replyBot, userClid, `${target.name} [#${target.id}] is already here.`);
+      return;
+    }
+
+    try {
+      target.bot.joinChannel(channelId);
+      console.log(
+        `[MusicCmd] Bot ${target.id}: summoned to channel ${channelId} by clid=${userClid}`,
+      );
+      await this.refreshBotChannels(target.id);
+      this.reply(replyBot, userClid, `${target.name} [#${target.id}] is joining.`);
+    } catch (err: any) {
+      console.warn(`[MusicCmd] Bot ${target.id}: summon failed: ${err.message}`);
+      this.reply(replyBot, userClid, `Could not move ${target.name} [#${target.id}]: ${err.message}`);
+    }
+  }
+
+  private async handleHere(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    args: string,
+  ): Promise<void> {
+    const cfg = this.botChannelConfig.get(botId);
+    const serverConfigId = cfg?.serverConfigId ?? bot.currentConfig.serverConfigId;
+    const virtualServerId = cfg?.virtualServerId ?? 1;
+    const channelId =
+      this.activeReplyChannel.get(`${botId}:${userClid}`) ||
+      bot.getCurrentChannelId() ||
+      0;
+
+    const candidates = await this.listSummonableBots(serverConfigId, virtualServerId);
+    if (candidates.length === 0) {
+      this.reply(bot, userClid, 'No music bots are available right now.');
+      return;
+    }
+
+    if (!args) {
+      if (candidates.length === 1) {
+        await this.summonBotToChannel(candidates[0], channelId, bot, userClid);
+        return;
+      }
+      if (!this.shouldSpeakHereList(serverConfigId, virtualServerId, channelId, userClid)) {
+        return;
+      }
+      this.reply(bot, userClid, this.formatHereBotList(candidates));
+      return;
+    }
+
+    const targetId = parseInt(args, 10);
+    if (isNaN(targetId) || String(targetId) !== args.trim()) {
+      this.reply(bot, userClid, 'Usage: !here [id] — Use !here to list bots.');
+      return;
+    }
+
+    const target = candidates.find((c) => c.id === targetId);
+    if (!target) {
+      this.reply(
+        bot,
+        userClid,
+        `Bot #${targetId} is not available. Use !here to list bots.`,
+      );
+      return;
+    }
+
+    await this.summonBotToChannel(target, channelId, bot, userClid);
+  }
+
+  /** Cross-channel !here: list/summon any running bot on this virtual server. */
+  private async handleHereCrossChannel(
+    configId: number,
+    sid: number,
+    channelId: number,
+    data: Record<string, string>,
+    args: string,
+  ): Promise<void> {
+    const userClid = parseInt(data.invokerid || '0', 10);
+    if (!userClid) return;
+
+    const candidates = await this.listSummonableBots(configId, sid);
+    if (candidates.length === 0) {
+      if (this.eventBridge) {
+        await this.eventBridge.sendChannelText(
+          configId,
+          sid,
+          channelId,
+          'No music bots are available right now.',
+        );
+      }
+      return;
+    }
+
+    const replyBot = candidates[0].bot;
+    // Route replies through a summonable bot while tagging the command channel.
+    this.activeReplyChannel.set(`${replyBot.currentConfig.id}:${userClid}`, channelId);
+    try {
+      if (!args) {
+        if (candidates.length === 1) {
+          await this.summonBotToChannel(candidates[0], channelId, replyBot, userClid);
+          return;
+        }
+        if (!this.shouldSpeakHereList(configId, sid, channelId, userClid)) return;
+        this.reply(replyBot, userClid, this.formatHereBotList(candidates));
+        return;
+      }
+
+      const targetId = parseInt(args, 10);
+      if (isNaN(targetId) || String(targetId) !== args.trim()) {
+        this.reply(replyBot, userClid, 'Usage: !here [id] — Use !here to list bots.');
+        return;
+      }
+
+      const target = candidates.find((c) => c.id === targetId);
+      if (!target) {
+        this.reply(
+          replyBot,
+          userClid,
+          `Bot #${targetId} is not available. Use !here to list bots.`,
+        );
+        return;
+      }
+
+      await this.summonBotToChannel(target, channelId, replyBot, userClid);
+    } finally {
+      this.activeReplyChannel.delete(`${replyBot.currentConfig.id}:${userClid}`);
     }
   }
 

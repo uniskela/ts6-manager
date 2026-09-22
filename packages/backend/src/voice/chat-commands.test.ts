@@ -20,6 +20,8 @@ describe('normalizeChatCommandName', () => {
 describe('isReservedChatCommandName', () => {
   it('reserves built-ins including help', () => {
     assert.equal(isReservedChatCommandName('help'), true);
+    assert.equal(isReservedChatCommandName('here'), true);
+    assert.equal(isReservedChatCommandName('come'), true);
     assert.equal(isReservedChatCommandName('PLAY'), true);
     assert.equal(isReservedChatCommandName('shuffle'), true);
     assert.equal(isReservedChatCommandName('rules'), false);
