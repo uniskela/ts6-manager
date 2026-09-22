@@ -398,6 +398,37 @@ test('successful SSH !help still suppresses a later voice reply on that channel'
   assert.equal(f.replies.length, 0);
 });
 
+test('voice !help with homeCid=0 resolves invoker channel so claim matches SSH', async () => {
+  const bot = makeBot(1, { name: 'A', channelId: 0 });
+  const f = fixture([bot]);
+  const sent: string[] = [];
+  f.handler.eventBridge = {
+    executeCommand: async () => 'clid=2 cid=20 client_type=0|clid=101 cid=1 client_type=0',
+    sendChannelText: async (_c: number, _s: number, _cid: number, msg: string) => {
+      sent.push(msg);
+      return true;
+    },
+  };
+  // Voice replies first with resolved cid=20; SSH helper must dedupe on the same key.
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, undefined);
+  assert.equal(f.replies.length, 1);
+  await f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
+  assert.equal(sent.length, 0);
+});
+
+test('voice !help with unknown channel skips when SSH can own the line', async () => {
+  const bot = makeBot(1, { name: 'A', channelId: 0 });
+  const f = fixture([bot]);
+  f.handler.eventBridge = {
+    executeCommand: async () => {
+      throw new Error('SSH clientlist unavailable');
+    },
+    sendChannelText: async () => true,
+  };
+  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, undefined);
+  assert.equal(f.replies.length, 0);
+});
+
 test('!here prefers idle from clientlist even when voice peer count is stale zero', async () => {
   const busy = makeBot(1, { name: 'Busy', channelId: 10, peers: 0, ts3ClientId: 101 });
   const idle = makeBot(2, { name: 'Idle', channelId: 11, peers: 0, ts3ClientId: 102 });

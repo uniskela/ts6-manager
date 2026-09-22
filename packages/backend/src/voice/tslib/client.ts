@@ -790,9 +790,11 @@ export class Ts3Client extends EventEmitter {
         const clid = parseInt(parsed.params.clid || "0");
         const cid = parseInt(parsed.params.ctid || parsed.params.cid || "0");
         // Initial join (and some reconnect paths) never send notifyclientmoved for us —
-        // learn home channel from our own enter-view so !here / idle checks work.
+        // learn home channel from our own enter-view only while still unknown.
+        // Never overwrite a known home (optimistic moveToChannel / prior discover) —
+        // stale enter-view can race and clear peers mid-summon.
         if (clid && clid === this.clientId && cid > 0) {
-          if (this.currentChannelId !== cid) {
+          if (this.currentChannelId <= 0) {
             this.currentChannelId = cid;
             this.channelMembers.clear();
             this.queryMembers.clear();

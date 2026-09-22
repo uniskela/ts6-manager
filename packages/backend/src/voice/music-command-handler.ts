@@ -687,14 +687,42 @@ export class MusicCommandHandler {
     const cfg = this.botChannelConfig.get(botId);
     const serverConfigId = cfg?.serverConfigId ?? bot.currentConfig.serverConfigId;
     const virtualServerId = cfg?.virtualServerId ?? 1;
-    const channelId =
+    const hinted =
       this.activeReplyChannel.get(`${botId}:${userClid}`) ||
       bot.getCurrentChannelId() ||
       0;
-    const helpKey = helpActionKey(serverConfigId, virtualServerId, channelId, userClid);
+    const channelId = await this.resolveCommandChannelId(
+      botId,
+      bot,
+      userClid,
+      hinted > 0 ? hinted : undefined,
+    );
+
+    if (channelId > 0) {
+      this.activeReplyChannel.set(`${botId}:${userClid}`, channelId);
+    }
+
+    // Do not claim with cid=0 — that key never matches the SSH helper's real listener
+    // cid, so voice + cross-channel both post. Align with !here: resolve first; if
+    // still unknown and SSH can own the line, leave it to the helper.
+    if (channelId <= 0) {
+      console.warn(
+        `[MusicCmd] !help skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
+      );
+      if (this.eventBridge) return;
+      // Pure voice (no Query): claim cid=0 so sibling bots in the same unknown state
+      // still collapse to one reply.
+    }
+
+    const helpKey = helpActionKey(
+      serverConfigId,
+      virtualServerId,
+      channelId > 0 ? channelId : 0,
+      userClid,
+    );
     if (!claimHelpAction(helpKey)) {
       console.log(
-        `[MusicCmd] !help deduped (bot=${botId} cid=${channelId} clid=${userClid})`,
+        `[MusicCmd] !help deduped (bot=${botId} cid=${channelId || 0} clid=${userClid})`,
       );
       return;
     }

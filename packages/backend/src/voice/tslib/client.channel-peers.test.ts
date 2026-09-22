@@ -36,6 +36,23 @@ test('own notifycliententerview sets home channel when still unknown', () => {
   assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
 });
 
+test('own notifycliententerview does not overwrite known home or clear peers', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 20;
+  (client as any).channelMembers.add(3);
+  (client as any).channelMembers.add(4);
+  const sent: string[] = [];
+  (client as any).sendCommand = (cmd: string) => {
+    sent.push(cmd);
+  };
+  // Stale/racing enter-view for a different cid must not clobber optimistic move.
+  feed(client, 'notifycliententerview clid=9 ctid=34 client_type=0');
+  assert.equal(client.getCurrentChannelId(), 20);
+  assert.equal(client.getChannelUserCount(), 2);
+  assert.equal(sent.length, 0);
+});
+
 test('clientlist discovers home channel when currentChannelId is 0', () => {
   const client = new Ts3Client();
   (client as any).clientId = 9;
