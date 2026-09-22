@@ -34,6 +34,7 @@ export function useReplaceIptvPlaylistFile() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['iptv-playlists'] });
       qc.invalidateQueries({ queryKey: ['iptv-channels'] });
+      qc.invalidateQueries({ queryKey: ['iptv-groups'] });
     },
   });
 }
@@ -62,6 +63,7 @@ export function useRefreshIptvPlaylist() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['iptv-playlists'] });
       qc.invalidateQueries({ queryKey: ['iptv-channels'] });
+      qc.invalidateQueries({ queryKey: ['iptv-groups'] });
     },
   });
 }
