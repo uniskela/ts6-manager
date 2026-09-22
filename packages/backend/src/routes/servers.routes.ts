@@ -1,6 +1,6 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
-import { AppError } from '../middleware/error-handler.js';
+import { AppError, TeamSpeakFloodError } from '../middleware/error-handler.js';
 import { WebQueryClient, createWebQueryClient } from '../ts-client/webquery-client.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { encrypt, decrypt } from '../utils/crypto.js';
@@ -11,6 +11,21 @@ import {
   sanitizeTsServerHost,
   validateTsServerPort,
 } from '../utils/validate-ts-host.js';
+
+function throwIfSharedQueryFlooded(req: Request, configId: number): void {
+  const pool: ConnectionPool | undefined = req.app.locals.connectionPool;
+  if (!pool) return;
+  try {
+    const client = pool.getClient(configId);
+    const remainingMs = client.getFloodCooldownRemainingMs();
+    if (remainingMs > 0) {
+      throw new TeamSpeakFloodError(Math.max(1, Math.ceil(remainingMs / 1000)));
+    }
+  } catch (err) {
+    if (err instanceof TeamSpeakFloodError) throw err;
+    // Missing/disabled pool entries still fall through to a fresh probe.
+  }
+}
 
 export const serverRoutes: Router = Router();
 
@@ -241,14 +256,17 @@ serverRoutes.post('/test-ssh', requireRole('admin'), async (req: Request, res: R
 serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
+    const configId = parseInt(String(req.params.configId));
     const server = await prisma.tsServerConfig.findUnique({
-      where: { id: parseInt(String(req.params.configId)) },
+      where: { id: configId },
     });
     if (!server) throw new AppError(404, 'Server config not found');
     if (server.isDemo) {
       res.json({ success: true, version: 'Demo mode' });
       return;
     }
+
+    throwIfSharedQueryFlooded(req, configId);
 
     const client = createWebQueryClient(server.host, server.webqueryPort, decrypt(server.apiKey), server.useHttps);
     const result = await client.testConnection();
@@ -265,8 +283,9 @@ serverRoutes.post('/:configId/test', requireRole('admin'), async (req: Request, 
 serverRoutes.post('/:configId/test-ssh', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
+    const configId = parseInt(String(req.params.configId));
     const server = await prisma.tsServerConfig.findUnique({
-      where: { id: parseInt(String(req.params.configId)) },
+      where: { id: configId },
     });
     if (!server) throw new AppError(404, 'Server config not found');
     if (server.isDemo) {
@@ -275,6 +294,10 @@ serverRoutes.post('/:configId/test-ssh', requireRole('admin'), async (req: Reque
     if (!server.sshUsername || !server.sshPassword) {
       throw new AppError(400, 'SSH credentials not configured');
     }
+
+    // Shared WebQuery flood cooldown means TeamSpeak is still blocking this manager
+    // source address — a fresh SSH Query probe would only deepen the ban window.
+    throwIfSharedQueryFlooded(req, configId);
 
     const result = await testSshConnection({
       host: server.host,

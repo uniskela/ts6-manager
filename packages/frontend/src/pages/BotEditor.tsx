@@ -1314,19 +1314,27 @@ export default function BotEditor() {
                       </div>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Speed</Label>
-                        <Select value={selectedNodeData.config.intervalSeconds || '3'} onValueChange={(v) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, intervalSeconds: v } } : n))}>
+                        <Select
+                          value={(() => {
+                            const raw = selectedNodeData.config.intervalSeconds || '10';
+                            const n = parseFloat(String(raw));
+                            if (!Number.isFinite(n) || n < 10) return '10';
+                            if (n <= 10) return '10';
+                            if (n <= 15) return '15';
+                            if (n <= 30) return '30';
+                            return '60';
+                          })()}
+                          onValueChange={(v) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, intervalSeconds: v } } : n))}
+                        >
                           <SelectTrigger className="h-7 text-xs mt-1"><SelectValue /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="0.25">Insane (0.25s)</SelectItem>
-                            <SelectItem value="0.5">Ultra (0.5s)</SelectItem>
-                            <SelectItem value="1">Very Fast (1s)</SelectItem>
-                            <SelectItem value="2">Fast (2s)</SelectItem>
-                            <SelectItem value="3">Medium (3s)</SelectItem>
-                            <SelectItem value="5">Slow (5s)</SelectItem>
+                            <SelectItem value="10">Normal (10s)</SelectItem>
                             <SelectItem value="15">Relaxed (15s)</SelectItem>
                             <SelectItem value="30">Calm (30s)</SelectItem>
+                            <SelectItem value="60">Slow (60s)</SelectItem>
                           </SelectContent>
                         </Select>
+                        <p className="text-[9px] text-muted-foreground mt-1">Faster than 10s is clamped server-side so Query flood protection does not trip.</p>
                       </div>
                       <div>
                         <Label className="text-[10px] text-muted-foreground">Prefix</Label>

@@ -10,7 +10,9 @@ const getClient = (req: Request) => {
 };
 
 instanceRoutes.get('/', async (req: Request, res: Response, next) => {
-  try { res.json(await getClient(req).execute(0, 'instanceinfo')); } catch (err) { next(err); }
+  try {
+    res.json(await getClient(req).execute(0, 'instanceinfo', undefined, { priority: 'high' }));
+  } catch (err) { next(err); }
 });
 
 // M3: Whitelist safe parameters for instanceedit
@@ -32,14 +34,18 @@ instanceRoutes.put('/', requireRole('admin'), async (req: Request, res: Response
     for (const [key, val] of Object.entries(req.body)) {
       if (ALLOWED_INSTANCE_PARAMS.has(key)) filtered[key] = val;
     }
-    res.json(await getClient(req).execute(0, 'instanceedit', filtered));
+    res.json(await getClient(req).execute(0, 'instanceedit', filtered, { priority: 'high' }));
   } catch (err) { next(err); }
 });
 
 instanceRoutes.get('/host', async (req: Request, res: Response, next) => {
-  try { res.json(await getClient(req).execute(0, 'hostinfo')); } catch (err) { next(err); }
+  try {
+    res.json(await getClient(req).execute(0, 'hostinfo', undefined, { priority: 'high' }));
+  } catch (err) { next(err); }
 });
 
 instanceRoutes.get('/version', async (req: Request, res: Response, next) => {
-  try { res.json(await getClient(req).execute(0, 'version')); } catch (err) { next(err); }
+  try {
+    res.json(await getClient(req).execute(0, 'version', undefined, { priority: 'high' }));
+  } catch (err) { next(err); }
 });

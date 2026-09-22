@@ -19,6 +19,7 @@ import {
 import { TS6_SERVER_DOCS } from '@/content/teamspeak-docs';
 import { ArrowLeft, ArrowRight, Check, Loader2, Radar, Sparkles, TestTube } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 
 const STEPS = [
@@ -209,7 +210,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
       },
       onError: (err: any) => {
         setWebqueryTestOk(false);
-        toast.error(err?.response?.data?.error || 'WebQuery test failed');
+        toast.error(apiErrorMessage(err, 'WebQuery test failed'));
       },
     });
   };
@@ -222,7 +223,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
       },
       onError: (err: any) => {
         setSshTestOk(false);
-        toast.error(err?.response?.data?.error || 'SSH test failed');
+        toast.error(apiErrorMessage(err, 'SSH test failed'));
       },
     });
   };

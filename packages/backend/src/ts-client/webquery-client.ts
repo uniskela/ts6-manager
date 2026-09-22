@@ -314,6 +314,9 @@ export class WebQueryClient {
       const version = await this.execute(0, 'version', undefined, { priority: 'high' });
       return { ok: true, version };
     } catch (err: any) {
+      // Preserve flood cooldown as HTTP 429 via the route error handler instead of
+      // collapsing it into a generic "connection failed" toast.
+      if (err instanceof TeamSpeakFloodError) throw err;
       return { ok: false, error: err?.message || String(err) };
     }
   }

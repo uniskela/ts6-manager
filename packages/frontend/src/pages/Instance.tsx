@@ -8,40 +8,77 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { Cpu, Save, Server, Globe } from 'lucide-react';
 import { formatBytes, formatUptime } from '@/lib/utils';
+import { apiErrorMessage } from '@/lib/api-error';
 import { toast } from 'sonner';
+
+const floodAwareRetry = (failureCount: number, error: any) =>
+  error?.response?.status !== 429 && failureCount < 3;
 
 export default function Instance() {
   const { selectedConfigId: c } = useServerStore();
   const qc = useQueryClient();
   const [editFields, setEditFields] = useState<Record<string, string>>({});
 
-  const { data: info, isLoading: loadingInfo } = useQuery({
+  const infoQuery = useQuery({
     queryKey: ['instance-info', c],
     queryFn: () => serversApi.instanceInfo(c!),
     enabled: !!c,
+    retry: floodAwareRetry,
+    refetchInterval: (query) => (query.state.error as any)?.response?.status === 429 ? 15_000 : false,
   });
-  const { data: host, isLoading: loadingHost } = useQuery({
+  const hostQuery = useQuery({
     queryKey: ['host-info', c],
     queryFn: () => serversApi.hostInfo(c!),
     enabled: !!c,
+    retry: floodAwareRetry,
+    refetchInterval: (query) => (query.state.error as any)?.response?.status === 429 ? 15_000 : false,
   });
-  const { data: version } = useQuery({
+  const versionQuery = useQuery({
     queryKey: ['version', c],
     queryFn: () => serversApi.version(c!),
     enabled: !!c,
+    retry: floodAwareRetry,
+    refetchInterval: (query) => (query.state.error as any)?.response?.status === 429 ? 15_000 : false,
   });
+
+  const { data: info, isLoading: loadingInfo, error: infoError, isFetching: fetchingInfo, refetch: refetchInfo } = infoQuery;
+  const { data: host, isLoading: loadingHost, error: hostError, isFetching: fetchingHost, refetch: refetchHost } = hostQuery;
+  const { data: version, error: versionError, refetch: refetchVersion } = versionQuery;
 
   const editMutation = useMutation({
     mutationFn: (data: any) => serversApi.instanceEdit(c!, data),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['instance-info', c] }); toast.success('Instance settings updated'); setEditFields({}); },
-    onError: () => toast.error('Failed to update instance settings'),
+    onError: (error) => toast.error(apiErrorMessage(error, 'Failed to update instance settings')),
   });
 
   if (!c) return <EmptyState icon={Cpu} title="No server selected" />;
-  if (loadingInfo || loadingHost) return <PageLoader />;
+  if ((loadingInfo || loadingHost) && !info && !host) return <PageLoader />;
+
+  const loadError = infoError || hostError || versionError;
+  if (!info && !host && loadError) {
+    const detail = apiErrorMessage(loadError, 'Could not load instance data from the TeamSpeak server.');
+    return (
+      <div className="space-y-4">
+        <EmptyState icon={Cpu} title="Instance unavailable" description={detail} />
+        <div className="flex justify-center">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={fetchingInfo || fetchingHost}
+            onClick={() => {
+              void refetchInfo();
+              void refetchHost();
+              void refetchVersion();
+            }}
+          >
+            {(fetchingInfo || fetchingHost) ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const instanceData = Array.isArray(info) ? info[0] : info;
   const hostData = Array.isArray(host) ? host[0] : host;
@@ -66,9 +103,20 @@ export default function Instance() {
     editMutation.mutate(data);
   };
 
+  const backgroundError = loadError
+    ? apiErrorMessage(loadError, 'Instance refresh failed. Retry after the TeamSpeak Query cooldown if flood protection is active.')
+    : null;
+
   return (
     <div className="space-y-5">
-      <h1 className="text-xl font-semibold">Instance</h1>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h1 className="text-xl font-semibold">Instance</h1>
+        {backgroundError && (
+          <p className="text-xs text-amber-600 dark:text-amber-400 max-w-xl" role="status">
+            {backgroundError}
+          </p>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Version Card */}
