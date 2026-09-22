@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { channelsApi } from '../api/channels.api';
 import { useServerStore } from '../stores/server.store';
 import { useVirtualServers } from './use-servers';
+import { teamSpeakQueryRetry, teamSpeakQueryRetryDelay } from '@/lib/api-error';
 
 export function useChannels() {
   const { selectedConfigId: c, selectedSid: s } = useServerStore();
@@ -12,8 +13,8 @@ export function useChannels() {
     queryFn: () => channelsApi.list(c!, s!),
     enabled: !!c && !!s && contextIsValid,
     refetchInterval: 15000,
-    retry: 3,
-    retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
+    retry: teamSpeakQueryRetry,
+    retryDelay: teamSpeakQueryRetryDelay,
   });
 }
 

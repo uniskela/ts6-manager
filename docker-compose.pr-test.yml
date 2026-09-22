@@ -7,6 +7,9 @@
 # Happy path:
 #   cp .env.pr-test.example .env
 #   docker compose -f docker-compose.pr-test.yml up --build
+#   Wait until teamspeak is healthy (Query ports accept TCP) before opening the UI —
+#   backend waits on service_healthy; first-boot virtual server can still take another
+#   short stretch after that before channels/clients succeed.
 #
 # Then open http://localhost:3000/setup → create admin → log in.
 # Settings → Connections already lists the bundled TeamSpeak host (WebQuery + SSH Query).
@@ -39,6 +42,17 @@ services:
       - "9987:9987/udp"
       - "30033:30033/tcp"
       - "10022:10022/tcp"   # SSH ServerQuery (not Linux sshd)
+    # Container start ≠ Query ready. Gate backend until WebQuery + SSH ports accept TCP.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/10080 && exec 4<>/dev/tcp/127.0.0.1/10022'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 15s
     networks:
       - ts6-pr-test
 
@@ -85,7 +99,7 @@ services:
       sidecar:
         condition: service_started
       teamspeak:
-        condition: service_started
+        condition: service_healthy
     networks:
       - ts6-pr-test
 

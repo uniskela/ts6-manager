@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isFloodError } from './webquery-client.js';
-import { TSApiError } from '../middleware/error-handler.js';
+import { isFloodError, isTransientNetworkError } from './webquery-client.js';
+import { TeamSpeakUnavailableError, TSApiError } from '../middleware/error-handler.js';
 
 /**
  * Unit tests for WebQuery queue helpers (priority pick + flood detection).
@@ -16,6 +16,17 @@ describe('isFloodError', () => {
     assert.equal(isFloodError(new TSApiError(0, 'ok')), false);
     assert.equal(isFloodError(new Error('socket hang up')), false);
     assert.equal(isFloodError({ message: 'client is flooding' }), true);
+  });
+});
+
+describe('isTransientNetworkError', () => {
+  it('detects hang-ups and refused connections while Query is starting', () => {
+    assert.equal(isTransientNetworkError(new Error('socket hang up')), true);
+    assert.equal(isTransientNetworkError({ code: 'ECONNRESET', message: 'read ECONNRESET' }), true);
+    assert.equal(isTransientNetworkError({ code: 'ECONNREFUSED', message: 'connect ECONNREFUSED' }), true);
+    assert.equal(isTransientNetworkError(new Error('Connection lost before handshake')), true);
+    assert.equal(isTransientNetworkError(new TeamSpeakUnavailableError(5)), true);
+    assert.equal(isTransientNetworkError(new TSApiError(2568, 'insufficient client permissions')), false);
   });
 });
 

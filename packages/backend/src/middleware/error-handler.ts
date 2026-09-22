@@ -32,6 +32,18 @@ export class TeamSpeakFloodError extends AppError {
   }
 }
 
+/** Query port open but TeamSpeak still booting / resetting sockets (common right after compose up). */
+export class TeamSpeakUnavailableError extends AppError {
+  constructor(public retryAfterSeconds: number = 5) {
+    super(
+      503,
+      'TeamSpeak Query is still starting',
+      `The TeamSpeak server is up but Query is not ready yet (common for ~30–90s after a fresh compose start). Wait a few seconds and retry — about ${retryAfterSeconds}s is usually enough.`,
+    );
+    this.name = 'TeamSpeakUnavailableError';
+  }
+}
+
 /** TeamSpeak WebQuery codes that are often empty lookups / benign misses — still return 502 to the client, but do not spam error logs. */
 const QUIET_TS_API_CODES = new Set([
   1281, // database empty result set
@@ -41,17 +53,19 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
   const quietTs =
     err instanceof TSApiError && QUIET_TS_API_CODES.has(err.code);
   const quietFlood = err instanceof TeamSpeakFloodError;
+  const quietUnavailable = err instanceof TeamSpeakUnavailableError;
 
-  if (!quietTs && !quietFlood) {
+  if (!quietTs && !quietFlood && !quietUnavailable) {
     console.error(`[Error] ${err.name}: ${err.message}`);
   }
 
-  if (err instanceof TeamSpeakFloodError) {
+  if (err instanceof TeamSpeakFloodError || err instanceof TeamSpeakUnavailableError) {
     res.setHeader('Retry-After', String(err.retryAfterSeconds));
     res.status(err.statusCode).json({
       error: err.message,
       details: err.details,
       retryAfterSeconds: err.retryAfterSeconds,
+      reason: err instanceof TeamSpeakUnavailableError ? 'ts_query_starting' : 'ts_query_flood',
     });
     return;
   }

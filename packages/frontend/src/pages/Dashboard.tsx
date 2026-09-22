@@ -29,7 +29,7 @@ import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatu
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
 import { formatBytes, formatUptime } from '@/lib/utils';
 import { formatLocalTime, formatNumber } from '@/lib/formatting';
-import { apiErrorMessage } from '@/lib/api-error';
+import { apiErrorMessage, isTeamSpeakStarting, teamSpeakConnectionTitle, teamSpeakRefreshTone } from '@/lib/api-error';
 
 interface DashboardData {
   serverName: string;
@@ -174,10 +174,15 @@ export default function Dashboard() {
   if (query.isLoading && !data) return <PageLoader />;
 
   if (!data) {
-    const detail = apiErrorMessage(query.error, 'Could not connect to the TeamSpeak server. Check your connection settings.');
+    const detail = apiErrorMessage(
+      query.error,
+      isTeamSpeakStarting(query.error)
+        ? 'TeamSpeak Query is still coming up after startup. Wait a moment and retry.'
+        : 'Could not connect to the TeamSpeak server. Check your connection settings.',
+    );
     return (
       <div className="space-y-4">
-        <EmptyState icon={Wifi} title="Connection failed" description={detail} />
+        <EmptyState icon={Wifi} title={teamSpeakConnectionTitle(query.error)} description={detail} />
         <div className="flex justify-center">
           <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
             {query.isFetching ? 'Retrying…' : 'Retry connection'}
@@ -193,8 +198,14 @@ export default function Dashboard() {
   const roundedUtilisation = Math.round(utilisation);
   const availableSlots = Math.max(data.maxClients - data.onlineUsers, 0);
   const backgroundError = query.error
-    ? apiErrorMessage(query.error, 'Live data refresh failed. The last successful snapshot is still displayed.')
+    ? apiErrorMessage(
+      query.error,
+      isTeamSpeakStarting(query.error)
+        ? 'TeamSpeak Query is still starting. Live data may be incomplete until it comes online.'
+        : 'Live data refresh failed. The last successful snapshot is still displayed.',
+    )
     : null;
+  const refreshTone = teamSpeakRefreshTone(query.error);
 
   return (
     <div className="min-w-0 space-y-5">
@@ -210,8 +221,11 @@ export default function Dashboard() {
         metadata={(
           <RefreshStatus
             isRefreshing={query.isFetching}
+            tone={refreshTone}
             idleLabel="Live monitoring active"
             refreshingLabel="Refreshing live data…"
+            degradedLabel="Live updates interrupted"
+            startingLabel="Waiting for TeamSpeak Query…"
           />
         )}
       />
