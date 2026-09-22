@@ -56,7 +56,66 @@ const chatReplyCooldownUntil = new Map<string, number>();
 
 /** Collapse duplicate !help when several bots hear the same channel message. */
 const HELP_ACTION_DEDUP_MS = 2500;
+/** Cooldown after a *successful* help post (late arrivals skip). */
 const helpActionUntil = new Map<string, number>();
+/**
+ * In-flight help owners. Waiters await `result`; true = posted, false = failed
+ * (waiter may become owner). Prevents mid-send duplicates without silencing voice
+ * forever when SSH send fails.
+ */
+type HelpFlight = {
+  result: Promise<boolean>;
+  settle: (ok: boolean) => void;
+};
+const helpFlights = new Map<string, HelpFlight>();
+
+function helpActionKey(
+  serverConfigId: number,
+  virtualServerId: number,
+  channelId: number,
+  userClid: number,
+): string {
+  return `${serverConfigId}:${virtualServerId}:${channelId}:${userClid}`;
+}
+
+/**
+ * Become help owner, or wait for the current owner.
+ * @returns true if this caller should post help; false if another path already posted.
+ */
+async function beginHelpAction(key: string): Promise<boolean> {
+  for (;;) {
+    const until = helpActionUntil.get(key) ?? 0;
+    if (Date.now() < until) return false;
+
+    const flight = helpFlights.get(key);
+    if (flight) {
+      const ok = await flight.result;
+      if (ok) return false;
+      // Owner failed — loop and try to claim.
+      continue;
+    }
+
+    let settle!: (ok: boolean) => void;
+    const result = new Promise<boolean>((resolve) => {
+      settle = resolve;
+    });
+    const entry: HelpFlight = { result, settle };
+    helpFlights.set(key, entry);
+    // Single-threaded: we own the slot we just created.
+    if (helpFlights.get(key) === entry) return true;
+  }
+}
+
+/** Finish an in-flight help attempt. `posted` true keeps a short success cooldown. */
+function completeHelpAction(key: string, posted: boolean): void {
+  if (posted) {
+    helpActionUntil.set(key, Date.now() + HELP_ACTION_DEDUP_MS);
+  }
+  const flight = helpFlights.get(key);
+  if (!flight) return;
+  helpFlights.delete(key);
+  flight.settle(posted);
+}
 
 /** Collapse duplicate !here lists when several bots hear the same channel message. */
 const HERE_LIST_COOLDOWN_MS = 2000;
@@ -83,28 +142,6 @@ function isChatReplyCoolingDown(botId: number, clid: number): boolean {
 
 function markChatReplyCooldown(botId: number, clid: number): void {
   chatReplyCooldownUntil.set(chatReplyCooldownKey(botId, clid), Date.now() + CHAT_REPLY_COOLDOWN_MS);
-}
-
-function helpActionKey(
-  serverConfigId: number,
-  virtualServerId: number,
-  channelId: number,
-  userClid: number,
-): string {
-  return `${serverConfigId}:${virtualServerId}:${channelId}:${userClid}`;
-}
-
-/** Returns true if this caller should post !help; false if a duplicate. */
-function claimHelpAction(key: string): boolean {
-  const until = helpActionUntil.get(key) ?? 0;
-  if (Date.now() < until) return false;
-  helpActionUntil.set(key, Date.now() + HELP_ACTION_DEDUP_MS);
-  return true;
-}
-
-/** Drop an in-flight claim so another path can answer after a failed send. */
-function releaseHelpAction(key: string): void {
-  helpActionUntil.delete(key);
 }
 
 function isBotSummonable(bot: VoiceBot): boolean {
@@ -134,6 +171,7 @@ export function resetHereDedupForTests(): void {
   hereActionUntil.clear();
   hereListCooldownUntil.clear();
   helpActionUntil.clear();
+  helpFlights.clear();
   chatReplyCooldownUntil.clear();
 }
 
@@ -692,12 +730,12 @@ export class MusicCommandHandler {
       bot.getCurrentChannelId() ||
       0;
 
-    // When the channel is already known, claim before any await so an in-flight SSH
-    // helper cannot also start posting for the same key.
-    let claimedKey: string | null = null;
+    // When the channel is already known, join the wait-for-owner flight before any
+    // await so we either own the post or wait for SSH / another bot's outcome.
+    let ownedKey: string | null = null;
     if (hinted > 0) {
-      claimedKey = helpActionKey(serverConfigId, virtualServerId, hinted, userClid);
-      if (!claimHelpAction(claimedKey)) {
+      ownedKey = helpActionKey(serverConfigId, virtualServerId, hinted, userClid);
+      if (!(await beginHelpAction(ownedKey))) {
         console.log(
           `[MusicCmd] !help deduped (bot=${botId} cid=${hinted} clid=${userClid})`,
         );
@@ -716,17 +754,16 @@ export class MusicCommandHandler {
       this.activeReplyChannel.set(`${botId}:${userClid}`, channelId);
     }
 
-    // Do not claim with cid=0 — that key never matches the SSH helper's real listener
+    // Do not own with cid=0 — that key never matches the SSH helper's real listener
     // cid, so voice + cross-channel both post. Align with !here: resolve first; if
     // still unknown and SSH can own the line, leave it to the helper.
     if (channelId <= 0) {
-      if (claimedKey) releaseHelpAction(claimedKey);
+      if (ownedKey) completeHelpAction(ownedKey, false);
       console.warn(
         `[MusicCmd] !help skipped on voice bot=${botId}: unknown channel (homeCid=${bot.getCurrentChannelId()})`,
       );
       if (this.eventBridge) return;
-      // Pure voice (no Query): claim cid=0 so sibling bots in the same unknown state
-      // still collapse to one reply.
+      // Pure voice (no Query): own cid=0 so sibling bots still collapse to one reply.
     }
 
     const helpKey = helpActionKey(
@@ -735,34 +772,41 @@ export class MusicCommandHandler {
       channelId > 0 ? channelId : 0,
       userClid,
     );
-    if (claimedKey && claimedKey !== helpKey) {
-      releaseHelpAction(claimedKey);
-      claimedKey = null;
+    if (ownedKey && ownedKey !== helpKey) {
+      completeHelpAction(ownedKey, false);
+      ownedKey = null;
     }
-    if (!claimedKey) {
-      if (!claimHelpAction(helpKey)) {
+    if (!ownedKey) {
+      if (!(await beginHelpAction(helpKey))) {
         console.log(
           `[MusicCmd] !help deduped (bot=${botId} cid=${channelId || 0} clid=${userClid})`,
         );
         return;
       }
+      ownedKey = helpKey;
     }
 
-    const dbBot = await this.prisma.musicBot.findUnique({
-      where: { id: botId },
-      select: { serverConfigId: true },
-    });
-
-    let custom: Array<{ name: string; description: string | null }> = [];
-    if (dbBot) {
-      custom = await this.prisma.chatCommand.findMany({
-        where: { serverConfigId: dbBot.serverConfigId, enabled: true },
-        orderBy: { name: 'asc' },
-        select: { name: true, description: true },
+    try {
+      const dbBot = await this.prisma.musicBot.findUnique({
+        where: { id: botId },
+        select: { serverConfigId: true },
       });
-    }
 
-    this.reply(bot, userClid, formatHelpMessage(BUILTIN_COMMAND_HELP, custom));
+      let custom: Array<{ name: string; description: string | null }> = [];
+      if (dbBot) {
+        custom = await this.prisma.chatCommand.findMany({
+          where: { serverConfigId: dbBot.serverConfigId, enabled: true },
+          orderBy: { name: 'asc' },
+          select: { name: true, description: true },
+        });
+      }
+
+      await this.reply(bot, userClid, formatHelpMessage(BUILTIN_COMMAND_HELP, custom));
+      completeHelpAction(ownedKey, true);
+    } catch (err) {
+      completeHelpAction(ownedKey, false);
+      throw err;
+    }
   }
 
   /**
@@ -779,9 +823,9 @@ export class MusicCommandHandler {
     if (!userClid || channelId <= 0) return;
 
     const helpKey = helpActionKey(configId, sid, channelId, userClid);
-    // Claim immediately (in-flight) so a concurrent voice resolve / second helper
-    // cannot also post during sendChannelText. Release on failure so voice can retry.
-    if (!claimHelpAction(helpKey)) {
+    // Own immediately so concurrent voice waits on our result instead of bailing.
+    // completeHelpAction(false) lets that waiter become owner and still reply.
+    if (!(await beginHelpAction(helpKey))) {
       console.log(
         `[MusicCmd] Cross-channel !help deduped (cid=${channelId} clid=${userClid})`,
       );
@@ -806,7 +850,7 @@ export class MusicCommandHandler {
     const msg = formatHelpMessage(BUILTIN_COMMAND_HELP, custom);
     if (!this.eventBridge) {
       console.warn(`[MusicCmd] Cross-channel !help: no eventBridge (cid=${channelId})`);
-      releaseHelpAction(helpKey);
+      completeHelpAction(helpKey, false);
       return;
     }
     const ok = await this.eventBridge.sendChannelText(configId, sid, channelId, msg, {
@@ -816,8 +860,8 @@ export class MusicCommandHandler {
       console.warn(
         `[MusicCmd] Cross-channel !help failed to post in cid=${channelId} (SSH listener?)`,
       );
-      releaseHelpAction(helpKey);
     }
+    completeHelpAction(helpKey, ok);
   }
 
   private async handleCustomCommand(

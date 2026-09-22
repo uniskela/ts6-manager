@@ -412,12 +412,37 @@ test('in-flight SSH !help claim blocks concurrent voice during send', async () =
     },
   };
   const ssh = f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
-  // Voice runs while SSH send is still in flight — must see the early claim.
-  await f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  // Voice waits on the in-flight owner; must not reply while SSH is still sending.
+  const voice = f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  // Yield so voice reaches beginHelpAction and parks on the flight.
+  await new Promise((r) => setImmediate(r));
   assert.equal(f.replies.length, 0);
   releaseSend();
-  await ssh;
+  await Promise.all([ssh, voice]);
   assert.equal(f.replies.length, 0);
+});
+
+test('in-flight SSH !help failure lets waiting voice reply', async () => {
+  const bot = makeBot(1, { name: 'Home', channelId: 20 });
+  const f = fixture([bot]);
+  let releaseSend!: () => void;
+  const sendGate = new Promise<void>((resolve) => {
+    releaseSend = resolve;
+  });
+  f.handler.eventBridge = {
+    sendChannelText: async () => {
+      await sendGate;
+      return false;
+    },
+  };
+  const ssh = f.handler.handleHelpCrossChannel(9, 1, 20, { invokerid: '2', msg: '!help' });
+  const voice = f.handler.onTextMessage(1, bot, { invokerid: '2', msg: '!help' }, 20);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(f.replies.length, 0);
+  releaseSend();
+  await Promise.all([ssh, voice]);
+  assert.equal(f.replies.length, 1);
+  assert.match(f.replies[0]!, /Music bot commands/i);
 });
 
 test('voice !help with homeCid=0 resolves invoker channel so claim matches SSH', async () => {
