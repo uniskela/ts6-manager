@@ -29,7 +29,8 @@ Bots can reconnect automatically with exponential backoff and overlap protection
 When a bot is connected to a configured command channel, users in that channel can use built-in commands.
 
 - **`!help`** — Show built-in and custom commands
-- **`!here [id]`** / **`!come [id]`** — Summon a music bot to this channel (prefers idle bots; with several options, lists IDs — use `!here <id>` to target one, including a busy bot)
+- **`!here [id]`** / **`!come [id]`** — Summon an idle music bot to your channel (or target a bot by ID)
+- **`!commands`** — List enabled custom chat commands only
 - **`!play <url>`** — Play supported media
 - **`!play`** — Resume paused playback
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue
@@ -54,6 +55,19 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!lyrics [artist - title]`** — Show/search lyrics
 
 Custom chat commands can also be configured.
+
+### Custom command presets
+
+Music Bots → **Commands** can seed recommended server-scoped canned replies shared by every music bot on that connection:
+
+| Command | Purpose |
+|---------|---------|
+| `!rules` | Server rules text |
+| `!links` | Useful links (website, Discord, donate, …) |
+| `!discord` | Discord invite (optional; can fold into `!links`) |
+| `!info` / `!about` | Short community blurb |
+
+Seeded presets start **disabled**. Edit the placeholder Markdown, then enable. `!commands` is a built-in that lists enabled customs (also shown under Custom in `!help`). Multiple bots on the same channel only send one informational reply (`!help` / `!commands` / customs) per user within a short cooldown.
 
 ## Download progress
 

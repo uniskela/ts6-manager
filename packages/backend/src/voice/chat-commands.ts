@@ -4,6 +4,7 @@
  */
 export const BUILTIN_CHAT_COMMANDS = [
   'help',
+  'commands',
   'here',
   'come',
   'radio',
@@ -41,11 +42,8 @@ const BUILTIN_SET = new Set<string>(BUILTIN_CHAT_COMMANDS);
 /** Short help lines for built-in commands (shown by !help). */
 export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string }[] = [
   { name: 'help', usage: '!help', blurb: 'Show this command list' },
-  {
-    name: 'here',
-    usage: '!here [id]',
-    blurb: 'Summon a music bot here (prefers idle bots; use !here <id> to target one)',
-  },
+  { name: 'commands', usage: '!commands', blurb: 'List enabled custom chat commands' },
+  { name: 'here', usage: '!here [id]', blurb: 'Summon a music bot here (prefers idle bots; use !here <id> to target one)' },
   { name: 'come', usage: '!come [id]', blurb: 'Alias for !here' },
   {
     name: 'play',
@@ -77,6 +75,83 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'tv', usage: '!tv <name>', blurb: 'Stream an IPTV channel' },
   { name: 'iptv', usage: '!iptv <name>', blurb: 'Alias for !tv' },
   { name: 'lyrics', usage: '!lyrics [artist - title]', blurb: 'Show lyrics for now playing or search' },
+];
+
+/**
+ * Recommended server-scoped canned-reply templates.
+ * Seeded via Music Bots → Commands (disabled until an admin edits and enables).
+ */
+export interface ChatCommandPreset {
+  name: string;
+  description: string;
+  response: string;
+}
+
+export const CHAT_COMMAND_PRESETS: ChatCommandPreset[] = [
+  {
+    name: 'rules',
+    description: 'Server rules',
+    response: [
+      '## Server rules',
+      '',
+      '1. Be respectful — no harassment or hate speech.',
+      '2. No spam or excessive caps in chat/voice.',
+      '3. Keep music requests reasonable; staff may skip tracks.',
+      '4. Follow staff instructions.',
+      '',
+      '_Edit this text in Music Bots → Commands._',
+    ].join('\n'),
+  },
+  {
+    name: 'links',
+    description: 'Useful community links',
+    response: [
+      '## Links',
+      '',
+      '- **Website:** https://example.com',
+      '- **Discord:** https://discord.gg/your-invite',
+      '- **Donate:** https://example.com/donate',
+      '',
+      '_Replace these URLs in Music Bots → Commands._',
+    ].join('\n'),
+  },
+  {
+    name: 'discord',
+    description: 'Discord invite',
+    response: [
+      '## Discord',
+      '',
+      'Join us: https://discord.gg/your-invite',
+      '',
+      '_Or fold this into !links and disable !discord._',
+    ].join('\n'),
+  },
+  {
+    name: 'info',
+    description: 'Short server / community blurb',
+    response: [
+      '## About',
+      '',
+      'Welcome to our TeamSpeak community. Music bots, radio, and chat commands keep the lobby moving.',
+      '',
+      'Type **!help** for music commands or **!commands** for custom replies.',
+      '',
+      '_Edit this blurb in Music Bots → Commands._',
+    ].join('\n'),
+  },
+  {
+    name: 'about',
+    description: 'Alias-style community blurb (same idea as !info)',
+    response: [
+      '## About',
+      '',
+      'Welcome to our TeamSpeak community. Music bots, radio, and chat commands keep the lobby moving.',
+      '',
+      'Type **!help** for music commands or **!commands** for custom replies.',
+      '',
+      '_Edit this blurb in Music Bots → Commands._',
+    ].join('\n'),
+  },
 ];
 
 export function isReservedChatCommandName(name: string): boolean {

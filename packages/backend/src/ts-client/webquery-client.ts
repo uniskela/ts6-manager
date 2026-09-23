@@ -9,7 +9,12 @@ import {
 } from '../middleware/error-handler.js';
 import { config } from '../config.js';
 import type { ValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
-import { createValidatedTsServerEndpoint, isAllowedTsServerHost } from '../utils/validate-ts-host.js';
+import { createValidatedTsServerEndpoint, isAllowedTsServerHost, buildWebQueryPath } from '../utils/validate-ts-host.js';
+import {
+  diagnoseConnection as runDiagnoseConnection,
+  type ConnectionDiagnosticReport,
+  type DiagnoseConnectionOptions,
+} from './connection-diagnostics.js';
 
 /** UI / interactive traffic jumps ahead of background bots & animations. */
 export type WebQueryPriority = 'high' | 'normal' | 'low';
@@ -134,6 +139,10 @@ export class WebQueryClient {
       baseURL,
       headers: { 'x-api-key': apiKey },
       timeout: 15000,
+      // Stay on the validated TeamSpeak origin — never follow redirects off-host.
+      maxRedirects: 0,
+      maxContentLength: 2 * 1024 * 1024,
+      maxBodyLength: 2 * 1024 * 1024,
       httpAgent: useHttpsResolved ? undefined : this.agent,
       httpsAgent: useHttpsResolved ? this.agent : undefined,
     });
@@ -277,9 +286,8 @@ export class WebQueryClient {
     options?: { priority?: WebQueryPriority },
   ): Promise<any> {
     return this.enqueue(async () => {
-      // WebQuery URL pattern: /{sid}/{command}
-      // For instance-level commands (sid=0): /{command}
-      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+      // Path is built only from sanitized sid + command; baseURL is a validated origin.
+      const path = buildWebQueryPath(sid, command);
 
       const response = await this.http.get(path, {
         params: this.cleanParams(params),
@@ -302,7 +310,7 @@ export class WebQueryClient {
     options?: { priority?: WebQueryPriority },
   ): Promise<any> {
     return this.enqueue(async () => {
-      const path = sid > 0 ? `/${sid}/${command}` : `/${command}`;
+      const path = buildWebQueryPath(sid, command);
       const response = await this.http.post(path, null, {
         params: this.cleanParams(params),
       });
@@ -338,6 +346,14 @@ export class WebQueryClient {
       if (err instanceof TeamSpeakUnavailableError) throw err;
       return { ok: false, error: err?.message || String(err) };
     }
+  }
+
+  /**
+   * Staged read-only WebQuery diagnostics (reachability → auth → permissions → virtual server).
+   * Prefer this over testConnection() for operator-facing connection tests.
+   */
+  async diagnoseConnection(options?: DiagnoseConnectionOptions): Promise<ConnectionDiagnosticReport> {
+    return runDiagnoseConnection(this, options);
   }
 
   destroy(): void {

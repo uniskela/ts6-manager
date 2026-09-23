@@ -1,7 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { isReservedChatCommandName, normalizeChatCommandName } from '../voice/chat-commands.js';
+import {
+  CHAT_COMMAND_PRESETS,
+  isReservedChatCommandName,
+  normalizeChatCommandName,
+} from '../voice/chat-commands.js';
 
 export const chatCommandRoutes: Router = Router({ mergeParams: true });
 
@@ -43,6 +47,50 @@ function validateCommandPayload(body: {
   const enabled = body.enabled === undefined ? true : Boolean(body.enabled);
   return { name, response, description, enabled };
 }
+
+// GET /presets — Recommended canned-reply templates (not yet bound to this server)
+chatCommandRoutes.get('/presets', (_req: Request, res: Response) => {
+  res.json(CHAT_COMMAND_PRESETS);
+});
+
+// POST /seed-presets — Create missing recommended presets (disabled until edited/enabled)
+chatCommandRoutes.post('/seed-presets', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const configId = parseInt(req.params.configId as string);
+
+    const names = CHAT_COMMAND_PRESETS.map((p) => p.name);
+    const existing = await prisma.chatCommand.findMany({
+      where: { serverConfigId: configId, name: { in: names } },
+      select: { name: true },
+    });
+    const existingNames = new Set(existing.map((c: { name: string }) => c.name));
+
+    const created = [];
+    for (const preset of CHAT_COMMAND_PRESETS) {
+      if (existingNames.has(preset.name)) continue;
+      if (isReservedChatCommandName(preset.name)) continue;
+      const command = await prisma.chatCommand.create({
+        data: {
+          serverConfigId: configId,
+          name: preset.name,
+          response: preset.response.slice(0, MAX_RESPONSE_LEN),
+          description: preset.description.slice(0, MAX_DESCRIPTION_LEN),
+          enabled: false,
+        },
+      });
+      created.push(command);
+    }
+
+    const commands = await prisma.chatCommand.findMany({
+      where: { serverConfigId: configId },
+      orderBy: { name: 'asc' },
+    });
+    res.json({ created: created.length, createdNames: created.map((c) => c.name), commands });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // GET / — List custom chat commands for this server
 chatCommandRoutes.get('/', async (req: Request, res: Response, next) => {

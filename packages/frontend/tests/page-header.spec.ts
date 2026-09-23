@@ -102,6 +102,7 @@ test('IPTV uses browser-local formatting and gives icon controls useful accessib
   }));
   await expect(page.getByText(`${expectedCount} channels`, { exact: true }).first()).toBeVisible();
   await expect(page.getByText(`Updated ${expectedDate}`, { exact: true })).toBeVisible();
+  await expect(page.getByText('URL', { exact: true }).first()).toBeVisible();
 
   const refresh = page.getByRole('button', { name: 'Refresh Local News & Events' });
   await expect(refresh).toBeVisible();
@@ -116,6 +117,25 @@ test('IPTV uses browser-local formatting and gives icon controls useful accessib
     outline: getComputedStyle(element).outline,
     shadow: getComputedStyle(element).boxShadow,
   }))).not.toEqual(restingFocusStyle);
+});
+
+test('IPTV Add Playlist dialog switches between URL and Upload source modes', async ({ page, request }) => {
+  await request.post('/__test/iptv?scenario=populated');
+  await signIn(page, request);
+  await page.goto('/iptv');
+
+  await page.getByRole('button', { name: 'Add Playlist' }).first().click();
+  await expect(page.getByRole('heading', { name: 'Add IPTV Playlist' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: /Playlist URL/i })).toHaveAttribute('data-state', 'active');
+  await expect(page.getByLabel('M3U URL')).toBeVisible();
+  await expect(page.getByLabel('Auto-refresh (minutes, 0 = manual)')).toBeVisible();
+
+  await page.getByRole('tab', { name: /Upload file/i }).click();
+  await expect(page.getByRole('tab', { name: /Upload file/i })).toHaveAttribute('data-state', 'active');
+  await expect(page.getByLabel('Playlist file')).toBeVisible();
+  await expect(page.getByText(/Accepts \.m3u/)).toBeVisible();
+  await expect(page.getByLabel('M3U URL')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Upload & Load' })).toBeVisible();
 });
 
 test('targeted pages remain document-contained at narrow and desktop widths', async ({ page, request }) => {

@@ -13,6 +13,10 @@ import { ConnectionSetupGuide } from '@/components/connections/ConnectionSetupGu
 import { ConnectionSetupHelpDialog } from '@/components/connections/ConnectionSetupHelpDialog';
 import { ConnectionSetupWizard } from '@/components/connections/ConnectionSetupWizard';
 import { ConnectionFormDialog } from '@/components/connections/ConnectionFormDialog';
+import {
+  ConnectionDiagnosticStages,
+  diagnosticToastMessage,
+} from '@/components/connections/ConnectionDiagnosticStages';
 import { DEFAULT_CONNECTION_FORM, type ConnectionFormState } from '@/content/connection-setup';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,10 +29,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { BrandMark } from '@/components/shared/BrandMark';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github, Palette } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github, Palette, Loader2 } from 'lucide-react';
 import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 import { apiErrorMessage } from '@/lib/api-error';
 import { toast } from 'sonner';
+import type { ConnectionDiagnosticReport } from '@ts6/common';
 
 export default function Settings() {
   const { user } = useAuthStore();
@@ -312,6 +317,8 @@ function ConnectionsTab() {
   const [webqueryTestPassed, setWebqueryTestPassed] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [form, setForm] = useState<ConnectionFormState>(DEFAULT_CONNECTION_FORM);
+  const [diagnosticByServer, setDiagnosticByServer] = useState<Record<number, ConnectionDiagnosticReport>>({});
+  const [testingServerId, setTestingServerId] = useState<number | null>(null);
 
   const serverList = useMemo(() => (Array.isArray(servers) ? servers : []), [servers]);
   const hasSshOnAnyConnection = serverList.some((s: any) => s.hasSshCredentials);
@@ -466,14 +473,34 @@ function ConnectionsTab() {
                     </span>
                   ) : (
                     <>
-                      <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testServer.mutate(server.id, {
-                        onSuccess: (data: any) => {
-                          setWebqueryTestPassed(true);
-                          toast.success(data?.version ? `WebQuery OK (${data.version})` : 'WebQuery connection successful');
-                        },
-                        onError: (err: any) => toast.error(apiErrorMessage(err, 'WebQuery test failed')),
-                      })}>
-                        <TestTube className="h-3 w-3 mr-1" /> Test WebQuery
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs"
+                        disabled={testingServerId === server.id || testServer.isPending}
+                        onClick={() => {
+                          setTestingServerId(server.id);
+                          testServer.mutate(server.id, {
+                            onSuccess: (data: ConnectionDiagnosticReport) => {
+                              setDiagnosticByServer((prev) => ({ ...prev, [server.id]: data }));
+                              if (data?.success === true) {
+                                setWebqueryTestPassed(true);
+                                toast.success(diagnosticToastMessage(data));
+                              } else if (data?.partial) {
+                                toast.message(diagnosticToastMessage(data));
+                              } else {
+                                toast.error(diagnosticToastMessage(data));
+                              }
+                            },
+                            onError: (err: any) => toast.error(apiErrorMessage(err, 'WebQuery test failed')),
+                            onSettled: () => setTestingServerId((current) => (current === server.id ? null : current)),
+                          });
+                        }}
+                      >
+                        {testingServerId === server.id
+                          ? <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          : <TestTube className="h-3 w-3 mr-1" />}
+                        Test WebQuery
                       </Button>
                       {server.hasSshCredentials && (
                         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => testSshServer.mutate(server.id, {
@@ -492,6 +519,14 @@ function ConnectionsTab() {
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
+                {(diagnosticByServer[server.id] || testingServerId === server.id) && (
+                  <ConnectionDiagnosticStages
+                    className="pt-1"
+                    compact
+                    pending={testingServerId === server.id}
+                    report={diagnosticByServer[server.id]}
+                  />
+                )}
               </CardContent>
             </Card>
           ))}

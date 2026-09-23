@@ -123,6 +123,10 @@ export const radioStationsApi = {
 
 export const chatCommandsApi = {
   list: (configId: number) => api.get(`/servers/${configId}/chat-commands`).then((r) => r.data),
+  presets: (configId: number) =>
+    api.get(`/servers/${configId}/chat-commands/presets`).then((r) => r.data),
+  seedPresets: (configId: number) =>
+    api.post(`/servers/${configId}/chat-commands/seed-presets`).then((r) => r.data),
   create: (
     configId: number,
     data: { name: string; response: string; description?: string; enabled?: boolean },

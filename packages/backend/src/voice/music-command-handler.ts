@@ -19,6 +19,7 @@ import {
 } from './audio/apple-music.js';
 import { BUILTIN_COMMAND_HELP, BUILTIN_CHAT_COMMANDS } from './chat-commands.js';
 import {
+  formatCustomCommandsMessage,
   formatHelpMessage,
   formatNowPlayingMessage,
   formatQueueMessage,
@@ -56,6 +57,39 @@ const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 /** Per bot+user cooldown for custom replies (ms). */
 const CHAT_REPLY_COOLDOWN_MS = 2500;
 const chatReplyCooldownUntil = new Map<string, number>();
+
+function chatInfoReplyKey(
+  serverConfigId: number,
+  virtualServerId: number,
+  channelId: number,
+  clid: number,
+  command: string,
+): string {
+  return `${serverConfigId}:${virtualServerId}:${channelId}:${clid}:${command}`;
+}
+
+function tryClaimChatInfoReply(
+  serverConfigId: number,
+  virtualServerId: number,
+  channelId: number,
+  clid: number,
+  command: string,
+): boolean {
+  const key = chatInfoReplyKey(serverConfigId, virtualServerId, channelId, clid, command);
+  const until = chatReplyCooldownUntil.get(key) ?? 0;
+  if (Date.now() < until) return false;
+  chatReplyCooldownUntil.set(key, Date.now() + CHAT_REPLY_COOLDOWN_MS);
+  return true;
+}
+
+/** @internal Exported for unit tests. */
+export function resetChatReplyCooldownsForTests(): void {
+  chatReplyCooldownUntil.clear();
+  helpActionUntil.clear();
+  helpFlights.clear();
+  hereActionUntil.clear();
+  hereListCooldownUntil.clear();
+}
 
 /** Collapse duplicate !help when several bots hear the same channel message. */
 const HELP_ACTION_DEDUP_MS = 2500;
@@ -130,19 +164,6 @@ const hereListCooldownUntil = new Map<string, number>();
  */
 const HERE_ACTION_DEDUP_MS = 1500;
 const hereActionUntil = new Map<string, number>();
-
-function chatReplyCooldownKey(botId: number, clid: number): string {
-  return `${botId}:${clid}`;
-}
-
-function isChatReplyCoolingDown(botId: number, clid: number): boolean {
-  const until = chatReplyCooldownUntil.get(chatReplyCooldownKey(botId, clid)) ?? 0;
-  return Date.now() < until;
-}
-
-function markChatReplyCooldown(botId: number, clid: number): void {
-  chatReplyCooldownUntil.set(chatReplyCooldownKey(botId, clid), Date.now() + CHAT_REPLY_COOLDOWN_MS);
-}
 
 function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
@@ -770,6 +791,9 @@ export class MusicCommandHandler {
           case 'help':
             await this.handleHelp(botId, bot, userClid);
             break;
+          case 'commands':
+            await this.handleCustomCommandsList(botId, bot, userClid);
+            break;
           case 'here':
           case 'come':
             await this.handleHere(botId, bot, userClid, args);
@@ -853,6 +877,40 @@ export class MusicCommandHandler {
     } finally {
       if (userClid) this.activeReplyChannel.delete(`${botId}:${userClid}`);
     }
+  }
+
+  private replyChannelForDedupe(botId: number, userClid: number, bot: VoiceBot): number {
+    const active = this.activeReplyChannel.get(`${botId}:${userClid}`);
+    if (active && active > 0) return active;
+    const home = bot.getCurrentChannelId();
+    if (home > 0) return home;
+    const cfg = this.botChannelConfig.get(botId);
+    return parseInt(cfg?.defaultChannel || '0', 10) || 0;
+  }
+
+  private virtualServerIdForBot(botId: number): number {
+    return this.botChannelConfig.get(botId)?.virtualServerId ?? 1;
+  }
+
+  private async handleCustomCommandsList(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+  ): Promise<void> {
+    const dbBot = await this.prisma.musicBot.findUnique({
+      where: { id: botId },
+      select: { serverConfigId: true },
+    });
+    if (!dbBot) return;
+    const channelId = this.replyChannelForDedupe(botId, userClid, bot);
+    const sid = this.virtualServerIdForBot(botId);
+    if (!tryClaimChatInfoReply(dbBot.serverConfigId, sid, channelId, userClid, 'commands')) return;
+    const custom = await this.prisma.chatCommand.findMany({
+      where: { serverConfigId: dbBot.serverConfigId, enabled: true },
+      orderBy: { name: 'asc' },
+      select: { name: true, description: true },
+    });
+    await this.reply(bot, userClid, formatCustomCommandsMessage(custom));
   }
 
   private async handleHelp(botId: number, bot: VoiceBot, userClid: number): Promise<void> {
@@ -1015,8 +1073,6 @@ export class MusicCommandHandler {
     userClid: number,
     command: string,
   ): Promise<void> {
-    if (isChatReplyCoolingDown(botId, userClid)) return;
-
     const dbBot = await this.prisma.musicBot.findUnique({
       where: { id: botId },
       select: { serverConfigId: true },
@@ -1030,9 +1086,11 @@ export class MusicCommandHandler {
     });
     if (!custom || !custom.enabled) return;
 
-    markChatReplyCooldown(botId, userClid);
+    const channelId = this.replyChannelForDedupe(botId, userClid, bot);
+    const sid = this.virtualServerIdForBot(botId);
+    if (!tryClaimChatInfoReply(dbBot.serverConfigId, sid, channelId, userClid, command)) return;
     console.log(`[MusicCmd] Bot ${botId}: !${command} (custom, from clid=${userClid})`);
-    this.reply(bot, userClid, custom.response);
+    await this.reply(bot, userClid, custom.response);
   }
 
   /**

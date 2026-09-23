@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   buildTsServerOrigin,
+  buildWebQueryPath,
   createValidatedTsServerEndpoint,
   sanitizeTsServerHost,
   validateTsServerPort,
@@ -53,5 +54,19 @@ describe('buildTsServerOrigin', () => {
   it('builds safe origins from validated parts', () => {
     assert.equal(buildTsServerOrigin('127.0.0.1', 10080, false), 'http://127.0.0.1:10080');
     assert.equal(buildTsServerOrigin('::1', 10080, true), 'https://[::1]:10080');
+  });
+});
+
+describe('buildWebQueryPath', () => {
+  it('builds relative paths from sanitized sid and command', () => {
+    assert.equal(buildWebQueryPath(0, 'version'), '/version');
+    assert.equal(buildWebQueryPath(1, 'serverinfo'), '/1/serverinfo');
+  });
+
+  it('rejects path-altering commands and invalid sids', () => {
+    assert.throws(() => buildWebQueryPath(1, '../etc/passwd'), /Invalid WebQuery command/);
+    assert.throws(() => buildWebQueryPath(1, 'http://evil'), /Invalid WebQuery command/);
+    assert.throws(() => buildWebQueryPath(1, '//evil'), /Invalid WebQuery command/);
+    assert.throws(() => buildWebQueryPath(-1, 'version'), /Server id/);
   });
 });

@@ -223,7 +223,14 @@ model RadioStation {
 model IptvPlaylist {
   id                 Int            @id @default(autoincrement())
   name               String
-  url                String
+  /// url | upload — existing rows default to url
+  sourceType         String         @default("url")
+  /// Remote M3U URL when sourceType=url; null for uploaded sources
+  url                String?
+  /// Relative filename under data/iptv/ (never expose absolute path to clients)
+  sourcePath         String?
+  /// Original user filename for uploaded sources (display only)
+  originalFilename   String?
   serverConfigId     Int
   serverConfig       TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
   autoRefreshMinutes Int            @default(0)

@@ -99,6 +99,10 @@ pnpm db:generate
 
 Newer pnpm majors change dependency build-script approval and `pnpm.overrides` handling; do not treat a failure caused only by running an unsupported pnpm major as an application regression.
 
+### Dependabot npm group PRs
+
+If CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, close the PR without merge. Dependabot’s regenerated lockfile often drops `pnpm.overrides` while `package.json` still has them (same class as #89/#95/#103). Do **not** relax `pnpm install --frozen-lockfile`. Recreate wanted bumps on a human branch with `pnpm install` (pnpm 9) so overrides remain in the lockfile. Major-ignore / minor-patch grouping (`dependabot.yml`) does not fix overrides stripping.
+
 ### Checklist (agents / maintainers)
 
 - [ ] Feature PR uses a conventional commit title (and `Release-As` in the body when forcing a version)
