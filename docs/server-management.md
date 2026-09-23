@@ -48,7 +48,11 @@ Compare is read-only: select two to four entities from one permission layer, the
 
 ## Appearance and responsive navigation
 
-Settings → Appearance offers Light, Dark, and Black base themes with Cyan, Violet, Red, Blue, Emerald, and Amber accents. The choice is stored in the current browser. Sidebar sections remember their expanded state, while the mobile menu, dialogs, tables, and editor remain contained on narrow screens.
+Settings → Appearance offers Light, Dark, and Black base themes with Cyan, Violet, Red, Blue, Emerald, and Amber accents. The choice is stored in the current browser.
+
+The same page also has background presets (None, Grid, Dots, Glow, Aurora, and Noise), motion (System, Off, or On), and background intensity (Subtle, Normal, or Strong). System motion follows the browser `prefers-reduced-motion` setting. Intensity is hidden when the background is None. These settings stay in the current browser, and the default look is unchanged: Grid matches the background that previously shipped.
+
+Sidebar sections remember their expanded state, while the mobile menu, dialogs, tables, and editor remain contained on narrow screens.
 
 For installation, safe-area behavior, updates, and offline limits, see [Install TS6 Manager as an app](pwa.md).
 
