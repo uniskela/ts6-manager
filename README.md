@@ -94,7 +94,7 @@ Compare two to four entities from the same permission layer in a read-only table
 - Live video streaming from YouTube, Twitch, or direct URLs to TeamSpeak channels
 - WebRTC-based with Go sidecar relay (Pion) for low-latency delivery
 - Quality presets (480p, 720p, 1080p)
-- M3U/M3U8 playlist URL management, channel browsing/filtering, and music-bot streaming controls
+- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](docs/video-streaming.md)); channel browsing, filtering, and music-bot streaming
 - In-browser preview with WebRTC playback
 - A/V synchronization via RTCP Sender Reports
 - Runs as a Docker sidecar container alongside the backend

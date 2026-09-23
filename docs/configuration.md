@@ -26,6 +26,8 @@ The setup wizard creates the first administrator account. There are no default l
 
 Open **Settings → Connections** and provide the TeamSpeak host, WebQuery HTTP port, and a management API key.
 
+**Test WebQuery** runs staged checks in order: reachability, authentication, permissions, then virtual server access. The result can be a complete success or a partial success when some stages pass and a later stage does not. **Test SSH** stays a single pass or fail.
+
 For TeamSpeak 6.0.0-beta13, see [TeamSpeak compatibility](teamspeak-compatibility.md) for the recommended Query settings and deterministic admin-key option.
 
 ### Persistent WebQuery API keys
