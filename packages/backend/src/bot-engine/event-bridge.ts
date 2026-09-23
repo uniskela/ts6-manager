@@ -17,6 +17,9 @@ export declare interface EventBridge {
 
 export class EventBridge extends EventEmitter {
   private connections: Map<string, SshQueryClient> = new Map();
+  /** Reserve a pair before the async database lookup can start another SSH login. */
+  private connecting = new Map<string, Promise<void>>();
+  private registered = new Set<string>();
   /** Channel the main SSH Query client currently occupies for music text (roaming helper). */
   private mainHelperChannel = new Map<string, number>();
   /**
@@ -99,6 +102,20 @@ export class EventBridge extends EventEmitter {
   async connectServer(configId: number, sid: number): Promise<void> {
     const key = this.makeKey(configId, sid);
     if (this.connections.has(key)) return;
+    const pending = this.connecting.get(key);
+    if (pending) return pending;
+
+    const attempt = this.startServerConnection(configId, sid);
+    this.connecting.set(key, attempt);
+    try {
+      await attempt;
+    } finally {
+      if (this.connecting.get(key) === attempt) this.connecting.delete(key);
+    }
+  }
+
+  private async startServerConnection(configId: number, sid: number): Promise<void> {
+    const key = this.makeKey(configId, sid);
 
     const serverConfig = await this.prisma.tsServerConfig.findUnique({
       where: { id: configId },
@@ -127,6 +144,8 @@ export class EventBridge extends EventEmitter {
       console.log(`[EventBridge] SSH connected to ${serverConfig.host}:${serverConfig.sshPort} for sid=${sid}`);
       try {
         await client.registerEvents(sid);
+        if (this.connections.get(key) !== client || !client.isConnected) return;
+        this.registered.add(key);
         // `use sid=` parks Query in the default channel — remount if we had a helper park.
         try {
           await this.remountMainHelperAfterReconnect(configId, sid);
@@ -152,6 +171,7 @@ export class EventBridge extends EventEmitter {
 
     client.on('close', () => {
       console.log(`[EventBridge] SSH disconnected for ${key}`);
+      this.registered.delete(key);
       // Cache is stale: Query will land in default channel on next registerEvents.
       this.forgetMainHelperLocation(key);
       this.emit('sshDisconnected', configId, sid);
@@ -174,7 +194,11 @@ export class EventBridge extends EventEmitter {
 
   async disconnectServer(configId: number, sid: number): Promise<void> {
     const key = this.makeKey(configId, sid);
+    // A connection still looking up its config must not materialize after disconnect.
+    const pending = this.connecting.get(key);
+    if (pending) await pending;
     const client = this.connections.get(key);
+    this.registered.delete(key);
     // Clear trusted location before destroy; retain remount target so reconnectConfig
     // (and SSH auto-reconnect) can park again after registerEvents.
     this.forgetMainHelperLocation(key);
@@ -239,6 +263,11 @@ export class EventBridge extends EventEmitter {
     const key = this.makeKey(configId, sid);
     const client = this.connections.get(key);
     return client?.isConnected ?? false;
+  }
+
+  /** The main SSH session is usable for music discovery only after event registration. */
+  isRegistered(configId: number, sid: number): boolean {
+    return this.registered.has(this.makeKey(configId, sid)) && this.isConnected(configId, sid);
   }
 
   /**
