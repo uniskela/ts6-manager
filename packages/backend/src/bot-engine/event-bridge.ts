@@ -101,9 +101,9 @@ export class EventBridge extends EventEmitter {
 
   async connectServer(configId: number, sid: number): Promise<void> {
     const key = this.makeKey(configId, sid);
-    if (this.connections.has(key)) return;
     const pending = this.connecting.get(key);
     if (pending) return pending;
+    if (this.connections.has(key)) return;
 
     const attempt = this.startServerConnection(configId, sid);
     this.connecting.set(key, attempt);
