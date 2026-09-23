@@ -227,6 +227,8 @@ export class MusicCommandHandler {
   /** Channels the roaming helper recently covered (key: configId:sid) — for mapping only. */
   private autoCommandChannels = new Map<string, number[]>();
   private mainHelperParkTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Coalesce concurrent bot refreshes for the same connection/SID pair. */
+  private syncingCommandPairs = new Map<string, Promise<void>>();
 
   constructor(
     private prisma: PrismaClient,
@@ -351,6 +353,22 @@ export class MusicCommandHandler {
    * Tear down leftovers from older tips and park the main SSH helper where humans are.
    */
   async syncCommandListenersForPair(configId: number, sid: number): Promise<void> {
+    const pairKey = `${configId}:${sid}`;
+    const pending = this.syncingCommandPairs.get(pairKey);
+    if (pending) return pending;
+
+    const run = this.syncCommandListenersForPairOnce(configId, sid);
+    this.syncingCommandPairs.set(pairKey, run);
+    try {
+      await run;
+    } finally {
+      if (this.syncingCommandPairs.get(pairKey) === run) {
+        this.syncingCommandPairs.delete(pairKey);
+      }
+    }
+  }
+
+  private async syncCommandListenersForPairOnce(configId: number, sid: number): Promise<void> {
     if (!this.eventBridge) {
       console.warn(
         `[MusicCmd] syncCommandListeners skipped ${configId}:${sid}: no eventBridge`,
