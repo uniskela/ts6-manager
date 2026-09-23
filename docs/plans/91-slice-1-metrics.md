@@ -1,9 +1,9 @@
 # Plan: #91 Slice 1 — Native TeamSpeak metrics data source
 
 Status: **blocked on real beta13 metrics fixture** (implementation not started).  
-Rebased against `origin/main` @ `599edb3` (after Slice 2 / PR #114 merged as `2a096bf`).
+Merged onto `origin/main` @ `cdb6c3d` (after Slice 2 / PR #114 merged as `2a096bf`, the appearance work in PR #122, and PR #121 itself landing as `cdb6c3d`).
 
-Supersedes the discovery-only draft in PR #121 (`cursor/docs-91-slice-1-plan-c289`), which was written against older `main` and assumed #114 was still open. Do **not** implement #121's architecture unchanged.
+Supersedes the discovery-only draft merged from PR #121 (`cursor/docs-91-slice-1-plan-c289`, commit `cdb6c3d`), which was written against older `main` and assumed #114 was still open. Do **not** implement #121's architecture unchanged; this fixture-gated plan is the authoritative one going forward. #121's current-state findings on existing building blocks (`validate-ts-host.ts`, `webquery-client.ts`, `connection-pool.ts`, `TsServerConfig` schema) remain accurate background reading but do not change the blocking gate or architecture below.
 
 ## Blocking gate (Codex review contract)
 
