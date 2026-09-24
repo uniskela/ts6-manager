@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { activityJournalApi } from '@/api/activity-journal.api';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
@@ -16,6 +17,14 @@ import {
   sameJournalTarget,
   type JournalTargetToggle,
 } from '@/lib/action-ownership';
+import {
+  captureStatusLabel,
+  connectionSidScopeKey,
+  historyRefreshPresentation,
+  nextScopedCursorStack,
+  resolveCaptureStatusDisplay,
+} from '@/lib/history-status-consistency';
+import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import type {
   ActivityCaptureStatus,
@@ -24,15 +33,8 @@ import type {
   ClientActivityEntry,
 } from '@ts6/common';
 
-const STATUS_LABEL: Record<ActivityCaptureStatus, string> = {
-  disabled: 'Disabled',
-  connecting: 'Connecting',
-  capturing: 'Capturing',
-  interrupted: 'Interrupted',
-  persistence_error: 'Persistence error',
-};
-
-const STATUS_CLASS: Record<ActivityCaptureStatus, string> = {
+const STATUS_CLASS: Record<ActivityCaptureStatus | 'unknown', string> = {
+  unknown: 'text-muted-foreground',
   disabled: 'text-muted-foreground',
   connecting: 'text-amber-600',
   capturing: 'text-emerald-600',
@@ -64,18 +66,32 @@ function formatWhen(iso: string): string {
 export default function ActivityJournal() {
   const { selectedConfigId: c, selectedSid: s } = useServerStore();
   const queryClient = useQueryClient();
+  const scopeKey = connectionSidScopeKey(c, s);
   const [kindFilter, setKindFilter] = useState<'ALL' | 'join' | 'leave'>('ALL');
   const [classFilter, setClassFilter] = useState<'ALL' | ActivityClassification>('ALL');
-  const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const [filterScopeKey, setFilterScopeKey] = useState(scopeKey);
+  const [pageState, setPageState] = useState<{ scopeKey: string; cursorStack: (string | null)[] }>({
+    scopeKey,
+    cursorStack: [null],
+  });
   const [ownerGeneration, setOwnerGeneration] = useState(0);
   const liveRef = useRef({ configId: c ?? null, sid: s ?? null, ownerGeneration: 0 });
   liveRef.current = { configId: c ?? null, sid: s ?? null, ownerGeneration };
-  const cursor = cursorStack[cursorStack.length - 1];
 
-  useEffect(() => {
+  // Synchronous scope reset — avoid one render that fetches the new pair with an old cursor.
+  const scopedPage = nextScopedCursorStack(pageState, scopeKey, [null]);
+  if (scopedPage !== pageState) {
+    setPageState(scopedPage);
     setOwnerGeneration((g) => g + 1);
-    setCursorStack([null]);
-  }, [c, s]);
+  }
+  if (filterScopeKey !== scopeKey) {
+    setFilterScopeKey(scopeKey);
+    setKindFilter('ALL');
+    setClassFilter('ALL');
+  }
+
+  const cursorStack = scopedPage.cursorStack;
+  const cursor = cursorStack[cursorStack.length - 1];
 
   const statusQuery = useQuery({
     queryKey: ['activity-journal-status'],
@@ -92,12 +108,20 @@ export default function ActivityJournal() {
     );
   }, [c, s, statusQuery.data]);
 
+  const captureDisplay = resolveCaptureStatusDisplay({
+    configId: c,
+    sid: s,
+    statuses: statusQuery.data?.statuses,
+    statusQueryStatus: statusQuery.status,
+    hasStatusData: !!statusQuery.data,
+  });
+  const captureStatusForLive: ActivityCaptureStatus =
+    captureDisplay.kind === 'unknown' ? 'disabled' : captureDisplay.status;
   const enabled = pairStatus?.enabled === true;
-  const captureStatus: ActivityCaptureStatus = pairStatus?.status || 'disabled';
   const onNewestPage = cursor == null;
   const historyRefetchInterval = activityJournalHistoryRefetchInterval({
-    enabled,
-    status: captureStatus,
+    enabled: enabled && captureDisplay.kind === 'current',
+    status: captureStatusForLive,
     onNewestPage,
   });
   const historyLive = historyRefetchInterval !== false;
@@ -124,7 +148,7 @@ export default function ActivityJournal() {
         queryKey: ['activity-journal-history', target.configId, target.sid],
       });
       if (shouldApplyJournalToggleResult(liveRef.current, target)) {
-        setCursorStack([null]);
+        setPageState({ scopeKey, cursorStack: [null] });
       }
     },
   });
@@ -137,14 +161,61 @@ export default function ActivityJournal() {
     });
   }, [historyQuery.data, kindFilter, classFilter]);
 
+  const statusError = statusQuery.isError
+    ? apiErrorMessage(statusQuery.error, 'Could not refresh capture status.')
+    : null;
+  const historyError = historyQuery.isError
+    ? apiErrorMessage(
+      historyQuery.error,
+      historyQuery.data
+        ? 'History refresh failed. The last successful page is still displayed.'
+        : 'Could not load activity journal history.',
+    )
+    : null;
+  const backgroundError = statusError || historyError;
+  const isFetchingGate = statusQuery.isFetching || historyQuery.isFetching;
+  const refreshPresentation = historyRefreshPresentation({
+    isFetching: isFetchingGate,
+    hasError: !!backgroundError,
+    livePolling: historyLive,
+    idleLiveLabel: 'Live journal history active',
+    idleStaticLabel: onNewestPage ? 'Journal history up to date' : 'This journal page loaded',
+    refreshingLabel: 'Refreshing journal…',
+    degradedLabel: 'Journal updates interrupted',
+  });
+
+  const retryRefresh = () => {
+    void statusQuery.refetch();
+    void historyQuery.refetch();
+  };
+
   if (!c || !s) {
     return <EmptyState icon={NotebookPen} title="No server selected" description="Select a connection and virtual server to view the activity journal." />;
   }
 
   if (statusQuery.isLoading && historyQuery.isLoading) return <PageLoader />;
 
+  if (historyQuery.isError && !historyQuery.data) {
+    return (
+      <div className="space-y-4">
+        <EmptyState
+          icon={NotebookPen}
+          title="Could not load journal history"
+          description={historyError ?? 'Could not load activity journal history.'}
+        />
+        <div className="flex justify-center">
+          <Button size="sm" variant="outline" onClick={retryRefresh} disabled={isFetchingGate}>
+            {isFetchingGate ? 'Retrying…' : 'Retry'}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  const statusClassKey = captureDisplay.kind === 'unknown' ? 'unknown' : captureDisplay.status;
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-testid="activity-journal-page">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-semibold">Activity Journal</h1>
@@ -157,31 +228,44 @@ export default function ActivityJournal() {
             {(statusQuery.data?.retention.global ?? 100000).toLocaleString()} global.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {historyLive && (
-            <span className="text-xs font-medium text-emerald-600" title="History refreshes while capturing">
+        <div className="flex flex-wrap items-center gap-3">
+          <RefreshStatus
+            isRefreshing={isFetchingGate}
+            tone={refreshPresentation.tone}
+            idleLabel={refreshPresentation.idleLabel}
+            refreshingLabel={refreshPresentation.refreshingLabel}
+            degradedLabel={refreshPresentation.degradedLabel}
+          />
+          {refreshPresentation.showLiveBadge && (
+            <span className="text-xs font-medium text-emerald-600" title="History refreshes while capturing" data-testid="journal-live-badge">
               Live
             </span>
           )}
           <Button
             size="sm"
             variant="outline"
-            onClick={() => {
-              void statusQuery.refetch();
-              void historyQuery.refetch();
-            }}
-            disabled={statusQuery.isFetching || historyQuery.isFetching}
+            onClick={retryRefresh}
+            disabled={isFetchingGate}
+            aria-busy={isFetchingGate}
           >
             <RefreshCw
               className={cn(
                 'h-4 w-4 mr-1',
-                (statusQuery.isFetching || historyQuery.isFetching) && 'animate-spin',
+                isFetchingGate && 'animate-spin',
               )}
             />
             Refresh
           </Button>
         </div>
       </div>
+
+      {backgroundError && historyQuery.data && (
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={retryRefresh}
+          isRetrying={isFetchingGate}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card px-4 py-3">
         <div className="flex items-center gap-2">
@@ -190,6 +274,7 @@ export default function ActivityJournal() {
             disabled={
               !c
               || !s
+              || captureDisplay.kind === 'unknown'
               || (targetMutation.isPending && sameJournalTarget({ configId: c, sid: s }, targetMutation.variables))
             }
             onCheckedChange={(v) => {
@@ -207,10 +292,10 @@ export default function ActivityJournal() {
             Capture for config {c} / SID {s}
           </label>
         </div>
-        <div className="text-sm">
+        <div className="text-sm" data-testid="journal-capture-status">
           Status:{' '}
-          <span className={cn('font-medium', STATUS_CLASS[captureStatus])}>
-            {STATUS_LABEL[captureStatus]}
+          <span className={cn('font-medium', STATUS_CLASS[statusClassKey], captureDisplay.kind === 'stale' && 'text-amber-600')}>
+            {captureStatusLabel(captureDisplay)}
           </span>
         </div>
         {pairStatus && pairStatus.droppedEvents > 0 && (
@@ -269,9 +354,11 @@ export default function ActivityJournal() {
                 <p className="text-center text-muted-foreground text-sm py-10">Loading…</p>
               ) : items.length === 0 ? (
                 <p className="text-center text-muted-foreground text-sm py-10">
-                  {enabled
-                    ? 'No journal entries yet for this context.'
-                    : 'Capture is disabled. Enable capture to record joins and leaves.'}
+                  {captureDisplay.kind === 'unknown'
+                    ? 'No journal entries on this page. Capture status is not known yet.'
+                    : enabled
+                      ? 'No journal entries yet for this context.'
+                      : 'Capture is disabled. Enable capture to record joins and leaves.'}
                 </p>
               ) : (
                 items.map((entry: ClientActivityEntry) => {
@@ -323,7 +410,10 @@ export default function ActivityJournal() {
           size="sm"
           variant="outline"
           disabled={cursorStack.length <= 1}
-          onClick={() => setCursorStack((stack) => stack.slice(0, -1))}
+          onClick={() => setPageState((prev) => ({
+            scopeKey,
+            cursorStack: prev.scopeKey === scopeKey ? prev.cursorStack.slice(0, -1) : [null],
+          }))}
         >
           Newer
         </Button>
@@ -333,7 +423,12 @@ export default function ActivityJournal() {
           disabled={!historyQuery.data?.nextCursor}
           onClick={() => {
             const next = historyQuery.data?.nextCursor;
-            if (next) setCursorStack((stack) => [...stack, next]);
+            if (next) {
+              setPageState((prev) => ({
+                scopeKey,
+                cursorStack: prev.scopeKey === scopeKey ? [...prev.cursorStack, next] : [null, next],
+              }));
+            }
           }}
         >
           Older

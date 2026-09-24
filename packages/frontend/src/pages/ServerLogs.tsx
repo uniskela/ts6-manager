@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { ServerLogPage } from '@ts6/common';
 import { LOGVIEW_MAX_LINES } from '@ts6/common';
@@ -24,6 +24,11 @@ import {
   teamSpeakQueryRetryDelay,
   teamSpeakRefreshTone,
 } from '@/lib/api-error';
+import {
+  connectionSidScopeKey,
+  historyRefreshPresentation,
+  nextScopedCursorStack,
+} from '@/lib/history-status-consistency';
 import {
   formatLogTimestamp,
   levelBadgeLabel,
@@ -53,18 +58,29 @@ export default function ServerLogs() {
   const [instanceMode, setInstanceMode] = useState(false);
   const [filter, setFilter] = useState('');
   const [levelFilter, setLevelFilter] = useState('ALL');
-  /** Stack of begin_pos values for Previous; empty means newest page. */
-  const [cursorStack, setCursorStack] = useState<string[]>([]);
-  const beginPos = cursorStack.length ? cursorStack[cursorStack.length - 1] : null;
+  /** Scope for paging: connection/SID + page size + instance vs VS logfile. */
+  const pageScopeKey = `${connectionSidScopeKey(c, s)}:${lines}:${instanceMode ? 'i' : 'v'}`;
+  const [pageState, setPageState] = useState<{ scopeKey: string; cursorStack: string[] }>({
+    scopeKey: pageScopeKey,
+    cursorStack: [],
+  });
+  const [filterScopeKey, setFilterScopeKey] = useState(pageScopeKey);
 
-  // Reset paging when the operator changes server context or page size / scope.
-  useEffect(() => {
-    setCursorStack([]);
+  const scopedPage = nextScopedCursorStack(pageState, pageScopeKey, []);
+  if (scopedPage !== pageState) {
+    setPageState(scopedPage);
+  }
+  if (filterScopeKey !== pageScopeKey) {
+    setFilterScopeKey(pageScopeKey);
     setFilter('');
     setLevelFilter('ALL');
-  }, [c, s, lines, instanceMode]);
+  }
+
+  const cursorStack = scopedPage.cursorStack;
+  const beginPos = cursorStack.length ? cursorStack[cursorStack.length - 1] : null;
 
   const pageSize = Math.min(LOGVIEW_MAX_LINES, Math.max(1, parseInt(lines, 10) || 100));
+  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === s);
 
   const query = useQuery({
     queryKey: ['logs', c, s, pageSize, instanceMode, beginPos],
@@ -74,7 +90,8 @@ export default function ServerLogs() {
       instance: instanceMode ? 1 : 0,
       beginPos,
     }),
-    enabled: !!c && !!s,
+    // Gate on a confirmed virtual-server context (same as clients/channels/dashboard).
+    enabled: !!c && !!s && contextIsValid,
     retry: teamSpeakQueryRetry,
     retryDelay: teamSpeakQueryRetryDelay,
   });
@@ -98,7 +115,6 @@ export default function ServerLogs() {
 
   const connection = servers?.find((server: any) => Number(server.id) === c);
   const virtualServer = virtualServers?.find((server: any) => Number(server.virtualserver_id) === s);
-  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === s);
   const hasPage = !!page;
   const gateError = query.error || virtualServersError;
   const isFetchingGate = query.isFetching || virtualServersFetching;
@@ -110,7 +126,7 @@ export default function ServerLogs() {
 
   const refreshNewest = () => {
     if (cursorStack.length > 0) {
-      setCursorStack([]);
+      setPageState({ scopeKey: pageScopeKey, cursorStack: [] });
       return;
     }
     void query.refetch();
@@ -118,11 +134,17 @@ export default function ServerLogs() {
 
   const goOlder = () => {
     if (!page?.nextBeginPos) return;
-    setCursorStack((prev) => [...prev, page.nextBeginPos!]);
+    setPageState((prev) => ({
+      scopeKey: pageScopeKey,
+      cursorStack: prev.scopeKey === pageScopeKey ? [...prev.cursorStack, page.nextBeginPos!] : [page.nextBeginPos!],
+    }));
   };
 
   const goPrevious = () => {
-    setCursorStack((prev) => prev.slice(0, -1));
+    setPageState((prev) => ({
+      scopeKey: pageScopeKey,
+      cursorStack: prev.scopeKey === pageScopeKey ? prev.cursorStack.slice(0, -1) : [],
+    }));
   };
 
   if (!c || !s) return <EmptyState icon={ScrollText} title="No server selected" />;
@@ -169,6 +191,15 @@ export default function ServerLogs() {
   const refreshTone = !contextIsValid && !gateError
     ? 'starting'
     : teamSpeakRefreshTone(gateError);
+  const onNewestPage = cursorStack.length === 0;
+  const refreshPresentation = historyRefreshPresentation({
+    isFetching: isFetchingGate,
+    hasError: !!gateError,
+    livePolling: false,
+    idleStaticLabel: onNewestPage ? 'Newest log page up to date' : 'This log page loaded',
+    refreshingLabel: 'Refreshing logs…',
+    degradedLabel: 'Log updates interrupted',
+  });
 
   const filtersActive = filter.length > 0 || levelFilter !== 'ALL';
   const scopeMismatch = hasPage && page.context.instance !== instanceMode;
@@ -215,10 +246,10 @@ export default function ServerLogs() {
         metadata={(
           <RefreshStatus
             isRefreshing={isFetchingGate}
-            tone={refreshTone}
-            idleLabel="Log page up to date"
-            refreshingLabel="Refreshing logs…"
-            degradedLabel="Log updates interrupted"
+            tone={refreshTone === 'live' ? refreshPresentation.tone : refreshTone}
+            idleLabel={refreshPresentation.idleLabel}
+            refreshingLabel={refreshPresentation.refreshingLabel}
+            degradedLabel={refreshPresentation.degradedLabel}
             startingLabel="Waiting for TeamSpeak Query…"
           />
         )}

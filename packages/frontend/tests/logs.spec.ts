@@ -95,11 +95,36 @@ test('Server Logs separates initial fetch failure from stale refresh errors', as
   await page.getByRole('button', { name: 'Retry' }).click();
   await expect(page.getByTestId('server-logs-page')).toBeVisible();
   await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
+  await expect(page.getByText('Newest log page up to date')).toBeVisible();
 
   await request.post('/__test/logs?scenario=refresh-failure');
   await page.getByRole('button', { name: 'Refresh' }).click();
   await expect(page.getByText(/Log refresh failed|last successful page/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
+  await expect(page.getByText('Log updates interrupted')).toBeVisible();
+  await expect(page.getByText('Newest log page up to date')).toHaveCount(0);
+});
+
+test('Server Logs waits for a valid virtual-server context before logview requests', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem('ts6-server', JSON.stringify({ state: { selectedConfigId: 1, selectedSid: 999 }, version: 0 }));
+  });
+  await request.post('/__test/dashboard?scenario=normal');
+  await request.post('/__test/logs?scenario=normal');
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
+  await page.goto('/logs');
+
+  await expect(page.getByTestId('server-logs-page')).toBeVisible();
+  await expect(page.getByLabel('Select virtual server')).toContainText('Operations Voice');
+
+  const state = await request.get('/__test/state').then((response) => response.json());
+  expect(state.logsRequests.some((entry: { sid: number }) => entry.sid === 999)).toBe(false);
+  expect(state.logsRequests.some((entry: { sid: number }) => entry.sid === 1)).toBe(true);
 });
 
 test('Server Logs shows logview I/O clearly and does not auto-retry stampede', async ({ page, request }) => {

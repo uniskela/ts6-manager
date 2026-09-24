@@ -67,13 +67,13 @@ The UI includes:
 - **Server Logs 2.0** (admin-only): bounded TeamSpeak `logview` pages with Previous/Older cursor paging, Refresh back to the newest page, connection / virtual-server / instance scope labels, page-local search and level filters, and source timestamps with a single page-level note that TeamSpeak does not report timezone (no per-row “timezone unknown”); and
 - instance-level settings.
 
-Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS. If TeamSpeak returns logfile I/O error 2052, the UI shows **TeamSpeak log file unavailable** with a single manual Retry (see [troubleshooting](troubleshooting.md#server-logs-teamspeak-log-file-unavailable-error-2052)).
+Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS. Log fetches wait until the selected virtual server is confirmed (same context gate as Clients / Channels). Failed refreshes keep the last successful page but label updates as interrupted — never as “up to date.” If TeamSpeak returns logfile I/O error 2052, the UI shows **TeamSpeak log file unavailable** with a single manual Retry (see [troubleshooting](troubleshooting.md#server-logs-teamspeak-log-file-unavailable-error-2052)).
 
 ## Activity journal and administrative audit
 
-Admin-only **Activity Journal** records opt-in TeamSpeak join/leave history for the selected connection and virtual server (column headers: date/time, event, user, type, identity). History auto-refreshes while capture is running on the newest page.
+Admin-only **Activity Journal** records opt-in TeamSpeak join/leave history for the selected connection and virtual server (column headers: date/time, event, user, type, identity). History auto-refreshes while capture is running on the newest page. Capture status distinguishes **Unknown** (not yet loaded), **stale** last-known values after a failed status refresh, and current states — it does not default missing data to Disabled. Connection/SID changes reset journal pagination immediately so an older cursor cannot be reused under the new scope.
 
-**Administrative Audit** lists Manager-initiated admin mutations (not TeamSpeak client activity). Rows show date/time, action, actor, target, connection/SID context, and outcome/result. The newest page live-refreshes about every 10 seconds; older pages stay frozen while paging.
+**Administrative Audit** lists Manager-initiated admin mutations (not TeamSpeak client activity). Rows show date/time, action, actor, target, connection/SID context, and outcome/result. The newest page live-refreshes about every 10 seconds; older pages stay frozen while paging. A failed refresh keeps prior rows with an interrupted label and hides the Live badge.
 
 ## Widgets
 
