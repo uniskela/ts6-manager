@@ -6,6 +6,7 @@ import { Header } from './Header';
 import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
 import { useResolvedBackgroundMotion } from '@/hooks/use-resolved-background-motion';
+import { useCustomCssInjection } from '@/hooks/use-custom-css-injection';
 import { authApi } from '@/api/auth.api';
 import { Toaster } from 'sonner';
 
@@ -16,6 +17,7 @@ export function AppLayout() {
   const backgroundMotion = useUiStore((s) => s.backgroundMotion);
   const backgroundIntensity = useUiStore((s) => s.backgroundIntensity);
   const resolvedMotion = useResolvedBackgroundMotion(backgroundMotion);
+  useCustomCssInjection(isAuthenticated);
 
   const { data: me } = useQuery({
     queryKey: ['me'],
