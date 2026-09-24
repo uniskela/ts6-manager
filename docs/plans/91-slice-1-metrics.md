@@ -1,9 +1,13 @@
 # Plan: #91 Slice 1 — Native TeamSpeak metrics data source
 
-Status: **blocked on real beta13 metrics fixture** (implementation not started).  
+Status: **fixture gate PASSED on [#126](https://github.com/uniskela/ts6-manager/pull/126) branch evidence only; still FAILED on `main`** (implementation not started on `main`).  
 Merged onto `origin/main` @ `cdb6c3d` (after Slice 2 / PR #114 merged as `2a096bf`, the appearance work in PR #122, and PR #121 itself landing as `cdb6c3d`).
 
+Design attribution for the deltas below: Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24), plus inspection of the candidate fixture on [#126](https://github.com/uniskela/ts6-manager/pull/126) head `3ffe375` (not an implementation review of #126).
+
 Supersedes the discovery-only draft merged from PR #121 (`cursor/docs-91-slice-1-plan-c289`, commit `cdb6c3d`), which was written against older `main` and assumed #114 was still open. Do **not** implement #121's architecture unchanged; this fixture-gated plan is the authoritative one going forward. #121's current-state findings on existing building blocks (`validate-ts-host.ts`, `webquery-client.ts`, `connection-pool.ts`, `TsServerConfig` schema) remain accurate background reading but do not change the blocking gate or architecture below.
+
+**Do not merge Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120)** based merely on the presence of #126.
 
 ## Blocking gate (Codex review contract)
 
@@ -17,11 +21,16 @@ Before any allow-listed metric names, typed mapper, or dashboard field mapping l
    - HTTP **content-type**;
    - whether samples are **scoped to a SID** or instance-wide / unscoped.
 
-**Current status of the gate:** **FAILED — no real fixture available** in this repo, docs, CI artifacts, agent env, or a reachable live beta13 container (Docker is not installed in this Cloud Agent environment; `ts6-compat.yml` only exercises WebQuery and does not enable metrics).
+### Gate status (reconciled)
 
-Until a maintainer (or a follow-up agent with Docker/live TS) commits a real dump under `packages/backend/src/ts-client/__fixtures__/`, **do not invent metric names or claim VS scoping**. Implementation PRs that invent names are out of contract.
+| Branch / evidence | Gate status |
+|-------------------|-------------|
+| `main` @ `bdcbaf3` | **FAILED** — capture instructions exist under `packages/backend/src/ts-client/__fixtures__/README.md`, but **no dump is on `main`**. |
+| [#126](https://github.com/uniskela/ts6-manager/pull/126) head `3ffe375` | **PASSED (candidate only)** — substantive fixture `ts6-beta13-metrics.txt` with headers/metadata reporting beta13, HTTP 200, and `text/plain; version=0.0.4; charset=utf-8`. Capture’s `TSSERVER_METRICS_VOICE` setting is explicitly unknown. Codex inspected that evidence; it did not independently reproduce the capture. |
 
-Capture instructions live in `packages/backend/src/ts-client/__fixtures__/README.md`.
+Until the accepted fixture lands on `main` (or an implementation PR that integrates #126 against this contract), **do not invent metric names or claim the main-branch gate passed**. Evaluate #126 against this contract before treating Slice 1 as complete.
+
+Capture instructions live in `packages/backend/src/ts-client/__fixtures__/README.md`. Reconcile the fixture filename with the plan when integrating (`ts6-beta13-metrics.txt` on #126 vs prior `beta13-metrics.txt` wording).
 
 ## Confirmed facts (safe to rely on without a fixture)
 
@@ -38,7 +47,15 @@ From official TeamSpeak 6 server docs (`teamspeak/teamspeak6-server` `CONFIG.md`
 | Voice extras | `TSSERVER_METRICS_VOICE` adds per-packet voice diagnostics (overhead) |
 | Format family | Prometheus text exposition (names/labels **not** documented in CONFIG.md) |
 
-**Still unknown without a fixture:** metric names, label keys/values, content-type string, and whether any label uniquely identifies `sid` / virtual server.
+**Still unknown without a fixture on `main`:** final accepted metric names, label keys/values, content-type string, and whether any label uniquely identifies `sid` / virtual server. Candidate answers exist only on #126 (see allow-list delta below).
+
+## Current-state findings (Codex @ `bdcbaf3` + #126 inspection)
+
+- Main’s dashboard remains WebQuery-based. The pool owns WebQuery clients; #114 supplies SID validation and staged diagnostics.
+- The frontend currently expects bandwidth in bytes/second, ping in milliseconds, and packet loss as a ratio.
+- The #126 candidate shows one virtual server, not a multi-server isolation demonstration.
+- SID alone cannot prove that a separately configured metrics listener belongs to the same TeamSpeak server.
+- The fixture’s packet-loss classes are not equivalent to the dashboard’s existing total-loss field.
 
 ## Intentionally unsupported topologies (Slice 1)
 
@@ -56,9 +73,15 @@ From official TeamSpeak 6 server docs (`teamspeak/teamspeak6-server` `CONFIG.md`
 
 `DashboardData` identity and structure fields (name, platform, version, channels, authenticated VS context, etc.) continue to come from authenticated WebQuery. Native metrics **augment** capacity/traffic/runtime fields only after a proven allow-list exists.
 
-### 2. Concurrent best-effort metrics fetch
+### 2. Concurrent best-effort metrics fetch (non-blocking)
 
-When `metricsEnabled` is true, the dashboard route starts WebQuery and metrics **concurrently**. A metrics timeout/failure must **not** serialize ahead of WebQuery and must not delay or fail the WebQuery path.
+When `metricsEnabled` is true, the dashboard route starts WebQuery and metrics **concurrently**. Make the “must not delay WebQuery” requirement executable:
+
+- Start both sources together.
+- When WebQuery completes, use already-completed valid metrics **or** return WebQuery immediately and **cancel** the outstanding scrape.
+- A simple `Promise.all` would still wait for metrics — do not use that pattern.
+
+A metrics timeout/failure must **not** serialize ahead of WebQuery and must not delay or fail the WebQuery path.
 
 ### 3. Composite provenance (not a single `kind` enum)
 
@@ -79,13 +102,29 @@ UI copy:
 - WebQuery + scoped metrics → “WebQuery + native metrics”
 - Never label a mixed response as metrics-only
 
-### 4. Fail closed on scoping
+Only advertise augmentation when a valid metric field was actually used. Preserve WebQuery values when optional metric samples are absent or invalid. Reject non-finite, negative, contradictory, and ambiguous values rather than converting them to zero.
+
+### 4. Fail closed on scoping (identity join)
+
+Resolve the selected SID through `teamspeak_virtualserver_info.virtualserver_id`, obtaining `virtualserver_unique_identifier`. Require that UID to agree with authenticated WebQuery identity, then accept only samples carrying that exact UID. Missing, ambiguous, conflicting, or mismatched identity fails closed as `unscoped`.
 
 If metrics cannot be **proven** scoped to the selected SID (exact VS identifier on samples), set `metrics.status = 'unavailable'`, `reason: 'unscoped'`, omit metrics-derived fields, and return the normal WebQuery dashboard.
 
-### 5. Allow-list only
+### 5. Allow-list only (candidate from #126 dump)
 
 Typed, documented allow-list derived from the real fixture. Parser supports only the Prometheus text subset needed for that fixture. Missing optional metrics are **omitted** — never filled with misleading zeroes.
+
+Candidate allow-list from the inspected #126 dump (integrate only after evaluating #126 against this contract):
+
+| Dashboard field | Observed source and rule |
+|-----------------|--------------------------|
+| Online users | `teamspeak_clients_online` minus `teamspeak_query_clients_online`; require both valid counts |
+| Capacity | `teamspeak_max_clients` |
+| Channels | `teamspeak_channels_online` |
+| Incoming/outgoing bandwidth | `teamspeak_connection_bandwidth_bytes_per_second`, exact `received`/`sent` direction |
+| Ping | `teamspeak_ping_seconds` × 1,000 |
+| Uptime | Retain WebQuery initially; the proposed calculation uses an unscoped host timestamp |
+| Total packet loss | Retain WebQuery; do not substitute the `speech` class or average class ratios |
 
 ### 6. Security / validation
 
@@ -96,6 +135,7 @@ Typed, documented allow-list derived from the real fixture. Parser supports only
 - Reject redirects; real response-stream byte cap (including decompressed); short timeout/abort; status + content-type checks.
 - **No** WebQuery API key/auth header on metrics requests.
 - No raw upstream errors to clients; SSRF/network tests required.
+- **DNS / rebinding:** Validate DNS resolution at connection time and use the validated address for the actual connection. A separate validation lookup followed by an unrestricted second lookup leaves a rebinding gap.
 
 ### 7. Config surface
 
@@ -107,7 +147,7 @@ Typed, documented allow-list derived from the real fixture. Parser supports only
 
 Metrics listener is **HTTP** unless a future real fixture/docs prove otherwise — do not silently inherit `useHttps`.
 
-Prisma migration + `pnpm db:generate` when implementing.
+Schema changes use this repository’s **Prisma `db push` plus `SCHEMA_VERSION`** mechanism (not a migration-history workflow), then `pnpm db:generate` when implementing.
 
 ### 8. Connection pool / routes
 
@@ -130,16 +170,24 @@ Prisma migration + `pnpm db:generate` when implementing.
 - Update `docs/roadmap.md` **only after** behavior is stable.
 - Do not claim unscoped metrics support.
 
-## Implementation checklist (post-fixture only)
+## Implementation steps (post-fixture)
 
-1. Commit real `beta13-metrics.txt` (+ note observed content-type / path / SID label).
-2. Derive allow-list + scoping rule from the fixture; write fixture-driven parser/mapper tests.
-3. Prisma fields + migration; `pnpm db:generate`.
-4. `metrics-client.ts` + SSRF/timeout/size/redirect tests (no auth header).
-5. Wire pool lifecycle; composite dashboard route (concurrent WebQuery + metrics).
-6. Frontend config + badge; Playwright/demo/`serve-production.mjs`.
+1. Accept and integrate the capture evidence (evaluate #126 against this contract; land fixture on `main` or with the implementation PR).
+2. Document the identity join and conservative mapping; write fixture-driven parser/mapper tests.
+3. Prisma fields + `SCHEMA_VERSION`; `pnpm db:generate`.
+4. Verify transport restrictions (`metrics-client.ts` + SSRF/timeout/size/redirect/DNS tests; no auth header).
+5. Wire pool lifecycle and non-blocking composite dashboard route.
+6. Frontend config + provenance badge; Playwright/demo/`serve-production.mjs`.
 7. Compatibility docs; optional beta13 live check if Docker available.
 8. Conventional commit `feat: …`; no hand-bumped versions.
+
+## Affected files
+
+The authoritative plan, fixture documentation, Prisma schema/`SCHEMA_VERSION`, metrics parser/mapper/client, connection pool, server/dashboard routes, shared response types, connection forms, dashboard, and corresponding fixtures/tests under `packages/backend/` and `packages/frontend/`.
+
+## Tests
+
+Include fixture-derived mapping; conflicting SID/UID mappings; a metrics listener for the wrong server with the same numeric SID; missing Query counts; optional fields; duplicate samples; units; and traffic-class semantics. Verify fast WebQuery with hanging metrics, WebQuery failure, cancellation, redirects, DNS/address restrictions including IPv6 forms, chunked/compressed oversize responses, timeouts, content type, RBAC, credential absence, demo isolation, and truthful frontend provenance.
 
 ## Verification commands (when implementing)
 
@@ -155,6 +203,16 @@ mapfile -t tests < <(find packages/backend/src -type f -name '*.test.ts' | sort)
 pnpm exec tsx --test "${tests[@]}"
 ```
 
-## What this PR ships
+## Risks and rollback
 
-Docs + fixture placeholder instructions only. No application code, no invented metrics, no version bumps. Refs #91. Close or supersede PR #121 once this plan is accepted.
+| Risk | Mitigation |
+|------|------------|
+| Cross-server attribution | UID identity join; fail closed as `unscoped` |
+| Silently changing metric meaning | Conservative allow-list; retain WebQuery for uptime / total packet loss |
+| Metrics delaying dashboard | Concurrent fetch + cancel on WebQuery completion |
+
+Keep the feature disabled by default; disabling metrics must immediately restore ordinary WebQuery behavior. Do not merge #120 based merely on the presence of #126.
+
+## What this docs update ships
+
+Plan deltas only (gate reconciliation + architecture deltas from Codex Jobs 1–5 analysis). No application code, no invented metrics beyond documenting the #126 candidate allow-list, no version bumps. Refs #91.
