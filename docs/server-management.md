@@ -68,6 +68,12 @@ The UI includes:
 
 Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS. If TeamSpeak returns logfile I/O error 2052, the UI shows **TeamSpeak log file unavailable** with a single manual Retry (see [troubleshooting](troubleshooting.md#server-logs-teamspeak-log-file-unavailable--error-2052)).
 
+## Activity journal and administrative audit
+
+Admin-only **Activity Journal** records opt-in TeamSpeak join/leave history for the selected connection and virtual server (column headers: date/time, event, user, type, identity). History auto-refreshes while capture is running on the newest page.
+
+**Administrative Audit** lists Manager-initiated admin mutations (not TeamSpeak client activity). Rows show date/time, action, actor, target, connection/SID context, and outcome/result. The newest page live-refreshes about every 10 seconds; older pages stay frozen while paging.
+
 ## Widgets
 
 Public server widgets can expose selected server status without application login using a dedicated widget token.

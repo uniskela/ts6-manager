@@ -6,14 +6,16 @@ import {
   type AdminAuditAction,
   type AdminAuditEventDto,
   type AdminAuditOutcome,
+  type AdminAuditResultCode,
 } from '@ts6/common';
-import { ClipboardList, Filter } from 'lucide-react';
+import { ClipboardList, Filter, RefreshCw } from 'lucide-react';
 import { auditApi } from '@/api/audit.api';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { adminAuditHistoryRefetchInterval } from '@/lib/admin-audit-live';
 import { cn } from '@/lib/utils';
 
 const ACTION_LABELS: Record<AdminAuditAction, string> = {
@@ -69,6 +71,36 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'settings.limits_update': 'Update app limits',
 };
 
+const RESULT_CODE_LABELS: Record<AdminAuditResultCode, string> = {
+  ok: 'OK',
+  ts_error: 'TeamSpeak error',
+  timeout: 'Timeout',
+  network_error: 'Network error',
+  engine_reload_failed: 'Engine reload failed',
+  pool_refresh_failed: 'Pool refresh failed',
+  not_found: 'Not found',
+  validation_failed: 'Validation failed',
+  storage_failed: 'Storage failed',
+  unknown: 'Unknown',
+};
+
+const TARGET_TYPE_LABELS: Record<string, string> = {
+  client: 'Client',
+  ban: 'Ban',
+  channel: 'Channel',
+  server_group: 'Server group',
+  channel_group: 'Channel group',
+  privilege_key: 'Privilege key',
+  virtual_server: 'Virtual server',
+  connection: 'Connection',
+  flow: 'Flow',
+  user: 'User',
+  settings: 'Settings',
+};
+
+const AUDIT_GRID =
+  'grid min-w-[52rem] grid-cols-[9.5rem_minmax(8rem,1.1fr)_minmax(6rem,0.9fr)_minmax(7rem,1fr)_minmax(6.5rem,0.85fr)_minmax(5.5rem,0.75fr)] gap-x-3';
+
 function outcomeClass(outcome: AdminAuditOutcome): string {
   switch (outcome) {
     case 'success':
@@ -96,25 +128,78 @@ function formatWhen(iso: string): string {
   }
 }
 
+function formatDurationMs(startedIso: string, completedIso: string | null): string | null {
+  if (!completedIso) return null;
+  const start = Date.parse(startedIso);
+  const end = Date.parse(completedIso);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  const ms = end - start;
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
 function EventRow({ event }: { event: AdminAuditEventDto }) {
   const label = ACTION_LABELS[event.action] ?? event.action;
+  const actor = event.actorUsername ?? `user #${event.actorUserId}`;
+  const targetType = event.targetType
+    ? (TARGET_TYPE_LABELS[event.targetType] ?? event.targetType)
+    : null;
+  const target = targetType
+    ? `${targetType}${event.targetId ? ` ${event.targetId}` : ''}`
+    : '—';
+  const contextBits = [
+    event.connectionId != null ? `conn ${event.connectionId}` : null,
+    event.virtualServerId != null ? `sid ${event.virtualServerId}` : null,
+  ].filter(Boolean);
+  const context = contextBits.join(' · ') || '—';
+  const resultLabel = event.resultCode
+    ? (RESULT_CODE_LABELS[event.resultCode] ?? event.resultCode)
+    : null;
+  const duration = formatDurationMs(event.createdAt, event.completedAt);
+  const title = [
+    `Operation ${event.operationId}`,
+    resultLabel ? `Result: ${resultLabel}` : null,
+    duration ? `Duration: ${duration}` : null,
+    event.completedAt ? `Completed: ${formatWhen(event.completedAt)}` : null,
+  ].filter(Boolean).join(' · ');
+
   return (
-    <div className="flex flex-col gap-1 border-b border-border/60 px-4 py-3 last:border-0 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-      <div className="min-w-0 space-y-1">
-        <p className="font-medium text-sm">{label}</p>
-        <p className="text-xs text-muted-foreground font-mono-data break-all">
-          {event.actorUsername ?? `user #${event.actorUserId}`}
-          {event.connectionId != null ? ` · connection ${event.connectionId}` : ''}
-          {event.virtualServerId != null ? ` · sid ${event.virtualServerId}` : ''}
-          {event.targetType ? ` · ${event.targetType}${event.targetId ? ` ${event.targetId}` : ''}` : ''}
+    <div
+      role="row"
+      className={cn(AUDIT_GRID, 'items-start border-b border-border/60 px-4 py-2.5 text-sm last:border-0')}
+      title={title}
+    >
+      <div className="space-y-0.5">
+        <p className="text-xs text-muted-foreground tabular-nums leading-snug">
+          {formatWhen(event.createdAt)}
+        </p>
+        {duration && (
+          <p className="text-[10px] text-muted-foreground/80">{duration}</p>
+        )}
+      </div>
+      <div className="min-w-0">
+        <p className="font-medium leading-snug truncate" title={label}>{label}</p>
+        <p className="text-[10px] text-muted-foreground font-mono-data truncate" title={event.action}>
+          {event.action}
         </p>
       </div>
-      <div className="shrink-0 text-left sm:text-right space-y-0.5">
+      <p className="min-w-0 truncate text-xs leading-snug" title={actor}>{actor}</p>
+      <p className="min-w-0 truncate text-xs text-muted-foreground font-mono-data leading-snug" title={target}>
+        {target}
+      </p>
+      <p className="min-w-0 truncate text-xs text-muted-foreground leading-snug" title={context}>
+        {context}
+      </p>
+      <div className="min-w-0 space-y-0.5">
         <p className={cn('text-xs font-medium uppercase tracking-wide', outcomeClass(event.outcome))}>
           {event.outcome}
-          {event.resultCode ? ` · ${event.resultCode}` : ''}
         </p>
-        <p className="text-xs text-muted-foreground">{formatWhen(event.createdAt)}</p>
+        {resultLabel && (
+          <p className="text-[10px] text-muted-foreground truncate" title={resultLabel}>
+            {resultLabel}
+          </p>
+        )}
       </div>
     </div>
   );
@@ -128,6 +213,9 @@ export default function AuditHistory() {
   const [virtualServerId, setVirtualServerId] = useState('');
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
   const cursor = cursorStack[cursorStack.length - 1] ?? undefined;
+  const onNewestPage = cursorStack.length === 1 && cursorStack[0] == null;
+  const historyRefetchInterval = adminAuditHistoryRefetchInterval({ onNewestPage });
+  const historyLive = historyRefetchInterval !== false;
 
   const filters = useMemo(
     () => ({
@@ -142,25 +230,44 @@ export default function AuditHistory() {
     [action, outcome, actorUserId, connectionId, virtualServerId, cursor],
   );
 
-  const { data, isLoading, isFetching, error } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ['admin-audit', filters],
     queryFn: () => auditApi.list(filters),
+    refetchInterval: historyRefetchInterval,
   });
 
   const resetPages = () => setCursorStack([null]);
 
   return (
-    <div className="mx-auto flex h-full max-w-5xl flex-col space-y-4">
-      <div className="shrink-0 space-y-1">
-        <h1 className="flex items-center gap-2 text-xl font-semibold">
-          <ClipboardList className="h-5 w-5 text-primary" />
-          Administrative Audit
-        </h1>
-        <p className="text-sm text-muted-foreground">
-          Manager-initiated admin actions only — separate from TeamSpeak client activity and Server Logs.
-          Retention: {data?.retention.maxAgeDays ?? 30} days or {data?.retention.maxRows?.toLocaleString() ?? '100,000'} rows
-          (whichever first). Records cannot be deleted from this UI.
-        </p>
+    <div className="mx-auto flex h-full max-w-6xl flex-col space-y-4">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="flex items-center gap-2 text-xl font-semibold">
+            <ClipboardList className="h-5 w-5 text-primary" />
+            Administrative Audit
+          </h1>
+          <p className="text-sm text-muted-foreground max-w-2xl">
+            Manager-initiated admin actions only — separate from TeamSpeak client activity and Server Logs.
+            Retention: {data?.retention.maxAgeDays ?? 30} days or {data?.retention.maxRows?.toLocaleString() ?? '100,000'} rows
+            (whichever first). Records cannot be deleted from this UI.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {historyLive && (
+            <span className="text-xs font-medium text-emerald-600" title="Newest page refreshes automatically">
+              Live
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void refetch()}
+            disabled={isFetching}
+          >
+            <RefreshCw className={cn('h-4 w-4 mr-1', isFetching && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="flex shrink-0 flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
@@ -239,7 +346,21 @@ export default function AuditHistory() {
           </div>
         ) : (
           <ScrollArea className="flex-1">
-            <div className={cn(isFetching && 'opacity-70')}>
+            <div className={cn('min-w-0', isFetching && 'opacity-70')}>
+              <div
+                className={cn(
+                  AUDIT_GRID,
+                  'sticky top-0 z-10 border-b border-border bg-card/95 px-4 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm',
+                )}
+                role="row"
+              >
+                <span>Date / time</span>
+                <span>Action</span>
+                <span>Actor</span>
+                <span>Target</span>
+                <span>Context</span>
+                <span>Outcome</span>
+              </div>
               {data.items.map((event) => (
                 <EventRow key={event.id} event={event} />
               ))}
