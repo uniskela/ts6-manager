@@ -38,6 +38,17 @@ var defaultStunServers = []string{
 	"stun:stun.l.google.com:19302",
 }
 
+// stunGatherTimeout bounds how long ICE gathering waits on a STUN server.
+//
+// CreatePeer answers a viewer only once gathering has completed, and gathering
+// completes only when every STUN request has been answered or has timed out.
+// pion's default timeout is five seconds, so a single server in the list that
+// no longer answers held every viewer at "waiting to be let in" for exactly
+// five seconds. A reachable server answers in a fraction of a second, so this
+// keeps the server-reflexive candidates remote viewers need while capping what
+// an unreachable one costs.
+const stunGatherTimeout = 1 * time.Second
+
 func getStunServers() []string {
 	if env := os.Getenv("STUN_SERVERS"); env != "" {
 		return strings.Split(env, ",")
@@ -583,6 +594,12 @@ func (s *Sidecar) processAudioRTP() {
 	}
 }
 
+// CreatePeer builds the WebRTC peer for one viewer and returns its SDP offer.
+//
+// The offer is returned only once ICE gathering has completed, so it already
+// carries every local candidate and none has to be trickled to the viewer
+// afterwards. That also makes the slowest STUN server the time a viewer waits
+// to join, which is what stunGatherTimeout bounds.
 func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 	s.peersLock.Lock()
 
@@ -661,7 +678,9 @@ func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 		return "", err
 	}
 
-	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i))
+	se := webrtc.SettingEngine{}
+	se.SetSTUNGatherTimeout(stunGatherTimeout)
+	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i), webrtc.WithSettingEngine(se))
 
 	pc, err := api.NewPeerConnection(webrtc.Configuration{
 		ICEServers: iceServers,
