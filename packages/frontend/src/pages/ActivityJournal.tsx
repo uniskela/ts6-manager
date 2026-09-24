@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { activityJournalApi } from '@/api/activity-journal.api';
 import { useServerStore } from '@/stores/server.store';
@@ -11,6 +11,11 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { NotebookPen, RefreshCw } from 'lucide-react';
 import { activityJournalHistoryRefetchInterval } from '@/lib/activity-journal-live';
+import {
+  shouldApplyJournalToggleResult,
+  sameJournalTarget,
+  type JournalTargetToggle,
+} from '@/lib/action-ownership';
 import { cn } from '@/lib/utils';
 import type {
   ActivityCaptureStatus,
@@ -62,7 +67,15 @@ export default function ActivityJournal() {
   const [kindFilter, setKindFilter] = useState<'ALL' | 'join' | 'leave'>('ALL');
   const [classFilter, setClassFilter] = useState<'ALL' | ActivityClassification>('ALL');
   const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const [ownerGeneration, setOwnerGeneration] = useState(0);
+  const liveRef = useRef({ configId: c ?? null, sid: s ?? null, ownerGeneration: 0 });
+  liveRef.current = { configId: c ?? null, sid: s ?? null, ownerGeneration };
   const cursor = cursorStack[cursorStack.length - 1];
+
+  useEffect(() => {
+    setOwnerGeneration((g) => g + 1);
+    setCursorStack([null]);
+  }, [c, s]);
 
   const statusQuery = useQuery({
     queryKey: ['activity-journal-status'],
@@ -103,14 +116,18 @@ export default function ActivityJournal() {
   });
 
   const targetMutation = useMutation({
-    mutationFn: (enabled: boolean) => activityJournalApi.setTarget(c!, s!, enabled),
-    onSuccess: () => {
+    mutationFn: (target: JournalTargetToggle) =>
+      activityJournalApi.setTarget(target.configId, target.sid, target.enabled),
+    onSuccess: (_data, target) => {
       void queryClient.invalidateQueries({ queryKey: ['activity-journal-status'] });
-      void queryClient.invalidateQueries({ queryKey: ['activity-journal-history'] });
-      setCursorStack([null]);
+      void queryClient.invalidateQueries({
+        queryKey: ['activity-journal-history', target.configId, target.sid],
+      });
+      if (shouldApplyJournalToggleResult(liveRef.current, target)) {
+        setCursorStack([null]);
+      }
     },
   });
-
   const items = useMemo((): ClientActivityEntry[] => {
     const raw = historyQuery.data?.items || [];
     return raw.filter((entry: ClientActivityEntry) => {
@@ -170,8 +187,20 @@ export default function ActivityJournal() {
         <div className="flex items-center gap-2">
           <Switch
             checked={enabled}
-            disabled={targetMutation.isPending}
-            onCheckedChange={(v) => targetMutation.mutate(v)}
+            disabled={
+              !c
+              || !s
+              || (targetMutation.isPending && sameJournalTarget({ configId: c, sid: s }, targetMutation.variables))
+            }
+            onCheckedChange={(v) => {
+              if (!c || !s) return;
+              targetMutation.mutate({
+                configId: c,
+                sid: s,
+                enabled: v,
+                ownerGeneration,
+              });
+            }}
             id="journal-capture"
           />
           <label htmlFor="journal-capture" className="text-sm font-medium">

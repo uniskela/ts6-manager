@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { serversApi } from '@/api/servers.api';
 import { Button } from '@/components/ui/button';
@@ -21,12 +21,16 @@ import {
   type DeploymentScenarioId,
 } from '@/content/connection-setup';
 import { TS6_SERVER_DOCS } from '@/content/teamspeak-docs';
+import {
+  connectionDraftKey,
+  shouldApplyConnectionTestResult,
+  type ConnectionTestOwner,
+} from '@/lib/action-ownership';
 import { ArrowLeft, ArrowRight, Check, Loader2, Radar, Sparkles, TestTube } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import type { ConnectionDiagnosticReport } from '@ts6/common';
-
 const STEPS = [
   'Where is your TeamSpeak server?',
   'WebQuery connection',
@@ -74,6 +78,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   const [step, setStep] = useState(0);
   const [scenarioId, setScenarioId] = useState<DeploymentScenarioId>('same-host');
   const [form, setForm] = useState<ConnectionFormState>(DEFAULT_CONNECTION_FORM);
+  const [draftGeneration, setDraftGeneration] = useState(0);
   const [skipSsh, setSkipSsh] = useState(false);
   const [webqueryTestOk, setWebqueryTestOk] = useState<boolean | null>(null);
   const [webqueryPartial, setWebqueryPartial] = useState(false);
@@ -83,6 +88,31 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   const [detectionApplied, setDetectionApplied] = useState(false);
   const [hostSuggestionApplied, setHostSuggestionApplied] = useState(false);
   const [autoCheckStarted, setAutoCheckStarted] = useState(false);
+  const draftOwnerRef = useRef<ConnectionTestOwner>({ ownerGeneration: 0, draftKey: '' });
+
+  const liveDraftOwner = useMemo<ConnectionTestOwner>(() => ({
+    ownerGeneration: draftGeneration,
+    draftKey: connectionDraftKey(form),
+  }), [draftGeneration, form]);
+  draftOwnerRef.current = liveDraftOwner;
+
+  const formRef = useRef(form);
+  formRef.current = form;
+
+  const updateForm = (next: ConnectionFormState | ((prev: ConnectionFormState) => ConnectionFormState)) => {
+    const prev = formRef.current;
+    const resolved = typeof next === 'function' ? next(prev) : next;
+    const keyChanged = connectionDraftKey(prev) !== connectionDraftKey(resolved);
+    formRef.current = resolved;
+    setForm(resolved);
+    if (keyChanged) {
+      setDraftGeneration((g) => g + 1);
+      setWebqueryTestOk(null);
+      setWebqueryPartial(false);
+      setWebqueryDiagnostic(null);
+      setSshTestOk(null);
+    }
+  };
 
   const scenario = useMemo(
     () => DEPLOYMENT_SCENARIOS.find((s) => s.id === scenarioId) ?? DEPLOYMENT_SCENARIOS[0],
@@ -104,21 +134,35 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     onSuccess: () => qc.invalidateQueries({ queryKey: ['servers'] }),
   });
 
+  type WebqueryTestVars = ConnectionTestOwner & {
+    host: string;
+    webqueryPort: number;
+    apiKey: string;
+    useHttps: boolean;
+  };
+
+  type SshTestVars = ConnectionTestOwner & {
+    host: string;
+    sshPort: number;
+    sshUsername: string;
+    sshPassword: string;
+  };
+
   const testWebqueryDraft = useMutation({
-    mutationFn: () => serversApi.testWebqueryDraft({
-      host: form.host,
-      webqueryPort: parseInt(form.webqueryPort, 10),
-      apiKey: form.apiKey,
-      useHttps: form.useHttps,
+    mutationFn: (vars: WebqueryTestVars) => serversApi.testWebqueryDraft({
+      host: vars.host,
+      webqueryPort: vars.webqueryPort,
+      apiKey: vars.apiKey,
+      useHttps: vars.useHttps,
     }),
   });
 
   const testSshDraft = useMutation({
-    mutationFn: () => serversApi.testSshDraft({
-      host: form.host,
-      sshPort: parseInt(form.sshPort, 10),
-      sshUsername: form.sshUsername,
-      sshPassword: form.sshPassword,
+    mutationFn: (vars: SshTestVars) => serversApi.testSshDraft({
+      host: vars.host,
+      sshPort: vars.sshPort,
+      sshUsername: vars.sshUsername,
+      sshPassword: vars.sshPassword,
     }),
   });
 
@@ -146,6 +190,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     setStep(0);
     setScenarioId('same-host');
     setForm(DEFAULT_CONNECTION_FORM);
+    setDraftGeneration(0);
     setSkipSsh(false);
     setWebqueryTestOk(null);
     setWebqueryPartial(false);
@@ -175,11 +220,11 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
     const next = DEPLOYMENT_SCENARIOS.find((s) => s.id === id);
     if (!next) return;
     if (hostOverride !== undefined) {
-      setForm((prev) => ({ ...prev, host: hostOverride }));
+      updateForm((prev) => ({ ...prev, host: hostOverride }));
       setHostSuggestionApplied(true);
       return;
     }
-    setForm((prev) => ({ ...prev, host: next.hostPlaceholder }));
+    updateForm((prev) => ({ ...prev, host: next.hostPlaceholder }));
     setHostSuggestionApplied(false);
   };
 
@@ -193,7 +238,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
       setDetectionApplied(true);
       setHostSuggestionApplied(!!detection.suggestedHost);
     } else if (detection.suggestedHost) {
-      setForm((prev) => ({ ...prev, host: detection.suggestedHost! }));
+      updateForm((prev) => ({ ...prev, host: detection.suggestedHost! }));
       setHostSuggestionApplied(true);
       toast.message('Suggested host applied — pick the scenario below that best matches your setup.');
     }
@@ -212,8 +257,19 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   };
 
   const handleTestWebquery = () => {
-    testWebqueryDraft.mutate(undefined, {
-      onSuccess: (data: ConnectionDiagnosticReport) => {
+    const owner = liveDraftOwner;
+    const vars: WebqueryTestVars = {
+      ...owner,
+      host: form.host,
+      webqueryPort: parseInt(form.webqueryPort, 10),
+      apiKey: form.apiKey,
+      useHttps: form.useHttps,
+    };
+    testWebqueryDraft.mutate(vars, {
+      onSuccess: (data: ConnectionDiagnosticReport, submitted) => {
+        if (!shouldApplyConnectionTestResult(draftOwnerRef.current, submitted)) {
+          return;
+        }
         setWebqueryDiagnostic(data);
         const complete = data?.success === true;
         setWebqueryTestOk(complete);
@@ -226,7 +282,10 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
           toast.error(diagnosticToastMessage(data));
         }
       },
-      onError: (err: any) => {
+      onError: (err: any, submitted) => {
+        if (!shouldApplyConnectionTestResult(draftOwnerRef.current, submitted)) {
+          return;
+        }
         setWebqueryTestOk(false);
         setWebqueryPartial(false);
         setWebqueryDiagnostic(null);
@@ -236,12 +295,26 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
   };
 
   const handleTestSsh = () => {
-    testSshDraft.mutate(undefined, {
-      onSuccess: (data) => {
+    const owner = liveDraftOwner;
+    const vars: SshTestVars = {
+      ...owner,
+      host: form.host,
+      sshPort: parseInt(form.sshPort, 10),
+      sshUsername: form.sshUsername,
+      sshPassword: form.sshPassword,
+    };
+    testSshDraft.mutate(vars, {
+      onSuccess: (data, submitted) => {
+        if (!shouldApplyConnectionTestResult(draftOwnerRef.current, submitted)) {
+          return;
+        }
         setSshTestOk(!!data?.success);
         toast.success('SSH connection successful');
       },
-      onError: (err: any) => {
+      onError: (err: any, submitted) => {
+        if (!shouldApplyConnectionTestResult(draftOwnerRef.current, submitted)) {
+          return;
+        }
         setSshTestOk(false);
         toast.error(apiErrorMessage(err, 'SSH test failed'));
       },
@@ -483,13 +556,13 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
               <div>
                 <Label className="text-xs">Name</Label>
                 <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.name}</p>
-                <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My TS Server" />
+                <Input value={form.name} onChange={(e) => updateForm({ ...form, name: e.target.value })} placeholder="My TS Server" />
               </div>
 
               <div>
                 <Label className="text-xs">Host</Label>
                 <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.host}</p>
-                <Input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} placeholder={scenario.hostPlaceholder} />
+                <Input value={form.host} onChange={(e) => updateForm({ ...form, host: e.target.value })} placeholder={scenario.hostPlaceholder} />
               </div>
 
               <div>
@@ -501,7 +574,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                   className="mt-2"
                   type="number"
                   value={form.webqueryPort}
-                  onChange={(e) => setForm({ ...form, webqueryPort: e.target.value })}
+                  onChange={(e) => updateForm({ ...form, webqueryPort: e.target.value })}
                 />
               </div>
 
@@ -523,13 +596,13 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                   className="mt-2"
                   type="password"
                   value={form.apiKey}
-                  onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
+                  onChange={(e) => updateForm({ ...form, apiKey: e.target.value })}
                   placeholder="WebQuery API Key"
                 />
               </div>
 
               <div className="flex items-center gap-2">
-                <Switch checked={form.useHttps} onCheckedChange={(v) => setForm({ ...form, useHttps: v })} />
+                <Switch checked={form.useHttps} onCheckedChange={(v) => updateForm({ ...form, useHttps: v })} />
                 <Label className="text-xs">{FIELD_HELP.useHttps}</Label>
               </div>
               <SetupDocLinks
@@ -545,7 +618,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                 <div className="flex items-center gap-2">
                   <Switch
                     checked={form.metricsEnabled}
-                    onCheckedChange={(v) => setForm({ ...form, metricsEnabled: v })}
+                    onCheckedChange={(v) => updateForm({ ...form, metricsEnabled: v })}
                   />
                   <Label className="text-xs">{FIELD_HELP.metricsEnabled}</Label>
                 </div>
@@ -556,14 +629,14 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                       <Input
                         type="number"
                         value={form.metricsPort}
-                        onChange={(e) => setForm({ ...form, metricsPort: e.target.value })}
+                        onChange={(e) => updateForm({ ...form, metricsPort: e.target.value })}
                       />
                     </div>
                     <div>
                       <Label className="text-xs">Metrics host (optional)</Label>
                       <Input
                         value={form.metricsHost}
-                        onChange={(e) => setForm({ ...form, metricsHost: e.target.value })}
+                        onChange={(e) => updateForm({ ...form, metricsHost: e.target.value })}
                         placeholder="Same as WebQuery host"
                       />
                     </div>
@@ -615,17 +688,17 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                   <div>
                     <Label className="text-xs">SSH Port</Label>
                     <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.sshPort}</p>
-                    <Input type="number" value={form.sshPort} onChange={(e) => setForm({ ...form, sshPort: e.target.value })} />
+                    <Input type="number" value={form.sshPort} onChange={(e) => updateForm({ ...form, sshPort: e.target.value })} />
                   </div>
                   <div>
                     <Label className="text-xs">SSH User</Label>
                     <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.sshUsername}</p>
-                    <Input value={form.sshUsername} onChange={(e) => setForm({ ...form, sshUsername: e.target.value })} placeholder="serveradmin" />
+                    <Input value={form.sshUsername} onChange={(e) => updateForm({ ...form, sshUsername: e.target.value })} placeholder="serveradmin" />
                   </div>
                   <div>
                     <Label className="text-xs">SSH Password</Label>
                     <p className="text-[11px] text-muted-foreground mb-1">{FIELD_HELP.sshPassword}</p>
-                    <Input type="password" value={form.sshPassword} onChange={(e) => setForm({ ...form, sshPassword: e.target.value })} />
+                    <Input type="password" value={form.sshPassword} onChange={(e) => updateForm({ ...form, sshPassword: e.target.value })} />
                   </div>
                 </div>
 

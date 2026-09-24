@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { filesApi } from '@/api/files.api';
 import { channelsApi } from '@/api/channels.api';
@@ -13,6 +13,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import {
+  buildFilePath,
+  canConfirmFileAction,
+  shouldCloseFileDialog,
+  type FileActionTarget,
+} from '@/lib/action-ownership';
 import { cn, formatBytes } from '@/lib/utils';
 import {
   FolderOpen, File, Folder, ArrowLeft, FolderPlus, Trash2, Hash, HardDrive, AlertTriangle, RefreshCw,
@@ -42,7 +48,10 @@ export default function Files() {
   const [currentPath, setCurrentPath] = useState('/');
   const [showMkdir, setShowMkdir] = useState(false);
   const [newDirName, setNewDirName] = useState('');
-  const [deleteTarget, setDeleteTarget] = useState<FileEntry | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<FileActionTarget | null>(null);
+  const [ownerGeneration, setOwnerGeneration] = useState(0);
+  const deleteTargetRef = useRef<FileActionTarget | null>(null);
+  deleteTargetRef.current = deleteTarget;
 
   // Fetch channel list for selector
   const { data: channelData } = useQuery({
@@ -96,33 +105,65 @@ export default function Files() {
     });
   }, [fileData]);
 
+  useEffect(() => {
+    setOwnerGeneration((g) => g + 1);
+    setSelectedCid(null);
+    setCurrentPath('/');
+    setShowMkdir(false);
+    setNewDirName('');
+    setDeleteTarget(null);
+  }, [c, s]);
+
+  useEffect(() => {
+    setDeleteTarget(null);
+  }, [selectedCid]);
+
   const mkdirMutation = useMutation({
-    mutationFn: (dirname: string) => filesApi.createDir(c!, s!, selectedCid!, dirname),
-    onSuccess: () => {
+    mutationFn: (target: FileActionTarget) =>
+      filesApi.createDir(target.configId, target.sid, target.cid, target.fullPath),
+    onSuccess: (_data, target) => {
       toast.success('Directory created');
-      setShowMkdir(false);
-      setNewDirName('');
-      qc.invalidateQueries({ queryKey: ['files', c, s, selectedCid, currentPath] });
-      qc.invalidateQueries({ queryKey: ['file-summaries', c, s] });
+      qc.invalidateQueries({
+        queryKey: ['files', target.configId, target.sid, target.cid],
+      });
+      qc.invalidateQueries({
+        queryKey: ['file-summaries', target.configId, target.sid],
+      });
+      // Only dismiss mkdir UI when it still belongs to the submitted scope.
+      if (
+        c === target.configId
+        && s === target.sid
+        && selectedCid === target.cid
+        && target.ownerGeneration === ownerGeneration
+      ) {
+        setShowMkdir(false);
+        setNewDirName('');
+      }
     },
     onError: () => toast.error('Failed to create directory'),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (name: string) => filesApi.delete(c!, s!, selectedCid!, name),
-    onSuccess: () => {
+    mutationFn: (target: FileActionTarget) =>
+      filesApi.delete(target.configId, target.sid, target.cid, target.fullPath),
+    onSuccess: (_data, target) => {
       toast.success('File deleted');
-      setDeleteTarget(null);
-      qc.invalidateQueries({ queryKey: ['files', c, s, selectedCid, currentPath] });
-      qc.invalidateQueries({ queryKey: ['file-summaries', c, s] });
+      qc.invalidateQueries({
+        queryKey: ['files', target.configId, target.sid, target.cid],
+      });
+      qc.invalidateQueries({
+        queryKey: ['file-summaries', target.configId, target.sid],
+      });
+      if (shouldCloseFileDialog(deleteTargetRef.current, target)) {
+        setDeleteTarget(null);
+      }
     },
     onError: () => toast.error('Failed to delete file'),
   });
 
   const navigateTo = (entry: FileEntry) => {
     if (entry.type === 1) {
-      const newPath = currentPath === '/' ? `/${entry.name}` : `${currentPath}/${entry.name}`;
-      setCurrentPath(newPath);
+      setCurrentPath(buildFilePath(currentPath, entry.name));
     }
   };
 
@@ -133,17 +174,47 @@ export default function Files() {
     setCurrentPath(parts.length === 0 ? '/' : '/' + parts.join('/'));
   };
 
+  const openDelete = (entry: FileEntry) => {
+    if (!c || !s || selectedCid == null) return;
+    setDeleteTarget({
+      configId: c,
+      sid: s,
+      cid: selectedCid,
+      fullPath: buildFilePath(currentPath, entry.name),
+      ownerGeneration,
+      entryName: entry.name,
+    });
+  };
+
   const handleMkdir = () => {
-    if (!newDirName.trim()) return;
-    const dirname = currentPath === '/' ? `/${newDirName}` : `${currentPath}/${newDirName}`;
-    mkdirMutation.mutate(dirname);
+    if (!newDirName.trim() || !c || !s || selectedCid == null) return;
+    const target: FileActionTarget = {
+      configId: c,
+      sid: s,
+      cid: selectedCid,
+      fullPath: buildFilePath(currentPath, newDirName.trim()),
+      ownerGeneration,
+      entryName: newDirName.trim(),
+    };
+    mkdirMutation.mutate(target);
   };
 
   const handleDelete = () => {
-    if (!deleteTarget) return;
-    const fullPath = currentPath === '/' ? `/${deleteTarget.name}` : `${currentPath}/${deleteTarget.name}`;
-    deleteMutation.mutate(fullPath);
+    if (!canConfirmFileAction(deleteTarget, { configId: c, sid: s, cid: selectedCid })) {
+      // Context switched away from the dialog owner — do not retarget to live B.
+      setDeleteTarget(null);
+      toast.error('Server context changed — delete cancelled');
+      return;
+    }
+    deleteMutation.mutate(deleteTarget);
   };
+
+  const deleteLoading = Boolean(
+    deleteMutation.isPending
+    && deleteMutation.variables
+    && deleteTarget
+    && shouldCloseFileDialog(deleteTarget, deleteMutation.variables),
+  );
 
   const formatDate = (ts: number) => {
     if (!ts) return '-';
@@ -318,7 +389,7 @@ export default function Files() {
                         </div>
                         <div className="col-span-1 flex justify-end">
                           <button
-                            onClick={(e) => { e.stopPropagation(); setDeleteTarget(file); }}
+                            onClick={(e) => { e.stopPropagation(); openDelete(file); }}
                             className="touch-action-reveal flex h-8 w-8 items-center justify-center rounded text-muted-foreground transition-all hover:bg-destructive/10 hover:text-destructive"
                             aria-label={`Delete ${file.name}`}
                             title={`Delete ${file.name}`}
@@ -357,16 +428,16 @@ export default function Files() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirm */}
+      {/* Delete Confirm — bound to deleteTarget ownership, not live store */}
       <ConfirmDialog
         open={!!deleteTarget}
         onOpenChange={() => setDeleteTarget(null)}
         title="Delete File"
-        description={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+        description={`Are you sure you want to delete "${deleteTarget?.entryName}" (${deleteTarget?.fullPath})? This cannot be undone.`}
         confirmLabel="Delete"
         destructive
         onConfirm={handleDelete}
-        loading={deleteMutation.isPending}
+        loading={deleteLoading}
       />
     </div>
   );
