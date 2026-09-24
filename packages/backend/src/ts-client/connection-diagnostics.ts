@@ -57,7 +57,7 @@ const DEFAULT_OVERALL_TIMEOUT_MS = 20_000;
 const STAGE_LABEL: Record<DiagnosticStageId, string> = {
   reachability: 'Endpoint reachability',
   authentication: 'Authentication',
-  permissions: 'Management permissions',
+  permissions: 'Management read permissions',
   virtual_server: 'Virtual server access',
 };
 
@@ -558,8 +558,8 @@ export async function diagnoseConnection(
 export function summarizeDiagnosticToast(report: ConnectionDiagnosticReport): string {
   if (report.success) {
     return report.version
-      ? `All stages OK (${report.version})`
-      : 'All connection stages succeeded';
+      ? `WebQuery read stages OK (${report.version}) — write actions still need their own permissions`
+      : 'WebQuery read stages succeeded — write actions still need their own permissions';
   }
   const failed = report.stages.find((s) => s.status === 'fail');
   if (report.partial && failed) {

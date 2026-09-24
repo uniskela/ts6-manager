@@ -62,7 +62,8 @@ Authenticated SSH Query is used for features that require file-transfer or event
 
 The UI includes:
 
-- channel file browsing with upload/download;
+- channel file browsing (create/delete via SSH Query; upload/download still use the TeamSpeak client);
+- action-local warnings that browsing a folder does **not** confirm permission to create or delete files;
 - **Server Logs 2.0** (admin-only): bounded TeamSpeak `logview` pages with Previous/Older cursor paging, Refresh back to the newest page, connection / virtual-server / instance scope labels, page-local search and level filters, and source timestamps with a single page-level note that TeamSpeak does not report timezone (no per-row “timezone unknown”); and
 - instance-level settings.
 

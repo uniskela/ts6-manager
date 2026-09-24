@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
-import { AppError, TSApiError } from '../middleware/error-handler.js';
+import {
+  AppError,
+  TSApiError,
+  TeamSpeakPermissionError,
+  isTeamSpeakPermissionError,
+} from '../middleware/error-handler.js';
 import { parseQueryResponse, tsEscape } from '@ts6/common';
 import type { BotEngine } from '../bot-engine/engine.js';
 
@@ -158,6 +163,24 @@ async function sshExecute(
   return parseQueryResponse(rawResponse);
 }
 
+function mapFileMutationError(err: unknown, actionHint: string): unknown {
+  if (err instanceof TSApiError && isTeamSpeakPermissionError(err)) {
+    return new TeamSpeakPermissionError(err.code, err.message, actionHint);
+  }
+  if (err instanceof TeamSpeakPermissionError) {
+    return new TeamSpeakPermissionError(err.tsCode, 'insufficient client permissions', actionHint);
+  }
+  if (err instanceof Error) {
+    if (err.message?.includes('SSH not connected') || err.message?.includes('SSH credentials')) {
+      return new AppError(
+        400,
+        'SSH credentials not configured for this server. File changes require SSH access because WebQuery HTTP does not support ft* commands.',
+      );
+    }
+  }
+  return err;
+}
+
 // Recursively summarize file trees for the channel selector.
 fileRoutes.get('/summary', async (req: Request, res: Response, next) => {
   try {
@@ -211,7 +234,9 @@ fileRoutes.post('/:cid/mkdir', requireRole('admin'), async (req: Request, res: R
     });
     fileSummaryCache.delete(fileSummaryKey(req, Number(req.params.cid)));
     res.json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(mapFileMutationError(err, 'creating directories'));
+  }
 });
 
 // Delete file
@@ -224,5 +249,7 @@ fileRoutes.delete('/:cid/file', requireRole('admin'), async (req: Request, res: 
     });
     fileSummaryCache.delete(fileSummaryKey(req, Number(req.params.cid)));
     res.json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(mapFileMutationError(err, 'deleting files'));
+  }
 });
