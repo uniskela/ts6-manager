@@ -10,6 +10,7 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { NotebookPen, RefreshCw } from 'lucide-react';
+import { activityJournalHistoryRefetchInterval } from '@/lib/activity-journal-live';
 import { cn } from '@/lib/utils';
 import type {
   ActivityCaptureStatus,
@@ -69,27 +70,6 @@ export default function ActivityJournal() {
     refetchInterval: 15_000,
   });
 
-  const historyQuery = useQuery({
-    queryKey: ['activity-journal-history', c, s, cursor],
-    queryFn: () =>
-      activityJournalApi.getHistory({
-        serverConfigId: c!,
-        virtualServerId: s!,
-        cursor: cursor || undefined,
-        limit: 50,
-      }),
-    enabled: !!c && !!s,
-  });
-
-  const targetMutation = useMutation({
-    mutationFn: (enabled: boolean) => activityJournalApi.setTarget(c!, s!, enabled),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['activity-journal-status'] });
-      void queryClient.invalidateQueries({ queryKey: ['activity-journal-history'] });
-      setCursorStack([null]);
-    },
-  });
-
   const pairStatus = useMemo((): ActivityJournalStatus | null => {
     if (!c || !s || !statusQuery.data) return null;
     return (
@@ -101,6 +81,35 @@ export default function ActivityJournal() {
 
   const enabled = pairStatus?.enabled === true;
   const captureStatus: ActivityCaptureStatus = pairStatus?.status || 'disabled';
+  const onNewestPage = cursor == null;
+  const historyRefetchInterval = activityJournalHistoryRefetchInterval({
+    enabled,
+    status: captureStatus,
+    onNewestPage,
+  });
+  const historyLive = historyRefetchInterval !== false;
+
+  const historyQuery = useQuery({
+    queryKey: ['activity-journal-history', c, s, cursor],
+    queryFn: () =>
+      activityJournalApi.getHistory({
+        serverConfigId: c!,
+        virtualServerId: s!,
+        cursor: cursor || undefined,
+        limit: 50,
+      }),
+    enabled: !!c && !!s,
+    refetchInterval: historyRefetchInterval,
+  });
+
+  const targetMutation = useMutation({
+    mutationFn: (enabled: boolean) => activityJournalApi.setTarget(c!, s!, enabled),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['activity-journal-status'] });
+      void queryClient.invalidateQueries({ queryKey: ['activity-journal-history'] });
+      setCursorStack([null]);
+    },
+  });
 
   const items = useMemo((): ClientActivityEntry[] => {
     const raw = historyQuery.data?.items || [];
@@ -131,23 +140,30 @@ export default function ActivityJournal() {
             {(statusQuery.data?.retention.global ?? 100000).toLocaleString()} global.
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={() => {
-            void statusQuery.refetch();
-            void historyQuery.refetch();
-          }}
-          disabled={statusQuery.isFetching || historyQuery.isFetching}
-        >
-          <RefreshCw
-            className={cn(
-              'h-4 w-4 mr-1',
-              (statusQuery.isFetching || historyQuery.isFetching) && 'animate-spin',
-            )}
-          />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          {historyLive && (
+            <span className="text-xs font-medium text-emerald-600" title="History refreshes while capturing">
+              Live
+            </span>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              void statusQuery.refetch();
+              void historyQuery.refetch();
+            }}
+            disabled={statusQuery.isFetching || historyQuery.isFetching}
+          >
+            <RefreshCw
+              className={cn(
+                'h-4 w-4 mr-1',
+                (statusQuery.isFetching || historyQuery.isFetching) && 'animate-spin',
+              )}
+            />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card px-4 py-3">
