@@ -2,6 +2,45 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.0](https://github.com/uniskela/ts6-manager/compare/v1.7.1...v1.8.0) (2026-09-24)
+
+
+### Features
+
+* add !here chat command to summon music bots ([#112](https://github.com/uniskela/ts6-manager/issues/112)) ([bdcbaf3](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24))
+* add IPTV playlist file upload ([#109](https://github.com/uniskela/ts6-manager/issues/109)) ([9778db1](https://github.com/uniskela/ts6-manager/commit/9778db15b803cc82d45a5522042be1842e91b535))
+* add journal/audit column headers and audit live refresh ([#140](https://github.com/uniskela/ts6-manager/issues/140)) ([f01c407](https://github.com/uniskela/ts6-manager/commit/f01c407833a1369cde2795432fb8c42951602d02))
+* add music-bot chat command presets ([#119](https://github.com/uniskela/ts6-manager/issues/119)) ([599edb3](https://github.com/uniskela/ts6-manager/commit/599edb3447d71d81204b8ee5242ada98973cf327))
+* administrative audit log ([#134](https://github.com/uniskela/ts6-manager/issues/134)) ([168e820](https://github.com/uniskela/ts6-manager/commit/168e82042833cbd42841bd0d0d90d2d5e0b21740))
+* appearance backgrounds and motion ([#122](https://github.com/uniskela/ts6-manager/issues/122)) ([d11065f](https://github.com/uniskela/ts6-manager/commit/d11065fa9c4d5715c8d9cd5aa820c33db6283010))
+* audit channel group and permission actions ([#135](https://github.com/uniskela/ts6-manager/issues/135)) ([89c0aef](https://github.com/uniskela/ts6-manager/commit/89c0aefbc8fa97ef4e980c990a5e5fbfd4198ae7))
+* bootstrap local pr-test stack with beta13 TeamSpeak ([#116](https://github.com/uniskela/ts6-manager/issues/116)) ([6abafe2](https://github.com/uniskela/ts6-manager/commit/6abafe2f81a309f1bdfe06b82abdef701b4bdbc4))
+* brand status widgets and link to GitHub ([#131](https://github.com/uniskela/ts6-manager/issues/131)) ([a91fcb8](https://github.com/uniskela/ts6-manager/commit/a91fcb810e8b81d9b63bfc78feb21b542de097f8))
+* custom CSS and safe-ui recovery (appearance part B) ([#128](https://github.com/uniskela/ts6-manager/issues/128)) ([2ff7736](https://github.com/uniskela/ts6-manager/commit/2ff7736ef514d8eee67ba5cbd8a73a08518fdd04))
+* native TeamSpeak metrics scrape (slice 1) ([#126](https://github.com/uniskela/ts6-manager/issues/126)) ([0f0cbf4](https://github.com/uniskela/ts6-manager/commit/0f0cbf46d871308ea0891893e9270e79fefe72fa))
+* server logs 2.0 paging and context ([#132](https://github.com/uniskela/ts6-manager/issues/132)) ([e01d024](https://github.com/uniskela/ts6-manager/commit/e01d024a398c25308f3a7234872000523718e6c1))
+* staged TeamSpeak connection diagnostics ([#114](https://github.com/uniskela/ts6-manager/issues/114)) ([2a096bf](https://github.com/uniskela/ts6-manager/commit/2a096bf7411fe1e44e9d000d93fe1731615cff34))
+* TeamSpeak activity journal ([#133](https://github.com/uniskela/ts6-manager/issues/133)) ([b56a88e](https://github.com/uniskela/ts6-manager/commit/b56a88e9033e475deb757ab3428f46802f01f473))
+
+
+### Bug Fixes
+
+* add demand-driven runtime and media diagnostics ([#153](https://github.com/uniskela/ts6-manager/issues/153)) ([aa926b5](https://github.com/uniskela/ts6-manager/commit/aa926b5dd3c84987421422d95a5630b083c12b19))
+* auto-refresh activity journal history while capturing ([#136](https://github.com/uniskela/ts6-manager/issues/136)) ([092fbf8](https://github.com/uniskela/ts6-manager/commit/092fbf81935d0154d09ec82a29df13f645d7fd4c))
+* bind file and draft actions to owner context ([#144](https://github.com/uniskela/ts6-manager/issues/144)) ([fe48e95](https://github.com/uniskela/ts6-manager/commit/fe48e95a98946f3ec61bee454b9fc6bec76381dc))
+* bound storage summary scans and coverage labels ([#151](https://github.com/uniskela/ts6-manager/issues/151)) ([9e72b3e](https://github.com/uniskela/ts6-manager/commit/9e72b3eb2bb74e654d37b46335f326fa0c9dbfd1))
+* correct server logs level filter and instance log mode ([#137](https://github.com/uniskela/ts6-manager/issues/137)) ([53b92cd](https://github.com/uniskela/ts6-manager/commit/53b92cdc60e820b38dc676332d33a3517a31ad63))
+* de-noise server log timezone unknown labels ([#142](https://github.com/uniskela/ts6-manager/issues/142)) ([9bb6f75](https://github.com/uniskela/ts6-manager/commit/9bb6f751fb313fcf76f374b3349a2eac3dcefbe8))
+* **docs:** use MkDocs slug for TeamSpeak 2052 troubleshooting link ([#148](https://github.com/uniskela/ts6-manager/issues/148)) ([888c3d3](https://github.com/uniskela/ts6-manager/commit/888c3d30a9567bd396ff1051cb2260c92494c0f4))
+* drop git sha from sidebar version label ([#113](https://github.com/uniskela/ts6-manager/issues/113)) ([308d4b0](https://github.com/uniskela/ts6-manager/commit/308d4b031270acf2d778c8465d4b9b8d0cf1768f))
+* harden server logs against TeamSpeak logview I/O errors ([#139](https://github.com/uniskela/ts6-manager/issues/139)) ([d6baafa](https://github.com/uniskela/ts6-manager/commit/d6baafa2eedfaef853ff329a9a80d5cf78707ce4))
+* keep history and capture status labels honest ([#155](https://github.com/uniskela/ts6-manager/issues/155)) ([d2fcd6b](https://github.com/uniskela/ts6-manager/commit/d2fcd6b5b04a33dc0bfdb45f1e9cf722df01170a))
+* keep SSH helper on human channels during music bot reconnect ([#143](https://github.com/uniskela/ts6-manager/issues/143)) ([9df08fd](https://github.com/uniskela/ts6-manager/commit/9df08fd7f2b50c3d7f3ba72dacba4989405edf3b))
+* make expensive diagnostics demand-driven ([#146](https://github.com/uniskela/ts6-manager/issues/146)) ([64f98a7](https://github.com/uniskela/ts6-manager/commit/64f98a7afc35bf821295c16d3d985df4aac651a3))
+* **sidecar:** stop an unreachable STUN server delaying every viewer by 5s ([48d4d16](https://github.com/uniskela/ts6-manager/commit/48d4d1648a58757b02c6fc3df4f62f281191c3dc))
+* surface action-local permission and compatibility guidance ([#152](https://github.com/uniskela/ts6-manager/issues/152)) ([3a37d92](https://github.com/uniskela/ts6-manager/commit/3a37d9268da53da1ad80cdc04bc1215d7bd4285d))
+* use full width for activity journal history rows ([#138](https://github.com/uniskela/ts6-manager/issues/138)) ([3ea1a54](https://github.com/uniskela/ts6-manager/commit/3ea1a54bbd0be8b97f883b12b470d5322feec45a))
+
 ## [1.7.1](https://github.com/uniskela/ts6-manager/compare/v1.7.0...v1.7.1) (2026-09-22)
 
 
