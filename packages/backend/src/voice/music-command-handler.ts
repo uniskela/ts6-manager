@@ -229,6 +229,8 @@ export class MusicCommandHandler {
   private mainHelperParkTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Coalesce concurrent bot refreshes for the same connection/SID pair. */
   private syncingCommandPairs = new Map<string, Promise<void>>();
+  /** Pairs retained under the `music` EventBridge session owner. */
+  private musicOwnedPairs = new Set<string>();
 
   constructor(
     private prisma: PrismaClient,
@@ -286,6 +288,7 @@ export class MusicCommandHandler {
         );
       });
     }
+    void this.syncMusicSessionOwnership();
   }
 
   async refreshAllBotChannels(): Promise<void> {
@@ -304,6 +307,7 @@ export class MusicCommandHandler {
       if (prevCfg) {
         await this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
       }
+      await this.syncMusicSessionOwnership();
       return;
     }
 
@@ -346,6 +350,7 @@ export class MusicCommandHandler {
     ) {
       await this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
     }
+    await this.syncMusicSessionOwnership();
   }
 
   /**
@@ -654,6 +659,7 @@ export class MusicCommandHandler {
     if (prevCfg) {
       void this.syncCommandListenersForPair(prevCfg.serverConfigId, prevCfg.virtualServerId);
     }
+    void this.syncMusicSessionOwnership();
   }
 
   /** Virtual-server pairs that need main SSH for send + roaming helper park. */
@@ -664,6 +670,33 @@ export class MusicCommandHandler {
       pairs.add(`${cfg.serverConfigId}:${cfg.virtualServerId}`);
     }
     return Array.from(pairs);
+  }
+
+  /**
+   * Keep music session ownership in sync with configured bots.
+   * Releasing music must not disconnect flow/journal consumers.
+   */
+  async syncMusicSessionOwnership(): Promise<void> {
+    if (!this.eventBridge) return;
+    const needed = new Set(this.getNeededServerPairs());
+
+    for (const pair of needed) {
+      if (this.musicOwnedPairs.has(pair)) continue;
+      const [configId, sid] = pair.split(':').map(Number);
+      try {
+        await this.eventBridge.retainSession('music', configId, sid);
+        this.musicOwnedPairs.add(pair);
+      } catch (err: any) {
+        console.error(`[MusicCmd] Music session retain failed for ${pair}: ${err.message}`);
+      }
+    }
+
+    for (const pair of [...this.musicOwnedPairs]) {
+      if (needed.has(pair)) continue;
+      const [configId, sid] = pair.split(':').map(Number);
+      await this.eventBridge.releaseSession('music', configId, sid);
+      this.musicOwnedPairs.delete(pair);
+    }
   }
 
   private async onCrossChannelTextMessage(

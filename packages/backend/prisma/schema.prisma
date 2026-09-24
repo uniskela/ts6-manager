@@ -349,3 +349,44 @@ model AdminAuditEvent {
   @@index([outcome])
   @@index([createdAt, id])
 }
+
+// === #91 Slice 5 — TeamSpeak activity journal ===
+
+/// Opt-in capture targets (connection + virtual server).
+model ActivityJournalTarget {
+  id              Int      @id @default(autoincrement())
+  serverConfigId  Int
+  virtualServerId Int
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([serverConfigId, virtualServerId])
+  @@index([enabled])
+}
+
+/// Allow-listed client join/leave observations (no IPs, chat, or raw notifications).
+model ClientActivity {
+  id                   String   @id @default(cuid())
+  observedAt           DateTime
+  serverConfigId       Int
+  virtualServerId      Int
+  connectionGeneration Int      @default(0)
+  /// join | leave
+  eventKind            String
+  clientId             Int
+  nickname             String?
+  uniqueId             String?
+  databaseId           Int?
+  /// Raw TeamSpeak client_type when known (0=voice, 1=query).
+  clientType           Int?
+  /// known_bot | query | voice | unknown
+  classification       String   @default("unknown")
+  /// event | cache | mixed | none
+  identityProvenance   String   @default("none")
+  createdAt            DateTime @default(now())
+
+  @@index([serverConfigId, virtualServerId, observedAt])
+  @@index([observedAt])
+  @@index([serverConfigId, virtualServerId, id])
+}

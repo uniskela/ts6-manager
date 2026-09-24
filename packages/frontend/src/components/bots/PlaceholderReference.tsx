@@ -76,6 +76,13 @@ export function PlaceholderReference({ open, onOpenChange }: Props) {
               <P code="{{event.cfid}}" desc="Channel the client was in" />
               <P code="{{event.reasonid}}" desc="Reason (3=lost, 5=kick, 6=ban, 8=leave)" example='Condition: event.reasonid == 5' />
               <P code="{{event.reasonmsg}}" desc="Reason message" example='Kicked: {{event.reasonmsg}}' />
+              <P code="{{event.client_nickname}}" desc="Nickname (enriched from enter cache when available)" example='{{event.client_nickname}} left TeamSpeak' />
+              <P code="{{event.client_type}}" desc="Type (0=User, 1=Query) when known from enter" example='Condition: event.client_type == 0' />
+              <P code="{{event.client_database_id}}" desc="Database ID when known from enter" />
+              <P code="{{event.client_unique_identifier}}" desc="Unique ID when known from enter" />
+              <p className="text-[11px] text-muted-foreground mt-1 mb-2">
+                Leave notifications from TeamSpeak often omit identity fields. EventBridge merges cached enter metadata when present; missing cache still emits the native leave payload.
+              </p>
 
               <SectionHeader>Client Moved &mdash; notifyclientmoved</SectionHeader>
               <P code="{{event.clid}}" desc="Client ID" />

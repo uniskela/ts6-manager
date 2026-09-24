@@ -355,3 +355,64 @@ export interface WidgetClient {
   isAway: boolean;
   isMuted: boolean;
 }
+
+// === #91 Slice 5 — TeamSpeak activity journal ===
+
+export type ActivityEventKind = 'join' | 'leave';
+export type ActivityClassification = 'known_bot' | 'query' | 'voice' | 'unknown';
+export type ActivityIdentityProvenance = 'event' | 'cache' | 'mixed' | 'none';
+export type ActivityCaptureStatus =
+  | 'disabled'
+  | 'connecting'
+  | 'capturing'
+  | 'interrupted'
+  | 'persistence_error';
+
+export interface ActivityJournalRetention {
+  days: number;
+  perConnectionSid: number;
+  global: number;
+  queueCapacity: number;
+}
+
+export interface ActivityJournalTarget {
+  serverConfigId: number;
+  virtualServerId: number;
+  enabled: boolean;
+}
+
+export interface ActivityJournalStatus {
+  serverConfigId: number;
+  virtualServerId: number;
+  enabled: boolean;
+  status: ActivityCaptureStatus;
+  queueDepth: number;
+  queueCapacity: number;
+  droppedEvents: number;
+  lastError: string | null;
+  lastPersistedAt: string | null;
+  sshConnected: boolean;
+  sshRegistered: boolean;
+  connectionGeneration: number;
+}
+
+export interface ClientActivityEntry {
+  id: string;
+  observedAt: string;
+  serverConfigId: number;
+  virtualServerId: number;
+  connectionGeneration: number;
+  eventKind: ActivityEventKind;
+  clientId: number;
+  nickname: string | null;
+  uniqueId: string | null;
+  databaseId: number | null;
+  clientType: number | null;
+  classification: ActivityClassification;
+  identityProvenance: ActivityIdentityProvenance;
+}
+
+export interface ActivityJournalHistoryResponse {
+  items: ClientActivityEntry[];
+  nextCursor: string | null;
+}

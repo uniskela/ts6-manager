@@ -17,6 +17,7 @@ import path from 'path';
 import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
 import { startAuditRetention } from './audit/index.js';
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
+import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -145,6 +146,11 @@ async function main() {
   voiceBotManager.setMusicCommandHandler(musicCommandHandler);
   await musicCommandHandler.refreshAllBotChannels();
 
+  // TeamSpeak activity journal (#91 Slice 5) — opt-in per connection/SID
+  const activityJournal = new ActivityJournalService(prisma, botEngine.getEventBridge());
+  app.locals.activityJournal = activityJournal;
+  await activityJournal.start();
+
   const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
   const stopAuditRetention = startAuditRetention(prisma);
 
@@ -159,6 +165,8 @@ async function main() {
     console.log('\n[TS6 WebUI] Shutting down...');
     stopIptvAutoRefresh();
     stopAuditRetention();
+    await activityJournal.stop();
+
     await voiceBotManager.stopAll();
     await botEngine.destroy();
     connectionPool.destroy();

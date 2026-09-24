@@ -138,6 +138,8 @@ Nested JSON access is supported for applicable event/temp values. Template filte
 {{temp.latency|round}}
 ```
 
+**Client leave enrichment:** `notifyclientleftview` payloads from TeamSpeak often include only `clid` / channel / reason fields. EventBridge caches allow-listed identity fields (`client_nickname`, `client_type`, `client_unique_identifier`, `client_database_id`) from `notifycliententerview` and merges them into leave events before flows run. Cached fields never override values already present on the leave event. If the client was never observed joining (reconnect gap), the native leave event is still emitted without those fields.
+
 ## Delays and execution limits
 
 Delay nodes are capped by the backend at **5 minutes per delay node**. The flow runner also caps node visits at **100 per execution** to stop accidental infinite traversal/loops.

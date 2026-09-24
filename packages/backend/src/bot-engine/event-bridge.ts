@@ -3,6 +3,10 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import { SshQueryClient } from './ssh-query-client.js';
 import { decrypt } from '../utils/crypto.js';
 import { sanitizeTsServerHost, validateTsServerPort } from '../utils/validate-ts-host.js';
+import { ClientMetadataCache } from './client-metadata-cache.js';
+
+/** Explicit multi-consumer ownership of main EventBridge SSH sessions. */
+export type SessionOwnerKind = 'flow' | 'music' | 'journal';
 
 export declare interface EventBridge {
   on(event: 'tsEvent', listener: (configId: number, sid: number, eventName: string, data: Record<string, string>) => void): this;
@@ -29,6 +33,10 @@ export class EventBridge extends EventEmitter {
   private mainHelperRemountAfterReconnect = new Map<string, number>();
   /** Serialize helper moves / sends on the main SSH to avoid Query floods. */
   private mainHelperChain: Promise<void> = Promise.resolve();
+  /** Who is keeping each main SSH session alive (flows / music / journal). */
+  private sessionOwners = new Map<string, Set<SessionOwnerKind>>();
+  /** Shared leave/join identity enrichment (#74) — one boundary for flows + journal. */
+  readonly clientCache = new ClientMetadataCache();
 
   constructor(private prisma: PrismaClient) {
     super();
@@ -143,9 +151,13 @@ export class EventBridge extends EventEmitter {
     client.on('ready', async () => {
       console.log(`[EventBridge] SSH connected to ${serverConfig.host}:${serverConfig.sshPort} for sid=${sid}`);
       try {
+        // New connection generation: clids from a prior SSH session must not enrich leaves.
+        this.clientCache.beginGeneration(configId, sid);
         await client.registerEvents(sid);
         if (this.connections.get(key) !== client || !client.isConnected) return;
         this.registered.add(key);
+        // Seed identity cache from current clients (does not manufacture journal joins).
+        await this.seedClientIdentityCache(configId, sid, client);
         // `use sid=` parks Query in the default channel — remount if we had a helper park.
         try {
           await this.remountMainHelperAfterReconnect(configId, sid);
@@ -161,7 +173,8 @@ export class EventBridge extends EventEmitter {
     });
 
     client.on('event', (eventName: string, data: Record<string, string>) => {
-      this.emit('tsEvent', configId, sid, eventName, data);
+      const enriched = this.clientCache.enrich(configId, sid, eventName, data);
+      this.emit('tsEvent', configId, sid, eventName, enriched);
     });
 
     client.on('error', (err: Error) => {
@@ -172,6 +185,7 @@ export class EventBridge extends EventEmitter {
     client.on('close', () => {
       console.log(`[EventBridge] SSH disconnected for ${key}`);
       this.registered.delete(key);
+      this.clientCache.clearPair(configId, sid);
       // Cache is stale: Query will land in default channel on next registerEvents.
       this.forgetMainHelperLocation(key);
       this.emit('sshDisconnected', configId, sid);
@@ -199,12 +213,73 @@ export class EventBridge extends EventEmitter {
     if (pending) await pending;
     const client = this.connections.get(key);
     this.registered.delete(key);
+    this.clientCache.clearPair(configId, sid);
     // Clear trusted location before destroy; retain remount target so reconnectConfig
     // (and SSH auto-reconnect) can park again after registerEvents.
     this.forgetMainHelperLocation(key);
     if (client) {
       await client.destroy();
       this.connections.delete(key);
+    }
+  }
+
+  /**
+   * Retain the main SSH session for a consumer. Connects on demand.
+   * Releasing the last owner disconnects the session.
+   */
+  async retainSession(owner: SessionOwnerKind, configId: number, sid: number): Promise<void> {
+    const key = this.makeKey(configId, sid);
+    let owners = this.sessionOwners.get(key);
+    if (!owners) {
+      owners = new Set();
+      this.sessionOwners.set(key, owners);
+    }
+    owners.add(owner);
+    await this.connectServer(configId, sid);
+  }
+
+  async releaseSession(owner: SessionOwnerKind, configId: number, sid: number): Promise<void> {
+    const key = this.makeKey(configId, sid);
+    const owners = this.sessionOwners.get(key);
+    if (!owners) return;
+    owners.delete(owner);
+    if (owners.size === 0) {
+      this.sessionOwners.delete(key);
+      await this.disconnectServer(configId, sid);
+    }
+  }
+
+  getSessionOwners(configId: number, sid: number): SessionOwnerKind[] {
+    const owners = this.sessionOwners.get(this.makeKey(configId, sid));
+    return owners ? Array.from(owners) : [];
+  }
+
+  hasSessionOwner(configId: number, sid: number, owner: SessionOwnerKind): boolean {
+    return this.sessionOwners.get(this.makeKey(configId, sid))?.has(owner) ?? false;
+  }
+
+  getClientCacheGeneration(configId: number, sid: number): number {
+    return this.clientCache.getGeneration(configId, sid);
+  }
+
+  private async seedClientIdentityCache(
+    configId: number,
+    sid: number,
+    client: SshQueryClient,
+  ): Promise<void> {
+    try {
+      const { parseQueryResponse } = await import('@ts6/common');
+      await client.executeCommand(`use sid=${sid}`);
+      const raw = await client.executeCommand('clientlist -uid');
+      const rows = parseQueryResponse(raw.trim()) as Record<string, string>[];
+      const clids = this.clientCache.seedFromClientList(configId, sid, rows);
+      console.log(
+        `[EventBridge] Seeded ${clids.length} client identity cache entr${clids.length === 1 ? 'y' : 'ies'} for ${configId}:${sid}`,
+      );
+    } catch (err: any) {
+      console.warn(
+        `[EventBridge] clientlist seed failed for ${configId}:${sid}: ${err.message}`,
+      );
     }
   }
 
@@ -333,7 +408,8 @@ export class EventBridge extends EventEmitter {
 
     client.on('event', (eventName: string, data: Record<string, string>) => {
       // Marker so engine can keep backward compatibility:
-      // triggers WITHOUT channelId should only react to base connection events
+      // triggers WITHOUT channelId should only react to base connection events.
+      // Do not run leave-cache eviction here — main SSH stream owns enrichment (#74).
       const enriched = { ...data, __cmd_listener_channel_id: String(channelId) };
       this.emit('tsEvent', configId, sid, eventName, enriched);
     });
@@ -570,6 +646,8 @@ export class EventBridge extends EventEmitter {
     this.connections.clear();
     this.mainHelperChannel.clear();
     this.mainHelperRemountAfterReconnect.clear();
+    this.sessionOwners.clear();
+    this.clientCache.clearAll();
 
     for (const client of this.commandListeners.values()) {
       closing.push(client.destroy());

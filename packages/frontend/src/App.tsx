@@ -40,6 +40,8 @@ const Complaints = lazy(() => import('@/pages/Complaints'));
 const Messages = lazy(() => import('@/pages/Messages'));
 const ServerLogs = lazy(() => import('@/pages/ServerLogs'));
 const AuditHistory = lazy(() => import('@/pages/AuditHistory'));
+const ActivityJournal = lazy(() => import('@/pages/ActivityJournal'));
+
 const Instance = lazy(() => import('@/pages/Instance'));
 const BotList = lazy(() => import('@/pages/BotList'));
 const BotEditor = lazy(() => import('@/pages/BotEditor'));
@@ -78,6 +80,8 @@ export function App() {
               <Route path="/messages" element={<AdminRoute><Messages /></AdminRoute>} />
               <Route path="/logs" element={<AdminRoute><ServerLogs /></AdminRoute>} />
               <Route path="/audit" element={<AdminRoute><AuditHistory /></AdminRoute>} />
+              <Route path="/activity-journal" element={<AdminRoute><ActivityJournal /></AdminRoute>} />
+
               <Route path="/instance" element={<AdminRoute><Instance /></AdminRoute>} />
               <Route path="/music-requests" element={<AdminRoute><MusicRequests /></AdminRoute>} />
               <Route path="/bots" element={<AdminRoute><BotList /></AdminRoute>} />

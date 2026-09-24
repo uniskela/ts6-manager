@@ -314,6 +314,12 @@ serverRoutes.delete('/:configId', requireRole('admin'), async (req: Request, res
   try {
     const prisma = req.app.locals.prisma;
     const id = parseInt(String(req.params.configId));
+    // Release journal SSH ownership and purge journal rows before deleting the config.
+    const activityJournal = req.app.locals.activityJournal;
+    if (activityJournal?.releaseConfig) {
+      await activityJournal.releaseConfig(id);
+    }
+
     await recordLocalSuccess(
       prisma,
       {
