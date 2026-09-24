@@ -354,9 +354,11 @@ export default function ActivityJournal() {
                 <p className="text-center text-muted-foreground text-sm py-10">Loading…</p>
               ) : items.length === 0 ? (
                 <p className="text-center text-muted-foreground text-sm py-10">
-                  {enabled
-                    ? 'No journal entries yet for this context.'
-                    : 'Capture is disabled. Enable capture to record joins and leaves.'}
+                  {captureDisplay.kind === 'unknown'
+                    ? 'No journal entries on this page. Capture status is not known yet.'
+                    : enabled
+                      ? 'No journal entries yet for this context.'
+                      : 'Capture is disabled. Enable capture to record joins and leaves.'}
                 </p>
               ) : (
                 items.map((entry: ClientActivityEntry) => {
