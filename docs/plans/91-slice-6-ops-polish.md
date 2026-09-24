@@ -1,10 +1,10 @@
 # #91 Slice 6 — Operational safety and on-demand diagnostics polish
 
-**Status:** Codex design accepted (follow-up review). Implement in small PRs; hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120).
+**Status:** Behavior PRs 1–5 **shipped on `main`**; PR 6 history/status consistency **open** ([#155](https://github.com/uniskela/ts6-manager/pull/155)); PR 7 acceptance evidence in [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until #155 lands and acceptance still matches `main`.
 
-**Reviewed checkout:** `9df08fd` (Codex). Open PRs at review time: only #120; no open #91 slice PRs.
+**Reviewed checkout (design):** `9df08fd` (Codex). **Shipped tip recorded for acceptance:** `aa926b5` (includes [#153](https://github.com/uniskela/ts6-manager/pull/153)).
 
-**Sequencing guidance:** Start with **action ownership and refresh control**; add **runtime diagnostics afterward**.
+**Sequencing guidance:** Action ownership and refresh control first; runtime diagnostics afterward — complete through PR 5 on `main`.
 
 ---
 
@@ -114,15 +114,15 @@ Apply the same principle to instance settings and journal controls where appropr
 
 ## Small-PR sequence
 
-| PR | Deliverable | Required evidence |
-| --- | --- | --- |
-| **1. Action and draft ownership** | Files target binding, instance draft protection, connection-test generation guards | Switching context cannot redirect a pending action or apply an obsolete result |
-| **2. Demand-driven query policy** | Filtered PWA recovery, explicit summary refresh, controlled page-entry trigger, truthful missing/error states | Request-count tests show no scan after recovery, mutation invalidation or channel-list changes |
-| **3. Bounded storage execution** | Request-wide budgets, generation-aware cache, cancellation/coalescing, coverage labels and channel-count handling | Large/denied/interrupted trees return honest bounded results |
-| **4. Contextual compatibility and permission guidance** | Action-local warnings and meaningful prerequisite errors | Read success never implies write authorization |
-| **5. Runtime/media diagnostics** | Bounded executable and sidecar checks beside relevant actions | Routine status polling performs no probes; failures terminate within bounds |
-| **6. History/status consistency** | Journal pagination reset, unknown/stale capture states, log context gating, accurate refresh labels | Scope changes and failed refreshes cannot preserve misleading current-state labels |
-| **7. Documentation and acceptance** | Correct shipped-status docs and record beta13/mobile/PWA evidence | #91/#101 claims match demonstrated behavior |
+| PR | Deliverable | Required evidence | Status |
+| --- | --- | --- | --- |
+| **1. Action and draft ownership** | Files target binding, instance draft protection, connection-test generation guards | Switching context cannot redirect a pending action or apply an obsolete result | **Shipped** [#144](https://github.com/uniskela/ts6-manager/pull/144) |
+| **2. Demand-driven query policy** | Filtered PWA recovery, explicit summary refresh, controlled page-entry trigger, truthful missing/error states | Request-count tests show no scan after recovery, mutation invalidation or channel-list changes | **Shipped** [#146](https://github.com/uniskela/ts6-manager/pull/146) |
+| **3. Bounded storage execution** | Request-wide budgets, generation-aware cache, cancellation/coalescing, coverage labels and channel-count handling | Large/denied/interrupted trees return honest bounded results | **Shipped** [#151](https://github.com/uniskela/ts6-manager/pull/151) |
+| **4. Contextual compatibility and permission guidance** | Action-local warnings and meaningful prerequisite errors | Read success never implies write authorization | **Shipped** [#152](https://github.com/uniskela/ts6-manager/pull/152) |
+| **5. Runtime/media diagnostics** | Bounded executable and sidecar checks beside relevant actions | Routine status polling performs no probes; failures terminate within bounds | **Shipped** [#153](https://github.com/uniskela/ts6-manager/pull/153) @ `aa926b5` |
+| **6. History/status consistency** | Journal pagination reset, unknown/stale capture states, log context gating, accurate refresh labels | Scope changes and failed refreshes cannot preserve misleading current-state labels | **In flight** [#155](https://github.com/uniskela/ts6-manager/pull/155) — not on `main` |
+| **7. Documentation and acceptance** | Correct shipped-status docs and record beta13/mobile/PWA evidence | #91/#101 claims match demonstrated behavior | [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md) |
 
 Each behavior PR includes focused tests and relevant docs. PR 7 consolidates acceptance evidence; it must not become a deferred testing bucket.
 

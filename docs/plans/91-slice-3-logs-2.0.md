@@ -1,9 +1,9 @@
 # Plan: #91 Slice 3 — Logs 2.0
 
-Status: **design approved; implementing on `cursor/logs-2-0-paging-2c1f`**.  
-Design attribution: Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
+Status: **core shipped on `main`** ([#132](https://github.com/uniskela/ts6-manager/pull/132), [#137](https://github.com/uniskela/ts6-manager/pull/137), [#139](https://github.com/uniskela/ts6-manager/pull/139), [#142](https://github.com/uniskela/ts6-manager/pull/142)). Remaining honest history/refresh-label polish is Slice 6 PR 6 ([#155](https://github.com/uniskela/ts6-manager/pull/155), in flight). Acceptance roll-up: [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md).  
+Design attribution (historical): Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
 
-Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Keep separate from metrics Slice 1. Do not merge Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) based on this plan.
+Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until Slice 6 acceptance is honest.
 
 ## Findings
 

@@ -1,7 +1,7 @@
 # Plan: #91 Slice 1 — Native TeamSpeak metrics data source
 
-Status: **fixture gate PASSED on [#126](https://github.com/uniskela/ts6-manager/pull/126) branch evidence only; still FAILED on `main`** (implementation not started on `main`).  
-Merged onto `origin/main` @ `cdb6c3d` (after Slice 2 / PR #114 merged as `2a096bf`, the appearance work in PR #122, and PR #121 itself landing as `cdb6c3d`).
+Status: **shipped on `main`** via [#126](https://github.com/uniskela/ts6-manager/pull/126) (`0f0cbf4`), with beta13 fixture under `packages/backend/src/ts-client/__fixtures__/`. Acceptance roll-up: [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md).  
+Historical note: plan docs previously landed via [#121](https://github.com/uniskela/ts6-manager/pull/121) / [#123](https://github.com/uniskela/ts6-manager/pull/123) before the fixture-gated implementation.
 
 Design attribution for the deltas below: Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24), plus inspection of the candidate fixture on [#126](https://github.com/uniskela/ts6-manager/pull/126) head `3ffe375` (not an implementation review of #126).
 
@@ -25,10 +25,10 @@ Before any allow-listed metric names, typed mapper, or dashboard field mapping l
 
 | Branch / evidence | Gate status |
 |-------------------|-------------|
-| `main` @ `bdcbaf3` | **FAILED** — capture instructions exist under `packages/backend/src/ts-client/__fixtures__/README.md`, but **no dump is on `main`**. |
-| [#126](https://github.com/uniskela/ts6-manager/pull/126) head `3ffe375` | **PASSED (candidate only)** — substantive fixture `ts6-beta13-metrics.txt` with headers/metadata reporting beta13, HTTP 200, and `text/plain; version=0.0.4; charset=utf-8`. Capture’s `TSSERVER_METRICS_VOICE` setting is explicitly unknown. Codex inspected that evidence; it did not independently reproduce the capture. |
+| `main` (post-[#126](https://github.com/uniskela/ts6-manager/pull/126)) | **PASSED** — fixture `ts6-beta13-metrics.txt` (+ headers/meta) and allow-listed scrape/mapper are on `main`. |
+| Historical [#126](https://github.com/uniskela/ts6-manager/pull/126) head `3ffe375` | Candidate fixture that landed with the implementation PR. Capture’s `TSSERVER_METRICS_VOICE` setting remains explicitly unknown. |
 
-Until the accepted fixture lands on `main` (or an implementation PR that integrates #126 against this contract), **do not invent metric names or claim the main-branch gate passed**. Evaluate #126 against this contract before treating Slice 1 as complete.
+Do not invent additional metric names beyond the allow-list derived from the committed beta13 fixture.
 
 Capture instructions live in `packages/backend/src/ts-client/__fixtures__/README.md`. Reconcile the fixture filename with the plan when integrating (`ts6-beta13-metrics.txt` on #126 vs prior `beta13-metrics.txt` wording).
 

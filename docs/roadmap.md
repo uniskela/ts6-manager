@@ -42,19 +42,24 @@ v1.6 adds:
 
 Planned work remains intentionally separated into dedicated changes.
 
-### Observability and operations — v1.8 direction
+### Observability and operations — v1.8
 
-A dedicated [v1.8 Observability & Operations tracker](https://github.com/uniskela/ts6-manager/issues/91) groups the next operator-focused improvements after the current UI/UX work.
+Tracked in [#91](https://github.com/uniskela/ts6-manager/issues/91). Acceptance evidence: [`docs/plans/91-slice-6-acceptance.md`](plans/91-slice-6-acceptance.md).
 
-The direction includes:
+Shipped on `main`:
 
-- optional use of TeamSpeak native metrics as a richer dashboard data source, with authenticated WebQuery fallback;
-- staged connection diagnostics that distinguish reachability, authentication, usable permissions, and virtual-server access;
-- a Server Logs 2.0 pass focused on context, time presentation, filtering, and mobile-safe operation;
-- bounded admin audit and TeamSpeak activity history without recording secrets; and
-- demand-driven health/diagnostic checks that avoid unnecessary permanent polling.
+- optional TeamSpeak native metrics with authenticated WebQuery fallback;
+- staged connection diagnostics (reachability, authentication, read permissions, virtual-server access);
+- Server Logs 2.0 paging, filters, and context labels;
+- bounded administrative audit and TeamSpeak activity journal (no secrets);
+- demand-driven storage summaries and runtime/media probes (no permanent expensive polling); and
+- action-local permission / compatibility guidance.
 
-This work should preserve the existing security model: metrics and diagnostics remain backend-mediated, access-controlled, tightly scoped to configured TeamSpeak servers, and safe to disable without reducing normal management functionality. It is not intended to add a bundled monitoring stack or long-term time-series platform.
+Still open before calling Slice 6 complete: history and capture status-label honesty ([#155](https://github.com/uniskela/ts6-manager/pull/155)). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until that lands and acceptance still matches `main`.
+
+Appearance 1.8 ([#101](https://github.com/uniskela/ts6-manager/issues/101)) — backgrounds/motion and custom CSS with `?safe-ui=1` recovery — is shipped (#122 / #128).
+
+Metrics and diagnostics remain backend-mediated, access-controlled, and scoped to configured TeamSpeak servers. This is not a bundled monitoring stack or long-term time-series platform.
 
 ### Framework modernization
 
