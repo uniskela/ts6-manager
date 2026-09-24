@@ -79,11 +79,12 @@ export function probeCommandVersion(
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     const finish = (result: CommandProbeResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      if (timer != null) clearTimeout(timer);
       resolve(result);
     };
 
@@ -103,7 +104,7 @@ export function probeCommandVersion(
       return;
     }
 
-    const timer = setTimeout(() => {
+    timer = setTimeout(() => {
       timedOut = true;
       try {
         proc.kill('SIGKILL');

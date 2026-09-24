@@ -98,13 +98,12 @@ describe('diagnoseRuntimeMedia', () => {
     });
 
     assert.ok(Date.now() - started < 500);
-    assert.ok(report.stages.length === 4);
-    assert.ok(
-      report.stages.some((s) => s.code === 'timeout')
-      || report.overall === 'ok'
-      || report.overall === 'partial'
-      || report.overall === 'fail',
-    );
+    assert.equal(report.stages.length, 4);
+    // yt-dlp (~50ms) and ffmpeg (~100ms) finish before the 80ms overall deadline;
+    // ffprobe and sidecar start after it and must be cut off.
+    assert.equal(report.stages.find((s) => s.id === 'ffprobe')?.code, 'timeout');
+    assert.equal(report.stages.find((s) => s.id === 'sidecar')?.code, 'timeout');
+    assert.notEqual(report.overall, 'ok');
   });
 
   it('exports a conservative default overall timeout', () => {
@@ -130,5 +129,13 @@ describe('probeCommandVersion', () => {
     const result = await probeCommandVersion('ts6-definitely-missing-binary-xyz', ['--version'], 500);
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.code, 'binary_missing');
+  });
+
+  it('resolves (does not reject) when spawn throws synchronously', async () => {
+    const result = await probeCommandVersion('', [], 200);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.ok(result.code === 'error' || result.code === 'binary_missing');
+    }
   });
 });
