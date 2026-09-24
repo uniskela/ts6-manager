@@ -10,6 +10,8 @@ The worker serves exact precache entries for same-origin GET requests without qu
 
 **`/api/**`, authentication/session traffic, WebSocket/live TeamSpeak state and mutations are never intentionally cached by the service worker.** Requests outside the static/navigation allow-lists pass through without `respondWith`. There is no runtime caching, background sync, offline request queue, external font/media cache, or catch-all offline response. React Query mutations use `networkMode: 'always'` and no retry, so offline actions fail instead of being paused for replay. Query data remains in memory only; the existing authentication storage model is unchanged.
 
+Browser-local Appearance preferences (including optional custom CSS) are not part of the service-worker cache model. Custom CSS does not alter API or static caching rules; any network requests it triggers are ordinary browser stylesheet resource loads, not SW-mediated caches.
+
 When adding an app route, review `pwa/cache-policy.ts` and the routing tests. Review the **emitted** `dist/sw.js` after changes: precache contents must contain only the allowed static files. Do not put secrets or personalized responses behind static paths.
 
 ## Activation and deployment

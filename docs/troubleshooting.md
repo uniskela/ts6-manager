@@ -85,3 +85,13 @@ Check:
 - the public frontend origin matches `FRONTEND_URL`;
 - WebSocket upgrades are supported by the reverse proxy; and
 - the public domain routes to the frontend/nginx service, not directly to the internal sidecar.
+
+## Appearance custom CSS made the UI unusable
+
+Custom CSS is browser-local. Open:
+
+`/settings?tab=appearance&safe-ui=1`
+
+Safe mode suspends custom CSS for that page load (and the rest of that document lifetime) without deleting the saved text. Use Appearance → Advanced to **Disable** or **Reset**, then reload without `?safe-ui=1`.
+
+Do not rely on a visible Disable button under hostile CSS — type or bookmark the recovery URL before enabling custom CSS. Clearing site data for the origin also removes the preference, but safe mode is the supported recovery path.

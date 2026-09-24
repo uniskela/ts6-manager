@@ -29,6 +29,19 @@ HTTP automation actions and FFmpeg/media URL paths include SSRF protections. Bot
 
 Do not design deployments or automations around bypassing these checks.
 
+## Appearance custom CSS
+
+Settings → Appearance → Advanced lets a browser store optional custom CSS for that origin. The CSS is a local presentation override only:
+
+- it is never uploaded to the backend and never changes authorization, credentials, or service-worker caching;
+- it is applied only inside the signed-in management UI through one managed `<style>` element (`textContent`), not through HTML parsing or script execution;
+- typing or importing into the editor does not activate CSS until **Save CSS** commits the draft and **Enable custom CSS** is on;
+- custom CSS can still hide controls, override accessibility colours, and cause the browser to request external resources (`@import`, `url(...)`, and similar). There is no sanitizer — treat pasted or imported CSS as trusted local customization.
+
+If custom CSS makes the UI unusable, open `/settings?tab=appearance&safe-ui=1` (safe mode). Safe mode latches for that document lifetime so SPA navigation cannot re-apply the CSS, does not erase saved CSS, and exposes Disable/Reset in Appearance. Leave safe mode with a normal reload after disabling or resetting.
+
+The hard size limit is **64 KiB** (UTF-8). Oversized import/save/hydration input is rejected rather than truncated.
+
 ## Media sidecar
 
 The sidecar mutating API is authenticated with `SIDECAR_SECRET`.
