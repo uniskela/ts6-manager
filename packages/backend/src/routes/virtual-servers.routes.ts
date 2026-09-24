@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
+import { actorFromRequest, runRemoteAudited } from '../audit/index.js';
 
 export const virtualServerRoutes: Router = Router({ mergeParams: true });
 
@@ -8,6 +9,7 @@ const getClient = (req: Request) => {
   const pool: ConnectionPool = req.app.locals.connectionPool;
   return pool.getClient(parseInt(String(req.params.configId)));
 };
+const getConnectionId = (req: Request) => parseInt(String(req.params.configId), 10);
 
 virtualServerRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
@@ -43,12 +45,24 @@ const ALLOWED_SERVER_EDIT_PARAMS = new Set([
 
 virtualServerRoutes.put('/:sid', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
+    const prisma = req.app.locals.prisma;
     const sid = parseInt(String(req.params.sid));
     const filtered: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(req.body)) {
       if (ALLOWED_SERVER_EDIT_PARAMS.has(key)) filtered[key] = val;
     }
-    const result = await getClient(req).execute(sid, 'serveredit', filtered);
+    // Never audit serveredit field values (password, host messages, …)
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'virtual_server.edit',
+        connectionId: getConnectionId(req),
+        virtualServerId: sid,
+        target: { type: 'virtual_server', id: sid },
+      },
+      () => getClient(req).execute(sid, 'serveredit', filtered),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -62,16 +76,38 @@ virtualServerRoutes.post('/', requireRole('admin'), async (req: Request, res: Re
 
 virtualServerRoutes.post('/:sid/start', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
+    const prisma = req.app.locals.prisma;
     const sid = parseInt(String(req.params.sid));
-    const result = await getClient(req).execute(0, 'serverstart', { sid });
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'virtual_server.start',
+        connectionId: getConnectionId(req),
+        virtualServerId: sid,
+        target: { type: 'virtual_server', id: sid },
+      },
+      () => getClient(req).execute(0, 'serverstart', { sid }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
 
 virtualServerRoutes.post('/:sid/stop', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
+    const prisma = req.app.locals.prisma;
     const sid = parseInt(String(req.params.sid));
-    const result = await getClient(req).execute(0, 'serverstop', { sid });
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'virtual_server.stop',
+        connectionId: getConnectionId(req),
+        virtualServerId: sid,
+        target: { type: 'virtual_server', id: sid },
+      },
+      () => getClient(req).execute(0, 'serverstop', { sid }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });

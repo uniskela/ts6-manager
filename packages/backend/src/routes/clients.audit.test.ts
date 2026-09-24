@@ -163,4 +163,116 @@ describe('client moderation audit instrumentation', () => {
       await close();
     }
   });
+
+  it('records client.move without channel password', async () => {
+    const { app, rows } = buildApp(async () => [{ ok: 1 }]);
+    const { base, close } = await listen(app);
+    try {
+      const res = await fetch(`${base}/api/servers/3/vs/1/clients/9/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cid: 42, cpw: SECRET }),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(rows[0].action, 'client.move');
+      assert.equal(rows[0].outcome, 'success');
+      assert.equal(rows[0].targetId, '9');
+      assert.equal(JSON.stringify(rows).includes(SECRET), false);
+      assert.equal(JSON.stringify(rows).includes('cpw'), false);
+    } finally {
+      await close();
+    }
+  });
+
+  it('records client.poke/message without message body', async () => {
+    const { app, rows } = buildApp(async () => [{ ok: 1 }]);
+    const { base, close } = await listen(app);
+    try {
+      const poke = await fetch(`${base}/api/servers/3/vs/1/clients/9/poke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msg: `poke ${SECRET}` }),
+      });
+      assert.equal(poke.status, 200);
+      const message = await fetch(`${base}/api/servers/3/vs/1/clients/9/message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ msg: `hello ${SECRET}` }),
+      });
+      assert.equal(message.status, 200);
+      assert.equal(rows.some((r) => r.action === 'client.poke'), true);
+      assert.equal(rows.some((r) => r.action === 'client.message'), true);
+      assert.equal(JSON.stringify(rows).includes(SECRET), false);
+      assert.equal(JSON.stringify(rows).includes('hello'), false);
+    } finally {
+      await close();
+    }
+  });
+
+  it('records client permission mutations without permsid/value secrets', async () => {
+    const rows: Array<Record<string, unknown>> = [];
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as any).user = { id: 5, role: 'admin', username: 'auditor' };
+      req.app.locals.prisma = {
+        adminAuditEvent: {
+          create: async ({ data }: { data: Record<string, unknown> }) => {
+            const row = { id: `a${rows.length + 1}`, ...data };
+            rows.push(row);
+            return row;
+          },
+          updateMany: async ({ where, data }: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+            for (const row of rows) {
+              if (row.operationId === where.operationId && row.outcome === where.outcome) {
+                Object.assign(row, data);
+              }
+            }
+            return { count: 1 };
+          },
+        },
+      };
+      req.app.locals.connectionPool = {
+        getClient: () => ({
+          execute: async (_sid: number, cmd: string) => {
+            if (cmd === 'permidgetbyname') return [{ permid: 77 }];
+            return [];
+          },
+          executePost: async () => [{ ok: 1 }],
+        }),
+      };
+      next();
+    });
+    app.use('/api/servers/:configId/vs/:sid/clients', clientRoutes);
+    app.use(errorHandler);
+
+    const { base, close } = await listen(app);
+    try {
+      const put = await fetch(`${base}/api/servers/3/vs/1/clients/55/permissions`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          permsid: `b_secret_${SECRET}`,
+          permvalue: 999,
+          permnegated: 0,
+          permskip: 0,
+        }),
+      });
+      assert.equal(put.status, 200);
+      const del = await fetch(`${base}/api/servers/3/vs/1/clients/55/permissions`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ permsid: `b_secret_${SECRET}` }),
+      });
+      assert.equal(del.status, 200);
+      assert.equal(rows[0].action, 'client.permission_add');
+      assert.equal(rows[1].action, 'client.permission_delete');
+      assert.equal(rows[0].targetId, '55');
+      assert.equal(JSON.stringify(rows).includes(SECRET), false);
+      assert.equal(JSON.stringify(rows).includes('permsid'), false);
+      assert.equal(JSON.stringify(rows).includes('999'), false);
+    } finally {
+      await close();
+    }
+  });
 });

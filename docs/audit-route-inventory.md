@@ -1,8 +1,6 @@
 # #91 Slice 4 — Administrative audit: remaining route inventory
 
-This PR ships the audit **core** (schema, writer, retention, read API/UI) plus a
-**representative** set of high-impact instruments. Routes below still need
-instrumentation in follow-up PRs. Prefer the same patterns:
+Prefer the same patterns:
 
 - **Remote TeamSpeak writes:** `beginRemoteAttempt` → dispatch → `completeRemoteAttempt`
   (fail-closed on attempt insert; `unknown` on timeout / ambiguous completion).
@@ -11,42 +9,36 @@ instrumentation in follow-up PRs. Prefer the same patterns:
 - **Never** audit request bodies, free-text reasons/messages, flow JSON, credentials,
   cookie contents, token path values, or exception text.
 
-## Instrumented in this PR
+## Instrumented (core + channel/group/permission follow-up)
 
 | Action | Route(s) |
 |--------|----------|
 | `client.kick` / `client.ban` | `POST .../clients/:clid/kick\|ban` |
+| `client.move` / `client.poke` / `client.message` | `POST .../clients/:clid/move\|poke\|message` (omit msg / cpw) |
+| `client.permission_add` / `client.permission_delete` | `PUT/DELETE .../clients/:cldbid/permissions` |
 | `ban.create` / `ban.delete` / `ban.delete_all` | `POST/DELETE .../bans` |
+| `channel.create` / `update` / `delete` / `move` / permission add\|delete | `.../channels` |
+| `server_group.*` (CRUD, copy, members, permissions) | `.../server-groups` |
+| `channel_group.*` (CRUD, assign, permissions) | `.../channel-groups` |
+| `privilege_key.create` / `privilege_key.delete` | `.../tokens` (**never** store token string) |
+| `virtual_server.edit` / `start` / `stop` | `PUT .../vs/:sid`, `POST .../:sid/start\|stop` |
 | `connection.create` / `update` / `credentials_changed` / `delete` | `POST/PUT/DELETE /api/servers` |
 | `flow.create` / `update` / `delete` / `enable` / `disable` | `/api/bots` mutations |
 | `user.create` / `update` / `delete` | `/api/users` mutations |
 | `settings.yt_cookies_*` / `settings.limits_update` | `/api/settings` mutations |
 
-## Remaining (not in this PR)
+## Remaining (not yet instrumented)
 
 ### Moderation / clients
 
-- `POST .../clients/:clid/move`
-- `POST .../clients/:clid/poke`
-- `POST .../clients/:clid/message` (omit message body)
-- `PUT/DELETE .../clients/:cldbid/permissions`
 - `POST/DELETE .../complaints...`
 
 ### Virtual server / instance
 
-- `PUT .../vs/:sid` (`serveredit`)
 - `POST .../virtual-servers` (`servercreate`)
-- `POST .../:sid/start\|stop`
 - `DELETE .../:sid`
 - `POST .../:sid/snapshot` / `snapshot/deploy` (no snapshot body)
 - `PUT .../instance` (`instanceedit`)
-
-### Channels / groups / permissions / tokens
-
-- Channel CRUD / move / channel permissions
-- Server group CRUD / copy / members / permissions
-- Channel group CRUD / assign / permissions
-- Privilege key create/delete (**never store token string from URL/body**)
 
 ### Connections (lower priority)
 
