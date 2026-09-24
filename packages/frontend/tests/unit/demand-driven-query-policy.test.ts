@@ -6,11 +6,15 @@ import {
   channelSummaryDisplay,
   channelSummaryLabelText,
   connectionScope,
+  consumePageEntryAttempt,
   decidePageEntryScan,
   expensiveDiagnosticQueryOptions,
+  hasConsumedPageEntryAttempt,
   invalidateAfterPwaRecovery,
   isExpensiveDiagnosticQuery,
   markExpensiveDiagnosticStale,
+  pageEntryAttemptWasOffline,
+  resetPageEntryAttemptsForTests,
   shouldScanOnTrigger,
 } from '../../src/lib/demand-driven-query-policy.ts';
 
@@ -115,6 +119,37 @@ describe('page-entry scan authorization', () => {
     });
     assert.equal(decision.action, 'skip');
     assert.equal(shouldScanOnTrigger('channel-list-change'), false);
+  });
+
+  it('persists page-entry attempts across remount-like reads of the same scope', () => {
+    resetPageEntryAttemptsForTests();
+    const scope = connectionScope(1, 1);
+    assert.equal(hasConsumedPageEntryAttempt(scope), false);
+
+    consumePageEntryAttempt(scope, true);
+    assert.equal(hasConsumedPageEntryAttempt(scope), true);
+    assert.equal(pageEntryAttemptWasOffline(scope), true);
+
+    // Remount: no component ref — only the module map remains.
+    const remount = decidePageEntryScan({
+      configId: 1,
+      sid: 1,
+      hasChannels: true,
+      online: true,
+      entryAttemptScope: hasConsumedPageEntryAttempt(scope) ? scope : null,
+    });
+    assert.deepEqual(remount, { action: 'skip', reason: 'already-attempted' });
+
+    // A different connection scope still gets one automatic opportunity.
+    const otherScope = connectionScope(2, 1);
+    const other = decidePageEntryScan({
+      configId: 2,
+      sid: 1,
+      hasChannels: true,
+      online: true,
+      entryAttemptScope: hasConsumedPageEntryAttempt(otherScope) ? otherScope : null,
+    });
+    assert.equal(other.action, 'authorize-entry-scan');
   });
 });
 

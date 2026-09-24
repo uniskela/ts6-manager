@@ -85,6 +85,29 @@ export function channelCoverageKey(channelIds: readonly number[]): string {
   return channelIds.join(',');
 }
 
+/**
+ * Page-entry attempts keyed by connectionScope. Survives `/files` remounts within
+ * the SPA document (same pattern as safe-ui latch); full reloads clear the map.
+ */
+const pageEntryAttempts = new Map<string, { offlineUnchecked: boolean }>();
+
+export function hasConsumedPageEntryAttempt(scope: string): boolean {
+  return pageEntryAttempts.has(scope);
+}
+
+export function consumePageEntryAttempt(scope: string, offlineUnchecked = false): void {
+  pageEntryAttempts.set(scope, { offlineUnchecked });
+}
+
+export function pageEntryAttemptWasOffline(scope: string): boolean {
+  return pageEntryAttempts.get(scope)?.offlineUnchecked === true;
+}
+
+/** Test-only: clear between cases in the same document. */
+export function resetPageEntryAttemptsForTests(): void {
+  pageEntryAttempts.clear();
+}
+
 export type PageEntryScanDecision =
   | { action: 'skip'; reason: 'missing-context' | 'already-attempted' | 'offline' }
   | { action: 'authorize-entry-scan'; scope: string };

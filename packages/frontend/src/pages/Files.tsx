@@ -24,9 +24,12 @@ import {
   channelSummaryDisplay,
   channelSummaryLabelText,
   connectionScope,
+  consumePageEntryAttempt,
   decidePageEntryScan,
   expensiveDiagnosticQueryOptions,
+  hasConsumedPageEntryAttempt,
   markExpensiveDiagnosticStale,
+  pageEntryAttemptWasOffline,
   type SummaryObservation,
 } from '@/lib/demand-driven-query-policy';
 import { cn, formatBytes } from '@/lib/utils';
@@ -88,7 +91,6 @@ export default function Files() {
   const channelIdsRef = useRef(channelIds);
   channelIdsRef.current = channelIds;
 
-  const entryAttemptScopeRef = useRef<string | null>(null);
   const [offlineUnchecked, setOfflineUnchecked] = useState(false);
 
   const summaryQueryKey = useMemo(() => ['file-summaries', c, s] as const, [c, s]);
@@ -132,27 +134,32 @@ export default function Files() {
     return map;
   }, [summaryData]);
 
-  // One bounded page-entry attempt once context is valid and online.
+  // One bounded page-entry attempt per connection scope (survives /files remounts).
   useEffect(() => {
     if (!c || !s) return;
+    const scope = connectionScope(c, s);
     const online = typeof navigator === 'undefined' ? true : navigator.onLine;
     const decision = decidePageEntryScan({
       configId: c,
       sid: s,
       hasChannels: channelIds.length > 0,
       online,
-      entryAttemptScope: entryAttemptScopeRef.current,
+      entryAttemptScope: hasConsumedPageEntryAttempt(scope) ? scope : null,
     });
     if (decision.action === 'skip') {
+      if (decision.reason === 'already-attempted') {
+        setOfflineUnchecked(pageEntryAttemptWasOffline(scope));
+        return;
+      }
       if (decision.reason === 'offline') {
         // Consume the page-entry opportunity so reconnect/channel churn cannot defer a scan.
-        entryAttemptScopeRef.current = connectionScope(c, s);
+        consumePageEntryAttempt(scope, true);
         setOfflineUnchecked(true);
       } else if (decision.reason === 'missing-context') {
         // Offline with no channels yet still consumes the opportunity — decidePageEntryScan
         // returns missing-context before it checks connectivity.
         if (!online) {
-          entryAttemptScopeRef.current = connectionScope(c, s);
+          consumePageEntryAttempt(scope, true);
           setOfflineUnchecked(true);
         } else {
           setOfflineUnchecked(false);
@@ -160,7 +167,7 @@ export default function Files() {
       }
       return;
     }
-    entryAttemptScopeRef.current = decision.scope;
+    consumePageEntryAttempt(decision.scope, false);
     setOfflineUnchecked(false);
     void refetchSummaries();
   }, [c, s, channelIds.length, refetchSummaries]);
@@ -174,7 +181,7 @@ export default function Files() {
 
   const refreshSummaries = () => {
     if (!c || !s || channelIds.length === 0) return;
-    entryAttemptScopeRef.current = connectionScope(c, s);
+    consumePageEntryAttempt(connectionScope(c, s), false);
     setOfflineUnchecked(false);
     // Compatible in-flight work is coalesced by TanStack Query on the same key.
     void refetchSummaries();
