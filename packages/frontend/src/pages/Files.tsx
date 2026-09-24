@@ -248,13 +248,16 @@ export default function Files() {
   const mkdirMutation = useMutation({
     mutationFn: (target: FileActionTarget) =>
       filesApi.createDir(target.configId, target.sid, target.cid, target.fullPath),
-    onSuccess: (_data, target) => {
+    onSuccess: async (_data, target) => {
       toast.success('Directory created');
       qc.invalidateQueries({
         queryKey: ['files', target.configId, target.sid, target.cid],
       });
-      // Mark summary stale — do not authorize another expensive scan.
-      void markExpensiveDiagnosticStale(qc, ['file-summaries', target.configId, target.sid]);
+      // Drop an in-flight scan before invalidating so its completion cannot clear
+      // isInvalidated and present pre-mutation counts as fresh.
+      const summaryKey = ['file-summaries', target.configId, target.sid] as const;
+      await qc.cancelQueries({ queryKey: summaryKey });
+      await markExpensiveDiagnosticStale(qc, summaryKey);
       // Only dismiss mkdir UI when it still belongs to the submitted scope.
       if (
         c === target.configId
@@ -272,12 +275,14 @@ export default function Files() {
   const deleteMutation = useMutation({
     mutationFn: (target: FileActionTarget) =>
       filesApi.delete(target.configId, target.sid, target.cid, target.fullPath),
-    onSuccess: (_data, target) => {
+    onSuccess: async (_data, target) => {
       toast.success('File deleted');
       qc.invalidateQueries({
         queryKey: ['files', target.configId, target.sid, target.cid],
       });
-      void markExpensiveDiagnosticStale(qc, ['file-summaries', target.configId, target.sid]);
+      const summaryKey = ['file-summaries', target.configId, target.sid] as const;
+      await qc.cancelQueries({ queryKey: summaryKey });
+      await markExpensiveDiagnosticStale(qc, summaryKey);
       if (shouldCloseFileDialog(deleteTargetRef.current, target)) {
         setDeleteTarget(null);
       }
