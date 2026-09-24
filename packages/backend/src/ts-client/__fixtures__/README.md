@@ -12,6 +12,8 @@ Real exposition dump is checked in:
 
 Allow-list and VS scoping in `metrics-map.ts` are derived from this dump only. Do not invent additional series (including voice metrics) without a new capture that includes them.
 
+**Main-branch gate:** this fixture lives on the Slice 1 implementation branch until merge — do not claim the `main` fixture gate passed solely because this file exists here.
+
 ## Observed (beta13)
 
 - Image: `teamspeaksystems/teamspeak6-server:6.0.0-beta13`
@@ -20,7 +22,9 @@ Allow-list and VS scoping in `metrics-map.ts` are derived from this dump only. D
 - Content-Type: `text/plain; version=0.0.4; charset=utf-8`
 - VS scope label: `virtualserver_unique_identifier`
 - Numeric SID appears on `teamspeak_virtualserver_info` as `virtualserver_id`
+- Identity join: SID → `virtualserver_id` → UID must agree with authenticated WebQuery `virtualserver_unique_identifier`
 - `TSSERVER_METRICS_VOICE`: unknown for this capture — voice-only series omitted from allow-list
+- Dashboard mapping: online = clients − query (both required); capacity/channels/bandwidth/ping from fixture; **uptime and total packet loss stay WebQuery**
 
 ## Capture procedure (Docker)
 
@@ -50,4 +54,4 @@ docker rm -f -v ts6-metrics-capture
 
 1. Diff metric names / labels against `METRICS_ALLOWLIST` in `metrics-map.ts`.
 2. Update fixture-driven tests.
-3. Keep fail-closed scoping via `teamspeak_virtualserver_info` + `virtualserver_unique_identifier`.
+3. Keep fail-closed scoping via `teamspeak_virtualserver_info` + `virtualserver_unique_identifier`, requiring WebQuery UID agreement.

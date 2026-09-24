@@ -4,6 +4,7 @@ import {
   buildTsServerOrigin,
   buildWebQueryPath,
   createValidatedTsServerEndpoint,
+  resolveValidatedConnectAddress,
   sanitizeTsServerHost,
   validateTsServerPort,
 } from './validate-ts-host.js';
@@ -68,5 +69,22 @@ describe('buildWebQueryPath', () => {
     assert.throws(() => buildWebQueryPath(1, 'http://evil'), /Invalid WebQuery command/);
     assert.throws(() => buildWebQueryPath(1, '//evil'), /Invalid WebQuery command/);
     assert.throws(() => buildWebQueryPath(-1, 'version'), /Server id/);
+  });
+});
+
+describe('resolveValidatedConnectAddress', () => {
+  it('returns literal IPv4/IPv6 without a second lookup target', async () => {
+    const v4 = await resolveValidatedConnectAddress('127.0.0.1');
+    assert.equal(v4.address, '127.0.0.1');
+    assert.equal(v4.family, 4);
+    assert.equal(v4.servername, '127.0.0.1');
+
+    const v6 = await resolveValidatedConnectAddress('::1');
+    assert.equal(v6.address, '::1');
+    assert.equal(v6.family, 6);
+  });
+
+  it('rejects blocked metadata literals', async () => {
+    await assert.rejects(() => resolveValidatedConnectAddress('169.254.169.254'), /not allowed/);
   });
 });

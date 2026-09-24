@@ -114,4 +114,49 @@ describe('MetricsClient', () => {
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }
   });
+
+  it('honours AbortSignal cancellation without waiting for a hanging scrape', async () => {
+    const server = createServer((_req, _res) => {
+      // Never respond — scrape must be abortable.
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+
+    const client = createMetricsClient('127.0.0.1', address.port);
+    const ac = new AbortController();
+    try {
+      const scrapePromise = client.scrape(ac.signal);
+      await new Promise((r) => setTimeout(r, 50));
+      ac.abort();
+      const result = await scrapePromise;
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.reason, 'timeout');
+    } finally {
+      client.destroy();
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it('cancelPending aborts in-flight scrapes', async () => {
+    const server = createServer((_req, _res) => {
+      // hang
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+
+    const client = createMetricsClient('127.0.0.1', address.port);
+    try {
+      const scrapePromise = client.scrape();
+      await new Promise((r) => setTimeout(r, 50));
+      client.cancelPending();
+      const result = await scrapePromise;
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.reason, 'timeout');
+    } finally {
+      client.destroy();
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
 });

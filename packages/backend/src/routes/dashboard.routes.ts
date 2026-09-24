@@ -5,10 +5,11 @@ import { parsePrometheusText } from '../ts-client/metrics-parse.js';
 import {
   applyMetricsAugmentation,
   mapScopedMetrics,
+  metricsAugmentationUsed,
   type MetricsAugmentation,
   type MetricsProvenance,
 } from '../ts-client/metrics-map.js';
-import type { MetricsScrapeFailureReason } from '../ts-client/metrics-client.js';
+import { takeTrackedIfReadyOrCancel, trackPromise } from '../ts-client/metrics-race.js';
 
 export const dashboardRoutes: Router = Router({ mergeParams: true });
 
@@ -28,12 +29,32 @@ type WebQueryDashboard = {
   bandwidth: { incoming: number; outgoing: number };
   packetloss: number;
   ping: number;
+  /** Authenticated VS unique id for metrics SID→UID join. */
+  virtualserverUniqueIdentifier: string | null;
 };
 
 type MetricsFetchBundle = {
   provenance: MetricsProvenance;
   augmentation?: MetricsAugmentation;
 };
+
+type MetricsScrapePhase =
+  | { kind: 'disabled' }
+  | { kind: 'cancelled' }
+  | {
+      kind: 'scrape';
+      result: {
+        ok: true;
+        body: string;
+        contentType: string;
+        fetchedAt: string;
+      } | {
+        ok: false;
+        reason: 'timeout' | 'unreachable' | 'invalid';
+        fetchedAt: string;
+      };
+    }
+  | { kind: 'unreachable'; fetchedAt: string };
 
 async function fetchWebQueryDashboard(req: Request, sid: number): Promise<{ data: WebQueryDashboard; fetchedAt: string }> {
   const client = getClient(req);
@@ -52,6 +73,9 @@ async function fetchWebQueryDashboard(req: Request, sid: number): Promise<{ data
   const channels = Array.isArray(channelList) ? channelList : [];
 
   const onlineClients = clients.filter((c: any) => String(c.client_type) === '0');
+  const uidRaw = info?.virtualserver_unique_identifier;
+  const virtualserverUniqueIdentifier =
+    typeof uidRaw === 'string' && uidRaw.trim().length > 0 ? uidRaw.trim() : null;
 
   return {
     fetchedAt,
@@ -69,37 +93,31 @@ async function fetchWebQueryDashboard(req: Request, sid: number): Promise<{ data
       },
       packetloss: Number(info.virtualserver_total_packetloss_total) || 0,
       ping: Number(info.virtualserver_total_ping) || 0,
+      virtualserverUniqueIdentifier,
     },
   };
 }
 
-async function fetchMetricsBundle(req: Request, sid: number): Promise<MetricsFetchBundle> {
-  const configId = parseInt(String(req.params.configId), 10);
-  const prisma = req.app.locals.prisma;
-  const pool: ConnectionPool = req.app.locals.connectionPool;
-
-  const server = await prisma.tsServerConfig.findUnique({ where: { id: configId } });
-  if (!server || server.isDemo || !server.metricsEnabled) {
-    return { provenance: { status: 'disabled' } };
-  }
-
-  const metricsClient = pool.getMetricsClient(configId);
-  if (!metricsClient) {
-    return {
-      provenance: {
-        status: 'unavailable',
-        reason: 'unreachable',
-        fetchedAt: new Date().toISOString(),
-      },
-    };
-  }
-
-  const scrape = await metricsClient.scrape();
+function mapScrapeToBundle(
+  scrape: Extract<MetricsScrapePhase, { kind: 'scrape' }>['result'],
+  sid: number,
+  webqueryUniqueId: string | null,
+): MetricsFetchBundle {
   if (!scrape.ok) {
     return {
       provenance: {
         status: 'unavailable',
-        reason: scrape.reason as MetricsScrapeFailureReason,
+        reason: scrape.reason,
+        fetchedAt: scrape.fetchedAt,
+      },
+    };
+  }
+
+  if (!webqueryUniqueId) {
+    return {
+      provenance: {
+        status: 'unavailable',
+        reason: 'unscoped',
         fetchedAt: scrape.fetchedAt,
       },
     };
@@ -107,7 +125,10 @@ async function fetchMetricsBundle(req: Request, sid: number): Promise<MetricsFet
 
   try {
     const { samples } = parsePrometheusText(scrape.body);
-    const mapped = mapScopedMetrics(samples, sid, scrape.fetchedAt);
+    const mapped = mapScopedMetrics(samples, sid, {
+      webqueryUniqueId,
+      fetchedAt: scrape.fetchedAt,
+    });
     if (!mapped.ok) {
       return {
         provenance: {
@@ -117,6 +138,18 @@ async function fetchMetricsBundle(req: Request, sid: number): Promise<MetricsFet
         },
       };
     }
+
+    // Provenance `current` only when at least one metric field was actually used.
+    if (!metricsAugmentationUsed(mapped.augmentation) || mapped.usedFields.length === 0) {
+      return {
+        provenance: {
+          status: 'unavailable',
+          reason: 'invalid',
+          fetchedAt: mapped.fetchedAt,
+        },
+      };
+    }
+
     return {
       provenance: { status: 'current', fetchedAt: mapped.fetchedAt },
       augmentation: mapped.augmentation,
@@ -135,21 +168,87 @@ async function fetchMetricsBundle(req: Request, sid: number): Promise<MetricsFet
 dashboardRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const sid = validateTsQueryServerId(req.params.sid);
+    const pool: ConnectionPool = req.app.locals.connectionPool;
+    const configId = parseInt(String(req.params.configId), 10);
 
-    // Start WebQuery and metrics concurrently. Metrics must never fail the WebQuery path.
+    // Start WebQuery and metrics concurrently. When WebQuery completes, use
+    // metrics only if already ready; otherwise cancel the outstanding scrape
+    // (do not Promise.all-wait on metrics).
+    const metricsAbort = new AbortController();
     const webqueryTask = fetchWebQueryDashboard(req, sid);
-    const metricsTask = fetchMetricsBundle(req, sid).catch((): MetricsFetchBundle => ({
-      provenance: {
-        status: 'unavailable',
-        reason: 'unreachable',
-        fetchedAt: new Date().toISOString(),
-      },
-    }));
 
-    const [webquery, metrics] = await Promise.all([webqueryTask, metricsTask]);
+    const metricsScrapeTask = trackPromise((async (): Promise<MetricsScrapePhase> => {
+      const prisma = req.app.locals.prisma;
+      const server = await prisma.tsServerConfig.findUnique({ where: { id: configId } });
+      if (!server || server.isDemo || !server.metricsEnabled) {
+        return { kind: 'disabled' };
+      }
+      const metricsClient = pool.getMetricsClient(configId);
+      if (!metricsClient) {
+        return { kind: 'unreachable', fetchedAt: new Date().toISOString() };
+      }
+      const result = await metricsClient.scrape(metricsAbort.signal);
+      return { kind: 'scrape', result };
+    })().catch((): MetricsScrapePhase => ({
+      kind: 'unreachable',
+      fetchedAt: new Date().toISOString(),
+    })));
+
+    const webquery = await webqueryTask;
+
+    const scrapePhase = takeTrackedIfReadyOrCancel(
+      metricsScrapeTask,
+      () => {
+        metricsAbort.abort();
+        pool.getMetricsClient(configId)?.cancelPending();
+      },
+      { kind: 'cancelled' } satisfies MetricsScrapePhase,
+    );
+
+    let metrics: MetricsFetchBundle;
+    switch (scrapePhase.kind) {
+      case 'disabled':
+        metrics = { provenance: { status: 'disabled' } };
+        break;
+      case 'cancelled':
+        metrics = {
+          provenance: {
+            status: 'unavailable',
+            reason: 'timeout',
+            fetchedAt: new Date().toISOString(),
+          },
+        };
+        break;
+      case 'unreachable':
+        metrics = {
+          provenance: {
+            status: 'unavailable',
+            reason: 'unreachable',
+            fetchedAt: scrapePhase.fetchedAt,
+          },
+        };
+        break;
+      case 'scrape':
+        metrics = mapScrapeToBundle(
+          scrapePhase.result,
+          sid,
+          webquery.data.virtualserverUniqueIdentifier,
+        );
+        break;
+      default:
+        metrics = {
+          provenance: {
+            status: 'unavailable',
+            reason: 'unreachable',
+            fetchedAt: new Date().toISOString(),
+          },
+        };
+    }
+
+    const { virtualserverUniqueIdentifier: _uid, ...dashboardFields } = webquery.data;
     const data = metrics.augmentation
-      ? applyMetricsAugmentation(webquery.data, metrics.augmentation)
-      : webquery.data;
+      ? applyMetricsAugmentation(dashboardFields, metrics.augmentation)
+      : dashboardFields;
 
     res.json({
       ...data,

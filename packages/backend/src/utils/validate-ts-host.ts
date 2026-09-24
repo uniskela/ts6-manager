@@ -214,9 +214,20 @@ export function buildTsServerOrigin(host: string, port: number, useHttps: boolea
   return createValidatedTsServerEndpoint(host, port, useHttps, port).origin;
 }
 
+function assertResolvedAddressAllowed(resolved: string): void {
+  if (BLOCKED_IPV4.has(resolved) || BLOCKED_HOSTNAMES.has(resolved)) {
+    throw new AppError(400, 'Host resolves to a blocked address');
+  }
+  if (!allowPrivateHosts() && isPrivateOrLoopbackIp(resolved)) {
+    throw new AppError(400, 'Host resolves to a private or loopback address');
+  }
+}
+
 /**
  * Optional DNS resolution guard: reject hosts that resolve to blocked addresses.
  * Used for draft connection tests where hostnames may point at metadata endpoints.
+ * Returns the sanitized hostname (not a pinned IP) — prefer
+ * `resolveValidatedConnectAddress` when opening an outbound socket.
  */
 export async function assertResolvableTsServerHost(host: string): Promise<string> {
   const safeHost = sanitizeTsServerHost(host);
@@ -238,14 +249,50 @@ export async function assertResolvableTsServerHost(host: string): Promise<string
   }
 
   for (const entry of addresses) {
-    const resolved = entry.address;
-    if (BLOCKED_IPV4.has(resolved) || BLOCKED_HOSTNAMES.has(resolved)) {
-      throw new AppError(400, 'Host resolves to a blocked address');
-    }
-    if (!allowPrivateHosts() && isPrivateOrLoopbackIp(resolved)) {
-      throw new AppError(400, 'Host resolves to a private or loopback address');
-    }
+    assertResolvedAddressAllowed(entry.address);
   }
 
   return safeHost;
+}
+
+export type ValidatedConnectAddress = {
+  /** Literal IP used for the TCP connection (no second DNS lookup). */
+  address: string;
+  family: 4 | 6;
+  /** Original sanitized host (hostname or IP) for Host header when needed. */
+  servername: string;
+};
+
+/**
+ * Resolve + validate DNS at connection time and return the address to connect to.
+ * Callers must dial `address` directly (not re-resolve `servername`) to close the
+ * DNS rebinding TOCTOU gap between validation and connect.
+ */
+export async function resolveValidatedConnectAddress(host: string): Promise<ValidatedConnectAddress> {
+  const safeHost = sanitizeTsServerHost(host);
+
+  if (net.isIP(safeHost)) {
+    assertNotBlockedHost(safeHost);
+    const family = net.isIPv6(safeHost) ? 6 : 4;
+    return { address: safeHost, family, servername: safeHost };
+  }
+
+  let addresses: { address: string; family: number }[];
+  try {
+    addresses = await dns.lookup(safeHost, { all: true, verbatim: true });
+  } catch {
+    throw new AppError(400, 'Host could not be resolved');
+  }
+
+  if (addresses.length === 0) {
+    throw new AppError(400, 'Host could not be resolved');
+  }
+
+  for (const entry of addresses) {
+    assertResolvedAddressAllowed(entry.address);
+  }
+
+  const chosen = addresses[0]!;
+  const family = chosen.family === 6 ? 6 : 4;
+  return { address: chosen.address, family, servername: safeHost };
 }
