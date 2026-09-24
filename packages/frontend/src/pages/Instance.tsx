@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { serversApi } from '@/api/servers.api';
 import { useServerStore } from '@/stores/server.store';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { shouldClearInstanceDraft, mergeClearedInstanceFields, type InstanceSaveTarget } from '@/lib/action-ownership';
 import { Cpu, Save, Server, Globe } from 'lucide-react';
 import { formatBytes, formatUptime } from '@/lib/utils';
 import { apiErrorMessage, teamSpeakQueryRetry } from '@/lib/api-error';
@@ -19,6 +20,16 @@ export default function Instance() {
   const { selectedConfigId: c } = useServerStore();
   const qc = useQueryClient();
   const [editFields, setEditFields] = useState<Record<string, string>>({});
+  const [draftConfigId, setDraftConfigId] = useState<number | null>(c ?? null);
+  const [ownerGeneration, setOwnerGeneration] = useState(0);
+  const draftMetaRef = useRef({ configId: c ?? null, generation: 0 });
+  draftMetaRef.current = { configId: draftConfigId, generation: ownerGeneration };
+
+  useEffect(() => {
+    setEditFields({});
+    setDraftConfigId(c ?? null);
+    setOwnerGeneration((g) => g + 1);
+  }, [c]);
 
   const infoQuery = useQuery({
     queryKey: ['instance-info', c],
@@ -47,8 +58,15 @@ export default function Instance() {
   const { data: version, error: versionError, refetch: refetchVersion } = versionQuery;
 
   const editMutation = useMutation({
-    mutationFn: (data: any) => serversApi.instanceEdit(c!, data),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['instance-info', c] }); toast.success('Instance settings updated'); setEditFields({}); },
+    mutationFn: (target: InstanceSaveTarget) => serversApi.instanceEdit(target.configId, target.data),
+    onSuccess: (_data, target) => {
+      qc.invalidateQueries({ queryKey: ['instance-info', target.configId] });
+      toast.success('Instance settings updated');
+      const live = draftMetaRef.current;
+      if (shouldClearInstanceDraft(live.configId, target.configId, live.generation, target.ownerGeneration)) {
+        setEditFields((prev) => mergeClearedInstanceFields(prev, Object.keys(target.data)));
+      }
+    },
     onError: (error) => toast.error(apiErrorMessage(error, 'Failed to update instance settings')),
   });
 
@@ -96,10 +114,16 @@ export default function Instance() {
   ];
 
   const handleSave = () => {
-    if (Object.keys(editFields).length === 0) return;
-    const data: any = {};
-    for (const [k, v] of Object.entries(editFields)) data[k] = parseInt(v);
-    editMutation.mutate(data);
+    if (!c || Object.keys(editFields).length === 0) return;
+    const data: Record<string, number> = {};
+    for (const [k, v] of Object.entries(editFields)) data[k] = parseInt(v, 10);
+    const target: InstanceSaveTarget = {
+      configId: c,
+      ownerGeneration,
+      data,
+    };
+    setDraftConfigId(c);
+    editMutation.mutate(target);
   };
 
   const backgroundError = loadError
@@ -161,7 +185,16 @@ export default function Instance() {
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle className="text-sm font-medium">Instance Settings</CardTitle>
-            <Button size="sm" onClick={handleSave} disabled={Object.keys(editFields).length === 0 || editMutation.isPending}>
+            <Button
+              size="sm"
+              onClick={handleSave}
+              disabled={
+                Object.keys(editFields).length === 0
+                || (editMutation.isPending
+                  && editMutation.variables?.configId === c
+                  && editMutation.variables?.ownerGeneration === ownerGeneration)
+              }
+            >
               <Save className="h-4 w-4 mr-1" /> Save Changes
             </Button>
           </div>
@@ -170,14 +203,18 @@ export default function Instance() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {editableFields.map((field) => {
               const current = instanceData?.[field.key];
+              const value = editFields[field.key] ?? (current != null ? String(current) : '');
               return (
-                <div key={field.key}>
+                <div key={`${c}-${field.key}`}>
                   <Label className="text-xs text-muted-foreground">{field.label}</Label>
                   <Input
                     type="number"
                     className="h-8 mt-1 font-mono-data text-xs"
-                    defaultValue={current ?? ''}
-                    onChange={(e) => setEditFields((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                    value={value}
+                    onChange={(e) => {
+                      setDraftConfigId(c ?? null);
+                      setEditFields((prev) => ({ ...prev, [field.key]: e.target.value }));
+                    }}
                   />
                 </div>
               );
