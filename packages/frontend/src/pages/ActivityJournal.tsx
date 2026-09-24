@@ -224,56 +224,67 @@ export default function ActivityJournal() {
 
       <div className="min-w-0 rounded-md border border-border bg-card overflow-hidden shadow-sm">
         <ScrollArea className="h-[max(18rem,calc(100dvh-22rem))] sm:h-[calc(100dvh-300px)]">
-          <div className="min-w-0 divide-y divide-border/60">
-            {historyQuery.isLoading ? (
-              <p className="text-center text-muted-foreground text-sm py-10">Loading…</p>
-            ) : items.length === 0 ? (
-              <p className="text-center text-muted-foreground text-sm py-10">
-                {enabled
-                  ? 'No journal entries yet for this context.'
-                  : 'Capture is disabled. Enable capture to record joins and leaves.'}
-              </p>
-            ) : (
-              items.map((entry: ClientActivityEntry) => {
-                const identityBits = [
-                  classLabel(entry.classification),
-                  entry.databaseId != null ? `dbid ${entry.databaseId}` : null,
-                  entry.uniqueId || null,
-                ].filter(Boolean);
-                const identityLine = identityBits.join(' · ');
-                return (
-                  <div
-                    key={entry.id}
-                    className="flex w-full min-w-0 flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-baseline sm:gap-x-4"
-                  >
-                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums sm:w-[10rem]">
-                      {formatWhen(entry.observedAt)}
-                    </span>
-                    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
-                      <Badge variant="outline" className="shrink-0 text-[10px] uppercase tracking-wide">
-                        {entry.eventKind}
-                      </Badge>
-                      <span className="shrink-0 font-medium">
+          <div className="min-w-0">
+            <div
+              className="sticky top-0 z-10 grid min-w-[36rem] grid-cols-[10rem_4.5rem_minmax(7rem,1fr)_5.5rem_minmax(8rem,1.25fr)] gap-x-3 border-b border-border bg-card/95 px-3 py-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground backdrop-blur-sm"
+              role="row"
+            >
+              <span>Date / time</span>
+              <span>Event</span>
+              <span>User</span>
+              <span>Type</span>
+              <span>Identity</span>
+            </div>
+            <div className="min-w-0 divide-y divide-border/60">
+              {historyQuery.isLoading ? (
+                <p className="text-center text-muted-foreground text-sm py-10">Loading…</p>
+              ) : items.length === 0 ? (
+                <p className="text-center text-muted-foreground text-sm py-10">
+                  {enabled
+                    ? 'No journal entries yet for this context.'
+                    : 'Capture is disabled. Enable capture to record joins and leaves.'}
+                </p>
+              ) : (
+                items.map((entry: ClientActivityEntry) => {
+                  const identityBits = [
+                    entry.databaseId != null ? `dbid ${entry.databaseId}` : null,
+                    entry.uniqueId || null,
+                    entry.identityProvenance !== 'event' && entry.identityProvenance !== 'none'
+                      ? `via ${entry.identityProvenance}`
+                      : null,
+                  ].filter(Boolean);
+                  const identityLine = identityBits.join(' · ') || '—';
+                  return (
+                    <div
+                      key={entry.id}
+                      role="row"
+                      className="grid min-w-[36rem] w-full grid-cols-[10rem_4.5rem_minmax(7rem,1fr)_5.5rem_minmax(8rem,1.25fr)] items-baseline gap-x-3 px-3 py-2 text-sm"
+                    >
+                      <span className="text-xs text-muted-foreground tabular-nums">
+                        {formatWhen(entry.observedAt)}
+                      </span>
+                      <span>
+                        <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                          {entry.eventKind}
+                        </Badge>
+                      </span>
+                      <span className="min-w-0 truncate font-medium" title={entry.nickname || undefined}>
                         {entry.nickname || `clid ${entry.clientId}`}
                       </span>
-                      {identityLine ? (
-                        <span
-                          className="min-w-0 flex-1 basis-[12rem] truncate text-xs text-muted-foreground font-mono-data"
-                          title={entry.uniqueId || identityLine}
-                        >
-                          {identityLine}
-                        </span>
-                      ) : null}
-                      {entry.identityProvenance !== 'event' && entry.identityProvenance !== 'none' && (
-                        <span className="shrink-0 text-[10px] text-muted-foreground">
-                          identity: {entry.identityProvenance}
-                        </span>
-                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {classLabel(entry.classification)}
+                      </span>
+                      <span
+                        className="min-w-0 truncate text-xs text-muted-foreground font-mono-data"
+                        title={entry.uniqueId || identityLine}
+                      >
+                        {identityLine}
+                      </span>
                     </div>
-                  </div>
-                );
-              })
-            )}
+                  );
+                })
+              )}
+            </div>
           </div>
         </ScrollArea>
       </div>
