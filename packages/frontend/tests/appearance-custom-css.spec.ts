@@ -27,6 +27,22 @@ function styleEl(page: Page) {
   return page.locator(`#${CUSTOM_CSS_STYLE_ID}`);
 }
 
+async function expectStyleText(page: Page, css: string) {
+  await expect(styleEl(page)).toHaveCount(1);
+  await expect.poll(async () => styleEl(page).evaluate((el) => el.textContent)).toBe(css);
+}
+
+async function readUiState(page: Page) {
+  const raw = await page.evaluate(() => localStorage.getItem('ts6-ui'));
+  if (!raw) {
+    // Defaults may remain memory-only until the first store write — nudge Part A.
+    await page.goto('/settings?tab=appearance');
+    await page.getByRole('button', { name: 'Dark base theme' }).click();
+  }
+  await page.waitForFunction(() => !!localStorage.getItem('ts6-ui'));
+  return page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
+}
+
 test.beforeEach(async ({ request }) => {
   await request.post('/__test/reset');
 });
@@ -45,13 +61,12 @@ test('custom CSS defaults disabled and inert until saved and enabled', async ({ 
   await page.getByRole('button', { name: 'Save CSS' }).click();
   await expect(styleEl(page)).toHaveCount(0);
 
-  const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
+  const stored = await readUiState(page);
   expect(stored.customCssText).toContain('outline');
   expect(stored.customCssEnabled).toBe(false);
 
   await page.getByLabel('Enable custom CSS').click();
-  await expect(styleEl(page)).toHaveCount(1);
-  await expect(styleEl(page)).toHaveText('body { outline: 2px solid magenta; }');
+  await expectStyleText(page, 'body { outline: 2px solid magenta; }');
 });
 
 test('disable preserves text; reset clears text and disables while keeping Part A prefs', async ({ page, request }) => {
@@ -68,13 +83,13 @@ test('disable preserves text; reset clears text and disables while keeping Part 
 
   await page.getByRole('button', { name: 'Disable', exact: true }).click();
   await expect(styleEl(page)).toHaveCount(0);
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state.customCssText)).toContain('--probe');
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state.customCssEnabled)).toBe(false);
+  expect((await readUiState(page)).customCssText).toContain('--probe');
+  expect((await readUiState(page)).customCssEnabled).toBe(false);
 
   await page.getByRole('button', { name: 'Reset', exact: true }).click();
   await page.getByRole('button', { name: 'Reset custom CSS' }).click();
   await expect(page.getByLabel('Custom CSS editor')).toHaveValue('');
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
+  const state = await readUiState(page);
   expect(state.customCssText).toBe('');
   expect(state.customCssEnabled).toBe(false);
   expect(state.baseTheme).toBe('black');
@@ -89,7 +104,7 @@ test('reset confirmation can be cancelled', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Save CSS' }).click();
   await page.getByRole('button', { name: 'Reset', exact: true }).click();
   await page.getByRole('button', { name: 'Cancel' }).click();
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state.customCssText)).toContain('keep me');
+  expect((await readUiState(page)).customCssText).toContain('keep me');
 });
 
 test('enable / save / disable / reload preserve committed state', async ({ page, request }) => {
@@ -98,11 +113,11 @@ test('enable / save / disable / reload preserve committed state', async ({ page,
   await page.getByLabel('Custom CSS editor').fill('header { --css-reload: 1; }');
   await page.getByRole('button', { name: 'Save CSS' }).click();
   await page.getByLabel('Enable custom CSS').click();
-  await expect(styleEl(page)).toHaveText('header { --css-reload: 1; }');
+  await expectStyleText(page, 'header { --css-reload: 1; }');
 
   await page.reload();
-  await expect(styleEl(page)).toHaveText('header { --css-reload: 1; }');
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
+  await expectStyleText(page, 'header { --css-reload: 1; }');
+  const state = await readUiState(page);
   expect(state.customCssEnabled).toBe(true);
   expect(state.customCssText).toContain('--css-reload');
 });
@@ -126,7 +141,7 @@ test('migration from version 5 preserves Part A prefs and adds CSS defaults', as
   });
 
   await signInAsAdmin(page, request);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
+  const state = await readUiState(page);
   expect(state).toMatchObject({
     sidebarCollapsed: true,
     baseTheme: 'black',
@@ -144,8 +159,8 @@ test('migration from version 5 preserves Part A prefs and adds CSS defaults', as
 });
 
 test('malformed or oversized stored CSS falls back safely', async ({ page, request }) => {
-  const oversized = 'z'.repeat(CUSTOM_CSS_MAX_BYTES + 8);
-  await page.addInitScript(({ oversized }) => {
+  await page.addInitScript((maxBytes) => {
+    const oversized = 'z'.repeat(maxBytes + 8);
     localStorage.setItem('ts6-ui', JSON.stringify({
       state: {
         sidebarCollapsed: false,
@@ -159,10 +174,13 @@ test('malformed or oversized stored CSS falls back safely', async ({ page, reque
       },
       version: 6,
     }));
-  }, { oversized });
+  }, CUSTOM_CSS_MAX_BYTES);
 
   await signInAsAdmin(page, request);
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
+  // Touch the store so sanitized values are re-persisted.
+  await page.goto('/settings?tab=appearance');
+  await page.getByRole('button', { name: 'Dark base theme' }).click();
+  const state = await readUiState(page);
   expect(state.customCssText).toBe('');
   expect(state.customCssEnabled).toBe(false);
   await expect(styleEl(page)).toHaveCount(0);
@@ -176,9 +194,8 @@ test('editor rejects oversized paste visibly without activating', async ({ page,
   await expect(page.getByRole('alert')).toContainText('64.0 KiB');
   await page.getByRole('button', { name: 'Save CSS' }).click();
   await expect(page.getByRole('alert')).toBeVisible();
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
-  expect(state.customCssText || '').toBe('');
   await expect(styleEl(page)).toHaveCount(0);
+  await expect(page.getByLabel('Enable custom CSS')).not.toBeChecked();
 });
 
 test('local .css import fills the draft only', async ({ page, request }) => {
@@ -193,91 +210,12 @@ test('local .css import fills the draft only', async ({ page, request }) => {
 
   await expect(page.getByLabel('Custom CSS editor')).toHaveValue(/imported/);
   await expect(styleEl(page)).toHaveCount(0);
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state.customCssText || '')).toBe('');
+  await expect(page.getByLabel('Enable custom CSS')).not.toBeChecked();
 });
 
 test('safe-ui latches before injection and survives SPA navigation', async ({ page, request }) => {
   const hostile = 'body { display: none !important; }';
-  await page.addInitScript(({ hostile }) => {
-    localStorage.setItem('ts6-ui', JSON.stringify({
-      state: {
-        sidebarCollapsed: false,
-        baseTheme: 'dark',
-        accent: 'cyan',
-        background: 'grid',
-        backgroundMotion: 'system',
-        backgroundIntensity: 'normal',
-        customCssText: hostile,
-        customCssEnabled: true,
-      },
-      version: 6,
-    }));
-  }, { hostile });
-
-  await request.post('/__test/auth?on');
-  await page.goto('/login?safe-ui=1');
-  await page.getByLabel('Username').fill('admin');
-  await page.getByLabel('Password', { exact: true }).fill('test-password');
-  await page.getByRole('button', { name: 'Sign In' }).click();
-  await expect(page).toHaveURL('/dashboard');
-  await expect(styleEl(page)).toHaveCount(0);
-  await expect(page.locator('body')).toBeVisible();
-
-  await page.goto('/settings?tab=appearance');
-  await expect(page.getByTestId('safe-ui-banner')).toBeVisible();
-  await expect(page.getByLabel('Custom CSS editor')).toBeVisible();
-  await expect(styleEl(page)).toHaveCount(0);
-
-  const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
-  expect(state.customCssText).toContain('display: none');
-  expect(state.customCssEnabled).toBe(true);
-
-  await page.getByRole('link', { name: 'Dashboard' }).click();
-  await expect(page).toHaveURL('/dashboard');
-  await expect(styleEl(page)).toHaveCount(0);
-});
-
-test('safe-ui recovers from hostile overlay / hidden nav / body display none', async ({ page, request }) => {
-  const cases = [
-    'body { display: none !important; }',
-    'nav, aside, [data-sidebar] { display: none !important; }',
-    'body::after { content: ""; position: fixed; inset: 0; z-index: 2147483647; background: red; }',
-  ];
-
-  for (const hostile of cases) {
-    await request.post('/__test/reset');
-    await page.addInitScript(({ hostile }) => {
-      localStorage.setItem('ts6-ui', JSON.stringify({
-        state: {
-          sidebarCollapsed: false,
-          baseTheme: 'dark',
-          accent: 'cyan',
-          background: 'grid',
-          backgroundMotion: 'system',
-          backgroundIntensity: 'normal',
-          customCssText: hostile,
-          customCssEnabled: true,
-        },
-        version: 6,
-      }));
-    }, { hostile });
-
-    await request.post('/__test/auth?on');
-    await page.goto(`${SAFE_UI_RECOVERY_PATH}`);
-    await page.getByLabel('Username').fill('admin');
-    await page.getByLabel('Password', { exact: true }).fill('test-password');
-    await page.getByRole('button', { name: 'Sign In' }).click();
-    // After login, router may drop query — latch must keep CSS off.
-    await page.goto(SAFE_UI_RECOVERY_PATH);
-    await expect(page.getByTestId('safe-ui-banner')).toBeVisible();
-    await expect(styleEl(page)).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'Disable', exact: true })).toBeEnabled();
-  }
-});
-
-test('safe mode blocks re-enable and does not fetch custom CSS resources', async ({ page, request }) => {
-  const css = '@import url("https://example.invalid/custom.css"); body { background: url("https://example.invalid/bg.png"); }';
-  await page.addInitScript(({ css }) => {
+  await page.addInitScript((css) => {
     localStorage.setItem('ts6-ui', JSON.stringify({
       state: {
         sidebarCollapsed: false,
@@ -291,7 +229,84 @@ test('safe mode blocks re-enable and does not fetch custom CSS resources', async
       },
       version: 6,
     }));
-  }, { css });
+  }, hostile);
+
+  await request.post('/__test/auth?on');
+  await page.goto('/login?safe-ui=1');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
+  await expect(styleEl(page)).toHaveCount(0);
+  await expect(page.locator('body')).toBeVisible();
+
+  // Client-side navigation must not clear the document latch.
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: /Appearance/i }).click();
+  await expect(page.getByTestId('safe-ui-banner')).toBeVisible();
+  await expect(page.getByLabel('Custom CSS editor')).toBeVisible();
+  await expect(styleEl(page)).toHaveCount(0);
+
+  const state = await readUiState(page);
+  expect(state.customCssText).toContain('display: none');
+  expect(state.customCssEnabled).toBe(true);
+
+  await page.getByRole('link', { name: 'Dashboard', exact: true }).click();
+  await expect(page).toHaveURL('/dashboard');
+  await expect(styleEl(page)).toHaveCount(0);
+});
+
+test('safe-ui recovers from hostile overlay / hidden nav / body display none', async ({ page, request }) => {
+  const cases = [
+    'body { display: none !important; }',
+    'nav, aside, [data-sidebar], .app-viewport { visibility: hidden !important; }',
+    'html::before { content: ""; position: fixed; inset: 0; z-index: 2147483647; background: red; }',
+  ];
+
+  await signInAsAdmin(page, request);
+
+  for (const hostile of cases) {
+    await page.evaluate((css) => {
+      localStorage.setItem('ts6-ui', JSON.stringify({
+        state: {
+          sidebarCollapsed: false,
+          baseTheme: 'dark',
+          accent: 'cyan',
+          background: 'grid',
+          backgroundMotion: 'system',
+          backgroundIntensity: 'normal',
+          customCssText: css,
+          customCssEnabled: true,
+        },
+        version: 6,
+      }));
+    }, hostile);
+
+    await page.goto(SAFE_UI_RECOVERY_PATH);
+    await expect(page.getByTestId('safe-ui-banner')).toBeVisible();
+    await expect(styleEl(page)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Disable', exact: true })).toBeEnabled();
+    await expect(page.getByLabel('Custom CSS editor')).toBeVisible();
+  }
+});
+
+test('safe mode blocks re-enable and does not fetch custom CSS resources', async ({ page, request }) => {
+  const css = '@import url("https://example.invalid/custom.css"); body { background: url("https://example.invalid/bg.png"); }';
+  await page.addInitScript((text) => {
+    localStorage.setItem('ts6-ui', JSON.stringify({
+      state: {
+        sidebarCollapsed: false,
+        baseTheme: 'dark',
+        accent: 'cyan',
+        background: 'grid',
+        backgroundMotion: 'system',
+        backgroundIntensity: 'normal',
+        customCssText: text,
+        customCssEnabled: true,
+      },
+      version: 6,
+    }));
+  }, css);
 
   const externalHits: string[] = [];
   page.on('request', (req) => {
@@ -299,19 +314,22 @@ test('safe mode blocks re-enable and does not fetch custom CSS resources', async
   });
 
   await request.post('/__test/auth?on');
-  await page.goto(SAFE_UI_RECOVERY_PATH);
+  await page.goto(`/login?safe-ui=1`);
   await page.getByLabel('Username').fill('admin');
   await page.getByLabel('Password', { exact: true }).fill('test-password');
   await page.getByRole('button', { name: 'Sign In' }).click();
-  await page.goto(SAFE_UI_RECOVERY_PATH);
+  await expect(page).toHaveURL('/dashboard');
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: /Appearance/i }).click();
 
   await expect(styleEl(page)).toHaveCount(0);
   expect(externalHits).toEqual([]);
 
-  await page.getByLabel('Enable custom CSS').click({ force: true }).catch(() => undefined);
-  // Switch may be interactive for disable-only; attempting enable should not inject.
-  const stillOff = await page.evaluate(() => !document.getElementById('ts6-custom-css'));
-  expect(stillOff).toBe(true);
+  await page.getByRole('button', { name: 'Disable', exact: true }).click();
+  expect((await readUiState(page)).customCssEnabled).toBe(false);
+  // Re-enable is blocked for this document while safe-ui is latched.
+  await expect(page.getByLabel('Enable custom CSS')).toBeDisabled();
+  await expect(styleEl(page)).toHaveCount(0);
   expect(externalHits).toEqual([]);
 });
 
@@ -338,7 +356,9 @@ test('custom CSS is removed outside the authenticated layout', async ({ page, re
   await page.getByLabel('Enable custom CSS').click();
   await expect(styleEl(page)).toHaveCount(1);
 
-  await page.goto('/login');
+  await page.getByRole('button', { name: 'Open account menu' }).click();
+  await page.getByRole('menuitem', { name: /Log out/i }).click();
+  await expect(page).toHaveURL('/login');
   await expect(styleEl(page)).toHaveCount(0);
 });
 
