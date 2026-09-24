@@ -22,7 +22,8 @@ test('Server Logs 2.0 pages, labels instance vs VS, and keeps filters page-local
   await expect(page.getByTestId('server-logs-page')).toBeVisible();
   await expect(page.getByTestId('logs-scope-label')).toContainText('Virtual server log');
   await expect(page.getByTestId('logs-filter-hint')).toContainText('this page only');
-  await expect(page.getByText('timezone unknown').first()).toBeVisible();
+  await expect(page.getByTestId('logs-timezone-hint')).toContainText('does not report whether');
+  await expect(page.getByText('timezone unknown')).toHaveCount(0);
   await expect(page.getByText('UNK').first()).toBeVisible();
 
   await expect(page.getByTestId('logs-older')).toBeEnabled();

@@ -128,7 +128,8 @@ export function parseServerLogLine(sourceText: string): ParsedServerLogLine {
 
 /**
  * Present a parsed timestamp. Without an established source zone, always return
- * the source fragment and never invent Local/UTC conversions.
+ * the source fragment and never invent Local/UTC conversions. Callers should
+ * surface {@link LOG_TIMESTAMP_ZONE_UNKNOWN_HINT} once per page — not per row.
  */
 export function formatLogTimestamp(
   parsed: ParsedServerLogLine,
@@ -138,11 +139,16 @@ export function formatLogTimestamp(
     return { text: '', zoneLabel: null };
   }
   if (!parsed.timezoneEstablished) {
-    return { text: parsed.sourceTimestamp, zoneLabel: 'timezone unknown' };
+    // No per-row "timezone unknown" — WebQuery does not report the zone.
+    return { text: parsed.sourceTimestamp, zoneLabel: null };
   }
   // Reserved for when a future source establishes timezone.
   return { text: parsed.sourceTimestamp, zoneLabel: 'UTC' };
 }
+
+/** One-line operator note when logview timestamps lack an established zone. */
+export const LOG_TIMESTAMP_ZONE_UNKNOWN_HINT =
+  'Timestamps are shown as TeamSpeak wrote them. WebQuery does not report whether the server log zone is UTC or local.';
 
 export function levelBadgeLabel(level: ServerLogLevel): string {
   if (level === 'UNKNOWN') return 'UNK';
