@@ -15,6 +15,9 @@
 # Settings → Connections already lists the bundled TeamSpeak host (WebQuery + SSH Query).
 #
 # Optional: connect a TS client to voice on UDP 9987.
+# Metrics: TeamSpeak publishes Prometheus text on TCP 9187 (GET /metrics).
+# Manager connection seed does not opt into metrics yet — enable in Settings →
+# Connections (metricsEnabled / port 9187) when testing the manager scrape path.
 # Manager-only (no TeamSpeak): use docker-compose.local.yml instead.
 #
 # Tear down:
@@ -36,12 +39,18 @@ services:
       TSSERVER_QUERY_SSH_ALLOW_GUEST: "0"
       TSSERVER_QUERY_ADMIN_PASSWORD: ${TS_PR_TEST_ADMIN_PASSWORD:-testadmin}
       TSSERVER_QUERY_ADMIN_API_KEY: ${TS_PR_TEST_API_KEY:-local-pr-test-webquery-api-key-not-for-prod}
+      # Native Prometheus metrics (default off in the TS image; bind all interfaces
+      # so other compose services and the published host port can scrape).
+      TSSERVER_METRICS_ENABLED: "1"
+      TSSERVER_METRICS_IP: "0.0.0.0"
+      TSSERVER_METRICS_PORT: "9187"
     volumes:
       - pr-test-teamspeak-data:/var/tsserver
     ports:
       - "9987:9987/udp"
       - "30033:30033/tcp"
       - "10022:10022/tcp"   # SSH ServerQuery (not Linux sshd)
+      - "9187:9187/tcp"     # Prometheus metrics (GET /metrics)
     # Container start ≠ Query ready. Gate backend until WebQuery + SSH ports accept TCP.
     healthcheck:
       test:
