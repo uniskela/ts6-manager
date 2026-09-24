@@ -22,5 +22,6 @@
       "@ts6/common": ["../common/src"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

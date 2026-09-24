@@ -19,6 +19,24 @@ Check `ENCRYPTION_KEY`.
 
 The same key must be retained across restarts and upgrades. A different value cannot decrypt credentials stored with the previous key.
 
+## Server Logs: TeamSpeak log file unavailable / error 2052
+
+Server Logs uses TeamSpeak `logview`. When TeamSpeak cannot open or read its logfile it returns **error 2052** (`file input/output error`). TS6 Manager maps that to **TeamSpeak log file unavailable** (not a generic “Connection failed”).
+
+Typical causes on the TeamSpeak host:
+
+- the `logs` directory is missing or not writable by the TeamSpeak process user;
+- logfile lock or rotation while `logview` runs;
+- a Docker volume whose ownership was changed outside the container (e.g. host `chown` as root).
+
+What to do:
+
+1. Confirm other TeamSpeak-backed pages still work (Dashboard, Clients). If they do, Manager ↔ Query is fine.
+2. On Docker pr-test: `docker exec ts6-pr-teamspeak ls -la /var/tsserver/logs` and ensure the TeamSpeak user owns the tree. If permissions look wrong, recreate the volume with `docker compose -f docker-compose.pr-test.yml down -v` and bring the stack up again.
+3. Use the **Retry** button once after a short wait — Manager does not auto-retry this error (repeated `logview` calls can make locks worse).
+
+Activity journal and administrative audit do not use `logview`, so they can look healthy while Server Logs fails.
+
 ## TeamSpeak Query flood protection / error 524
 
 TS6 Manager automatically pauses WebQuery traffic and backs off SSH Query reconnects when TeamSpeak reports flood protection. The UI should show a temporary cooldown message and recover automatically after TeamSpeak accepts Query traffic again.
