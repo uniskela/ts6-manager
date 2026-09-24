@@ -547,15 +547,18 @@ const server = createServer(async (req, res) => {
                 return { lastPos, sourceText: '2026-03-15 12:00:04.123456|WARNING |VirtualServer |1  |Client Sample User connected.' };
               }
               if (index === 2) {
-                return { lastPos, sourceText: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer.' };
+                return { lastPos, sourceText: '2026-03-15 12:00:03.500000|WAR     |VirtualServer |1  |privilege key \"DEMO-TOKEN\" used by client \"Sample User\".' };
               }
               if (index === 3) {
-                return { lastPos, sourceText: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed.' };
+                return { lastPos, sourceText: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer.' };
               }
               if (index === 4) {
-                return { lastPos, sourceText: 'not a structured line — Unicode ✓ and a very long path /var/log/teamspeak/virtualserver_1.log that must wrap without overflowing the page on narrow screens' };
+                return { lastPos, sourceText: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed.' };
               }
               if (index === 5) {
+                return { lastPos, sourceText: 'not a structured line — Unicode ✓ and a very long path /var/log/teamspeak/virtualserver_1.log that must wrap without overflowing the page on narrow screens' };
+              }
+              if (index === 6) {
                 return { lastPos, sourceText: '2026-03-15 12:00:00.000000|NOTICE  |VirtualServer |1  |Unrecognized level stays Unknown.' };
               }
               return {
@@ -574,6 +577,7 @@ const server = createServer(async (req, res) => {
               rows = rows.filter((row) => BigInt(row.lastPos) < cursor);
             }
             if (logsScenario === 'empty') rows = [];
+            if (logsScenario === 'instance-empty' && instance) rows = [];
             const pageRows = rows.slice(0, lines);
             const hasMore = rows.length > pageRows.length;
             const nextBeginPos = hasMore && pageRows.length

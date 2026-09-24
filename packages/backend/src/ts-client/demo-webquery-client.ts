@@ -104,6 +104,7 @@ const DEMO_TOKENS = [
 const DEMO_VS_LOGS = [
   { last_pos: '500', file_size: '500', l: '2026-03-15 12:00:05.123456|INFO    |VirtualServer |1  |Virtual server started successfully.' },
   { last_pos: '400', file_size: '500', l: '2026-03-15 12:00:04.123456|WARNING |VirtualServer |1  |Client Sample User connected with an unusual client version.' },
+  { last_pos: '350', file_size: '500', l: '2026-03-15 12:00:03.500000|WAR     |VirtualServer |1  |privilege key \"DEMO-TOKEN\" used by client \"Sample User\"(id:12).' },
   { last_pos: '300', file_size: '500', l: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer for cid=4.' },
   { last_pos: '200', file_size: '500', l: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed for cldbid=12.' },
   { last_pos: '100', file_size: '500', l: 'not a structured line — Unicode ✓ and spaces\\spath' },

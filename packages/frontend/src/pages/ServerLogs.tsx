@@ -26,6 +26,7 @@ import {
 import {
   formatLogTimestamp,
   levelBadgeLabel,
+  logLevelMatchesFilter,
   parseServerLogLine,
   type ServerLogLevel,
 } from '@/lib/server-logs';
@@ -87,7 +88,7 @@ export default function ServerLogs() {
 
   const filtered = useMemo(() => {
     return parsedEntries.filter((entry) => {
-      if (levelFilter !== 'ALL' && entry.parsed.level !== levelFilter) return false;
+      if (!logLevelMatchesFilter(entry.parsed.level, levelFilter)) return false;
       if (filter && !entry.sourceText.toLowerCase().includes(filter.toLowerCase())) return false;
       return true;
     });
@@ -163,11 +164,21 @@ export default function ServerLogs() {
     : teamSpeakRefreshTone(gateError);
 
   const filtersActive = filter.length > 0 || levelFilter !== 'ALL';
-  const emptyMessage = parsedEntries.length === 0
-    ? (beginPos ? 'No older log entries for this cursor. Refresh for the newest page if the log rotated.' : 'No log entries on this page.')
-    : filtersActive
-      ? 'No matches on this page.'
-      : null;
+  const scopeMismatch = hasPage && page.context.instance !== instanceMode;
+  const emptyMessage = (() => {
+    if (filtered.length > 0) return null;
+    if (parsedEntries.length === 0) {
+      if (beginPos) {
+        return 'No older log entries for this cursor. Refresh for the newest page if the log rotated.';
+      }
+      if (instanceMode) {
+        return 'Instance log returned no entries. The TeamSpeak instance logfile may be empty, or instance logview is unavailable for this connection.';
+      }
+      return 'No virtual server log entries on this page.';
+    }
+    if (filtersActive) return 'No matches on this page.';
+    return null;
+  })();
 
   const scopeLabel = instanceMode
     ? 'Instance log (not scoped to the selected virtual server)'
@@ -209,6 +220,14 @@ export default function ServerLogs() {
       {backgroundError && (
         <StaleDataNotice
           message={backgroundError}
+          onRetry={retryGate}
+          isRetrying={isFetchingGate}
+        />
+      )}
+
+      {scopeMismatch && (
+        <StaleDataNotice
+          message="Log scope response did not match the selected Instance / Virtual server mode. Refresh to reload."
           onRetry={retryGate}
           isRetrying={isFetchingGate}
         />

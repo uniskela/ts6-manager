@@ -114,4 +114,22 @@ describe('buildServerLogPage', () => {
     assert.equal(page.fileSize, null);
     assert.deepEqual(page.entries, []);
   });
+
+  it('normalizes a single logview object body into one entry', () => {
+    const page = buildServerLogPage({
+      configId: 1,
+      sid: 1,
+      lines: 50,
+      reverse: 1,
+      instance: 1,
+      beginPos: undefined,
+      fetchedAt: '2026-09-24T00:00:00.000Z',
+      raw: { last_pos: '80', file_size: '80', l: '2026-01-01 00:00:00.000000|INFO    |ServerLibPriv |   |only row' },
+    });
+    assert.equal(page.entries.length, 1);
+    assert.equal(page.entries[0].sourceText.includes('only row'), true);
+    assert.equal(page.nextBeginPos, '80');
+    assert.equal(page.fileSize, '80');
+    assert.equal(page.context.instance, true);
+  });
 });

@@ -38,6 +38,15 @@ test('Server Logs 2.0 pages, labels instance vs VS, and keeps filters page-local
   await expect(page.getByTestId('logs-empty')).toHaveText('No matches on this page.');
   await page.getByRole('textbox', { name: 'Filter this page' }).fill('');
 
+  await page.getByLabel('Level filter this page').click();
+  await page.getByRole('option', { name: 'Warning (this page)' }).click();
+  await expect(page.getByText(/privilege key/)).toBeVisible();
+  await expect(page.getByText(/Client Sample User connected/)).toBeVisible();
+  await expect(page.getByText('Virtual server started successfully.')).toHaveCount(0);
+  await expect(page.getByTestId('logs-count')).toContainText('of');
+  await page.getByLabel('Level filter this page').click();
+  await page.getByRole('option', { name: 'All levels (this page)' }).click();
+
   await page.getByLabel('Log source scope').click();
   await page.getByRole('option', { name: 'Instance log' }).click();
   await expect(page.getByTestId('logs-scope-label')).toContainText('Instance log');
@@ -47,6 +56,24 @@ test('Server Logs 2.0 pages, labels instance vs VS, and keeps filters page-local
   const state = await request.get('/__test/state').then((response) => response.json());
   expect(state.logsRequests.some((entry: { instance: boolean }) => entry.instance === true)).toBeTruthy();
   expect(state.logsRequests.some((entry: { beginPos: string | null }) => entry.beginPos !== null)).toBeTruthy();
+});
+
+test('Server Logs distinguishes empty instance log from filter no-matches', async ({ page, request }) => {
+  await request.post('/__test/dashboard?scenario=normal');
+  await request.post('/__test/logs?scenario=instance-empty');
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
+  await page.goto('/logs');
+
+  await expect(page.getByTestId('server-logs-page')).toBeVisible();
+  await page.getByLabel('Log source scope').click();
+  await page.getByRole('option', { name: 'Instance log' }).click();
+  await expect(page.getByTestId('logs-empty')).toContainText('Instance log returned no entries');
+  await expect(page.getByTestId('logs-empty')).not.toHaveText('No matches on this page.');
 });
 
 test('Server Logs separates initial fetch failure from stale refresh errors', async ({ page, request }) => {
