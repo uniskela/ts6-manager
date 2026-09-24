@@ -42,6 +42,12 @@ import {
 } from '@/lib/action-guidance';
 import { cn, formatBytes } from '@/lib/utils';
 import {
+  isCountedSummary,
+  isPartialSummary,
+  selectChannelsForSummaryScan,
+  type ChannelFileSummaryResult,
+} from '@/api/file-summary.types';
+import {
   FolderOpen, File, Folder, ArrowLeft, FolderPlus, Trash2, Hash, HardDrive, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -53,16 +59,8 @@ interface FileEntry {
   type: number; // 0 = file, 1 = directory
 }
 
-interface ChannelFileSummary {
-  cid: number;
-  fileCount?: number;
-  folderCount?: number;
-  totalSize?: number;
-  unavailable?: boolean;
-}
-
 type SummaryQueryData = {
-  summaries: ChannelFileSummary[];
+  summaries: ChannelFileSummaryResult[];
   observation: SummaryObservation;
 };
 
@@ -95,9 +93,16 @@ export default function Files() {
   }, [channelData]);
 
   const channelIds = useMemo(() => channels.map((channel) => channel.cid), [channels]);
+  const { scanIds, omittedIds } = useMemo(
+    () => selectChannelsForSummaryScan(channelIds),
+    [channelIds],
+  );
+  const eligibleChannelKey = useMemo(() => channelCoverageKey(scanIds), [scanIds]);
   const currentChannelKey = useMemo(() => channelCoverageKey(channelIds), [channelIds]);
-  const channelIdsRef = useRef(channelIds);
-  channelIdsRef.current = channelIds;
+  const scanIdsRef = useRef(scanIds);
+  scanIdsRef.current = scanIds;
+  const omittedIdsRef = useRef(omittedIds);
+  omittedIdsRef.current = omittedIds;
 
   const [offlineUnchecked, setOfflineUnchecked] = useState(false);
 
@@ -110,14 +115,23 @@ export default function Files() {
     refetch: refetchSummaries,
   } = useQuery({
     queryKey: summaryQueryKey,
-    queryFn: async (): Promise<SummaryQueryData> => {
-      const ids = channelIdsRef.current;
-      const summaries = await filesApi.summaries(c!, s!, ids);
+    queryFn: async ({ signal }): Promise<SummaryQueryData> => {
+      const ids = scanIdsRef.current;
+      const omitted = omittedIdsRef.current;
+      const response = await filesApi.summaries(c!, s!, ids, { signal });
+      const summaries = Array.isArray(response?.summaries) ? response.summaries : [];
+      // Observation covers only the bounded scan set; omitted IDs stay Not scanned.
       return {
-        summaries: Array.isArray(summaries) ? summaries : [],
+        summaries: [
+          ...summaries,
+          // Ensure omitted channels appear as notScanned even if the server omitted them.
+          ...omitted
+            .filter((cid) => !summaries.some((row) => row.cid === cid))
+            .map((cid) => ({ cid, notScanned: true as const, reason: 'channel-cap' as const })),
+        ],
         observation: {
           scannedChannelKey: channelCoverageKey(ids),
-          scannedAt: Date.now(),
+          scannedAt: typeof response?.scannedAt === 'number' ? response.scannedAt : Date.now(),
         },
       };
     },
@@ -136,7 +150,7 @@ export default function Files() {
   const observation = summaryPayload?.observation ?? null;
 
   const summariesByChannel = useMemo(() => {
-    const map = new Map<number, ChannelFileSummary>();
+    const map = new Map<number, ChannelFileSummaryResult>();
     if (!Array.isArray(summaryData)) return map;
     for (const summary of summaryData) map.set(Number(summary.cid), summary);
     return map;
@@ -235,13 +249,16 @@ export default function Files() {
   const mkdirMutation = useMutation({
     mutationFn: (target: FileActionTarget) =>
       filesApi.createDir(target.configId, target.sid, target.cid, target.fullPath),
-    onSuccess: (_data, target) => {
+    onSuccess: async (_data, target) => {
       toast.success('Directory created');
       qc.invalidateQueries({
         queryKey: ['files', target.configId, target.sid, target.cid],
       });
-      // Mark summary stale — do not authorize another expensive scan.
-      void markExpensiveDiagnosticStale(qc, ['file-summaries', target.configId, target.sid]);
+      // Drop an in-flight scan before invalidating so its completion cannot clear
+      // isInvalidated and present pre-mutation counts as fresh.
+      const summaryKey = ['file-summaries', target.configId, target.sid] as const;
+      await qc.cancelQueries({ queryKey: summaryKey });
+      await markExpensiveDiagnosticStale(qc, summaryKey);
       // Only dismiss mkdir UI when it still belongs to the submitted scope.
       if (
         c === target.configId
@@ -259,12 +276,14 @@ export default function Files() {
   const deleteMutation = useMutation({
     mutationFn: (target: FileActionTarget) =>
       filesApi.delete(target.configId, target.sid, target.cid, target.fullPath),
-    onSuccess: (_data, target) => {
+    onSuccess: async (_data, target) => {
       toast.success('File deleted');
       qc.invalidateQueries({
         queryKey: ['files', target.configId, target.sid, target.cid],
       });
-      void markExpensiveDiagnosticStale(qc, ['file-summaries', target.configId, target.sid]);
+      const summaryKey = ['file-summaries', target.configId, target.sid] as const;
+      await qc.cancelQueries({ queryKey: summaryKey });
+      await markExpensiveDiagnosticStale(qc, summaryKey);
       if (shouldCloseFileDialog(deleteTargetRef.current, target)) {
         setDeleteTarget(null);
       }
@@ -386,11 +405,15 @@ export default function Files() {
                     hasErrorData: summaryIsError,
                     observation,
                     currentChannelKey,
+                    eligibleChannelKey,
+                    omittedChannelIds: omittedIds,
                     channelId: ch.cid,
                     summary,
                     isQueryInvalidated: summaryInvalidated,
                   });
                   const statusText = channelSummaryLabelText(display);
+                  const counted = isCountedSummary(summary);
+                  const showPartial = isPartialSummary(summary);
                   return (
                   <button
                     key={ch.cid}
@@ -404,23 +427,31 @@ export default function Files() {
                   >
                     <span className="block truncate">{ch.name}</span>
                     <span className="mt-1 flex min-h-3.5 items-center gap-2 font-mono-data text-[9px] text-muted-foreground/80">
-                      {statusText ? (
+                      {statusText && display.kind !== 'partial' && display.kind !== 'stale-cached' ? (
                         <span className={cn(
                           display.kind === 'unavailable' || display.kind === 'error' ? 'text-amber-400/80' : undefined,
-                          display.kind === 'stale-cached' ? 'opacity-80' : undefined,
                         )}>
                           {statusText}
                         </span>
-                      ) : (
+                      ) : counted ? (
                         <>
-                          <span className="flex items-center gap-0.5" title="Files"><File className="h-3 w-3" />{summary?.fileCount ?? 0}</span>
-                          <span className="flex items-center gap-0.5" title="Folders"><Folder className="h-3 w-3" />{summary?.folderCount ?? 0}</span>
-                          <span className="ml-auto flex items-center gap-0.5" title="Total size"><HardDrive className="h-3 w-3" />{formatBytes(summary?.totalSize ?? 0)}</span>
+                          <span className="flex items-center gap-0.5" title="Files"><File className="h-3 w-3" />{summary.fileCount}</span>
+                          <span className="flex items-center gap-0.5" title="Folders"><Folder className="h-3 w-3" />{summary.folderCount}</span>
+                          <span className="ml-auto flex items-center gap-0.5" title="Total size"><HardDrive className="h-3 w-3" />{formatBytes(summary.totalSize)}</span>
+                          {showPartial && (
+                            <span className="text-amber-400/80" title="Scan stopped before the full tree was counted">Partial</span>
+                          )}
                           {display.kind === 'stale-cached' && (
                             <span className="text-amber-400/80" title="Summary may be outdated">Stale</span>
                           )}
                         </>
-                      )}
+                      ) : statusText ? (
+                        <span className={cn(
+                          display.kind === 'unavailable' || display.kind === 'error' ? 'text-amber-400/80' : undefined,
+                        )}>
+                          {statusText}
+                        </span>
+                      ) : null}
                     </span>
                   </button>
                   );

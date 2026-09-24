@@ -8,27 +8,22 @@ import {
 } from '../middleware/error-handler.js';
 import { parseQueryResponse, tsEscape } from '@ts6/common';
 import type { BotEngine } from '../bot-engine/engine.js';
+import {
+  FILE_SUMMARY_DEADLINE_MS,
+  FILE_SUMMARY_MAX_CHANNELS,
+  FILE_SUMMARY_MAX_COMMANDS_PER_REQUEST,
+  FILE_SUMMARY_MAX_DEPTH,
+  FILE_SUMMARY_MAX_ENTRIES_PER_CHANNEL,
+  FILE_SUMMARY_MAX_ENTRIES_PER_REQUEST,
+  abortSignalFromRequest,
+  fileSummaryScanCoordinator,
+  selectChannelsForSummaryScan,
+} from './file-summary-scan.js';
 
 export const fileRoutes: Router = Router({ mergeParams: true });
 
 const getConfigId = (req: Request) => parseInt(String(req.params.configId));
 const getSid = (req: Request) => parseInt(String(req.params.sid));
-
-interface ChannelFileSummary {
-  cid: number;
-  fileCount: number;
-  folderCount: number;
-  totalSize: number;
-  scannedAt: number;
-}
-
-const FILE_SUMMARY_TTL_MS = 30_000;
-const MAX_SUMMARY_DEPTH = 32;
-const MAX_SUMMARY_ENTRIES = 10_000;
-const fileSummaryCache = new Map<string, ChannelFileSummary>();
-const fileSummaryScans = new Map<string, Promise<ChannelFileSummary>>();
-
-const fileSummaryKey = (req: Request, cid: number) => `${getConfigId(req)}:${getSid(req)}:${cid}`;
 
 async function listChannelPath(req: Request, cid: number, path: string): Promise<Record<string, string>[]> {
   try {
@@ -37,57 +32,6 @@ async function listChannelPath(req: Request, cid: number, path: string): Promise
     if (err instanceof TSApiError && err.code === 1281) return [];
     throw err;
   }
-}
-
-async function scanChannelFiles(req: Request, cid: number): Promise<ChannelFileSummary> {
-  let fileCount = 0;
-  let folderCount = 0;
-  let totalSize = 0;
-  let entryCount = 0;
-  const visited = new Set<string>();
-
-  const scan = async (path: string, depth: number): Promise<void> => {
-    if (depth > MAX_SUMMARY_DEPTH) throw new AppError(422, 'Channel file tree exceeds the supported depth');
-    if (visited.has(path)) return;
-    visited.add(path);
-
-    const entries = await listChannelPath(req, cid, path);
-    for (const entry of entries) {
-      const name = String(entry.name || '');
-      if (!name || name === '.' || name === '..') continue;
-      entryCount += 1;
-      if (entryCount > MAX_SUMMARY_ENTRIES) throw new AppError(422, 'Channel file tree contains too many entries');
-
-      // ftgetfilelist: type 0 = file, 1 = directory (matches Files browser)
-      if (String(entry.type) === '1') {
-        folderCount += 1;
-        const childPath = path === '/' ? `/${name}` : `${path}/${name}`;
-        await scan(childPath, depth + 1);
-      } else if (String(entry.type) === '0') {
-        fileCount += 1;
-        const size = Number(entry.size);
-        if (Number.isFinite(size) && size > 0) totalSize += size;
-      }
-    }
-  };
-
-  await scan('/', 0);
-  return { cid, fileCount, folderCount, totalSize, scannedAt: Date.now() };
-}
-
-async function getChannelFileSummary(req: Request, cid: number): Promise<ChannelFileSummary> {
-  const key = fileSummaryKey(req, cid);
-  const cached = fileSummaryCache.get(key);
-  if (cached && Date.now() - cached.scannedAt < FILE_SUMMARY_TTL_MS) return cached;
-
-  let pending = fileSummaryScans.get(key);
-  if (!pending) {
-    pending = scanChannelFiles(req, cid).finally(() => fileSummaryScans.delete(key));
-    fileSummaryScans.set(key, pending);
-  }
-  const summary = await pending;
-  fileSummaryCache.set(key, summary);
-  return summary;
 }
 
 /**
@@ -197,24 +141,54 @@ function mapFileMutationError(err: unknown, actionHint: string): unknown {
   return err;
 }
 
-// Recursively summarize file trees for the channel selector.
+function getBridgeGeneration(req: Request): number {
+  const engine: BotEngine | undefined = req.app.locals.botEngine;
+  if (!engine) return 0;
+  try {
+    return engine.getEventBridge().getClientCacheGeneration(getConfigId(req), getSid(req));
+  } catch {
+    return 0;
+  }
+}
+
+// Recursively summarize file trees for the channel selector (bounded).
 fileRoutes.get('/summary', async (req: Request, res: Response, next) => {
   try {
     const rawCids = String(req.query.cids || '');
-    const cids = [...new Set(rawCids.split(',').filter(Boolean).map(Number))];
-    if (cids.length < 1 || cids.length > 256 || cids.some((cid) => !Number.isInteger(cid) || cid <= 0)) {
-      throw new AppError(400, 'Provide between 1 and 256 valid channel IDs');
+    const requested = [...new Set(rawCids.split(',').filter(Boolean).map(Number))];
+    if (requested.length < 1 || requested.some((cid) => !Number.isInteger(cid) || cid <= 0)) {
+      throw new AppError(400, 'Provide at least one valid channel ID');
     }
+    // Accept oversized lists: bound the scan set and label the remainder Not scanned.
+    // (Previously rejected >256 with 400 — the Files UI could not explain that.)
+    const { scanIds, omittedIds } = selectChannelsForSummaryScan(requested, FILE_SUMMARY_MAX_CHANNELS);
 
-    const summaries: Array<ChannelFileSummary | { cid: number; unavailable: true }> = [];
-    for (const cid of cids) {
-      try {
-        summaries.push(await getChannelFileSummary(req, cid));
-      } catch {
-        summaries.push({ cid, unavailable: true });
-      }
-    }
-    res.json(summaries);
+    const configId = getConfigId(req);
+    const sid = getSid(req);
+    const connectionGeneration = getBridgeGeneration(req);
+    const cacheGeneration = fileSummaryScanCoordinator.getCacheGeneration(configId, sid);
+    const signal = abortSignalFromRequest(req, res);
+    const now = Date.now();
+
+    const response = await fileSummaryScanCoordinator.runRequest({
+      configId,
+      sid,
+      cids: scanIds,
+      omittedCids: omittedIds,
+      connectionGeneration,
+      cacheGeneration,
+      deadlineAt: now + FILE_SUMMARY_DEADLINE_MS,
+      maxCommands: FILE_SUMMARY_MAX_COMMANDS_PER_REQUEST,
+      maxEntries: FILE_SUMMARY_MAX_ENTRIES_PER_REQUEST,
+      maxDepth: FILE_SUMMARY_MAX_DEPTH,
+      maxEntriesPerChannel: FILE_SUMMARY_MAX_ENTRIES_PER_CHANNEL,
+      signal,
+      listPath: (cid, path) => listChannelPath(req, cid, path),
+      getConnectionGeneration: () => getBridgeGeneration(req),
+      getCacheGeneration: () => fileSummaryScanCoordinator.getCacheGeneration(configId, sid),
+    });
+
+    res.json(response);
   } catch (err) { next(err); }
 });
 
@@ -249,7 +223,7 @@ fileRoutes.post('/:cid/mkdir', requireRole('admin'), async (req: Request, res: R
       cpw: '',
       dirname: req.body.dirname,
     });
-    fileSummaryCache.delete(fileSummaryKey(req, Number(req.params.cid)));
+    fileSummaryScanCoordinator.invalidateChannel(getConfigId(req), getSid(req), Number(req.params.cid));
     res.json(result);
   } catch (err) {
     next(mapFileMutationError(err, 'creating directories'));
@@ -264,7 +238,7 @@ fileRoutes.delete('/:cid/file', requireRole('admin'), async (req: Request, res: 
       cpw: '',
       name: req.body.name,
     });
-    fileSummaryCache.delete(fileSummaryKey(req, Number(req.params.cid)));
+    fileSummaryScanCoordinator.invalidateChannel(getConfigId(req), getSid(req), Number(req.params.cid));
     res.json(result);
   } catch (err) {
     next(mapFileMutationError(err, 'deleting files'));

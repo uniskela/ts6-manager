@@ -231,12 +231,100 @@ describe('summary display honesty', () => {
       hasErrorData: false,
       observation: { scannedChannelKey: '10', scannedAt: 1 },
       currentChannelKey: channelCoverageKey([10, 99]),
+      eligibleChannelKey: channelCoverageKey([10]),
       channelId: 99,
       summary: null,
       isQueryInvalidated: false,
     });
     assert.equal(display.kind, 'not-scanned');
     assert.equal(channelSummaryLabelText(display), 'Not scanned.');
+  });
+
+  it('labels omitted (beyond-cap) channels Not scanned. while eligible channels are still fetching', () => {
+    const eligible = Array.from({ length: 256 }, (_, i) => i + 1);
+    const all = [...eligible, 257];
+    const display = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: true,
+      isError: false,
+      hasErrorData: false,
+      observation: null,
+      currentChannelKey: channelCoverageKey(all),
+      eligibleChannelKey: channelCoverageKey(eligible),
+      omittedChannelIds: [257],
+      channelId: 257,
+      summary: null,
+      isQueryInvalidated: false,
+    });
+    assert.equal(display.kind, 'not-scanned');
+    assert.equal(channelSummaryLabelText(display), 'Not scanned.');
+  });
+
+  it('keeps first-256 eligible channels ready when extras are omitted (scenario 5)', () => {
+    const eligible = Array.from({ length: 256 }, (_, i) => i + 1);
+    const all = [...eligible, 257];
+    const displayScanned = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: channelCoverageKey(eligible), scannedAt: 1 },
+      currentChannelKey: channelCoverageKey(all),
+      eligibleChannelKey: channelCoverageKey(eligible),
+      channelId: 1,
+      summary: { complete: true },
+      isQueryInvalidated: false,
+    });
+    assert.equal(displayScanned.kind, 'ready');
+
+    const displayOmitted = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: channelCoverageKey(eligible), scannedAt: 1 },
+      currentChannelKey: channelCoverageKey(all),
+      eligibleChannelKey: channelCoverageKey(eligible),
+      omittedChannelIds: [257],
+      channelId: 257,
+      summary: { notScanned: true },
+      isQueryInvalidated: false,
+    });
+    assert.equal(displayOmitted.kind, 'not-scanned');
+  });
+
+  it('labels incomplete trees as Partial', () => {
+    const display = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: '10', scannedAt: 1 },
+      currentChannelKey: '10',
+      eligibleChannelKey: '10',
+      channelId: 10,
+      summary: { complete: false },
+      isQueryInvalidated: false,
+    });
+    assert.equal(display.kind, 'partial');
+    assert.equal(channelSummaryLabelText(display), 'Partial');
+  });
+
+  it('marks invalidated incomplete summaries stale-cached (Partial comes from summary.complete in UI)', () => {
+    const display = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: '10', scannedAt: 1 },
+      currentChannelKey: '10',
+      eligibleChannelKey: '10',
+      channelId: 10,
+      summary: { complete: false },
+      isQueryInvalidated: true,
+    });
+    assert.equal(display.kind, 'stale-cached');
+    assert.equal(channelSummaryLabelText(display), null);
   });
 
   it('shows Check failed. for refresh errors that retain a prior observation', () => {
