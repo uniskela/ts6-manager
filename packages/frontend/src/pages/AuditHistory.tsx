@@ -12,10 +12,13 @@ import { ClipboardList, Filter, RefreshCw } from 'lucide-react';
 import { auditApi } from '@/api/audit.api';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { adminAuditHistoryRefetchInterval } from '@/lib/admin-audit-live';
+import { apiErrorMessage } from '@/lib/api-error';
+import { historyRefreshPresentation, nextScopedCursorStack } from '@/lib/history-status-consistency';
 import { cn } from '@/lib/utils';
 
 const ACTION_LABELS: Record<AdminAuditAction, string> = {
@@ -211,7 +214,24 @@ export default function AuditHistory() {
   const [actorUserId, setActorUserId] = useState('');
   const [connectionId, setConnectionId] = useState('');
   const [virtualServerId, setVirtualServerId] = useState('');
-  const [cursorStack, setCursorStack] = useState<(string | null)[]>([null]);
+  const filterScopeKey = [
+    action,
+    outcome,
+    actorUserId,
+    connectionId,
+    virtualServerId,
+  ].join('|');
+  const [pageState, setPageState] = useState<{ scopeKey: string; cursorStack: (string | null)[] }>({
+    scopeKey: filterScopeKey,
+    cursorStack: [null],
+  });
+
+  const scopedPage = nextScopedCursorStack(pageState, filterScopeKey, [null]);
+  if (scopedPage !== pageState) {
+    setPageState(scopedPage);
+  }
+
+  const cursorStack = scopedPage.cursorStack;
   const cursor = cursorStack[cursorStack.length - 1] ?? undefined;
   const onNewestPage = cursorStack.length === 1 && cursorStack[0] == null;
   const historyRefetchInterval = adminAuditHistoryRefetchInterval({ onNewestPage });
@@ -230,16 +250,38 @@ export default function AuditHistory() {
     [action, outcome, actorUserId, connectionId, virtualServerId, cursor],
   );
 
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, error, refetch, isError, status } = useQuery({
     queryKey: ['admin-audit', filters],
     queryFn: () => auditApi.list(filters),
     refetchInterval: historyRefetchInterval,
   });
 
-  const resetPages = () => setCursorStack([null]);
+  const backgroundError = isError
+    ? apiErrorMessage(
+      error,
+      data
+        ? 'Audit refresh failed. The last successful page is still displayed.'
+        : 'Failed to load audit history. Confirm you are signed in as an admin.',
+    )
+    : null;
+  // Treat a failed poll as non-live even when React Query keeps prior rows.
+  const refreshPresentation = historyRefreshPresentation({
+    isFetching,
+    hasError: !!backgroundError,
+    livePolling: historyLive && status !== 'error',
+    idleLiveLabel: 'Live audit history active',
+    idleStaticLabel: onNewestPage ? 'Audit history up to date' : 'This audit page loaded',
+    refreshingLabel: 'Refreshing audit…',
+    degradedLabel: 'Audit updates interrupted',
+  });
+
+  const resetPages = () => setPageState({ scopeKey: filterScopeKey, cursorStack: [null] });
+  const retryRefresh = () => {
+    void refetch();
+  };
 
   return (
-    <div className="mx-auto flex h-full max-w-6xl flex-col space-y-4">
+    <div className="mx-auto flex h-full max-w-6xl flex-col space-y-4" data-testid="audit-history-page">
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-3">
         <div className="space-y-1">
           <h1 className="flex items-center gap-2 text-xl font-semibold">
@@ -252,23 +294,39 @@ export default function AuditHistory() {
             (whichever first). Records cannot be deleted from this UI.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {historyLive && (
-            <span className="text-xs font-medium text-emerald-600" title="Newest page refreshes automatically">
+        <div className="flex flex-wrap items-center gap-3">
+          <RefreshStatus
+            isRefreshing={isFetching}
+            tone={refreshPresentation.tone}
+            idleLabel={refreshPresentation.idleLabel}
+            refreshingLabel={refreshPresentation.refreshingLabel}
+            degradedLabel={refreshPresentation.degradedLabel}
+          />
+          {refreshPresentation.showLiveBadge && (
+            <span className="text-xs font-medium text-emerald-600" title="Newest page refreshes automatically" data-testid="audit-live-badge">
               Live
             </span>
           )}
           <Button
             size="sm"
             variant="outline"
-            onClick={() => void refetch()}
+            onClick={retryRefresh}
             disabled={isFetching}
+            aria-busy={isFetching}
           >
             <RefreshCw className={cn('h-4 w-4 mr-1', isFetching && 'animate-spin')} />
             Refresh
           </Button>
         </div>
       </div>
+
+      {backgroundError && data && (
+        <StaleDataNotice
+          message={backgroundError}
+          onRetry={retryRefresh}
+          isRetrying={isFetching}
+        />
+      )}
 
       <div className="flex shrink-0 flex-wrap items-end gap-3 rounded-lg border border-border bg-card p-3">
         <label className="space-y-1 text-xs text-muted-foreground">
@@ -332,9 +390,12 @@ export default function AuditHistory() {
       <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm">
         {isLoading ? (
           <PageLoader />
-        ) : error ? (
-          <div className="flex flex-1 items-center justify-center p-6 text-sm text-destructive">
-            Failed to load audit history. Confirm you are signed in as an admin.
+        ) : isError && !data ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-sm text-destructive">
+            <p>{backgroundError}</p>
+            <Button size="sm" variant="outline" onClick={retryRefresh} disabled={isFetching}>
+              {isFetching ? 'Retrying…' : 'Retry'}
+            </Button>
           </div>
         ) : !data?.items.length ? (
           <div className="flex flex-1 items-center justify-center">
@@ -375,7 +436,10 @@ export default function AuditHistory() {
           variant="outline"
           size="sm"
           disabled={cursorStack.length <= 1 || isFetching}
-          onClick={() => setCursorStack((s) => s.slice(0, -1))}
+          onClick={() => setPageState((prev) => ({
+            scopeKey: filterScopeKey,
+            cursorStack: prev.scopeKey === filterScopeKey ? prev.cursorStack.slice(0, -1) : [null],
+          }))}
         >
           Newer
         </Button>
@@ -385,7 +449,14 @@ export default function AuditHistory() {
           size="sm"
           disabled={!data?.nextCursor || isFetching}
           onClick={() => {
-            if (data?.nextCursor) setCursorStack((s) => [...s, data.nextCursor]);
+            if (data?.nextCursor) {
+              setPageState((prev) => ({
+                scopeKey: filterScopeKey,
+                cursorStack: prev.scopeKey === filterScopeKey
+                  ? [...prev.cursorStack, data.nextCursor]
+                  : [null, data.nextCursor],
+              }));
+            }
           }}
         >
           Older
