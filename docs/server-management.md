@@ -70,7 +70,7 @@ The UI includes:
 
 Public server widgets can expose selected server status without application login using a dedicated widget token.
 
-Available output includes live HTML, SVG, and PNG. Widget configuration can control whether channel and client information is shown.
+Available output includes live HTML, SVG, and PNG. Widget configuration can control whether channel and client information is shown. Footers brand as **ts6-manager** and link to the public GitHub repository. The HTML/iframe embed link is always clickable; the SVG footer link works when the SVG is opened as a document (for example via the direct `.svg` URL), but not when the file is embedded as an `<img>`.
 
 Treat widget tokens as public-access capabilities and expose only the information you intend to publish.
 

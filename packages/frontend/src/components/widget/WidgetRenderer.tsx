@@ -1,5 +1,9 @@
 import type { WidgetData, WidgetChannelNode as WidgetChannelNodeType, WidgetTheme } from '@ts6/common';
 import { WIDGET_THEMES } from '@ts6/common';
+import { Github } from 'lucide-react';
+import { APP_REPOSITORY_URL } from '@/lib/app-version';
+
+const WIDGET_BRAND_LABEL = 'ts6-manager';
 
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400);
@@ -216,12 +220,30 @@ export function WidgetRenderer({ data }: { data: WidgetData }) {
       <div style={{
         borderTop: `1px solid ${t.border}`,
         paddingTop: '8px',
-        textAlign: 'center',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
         color: t.textSecondary,
         fontSize: '9px',
         opacity: 0.6,
       }}>
-        TS6 WebUI Widget
+        <a
+          href={APP_REPOSITORY_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="View ts6-manager on GitHub"
+          aria-label="Open ts6-manager on GitHub"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '4px',
+            color: 'inherit',
+            textDecoration: 'none',
+          }}
+        >
+          <Github style={{ width: 10, height: 10, flexShrink: 0 }} aria-hidden />
+          {WIDGET_BRAND_LABEL}
+        </a>
       </div>
     </div>
   );

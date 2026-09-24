@@ -8,6 +8,9 @@ const CHANNEL_ROW = 22;
 const CLIENT_ROW = 18;
 const FOOTER_HEIGHT = 28;
 const FONT = "'Segoe UI', 'Helvetica Neue', Arial, sans-serif";
+const WIDGET_BRAND_LABEL = 'ts6-manager';
+/** Public repo; clickable when SVG is opened as a document (not via <img>). */
+const WIDGET_BRAND_URL = 'https://github.com/uniskela/ts6-manager';
 
 function escapeXml(s: string): string {
   return s
@@ -88,10 +91,12 @@ export function renderWidgetSvg(data: WidgetData): string {
     y = renderTreeNodes(lines, data.channelTree, data.showClients, theme, y, 0);
   }
 
-  // --- Footer ---
+  // --- Footer (linked brand; works when SVG is opened as a document, not as <img>) ---
   const footerY = totalHeight - 10;
   lines.push(`<line x1="${PADDING}" y1="${footerY - 14}" x2="${WIDTH - PADDING}" y2="${footerY - 14}" stroke="${theme.border}" stroke-width="1"/>`);
-  lines.push(`<text x="${WIDTH / 2}" y="${footerY}" fill="${theme.textSecondary}" font-family="${FONT}" font-size="9" text-anchor="middle" opacity="0.6">TS6 WebUI Widget</text>`);
+  lines.push(`<a href="${WIDGET_BRAND_URL}" target="_blank" rel="noopener noreferrer">`);
+  lines.push(`<text x="${WIDTH / 2}" y="${footerY}" fill="${theme.textSecondary}" font-family="${FONT}" font-size="9" text-anchor="middle" opacity="0.6">${WIDGET_BRAND_LABEL}</text>`);
+  lines.push(`</a>`);
 
   lines.push(`</g></svg>`);
   return lines.join('\n');
