@@ -108,6 +108,67 @@ export function resetPageEntryAttemptsForTests(): void {
   pageEntryAttempts.clear();
 }
 
+type CancelTimer = ReturnType<typeof setTimeout>;
+
+/**
+ * Deferred summary cancels keyed by connectionScope. StrictMode remounts
+ * re-establish the same scope in the same turn and call retain to abort cancel.
+ */
+const pendingSummaryCancels = new Map<string, CancelTimer>();
+
+export type SummaryCancelClient = {
+  cancelQueries: (filters: { queryKey: readonly unknown[] }) => unknown;
+};
+
+function summaryCancelScopeKey(queryKey: readonly unknown[]): string | null {
+  // Expected shape: ['file-summaries', configId, sid]
+  if (queryKey.length < 3) return null;
+  const configId = queryKey[1];
+  const sid = queryKey[2];
+  if (typeof configId !== 'number' || typeof sid !== 'number') return null;
+  return connectionScope(configId, sid);
+}
+
+/** Keep an in-flight summary for this scope (StrictMode same-scope remount). */
+export function retainSummaryQueryScope(queryKey: readonly unknown[]): void {
+  const scope = summaryCancelScopeKey(queryKey);
+  if (!scope) return;
+  const pending = pendingSummaryCancels.get(scope);
+  if (pending != null) {
+    clearTimeout(pending);
+    pendingSummaryCancels.delete(scope);
+  }
+}
+
+/**
+ * Cancel after a macrotask so same-scope StrictMode replay can retain first.
+ * Real connection changes and unmounts still cancel once the timer fires.
+ */
+export function deferCancelSummaryQuery(
+  queryClient: SummaryCancelClient,
+  queryKey: readonly unknown[],
+): void {
+  const scope = summaryCancelScopeKey(queryKey);
+  if (!scope) {
+    void queryClient.cancelQueries({ queryKey });
+    return;
+  }
+  const existing = pendingSummaryCancels.get(scope);
+  if (existing != null) clearTimeout(existing);
+  const keySnapshot = [...queryKey];
+  const handle = setTimeout(() => {
+    pendingSummaryCancels.delete(scope);
+    void queryClient.cancelQueries({ queryKey: keySnapshot });
+  }, 0);
+  pendingSummaryCancels.set(scope, handle);
+}
+
+/** Test-only: drop deferred cancels without firing them. */
+export function resetPendingSummaryCancelsForTests(): void {
+  for (const handle of pendingSummaryCancels.values()) clearTimeout(handle);
+  pendingSummaryCancels.clear();
+}
+
 export type PageEntryScanDecision =
   | { action: 'skip'; reason: 'missing-context' | 'already-attempted' | 'offline' }
   | { action: 'authorize-entry-scan'; scope: string };

@@ -8,6 +8,7 @@ import {
   connectionScope,
   consumePageEntryAttempt,
   decidePageEntryScan,
+  deferCancelSummaryQuery,
   expensiveDiagnosticQueryOptions,
   hasConsumedPageEntryAttempt,
   invalidateAfterPwaRecovery,
@@ -15,6 +16,8 @@ import {
   markExpensiveDiagnosticStale,
   pageEntryAttemptWasOffline,
   resetPageEntryAttemptsForTests,
+  resetPendingSummaryCancelsForTests,
+  retainSummaryQueryScope,
   shouldScanOnTrigger,
 } from '../../src/lib/demand-driven-query-policy.ts';
 
@@ -150,6 +153,56 @@ describe('page-entry scan authorization', () => {
       entryAttemptScope: hasConsumedPageEntryAttempt(otherScope) ? otherScope : null,
     });
     assert.equal(other.action, 'authorize-entry-scan');
+  });
+});
+
+describe('deferred summary cancel (StrictMode same-scope remount)', () => {
+  it('retains when the same scope is re-established before the timer fires', async () => {
+    resetPendingSummaryCancelsForTests();
+    let cancelCount = 0;
+    const qc = {
+      cancelQueries: () => {
+        cancelCount += 1;
+      },
+    };
+    const key = ['file-summaries', 1, 1] as const;
+
+    deferCancelSummaryQuery(qc, key);
+    retainSummaryQueryScope(key);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(cancelCount, 0);
+  });
+
+  it('cancels after unmount when the scope is not re-established', async () => {
+    resetPendingSummaryCancelsForTests();
+    let cancelCount = 0;
+    const qc = {
+      cancelQueries: () => {
+        cancelCount += 1;
+      },
+    };
+    const key = ['file-summaries', 1, 1] as const;
+
+    deferCancelSummaryQuery(qc, key);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(cancelCount, 1);
+  });
+
+  it('cancels the prior scope when connection revision changes', async () => {
+    resetPendingSummaryCancelsForTests();
+    const cancelled: string[] = [];
+    const qc = {
+      cancelQueries: ({ queryKey }: { queryKey: readonly unknown[] }) => {
+        cancelled.push(String(queryKey[1]));
+      },
+    };
+    const oldKey = ['file-summaries', 1, 1] as const;
+    const newKey = ['file-summaries', 2, 1] as const;
+
+    deferCancelSummaryQuery(qc, oldKey);
+    retainSummaryQueryScope(newKey);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.deepEqual(cancelled, ['1']);
   });
 });
 

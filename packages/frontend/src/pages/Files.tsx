@@ -26,10 +26,12 @@ import {
   connectionScope,
   consumePageEntryAttempt,
   decidePageEntryScan,
+  deferCancelSummaryQuery,
   expensiveDiagnosticQueryOptions,
   hasConsumedPageEntryAttempt,
   markExpensiveDiagnosticStale,
   pageEntryAttemptWasOffline,
+  retainSummaryQueryScope,
   type SummaryObservation,
 } from '@/lib/demand-driven-query-policy';
 import { cn, formatBytes } from '@/lib/utils';
@@ -172,10 +174,12 @@ export default function Files() {
     void refetchSummaries();
   }, [c, s, channelIds.length, refetchSummaries]);
 
-  // Connection revision: cancel in-flight summaries when the scope key changes.
+  // Connection revision: cancel in-flight summaries when the scope leaves.
+  // Defer cancel so StrictMode same-scope remount can retain the initial scan.
   useEffect(() => {
+    retainSummaryQueryScope(summaryQueryKey);
     return () => {
-      void qc.cancelQueries({ queryKey: summaryQueryKey });
+      deferCancelSummaryQuery(qc, summaryQueryKey);
     };
   }, [qc, summaryQueryKey]);
 
