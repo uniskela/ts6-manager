@@ -20,7 +20,6 @@ import {
   type FileActionTarget,
 } from '@/lib/action-ownership';
 import {
-<<<<<<< HEAD
   channelCoverageKey,
   channelSummaryDisplay,
   channelSummaryLabelText,
@@ -35,13 +34,12 @@ import {
   retainSummaryQueryScope,
   type SummaryObservation,
 } from '@/lib/demand-driven-query-policy';
-=======
+import {
   FILE_WRITE_READ_DOES_NOT_AUTHORIZE,
   fileBrowseErrorMessage,
   fileDeleteConfirmDescription,
   fileWriteErrorMessage,
 } from '@/lib/action-guidance';
->>>>>>> bdcde3d (fix: surface action-local permission and compatibility guidance)
 import { cn, formatBytes } from '@/lib/utils';
 import {
   FolderOpen, File, Folder, ArrowLeft, FolderPlus, Trash2, Hash, HardDrive, AlertTriangle, RefreshCw,
