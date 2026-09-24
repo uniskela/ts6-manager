@@ -534,18 +534,35 @@ const server = createServer(async (req, res) => {
               res.statusCode = 503;
               return { error: 'TeamSpeak logview unavailable', details: 'WebQuery logview timed out' };
             }
-            if (logsScenario === 'refresh-failure' && logsRequests.length > 1) {
+            if (logsScenario === 'refresh-failure') {
               res.statusCode = 503;
               return { error: 'Log refresh failed', details: 'The last successful page is still available' };
             }
-            const vsRows = [
-              { lastPos: '500', sourceText: '2026-03-15 12:00:05.123456|INFO    |VirtualServer |1  |Virtual server started successfully.' },
-              { lastPos: '400', sourceText: '2026-03-15 12:00:04.123456|WARNING |VirtualServer |1  |Client Sample User connected.' },
-              { lastPos: '300', sourceText: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer.' },
-              { lastPos: '200', sourceText: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed.' },
-              { lastPos: '100', sourceText: 'not a structured line — Unicode ✓ and a very long path /var/log/teamspeak/virtualserver_1.log that must wrap without overflowing the page on narrow screens' },
-              { lastPos: '50', sourceText: '2026-03-15 12:00:00.000000|NOTICE  |VirtualServer |1  |Unrecognized level stays Unknown.' },
-            ];
+            const vsRows = Array.from({ length: 120 }, (_, index) => {
+              const lastPos = String(1200 - index);
+              if (index === 0) {
+                return { lastPos, sourceText: '2026-03-15 12:00:05.123456|INFO    |VirtualServer |1  |Virtual server started successfully.' };
+              }
+              if (index === 1) {
+                return { lastPos, sourceText: '2026-03-15 12:00:04.123456|WARNING |VirtualServer |1  |Client Sample User connected.' };
+              }
+              if (index === 2) {
+                return { lastPos, sourceText: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer.' };
+              }
+              if (index === 3) {
+                return { lastPos, sourceText: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed.' };
+              }
+              if (index === 4) {
+                return { lastPos, sourceText: 'not a structured line — Unicode ✓ and a very long path /var/log/teamspeak/virtualserver_1.log that must wrap without overflowing the page on narrow screens' };
+              }
+              if (index === 5) {
+                return { lastPos, sourceText: '2026-03-15 12:00:00.000000|NOTICE  |VirtualServer |1  |Unrecognized level stays Unknown.' };
+              }
+              return {
+                lastPos,
+                sourceText: `2026-03-14 12:00:00.000000|INFO    |VirtualServer |1  |Older fixture row ${index}`,
+              };
+            });
             const instanceRows = [
               { lastPos: '300', sourceText: '2026-03-15 11:59:00.000000|INFO    |ServerLibPriv |   |TeamSpeak instance started.' },
               { lastPos: '200', sourceText: '2026-03-15 11:58:00.000000|WARNING |Accounting    |   |License check deferred.' },

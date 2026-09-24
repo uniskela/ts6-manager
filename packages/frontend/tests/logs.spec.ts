@@ -25,6 +25,7 @@ test('Server Logs 2.0 pages, labels instance vs VS, and keeps filters page-local
   await expect(page.getByText('timezone unknown').first()).toBeVisible();
   await expect(page.getByText('UNK').first()).toBeVisible();
 
+  await expect(page.getByTestId('logs-older')).toBeEnabled();
   await page.getByTestId('logs-older').click();
   await expect(page.getByTestId('logs-page-meta')).toContainText('Older page');
   await expect(page.getByText('Virtual server started successfully.')).toHaveCount(0);
@@ -33,9 +34,9 @@ test('Server Logs 2.0 pages, labels instance vs VS, and keeps filters page-local
   await expect(page.getByTestId('logs-page-meta')).toContainText('Newest page');
   await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
 
-  await page.getByLabel('Filter this page').fill('no-such-match-on-this-page');
+  await page.getByRole('textbox', { name: 'Filter this page' }).fill('no-such-match-on-this-page');
   await expect(page.getByTestId('logs-empty')).toHaveText('No matches on this page.');
-  await page.getByLabel('Filter this page').fill('');
+  await page.getByRole('textbox', { name: 'Filter this page' }).fill('');
 
   await page.getByLabel('Log source scope').click();
   await page.getByRole('option', { name: 'Instance log' }).click();
@@ -56,9 +57,10 @@ test('Server Logs separates initial fetch failure from stale refresh errors', as
   await page.getByLabel('Username').fill('admin');
   await page.getByLabel('Password', { exact: true }).fill('test-password');
   await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
   await page.goto('/logs');
 
-  await expect(page.getByText('Could not load server logs from TeamSpeak.').or(page.getByText('TeamSpeak logview unavailable'))).toBeVisible();
+  await expect(page.getByText(/TeamSpeak logview unavailable|Could not load server logs/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
 
   await request.post('/__test/logs?scenario=normal');
@@ -68,7 +70,7 @@ test('Server Logs separates initial fetch failure from stale refresh errors', as
 
   await request.post('/__test/logs?scenario=refresh-failure');
   await page.getByRole('button', { name: 'Refresh' }).click();
-  await expect(page.getByText(/Log refresh failed|last successful page/i)).toBeVisible();
+  await expect(page.getByText(/Log refresh failed|last successful page/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
 });
 

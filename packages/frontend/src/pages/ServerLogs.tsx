@@ -19,6 +19,8 @@ import {
   apiErrorMessage,
   isTeamSpeakStarting,
   teamSpeakConnectionTitle,
+  teamSpeakQueryRetry,
+  teamSpeakQueryRetryDelay,
   teamSpeakRefreshTone,
 } from '@/lib/api-error';
 import {
@@ -70,6 +72,8 @@ export default function ServerLogs() {
       beginPos,
     }),
     enabled: !!c && !!s,
+    retry: teamSpeakQueryRetry,
+    retryDelay: teamSpeakQueryRetryDelay,
   });
 
   const page = query.data as ServerLogPage | undefined;
