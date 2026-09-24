@@ -249,27 +249,69 @@ clientRoutes.post('/:clid/ban', requireRole('admin'), async (req: Request, res: 
 
 clientRoutes.post('/:clid/move', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
-    const result = await getClient(req).execute(getSid(req), 'clientmove', {
-      clid: String(req.params.clid), cid: req.body.cid, cpw: req.body.cpw,
-    });
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
+    // Intentionally omit cpw (channel password) from audit
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.move',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: String(req.params.clid) },
+      },
+      () => getClient(req).execute(sid, 'clientmove', {
+        clid: String(req.params.clid), cid: req.body.cid, cpw: req.body.cpw,
+      }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
 
 clientRoutes.post('/:clid/poke', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
-    const result = await getClient(req).execute(getSid(req), 'clientpoke', {
-      clid: String(req.params.clid), msg: req.body.msg,
-    });
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
+    // Intentionally omit poke message body
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.poke',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: String(req.params.clid) },
+      },
+      () => getClient(req).execute(sid, 'clientpoke', {
+        clid: String(req.params.clid), msg: req.body.msg,
+      }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
 
 clientRoutes.post('/:clid/message', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
-    const result = await getClient(req).execute(getSid(req), 'sendtextmessage', {
-      targetmode: 1, target: String(req.params.clid), msg: req.body.msg,
-    });
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
+    // Intentionally omit message body
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.message',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: String(req.params.clid) },
+      },
+      () => getClient(req).execute(sid, 'sendtextmessage', {
+        targetmode: 1, target: String(req.params.clid), msg: req.body.msg,
+      }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
@@ -292,30 +334,57 @@ clientRoutes.get('/:cldbid/permissions', async (req: Request, res: Response, nex
 
 clientRoutes.put('/:cldbid/permissions', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
     const cldbid = String(req.params.cldbid);
     const { permsid, permvalue, permnegated, permskip } = req.body;
-    // Resolve permission name to numeric ID
-    const permLookup = await getClient(req).execute(getSid(req), 'permidgetbyname', { permsid });
+    // Resolve permission name to numeric ID (read — not audited)
+    const permLookup = await getClient(req).execute(sid, 'permidgetbyname', { permsid });
     const permid = permLookup?.[0]?.permid;
     if (!permid) throw new Error(`Unknown permission: ${permsid}`);
-    await getClient(req).executePost(getSid(req), 'clientaddperm', {
-      cldbid, permid: String(permid), permvalue: String(permvalue ?? 0),
-      permnegated: String(permnegated ?? 0), permskip: String(permskip ?? 0),
-    });
+    // Never audit permsid / permvalue
+    await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.permission_add',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: cldbid },
+      },
+      () => getClient(req).executePost(sid, 'clientaddperm', {
+        cldbid, permid: String(permid), permvalue: String(permvalue ?? 0),
+        permnegated: String(permnegated ?? 0), permskip: String(permskip ?? 0),
+      }),
+    );
     res.json({ success: true });
   } catch (err) { next(err); }
 });
 
 clientRoutes.delete('/:cldbid/permissions', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
     const cldbid = String(req.params.cldbid);
     const { permsid } = req.body;
-    const permLookup = await getClient(req).execute(getSid(req), 'permidgetbyname', { permsid });
+    const permLookup = await getClient(req).execute(sid, 'permidgetbyname', { permsid });
     const permid = permLookup?.[0]?.permid;
     if (!permid) throw new Error(`Unknown permission: ${permsid}`);
-    await getClient(req).executePost(getSid(req), 'clientdelperm', {
-      cldbid, permid: String(permid),
-    });
+    await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.permission_delete',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: cldbid },
+      },
+      () => getClient(req).executePost(sid, 'clientdelperm', {
+        cldbid, permid: String(permid),
+      }),
+    );
     res.json({ success: true });
   } catch (err) { next(err); }
 });
