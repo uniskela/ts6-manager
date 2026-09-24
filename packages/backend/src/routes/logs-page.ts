@@ -128,6 +128,21 @@ export function verifiedNextBeginPos(
   return lastPos;
 }
 
+/** WebQuery may return one row as an object instead of a one-element array. */
+export function normalizeLogviewRows(raw: unknown): Array<Record<string, unknown>> {
+  if (Array.isArray(raw)) {
+    return raw.filter((row): row is Record<string, unknown> => row !== null && typeof row === 'object');
+  }
+  if (raw !== null && typeof raw === 'object') {
+    // Ignore bare status envelopes mistaken for a row.
+    const record = raw as Record<string, unknown>;
+    if ('l' in record || 'msg' in record || 'last_pos' in record) {
+      return [record];
+    }
+  }
+  return [];
+}
+
 export function buildServerLogPage(options: {
   configId: number;
   sid: number;
@@ -138,9 +153,7 @@ export function buildServerLogPage(options: {
   raw: unknown;
   fetchedAt?: string;
 }): ServerLogPage {
-  const rows = Array.isArray(options.raw)
-    ? options.raw.filter((row): row is Record<string, unknown> => row !== null && typeof row === 'object')
-    : [];
+  const rows = normalizeLogviewRows(options.raw);
 
   const entries: ServerLogEntry[] = rows.map((row) => {
     const sourceText =

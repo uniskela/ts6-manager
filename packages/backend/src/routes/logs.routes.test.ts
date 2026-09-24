@@ -93,9 +93,34 @@ describe('logs routes', () => {
       assert.equal(body.entries[0].sourceText, 'line-a');
       assert.equal(body.total, undefined);
       assert.deepEqual(calls[0], {
-        sid: 3,
+        sid: 0,
         command: 'logview',
         params: { lines: 50, reverse: 1, instance: 1, begin_pos: '40' },
+      });
+    } finally {
+      await close();
+    }
+  });
+
+  it('forwards virtual-server logview on the selected sid when instance=0', async () => {
+    const calls: Array<{ sid: number; command: string; params?: Record<string, unknown> }> = [];
+    const app = buildApp({
+      execute: async (sid, command, params) => {
+        calls.push({ sid, command, params });
+        return [{ last_pos: '10', file_size: '10', l: 'vs-line' }];
+      },
+    });
+    const { base, close } = await listen(app);
+    try {
+      const response = await fetch(`${base}/api/servers/2/vs/5/logs?lines=50&instance=0`);
+      assert.equal(response.status, 200);
+      const body = await response.json() as any;
+      assert.equal(body.context.sid, 5);
+      assert.equal(body.context.instance, false);
+      assert.deepEqual(calls[0], {
+        sid: 5,
+        command: 'logview',
+        params: { lines: 50, reverse: 1, instance: 0 },
       });
     } finally {
       await close();

@@ -2,6 +2,8 @@
 export {
   formatLogTimestamp,
   levelBadgeLabel,
+  logLevelMatchesFilter,
+  normalizeServerLogLevel,
   parseServerLogLine,
   type LogTimestampZoneMode,
   type ParsedServerLogLine,

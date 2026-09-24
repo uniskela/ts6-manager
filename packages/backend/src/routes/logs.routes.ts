@@ -34,7 +34,10 @@ logRoutes.get('/', requireRole('admin'), async (req: Request, res: Response, nex
       params.begin_pos = parsed.beginPos;
     }
 
-    const raw = await getClient(req).execute(sid, 'logview', params);
+    // Instance logfile is server-wide: use sid=0 (same pattern as instanceinfo).
+    // Keep the selected VS sid in the response context for UI labeling only.
+    const querySid = parsed.instance === 1 ? 0 : sid;
+    const raw = await getClient(req).execute(querySid, 'logview', params);
     res.json(buildServerLogPage({
       configId,
       sid,

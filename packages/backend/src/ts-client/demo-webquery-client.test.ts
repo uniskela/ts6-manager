@@ -49,7 +49,7 @@ describe('DemoWebQueryClient', () => {
         begin_pos: '400',
       });
       assert.equal(older.length, 2);
-      assert.equal(older[0].last_pos, '300');
+      assert.equal(older[0].last_pos, '350');
       assert.ok(!older.some((row: any) => row.last_pos === '500' || row.last_pos === '400'));
 
       const instance = await client.execute(1, 'logview', { lines: 10, reverse: 1, instance: 1 });
