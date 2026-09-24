@@ -92,6 +92,18 @@ describe('page-entry scan authorization', () => {
     assert.deepEqual(decision, { action: 'skip', reason: 'offline' });
   });
 
+  it('returns missing-context before offline when channels are not ready yet', () => {
+    // Callers must treat offline+missing-context as a consumed cold entry (see Files.tsx).
+    const decision = decidePageEntryScan({
+      configId: 1,
+      sid: 1,
+      hasChannels: false,
+      online: false,
+      entryAttemptScope: null,
+    });
+    assert.deepEqual(decision, { action: 'skip', reason: 'missing-context' });
+  });
+
   it('does not treat channel-list readiness alone as a second opportunity', () => {
     // Same scope already attempted — growing channel list must not re-authorize.
     const decision = decidePageEntryScan({

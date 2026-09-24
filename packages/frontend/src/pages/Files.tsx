@@ -135,11 +135,12 @@ export default function Files() {
   // One bounded page-entry attempt once context is valid and online.
   useEffect(() => {
     if (!c || !s) return;
+    const online = typeof navigator === 'undefined' ? true : navigator.onLine;
     const decision = decidePageEntryScan({
       configId: c,
       sid: s,
       hasChannels: channelIds.length > 0,
-      online: typeof navigator === 'undefined' ? true : navigator.onLine,
+      online,
       entryAttemptScope: entryAttemptScopeRef.current,
     });
     if (decision.action === 'skip') {
@@ -148,7 +149,14 @@ export default function Files() {
         entryAttemptScopeRef.current = connectionScope(c, s);
         setOfflineUnchecked(true);
       } else if (decision.reason === 'missing-context') {
-        setOfflineUnchecked(false);
+        // Offline with no channels yet still consumes the opportunity — decidePageEntryScan
+        // returns missing-context before it checks connectivity.
+        if (!online) {
+          entryAttemptScopeRef.current = connectionScope(c, s);
+          setOfflineUnchecked(true);
+        } else {
+          setOfflineUnchecked(false);
+        }
       }
       return;
     }
