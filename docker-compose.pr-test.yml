@@ -44,6 +44,11 @@ services:
       TSSERVER_METRICS_ENABLED: "1"
       TSSERVER_METRICS_IP: "0.0.0.0"
       TSSERVER_METRICS_PORT: "9187"
+    # Persistent data includes TS logfiles under /var/tsserver/logs. If Server Logs
+    # shows TeamSpeak error 2052 ("file input/output error"), inspect ownership of
+    # that directory inside this container, then recreate the volume if needed:
+    #   docker compose -f docker-compose.pr-test.yml down -v
+    # Do not chown the bind as root on the host while the image user still runs TS.
     volumes:
       - pr-test-teamspeak-data:/var/tsserver
     ports:

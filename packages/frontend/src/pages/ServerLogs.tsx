@@ -17,6 +17,7 @@ import { ChevronLeft, ChevronRight, RefreshCw, ScrollText, Search } from 'lucide
 import { cn } from '@/lib/utils';
 import {
   apiErrorMessage,
+  isTeamSpeakLogviewIo,
   isTeamSpeakStarting,
   teamSpeakConnectionTitle,
   teamSpeakQueryRetry,
@@ -126,6 +127,7 @@ export default function ServerLogs() {
   if (!c || !s) return <EmptyState icon={ScrollText} title="No server selected" />;
 
   if (gateError && !hasPage) {
+    const logviewIo = isTeamSpeakLogviewIo(gateError);
     return (
       <div className="space-y-4">
         <EmptyState
@@ -133,9 +135,11 @@ export default function ServerLogs() {
           title={teamSpeakConnectionTitle(gateError)}
           description={apiErrorMessage(
             gateError,
-            isTeamSpeakStarting(gateError)
-              ? 'TeamSpeak Query is still coming up after startup. Wait a moment and retry.'
-              : 'Could not load server logs from TeamSpeak.',
+            logviewIo
+              ? 'TeamSpeak could not read its logfile (permissions, lock, or rotation). Manager is connected — use Retry once after a few seconds, or check the TeamSpeak logs volume.'
+              : isTeamSpeakStarting(gateError)
+                ? 'TeamSpeak Query is still coming up after startup. Wait a moment and retry.'
+                : 'Could not load server logs from TeamSpeak.',
           )}
         />
         <div className="flex justify-center">
@@ -154,9 +158,11 @@ export default function ServerLogs() {
   const backgroundError = gateError
     ? apiErrorMessage(
       gateError,
-      isTeamSpeakStarting(gateError)
-        ? 'TeamSpeak Query is still starting. Log data may be incomplete until it comes online.'
-        : 'Log refresh failed. The last successful page is still displayed.',
+      isTeamSpeakLogviewIo(gateError)
+        ? 'TeamSpeak could not read its logfile. The last successful page is still displayed — Retry once; do not leave this page auto-refreshing.'
+        : isTeamSpeakStarting(gateError)
+          ? 'TeamSpeak Query is still starting. Log data may be incomplete until it comes online.'
+          : 'Log refresh failed. The last successful page is still displayed.',
     )
     : null;
   const refreshTone = !contextIsValid && !gateError

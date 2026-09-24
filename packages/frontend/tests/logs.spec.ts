@@ -101,6 +101,28 @@ test('Server Logs separates initial fetch failure from stale refresh errors', as
   await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
 });
 
+test('Server Logs shows logview I/O clearly and does not auto-retry stampede', async ({ page, request }) => {
+  await request.post('/__test/dashboard?scenario=normal');
+  await request.post('/__test/logs?scenario=logview-io');
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
+  await page.goto('/logs');
+
+  await expect(page.getByRole('heading', { name: 'TeamSpeak log file unavailable' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/could not read the server logfile.*file input\/output error/i)).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Connection failed' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+
+  await page.waitForTimeout(2500);
+  const state = await request.get('/__test/state').then((response) => response.json());
+  // One initial fetch only — no React Query retry storm (~1 req/s).
+  expect(state.logsRequests.length).toBeLessThanOrEqual(2);
+});
+
 test('Server Logs stays contained at 390x844 without document overflow', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await signInAsAdmin(page, request);

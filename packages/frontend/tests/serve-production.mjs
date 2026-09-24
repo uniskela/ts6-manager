@@ -534,6 +534,15 @@ const server = createServer(async (req, res) => {
               res.statusCode = 503;
               return { error: 'TeamSpeak logview unavailable', details: 'WebQuery logview timed out' };
             }
+            if (logsScenario === 'logview-io') {
+              res.statusCode = 502;
+              return {
+                error: 'TeamSpeak log file unavailable',
+                details: 'TeamSpeak could not read the server logfile (error 2052: file input/output error). This is usually a log directory permission, lock, or rotation issue on the TeamSpeak host — not a Manager connection failure.',
+                code: 2052,
+                reason: 'ts_logview_io',
+              };
+            }
             if (logsScenario === 'refresh-failure') {
               res.statusCode = 503;
               return { error: 'Log refresh failed', details: 'The last successful page is still available' };

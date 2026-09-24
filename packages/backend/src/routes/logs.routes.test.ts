@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import express, { type Express } from 'express';
-import { logRoutes } from './logs.routes.js';
-import { errorHandler } from '../middleware/error-handler.js';
+import { logRoutes, resetLogviewInflightForTests } from './logs.routes.js';
+import { errorHandler, TSApiError } from '../middleware/error-handler.js';
 
 function buildApp(options: {
   role?: 'admin' | 'moderator' | 'viewer';
@@ -42,6 +42,10 @@ async function listen(app: Express): Promise<{ base: string; close: () => Promis
 }
 
 describe('logs routes', () => {
+  beforeEach(() => {
+    resetLogviewInflightForTests();
+  });
+
   it('requires admin role', async () => {
     const app = buildApp({ role: 'viewer' });
     const { base, close } = await listen(app);
@@ -122,6 +126,54 @@ describe('logs routes', () => {
         command: 'logview',
         params: { lines: 50, reverse: 1, instance: 0 },
       });
+    } finally {
+      await close();
+    }
+  });
+
+  it('maps TeamSpeak logview I/O error 2052 to a clear reason (not generic API Error)', async () => {
+    const app = buildApp({
+      execute: async () => {
+        throw new TSApiError(2052, 'file input/output error');
+      },
+    });
+    const { base, close } = await listen(app);
+    try {
+      const response = await fetch(`${base}/api/servers/1/vs/1/logs?lines=100&reverse=1&instance=0`);
+      assert.equal(response.status, 502);
+      const body = await response.json() as any;
+      assert.equal(body.reason, 'ts_logview_io');
+      assert.equal(body.code, 2052);
+      assert.equal(body.error, 'TeamSpeak log file unavailable');
+      assert.match(String(body.details), /logfile|permission|lock|rotation/i);
+      assert.notEqual(body.error, 'TeamSpeak API Error');
+    } finally {
+      await close();
+    }
+  });
+
+  it('coalesces overlapping identical logview requests into one TeamSpeak call', async () => {
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const app = buildApp({
+      execute: async () => {
+        started += 1;
+        await gate;
+        return [{ last_pos: '10', file_size: '10', l: 'shared' }];
+      },
+    });
+    const { base, close } = await listen(app);
+    try {
+      const url = `${base}/api/servers/1/vs/1/logs?lines=100&reverse=1&instance=0`;
+      const pending = Promise.all([fetch(url), fetch(url), fetch(url)]);
+      // Let both requests enter the route and hit coalesce before releasing TS.
+      await new Promise((r) => setTimeout(r, 30));
+      assert.equal(started, 1);
+      release();
+      const responses = await pending;
+      assert.deepEqual(responses.map((r) => r.status), [200, 200, 200]);
+      assert.equal(started, 1);
     } finally {
       await close();
     }
