@@ -24,11 +24,12 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { formatUptime } from '@/lib/utils';
 import { formatNumber } from '@/lib/formatting';
-import { apiErrorMessage } from '@/lib/api-error';
+import { apiErrorMessage, isTeamSpeakStarting, teamSpeakConnectionTitle, teamSpeakRefreshTone } from '@/lib/api-error';
 import { Users, MoreHorizontal, LogOut, Ban, Zap, Youtube, Radio, Copy } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
 import type { MusicBotSummary, RadioStationInfo } from '@ts6/common';
+import { useVirtualServers } from '@/hooks/use-servers';
 
 type PlayDialogMode = 'youtube' | 'radio' | null;
 
@@ -43,6 +44,13 @@ export default function Clients() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const isAdmin = useAuthStore((s) => s.isAdmin());
   const { data, isLoading, error, refetch, isFetching } = useClients();
+  const {
+    data: virtualServers,
+    error: virtualServersError,
+    isLoading: virtualServersLoading,
+    isFetching: virtualServersFetching,
+    refetch: refetchVirtualServers,
+  } = useVirtualServers();
   const kickClient = useKickClient();
   const banClient = useBanClient();
   const pokeClient = usePokeClient();
@@ -401,27 +409,51 @@ export default function Clients() {
   }, [isAdmin, selectedConfigId, selectedSid]);
 
   const hasClientData = Array.isArray(data);
+  const gateError = error || virtualServersError;
+  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === selectedSid);
+  const isFetchingGate = isFetching || virtualServersFetching;
+  const retryGate = () => {
+    void refetchVirtualServers();
+    void refetch();
+  };
+
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
-  if (isLoading && !hasClientData) return <PageLoader />;
-  if (error && !hasClientData) {
+  if (gateError && !hasClientData) {
     return (
       <div className="space-y-4">
         <EmptyState
           icon={Users}
-          title="Connection failed"
-          description={(error as any)?.response?.data?.error || (error as any)?.message || 'Could not load clients from the TeamSpeak server.'}
+          title={teamSpeakConnectionTitle(gateError)}
+          description={apiErrorMessage(
+            gateError,
+            isTeamSpeakStarting(gateError)
+              ? 'TeamSpeak Query is still coming up after startup. Wait a moment and retry.'
+              : 'Could not load clients from the TeamSpeak server.',
+          )}
         />
         <div className="flex justify-center">
-          <Button size="sm" variant="outline" onClick={() => refetch()} disabled={isFetching}>
-            {isFetching ? 'Retrying…' : 'Retry'}
+          <Button size="sm" variant="outline" onClick={retryGate} disabled={isFetchingGate}>
+            {isFetchingGate ? 'Retrying…' : 'Retry'}
           </Button>
         </div>
       </div>
     );
   }
-  const backgroundError = error
-    ? apiErrorMessage(error, 'Client refresh failed. The last successful client list is still displayed.')
+  // Match Channels: invalid/unknown selected sid is not-ready, not an empty Live table.
+  if ((isLoading || virtualServersLoading || !contextIsValid) && !hasClientData) {
+    return <PageLoader />;
+  }
+  const backgroundError = gateError
+    ? apiErrorMessage(
+      gateError,
+      isTeamSpeakStarting(gateError)
+        ? 'TeamSpeak Query is still starting. Client data may be incomplete until it comes online.'
+        : 'Client refresh failed. The last successful client list is still displayed.',
+    )
     : null;
+  const refreshTone = !contextIsValid && !gateError
+    ? 'starting'
+    : teamSpeakRefreshTone(gateError);
 
   return (
     <div className="space-y-5">
@@ -429,14 +461,23 @@ export default function Clients() {
         title="Clients"
         icon={Users}
         description={`${formatNumber(clients.length)} online`}
-        metadata={<RefreshStatus isRefreshing={isFetching} idleLabel="Live client updates active" refreshingLabel="Refreshing clients…" />}
+        metadata={(
+          <RefreshStatus
+            isRefreshing={isFetchingGate}
+            tone={refreshTone}
+            idleLabel="Live client updates active"
+            refreshingLabel="Refreshing clients…"
+            degradedLabel="Client updates interrupted"
+            startingLabel="Waiting for TeamSpeak Query…"
+          />
+        )}
       />
 
       {backgroundError && (
         <StaleDataNotice
           message={backgroundError}
-          onRetry={() => { void refetch(); }}
-          isRetrying={isFetching}
+          onRetry={retryGate}
+          isRetrying={isFetchingGate}
         />
       )}
 

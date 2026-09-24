@@ -14,7 +14,7 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, Tooltip as ReTooltip, XAxis, YAxis } from 'recharts';
 import { useDashboard } from '@/hooks/use-dashboard';
-import { useServers } from '@/hooks/use-servers';
+import { useServers, useVirtualServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { NUDGE_DISMISS_STORAGE_KEY } from '@/content/connection-setup';
@@ -29,7 +29,7 @@ import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatu
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
 import { formatBytes, formatUptime } from '@/lib/utils';
 import { formatLocalTime, formatNumber } from '@/lib/formatting';
-import { apiErrorMessage } from '@/lib/api-error';
+import { apiErrorMessage, isTeamSpeakStarting, teamSpeakConnectionTitle, teamSpeakRefreshTone } from '@/lib/api-error';
 
 interface DashboardData {
   serverName: string;
@@ -84,6 +84,13 @@ function DetailRow({ label, children }: { label: string; children: ReactNode }) 
 export default function Dashboard() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const { data: servers } = useServers();
+  const {
+    data: virtualServers,
+    error: virtualServersError,
+    isLoading: virtualServersLoading,
+    isFetching: virtualServersFetching,
+    refetch: refetchVirtualServers,
+  } = useVirtualServers();
   const query = useDashboard();
   const data = query.data as DashboardData | undefined;
   const isAdmin = useAuthStore((state) => state.isAdmin());
@@ -104,6 +111,14 @@ export default function Dashboard() {
   );
   const hasNoConnections = isAdmin && Array.isArray(servers) && servers.length === 0;
   const showConnectionNudge = hasNoConnections && !nudgeDismissed;
+  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === selectedSid);
+  // Prefer dashboard errors when present; otherwise surface VS Query warming/failures that gate the dashboard query.
+  const gateError = query.error || virtualServersError;
+  const isFetchingGate = query.isFetching || virtualServersFetching;
+  const retryGate = () => {
+    void refetchVirtualServers();
+    void query.refetch();
+  };
 
   useEffect(() => {
     setBandwidthHistory([]);
@@ -171,16 +186,40 @@ export default function Dashboard() {
     );
   }
 
-  if (query.isLoading && !data) return <PageLoader />;
+  if (query.isLoading || virtualServersLoading) {
+    if (!data) return <PageLoader />;
+  }
 
   if (!data) {
-    const detail = apiErrorMessage(query.error, 'Could not connect to the TeamSpeak server. Check your connection settings.');
+    if (gateError) {
+      const detail = apiErrorMessage(
+        gateError,
+        isTeamSpeakStarting(gateError)
+          ? 'TeamSpeak Query is still coming up after startup. Wait a moment and retry.'
+          : 'Could not connect to the TeamSpeak server. Check your connection settings.',
+      );
+      return (
+        <div className="space-y-4">
+          <EmptyState icon={Wifi} title={teamSpeakConnectionTitle(gateError)} description={detail} />
+          <div className="flex justify-center">
+            <Button size="sm" variant="outline" onClick={retryGate} disabled={isFetchingGate}>
+              {isFetchingGate ? 'Retrying…' : 'Retry connection'}
+            </Button>
+          </div>
+        </div>
+      );
+    }
+    if (!contextIsValid) return <PageLoader />;
     return (
       <div className="space-y-4">
-        <EmptyState icon={Wifi} title="Connection failed" description={detail} />
+        <EmptyState
+          icon={Wifi}
+          title="Connection failed"
+          description="Could not connect to the TeamSpeak server. Check your connection settings."
+        />
         <div className="flex justify-center">
-          <Button size="sm" variant="outline" onClick={() => query.refetch()} disabled={query.isFetching}>
-            {query.isFetching ? 'Retrying…' : 'Retry connection'}
+          <Button size="sm" variant="outline" onClick={retryGate} disabled={isFetchingGate}>
+            {isFetchingGate ? 'Retrying…' : 'Retry connection'}
           </Button>
         </div>
       </div>
@@ -192,9 +231,18 @@ export default function Dashboard() {
     : 0;
   const roundedUtilisation = Math.round(utilisation);
   const availableSlots = Math.max(data.maxClients - data.onlineUsers, 0);
-  const backgroundError = query.error
-    ? apiErrorMessage(query.error, 'Live data refresh failed. The last successful snapshot is still displayed.')
+  const backgroundError = gateError
+    ? apiErrorMessage(
+      gateError,
+      isTeamSpeakStarting(gateError)
+        ? 'TeamSpeak Query is still starting. Live data may be incomplete until it comes online.'
+        : 'Live data refresh failed. The last successful snapshot is still displayed.',
+    )
     : null;
+  // Cached snapshot + Query still warming (or selected sid not in VS list yet) must not claim Live.
+  const refreshTone = !contextIsValid && !gateError
+    ? 'starting'
+    : teamSpeakRefreshTone(gateError);
 
   return (
     <div className="min-w-0 space-y-5">
@@ -209,9 +257,12 @@ export default function Dashboard() {
         ) : undefined}
         metadata={(
           <RefreshStatus
-            isRefreshing={query.isFetching}
+            isRefreshing={isFetchingGate}
+            tone={refreshTone}
             idleLabel="Live monitoring active"
             refreshingLabel="Refreshing live data…"
+            degradedLabel="Live updates interrupted"
+            startingLabel="Waiting for TeamSpeak Query…"
           />
         )}
       />
@@ -219,8 +270,8 @@ export default function Dashboard() {
       {backgroundError && (
         <StaleDataNotice
           message={backgroundError}
-          onRetry={() => { void query.refetch(); }}
-          isRetrying={query.isFetching}
+          onRetry={retryGate}
+          isRetrying={isFetchingGate}
         />
       )}
 

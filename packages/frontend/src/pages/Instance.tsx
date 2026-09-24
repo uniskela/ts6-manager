@@ -10,11 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Cpu, Save, Server, Globe } from 'lucide-react';
 import { formatBytes, formatUptime } from '@/lib/utils';
-import { apiErrorMessage } from '@/lib/api-error';
+import { apiErrorMessage, teamSpeakQueryRetry } from '@/lib/api-error';
 import { toast } from 'sonner';
 
-const floodAwareRetry = (failureCount: number, error: any) =>
-  error?.response?.status !== 429 && failureCount < 3;
+const floodAwareRetry = teamSpeakQueryRetry;
 
 export default function Instance() {
   const { selectedConfigId: c } = useServerStore();

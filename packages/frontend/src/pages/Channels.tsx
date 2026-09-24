@@ -21,11 +21,12 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
-import { apiErrorMessage } from '@/lib/api-error';
+import { apiErrorMessage, isTeamSpeakStarting, teamSpeakConnectionTitle, teamSpeakRefreshTone } from '@/lib/api-error';
 import { formatNumber } from '@/lib/formatting';
 import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal, MoveRight } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { toast } from 'sonner';
+import { useVirtualServers } from '@/hooks/use-servers';
 
 interface ChannelNode {
   cid: number;
@@ -368,6 +369,13 @@ export default function Channels() {
   const setShowQueryClients = useUiStore((s) => s.setShowQueryClients);
   const showQueryClients = isAdmin && storedShowQueryClients;
   const { data: channelData, isLoading: channelsLoading, error: channelsError, refetch: refetchChannels, isFetching: channelsFetching } = useChannels();
+  const {
+    data: virtualServers,
+    error: virtualServersError,
+    isLoading: virtualServersLoading,
+    isFetching: virtualServersFetching,
+    refetch: refetchVirtualServers,
+  } = useVirtualServers();
   const { data: clientData } = useClients();
   const createChannel = useCreateChannel();
   const deleteChannel = useDeleteChannel();
@@ -426,23 +434,40 @@ export default function Channels() {
 
   if (!selectedConfigId || !selectedSid) return <EmptyState icon={Hash} title="No server selected" />;
   const hasChannelData = Array.isArray(channelData);
-  if (channelsError && !hasChannelData) {
+  const gateError = channelsError || virtualServersError;
+  const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === selectedSid);
+  const isFetchingGate = channelsFetching || virtualServersFetching;
+
+  const retryGate = () => {
+    void refetchVirtualServers();
+    void refetchChannels();
+  };
+
+  // Prefer an explicit Query-warming / connection failure over a fake empty live tree.
+  if (gateError && !hasChannelData) {
     return (
       <div className="space-y-4">
         <EmptyState
           icon={Hash}
-          title="Connection failed"
-          description={apiErrorMessage(channelsError, 'Could not load channels from the TeamSpeak server.')}
+          title={teamSpeakConnectionTitle(gateError)}
+          description={apiErrorMessage(
+            gateError,
+            isTeamSpeakStarting(gateError)
+              ? 'TeamSpeak Query is still coming up after startup. Wait a moment and retry.'
+              : 'Could not load channels from the TeamSpeak server.',
+          )}
         />
         <div className="flex justify-center">
-          <Button size="sm" variant="outline" onClick={() => refetchChannels()} disabled={channelsFetching}>
-            {channelsFetching ? 'Retrying…' : 'Retry'}
+          <Button size="sm" variant="outline" onClick={retryGate} disabled={isFetchingGate}>
+            {isFetchingGate ? 'Retrying…' : 'Retry'}
           </Button>
         </div>
       </div>
     );
   }
-  if (channelsLoading && !hasChannelData) return <PageLoader />;
+  if ((channelsLoading || virtualServersLoading || !contextIsValid) && !hasChannelData) {
+    return <PageLoader />;
+  }
 
   const handleCreate = () => {
     if (!newName.trim()) return;
@@ -556,9 +581,15 @@ export default function Channels() {
     : [];
   const totalClients = allVisibleClients.filter((client) => client.client_type !== '1').length;
   const totalQuerySessions = allVisibleClients.filter((client) => client.client_type === '1').length;
-  const backgroundError = channelsError
-    ? apiErrorMessage(channelsError, 'Channel refresh failed. The last successful channel tree is still displayed.')
+  const backgroundError = gateError
+    ? apiErrorMessage(
+      gateError,
+      isTeamSpeakStarting(gateError)
+        ? 'TeamSpeak Query is still starting. Channel data may be incomplete until it comes online.'
+        : 'Channel refresh failed. The last successful channel tree is still displayed.',
+    )
     : null;
+  const refreshTone = teamSpeakRefreshTone(gateError);
 
   return (
     <div className="space-y-5">
@@ -571,14 +602,23 @@ export default function Channels() {
             <Plus className="h-4 w-4 mr-1" /> Create Channel
           </Button>
         ) : undefined}
-        metadata={<RefreshStatus isRefreshing={channelsFetching} idleLabel="Live channel updates active" refreshingLabel="Refreshing channels…" />}
+        metadata={(
+          <RefreshStatus
+            isRefreshing={isFetchingGate}
+            tone={refreshTone}
+            idleLabel="Live channel updates active"
+            refreshingLabel="Refreshing channels…"
+            degradedLabel="Channel updates interrupted"
+            startingLabel="Waiting for TeamSpeak Query…"
+          />
+        )}
       />
 
       {backgroundError && (
         <StaleDataNotice
           message={backgroundError}
-          onRetry={() => { void refetchChannels(); }}
-          isRetrying={channelsFetching}
+          onRetry={retryGate}
+          isRetrying={isFetchingGate}
         />
       )}
 

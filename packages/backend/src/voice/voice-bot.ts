@@ -202,6 +202,26 @@ export class VoiceBot extends EventEmitter {
     return this.client.getCurrentChannelId();
   }
 
+  /** Apply home cid from SSH clientlist when voice discovery left homeCid=0. */
+  setCurrentChannelIdIfUnknown(channelId: number): boolean {
+    return this.client.setCurrentChannelIdIfUnknown(channelId);
+  }
+
+  /** Discover home cid via the voice socket (no SSH). */
+  ensureHomeChannelDiscovered(timeoutMs?: number): Promise<number> {
+    return this.client.ensureHomeChannelDiscovered(timeoutMs);
+  }
+
+  /** Other non-query voice clients currently in this bot's channel (excludes the bot itself). */
+  getHumanChannelPeerCount(): number {
+    return this.client.getChannelUserCount();
+  }
+
+  /** Non-query client IDs tracked in this bot's channel (excludes self). */
+  getHumanChannelPeerClids(): number[] {
+    return this.client.getChannelMemberClids();
+  }
+
   /** Join a channel by ID (for following !play / playback commands). */
   joinChannel(channelId: number): void {
     if (this._status === 'stopped' || this._status === 'error' || this._status === 'starting') {
@@ -402,6 +422,14 @@ export class VoiceBot extends EventEmitter {
       this.icyPollTimer = null;
     }
     this.lastStreamTitle = '';
+  }
+
+  /** Apply a persisted/generated identity before connect (create may finish keygen later). */
+  setIdentity(identity: IdentityData): void {
+    this.config.identity = identity;
+    if (this._status === 'stopped') {
+      this.identity = identity;
+    }
   }
 
   async start(): Promise<void> {

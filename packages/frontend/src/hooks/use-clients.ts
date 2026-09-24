@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { clientsApi } from '../api/clients.api';
 import { useServerStore } from '../stores/server.store';
 import { useVirtualServers } from './use-servers';
+import { teamSpeakQueryRetry, teamSpeakQueryRetryDelay } from '@/lib/api-error';
 
 export interface ClientActionContext {
   configId: number;
@@ -32,8 +33,8 @@ export function useClients() {
     queryFn: () => clientsApi.list(c!, s!),
     enabled: !!c && !!s && contextIsValid,
     refetchInterval: 10000,
-    retry: 3,
-    retryDelay: (attempt) => Math.min(1500, 300 * 2 ** attempt),
+    retry: teamSpeakQueryRetry,
+    retryDelay: teamSpeakQueryRetryDelay,
   });
 }
 

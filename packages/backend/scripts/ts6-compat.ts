@@ -17,10 +17,31 @@ async function runSmoke(): Promise<void> {
   let client: ReturnType<typeof createWebQueryClient> | undefined;
   let phase = 'starting TeamSpeak container';
   try {
-    docker(['run', '-d', '--name', name, '-p', '127.0.0.1::10080',
-      '-e', 'TSSERVER_LICENSE_ACCEPTED=accept', '-e', 'TSSERVER_QUERY_HTTP_ENABLED=1',
-      '-e', 'TSSERVER_QUERY_HTTP_ALLOW_GUEST=0', '-e', 'TSSERVER_QUERY_SSH_ALLOW_GUEST=0',
-      '-e', 'TSSERVER_QUERY_ADMIN_API_KEY', `teamspeaksystems/teamspeak6-server:${tag}`]);
+    // Image pull / daemon hiccups occasionally fail the first `docker run` in CI.
+    let started = false;
+    let lastStartError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        try { docker(['rm', '-f', '-v', name]); } catch { /* fresh name or leftover */ }
+        if (attempt > 1) {
+          try {
+            docker(['pull', `teamspeaksystems/teamspeak6-server:${tag}`]);
+          } catch { /* run may still succeed from cache */ }
+          await delay(2000);
+        }
+        docker(['run', '-d', '--name', name, '-p', '127.0.0.1::10080',
+          '-e', 'TSSERVER_LICENSE_ACCEPTED=accept', '-e', 'TSSERVER_QUERY_HTTP_ENABLED=1',
+          '-e', 'TSSERVER_QUERY_HTTP_ALLOW_GUEST=0', '-e', 'TSSERVER_QUERY_SSH_ALLOW_GUEST=0',
+          '-e', 'TSSERVER_QUERY_ADMIN_API_KEY', `teamspeaksystems/teamspeak6-server:${tag}`]);
+        started = true;
+        break;
+      } catch (err) {
+        lastStartError = err;
+        console.error(`TeamSpeak container start attempt ${attempt}/3 failed`);
+      }
+    }
+    if (!started) throw lastStartError instanceof Error ? lastStartError : new Error('docker run failed');
+
     const port = Number(docker(['port', name, '10080/tcp']).split(':').pop());
     const origin = `http://127.0.0.1:${port}`;
     const deadline = Date.now() + 120_000;
@@ -83,7 +104,8 @@ async function runSmoke(): Promise<void> {
   } catch (error) {
     console.error(`Failure phase: ${phase}`);
     console.error('Failure code:', typeof (error as any)?.code === 'number' ? (error as any).code : 'none');
-    console.error(error instanceof Error && error.name === 'AssertionError' ? error.message : 'Query failed');
+    const detail = error instanceof Error ? error.message : 'unknown error';
+    console.error(error instanceof Error && error.name === 'AssertionError' ? detail : `Startup/query failed: ${detail.split('\n')[0]}`);
     // Do not print thrown HTTP/Docker objects or server logs: they may contain keys.
     console.error('TeamSpeak compatibility smoke failed (credentials and server logs withheld).');
     throw new Error('TeamSpeak compatibility smoke failed');

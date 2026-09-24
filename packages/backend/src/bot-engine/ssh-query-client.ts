@@ -244,6 +244,7 @@ export class SshQueryClient extends EventEmitter {
       await this.executeCommand(`clientupdate client_nickname=TS6-WebUI-Bot-${sid}-${this.nickSuffix}`);
     } catch { }
 
+    let registrationFailures = 0;
     for (const eventType of TS_EVENT_TYPES) {
       const cmd = eventType === 'channel'
         ? `servernotifyregister event=${eventType} id=0`
@@ -253,12 +254,23 @@ export class SshQueryClient extends EventEmitter {
       } catch (err: any) {
         // error id=516 = already registered, ignore
         if (!err.message?.includes('516')) {
+          registrationFailures += 1;
           console.warn(`[SshQueryClient] Failed to register event ${eventType}: ${err.message}`);
+          // A flood response invalidates this Query session. Do not continue
+          // issuing registration commands and then report a false success.
+          if (isSshFloodError(err)) throw err;
         }
       }
     }
 
-    console.log(`[SshQueryClient] Events registered for sid=${sid}`);
+    if (!this.connected) {
+      throw new Error('SSH disconnected while registering events');
+    }
+
+    console.log(
+      `[SshQueryClient] Events registered for sid=${sid}` +
+        (registrationFailures ? ` with ${registrationFailures} warning(s)` : ''),
+    );
   }
 
   async registerCommandListener(sid: number, channelId: number): Promise<void> {
@@ -494,6 +506,13 @@ export class SshQueryClient extends EventEmitter {
         this.floodPauseUntil = 0;
         this.floodStrikes = 0;
       }
+      cmd.resolve(cmd.responseLines.join('\n'));
+      this.processQueue();
+      return;
+    }
+
+    // 770 = already member of channel — clientmove no-op success (listener already there).
+    if (errorId === 770 && /^\s*clientmove\b/i.test(cmd.command)) {
       cmd.resolve(cmd.responseLines.join('\n'));
       this.processQueue();
       return;

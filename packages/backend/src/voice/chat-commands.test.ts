@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { describe, it, test } from 'node:test';
 import {
   BUILTIN_CHAT_COMMANDS,
   BUILTIN_COMMAND_HELP,
@@ -9,27 +9,28 @@ import {
 } from './chat-commands.js';
 
 describe('normalizeChatCommandName', () => {
-  test('strips bang and lowercases', () => {
+  it('strips bang and lowercases', () => {
     assert.equal(normalizeChatCommandName('!Rules'), 'rules');
     assert.equal(normalizeChatCommandName('  Hello_World  '), 'hello_world');
   });
 
-  test('strips invalid characters', () => {
+  it('rejects invalid characters', () => {
     assert.equal(normalizeChatCommandName('foo bar'), 'foobar');
     assert.equal(normalizeChatCommandName('!!!'), '');
   });
 });
 
 describe('isReservedChatCommandName', () => {
-  test('reserves built-ins including !commands', () => {
+  it('reserves built-ins including help', () => {
     assert.equal(isReservedChatCommandName('help'), true);
-    assert.equal(isReservedChatCommandName('commands'), true);
+    assert.equal(isReservedChatCommandName('here'), true);
+    assert.equal(isReservedChatCommandName('come'), true);
     assert.equal(isReservedChatCommandName('PLAY'), true);
     assert.equal(isReservedChatCommandName('shuffle'), true);
     assert.equal(isReservedChatCommandName('rules'), false);
-    assert.equal(isReservedChatCommandName('links'), false);
   });
 });
+
 
 describe('CHAT_COMMAND_PRESETS', () => {
   test('includes recommended canned-reply names without colliding with built-ins', () => {

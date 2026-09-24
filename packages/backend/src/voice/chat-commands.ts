@@ -5,6 +5,8 @@
 export const BUILTIN_CHAT_COMMANDS = [
   'help',
   'commands',
+  'here',
+  'come',
   'radio',
   'play',
   'stop',
@@ -41,6 +43,8 @@ const BUILTIN_SET = new Set<string>(BUILTIN_CHAT_COMMANDS);
 export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string }[] = [
   { name: 'help', usage: '!help', blurb: 'Show this command list' },
   { name: 'commands', usage: '!commands', blurb: 'List enabled custom chat commands' },
+  { name: 'here', usage: '!here [id]', blurb: 'Summon a music bot here (prefers idle bots; use !here <id> to target one)' },
+  { name: 'come', usage: '!come [id]', blurb: 'Alias for !here' },
   {
     name: 'play',
     usage: '!play <url>',

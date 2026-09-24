@@ -355,6 +355,7 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 When a music bot is connected to a configured command channel, users there can control it via chat. These are the built-in commands; custom commands (and recommended presets like `!rules` / `!links`) can also be configured under Music Bots → Commands.
 
 - **`!help`** — Show built-in and custom commands
+- **`!here [id]`** / **`!come [id]`** — Summon an idle music bot to your channel (or target a bot by ID)
 - **`!commands`** — List enabled custom chat commands
 - **`!play <url>`** — Play YouTube, Spotify, or Apple Music media
 - **`!play`** — Resume paused playback

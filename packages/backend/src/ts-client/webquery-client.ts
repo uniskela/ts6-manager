@@ -1,7 +1,12 @@
 import axios, { AxiosInstance } from 'axios';
 import http from 'http';
 import https from 'https';
-import { AppError, TeamSpeakFloodError, TSApiError } from '../middleware/error-handler.js';
+import {
+  AppError,
+  TeamSpeakFloodError,
+  TeamSpeakUnavailableError,
+  TSApiError,
+} from '../middleware/error-handler.js';
 import { config } from '../config.js';
 import type { ValidatedTsServerEndpoint } from '../utils/validate-ts-host.js';
 import { createValidatedTsServerEndpoint, isAllowedTsServerHost, buildWebQueryPath } from '../utils/validate-ts-host.js';
@@ -27,6 +32,7 @@ const FLOOD_MAX_PAUSE_MS = 5 * 60_000;
 
 const TRANSIENT_CODES = new Set([
   'ECONNRESET',
+  'ECONNREFUSED',
   'ECONNABORTED',
   'EPIPE',
   'ETIMEDOUT',
@@ -34,16 +40,20 @@ const TRANSIENT_CODES = new Set([
   'EAI_AGAIN',
 ]);
 
-function isTransientNetworkError(error: any): boolean {
+/** Transport-level Query failures while TeamSpeak is still booting or resetting sockets. */
+export function isTransientNetworkError(error: any): boolean {
+  if (error instanceof TeamSpeakUnavailableError) return true;
   const code = error?.code || error?.cause?.code;
   if (code && TRANSIENT_CODES.has(code)) return true;
-  const msg = String(error?.message || '');
+  const msg = String(error?.message || error?.details || '');
   return (
     msg.includes('socket hang up') ||
     msg.includes('ECONNRESET') ||
+    msg.includes('ECONNREFUSED') ||
     msg.includes('EPIPE') ||
     msg.includes('ETIMEDOUT') ||
-    msg.includes('network socket disconnected')
+    msg.includes('network socket disconnected') ||
+    msg.includes('Connection lost before handshake')
   );
 }
 
@@ -62,12 +72,20 @@ export function isFloodError(error: any): boolean {
 }
 
 function toTsApiError(error: any): never {
-  if (error instanceof TSApiError) throw error;
+  if (error instanceof TeamSpeakUnavailableError) throw error;
+  if (error instanceof TeamSpeakFloodError) throw error;
+  if (error instanceof TSApiError) {
+    if (isTransientNetworkError(error)) throw new TeamSpeakUnavailableError(5);
+    throw error;
+  }
   if (error.response?.data?.status) {
     throw new TSApiError(
       error.response.data.status.code,
       error.response.data.status.message,
     );
+  }
+  if (isTransientNetworkError(error)) {
+    throw new TeamSpeakUnavailableError(5);
   }
   throw new TSApiError(-1, error.message || 'Connection failed');
 }
@@ -322,9 +340,10 @@ export class WebQueryClient {
       const version = await this.execute(0, 'version', undefined, { priority: 'high' });
       return { ok: true, version };
     } catch (err: any) {
-      // Preserve flood cooldown as HTTP 429 via the route error handler instead of
-      // collapsing it into a generic "connection failed" toast.
+      // Preserve flood / warming-up as HTTP 429/503 via the route error handler instead of
+      // collapsing them into a generic "connection failed" toast.
       if (err instanceof TeamSpeakFloodError) throw err;
+      if (err instanceof TeamSpeakUnavailableError) throw err;
       return { ok: false, error: err?.message || String(err) };
     }
   }
