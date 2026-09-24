@@ -66,7 +66,7 @@ The UI includes:
 - **Server Logs 2.0** (admin-only): bounded TeamSpeak `logview` pages with Previous/Older cursor paging, Refresh back to the newest page, connection / virtual-server / instance scope labels, page-local search and level filters, and source timestamps with a single page-level note that TeamSpeak does not report timezone (no per-row “timezone unknown”); and
 - instance-level settings.
 
-Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS. If TeamSpeak returns logfile I/O error 2052, the UI shows **TeamSpeak log file unavailable** with a single manual Retry (see [troubleshooting](troubleshooting.md#server-logs-teamspeak-log-file-unavailable--error-2052)).
+Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS. If TeamSpeak returns logfile I/O error 2052, the UI shows **TeamSpeak log file unavailable** with a single manual Retry (see [troubleshooting](troubleshooting.md#server-logs-teamspeak-log-file-unavailable-error-2052)).
 
 ## Activity journal and administrative audit
 
