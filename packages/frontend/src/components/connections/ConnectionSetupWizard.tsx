@@ -269,6 +269,9 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
       apiKey: form.apiKey,
       useHttps: form.useHttps,
       sshPort: parseInt(form.sshPort, 10),
+      metricsEnabled: form.metricsEnabled,
+      metricsPort: parseInt(form.metricsPort, 10) || 9187,
+      metricsHost: form.metricsHost.trim() ? form.metricsHost.trim() : null,
     };
     if (!skipSsh && form.sshUsername && form.sshPassword) {
       payload.sshUsername = form.sshUsername;
@@ -533,6 +536,40 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
                 docs={[{ label: 'HTTPS WebQuery setup (TS6 docs)', url: TS6_SERVER_DOCS.httpQuery }]}
                 className="flex flex-wrap gap-x-3 gap-y-1"
               />
+
+              <div className="space-y-3 border-t border-border pt-3">
+                <p className="text-xs font-medium text-foreground">Native metrics (optional)</p>
+                <p className="text-[11px] text-muted-foreground -mt-1">
+                  Keep the metrics listener private — it is unauthenticated (default port 9187).
+                </p>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={form.metricsEnabled}
+                    onCheckedChange={(v) => setForm({ ...form, metricsEnabled: v })}
+                  />
+                  <Label className="text-xs">{FIELD_HELP.metricsEnabled}</Label>
+                </div>
+                {form.metricsEnabled && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="text-xs">Metrics port</Label>
+                      <Input
+                        type="number"
+                        value={form.metricsPort}
+                        onChange={(e) => setForm({ ...form, metricsPort: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <Label className="text-xs">Metrics host (optional)</Label>
+                      <Input
+                        value={form.metricsHost}
+                        onChange={(e) => setForm({ ...form, metricsHost: e.target.value })}
+                        placeholder="Same as WebQuery host"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -617,6 +654,12 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
               <p><span className="text-muted-foreground">Name:</span> {form.name}</p>
               <p><span className="text-muted-foreground">Host:</span> {form.host}:{form.webqueryPort}</p>
               <p><span className="text-muted-foreground">HTTPS:</span> {form.useHttps ? 'Yes' : 'No'}</p>
+              <p>
+                <span className="text-muted-foreground">Native metrics:</span>{' '}
+                {form.metricsEnabled
+                  ? `Enabled (${form.metricsHost.trim() || form.host}:${form.metricsPort})`
+                  : 'Disabled'}
+              </p>
               <p>
                 <span className="text-muted-foreground">SSH:</span>{' '}
                 {skipSsh || !form.sshUsername ? 'Not configured' : `${form.sshUsername}@${form.host}:${form.sshPort}`}

@@ -57,6 +57,11 @@ model TsServerConfig {
   sshHostKeyFingerprint String?
   enabled      Boolean  @default(true)
   isDemo       Boolean  @default(false)
+  /** Opt-in native TeamSpeak Prometheus metrics scrape (#91 Slice 1). */
+  metricsEnabled Boolean @default(false)
+  metricsPort    Int     @default(9187)
+  /** Optional override when TSSERVER_METRICS_IP differs from WebQuery host; null = use `host`. */
+  metricsHost    String?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

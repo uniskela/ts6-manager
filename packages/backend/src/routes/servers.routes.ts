@@ -15,6 +15,25 @@ import {
   buildFloodDiagnosticReport,
   buildFullSuccessReport,
 } from '../ts-client/connection-diagnostics.js';
+import { DEFAULT_METRICS_PORT } from '../ts-client/metrics-client.js';
+
+function parseOptionalMetricsHost(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null || value === '') return null;
+  return sanitizeTsServerHost(String(value));
+}
+
+function metricsAdminFields(server: {
+  metricsEnabled?: boolean | null;
+  metricsPort?: number | null;
+  metricsHost?: string | null;
+}) {
+  return {
+    metricsEnabled: Boolean(server.metricsEnabled),
+    metricsPort: server.metricsPort ?? DEFAULT_METRICS_PORT,
+    metricsHost: server.metricsHost ?? null,
+  };
+}
 
 function throwIfSharedQueryFlooded(req: Request, configId: number): void {
   const pool: ConnectionPool | undefined = req.app.locals.connectionPool;
@@ -80,33 +99,47 @@ serverRoutes.post('/demo', requireRole('admin'), async (req: Request, res: Respo
 serverRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
+    const isAdmin = req.user?.role === 'admin';
     const servers = await prisma.tsServerConfig.findMany({
       select: {
         id: true, name: true, host: true, webqueryPort: true,
         useHttps: true, sshPort: true, enabled: true, isDemo: true,
         createdAt: true, sshUsername: true, sshPassword: true,
+        metricsEnabled: true, metricsPort: true, metricsHost: true,
       },
       orderBy: { id: 'asc' },
     });
 
-    res.json(servers.map((s: any) => ({
-      ...s,
-      hasSshCredentials: !!s.sshUsername && !!s.sshPassword,
-      sshUsername: undefined,
-      sshPassword: undefined,
-    })));
+    res.json(servers.map((s: any) => {
+      const base = {
+        ...s,
+        hasSshCredentials: !!s.sshUsername && !!s.sshPassword,
+        sshUsername: undefined,
+        sshPassword: undefined,
+        metricsEnabled: undefined,
+        metricsPort: undefined,
+        metricsHost: undefined,
+      };
+      return isAdmin ? { ...base, ...metricsAdminFields(s) } : base;
+    }));
   } catch (err) { next(err); }
 });
 
 // Add new TS server connection
 serverRoutes.post('/', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
-    const { name, host, webqueryPort, apiKey, useHttps, sshPort, sshUsername, sshPassword } = req.body;
+    const {
+      name, host, webqueryPort, apiKey, useHttps, sshPort, sshUsername, sshPassword,
+      metricsEnabled, metricsPort, metricsHost,
+    } = req.body;
     if (!name || !host || !apiKey) throw new AppError(400, 'Name, host, and API key are required');
 
     const safeHost = sanitizeTsServerHost(host);
     const safeWebqueryPort = validateTsServerPort(webqueryPort, 10080);
     const safeSshPort = validateTsServerPort(sshPort, 10022);
+    const safeMetricsPort = validateTsServerPort(metricsPort, DEFAULT_METRICS_PORT);
+    const safeMetricsHost = parseOptionalMetricsHost(metricsHost);
+    const metricsOn = Boolean(metricsEnabled);
 
     const prisma = req.app.locals.prisma;
     // H8: Encrypt sensitive fields at rest
@@ -120,12 +153,16 @@ serverRoutes.post('/', requireRole('admin'), async (req: Request, res: Response,
         sshPort: safeSshPort,
         sshUsername: sshUsername || null,
         sshPassword: sshPassword ? encrypt(sshPassword) : null,
+        metricsEnabled: metricsOn,
+        metricsPort: safeMetricsPort,
+        metricsHost: safeMetricsHost === undefined ? null : safeMetricsHost,
       },
     });
 
     // Add to connection pool (use plaintext key for connection)
     const pool: ConnectionPool = req.app.locals.connectionPool;
     pool.addClient(server.id, server.host, server.webqueryPort, apiKey, server.useHttps);
+    pool.syncMetricsClient(server);
 
     res.status(201).json({ id: server.id, name: server.name });
   } catch (err) { next(err); }
@@ -140,12 +177,16 @@ serverRoutes.get('/:configId', async (req: Request, res: Response, next) => {
     });
     if (!server) throw new AppError(404, 'Server config not found');
 
-    res.json({
+    const payload: Record<string, unknown> = {
       id: server.id, name: server.name, host: server.host,
       webqueryPort: server.webqueryPort, useHttps: server.useHttps,
       sshPort: server.sshPort, hasSshCredentials: !!server.sshUsername && !!server.sshPassword,
       enabled: server.enabled, isDemo: server.isDemo, createdAt: server.createdAt,
-    });
+    };
+    if (req.user?.role === 'admin') {
+      Object.assign(payload, metricsAdminFields(server));
+    }
+    res.json(payload);
   } catch (err) { next(err); }
 });
 
@@ -156,7 +197,10 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
     const id = parseInt(String(req.params.configId));
     const data: any = {};
 
-    const fields = ['name', 'host', 'webqueryPort', 'apiKey', 'useHttps', 'sshPort', 'sshUsername', 'sshPassword', 'enabled'];
+    const fields = [
+      'name', 'host', 'webqueryPort', 'apiKey', 'useHttps', 'sshPort', 'sshUsername', 'sshPassword', 'enabled',
+      'metricsEnabled', 'metricsPort', 'metricsHost',
+    ];
     for (const field of fields) {
       if (req.body[field] !== undefined) {
         // Don't overwrite secrets/SSH username with empty strings (edit form omits unchanged secrets)
@@ -171,6 +215,19 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
         }
         if (field === 'sshPort') {
           data[field] = validateTsServerPort(req.body[field], 10022);
+          continue;
+        }
+        if (field === 'metricsPort') {
+          data[field] = validateTsServerPort(req.body[field], DEFAULT_METRICS_PORT);
+          continue;
+        }
+        if (field === 'metricsHost') {
+          const parsed = parseOptionalMetricsHost(req.body[field]);
+          if (parsed !== undefined) data[field] = parsed;
+          continue;
+        }
+        if (field === 'metricsEnabled') {
+          data[field] = Boolean(req.body[field]);
           continue;
         }
         // H8: Encrypt sensitive fields

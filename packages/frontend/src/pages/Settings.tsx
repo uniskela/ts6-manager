@@ -468,6 +468,9 @@ function ConnectionsTab() {
       webqueryPort: parseInt(form.webqueryPort, 10),
       useHttps: form.useHttps,
       sshPort: parseInt(form.sshPort, 10),
+      metricsEnabled: form.metricsEnabled,
+      metricsPort: parseInt(form.metricsPort, 10) || 9187,
+      metricsHost: form.metricsHost.trim() ? form.metricsHost.trim() : null,
     };
     if (form.apiKey) payload.apiKey = form.apiKey;
     if (form.sshUsername) payload.sshUsername = form.sshUsername;
@@ -501,6 +504,9 @@ function ConnectionsTab() {
       sshPort: String(server.sshPort || 10022),
       sshUsername: '',
       sshPassword: '',
+      metricsEnabled: Boolean(server.metricsEnabled),
+      metricsPort: String(server.metricsPort || 9187),
+      metricsHost: server.metricsHost || '',
     });
     setEditId(server.id);
     setShowAdd(true);

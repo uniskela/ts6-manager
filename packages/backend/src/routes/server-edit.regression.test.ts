@@ -21,7 +21,9 @@ test('create then edit SSH settings persists encrypted secrets and refreshes eve
     botFlow: { findMany: async () => [{ id: 3 }] },
   };
   app.locals.connectionPool = {
-    addClient: () => {}, refreshClient: async () => { assert.equal(decrypt(stored.apiKey), apiKey); refreshed.push('webquery'); },
+    addClient: () => {},
+    syncMetricsClient: () => {},
+    refreshClient: async () => { assert.equal(decrypt(stored.apiKey), apiKey); refreshed.push('webquery'); },
   };
   app.locals.botEngine = {
     getEventBridge: () => ({ reconnectConfig: async (id: number) => {

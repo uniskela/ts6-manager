@@ -85,6 +85,9 @@ export const FIELD_HELP = {
   sshPort: 'SSH ServerQuery port (default 10022). Used for file browser, bot events, and music bot chat commands.',
   sshUsername: 'ServerQuery SSH username (commonly serveradmin).',
   sshPassword: 'ServerQuery SSH password. Stored encrypted; leave blank when editing to keep the existing password.',
+  metricsEnabled: 'Opt-in scrape of the TeamSpeak native Prometheus metrics listener for richer dashboard capacity/traffic data. Keep the metrics port private — it is unauthenticated.',
+  metricsPort: 'TeamSpeak metrics HTTP port (default 9187). Separate from WebQuery; does not use HTTPS or the API key.',
+  metricsHost: 'Optional host override when the metrics listener binds a different address than WebQuery. Leave blank to use the WebQuery host.',
 } as const;
 
 export const FEATURE_MATRIX = [
@@ -177,6 +180,9 @@ export const DEFAULT_CONNECTION_FORM = {
   sshPort: '10022',
   sshUsername: '',
   sshPassword: '',
+  metricsEnabled: false,
+  metricsPort: '9187',
+  metricsHost: '',
 };
 
 export type ConnectionFormState = typeof DEFAULT_CONNECTION_FORM;

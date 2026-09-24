@@ -39,6 +39,11 @@ export interface ServerConfig {
   hasSshCredentials: boolean;
   enabled: boolean;
   createdAt: string;
+  /** Admin-only: opt-in native metrics scrape. */
+  metricsEnabled?: boolean;
+  metricsPort?: number;
+  /** Admin-only: optional metrics bind host override (null/omit = WebQuery host). */
+  metricsHost?: string | null;
 }
 
 export interface CreateServerConfig {
@@ -50,6 +55,9 @@ export interface CreateServerConfig {
   sshPort: number;
   sshUsername?: string;
   sshPassword?: string;
+  metricsEnabled?: boolean;
+  metricsPort?: number;
+  metricsHost?: string | null;
 }
 
 export interface UpdateServerConfig {
@@ -62,6 +70,9 @@ export interface UpdateServerConfig {
   sshUsername?: string;
   sshPassword?: string;
   enabled?: boolean;
+  metricsEnabled?: boolean;
+  metricsPort?: number;
+  metricsHost?: string | null;
 }
 
 /** Staged WebQuery connection diagnostics (#91 Slice 2). */
@@ -90,6 +101,22 @@ export interface ConnectionDiagnosticReport {
 }
 
 // Dashboard
+export type DashboardWebQuerySourceStatus = 'current' | 'unavailable';
+export type DashboardMetricsSourceStatus = 'disabled' | 'current' | 'unavailable';
+export type DashboardMetricsUnavailableReason = 'timeout' | 'unreachable' | 'invalid' | 'unscoped';
+
+export interface DashboardDataSource {
+  webquery: {
+    status: DashboardWebQuerySourceStatus;
+    fetchedAt?: string;
+  };
+  metrics: {
+    status: DashboardMetricsSourceStatus;
+    fetchedAt?: string;
+    reason?: DashboardMetricsUnavailableReason;
+  };
+}
+
 export interface DashboardData {
   serverName: string;
   platform: string;
@@ -104,6 +131,8 @@ export interface DashboardData {
   };
   packetloss: number;
   ping: number;
+  /** Composite provenance — never label mixed responses as metrics-only. */
+  dataSource?: DashboardDataSource;
 }
 
 // Channel operations
