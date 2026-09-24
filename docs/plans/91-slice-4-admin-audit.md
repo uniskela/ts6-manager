@@ -1,6 +1,6 @@
 # Plan: #91 Slice 4 — Administrative audit
 
-Status: **design approved (Codex analysis); implementation not started**.  
+Status: **implementation in progress / shipped via feature PR** (see PR).  
 Design attribution: Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
 
 Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Prefer several small PRs with coverage documented until complete. Do not merge Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) based on this plan.

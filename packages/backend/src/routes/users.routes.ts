@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { validatePassword } from '../utils/validate-password.js';
+import { actorFromRequest, recordLocalSuccess } from '../audit/index.js';
 
 const VALID_ROLES = ['admin', 'viewer'];
 
@@ -34,9 +35,19 @@ userRoutes.post('/', async (req: Request, res: Response, next) => {
 
     const prisma = req.app.locals.prisma;
     const passwordHash = await bcrypt.hash(password, 12);
-    const user = await prisma.user.create({
-      data: { username, passwordHash, displayName, role: assignedRole },
-    });
+    // Never audit password / passwordHash
+    const { result: user } = await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'user.create',
+        target: { type: 'user' },
+      },
+      async (tx) => tx.user.create({
+        data: { username, passwordHash, displayName, role: assignedRole },
+      }),
+      { resolveTargetId: (created) => created.id },
+    );
 
     res.status(201).json({ id: user.id, username: user.username });
   } catch (err) { next(err); }
@@ -60,7 +71,17 @@ userRoutes.put('/:userId', async (req: Request, res: Response, next) => {
       data.passwordHash = await bcrypt.hash(req.body.password, 12);
     }
 
-    await prisma.user.update({ where: { id }, data });
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'user.update',
+        target: { type: 'user', id },
+      },
+      async (tx) => {
+        await tx.user.update({ where: { id }, data });
+      },
+    );
     res.status(204).send();
   } catch (err) { next(err); }
 });
@@ -70,7 +91,17 @@ userRoutes.delete('/:userId', async (req: Request, res: Response, next) => {
     const prisma = req.app.locals.prisma;
     const id = parseInt(String(req.params.userId));
     if (id === req.user!.id) throw new AppError(400, 'Cannot delete your own account');
-    await prisma.user.delete({ where: { id } });
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'user.delete',
+        target: { type: 'user', id },
+      },
+      async (tx) => {
+        await tx.user.delete({ where: { id } });
+      },
+    );
     res.status(204).send();
   } catch (err) { next(err); }
 });

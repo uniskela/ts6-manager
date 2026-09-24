@@ -15,6 +15,7 @@ import type { JwtPayload } from '@ts6/common';
 import fs from 'fs';
 import path from 'path';
 import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
+import { startAuditRetention } from './audit/index.js';
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 
 async function main() {
@@ -145,6 +146,7 @@ async function main() {
   await musicCommandHandler.refreshAllBotChannels();
 
   const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
+  const stopAuditRetention = startAuditRetention(prisma);
 
   server.listen(config.port, () => {
     console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);
@@ -156,6 +158,7 @@ async function main() {
   const shutdown = async () => {
     console.log('\n[TS6 WebUI] Shutting down...');
     stopIptvAutoRefresh();
+    stopAuditRetention();
     await voiceBotManager.stopAll();
     await botEngine.destroy();
     connectionPool.destroy();

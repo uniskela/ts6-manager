@@ -3,6 +3,10 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { AppError, TSApiError } from '../middleware/error-handler.js';
+import {
+  actorFromRequest,
+  runRemoteAudited,
+} from '../audit/index.js';
 
 export const clientRoutes: Router = Router({ mergeParams: true });
 
@@ -199,18 +203,46 @@ clientRoutes.get('/:clid', async (req: Request, res: Response, next) => {
 
 clientRoutes.post('/:clid/kick', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
-    const result = await getClient(req).execute(getSid(req), 'clientkick', {
-      clid: String(req.params.clid), reasonid: req.body.reasonid || 5, reasonmsg: req.body.reasonmsg,
-    });
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
+    // Intentionally omit reasonmsg from audit — free-text / may contain secrets
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.kick',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: String(req.params.clid) },
+      },
+      () => getClient(req).execute(sid, 'clientkick', {
+        clid: String(req.params.clid), reasonid: req.body.reasonid || 5, reasonmsg: req.body.reasonmsg,
+      }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
 
 clientRoutes.post('/:clid/ban', requireRole('admin'), async (req: Request, res: Response, next) => {
   try {
-    const result = await getClient(req).execute(getSid(req), 'banclient', {
-      clid: String(req.params.clid), time: req.body.time || 0, banreason: req.body.banreason,
-    });
+    const prisma = req.app.locals.prisma;
+    const connectionId = parseInt(String(req.params.configId), 10);
+    const sid = getSid(req);
+    // Intentionally omit banreason from audit
+    const result = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'client.ban',
+        connectionId,
+        virtualServerId: sid,
+        target: { type: 'client', id: String(req.params.clid) },
+      },
+      () => getClient(req).execute(sid, 'banclient', {
+        clid: String(req.params.clid), time: req.body.time || 0, banreason: req.body.banreason,
+      }),
+    );
     res.json(result);
   } catch (err) { next(err); }
 });
