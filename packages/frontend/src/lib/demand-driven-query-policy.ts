@@ -6,7 +6,10 @@
  * intervals mark stale / coverage-stale without starting a scan.
  */
 
-export const EXPENSIVE_DIAGNOSTIC_QUERY_ROOTS = ['file-summaries'] as const;
+export const EXPENSIVE_DIAGNOSTIC_QUERY_ROOTS = [
+  'file-summaries',
+  'runtime-media-diagnostics',
+] as const;
 
 export type DemandDrivenKind = 'expensive-diagnostic' | 'ordinary';
 
@@ -86,8 +89,9 @@ export function channelCoverageKey(channelIds: readonly number[]): string {
 }
 
 /**
- * Page-entry attempts keyed by connectionScope. Survives `/files` remounts within
- * the SPA document (same pattern as safe-ui latch); full reloads clear the map.
+ * Page-entry attempts keyed by connectionScope (or a fixed global scope such as
+ * runtime-media). Survives remounts within the SPA document; full reloads clear
+ * the map.
  */
 const pageEntryAttempts = new Map<string, { offlineUnchecked: boolean }>();
 
@@ -173,6 +177,9 @@ export type PageEntryScanDecision =
   | { action: 'skip'; reason: 'missing-context' | 'already-attempted' | 'offline' }
   | { action: 'authorize-entry-scan'; scope: string };
 
+/** Fixed scope for instance-global runtime/media probes (not per-connection). */
+export const RUNTIME_MEDIA_DIAGNOSTICS_SCOPE = 'runtime-media';
+
 /**
  * One automatic opportunity per connection scope after context is valid.
  * Offline entry does not authorize a deferred scan — callers show "Not checked."
@@ -195,6 +202,23 @@ export function decidePageEntryScan(input: {
     return { action: 'skip', reason: 'offline' };
   }
   return { action: 'authorize-entry-scan', scope };
+}
+
+/**
+ * One automatic opportunity for a global (non-connection) expensive diagnostic.
+ * Offline entry shows "Not checked." and does not defer a probe until reconnect.
+ */
+export function decideGlobalPageEntryScan(input: {
+  scope: string;
+  online: boolean;
+}): PageEntryScanDecision {
+  if (hasConsumedPageEntryAttempt(input.scope)) {
+    return { action: 'skip', reason: 'already-attempted' };
+  }
+  if (!input.online) {
+    return { action: 'skip', reason: 'offline' };
+  }
+  return { action: 'authorize-entry-scan', scope: input.scope };
 }
 
 export type DiagnosticTrigger =

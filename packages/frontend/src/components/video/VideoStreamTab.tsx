@@ -20,6 +20,7 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
+import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
 
 const PRESETS = [
   { value: '480p', label: '480p (854x480, 1 Mbps)' },
@@ -102,6 +103,10 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          <RuntimeMediaDiagnostics
+            focus={['sidecar', 'ffmpeg', 'ffprobe', 'yt-dlp']}
+            showPrerequisite
+          />
           {!isBotConnected && (
             <p className="text-sm text-muted-foreground">
               Bot must be connected to start video streaming.

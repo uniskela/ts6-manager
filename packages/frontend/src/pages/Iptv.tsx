@@ -25,6 +25,7 @@ import { toast } from 'sonner';
 import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage } from '@ts6/common';
 import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
+import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
 
 const PRESETS = [
   { value: '480p', label: '480p' },
@@ -94,6 +95,10 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
 
   return (
     <div className="space-y-3">
+      <RuntimeMediaDiagnostics
+        focus={['sidecar', 'ffmpeg', 'yt-dlp']}
+        showPrerequisite
+      />
       {/* Streamer controls */}
       <div className="flex flex-wrap items-end gap-2 rounded-md border p-2.5">
         <div className="space-y-1">

@@ -53,4 +53,6 @@ If a stream does not start, check:
 3. the media volume is mounted at the same path in both containers; and
 4. the source URL is still available to yt-dlp/FFmpeg.
 
+Use the Runtime / media strip beside Video streaming or IPTV controls (Refresh) for a bounded on-demand sidecar and tool probe. Routine music-bot status polling does not call the sidecar health endpoint.
+
 See [Troubleshooting](troubleshooting.md) for common deployment checks.

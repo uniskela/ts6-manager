@@ -100,6 +100,30 @@ export interface ConnectionDiagnosticReport {
   version?: string;
 }
 
+/** Bounded runtime/media executable + sidecar probes (#91 Slice 6 PR5). */
+export type RuntimeMediaStageId = 'yt-dlp' | 'ffmpeg' | 'ffprobe' | 'sidecar';
+export type RuntimeMediaStageStatus = DiagnosticStageStatus;
+export type RuntimeMediaOverall = DiagnosticOverall;
+export type RuntimeMediaSidecarMode = 'url' | 'local';
+
+export interface RuntimeMediaStageResult {
+  id: RuntimeMediaStageId;
+  status: RuntimeMediaStageStatus;
+  /** Operator-safe message — never secrets or raw process dumps. */
+  message: string;
+  version?: string;
+  code?: string;
+}
+
+export interface RuntimeMediaDiagnosticReport {
+  checkedAt: string;
+  overall: RuntimeMediaOverall;
+  stages: RuntimeMediaStageResult[];
+  meta: {
+    sidecarMode: RuntimeMediaSidecarMode;
+  };
+}
+
 // Dashboard
 export type DashboardWebQuerySourceStatus = 'current' | 'unavailable';
 export type DashboardMetricsSourceStatus = 'disabled' | 'current' | 'unavailable';

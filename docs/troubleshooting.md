@@ -76,11 +76,15 @@ For a split-stack deployment verify:
 - both containers share the same media volume path; and
 - sidecar port 9800 is reachable internally without being exposed publicly.
 
+In the UI, use **Refresh** on the Runtime / media strip beside Video, IPTV, or Settings → YouTube. That runs a bounded on-demand probe (yt-dlp, ffmpeg, ffprobe, sidecar). Music bot status polling does not run these probes.
+
 ## YouTube/media extraction problems
 
 yt-dlp is bundled into the production backend image and does not self-update at runtime.
 
 If an extractor has changed upstream, pull a newer TS6 Manager image or rebuild the image so a newer bundled yt-dlp can be installed.
+
+The Settings → YouTube Runtime / media strip shows the bundled yt-dlp version when you refresh diagnostics. It never updates the tool in place.
 
 For media requiring login, age, or member access, configure an appropriate cookie file and protect it like a credential.
 
