@@ -813,3 +813,57 @@ test('cross-channel !help is skipped when a voice bot is already in the channel'
   await f.handler.onCrossChannelTextMessage(9, 1, 20, { invokerid: '2', msg: '!help' });
   assert.equal(sent.length, 0);
 });
+
+test('parkMainHelper does not follow a starting music bot — rebalances to human channel', async () => {
+  // Regression: reconnect status=starting used to look "absent", so the SSH helper
+  // parked onto the bot's channel and abandoned humans elsewhere (silent !here/!help).
+  const bot = makeBot(1, {
+    status: 'starting',
+    channelId: 1,
+    ts3ClientId: 101,
+  });
+  const f = fixture([bot]);
+  f.handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '1',
+    commandChannelIds: [],
+  });
+  const parked: number[] = [];
+  f.handler.eventBridge = {
+    ensureHelperInChannel: async (_c: number, _s: number, cid: number) => {
+      parked.push(cid);
+      return true;
+    },
+    executeCommand: async () =>
+      [
+        'clid=101 cid=1 client_type=0', // starting music bot in Default
+        'clid=2 cid=34 client_type=0', // human in TinklyDink
+      ].join('|'),
+  };
+
+  await f.handler.parkMainHelper(9, 1, 1);
+  assert.deepEqual(parked, [34], 'helper must cover the human channel, not the starting bot');
+});
+
+test('parkMainHelper still refuses a connected music-bot home and rebalances', async () => {
+  const bot = makeBot(1, { status: 'connected', channelId: 1, ts3ClientId: 101 });
+  const f = fixture([bot]);
+  f.handler.botChannelConfig.set(1, {
+    serverConfigId: 9,
+    virtualServerId: 1,
+    defaultChannel: '1',
+    commandChannelIds: [],
+  });
+  const parked: number[] = [];
+  f.handler.eventBridge = {
+    ensureHelperInChannel: async (_c: number, _s: number, cid: number) => {
+      parked.push(cid);
+      return true;
+    },
+    executeCommand: async () =>
+      'clid=101 cid=1 client_type=0|clid=2 cid=34 client_type=0',
+  };
+  await f.handler.parkMainHelper(9, 1, 1);
+  assert.deepEqual(parked, [34]);
+});

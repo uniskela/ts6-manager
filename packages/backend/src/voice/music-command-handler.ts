@@ -169,6 +169,17 @@ function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
 }
 
+/**
+ * True when a music voice client is (or is connecting) in `channelId`.
+ * Includes `starting` — reconnect races must not park the SSH helper onto the
+ * bot's channel and abandon humans elsewhere (cross-channel !here/!help go silent).
+ */
+function botOccupiesChannel(bot: VoiceBot, channelId: number): boolean {
+  if (channelId <= 0) return false;
+  if (bot.status === 'stopped' || bot.status === 'error') return false;
+  return bot.getCurrentChannelId() === channelId;
+}
+
 function hereActionKey(
   serverConfigId: number,
   virtualServerId: number,
@@ -227,6 +238,8 @@ export class MusicCommandHandler {
   /** Channels the roaming helper recently covered (key: configId:sid) — for mapping only. */
   private autoCommandChannels = new Map<string, number[]>();
   private mainHelperParkTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Debounced rebalance after music-bot moves (do not follow the bot with the helper). */
+  private mainHelperRebalanceTimers = new Map<string, ReturnType<typeof setTimeout>>();
   /** Coalesce concurrent bot refreshes for the same connection/SID pair. */
   private syncingCommandPairs = new Map<string, Promise<void>>();
   /** Pairs retained under the `music` EventBridge session owner. */
@@ -243,6 +256,7 @@ export class MusicCommandHandler {
       this.eventBridgeListening = true;
       bridge.on('tsEvent', (configId, sid, eventName, data) => {
         // Park the main SSH helper in the human's channel (no second Query login).
+        // Never follow a music voice bot — that abandons cross-channel humans.
         if (
           (eventName === 'notifycliententerview' || eventName === 'notifyclientmoved') &&
           !data.__cmd_listener_channel_id
@@ -251,8 +265,13 @@ export class MusicCommandHandler {
             data.ctid || data.cid || data.client_channel_id || '0',
             10,
           );
+          const clid = parseInt(data.clid || '0', 10);
           if (cid > 0 && String(data.client_type || '0') !== '1') {
-            this.scheduleMainHelperPark(configId, sid, cid);
+            if (clid > 0 && this.musicBotClidsOnServer(configId, sid).has(clid)) {
+              this.scheduleMainHelperRebalance(configId, sid);
+            } else {
+              this.scheduleMainHelperPark(configId, sid, cid);
+            }
           }
         }
         if (eventName !== 'notifytextmessage') return;
@@ -443,8 +462,9 @@ export class MusicCommandHandler {
       if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
       hasBots = true;
       const bot = this.voiceBotManager.getBot(botId);
-      // Voice bot already in that channel — it hears chat; don't fight for the cid.
-      if (bot && isBotSummonable(bot) && bot.getCurrentChannelId() === channelId) {
+      // Voice bot already covers that channel (incl. reconnect/starting) — cover humans elsewhere.
+      if (bot && botOccupiesChannel(bot, channelId)) {
+        this.scheduleMainHelperRebalance(configId, sid);
         return;
       }
     }
@@ -466,17 +486,71 @@ export class MusicCommandHandler {
     );
   }
 
+  /**
+   * Re-park the main SSH helper into a human-only channel (never a music-bot home).
+   * Used after music bots move/reconnect so cross-channel cmds keep working.
+   */
+  private scheduleMainHelperRebalance(configId: number, sid: number): void {
+    if (!this.eventBridge) return;
+    let hasBots = false;
+    for (const cfg of this.botChannelConfig.values()) {
+      if (cfg.serverConfigId === configId && cfg.virtualServerId === sid) {
+        hasBots = true;
+        break;
+      }
+    }
+    if (!hasBots) return;
+
+    const pairKey = `${configId}:${sid}`;
+    const prev = this.mainHelperRebalanceTimers.get(pairKey);
+    if (prev) clearTimeout(prev);
+    this.mainHelperRebalanceTimers.set(
+      pairKey,
+      setTimeout(() => {
+        this.mainHelperRebalanceTimers.delete(pairKey);
+        void this.rebalanceMainHelper(configId, sid).catch((err: any) => {
+          console.warn(
+            `[MusicCmd] Main helper rebalance ${pairKey}: ${err?.message || err}`,
+          );
+        });
+      }, MAIN_HELPER_PARK_DEBOUNCE_MS),
+    );
+  }
+
+  private async rebalanceMainHelper(configId: number, sid: number): Promise<void> {
+    if (!this.eventBridge) return;
+    const occupied = await this.discoverOccupiedCommandChannels(configId, sid);
+    const pairKey = `${configId}:${sid}`;
+    if (occupied.length === 0) {
+      console.log(
+        `[MusicCmd] No human-occupied channel to park helper for ${pairKey} yet ` +
+          `(will park on cliententer/move)`,
+      );
+      return;
+    }
+    const parkCid = occupied[0]!;
+    const ok = await this.eventBridge.ensureHelperInChannel(configId, sid, parkCid);
+    if (!ok) return;
+    this.autoCommandChannels.set(pairKey, [parkCid]);
+    this.mapBotsToAutoChannels(configId, sid, [parkCid]);
+    console.log(
+      `[MusicCmd] Main SSH helper listening in cid=${parkCid} for ${pairKey} ` +
+        `(rebalance; occupied=[${occupied.join(',')}])`,
+    );
+  }
+
   private async parkMainHelper(
     configId: number,
     sid: number,
     channelId: number,
   ): Promise<void> {
     if (!this.eventBridge || channelId <= 0) return;
-    // Re-check voice ownership after debounce.
+    // Re-check voice ownership after debounce (incl. starting/reconnect).
     for (const [botId, cfg] of this.botChannelConfig) {
       if (cfg.serverConfigId !== configId || cfg.virtualServerId !== sid) continue;
       const bot = this.voiceBotManager.getBot(botId);
-      if (bot && isBotSummonable(bot) && bot.getCurrentChannelId() === channelId) {
+      if (bot && botOccupiesChannel(bot, channelId)) {
+        await this.rebalanceMainHelper(configId, sid);
         return;
       }
     }
@@ -1452,7 +1526,8 @@ export class MusicCommandHandler {
         continue;
       }
       const b = this.voiceBotManager.getBot(botId);
-      if (!b || !isBotSummonable(b)) continue;
+      // Include starting/reconnect so helper park does not treat the bot as a human.
+      if (!b || b.status === 'stopped' || b.status === 'error') continue;
       const clid = b.ts3ClientId || 0;
       if (clid > 0) clids.add(clid);
     }
