@@ -1,15 +1,15 @@
 # Plan: #91 Slice 3 — Logs 2.0
 
-Status: **core shipped on `main`** ([#132](https://github.com/uniskela/ts6-manager/pull/132), [#137](https://github.com/uniskela/ts6-manager/pull/137), [#139](https://github.com/uniskela/ts6-manager/pull/139), [#142](https://github.com/uniskela/ts6-manager/pull/142)). Remaining honest history/refresh-label polish is Slice 6 PR 6 ([#155](https://github.com/uniskela/ts6-manager/pull/155), in flight). Acceptance roll-up: [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md).  
+Status: **shipped on `main`** ([#132](https://github.com/uniskela/ts6-manager/pull/132), [#137](https://github.com/uniskela/ts6-manager/pull/137), [#139](https://github.com/uniskela/ts6-manager/pull/139), [#142](https://github.com/uniskela/ts6-manager/pull/142)), with Slice 6 history/refresh-label honesty via [#155](https://github.com/uniskela/ts6-manager/pull/155). Acceptance roll-up: [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md).  
 Design attribution (historical): Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
 
-Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until Slice 6 acceptance is honest.
+Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until release-note curation matches shipped behavior.
 
 ## Findings
 
 1. The admin-only backend forwards `lines`, `reverse`, `instance`, and `begin_pos` to `logview`.
 2. The UI fetches one batch of 50–500 lines, filters that batch locally, displays raw timestamps, and classifies unknown levels as INFO.
-3. It does not expose pagination or explicit query-error presentation.
+3. **Historical:** earlier UI lacked pagination and explicit query-error presentation. **Current:** bounded Previous/Older cursor paging plus explicit query-error / Retry handling (including Slice 6 [#155](https://github.com/uniskela/ts6-manager/pull/155) honesty for interrupted refreshes).
 4. Shared date/time, page-header, refresh, and stale-data components already exist.
 
 ## Assumptions

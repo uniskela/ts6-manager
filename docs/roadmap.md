@@ -50,14 +50,14 @@ Shipped on `main`:
 
 - optional TeamSpeak native metrics with authenticated WebQuery fallback;
 - staged connection diagnostics (reachability, authentication, read permissions, virtual-server access);
-- Server Logs 2.0 paging, filters, and context labels;
-- bounded administrative audit and TeamSpeak activity journal (no secrets);
+- Server Logs 2.0 paging, filters, context labels, and honest refresh/interrupted states;
+- bounded administrative audit and TeamSpeak activity journal (no secrets), with scope-safe pagination and capture status;
 - demand-driven storage summaries and runtime/media probes (no permanent expensive polling); and
 - action-local permission / compatibility guidance.
 
-Still open before calling Slice 6 complete: history and capture status-label honesty ([#155](https://github.com/uniskela/ts6-manager/pull/155)). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until that lands and acceptance still matches `main`.
-
 Appearance 1.8 ([#101](https://github.com/uniskela/ts6-manager/issues/101)) — backgrounds/motion and custom CSS with `?safe-ui=1` recovery — is shipped (#122 / #128).
+
+Acceptance evidence: [`docs/plans/91-slice-6-acceptance.md`](plans/91-slice-6-acceptance.md). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until release-note curation matches shipped behavior.
 
 Metrics and diagnostics remain backend-mediated, access-controlled, and scoped to configured TeamSpeak servers. This is not a bundled monitoring stack or long-term time-series platform.
 
