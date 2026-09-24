@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json",
     "test": "playwright test",
-    "test:unit": "tsx --test tests/unit/**/*.test.ts",
+    "test:unit": "tsx --test tests/unit/*.test.ts",
     "docs:screenshots": "tsc -b && vite build && UPDATE_DOCS_SCREENSHOTS=1 playwright test tests/docs-screenshots.spec.ts"
   },
   "dependencies": {
