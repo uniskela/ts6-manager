@@ -222,9 +222,9 @@ export default function ActivityJournal() {
         </Select>
       </div>
 
-      <div className="rounded-md border border-border bg-card overflow-hidden shadow-sm">
+      <div className="min-w-0 rounded-md border border-border bg-card overflow-hidden shadow-sm">
         <ScrollArea className="h-[max(18rem,calc(100dvh-22rem))] sm:h-[calc(100dvh-300px)]">
-          <div className="divide-y divide-border/60">
+          <div className="min-w-0 divide-y divide-border/60">
             {historyQuery.isLoading ? (
               <p className="text-center text-muted-foreground text-sm py-10">Loading…</p>
             ) : items.length === 0 ? (
@@ -234,30 +234,45 @@ export default function ActivityJournal() {
                   : 'Capture is disabled. Enable capture to record joins and leaves.'}
               </p>
             ) : (
-              items.map((entry: ClientActivityEntry) => (
-                <div
-                  key={entry.id}
-                  className="flex flex-wrap items-start gap-x-4 gap-y-1 px-3 py-2 text-sm"
-                >
-                  <span className="text-xs text-muted-foreground tabular-nums min-w-[10rem]">
-                    {formatWhen(entry.observedAt)}
-                  </span>
-                  <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                    {entry.eventKind}
-                  </Badge>
-                  <span className="font-medium">{entry.nickname || `clid ${entry.clientId}`}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {classLabel(entry.classification)}
-                    {entry.databaseId != null ? ` · dbid ${entry.databaseId}` : ''}
-                    {entry.uniqueId ? ` · ${entry.uniqueId.slice(0, 12)}…` : ''}
-                  </span>
-                  {entry.identityProvenance !== 'event' && entry.identityProvenance !== 'none' && (
-                    <span className="text-[10px] text-muted-foreground">
-                      identity: {entry.identityProvenance}
+              items.map((entry: ClientActivityEntry) => {
+                const identityBits = [
+                  classLabel(entry.classification),
+                  entry.databaseId != null ? `dbid ${entry.databaseId}` : null,
+                  entry.uniqueId || null,
+                ].filter(Boolean);
+                const identityLine = identityBits.join(' · ');
+                return (
+                  <div
+                    key={entry.id}
+                    className="flex w-full min-w-0 flex-col gap-1 px-3 py-2 text-sm sm:flex-row sm:items-baseline sm:gap-x-4"
+                  >
+                    <span className="shrink-0 text-xs text-muted-foreground tabular-nums sm:w-[10rem]">
+                      {formatWhen(entry.observedAt)}
                     </span>
-                  )}
-                </div>
-              ))
+                    <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <Badge variant="outline" className="shrink-0 text-[10px] uppercase tracking-wide">
+                        {entry.eventKind}
+                      </Badge>
+                      <span className="shrink-0 font-medium">
+                        {entry.nickname || `clid ${entry.clientId}`}
+                      </span>
+                      {identityLine ? (
+                        <span
+                          className="min-w-0 flex-1 basis-[12rem] truncate text-xs text-muted-foreground font-mono-data"
+                          title={entry.uniqueId || identityLine}
+                        >
+                          {identityLine}
+                        </span>
+                      ) : null}
+                      {entry.identityProvenance !== 'event' && entry.identityProvenance !== 'none' && (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          identity: {entry.identityProvenance}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })
             )}
           </div>
         </ScrollArea>
