@@ -55,6 +55,7 @@ const RETENTION_GLOBAL = 100_000;
 const NICK_MAX = 30;
 const UID_MAX = 64;
 const RETENTION_INTERVAL_MS = 5 * 60 * 1000;
+const KNOWN_BOT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
 function pairKey(configId: number, sid: number): string {
   return `${configId}:${sid}`;
@@ -97,12 +98,21 @@ export function resolveIdentityProvenance(
   return 'event';
 }
 
+/**
+ * Accept events while capturing or while reporting a gap.
+ * Block only before baseline (`connecting`) and when disabled.
+ */
+export function isCaptureAccepting(status: ActivityCaptureStatus | undefined): boolean {
+  return status === 'capturing' || status === 'interrupted' || status === 'persistence_error';
+}
+
 export class ActivityJournalService {
   private listening = false;
   private targets = new Map<string, boolean>();
   private status = new Map<string, ActivityCaptureStatus>();
   private queues = new Map<string, PendingRecord[]>();
   private flushing = new Map<string, boolean>();
+  private flushAgain = new Map<string, boolean>();
   private dropped = new Map<string, number>();
   private lastError = new Map<string, string | null>();
   private lastPersistedAt = new Map<string, Date | null>();
@@ -110,6 +120,7 @@ export class ActivityJournalService {
   private baselineClids = new Map<string, Set<string>>();
   private knownBotUids = new Set<string>();
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
+  private knownBotTimer: ReturnType<typeof setInterval> | null = null;
   private readonly onTsEventBound = (
     configId: number,
     sid: number,
@@ -141,6 +152,11 @@ export class ActivityJournalService {
         console.warn(`[ActivityJournal] Retention failed: ${err.message}`);
       });
     }, RETENTION_INTERVAL_MS);
+    this.knownBotTimer = setInterval(() => {
+      void this.refreshKnownBotUids().catch((err) => {
+        console.warn(`[ActivityJournal] Known-bot refresh failed: ${err.message}`);
+      });
+    }, KNOWN_BOT_REFRESH_INTERVAL_MS);
     console.log('[ActivityJournal] Started');
   }
 
@@ -154,13 +170,43 @@ export class ActivityJournalService {
       clearInterval(this.retentionTimer);
       this.retentionTimer = null;
     }
+    if (this.knownBotTimer) {
+      clearInterval(this.knownBotTimer);
+      this.knownBotTimer = null;
+    }
     for (const key of [...this.targets.keys()]) {
+      await this.drainQueue(key);
       const [configId, sid] = key.split(':').map(Number);
       await this.eventBridge.releaseSession('journal', configId, sid);
     }
     this.targets.clear();
     this.status.clear();
     this.baselineClids.clear();
+    this.queues.clear();
+  }
+
+  /**
+   * Release journal ownership and purge journal rows for a deleted server config.
+   */
+  async releaseConfig(serverConfigId: number): Promise<void> {
+    const prefix = `${serverConfigId}:`;
+    for (const key of [...this.targets.keys()]) {
+      if (!key.startsWith(prefix)) continue;
+      await this.drainQueue(key);
+      const sid = parseInt(key.slice(prefix.length), 10);
+      if (Number.isFinite(sid)) {
+        await this.eventBridge.releaseSession('journal', serverConfigId, sid);
+      }
+      this.targets.delete(key);
+      this.status.delete(key);
+      this.baselineClids.delete(key);
+      this.queues.delete(key);
+      this.dropped.delete(key);
+      this.lastError.delete(key);
+      this.lastPersistedAt.delete(key);
+    }
+    await this.prisma.activityJournalTarget.deleteMany({ where: { serverConfigId } });
+    await this.prisma.clientActivity.deleteMany({ where: { serverConfigId } });
   }
 
   async refreshKnownBotUids(): Promise<void> {
@@ -210,11 +256,11 @@ export class ActivityJournalService {
         await this.onSshConnected(serverConfigId, virtualServerId);
       }
     } else {
+      await this.drainQueue(key);
       this.targets.set(key, false);
       this.status.set(key, 'disabled');
       this.baselineClids.delete(key);
       await this.eventBridge.releaseSession('journal', serverConfigId, virtualServerId);
-      // Keep target row; status disabled.
     }
   }
 
@@ -357,8 +403,8 @@ export class ActivityJournalService {
   ): void {
     const key = pairKey(configId, sid);
     if (this.targets.get(key) !== true) return;
-    // Wait until baseline snapshot completes — avoids journaling registration floods as joins.
-    if (this.status.get(key) !== 'capturing') return;
+    // Block only before baseline / when disabled. Gap statuses still accept events.
+    if (!isCaptureAccepting(this.status.get(key))) return;
     // Ignore command-listener duplicates — main EventBridge stream only.
     if (data.__cmd_listener_channel_id) return;
 
@@ -415,12 +461,18 @@ export class ActivityJournalService {
       knownBotUids: this.knownBotUids,
     });
 
-    const hasIdentity = CLIENT_IDENTITY_FIELDS.some((f) => Boolean(data[f]));
-    let identityProvenance: ActivityIdentityProvenance = 'none';
-    if (hasIdentity) {
-      // Native leave payloads usually omit identity; presence after EventBridge enrich ⇒ cache.
-      identityProvenance = eventKind === 'leave' ? 'cache' : 'event';
-    }
+    // Leave payloads from TS rarely include identity; presence after EventBridge enrich ⇒ cache.
+    // Joins carry identity on the native event ⇒ event.
+    const before: Record<string, string> =
+      eventKind === 'leave'
+        ? { clid: data.clid || '' }
+        : Object.fromEntries(
+            CLIENT_IDENTITY_FIELDS.filter((f) => data[f]).map((f) => [f, data[f]!]),
+          );
+    const identityProvenance =
+      eventKind === 'leave'
+        ? resolveIdentityProvenance(before, data)
+        : resolveIdentityProvenance(data, data);
 
     return {
       observedAt: new Date(),
@@ -446,7 +498,10 @@ export class ActivityJournalService {
     }
     if (queue.length >= QUEUE_CAPACITY) {
       this.dropped.set(key, (this.dropped.get(key) ?? 0) + 1);
-      if (this.status.get(key) === 'capturing') this.status.set(key, 'interrupted');
+      // Visible gap — keep accepting events (do not freeze on `interrupted`).
+      if (this.status.get(key) === 'capturing') {
+        this.status.set(key, 'interrupted');
+      }
       return;
     }
     queue.push(record);
@@ -454,33 +509,61 @@ export class ActivityJournalService {
   }
 
   private async flush(key: string): Promise<void> {
-    if (this.flushing.get(key)) return;
+    if (this.flushing.get(key)) {
+      // Enqueue raced with an in-flight flush — run again after it finishes.
+      this.flushAgain.set(key, true);
+      return;
+    }
     this.flushing.set(key, true);
     try {
-      const queue = this.queues.get(key);
-      while (queue && queue.length > 0) {
-        const batch = queue.splice(0, 50);
-        try {
-          await this.prisma.clientActivity.createMany({ data: batch });
-          this.lastPersistedAt.set(key, new Date());
-          this.lastError.set(key, null);
-          if (this.targets.get(key) === true && this.status.get(key) === 'persistence_error') {
-            const [configId, sid] = key.split(':').map(Number);
-            this.status.set(
-              key,
-              this.eventBridge.isRegistered(configId, sid) ? 'capturing' : 'interrupted',
-            );
+      do {
+        this.flushAgain.set(key, false);
+        const queue = this.queues.get(key);
+        while (queue && queue.length > 0) {
+          const batch = queue.splice(0, 50);
+          try {
+            await this.prisma.clientActivity.createMany({ data: batch });
+            this.lastPersistedAt.set(key, new Date());
+            this.lastError.set(key, null);
+            this.maybeRestoreCapturing(key);
+          } catch (err: any) {
+            this.lastError.set(key, err.message);
+            this.status.set(key, 'persistence_error');
+            this.dropped.set(key, (this.dropped.get(key) ?? 0) + batch.length);
+            // Surface the gap; continue accepting. Remaining queued items retry on next flush.
+            break;
           }
-        } catch (err: any) {
-          this.lastError.set(key, err.message);
-          this.status.set(key, 'persistence_error');
-          this.dropped.set(key, (this.dropped.get(key) ?? 0) + batch.length);
-          // Do not re-queue forever — surface the gap via droppedEvents.
-          break;
         }
-      }
+      } while (this.flushAgain.get(key));
     } finally {
       this.flushing.set(key, false);
+      // Final race: item arrived after last flushAgain clear but before unlocking.
+      if ((this.queues.get(key)?.length ?? 0) > 0) {
+        void this.flush(key);
+      }
+    }
+  }
+
+  private maybeRestoreCapturing(key: string): void {
+    if (this.targets.get(key) !== true) return;
+    const current = this.status.get(key);
+    if (current !== 'interrupted' && current !== 'persistence_error') return;
+    // Do not clear SSH-disconnect interrupted while still offline.
+    const [configId, sid] = key.split(':').map(Number);
+    if (!this.eventBridge.isRegistered(configId, sid)) return;
+    // Keep interrupted while the queue is still overflowing / non-empty after overflow
+    // only when we just successfully wrote — restore once writes succeed again.
+    this.status.set(key, 'capturing');
+  }
+
+  private async drainQueue(key: string): Promise<void> {
+    // Wait briefly for an in-flight flush, then force one more pass.
+    for (let i = 0; i < 50 && this.flushing.get(key); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await this.flush(key);
+    for (let i = 0; i < 50 && this.flushing.get(key); i++) {
+      await new Promise((r) => setTimeout(r, 20));
     }
   }
 

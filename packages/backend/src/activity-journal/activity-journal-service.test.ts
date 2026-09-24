@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   classifyClient,
+  isCaptureAccepting,
   isServerJoinEvent,
   isServerLeaveEvent,
   resolveIdentityProvenance,
@@ -48,4 +49,13 @@ test('resolveIdentityProvenance distinguishes event vs cache vs mixed', () => {
     'mixed',
   );
   assert.equal(resolveIdentityProvenance({ clid: '1' }, { clid: '1' }), 'none');
+});
+
+test('gap statuses still accept capture events', () => {
+  assert.equal(isCaptureAccepting('capturing'), true);
+  assert.equal(isCaptureAccepting('interrupted'), true);
+  assert.equal(isCaptureAccepting('persistence_error'), true);
+  assert.equal(isCaptureAccepting('connecting'), false);
+  assert.equal(isCaptureAccepting('disabled'), false);
+  assert.equal(isCaptureAccepting(undefined), false);
 });
