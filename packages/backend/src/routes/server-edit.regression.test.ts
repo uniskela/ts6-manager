@@ -19,6 +19,11 @@ test('create then edit SSH settings persists encrypted secrets and refreshes eve
       update: async ({ where, data }: any) => { assert.equal(where.id, 1); Object.assign(stored, data); return stored; },
     },
     botFlow: { findMany: async () => [{ id: 3 }] },
+    adminAuditEvent: {
+      create: async ({ data }: any) => ({ id: 'audit1', ...data }),
+      updateMany: async () => ({ count: 1 }),
+    },
+    $transaction: async (fn: any) => fn(app.locals.prisma),
   };
   app.locals.connectionPool = {
     addClient: () => {},

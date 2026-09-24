@@ -319,3 +319,33 @@ model StreamSession {
   endedAt        DateTime?
   peakViewers    Int       @default(0)
 }
+
+/// Manager administrative mutation audit (#91 Slice 4).
+/// No FKs to User/TsServerConfig — retain actor/connection IDs after deletion.
+/// Never store secrets, raw bodies, URLs, credentials, or exception text.
+model AdminAuditEvent {
+  id              String    @id @default(cuid())
+  /// Shared across attempt → completion stages for one logical operation.
+  operationId     String
+  actorUserId     Int
+  /// Snapshot at write time for display after user deletion.
+  actorUsername   String?
+  action          String
+  connectionId    Int?
+  virtualServerId Int?
+  targetType      String?
+  /// Non-secret identifier only (numeric IDs, flow id, etc.).
+  targetId        String?
+  outcome         String
+  resultCode      String?
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([operationId])
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@index([action])
+  @@index([connectionId])
+  @@index([outcome])
+  @@index([createdAt, id])
+}

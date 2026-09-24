@@ -4,6 +4,7 @@ import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
   ScrollText, Settings, Bot, Cpu, ChevronDown, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github, BookOpen, Menu,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -74,6 +75,7 @@ const navSections: NavSection[] = [
     adminOnly: true,
     items: [
       { to: '/logs', icon: ScrollText, label: 'Server Logs', adminOnly: true },
+      { to: '/audit', icon: ClipboardList, label: 'Admin Audit', adminOnly: true },
       { to: '/instance', icon: Cpu, label: 'Instance', adminOnly: true },
       { to: '/music-requests', icon: ListMusic, label: 'Music Request History', adminOnly: true },
     ],

@@ -16,6 +16,12 @@ import {
   buildFullSuccessReport,
 } from '../ts-client/connection-diagnostics.js';
 import { DEFAULT_METRICS_PORT } from '../ts-client/metrics-client.js';
+import {
+  actorFromRequest,
+  markPartial,
+  recordLocalSuccess,
+} from '../audit/index.js';
+import type { AdminAuditAction } from '@ts6/common';
 
 function parseOptionalMetricsHost(value: unknown): string | null | undefined {
   if (value === undefined) return undefined;
@@ -142,27 +148,45 @@ serverRoutes.post('/', requireRole('admin'), async (req: Request, res: Response,
     const metricsOn = Boolean(metricsEnabled);
 
     const prisma = req.app.locals.prisma;
-    // H8: Encrypt sensitive fields at rest
-    const server = await prisma.tsServerConfig.create({
-      data: {
-        name,
-        host: safeHost,
-        webqueryPort: safeWebqueryPort,
-        apiKey: encrypt(apiKey),
-        useHttps: useHttps || false,
-        sshPort: safeSshPort,
-        sshUsername: sshUsername || null,
-        sshPassword: sshPassword ? encrypt(sshPassword) : null,
-        metricsEnabled: metricsOn,
-        metricsPort: safeMetricsPort,
-        metricsHost: safeMetricsHost === undefined ? null : safeMetricsHost,
+    // H8: Encrypt sensitive fields at rest — never put apiKey/sshPassword in audit
+    const { result: server, operationId } = await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'connection.create',
+        target: { type: 'connection' },
       },
+      async (tx) => tx.tsServerConfig.create({
+        data: {
+          name,
+          host: safeHost,
+          webqueryPort: safeWebqueryPort,
+          apiKey: encrypt(apiKey),
+          useHttps: useHttps || false,
+          sshPort: safeSshPort,
+          sshUsername: sshUsername || null,
+          sshPassword: sshPassword ? encrypt(sshPassword) : null,
+          metricsEnabled: metricsOn,
+          metricsPort: safeMetricsPort,
+          metricsHost: safeMetricsHost === undefined ? null : safeMetricsHost,
+        },
+      }),
+      { resolveTargetId: (created) => created.id },
+    );
+
+    await prisma.adminAuditEvent.updateMany({
+      where: { operationId },
+      data: { connectionId: server.id },
     });
 
     // Add to connection pool (use plaintext key for connection)
     const pool: ConnectionPool = req.app.locals.connectionPool;
-    pool.addClient(server.id, server.host, server.webqueryPort, apiKey, server.useHttps);
-    pool.syncMetricsClient(server);
+    try {
+      pool.addClient(server.id, server.host, server.webqueryPort, apiKey, server.useHttps);
+      pool.syncMetricsClient(server);
+    } catch {
+      await markPartial(prisma, operationId, 'pool_refresh_failed');
+    }
 
     res.status(201).json({ id: server.id, name: server.name });
   } catch (err) { next(err); }
@@ -239,21 +263,46 @@ serverRoutes.put('/:configId', requireRole('admin'), async (req: Request, res: R
       }
     }
 
-    const server = await prisma.tsServerConfig.update({ where: { id }, data });
+    const credentialsChanged = Boolean(
+      (req.body.apiKey && req.body.apiKey !== '')
+      || (req.body.sshPassword && req.body.sshPassword !== ''),
+    );
+    const action: AdminAuditAction = credentialsChanged
+      ? 'connection.credentials_changed'
+      : 'connection.update';
+
+    const { result: server, operationId } = await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action,
+        connectionId: id,
+        target: { type: 'connection', id },
+      },
+      async (tx) => tx.tsServerConfig.update({ where: { id }, data }),
+    );
 
     // Refresh WebQuery connection pool (destroy old sockets first)
     const pool: ConnectionPool = req.app.locals.connectionPool;
-    await pool.refreshClient(id);
+    try {
+      await pool.refreshClient(id);
+    } catch {
+      await markPartial(prisma, operationId, 'pool_refresh_failed');
+    }
 
     // Force EventBridge SSH reconnect so updated SSH credentials take effect.
     // Then reload flows using this server so long-running actions/animations stop
     // holding the destroyed WebQuery client from before the refresh.
     const botEngine = req.app.locals.botEngine;
-    if (botEngine?.getEventBridge) {
-      await botEngine.getEventBridge().reconnectConfig(id);
-    }
-    if (botEngine?.reloadFlow) {
-      await reloadEnabledServerFlows(prisma, botEngine, id);
+    try {
+      if (botEngine?.getEventBridge) {
+        await botEngine.getEventBridge().reconnectConfig(id);
+      }
+      if (botEngine?.reloadFlow) {
+        await reloadEnabledServerFlows(prisma, botEngine, id);
+      }
+    } catch {
+      await markPartial(prisma, operationId, 'engine_reload_failed');
     }
 
     res.json({ id: server.id, name: server.name });
@@ -265,7 +314,18 @@ serverRoutes.delete('/:configId', requireRole('admin'), async (req: Request, res
   try {
     const prisma = req.app.locals.prisma;
     const id = parseInt(String(req.params.configId));
-    await prisma.tsServerConfig.delete({ where: { id } });
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'connection.delete',
+        connectionId: id,
+        target: { type: 'connection', id },
+      },
+      async (tx) => {
+        await tx.tsServerConfig.delete({ where: { id } });
+      },
+    );
 
     const pool: ConnectionPool = req.app.locals.connectionPool;
     pool.removeClient(id);

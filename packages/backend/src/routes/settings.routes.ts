@@ -16,6 +16,7 @@ import {
   parseVideoDuration,
   parseImportCap,
 } from '../utils/app-settings.js';
+import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
 
 const settingsRoutes: Router = Router();
 
@@ -57,35 +58,56 @@ settingsRoutes.get('/yt-cookies', requireAdmin, ytCookiesLimiter, (_req: Request
 });
 
 // POST /api/settings/yt-cookies — Upload cookie file
-settingsRoutes.post('/yt-cookies', requireAdmin, ytCookiesLimiter, upload.single('cookies'), (req: Request, res: Response, next) => {
+settingsRoutes.post('/yt-cookies', requireAdmin, ytCookiesLimiter, upload.single('cookies'), async (req: Request, res: Response, next) => {
   try {
-    if (!req.file) {
-      // Check if raw text was sent in body
-      const text = req.body?.text;
-      if (!text || typeof text !== 'string') {
-        throw new AppError(400, 'No cookie file or text provided');
-      }
-      fs.mkdirSync(COOKIE_DIR, { recursive: true });
-      fs.writeFileSync(COOKIE_PATH, text, 'utf-8');
-    } else {
-      fs.mkdirSync(COOKIE_DIR, { recursive: true });
-      fs.writeFileSync(COOKIE_PATH, req.file.buffer);
-    }
-
-    setYtCookieFile(COOKIE_PATH);
-    const size = fs.statSync(COOKIE_PATH).size;
+    const prisma = req.app.locals.prisma;
+    // Fail-closed pending audit before writing cookie material; never store cookie contents.
+    const size = await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.yt_cookies_changed',
+        target: { type: 'settings', id: 'yt-cookies' },
+      },
+      async () => {
+        if (!req.file) {
+          const text = req.body?.text;
+          if (!text || typeof text !== 'string') {
+            throw new AppError(400, 'No cookie file or text provided');
+          }
+          fs.mkdirSync(COOKIE_DIR, { recursive: true });
+          fs.writeFileSync(COOKIE_PATH, text, 'utf-8');
+        } else {
+          fs.mkdirSync(COOKIE_DIR, { recursive: true });
+          fs.writeFileSync(COOKIE_PATH, req.file.buffer);
+        }
+        setYtCookieFile(COOKIE_PATH);
+        return fs.statSync(COOKIE_PATH).size;
+      },
+    );
     console.log(`[yt-dlp] Cookie file uploaded (${size} bytes)`);
     res.json({ success: true, size });
   } catch (err) { next(err); }
 });
 
 // DELETE /api/settings/yt-cookies — Remove cookie file
-settingsRoutes.delete('/yt-cookies', requireAdmin, ytCookiesLimiter, (_req: Request, res: Response, next) => {
+settingsRoutes.delete('/yt-cookies', requireAdmin, ytCookiesLimiter, async (req: Request, res: Response, next) => {
   try {
-    if (fs.existsSync(COOKIE_PATH)) {
-      fs.unlinkSync(COOKIE_PATH);
-    }
-    setYtCookieFile(null);
+    const prisma = req.app.locals.prisma;
+    await runRemoteAudited(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.yt_cookies_removed',
+        target: { type: 'settings', id: 'yt-cookies' },
+      },
+      async () => {
+        if (fs.existsSync(COOKIE_PATH)) {
+          fs.unlinkSync(COOKIE_PATH);
+        }
+        setYtCookieFile(null);
+      },
+    );
     console.log('[yt-dlp] Cookie file removed');
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -112,25 +134,39 @@ settingsRoutes.put('/limits', requireAdmin, async (req: Request, res: Response, 
     const prisma = req.app.locals.prisma;
     const { maxVideoDuration, maxPlaylistImport } = req.body;
 
-    if (maxVideoDuration != null) {
-      const val = parseVideoDuration(String(maxVideoDuration), -1);
-      if (val < 0) throw new AppError(400, 'maxVideoDuration must be a non-negative integer (seconds)');
-      await prisma.appSetting.upsert({
-        where: { key: MAX_VIDEO_DURATION_KEY },
-        create: { key: MAX_VIDEO_DURATION_KEY, value: String(val) },
-        update: { value: String(val) },
-      });
+    if (maxVideoDuration == null && maxPlaylistImport == null) {
+      throw new AppError(400, 'Provide maxVideoDuration and/or maxPlaylistImport');
     }
 
-    if (maxPlaylistImport != null) {
-      const val = parseImportCap(String(maxPlaylistImport), -1);
-      if (val <= 0) throw new AppError(400, 'maxPlaylistImport must be a positive integer (max 500)');
-      await prisma.appSetting.upsert({
-        where: { key: MAX_PLAYLIST_IMPORT_KEY },
-        create: { key: MAX_PLAYLIST_IMPORT_KEY, value: String(val) },
-        update: { value: String(val) },
-      });
-    }
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.limits_update',
+        target: { type: 'settings', id: 'limits' },
+      },
+      async (tx) => {
+        if (maxVideoDuration != null) {
+          const val = parseVideoDuration(String(maxVideoDuration), -1);
+          if (val < 0) throw new AppError(400, 'maxVideoDuration must be a non-negative integer (seconds)');
+          await tx.appSetting.upsert({
+            where: { key: MAX_VIDEO_DURATION_KEY },
+            create: { key: MAX_VIDEO_DURATION_KEY, value: String(val) },
+            update: { value: String(val) },
+          });
+        }
+
+        if (maxPlaylistImport != null) {
+          const val = parseImportCap(String(maxPlaylistImport), -1);
+          if (val <= 0) throw new AppError(400, 'maxPlaylistImport must be a positive integer (max 500)');
+          await tx.appSetting.upsert({
+            where: { key: MAX_PLAYLIST_IMPORT_KEY },
+            create: { key: MAX_PLAYLIST_IMPORT_KEY, value: String(val) },
+            update: { value: String(val) },
+          });
+        }
+      },
+    );
 
     res.json({ success: true });
   } catch (err) { next(err); }
