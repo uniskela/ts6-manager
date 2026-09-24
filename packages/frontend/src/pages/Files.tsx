@@ -43,6 +43,7 @@ import {
 import { cn, formatBytes } from '@/lib/utils';
 import {
   isCountedSummary,
+  isPartialSummary,
   selectChannelsForSummaryScan,
   type ChannelFileSummaryResult,
 } from '@/api/file-summary.types';
@@ -405,12 +406,14 @@ export default function Files() {
                     observation,
                     currentChannelKey,
                     eligibleChannelKey,
+                    omittedChannelIds: omittedIds,
                     channelId: ch.cid,
                     summary,
                     isQueryInvalidated: summaryInvalidated,
                   });
                   const statusText = channelSummaryLabelText(display);
                   const counted = isCountedSummary(summary);
+                  const showPartial = isPartialSummary(summary);
                   return (
                   <button
                     key={ch.cid}
@@ -424,10 +427,9 @@ export default function Files() {
                   >
                     <span className="block truncate">{ch.name}</span>
                     <span className="mt-1 flex min-h-3.5 items-center gap-2 font-mono-data text-[9px] text-muted-foreground/80">
-                      {statusText && display.kind !== 'partial' ? (
+                      {statusText && display.kind !== 'partial' && display.kind !== 'stale-cached' ? (
                         <span className={cn(
                           display.kind === 'unavailable' || display.kind === 'error' ? 'text-amber-400/80' : undefined,
-                          display.kind === 'stale-cached' ? 'opacity-80' : undefined,
                         )}>
                           {statusText}
                         </span>
@@ -436,7 +438,7 @@ export default function Files() {
                           <span className="flex items-center gap-0.5" title="Files"><File className="h-3 w-3" />{summary.fileCount}</span>
                           <span className="flex items-center gap-0.5" title="Folders"><Folder className="h-3 w-3" />{summary.folderCount}</span>
                           <span className="ml-auto flex items-center gap-0.5" title="Total size"><HardDrive className="h-3 w-3" />{formatBytes(summary.totalSize)}</span>
-                          {display.kind === 'partial' && (
+                          {showPartial && (
                             <span className="text-amber-400/80" title="Scan stopped before the full tree was counted">Partial</span>
                           )}
                           {display.kind === 'stale-cached' && (

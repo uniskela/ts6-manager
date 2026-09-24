@@ -234,7 +234,8 @@ export type ChannelSummaryDisplay =
  * Never presents a missing observation as zero files.
  *
  * `eligibleChannelKey` is the bounded selection that may be scanned (first ≤256).
- * Intentional omissions beyond the cap are `not-scanned`, not stale.
+ * Intentional omissions beyond the cap are `not-scanned`, not stale — including
+ * while the eligible channels are still fetching.
  */
 export function channelSummaryDisplay(input: {
   offlineUnchecked: boolean;
@@ -246,6 +247,8 @@ export function channelSummaryDisplay(input: {
   currentChannelKey: string;
   /** Bounded eligible set (first ≤256 of current channels). */
   eligibleChannelKey?: string;
+  /** Channels beyond the scan cap (never requested). */
+  omittedChannelIds?: readonly number[];
   channelId: number;
   summary?: {
     unavailable?: boolean;
@@ -254,6 +257,15 @@ export function channelSummaryDisplay(input: {
   } | null;
   isQueryInvalidated: boolean;
 }): ChannelSummaryDisplay {
+  // Cap omissions never scan — classify before fetching so UI never says Scanning…
+  if (
+    input.summary?.notScanned
+    || (input.omittedChannelIds !== undefined
+      && input.omittedChannelIds.includes(input.channelId))
+  ) {
+    return { kind: 'not-scanned' };
+  }
+
   if (input.isFetching && !input.summary) return { kind: 'scanning' };
   if (input.offlineUnchecked && !input.observation) return { kind: 'not-checked' };
   if (input.isError && !input.observation) return { kind: 'error' };
@@ -265,7 +277,7 @@ export function channelSummaryDisplay(input: {
         .filter(Boolean)
         .map(Number),
     );
-    if (!scannedIds.has(input.channelId) || input.summary?.notScanned) {
+    if (!scannedIds.has(input.channelId)) {
       return { kind: 'not-scanned' };
     }
     if (input.isError) return { kind: 'error' };
