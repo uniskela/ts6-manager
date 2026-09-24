@@ -2,25 +2,25 @@
 
 ## Status
 
-**No real exposition dump is checked in yet.** Slice 1 (#91) scaffolding is fixture-gated: the scrape client, Prometheus text skeleton parser, config surface, and dashboard `dataSource` provenance ship without invented TeamSpeak metric names.
+Real exposition dump is checked in:
 
-Drop a real scrape here as:
+| File | Role |
+|------|------|
+| `ts6-beta13-metrics.txt` | Prometheus text body (20856 bytes) |
+| `ts6-beta13-metrics.headers` | Observed HTTP response headers |
+| `ts6-beta13-metrics.meta.md` | Capture notes (image, Content-Type, VS label) |
 
-```text
-packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt
-```
+Allow-list and VS scoping in `metrics-map.ts` are derived from this dump only. Do not invent additional series (including voice metrics) without a new capture that includes them.
 
-Do **not** invent `# HELP` / `# TYPE` / sample lines. Parser allow-lists and VS-scoping rules must be derived from that dump only.
+## Observed (beta13)
 
-## Confirmed before capture
-
-Official TeamSpeak 6 `CONFIG.md` documents:
-
-- Enable: `TSSERVER_METRICS_ENABLED=1` (or `--metrics-enable`)
+- Image: `teamspeaksystems/teamspeak6-server:6.0.0-beta13`
 - Path: `GET /metrics`
-- Default port: `9187`
-- Bind: `TSSERVER_METRICS_IP` (default localhost-only — publish carefully)
-- Unauthenticated HTTP listener (separate from WebQuery)
+- HTTP: `200 OK`
+- Content-Type: `text/plain; version=0.0.4; charset=utf-8`
+- VS scope label: `virtualserver_unique_identifier`
+- Numeric SID appears on `teamspeak_virtualserver_info` as `virtualserver_id`
+- `TSSERVER_METRICS_VOICE`: unknown for this capture — voice-only series omitted from allow-list
 
 ## Capture procedure (Docker)
 
@@ -36,28 +36,18 @@ docker run -d --name ts6-metrics-capture \
   teamspeaksystems/teamspeak6-server:6.0.0-beta13
 
 # 2. Wait until the default virtual server is online (WebQuery health), then:
-curl -sS -D /tmp/metrics.headers -o packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt \
+curl -sS -D packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.headers \
+  -o packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt \
   http://127.0.0.1:9187/metrics
 
-# 3. Record observed response metadata next to the dump (do not invent values):
-#    - HTTP status
-#    - Content-Type header
-#    - Whether any label uniquely identifies virtual server id / sid
-#    - Whether voice metrics appear only when TSSERVER_METRICS_VOICE=1
+# 3. Update ts6-beta13-metrics.meta.md with status, Content-Type, SID label notes
 
 # 4. Clean up
 docker rm -f -v ts6-metrics-capture
 ```
 
-Optional companion file (recommended): `ts6-beta13-metrics.meta.md` with the observed status line, `Content-Type`, bind/port used, image tag, and a short note on SID label presence/absence. Still no invented metric names.
+## After a new capture
 
-## After capture
-
-1. Commit the real `ts6-beta13-metrics.txt` (and optional `.meta.md`).
-2. Derive the typed allow-list and scoping rule from that file only (`metrics-map.ts`).
-3. Expand fixture-driven parser/mapper tests (currently `t.skip` when the file is missing).
-4. Follow remaining checklist items in `docs/plans/91-slice-1-metrics.md`.
-
-## Intentionally blank
-
-This directory intentionally contains **no** sample Prometheus body until a real beta13 scrape is committed. Generic parser unit tests use clearly non-TeamSpeak synthetic lines only.
+1. Diff metric names / labels against `METRICS_ALLOWLIST` in `metrics-map.ts`.
+2. Update fixture-driven tests.
+3. Keep fail-closed scoping via `teamspeak_virtualserver_info` + `virtualserver_unique_identifier`.

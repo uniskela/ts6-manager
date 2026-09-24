@@ -1,0 +1,267 @@
+# HELP process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE process_cpu_seconds_total counter
+process_cpu_seconds_total 4.13
+# HELP process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE process_start_time_seconds gauge
+process_start_time_seconds 1790221386.44
+# HELP process_resident_memory_bytes Resident memory size in bytes.
+# TYPE process_resident_memory_bytes gauge
+process_resident_memory_bytes 56119296
+# HELP process_open_fds Number of open file descriptors.
+# TYPE process_open_fds gauge
+process_open_fds 60
+# HELP teamspeak_build_info Build identity of the running server; value is always 1.
+# TYPE teamspeak_build_info gauge
+teamspeak_build_info{version="6.0.0-beta13 [Build: 1789645103]",revision="gobwspmOWTr2LZ7LBQK7P1DLN/veTP5Gf+O7gdUKJpiVvcgVwLBd8PQ9J9tG1E9X653oDkBd+kIwUhF/5v1FCQ==",architecture="x86_64"} 1
+# HELP teamspeak_virtualservers_running Number of virtual servers currently running.
+# TYPE teamspeak_virtualservers_running gauge
+teamspeak_virtualservers_running 1
+# HELP teamspeak_instance_uptime_seconds Instance uptime in seconds.
+# TYPE teamspeak_instance_uptime_seconds gauge
+teamspeak_instance_uptime_seconds 115
+# HELP teamspeak_host_timestamp_seconds Current host time, unix seconds.
+# TYPE teamspeak_host_timestamp_seconds gauge
+teamspeak_host_timestamp_seconds 1790221502
+# HELP teamspeak_instance_clients_online Total non-query clients online across all virtual servers.
+# TYPE teamspeak_instance_clients_online gauge
+teamspeak_instance_clients_online 1
+# HELP teamspeak_instance_maxclients Total configured client slots across all virtual servers.
+# TYPE teamspeak_instance_maxclients gauge
+teamspeak_instance_maxclients 32
+# HELP teamspeak_instance_channels_online Total channels online across all virtual servers.
+# TYPE teamspeak_instance_channels_online gauge
+teamspeak_instance_channels_online 14
+# HELP teamspeak_instance_connection_bytes_sent_total Instance-wide bytes sent.
+# TYPE teamspeak_instance_connection_bytes_sent_total counter
+teamspeak_instance_connection_bytes_sent_total 17934
+# HELP teamspeak_instance_connection_bytes_received_total Instance-wide bytes received.
+# TYPE teamspeak_instance_connection_bytes_received_total counter
+teamspeak_instance_connection_bytes_received_total 9585
+# HELP teamspeak_instance_connection_packets_sent_total Instance-wide packets sent.
+# TYPE teamspeak_instance_connection_packets_sent_total counter
+teamspeak_instance_connection_packets_sent_total 190
+# HELP teamspeak_instance_connection_packets_received_total Instance-wide packets received.
+# TYPE teamspeak_instance_connection_packets_received_total counter
+teamspeak_instance_connection_packets_received_total 191
+# HELP teamspeak_serverquery_flood_commands_limit ServerQuery flood-protection command limit.
+# TYPE teamspeak_serverquery_flood_commands_limit gauge
+teamspeak_serverquery_flood_commands_limit 10
+# HELP teamspeak_serverquery_flood_time_seconds ServerQuery flood-protection time window in seconds.
+# TYPE teamspeak_serverquery_flood_time_seconds gauge
+teamspeak_serverquery_flood_time_seconds 3
+# HELP teamspeak_serverquery_ban_time_seconds ServerQuery flood ban duration in seconds.
+# TYPE teamspeak_serverquery_ban_time_seconds gauge
+teamspeak_serverquery_ban_time_seconds 600
+# HELP teamspeak_serverquery_max_connections_per_ip Maximum ServerQuery connections per IP.
+# TYPE teamspeak_serverquery_max_connections_per_ip gauge
+teamspeak_serverquery_max_connections_per_ip 5
+# HELP teamspeak_pending_connections_per_ip_limit Maximum pending connections per IP.
+# TYPE teamspeak_pending_connections_per_ip_limit gauge
+teamspeak_pending_connections_per_ip_limit 0
+# HELP teamspeak_database_version Database schema version.
+# TYPE teamspeak_database_version gauge
+teamspeak_database_version 66
+# HELP teamspeak_permissions_version Permissions schema version.
+# TYPE teamspeak_permissions_version gauge
+teamspeak_permissions_version 26
+# HELP teamspeak_instance_filetransfer_bytes_total Instance-wide file-transfer bytes by direction.
+# TYPE teamspeak_instance_filetransfer_bytes_total counter
+teamspeak_instance_filetransfer_bytes_total{direction="sent"} 0
+teamspeak_instance_filetransfer_bytes_total{direction="received"} 0
+# HELP teamspeak_virtualserver_info Static identity of a virtual server; value is always 1.
+# TYPE teamspeak_virtualserver_info gauge
+teamspeak_virtualserver_info{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",virtualserver_id="1",name="Ranked is Broke",port="9987",version="6.0.0-beta13 [Build: 1789645103]",platform="Linux"} 1
+# HELP teamspeak_virtualserver_state Current lifecycle state; exactly one label value is 1.
+# TYPE teamspeak_virtualserver_state gauge
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="online"} 1
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="offline"} 0
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="booting up"} 0
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="shutting down"} 0
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="online virtual"} 0
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="deploy running"} 0
+teamspeak_virtualserver_state{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",state="unknown"} 0
+# HELP teamspeak_clients_online Clients currently online.
+# TYPE teamspeak_clients_online gauge
+teamspeak_clients_online{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 3
+# HELP teamspeak_query_clients_online Query clients currently online.
+# TYPE teamspeak_query_clients_online gauge
+teamspeak_query_clients_online{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 2
+# HELP teamspeak_channels_online Channels currently online.
+# TYPE teamspeak_channels_online gauge
+teamspeak_channels_online{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 14
+# HELP teamspeak_max_clients Maximum client slots.
+# TYPE teamspeak_max_clients gauge
+teamspeak_max_clients{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 32
+# HELP teamspeak_reserved_slots Reserved client slots.
+# TYPE teamspeak_reserved_slots gauge
+teamspeak_reserved_slots{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 0
+# HELP teamspeak_virtualserver_start_timestamp_seconds Virtual server start time, unix seconds.
+# TYPE teamspeak_virtualserver_start_timestamp_seconds gauge
+teamspeak_virtualserver_start_timestamp_seconds{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 1790221390
+# HELP teamspeak_virtualserver_created_timestamp_seconds Virtual server creation time, unix seconds.
+# TYPE teamspeak_virtualserver_created_timestamp_seconds gauge
+teamspeak_virtualserver_created_timestamp_seconds{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 1773716363
+# HELP teamspeak_packetloss_ratio Packet loss fraction in [0,1] by traffic class.
+# TYPE teamspeak_packetloss_ratio gauge
+teamspeak_packetloss_ratio{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="speech"} 0
+teamspeak_packetloss_ratio{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="keepalive"} 0
+teamspeak_packetloss_ratio{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="control"} 0
+# HELP teamspeak_ping_seconds Average client round-trip time in seconds.
+# TYPE teamspeak_ping_seconds gauge
+teamspeak_ping_seconds{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 0
+# HELP teamspeak_bans_active Currently active ban entries.
+# TYPE teamspeak_bans_active gauge
+teamspeak_bans_active{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 0
+# HELP teamspeak_connection_bytes_sent_total Bytes sent, by traffic class.
+# TYPE teamspeak_connection_bytes_sent_total counter
+teamspeak_connection_bytes_sent_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="speech"} 0
+teamspeak_connection_bytes_sent_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="keepalive"} 6027
+teamspeak_connection_bytes_sent_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="control"} 11907
+# HELP teamspeak_connection_bytes_sent_aggregate_total Bytes sent, by traffic class.
+# TYPE teamspeak_connection_bytes_sent_aggregate_total counter
+teamspeak_connection_bytes_sent_aggregate_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 17934
+# HELP teamspeak_connection_bytes_received_total Bytes received, by traffic class.
+# TYPE teamspeak_connection_bytes_received_total counter
+teamspeak_connection_bytes_received_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="speech"} 0
+teamspeak_connection_bytes_received_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="keepalive"} 6101
+teamspeak_connection_bytes_received_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="control"} 3484
+# HELP teamspeak_connection_bytes_received_aggregate_total Bytes received, by traffic class.
+# TYPE teamspeak_connection_bytes_received_aggregate_total counter
+teamspeak_connection_bytes_received_aggregate_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 9585
+# HELP teamspeak_connection_packets_sent_total Packets sent, by traffic class.
+# TYPE teamspeak_connection_packets_sent_total counter
+teamspeak_connection_packets_sent_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="speech"} 0
+teamspeak_connection_packets_sent_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="keepalive"} 147
+teamspeak_connection_packets_sent_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="control"} 43
+# HELP teamspeak_connection_packets_sent_aggregate_total Packets sent, by traffic class.
+# TYPE teamspeak_connection_packets_sent_aggregate_total counter
+teamspeak_connection_packets_sent_aggregate_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 190
+# HELP teamspeak_connection_packets_received_total Packets received, by traffic class.
+# TYPE teamspeak_connection_packets_received_total counter
+teamspeak_connection_packets_received_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="speech"} 0
+teamspeak_connection_packets_received_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="keepalive"} 147
+teamspeak_connection_packets_received_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",traffic_class="control"} 44
+# HELP teamspeak_connection_packets_received_aggregate_total Packets received, by traffic class.
+# TYPE teamspeak_connection_packets_received_aggregate_total counter
+teamspeak_connection_packets_received_aggregate_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 191
+# HELP teamspeak_connection_bandwidth_bytes_per_second Aggregate bandwidth over the last second, by direction.
+# TYPE teamspeak_connection_bandwidth_bytes_per_second gauge
+teamspeak_connection_bandwidth_bytes_per_second{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="sent"} 513
+teamspeak_connection_bandwidth_bytes_per_second{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="received"} 211
+# HELP teamspeak_transfer_month_bytes Month-to-date transfer bytes by direction (resets on calendar rollover).
+# TYPE teamspeak_transfer_month_bytes gauge
+teamspeak_transfer_month_bytes{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="downloaded"} 25317
+teamspeak_transfer_month_bytes{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="uploaded"} 8439
+# HELP teamspeak_transfer_lifetime_bytes_total Lifetime cumulative transfer bytes by direction.
+# TYPE teamspeak_transfer_lifetime_bytes_total counter
+teamspeak_transfer_lifetime_bytes_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="downloaded"} 224485976
+teamspeak_transfer_lifetime_bytes_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="uploaded"} 224158738
+# HELP teamspeak_client_connections_total Cumulative client connections since creation.
+# TYPE teamspeak_client_connections_total counter
+teamspeak_client_connections_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 1
+# HELP teamspeak_query_client_connections_total Cumulative query-client connections since creation.
+# TYPE teamspeak_query_client_connections_total counter
+teamspeak_query_client_connections_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8="} 2
+# HELP teamspeak_filetransfer_bandwidth_bytes_per_second File-transfer bandwidth (5s average) by direction.
+# TYPE teamspeak_filetransfer_bandwidth_bytes_per_second gauge
+teamspeak_filetransfer_bandwidth_bytes_per_second{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="sent"} 0
+teamspeak_filetransfer_bandwidth_bytes_per_second{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="received"} 0
+# HELP teamspeak_filetransfer_bytes_total Cumulative file-transfer bytes by direction.
+# TYPE teamspeak_filetransfer_bytes_total counter
+teamspeak_filetransfer_bytes_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="sent"} 0
+teamspeak_filetransfer_bytes_total{virtualserver_unique_identifier="0L25l+TF+e0f4opNTkshv5ETKfeLYaOXlAJ3X99/ug8=",direction="received"} 0
+# HELP teamspeak_license_valid 1 if the server holds a currently-valid license.
+# TYPE teamspeak_license_valid gauge
+teamspeak_license_valid 1
+# HELP teamspeak_license_max_slots Maximum client slots permitted by the license.
+# TYPE teamspeak_license_max_slots gauge
+teamspeak_license_max_slots 32
+# HELP teamspeak_license_max_virtual_servers Maximum virtual servers permitted by the license.
+# TYPE teamspeak_license_max_virtual_servers gauge
+teamspeak_license_max_virtual_servers 1
+# HELP teamspeak_license_expires_timestamp_seconds License expiry, unix seconds.
+# TYPE teamspeak_license_expires_timestamp_seconds gauge
+teamspeak_license_expires_timestamp_seconds 1796083200
+# HELP teamspeak_license_info License identity; value is always 1.
+# TYPE teamspeak_license_info gauge
+teamspeak_license_info{type="default"} 1
+# HELP teamspeak_log_events_total Log events emitted, by level.
+# TYPE teamspeak_log_events_total counter
+teamspeak_log_events_total{level="critical"} 0
+teamspeak_log_events_total{level="error"} 0
+teamspeak_log_events_total{level="warning"} 0
+teamspeak_log_events_total{level="debug"} 0
+teamspeak_log_events_total{level="info"} 38
+teamspeak_log_events_total{level="devel"} 0
+# HELP teamspeak_reliable_messages_outstanding Reliable messages awaiting acknowledgement.
+# TYPE teamspeak_reliable_messages_outstanding gauge
+teamspeak_reliable_messages_outstanding 0
+# HELP teamspeak_reliable_retransmissions_total Reliable-message retransmissions.
+# TYPE teamspeak_reliable_retransmissions_total counter
+teamspeak_reliable_retransmissions_total 0
+# HELP teamspeak_client_admission_total Client admission outcomes by result.
+# TYPE teamspeak_client_admission_total counter
+teamspeak_client_admission_total{outcome="accepted"} 1
+# HELP teamspeak_client_handshakes_pending Handshakes in progress (pending connections).
+# TYPE teamspeak_client_handshakes_pending gauge
+teamspeak_client_handshakes_pending 0
+# HELP teamspeak_query_sessions Active ServerQuery sessions.
+# TYPE teamspeak_query_sessions gauge
+teamspeak_query_sessions 2
+# HELP teamspeak_database_operation_duration_seconds Database operation duration in seconds by operation.
+# TYPE teamspeak_database_operation_duration_seconds histogram
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.0001"} 2
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.0005"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.001"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.005"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.01"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.025"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.05"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.1"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.25"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="0.5"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="1"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="2.5"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="5"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="10"} 17
+teamspeak_database_operation_duration_seconds_bucket{operation="exec",le="+Inf"} 17
+teamspeak_database_operation_duration_seconds_sum{operation="exec"} 0.004619143
+teamspeak_database_operation_duration_seconds_count{operation="exec"} 17
+# HELP teamspeak_query_command_duration_seconds ServerQuery command processing duration in seconds.
+# TYPE teamspeak_query_command_duration_seconds histogram
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.0001"} 0
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.0005"} 9
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.001"} 19
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.005"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.01"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.025"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.05"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.1"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.25"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="0.5"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="1"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="2.5"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="5"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="10"} 29
+teamspeak_query_command_duration_seconds_bucket{interface="query",le="+Inf"} 29
+teamspeak_query_command_duration_seconds_sum{interface="query"} 0.027521711
+teamspeak_query_command_duration_seconds_count{interface="query"} 29
+# HELP teamspeak_client_handshake_duration_seconds Time from pending connection to acceptance, in seconds.
+# TYPE teamspeak_client_handshake_duration_seconds histogram
+teamspeak_client_handshake_duration_seconds_bucket{le="0.0001"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.0005"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.001"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.005"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.01"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.025"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.05"} 0
+teamspeak_client_handshake_duration_seconds_bucket{le="0.1"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="0.25"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="0.5"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="1"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="2.5"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="5"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="10"} 1
+teamspeak_client_handshake_duration_seconds_bucket{le="+Inf"} 1
+teamspeak_client_handshake_duration_seconds_sum 0.1
+teamspeak_client_handshake_duration_seconds_count 1

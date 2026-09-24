@@ -1,6 +1,6 @@
 # Plan: #91 Slice 1 — Native TeamSpeak metrics data source
 
-Status: **fixture-gated scaffolding in progress** — real beta13 dump still required before allow-listed metric names or VS-scoped dashboard fields.  
+Status: **fixture landed — allow-list + VS-scoped dashboard mapping active** (from `ts6-beta13-metrics.txt`).  
 Merged plan onto `origin/main` @ `cdb6c3d` (after Slice 2 / PR #114 merged as `2a096bf`, the appearance work in PR #122, and PR #121 itself landing as `cdb6c3d`).
 
 Supersedes the discovery-only draft merged from PR #121 (`cursor/docs-91-slice-1-plan-c289`, commit `cdb6c3d`), which was written against older `main` and assumed #114 was still open. Do **not** implement #121's architecture unchanged; this fixture-gated plan is the authoritative one going forward. #121's current-state findings on existing building blocks (`validate-ts-host.ts`, `webquery-client.ts`, `connection-pool.ts`, `TsServerConfig` schema) remain accurate background reading but do not change the blocking gate or architecture below.
@@ -17,11 +17,7 @@ Before any allow-listed metric names, typed mapper, or dashboard field mapping l
    - HTTP **content-type**;
    - whether samples are **scoped to a SID** or instance-wide / unscoped.
 
-**Current status of the gate:** **FAILED — no real fixture available** in this repo, docs, CI artifacts, agent env, or a reachable live beta13 container (Docker is not installed in this Cloud Agent environment; `ts6-compat.yml` only exercises WebQuery and does not enable metrics).
-
-Until a maintainer (or a follow-up agent with Docker/live TS) commits a real dump under `packages/backend/src/ts-client/__fixtures__/`, **do not invent metric names or claim VS scoping**. Implementation PRs that invent names are out of contract.
-
-Capture instructions live in `packages/backend/src/ts-client/__fixtures__/README.md`.
+**Current status of the gate:** **PASSED** — real dump at `packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt` (Content-Type `text/plain; version=0.0.4; charset=utf-8`; VS label `virtualserver_unique_identifier`; SID via `teamspeak_virtualserver_info.virtualserver_id`).
 
 ## Confirmed facts (safe to rely on without a fixture)
 

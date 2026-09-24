@@ -16,8 +16,8 @@ describe('MetricsClient', () => {
       method = req.method || '';
       path = req.url || '';
       if (req.headers['x-api-key'] || req.headers.authorization) sawAuth = true;
-      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
-      res.end('# placeholder — not a real beta13 dump\n');
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4; charset=utf-8' });
+      res.end('# placeholder body for transport test\nexample 1\n');
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address();
@@ -34,6 +34,26 @@ describe('MetricsClient', () => {
       assert.equal(method, 'GET');
       assert.equal(path, METRICS_PATH);
       assert.equal(sawAuth, false);
+    } finally {
+      client.destroy();
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it('rejects non-text/plain content types', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{"no":"metrics"}');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+
+    const client = createMetricsClient('127.0.0.1', address.port);
+    try {
+      const result = await client.scrape();
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.reason, 'invalid');
     } finally {
       client.destroy();
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));

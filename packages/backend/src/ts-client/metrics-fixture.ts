@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 export const BETA13_METRICS_FIXTURE_NAME = 'ts6-beta13-metrics.txt';
 
 export function beta13MetricsFixturePath(): string {
-  return join(here, BETA13_METRICS_FIXTURE_NAME);
+  return join(here, '__fixtures__', BETA13_METRICS_FIXTURE_NAME);
 }
 
 export function hasBeta13MetricsFixture(): boolean {

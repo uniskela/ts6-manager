@@ -30,13 +30,10 @@ export type MetricsScrapeResult =
   | { ok: false; reason: MetricsScrapeFailureReason; fetchedAt: string };
 
 function isAcceptableMetricsContentType(contentType: string | undefined): boolean {
-  if (!contentType || !contentType.trim()) return true; // some exporters omit; validate after fixture
-  const lower = contentType.toLowerCase();
-  return (
-    lower.startsWith('text/plain')
-    || lower.startsWith('application/openmetrics-text')
-    || lower.includes('text/plain')
-  );
+  // Observed beta13: `text/plain; version=0.0.4; charset=utf-8`
+  if (!contentType || !contentType.trim()) return false;
+  const lower = contentType.toLowerCase().trim();
+  return lower.startsWith('text/plain');
 }
 
 export function createMetricsClient(host: string, port: number = DEFAULT_METRICS_PORT): MetricsClient {

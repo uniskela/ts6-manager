@@ -3,7 +3,9 @@ import type { ConnectionPool } from '../ts-client/connection-pool.js';
 import { validateTsQueryServerId } from '../utils/validate-ts-host.js';
 import { parsePrometheusText } from '../ts-client/metrics-parse.js';
 import {
+  applyMetricsAugmentation,
   mapScopedMetrics,
+  type MetricsAugmentation,
   type MetricsProvenance,
 } from '../ts-client/metrics-map.js';
 import type { MetricsScrapeFailureReason } from '../ts-client/metrics-client.js';
@@ -26,6 +28,11 @@ type WebQueryDashboard = {
   bandwidth: { incoming: number; outgoing: number };
   packetloss: number;
   ping: number;
+};
+
+type MetricsFetchBundle = {
+  provenance: MetricsProvenance;
+  augmentation?: MetricsAugmentation;
 };
 
 async function fetchWebQueryDashboard(req: Request, sid: number): Promise<{ data: WebQueryDashboard; fetchedAt: string }> {
@@ -66,27 +73,35 @@ async function fetchWebQueryDashboard(req: Request, sid: number): Promise<{ data
   };
 }
 
-async function fetchMetricsProvenance(req: Request, sid: number): Promise<MetricsProvenance> {
+async function fetchMetricsBundle(req: Request, sid: number): Promise<MetricsFetchBundle> {
   const configId = parseInt(String(req.params.configId), 10);
   const prisma = req.app.locals.prisma;
   const pool: ConnectionPool = req.app.locals.connectionPool;
 
   const server = await prisma.tsServerConfig.findUnique({ where: { id: configId } });
   if (!server || server.isDemo || !server.metricsEnabled) {
-    return { status: 'disabled' };
+    return { provenance: { status: 'disabled' } };
   }
 
   const metricsClient = pool.getMetricsClient(configId);
   if (!metricsClient) {
-    return { status: 'unavailable', reason: 'unreachable', fetchedAt: new Date().toISOString() };
+    return {
+      provenance: {
+        status: 'unavailable',
+        reason: 'unreachable',
+        fetchedAt: new Date().toISOString(),
+      },
+    };
   }
 
   const scrape = await metricsClient.scrape();
   if (!scrape.ok) {
     return {
-      status: 'unavailable',
-      reason: scrape.reason as MetricsScrapeFailureReason,
-      fetchedAt: scrape.fetchedAt,
+      provenance: {
+        status: 'unavailable',
+        reason: scrape.reason as MetricsScrapeFailureReason,
+        fetchedAt: scrape.fetchedAt,
+      },
     };
   }
 
@@ -94,11 +109,26 @@ async function fetchMetricsProvenance(req: Request, sid: number): Promise<Metric
     const { samples } = parsePrometheusText(scrape.body);
     const mapped = mapScopedMetrics(samples, sid, scrape.fetchedAt);
     if (!mapped.ok) {
-      return { status: 'unavailable', reason: mapped.reason, fetchedAt: mapped.fetchedAt };
+      return {
+        provenance: {
+          status: 'unavailable',
+          reason: mapped.reason,
+          fetchedAt: mapped.fetchedAt,
+        },
+      };
     }
-    return { status: 'current', fetchedAt: mapped.fetchedAt };
+    return {
+      provenance: { status: 'current', fetchedAt: mapped.fetchedAt },
+      augmentation: mapped.augmentation,
+    };
   } catch {
-    return { status: 'unavailable', reason: 'invalid', fetchedAt: scrape.fetchedAt };
+    return {
+      provenance: {
+        status: 'unavailable',
+        reason: 'invalid',
+        fetchedAt: scrape.fetchedAt,
+      },
+    };
   }
 }
 
@@ -108,19 +138,24 @@ dashboardRoutes.get('/', async (req: Request, res: Response, next) => {
 
     // Start WebQuery and metrics concurrently. Metrics must never fail the WebQuery path.
     const webqueryTask = fetchWebQueryDashboard(req, sid);
-    const metricsTask = fetchMetricsProvenance(req, sid).catch((): MetricsProvenance => ({
-      status: 'unavailable',
-      reason: 'unreachable',
-      fetchedAt: new Date().toISOString(),
+    const metricsTask = fetchMetricsBundle(req, sid).catch((): MetricsFetchBundle => ({
+      provenance: {
+        status: 'unavailable',
+        reason: 'unreachable',
+        fetchedAt: new Date().toISOString(),
+      },
     }));
 
     const [webquery, metrics] = await Promise.all([webqueryTask, metricsTask]);
+    const data = metrics.augmentation
+      ? applyMetricsAugmentation(webquery.data, metrics.augmentation)
+      : webquery.data;
 
     res.json({
-      ...webquery.data,
+      ...data,
       dataSource: {
         webquery: { status: 'current' as const, fetchedAt: webquery.fetchedAt },
-        metrics,
+        metrics: metrics.provenance,
       },
     });
   } catch (err) { next(err); }
