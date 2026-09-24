@@ -597,9 +597,9 @@ func (s *Sidecar) processAudioRTP() {
 // CreatePeer builds the WebRTC peer for one viewer and returns its SDP offer.
 //
 // The offer is returned only once ICE gathering has completed, so it already
-// carries every candidate and the viewer needs no trickle ICE. That also makes
-// the slowest STUN server the time a viewer waits to join, which is what
-// stunGatherTimeout bounds.
+// carries every local candidate and none has to be trickled to the viewer
+// afterwards. That also makes the slowest STUN server the time a viewer waits
+// to join, which is what stunGatherTimeout bounds.
 func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 	s.peersLock.Lock()
 
