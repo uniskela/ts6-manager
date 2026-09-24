@@ -6,4 +6,5 @@ export * from './types/music.js';
 export * from './types/iptv.js';
 export * from './constants/events.js';
 export * from './utils/ts-escape.js';
+export * from './utils/server-logs.js';
 export * from './widget-themes.js';

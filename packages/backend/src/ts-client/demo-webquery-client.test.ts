@@ -34,6 +34,32 @@ describe('DemoWebQueryClient', () => {
     }
   });
 
+  it('pages logview with begin_pos without inventing cursors from text length', async () => {
+    const client = new DemoWebQueryClient();
+    try {
+      const newest = await client.execute(1, 'logview', { lines: 2, reverse: 1, instance: 0 });
+      assert.equal(newest.length, 2);
+      assert.equal(newest[0].last_pos, '500');
+      assert.equal(newest[1].last_pos, '400');
+
+      const older = await client.execute(1, 'logview', {
+        lines: 2,
+        reverse: 1,
+        instance: 0,
+        begin_pos: '400',
+      });
+      assert.equal(older.length, 2);
+      assert.equal(older[0].last_pos, '300');
+      assert.ok(!older.some((row: any) => row.last_pos === '500' || row.last_pos === '400'));
+
+      const instance = await client.execute(1, 'logview', { lines: 10, reverse: 1, instance: 1 });
+      assert.ok(instance.every((row: any) => String(row.l).includes('TeamSpeak instance') || String(row.l).includes('License') || String(row.l).includes('WebQuery')));
+      assert.ok(!instance.some((row: any) => String(row.l).includes('VirtualServer |1')));
+    } finally {
+      client.destroy();
+    }
+  });
+
   it('simulates mutation responses without changing the fixture source', async () => {
     const client = new DemoWebQueryClient();
     try {

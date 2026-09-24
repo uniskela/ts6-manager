@@ -255,6 +255,34 @@ export interface PaginatedResponse<T> {
   limit: number;
 }
 
+/** TeamSpeak logview page envelope (#91 Slice 3 — Logs 2.0). */
+export const LOGVIEW_MIN_LINES = 1;
+export const LOGVIEW_MAX_LINES = 100;
+
+export interface ServerLogEntry {
+  sourceText: string;
+  lastPos: string | null;
+}
+
+export interface ServerLogPageContext {
+  configId: number;
+  sid: number;
+  /** True when rows come from the instance/master logfile. */
+  instance: boolean;
+  reverse: boolean;
+  lines: number;
+  beginPos: string | null;
+}
+
+export interface ServerLogPage {
+  entries: ServerLogEntry[];
+  context: ServerLogPageContext;
+  fetchedAt: string;
+  fileSize: string | null;
+  /** Verified Older-page cursor from TeamSpeak `last_pos`; never invented. */
+  nextBeginPos: string | null;
+}
+
 // === Server Widget / Banner ===
 
 export type WidgetTheme = 'dark' | 'light' | 'transparent' | 'neon' | 'military' | 'minimal';

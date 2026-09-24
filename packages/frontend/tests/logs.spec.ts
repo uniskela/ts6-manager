@@ -1,0 +1,90 @@
+import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+
+async function signInAsAdmin(page: Page, request: APIRequestContext) {
+  await request.post('/__test/dashboard?scenario=normal');
+  await request.post('/__test/logs?scenario=normal');
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await expect(page).toHaveURL('/dashboard');
+}
+
+test.beforeEach(async ({ request }) => {
+  await request.post('/__test/reset');
+});
+
+test('Server Logs 2.0 pages, labels instance vs VS, and keeps filters page-local', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await page.goto('/logs');
+
+  await expect(page.getByTestId('server-logs-page')).toBeVisible();
+  await expect(page.getByTestId('logs-scope-label')).toContainText('Virtual server log');
+  await expect(page.getByTestId('logs-filter-hint')).toContainText('this page only');
+  await expect(page.getByText('timezone unknown').first()).toBeVisible();
+  await expect(page.getByText('UNK').first()).toBeVisible();
+
+  await page.getByTestId('logs-older').click();
+  await expect(page.getByTestId('logs-page-meta')).toContainText('Older page');
+  await expect(page.getByText('Virtual server started successfully.')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(page.getByTestId('logs-page-meta')).toContainText('Newest page');
+  await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
+
+  await page.getByLabel('Filter this page').fill('no-such-match-on-this-page');
+  await expect(page.getByTestId('logs-empty')).toHaveText('No matches on this page.');
+  await page.getByLabel('Filter this page').fill('');
+
+  await page.getByLabel('Log source scope').click();
+  await page.getByRole('option', { name: 'Instance log' }).click();
+  await expect(page.getByTestId('logs-scope-label')).toContainText('Instance log');
+  await expect(page.getByText('TeamSpeak instance started.')).toBeVisible();
+  await expect(page.getByText('Virtual server started successfully.')).toHaveCount(0);
+
+  const state = await request.get('/__test/state').then((response) => response.json());
+  expect(state.logsRequests.some((entry: { instance: boolean }) => entry.instance === true)).toBeTruthy();
+  expect(state.logsRequests.some((entry: { beginPos: string | null }) => entry.beginPos !== null)).toBeTruthy();
+});
+
+test('Server Logs separates initial fetch failure from stale refresh errors', async ({ page, request }) => {
+  await request.post('/__test/dashboard?scenario=normal');
+  await request.post('/__test/logs?scenario=initial-failure');
+  await request.post('/__test/auth?on');
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await page.getByRole('button', { name: 'Sign In' }).click();
+  await page.goto('/logs');
+
+  await expect(page.getByText('Could not load server logs from TeamSpeak.').or(page.getByText('TeamSpeak logview unavailable'))).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
+
+  await request.post('/__test/logs?scenario=normal');
+  await page.getByRole('button', { name: 'Retry' }).click();
+  await expect(page.getByTestId('server-logs-page')).toBeVisible();
+  await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
+
+  await request.post('/__test/logs?scenario=refresh-failure');
+  await page.getByRole('button', { name: 'Refresh' }).click();
+  await expect(page.getByText(/Log refresh failed|last successful page/i)).toBeVisible();
+  await expect(page.getByText('Virtual server started successfully.')).toBeVisible();
+});
+
+test('Server Logs stays contained at 390x844 without document overflow', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signInAsAdmin(page, request);
+  await page.goto('/logs');
+  await expect(page.getByTestId('server-logs-page')).toBeVisible();
+  await expect(page.getByText(/very long path/)).toBeVisible();
+
+  const overflow = await page.evaluate(() => {
+    const root = document.documentElement;
+    return {
+      scrollWidth: root.scrollWidth,
+      clientWidth: root.clientWidth,
+    };
+  });
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.clientWidth + 1);
+});

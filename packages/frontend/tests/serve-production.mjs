@@ -24,6 +24,8 @@ let channelsEnabled = false;
 let channelRequests = [];
 let iptvScenario = 'empty';
 let docsScenario = false;
+let logsScenario = 'normal';
+let logsRequests = [];
 let channelRows = [
   { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
   { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
@@ -295,6 +297,8 @@ const server = createServer(async (req, res) => {
       channelRequests = [];
       iptvScenario = 'empty';
       docsScenario = false;
+      logsScenario = 'normal';
+      logsRequests = [];
       channelRows = structuredClone([
         { cid: '1', pid: '0', channel_name: 'Lobby', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
         { cid: '2', pid: '1', channel_name: 'Support', channel_topic: '', total_clients: '1', channel_flag_permanent: '1', channel_flag_password: '0', channel_codec_quality: '7', channel_icon_id: '0' },
@@ -331,6 +335,10 @@ const server = createServer(async (req, res) => {
     if (url.pathname === '/__test/iptv' && url.searchParams.has('scenario')) {
       iptvScenario = url.searchParams.get('scenario') || 'empty';
     }
+    if (url.pathname === '/__test/logs' && url.searchParams.has('scenario')) {
+      logsScenario = url.searchParams.get('scenario') || 'normal';
+      logsRequests = [];
+    }
     if (url.pathname === '/__test/docs') {
       docsScenario = url.searchParams.has('on');
       bots = structuredClone(docsScenario ? docsBots : initialBots);
@@ -339,7 +347,7 @@ const server = createServer(async (req, res) => {
       testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
     }
     res.setHeader('Content-Type', 'application/json');
-    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests, channelScenario, channelRequests }));
+    res.end(JSON.stringify({ mutations, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests, channelScenario, channelRequests, logsScenario, logsRequests }));
     return;
   }
   if (/^\/(api|ws)(\/|$)/.test(url.pathname)) {
@@ -507,6 +515,68 @@ const server = createServer(async (req, res) => {
         ? (dataTableScenario === 'normal' ? permissionEntities.clients : dataTableRows(dataTableClients))
       : /^\/api\/servers\/\d+\/vs\/\d+\/complaints$/.test(url.pathname) && allowTestAuth
         ? dataTableRows(dataTableComplaints)
+      : /^\/api\/servers\/(\d+)\/vs\/(\d+)\/logs$/.test(url.pathname) && allowTestAuth
+        ? (() => {
+            const match = url.pathname.match(/^\/api\/servers\/(\d+)\/vs\/(\d+)\/logs$/);
+            const configId = Number(match[1]);
+            const sid = Number(match[2]);
+            const lines = Math.min(100, Math.max(1, Number(url.searchParams.get('lines') || 100) || 100));
+            const instance = url.searchParams.get('instance') === '1';
+            const beginPos = url.searchParams.get('begin_pos');
+            logsRequests.push({
+              configId,
+              sid,
+              lines,
+              instance,
+              beginPos: beginPos || null,
+            });
+            if (logsScenario === 'initial-failure') {
+              res.statusCode = 503;
+              return { error: 'TeamSpeak logview unavailable', details: 'WebQuery logview timed out' };
+            }
+            if (logsScenario === 'refresh-failure' && logsRequests.length > 1) {
+              res.statusCode = 503;
+              return { error: 'Log refresh failed', details: 'The last successful page is still available' };
+            }
+            const vsRows = [
+              { lastPos: '500', sourceText: '2026-03-15 12:00:05.123456|INFO    |VirtualServer |1  |Virtual server started successfully.' },
+              { lastPos: '400', sourceText: '2026-03-15 12:00:04.123456|WARNING |VirtualServer |1  |Client Sample User connected.' },
+              { lastPos: '300', sourceText: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer.' },
+              { lastPos: '200', sourceText: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed.' },
+              { lastPos: '100', sourceText: 'not a structured line — Unicode ✓ and a very long path /var/log/teamspeak/virtualserver_1.log that must wrap without overflowing the page on narrow screens' },
+              { lastPos: '50', sourceText: '2026-03-15 12:00:00.000000|NOTICE  |VirtualServer |1  |Unrecognized level stays Unknown.' },
+            ];
+            const instanceRows = [
+              { lastPos: '300', sourceText: '2026-03-15 11:59:00.000000|INFO    |ServerLibPriv |   |TeamSpeak instance started.' },
+              { lastPos: '200', sourceText: '2026-03-15 11:58:00.000000|WARNING |Accounting    |   |License check deferred.' },
+              { lastPos: '100', sourceText: '2026-03-15 11:57:00.000000|INFO    |Query         |   |WebQuery listener ready.' },
+            ];
+            let rows = instance ? instanceRows : vsRows;
+            if (beginPos && /^\d+$/.test(beginPos)) {
+              const cursor = BigInt(beginPos);
+              rows = rows.filter((row) => BigInt(row.lastPos) < cursor);
+            }
+            if (logsScenario === 'empty') rows = [];
+            const pageRows = rows.slice(0, lines);
+            const hasMore = rows.length > pageRows.length;
+            const nextBeginPos = hasMore && pageRows.length
+              ? pageRows[pageRows.length - 1].lastPos
+              : null;
+            return {
+              entries: pageRows.map((row) => ({ sourceText: row.sourceText, lastPos: row.lastPos })),
+              context: {
+                configId,
+                sid,
+                instance,
+                reverse: true,
+                lines,
+                beginPos: beginPos || null,
+              },
+              fetchedAt: '2026-09-24T12:00:00.000Z',
+              fileSize: instance ? '300' : '500',
+              nextBeginPos,
+            };
+          })()
       : /^\/api\/servers\/(\d+)\/vs\/(\d+)\/dashboard$/.test(url.pathname) && allowTestAuth
         ? (() => {
             dashboardRequests++;
