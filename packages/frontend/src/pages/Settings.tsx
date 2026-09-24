@@ -11,6 +11,9 @@ import {
   type Accent, type BaseTheme, type Background, type BackgroundMotion, type BackgroundIntensity,
 } from '@/stores/ui.store';
 import { useResolvedBackgroundMotion } from '@/hooks/use-resolved-background-motion';
+import { CustomCssSection } from '@/components/settings/CustomCssSection';
+import { isSafeUiActive } from '@/lib/safe-ui';
+import { SAFE_UI_RECOVERY_PATH } from '@/lib/custom-css';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConnectionSetupGuide } from '@/components/connections/ConnectionSetupGuide';
@@ -33,7 +36,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { BrandMark } from '@/components/shared/BrandMark';
-import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github, Palette, Loader2 } from 'lucide-react';
+import { Settings as SettingsIcon, Users, Server, Plus, Trash2, Pencil, TestTube, Check, X, Lock, KeyRound, Youtube, Upload, FileText, Wand2, Info, Github, Palette, Loader2, ShieldAlert } from 'lucide-react';
 import { APP_REPOSITORY_URL, APP_VERSION, APP_VERSION_LABEL } from '@/lib/app-version';
 import { apiErrorMessage } from '@/lib/api-error';
 import { toast } from 'sonner';
@@ -155,9 +158,31 @@ function AppearanceTab() {
     background, setBackground, backgroundMotion, setBackgroundMotion, backgroundIntensity, setBackgroundIntensity,
   } = useUiStore();
   const resolvedMotion = useResolvedBackgroundMotion(backgroundMotion);
+  const safeUi = isSafeUiActive();
+  const [searchParams] = useSearchParams();
+  const landedViaSafeUi = searchParams.get('safe-ui') === '1' || safeUi;
 
   return (
     <div className="max-w-2xl space-y-4">
+      {safeUi && (
+        <div
+          role="status"
+          className="flex gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-3 text-sm text-warning"
+          data-testid="safe-ui-banner"
+        >
+          <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <div className="space-y-1">
+            <p className="font-medium">Safe UI mode</p>
+            <p className="text-xs text-warning/90">
+              Custom CSS is suspended for this document. Your saved CSS is still in this browser.
+              Use Advanced controls below to Disable or Reset, then reload without{' '}
+              <span className="font-mono-data">?safe-ui=1</span> to leave safe mode.
+              Recovery URL: <span className="break-all font-mono-data">{SAFE_UI_RECOVERY_PATH}</span>
+            </p>
+          </div>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-3 text-base font-medium">
@@ -324,6 +349,8 @@ function AppearanceTab() {
           </div>
         </CardContent>
       </Card>
+
+      <CustomCssSection forceAdvancedOpen={landedViaSafeUi} />
     </div>
   );
 }

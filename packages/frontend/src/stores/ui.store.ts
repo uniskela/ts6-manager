@@ -1,5 +1,9 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import {
+  sanitizeCustomCssEnabled,
+  sanitizeCustomCssText,
+} from '@/lib/custom-css';
 
 export const BASE_THEMES = ['light', 'dark', 'black'] as const;
 export const ACCENTS = ['cyan', 'violet', 'red', 'blue', 'emerald', 'amber'] as const;
@@ -24,6 +28,8 @@ export const DEFAULT_ACCENT: Accent = 'cyan';
 export const DEFAULT_BACKGROUND: Background = 'grid';
 export const DEFAULT_BACKGROUND_MOTION: BackgroundMotion = 'system';
 export const DEFAULT_BACKGROUND_INTENSITY: BackgroundIntensity = 'normal';
+export const DEFAULT_CUSTOM_CSS_TEXT = '';
+export const DEFAULT_CUSTOM_CSS_ENABLED = false;
 export const DEFAULT_SIDEBAR_SECTIONS: SidebarSections = {
   overview: true,
   management: true,
@@ -91,6 +97,7 @@ export function applyAppearance(baseTheme: BaseTheme, accent: Accent) {
 function migrateUiState(persisted: unknown) {
   const state = persisted && typeof persisted === 'object' ? persisted as Record<string, unknown> : {};
   const legacyTheme = isBaseTheme(state.theme) ? state.theme : undefined;
+  const customCssText = sanitizeCustomCssText(state.customCssText);
   return {
     sidebarCollapsed: state.sidebarCollapsed === true,
     sidebarSections: migrateSidebarSections(state.sidebarSections),
@@ -99,6 +106,8 @@ function migrateUiState(persisted: unknown) {
     background: isBackground(state.background) ? state.background : DEFAULT_BACKGROUND,
     backgroundMotion: isBackgroundMotion(state.backgroundMotion) ? state.backgroundMotion : DEFAULT_BACKGROUND_MOTION,
     backgroundIntensity: isBackgroundIntensity(state.backgroundIntensity) ? state.backgroundIntensity : DEFAULT_BACKGROUND_INTENSITY,
+    customCssText,
+    customCssEnabled: sanitizeCustomCssEnabled(state.customCssEnabled, customCssText),
     permissionLabelMode: isPermissionLabelMode(state.permissionLabelMode) ? state.permissionLabelMode : 'simple',
     showQueryClients: state.showQueryClients === true,
   };
@@ -112,6 +121,8 @@ interface UiStore {
   background: Background;
   backgroundMotion: BackgroundMotion;
   backgroundIntensity: BackgroundIntensity;
+  customCssText: string;
+  customCssEnabled: boolean;
   permissionLabelMode: PermissionLabelMode;
   showQueryClients: boolean;
   toggleSidebar: () => void;
@@ -123,6 +134,11 @@ interface UiStore {
   setBackground: (background: Background) => void;
   setBackgroundMotion: (motion: BackgroundMotion) => void;
   setBackgroundIntensity: (intensity: BackgroundIntensity) => void;
+  /** Commit saved CSS text. Rejects oversized values (caller should surface the error). */
+  setCustomCssText: (text: string) => { ok: true } | { ok: false; reason: 'too-large' };
+  setCustomCssEnabled: (enabled: boolean) => void;
+  /** Clears text and disables; leaves Part A appearance prefs untouched. */
+  resetCustomCss: () => void;
   setPermissionLabelMode: (mode: PermissionLabelMode) => void;
   setShowQueryClients: (show: boolean) => void;
 }
@@ -137,6 +153,8 @@ export const useUiStore = create<UiStore>()(
       background: DEFAULT_BACKGROUND,
       backgroundMotion: DEFAULT_BACKGROUND_MOTION,
       backgroundIntensity: DEFAULT_BACKGROUND_INTENSITY,
+      customCssText: DEFAULT_CUSTOM_CSS_TEXT,
+      customCssEnabled: DEFAULT_CUSTOM_CSS_ENABLED,
       permissionLabelMode: 'simple',
       showQueryClients: false,
       toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
@@ -163,17 +181,38 @@ export const useUiStore = create<UiStore>()(
       setBackground: (background) => set({ background }),
       setBackgroundMotion: (backgroundMotion) => set({ backgroundMotion }),
       setBackgroundIntensity: (backgroundIntensity) => set({ backgroundIntensity }),
+      setCustomCssText: (text) => {
+        const sanitized = sanitizeCustomCssText(text);
+        if (text.length > 0 && sanitized.length === 0) {
+          return { ok: false, reason: 'too-large' };
+        }
+        const enabled = get().customCssEnabled && sanitized.length > 0;
+        set({ customCssText: sanitized, customCssEnabled: enabled });
+        return { ok: true };
+      },
+      setCustomCssEnabled: (enabled) => {
+        const text = get().customCssText;
+        if (enabled && text.length === 0) {
+          set({ customCssEnabled: false });
+          return;
+        }
+        set({ customCssEnabled: enabled && text.length > 0 });
+      },
+      resetCustomCss: () => set({
+        customCssText: DEFAULT_CUSTOM_CSS_TEXT,
+        customCssEnabled: DEFAULT_CUSTOM_CSS_ENABLED,
+      }),
       setPermissionLabelMode: (permissionLabelMode) => set({ permissionLabelMode }),
       setShowQueryClients: (showQueryClients) => set({ showQueryClients }),
     }),
     {
       name: 'ts6-ui',
-      version: 5,
+      version: 6,
       migrate: migrateUiState,
       merge: (persisted, current) => ({ ...current, ...migrateUiState(persisted) }),
       partialize: ({
         sidebarCollapsed, sidebarSections, baseTheme, accent, background, backgroundMotion, backgroundIntensity,
-        permissionLabelMode, showQueryClients,
+        customCssText, customCssEnabled, permissionLabelMode, showQueryClients,
       }) => ({
         sidebarCollapsed,
         sidebarSections,
@@ -182,6 +221,8 @@ export const useUiStore = create<UiStore>()(
         background,
         backgroundMotion,
         backgroundIntensity,
+        customCssText,
+        customCssEnabled,
         permissionLabelMode,
         showQueryClients,
       }),
