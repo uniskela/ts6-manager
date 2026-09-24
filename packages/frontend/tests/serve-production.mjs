@@ -245,6 +245,10 @@ const dashboards = {
     bandwidth: { incoming: 18240, outgoing: 24680 },
     packetloss: 0.0012,
     ping: 18.42,
+    dataSource: {
+      webquery: { status: 'current', fetchedAt: '2026-09-24T00:00:00.000Z' },
+      metrics: { status: 'disabled' },
+    },
   },
   '2:2': {
     serverName: 'Backup Voice',
@@ -257,6 +261,10 @@ const dashboards = {
     bandwidth: { incoming: 512, outgoing: 1024 },
     packetloss: 0,
     ping: 4.8,
+    dataSource: {
+      webquery: { status: 'current', fetchedAt: '2026-09-24T00:00:00.000Z' },
+      metrics: { status: 'disabled' },
+    },
   },
 };
 const server = createServer(async (req, res) => {

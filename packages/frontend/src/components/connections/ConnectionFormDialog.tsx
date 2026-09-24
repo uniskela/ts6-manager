@@ -149,6 +149,43 @@ export function ConnectionFormDialog({
                 </div>
               </div>
             </div>
+
+            <div className="space-y-3 border-t border-border pt-3">
+              <p className="text-xs font-medium text-foreground">Native metrics (optional)</p>
+              <p className="text-[11px] text-muted-foreground -mt-2">
+                Scrapes TeamSpeak’s unauthenticated Prometheus metrics listener server-side.
+                Keep port 9187 private — do not expose it to the internet.
+              </p>
+
+              <div className="flex items-center gap-2">
+                <Switch
+                  checked={form.metricsEnabled}
+                  onCheckedChange={(v) => onChange({ ...form, metricsEnabled: v })}
+                />
+                <FieldLabel label="Enable metrics scrape" help={FIELD_HELP.metricsEnabled} />
+              </div>
+
+              {form.metricsEnabled && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <FieldLabel label="Metrics port" help={FIELD_HELP.metricsPort} />
+                    <Input
+                      type="number"
+                      value={form.metricsPort}
+                      onChange={(e) => onChange({ ...form, metricsPort: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel label="Metrics host (optional)" help={FIELD_HELP.metricsHost} tooltipAlign="end" />
+                    <Input
+                      value={form.metricsHost}
+                      onChange={(e) => onChange({ ...form, metricsHost: e.target.value })}
+                      placeholder="Same as WebQuery host"
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <DialogFooter>

@@ -42,6 +42,19 @@ interface DashboardData {
   bandwidth: { incoming: number; outgoing: number };
   packetloss: number;
   ping: number;
+  dataSource?: {
+    webquery: { status: 'current' | 'unavailable'; fetchedAt?: string };
+    metrics: {
+      status: 'disabled' | 'current' | 'unavailable';
+      fetchedAt?: string;
+      reason?: 'timeout' | 'unreachable' | 'invalid' | 'unscoped';
+    };
+  };
+}
+
+function dashboardSourceLabel(dataSource: DashboardData['dataSource']): string {
+  if (dataSource?.metrics.status === 'current') return 'WebQuery + native metrics';
+  return 'WebQuery only';
 }
 
 interface BandwidthSample {
@@ -256,14 +269,19 @@ export default function Dashboard() {
           </Button>
         ) : undefined}
         metadata={(
-          <RefreshStatus
-            isRefreshing={isFetchingGate}
-            tone={refreshTone}
-            idleLabel="Live monitoring active"
-            refreshingLabel="Refreshing live data…"
-            degradedLabel="Live updates interrupted"
-            startingLabel="Waiting for TeamSpeak Query…"
-          />
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge variant="outline" className="font-mono-data text-[10px]">
+              {dashboardSourceLabel(data.dataSource)}
+            </Badge>
+            <RefreshStatus
+              isRefreshing={isFetchingGate}
+              tone={refreshTone}
+              idleLabel="Live monitoring active"
+              refreshingLabel="Refreshing live data…"
+              degradedLabel="Live updates interrupted"
+              startingLabel="Waiting for TeamSpeak Query…"
+            />
+          </div>
         )}
       />
 
