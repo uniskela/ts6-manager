@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { describe, it, beforeEach } from 'node:test';
 import {
   FILE_SUMMARY_MAX_CHANNELS,
   FileSummaryScanCoordinator,
+  abortSignalFromRequest,
   selectChannelsForSummaryScan,
   type ListPathFn,
 } from './file-summary-scan.js';
@@ -199,6 +201,84 @@ describe('FileSummaryScanCoordinator', () => {
     assert.ok(resultA.summaries[0]);
   });
 
+  it('both waiters abort — no further listPath after the gated call returns', async () => {
+    let releaseList: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { releaseList = resolve; });
+    let listed = 0;
+
+    const listPath: ListPathFn = async (_cid, path) => {
+      listed += 1;
+      if (path === '/') {
+        await gate;
+        return [
+          { name: 'child', size: '0', type: '1' },
+          { name: 'root.txt', size: '1', type: '0' },
+        ];
+      }
+      return [{ name: 'deep.txt', size: '2', type: '0' }];
+    };
+
+    const acA = new AbortController();
+    const acB = new AbortController();
+    const a = coordinator.runRequest(baseCtx({ signal: acA.signal, listPath }));
+    await delay(20);
+    assert.equal(listed, 1);
+
+    const b = coordinator.runRequest(baseCtx({
+      signal: acB.signal,
+      listPath,
+      cacheGeneration: coordinator.getCacheGeneration(1, 1),
+    }));
+    await delay(20);
+
+    // Both callers disconnect while the root list is still in flight.
+    acA.abort();
+    acB.abort();
+    releaseList!();
+
+    await Promise.all([a, b]);
+    // Root list may finish, but no child directory should be scheduled.
+    assert.equal(listed, 1, `expected only the gated root list, got ${listed}`);
+  });
+
+  it('does not join a stopped in-flight scan — starts a fresh list', async () => {
+    let releaseOld: (() => void) | undefined;
+    const oldGate = new Promise<void>((resolve) => { releaseOld = resolve; });
+    let listed = 0;
+
+    const ac = new AbortController();
+    const oldPromise = coordinator.runRequest(baseCtx({
+      signal: ac.signal,
+      listPath: async () => {
+        listed += 1;
+        if (listed === 1) await oldGate;
+        return [{ name: 'old.txt', size: '1', type: '0' }];
+      },
+    }));
+    await delay(20);
+    assert.equal(listed, 1);
+
+    // Sole waiter disconnects → stopScheduling while list is still gated.
+    ac.abort();
+    await delay(10);
+
+    const fresh = coordinator.runRequest(baseCtx({
+      cacheGeneration: coordinator.getCacheGeneration(1, 1),
+      listPath: async () => {
+        listed += 1;
+        return [{ name: 'fresh.txt', size: '9', type: '0' }];
+      },
+    }));
+
+    releaseOld!();
+    const [oldResult, freshResult] = await Promise.all([oldPromise, fresh]);
+    assert.ok(listed >= 2, 'fresh request must start its own listPath');
+    const freshRow = freshResult.summaries[0];
+    assert.ok('complete' in freshRow && freshRow.complete === true);
+    assert.equal(freshRow.totalSize, 9);
+    assert.ok(oldResult.summaries[0]);
+  });
+
   it('scenario 8: exhausting the command budget stops further scheduling', async () => {
     // Deep-ish tree: each directory listing is one command.
     const tree: Record<string, Record<string, string>[]> = {
@@ -312,5 +392,35 @@ describe('FileSummaryScanCoordinator', () => {
     const row = response.summaries[0];
     assert.ok('unavailable' in row && row.unavailable);
     assert.equal(row.reason, 'denied');
+  });
+});
+
+describe('abortSignalFromRequest', () => {
+  it('aborts on response close before writableFinished (client disconnect)', () => {
+    const req = new EventEmitter() as EventEmitter & { aborted?: boolean };
+    const res = new EventEmitter() as EventEmitter & { writableFinished?: boolean };
+    res.writableFinished = false;
+    const signal = abortSignalFromRequest(req, res);
+    assert.equal(signal.aborted, false);
+    res.emit('close');
+    assert.equal(signal.aborted, true);
+  });
+
+  it('does not abort on normal finish/close after writableFinished', () => {
+    const req = new EventEmitter() as EventEmitter & { aborted?: boolean };
+    const res = new EventEmitter() as EventEmitter & { writableFinished?: boolean };
+    const signal = abortSignalFromRequest(req, res);
+    res.writableFinished = true;
+    res.emit('finish');
+    res.emit('close');
+    assert.equal(signal.aborted, false);
+  });
+
+  it('aborts on req.aborted event', () => {
+    const req = new EventEmitter() as EventEmitter & { aborted?: boolean };
+    const res = new EventEmitter() as EventEmitter & { writableFinished?: boolean };
+    const signal = abortSignalFromRequest(req, res);
+    req.emit('aborted');
+    assert.equal(signal.aborted, true);
   });
 });

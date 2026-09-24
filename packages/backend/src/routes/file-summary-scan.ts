@@ -355,8 +355,8 @@ export class FileSummaryScanCoordinator {
     }
 
     let entry = this.inFlight.get(key);
-    // Do not join an obsolete in-flight scan after cache invalidation.
-    if (entry && entry.cacheGeneration !== ctx.cacheGeneration) {
+    // Do not join an obsolete or already-cancelled in-flight scan.
+    if (entry && (entry.cacheGeneration !== ctx.cacheGeneration || entry.stopScheduling)) {
       entry.stopScheduling = true;
       entry = undefined;
     }
@@ -407,9 +407,17 @@ export class FileSummaryScanCoordinator {
     }
 
     entry.waiters += 1;
+    let counted = true;
+    const release = () => {
+      if (!counted) return;
+      counted = false;
+      entry!.waiters = Math.max(0, entry!.waiters - 1);
+    };
     const onAbort = () => {
+      // Decrement immediately so a later aborting peer sees the true active count.
+      release();
       // One disconnected caller must not cancel work still needed by others.
-      if (entry!.waiters <= 1) {
+      if (entry!.waiters === 0) {
         entry!.stopScheduling = true;
       }
     };
@@ -421,12 +429,9 @@ export class FileSummaryScanCoordinator {
     try {
       return await entry.promise;
     } finally {
-      entry.waiters = Math.max(0, entry.waiters - 1);
+      release();
       if (ctx.signal) {
         ctx.signal.removeEventListener('abort', onAbort);
-      }
-      if (entry.waiters === 0 && ctx.signal?.aborted) {
-        entry.stopScheduling = true;
       }
     }
   }
@@ -576,20 +581,38 @@ export function abortSignalFromRequest(
   req: {
     aborted?: boolean;
     on: (event: string, listener: () => void) => void;
+    removeListener: (event: string, listener: () => void) => void;
   },
-  res?: { writableEnded?: boolean },
+  res?: {
+    writableFinished?: boolean;
+    once: (event: string, listener: () => void) => void;
+    removeListener: (event: string, listener: () => void) => void;
+  },
 ): AbortSignal {
   const ac = new AbortController();
   if (req.aborted) {
     ac.abort();
     return ac.signal;
   }
-  const onClose = () => {
-    // Normal response completion also emits `close` — only abort early disconnects.
-    if (res?.writableEnded) return;
-    if (!ac.signal.aborted) ac.abort();
+
+  // On Node 20, IncomingMessage `close` fires on normal request completion too,
+  // so disconnect detection must use the response stream instead.
+  const cleanup = () => {
+    req.removeListener('aborted', abort);
+    res?.removeListener('close', onResponseClose);
+    res?.removeListener('finish', cleanup);
   };
-  req.on('close', onClose);
-  req.on('aborted', onClose);
+  const abort = () => {
+    if (!ac.signal.aborted) ac.abort();
+    cleanup();
+  };
+  const onResponseClose = () => {
+    if (!res?.writableFinished) abort();
+    else cleanup();
+  };
+
+  req.on('aborted', abort);
+  res?.once('close', onResponseClose);
+  res?.once('finish', cleanup);
   return ac.signal;
 }
