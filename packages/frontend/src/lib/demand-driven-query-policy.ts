@@ -170,6 +170,7 @@ export function channelSummaryDisplay(input: {
         .map(Number),
     );
     if (!scannedIds.has(input.channelId)) return { kind: 'not-scanned' };
+    if (input.isError) return { kind: 'error' };
     if (input.summary?.unavailable) return { kind: 'unavailable' };
     if (
       input.isQueryInvalidated

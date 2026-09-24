@@ -138,6 +138,37 @@ describe('summary display honesty', () => {
     assert.equal(display.kind, 'not-scanned');
     assert.equal(channelSummaryLabelText(display), 'Not scanned.');
   });
+
+  it('shows Check failed. for refresh errors that retain a prior observation', () => {
+    const display = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: true,
+      hasErrorData: true,
+      observation: { scannedChannelKey: '10', scannedAt: 1 },
+      currentChannelKey: '10',
+      channelId: 10,
+      summary: { unavailable: true },
+      isQueryInvalidated: false,
+    });
+    assert.equal(display.kind, 'error');
+    assert.equal(channelSummaryLabelText(display), 'Check failed.');
+  });
+
+  it('keeps Not scanned. for out-of-coverage channels even when the query errored', () => {
+    const display = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: true,
+      hasErrorData: true,
+      observation: { scannedChannelKey: '10', scannedAt: 1 },
+      currentChannelKey: channelCoverageKey([10, 99]),
+      channelId: 99,
+      summary: null,
+      isQueryInvalidated: false,
+    });
+    assert.equal(display.kind, 'not-scanned');
+  });
 });
 
 describe('request counts (scenario 4)', () => {
@@ -184,6 +215,22 @@ describe('request counts (scenario 4)', () => {
     await markExpensiveDiagnosticStale(qc, expensiveKey);
     assert.equal(expensiveFetches, 1);
     assert.equal(qc.getQueryState(expensiveKey)?.isInvalidated, true);
+
+    // Disabled observers report isStale=false; UI must read isInvalidated from the cache.
+    assert.equal(
+      channelSummaryDisplay({
+        offlineUnchecked: false,
+        isFetching: false,
+        isError: false,
+        hasErrorData: false,
+        observation: { scannedChannelKey: '10', scannedAt: 1 },
+        currentChannelKey: '10',
+        channelId: 10,
+        summary: { fileCount: 1 } as { unavailable?: boolean },
+        isQueryInvalidated: qc.getQueryState(expensiveKey)?.isInvalidated ?? false,
+      }).kind,
+      'stale-cached',
+    );
 
     // PWA recovery: expensive stays at one fetch; ordinary may refresh when active.
     assert.equal(shouldScanOnTrigger('pwa-recovery'), false);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { filesApi } from '@/api/files.api';
 import { channelsApi } from '@/api/channels.api';
@@ -97,7 +97,6 @@ export default function Files() {
     data: summaryPayload,
     isFetching: fetchingSummaries,
     isError: summaryIsError,
-    isStale: summaryStale,
     refetch: refetchSummaries,
   } = useQuery({
     queryKey: summaryQueryKey,
@@ -115,6 +114,13 @@ export default function Files() {
     enabled: false,
     ...expensiveDiagnosticQueryOptions,
   });
+
+  // Disabled observers always report isStale=false; read invalidation from the cache.
+  const summaryInvalidated = useSyncExternalStore(
+    (onChange) => qc.getQueryCache().subscribe(onChange),
+    () => qc.getQueryState(summaryQueryKey)?.isInvalidated ?? false,
+    () => false,
+  );
 
   const summaryData = summaryPayload?.summaries;
   const observation = summaryPayload?.observation ?? null;
@@ -137,7 +143,13 @@ export default function Files() {
       entryAttemptScope: entryAttemptScopeRef.current,
     });
     if (decision.action === 'skip') {
-      if (decision.reason === 'offline') setOfflineUnchecked(true);
+      if (decision.reason === 'offline') {
+        // Consume the page-entry opportunity so reconnect/channel churn cannot defer a scan.
+        entryAttemptScopeRef.current = connectionScope(c, s);
+        setOfflineUnchecked(true);
+      } else if (decision.reason === 'missing-context') {
+        setOfflineUnchecked(false);
+      }
       return;
     }
     entryAttemptScopeRef.current = decision.scope;
@@ -189,7 +201,6 @@ export default function Files() {
     setShowMkdir(false);
     setNewDirName('');
     setDeleteTarget(null);
-    setOfflineUnchecked(false);
   }, [c, s]);
 
   useEffect(() => {
@@ -352,7 +363,7 @@ export default function Files() {
                     currentChannelKey,
                     channelId: ch.cid,
                     summary,
-                    isQueryInvalidated: summaryStale,
+                    isQueryInvalidated: summaryInvalidated,
                   });
                   const statusText = channelSummaryLabelText(display);
                   return (
