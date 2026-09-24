@@ -16,12 +16,18 @@ function axiosLike(status: number, data: Record<string, unknown>) {
 }
 
 describe('action-guidance prerequisites', () => {
-  it('classifies SSH missing, SSH failure, and permission denied', () => {
+  it('classifies SSH missing, SSH disconnect, SSH failure, and permission denied', () => {
     assert.equal(
       classifyActionPrerequisite(axiosLike(400, {
         error: 'SSH credentials not configured for this server. File browsing requires SSH access because WebQuery HTTP does not support ft* commands.',
       })),
       'ssh_required',
+    );
+    assert.equal(
+      classifyActionPrerequisite(axiosLike(502, {
+        error: 'Could not change files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+      })),
+      'ssh_failed',
     );
     assert.equal(
       classifyActionPrerequisite(axiosLike(502, {
@@ -48,11 +54,33 @@ describe('action-guidance prerequisites', () => {
     );
   });
 
+  it('does not treat generic insufficient resource errors as permission denied', () => {
+    assert.equal(
+      classifyActionPrerequisite(axiosLike(507, {
+        error: 'Write failed',
+        details: 'insufficient disk space',
+      })),
+      'generic',
+    );
+    const message = fileWriteErrorMessage(axiosLike(507, {
+      error: 'Write failed',
+      details: 'insufficient disk space',
+    }), 'delete');
+    assert.match(message, /insufficient disk space/i);
+    assert.doesNotMatch(message, /grant the Query identity/i);
+  });
+
   it('maps browse and write errors to meaningful prerequisite copy', () => {
     const browse = fileBrowseErrorMessage(axiosLike(400, {
       error: 'SSH credentials not configured for this server',
     }));
     assert.match(browse, /requires SSH/i);
+
+    const disconnected = fileWriteErrorMessage(axiosLike(502, {
+      error: 'Could not change files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+    }), 'delete');
+    assert.match(disconnected, /SSH connection failed/i);
+    assert.doesNotMatch(disconnected, /SSH is required for file changes/i);
 
     const denied = fileWriteErrorMessage(axiosLike(403, {
       reason: 'ts_permission_denied',

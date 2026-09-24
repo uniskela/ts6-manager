@@ -34,12 +34,21 @@ export function classifyActionPrerequisite(error: unknown): ActionPrerequisiteKi
   const code = Number(data.code);
   const text = errorPayloadText(error);
 
-  if (reason === 'ts_permission_denied' || code === 2568 || text.includes('insufficient')) {
+  // Permission only: reason, TS 2568, or permission-specific wording — not bare "insufficient"
+  // (e.g. "insufficient disk space" must stay generic).
+  if (
+    reason === 'ts_permission_denied'
+    || code === 2568
+    || /insufficient\s+(?:client\s+|teamspeak\s+)?permissions?/.test(text)
+  ) {
     return 'permission_denied';
+  }
+  // Disconnected session ≠ missing credentials.
+  if (text.includes('ssh not connected')) {
+    return 'ssh_failed';
   }
   if (
     text.includes('ssh credentials not configured')
-    || text.includes('ssh not connected')
     || text.includes('webquery http does not support')
   ) {
     return 'ssh_required';
