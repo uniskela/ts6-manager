@@ -26,7 +26,7 @@ If worker registration, installation, or storage fails, ordinary browser use con
 
 After building, `pnpm --filter @ts6/frontend test` runs Playwright against production output, including the real emitted worker. Install Chromium with `pnpm --filter @ts6/frontend exec playwright install chromium` first. These tests use generic synthetic API responses to isolate worker security and lifecycle behavior; they are not TeamSpeak integration tests.
 
-Also test both actual nginx configurations, and run the real backend with its generic Demo TeamSpeak Server for dashboard, channels, clients, groups, permissions, files, music bots, bot flows, and Settings QA. Verify login, refresh after expiry, logout, expired sessions, backend loss/recovery, and cache contents. Never use real credentials or private fixtures in committed test data.
+Also test both actual nginx configurations, and run the real backend with its generic Demo TeamSpeak Server for dashboard, channels, clients, groups, permissions, files, music bots, bot flows, and Settings QA. Verify login, refresh after expiry, logout, expired sessions, backend loss/recovery, and cache contents. On backend recovery, confirm ordinary live queries may refresh while expensive diagnostics (file storage summaries, runtime/media probes) stay stale until manual Refresh — covered by frontend unit policy tests in CI. Never use real credentials or private fixtures in committed test data.
 
 Physical-device release checklist (browser emulation cannot certify OS installation):
 

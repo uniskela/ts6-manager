@@ -1,9 +1,9 @@
 # Plan: #91 Slice 4 — Administrative audit
 
-Status: **implementation in progress / shipped via feature PR** (see PR).  
-Design attribution: Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
+Status: **shipped on `main`** via [#134](https://github.com/uniskela/ts6-manager/pull/134), [#135](https://github.com/uniskela/ts6-manager/pull/135), [#140](https://github.com/uniskela/ts6-manager/pull/140). Acceptance roll-up: [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md).  
+Design attribution (historical): Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
 
-Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Prefer several small PRs with coverage documented until complete. Do not merge Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) based on this plan.
+Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until Slice 6 acceptance is honest.
 
 ## Findings
 

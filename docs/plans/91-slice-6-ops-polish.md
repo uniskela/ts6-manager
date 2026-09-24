@@ -1,10 +1,10 @@
 # #91 Slice 6 — Operational safety and on-demand diagnostics polish
 
-**Status:** Codex design accepted (follow-up review). Implement in small PRs; hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120).
+**Status:** Behavior PRs 1–6 **shipped on `main`** (through [#155](https://github.com/uniskela/ts6-manager/pull/155) @ `d2fcd6b`); PR 7 acceptance evidence in [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until release-note curation matches shipped behavior.
 
-**Reviewed checkout:** `9df08fd` (Codex). Open PRs at review time: only #120; no open #91 slice PRs.
+**Reviewed checkout (design):** `9df08fd` (Codex). **Shipped tip recorded for acceptance:** `d2fcd6b` (includes [#153](https://github.com/uniskela/ts6-manager/pull/153) and [#155](https://github.com/uniskela/ts6-manager/pull/155)).
 
-**Sequencing guidance:** Start with **action ownership and refresh control**; add **runtime diagnostics afterward**.
+**Sequencing guidance:** Action ownership and refresh control first; runtime diagnostics afterward — complete through PR 6 on `main`.
 
 ---
 
@@ -24,13 +24,17 @@ New monitoring stack; manager self-update; broad SSO; unrelated major upgrades; 
 
 ## Additional current-state findings (Codex follow-up)
 
-**Storage has two additional refresh/scale traps.** In `Files.tsx`, channel IDs form part of the summary query key. A changed channel list can therefore trigger another scan without page entry or manual refresh. The frontend also submits every channel, while the backend accepts at most 256; larger servers receive a request error that the summary UI does not explain.
+> **Historical (pre–Slice 6).** The bullets below describe the design-time gaps Codex recorded at `9df08fd`. They are **resolved on current `main`**; kept here so the plan’s original diagnosis remains readable.
 
-**File-action ownership includes the path and channel.** The delete handler constructs its path at confirmation time, and mutation functions read the current connection/SID/channel. Protection must bind the complete original target, not merely reset selection when switching servers.
+**Storage refresh/scale traps (resolved).** Design-time: channel IDs were part of the summary query key (so a channel-list change could rescan), and submitting every channel against a 256 backend cap produced an unexplained request error. **Now:** the summary key is connection/SID scoped (no channel-ID embedding); the frontend sends only the bounded set and labels omitted channels **“Not scanned.”**; channel-list changes mark coverage stale without scanning.
 
-**Aborting HTTP does not currently cancel a scan.** `files.api.ts` does not forward an abort signal. The backend recursively schedules SSH work, and `EventBridge.executeCommand` resolves the current shared connection for each call. A scan needs generation checks during execution, as well as before displaying or caching its result.
+**File-action ownership includes the path and channel (resolved via PR 1).** Protection binds the complete original target (connection, SID, channel, path, generation), not merely selection reset when switching servers — see [#144](https://github.com/uniskela/ts6-manager/pull/144).
 
-**Frontend unit-test placement needs explicit CI wiring.** `playwright.config.ts` excludes `tests/unit/**`. PR validation runs Playwright and backend tests without a separate frontend-unit invocation. New policy tests placed only in that directory would not be covered unless CI is updated.
+**Aborting HTTP / scan lifecycle (resolved via PR 3).** Design-time: `files.api.ts` did not forward an abort signal and scans lacked mid-execution generation checks. **Now:** request-wide budgets, generation-aware cache, cancellation/coalescing, and coverage labels land in [#151](https://github.com/uniskela/ts6-manager/pull/151).
+
+**Frontend unit-test CI wiring (resolved).** Design-time: `playwright.config.ts` excluded `tests/unit/**` and PR validation did not invoke frontend unit tests. **Now:** `.github/workflows/pr-validation.yml` runs `find tests/unit …` via **Run frontend unit tests**.
+
+**Server Logs paging / query errors (resolved).** Design-time concerns about missing cursor pagination and unclear query-error presentation were addressed in Logs 2.0 and Slice 6 PR 6 ([#155](https://github.com/uniskela/ts6-manager/pull/155)): bounded Previous/Older cursor paging, context gating, and honest interrupted/retry labels.
 
 ---
 
@@ -114,15 +118,15 @@ Apply the same principle to instance settings and journal controls where appropr
 
 ## Small-PR sequence
 
-| PR | Deliverable | Required evidence |
-| --- | --- | --- |
-| **1. Action and draft ownership** | Files target binding, instance draft protection, connection-test generation guards | Switching context cannot redirect a pending action or apply an obsolete result |
-| **2. Demand-driven query policy** | Filtered PWA recovery, explicit summary refresh, controlled page-entry trigger, truthful missing/error states | Request-count tests show no scan after recovery, mutation invalidation or channel-list changes |
-| **3. Bounded storage execution** | Request-wide budgets, generation-aware cache, cancellation/coalescing, coverage labels and channel-count handling | Large/denied/interrupted trees return honest bounded results |
-| **4. Contextual compatibility and permission guidance** | Action-local warnings and meaningful prerequisite errors | Read success never implies write authorization |
-| **5. Runtime/media diagnostics** | Bounded executable and sidecar checks beside relevant actions | Routine status polling performs no probes; failures terminate within bounds |
-| **6. History/status consistency** | Journal pagination reset, unknown/stale capture states, log context gating, accurate refresh labels | Scope changes and failed refreshes cannot preserve misleading current-state labels |
-| **7. Documentation and acceptance** | Correct shipped-status docs and record beta13/mobile/PWA evidence | #91/#101 claims match demonstrated behavior |
+| PR | Deliverable | Required evidence | Status |
+| --- | --- | --- | --- |
+| **1. Action and draft ownership** | Files target binding, instance draft protection, connection-test generation guards | Switching context cannot redirect a pending action or apply an obsolete result | **Shipped** [#144](https://github.com/uniskela/ts6-manager/pull/144) |
+| **2. Demand-driven query policy** | Filtered PWA recovery, explicit summary refresh, controlled page-entry trigger, truthful missing/error states | Request-count tests show no scan after recovery, mutation invalidation or channel-list changes | **Shipped** [#146](https://github.com/uniskela/ts6-manager/pull/146) |
+| **3. Bounded storage execution** | Request-wide budgets, generation-aware cache, cancellation/coalescing, coverage labels and channel-count handling | Large/denied/interrupted trees return honest bounded results | **Shipped** [#151](https://github.com/uniskela/ts6-manager/pull/151) |
+| **4. Contextual compatibility and permission guidance** | Action-local warnings and meaningful prerequisite errors | Read success never implies write authorization | **Shipped** [#152](https://github.com/uniskela/ts6-manager/pull/152) |
+| **5. Runtime/media diagnostics** | Bounded executable and sidecar checks beside relevant actions | Routine status polling performs no probes; failures terminate within bounds | **Shipped** [#153](https://github.com/uniskela/ts6-manager/pull/153) @ `aa926b5` |
+| **6. History/status consistency** | Journal pagination reset, unknown/stale capture states, log context gating, accurate refresh labels | Scope changes and failed refreshes cannot preserve misleading current-state labels | **Shipped** [#155](https://github.com/uniskela/ts6-manager/pull/155) @ `d2fcd6b` |
+| **7. Documentation and acceptance** | Correct shipped-status docs and record beta13/mobile/PWA evidence | #91/#101 claims match demonstrated behavior | [`91-slice-6-acceptance.md`](91-slice-6-acceptance.md) |
 
 Each behavior PR includes focused tests and relevant docs. PR 7 consolidates acceptance evidence; it must not become a deferred testing bucket.
 
