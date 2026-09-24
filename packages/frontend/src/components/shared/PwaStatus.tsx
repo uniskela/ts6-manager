@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
+import { invalidateAfterPwaRecovery } from '@/lib/demand-driven-query-policy';
 
 /** Available on login/setup as well as protected routes. No persisted live data. */
 export function PwaStatus() {
@@ -75,7 +76,8 @@ export function PwaStatus() {
       }
       if (disposed) return;
       setUnavailable(!available);
-      if (wasUnavailable && available) void queryClient.invalidateQueries();
+      // Recovery refreshes ordinary live queries but must not start expensive scans.
+      if (wasUnavailable && available) void invalidateAfterPwaRecovery(queryClient);
       wasUnavailable = !available;
     };
 

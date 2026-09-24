@@ -19,6 +19,16 @@ import {
   shouldCloseFileDialog,
   type FileActionTarget,
 } from '@/lib/action-ownership';
+import {
+  channelCoverageKey,
+  channelSummaryDisplay,
+  channelSummaryLabelText,
+  connectionScope,
+  decidePageEntryScan,
+  expensiveDiagnosticQueryOptions,
+  markExpensiveDiagnosticStale,
+  type SummaryObservation,
+} from '@/lib/demand-driven-query-policy';
 import { cn, formatBytes } from '@/lib/utils';
 import {
   FolderOpen, File, Folder, ArrowLeft, FolderPlus, Trash2, Hash, HardDrive, AlertTriangle, RefreshCw,
@@ -39,6 +49,11 @@ interface ChannelFileSummary {
   totalSize?: number;
   unavailable?: boolean;
 }
+
+type SummaryQueryData = {
+  summaries: ChannelFileSummary[];
+  observation: SummaryObservation;
+};
 
 export default function Files() {
   const { selectedConfigId: c, selectedSid: s } = useServerStore();
@@ -69,19 +84,81 @@ export default function Files() {
   }, [channelData]);
 
   const channelIds = useMemo(() => channels.map((channel) => channel.cid), [channels]);
-  const { data: summaryData, isLoading: loadingSummaries, isFetching: fetchingSummaries } = useQuery({
-    queryKey: ['file-summaries', c, s, channelIds.join(',')],
-    queryFn: () => filesApi.summaries(c!, s!, channelIds),
-    enabled: !!c && !!s && channelIds.length > 0,
-    staleTime: 30_000,
-    retry: false,
+  const currentChannelKey = useMemo(() => channelCoverageKey(channelIds), [channelIds]);
+  const channelIdsRef = useRef(channelIds);
+  channelIdsRef.current = channelIds;
+
+  const entryAttemptScopeRef = useRef<string | null>(null);
+  const [offlineUnchecked, setOfflineUnchecked] = useState(false);
+
+  const summaryQueryKey = useMemo(() => ['file-summaries', c, s] as const, [c, s]);
+
+  const {
+    data: summaryPayload,
+    isFetching: fetchingSummaries,
+    isError: summaryIsError,
+    isStale: summaryStale,
+    refetch: refetchSummaries,
+  } = useQuery({
+    queryKey: summaryQueryKey,
+    queryFn: async (): Promise<SummaryQueryData> => {
+      const ids = channelIdsRef.current;
+      const summaries = await filesApi.summaries(c!, s!, ids);
+      return {
+        summaries: Array.isArray(summaries) ? summaries : [],
+        observation: {
+          scannedChannelKey: channelCoverageKey(ids),
+          scannedAt: Date.now(),
+        },
+      };
+    },
+    enabled: false,
+    ...expensiveDiagnosticQueryOptions,
   });
+
+  const summaryData = summaryPayload?.summaries;
+  const observation = summaryPayload?.observation ?? null;
+
   const summariesByChannel = useMemo(() => {
     const map = new Map<number, ChannelFileSummary>();
     if (!Array.isArray(summaryData)) return map;
     for (const summary of summaryData) map.set(Number(summary.cid), summary);
     return map;
   }, [summaryData]);
+
+  // One bounded page-entry attempt once context is valid and online.
+  useEffect(() => {
+    if (!c || !s) return;
+    const decision = decidePageEntryScan({
+      configId: c,
+      sid: s,
+      hasChannels: channelIds.length > 0,
+      online: typeof navigator === 'undefined' ? true : navigator.onLine,
+      entryAttemptScope: entryAttemptScopeRef.current,
+    });
+    if (decision.action === 'skip') {
+      if (decision.reason === 'offline') setOfflineUnchecked(true);
+      return;
+    }
+    entryAttemptScopeRef.current = decision.scope;
+    setOfflineUnchecked(false);
+    void refetchSummaries();
+  }, [c, s, channelIds.length, refetchSummaries]);
+
+  // Connection revision: cancel in-flight summaries when the scope key changes.
+  useEffect(() => {
+    return () => {
+      void qc.cancelQueries({ queryKey: summaryQueryKey });
+    };
+  }, [qc, summaryQueryKey]);
+
+  const refreshSummaries = () => {
+    if (!c || !s || channelIds.length === 0) return;
+    entryAttemptScopeRef.current = connectionScope(c, s);
+    setOfflineUnchecked(false);
+    // Compatible in-flight work is coalesced by TanStack Query on the same key.
+    void refetchSummaries();
+  };
 
   // Fetch files in selected channel + path
   const { data: fileData, isLoading: loadingFiles, error: filesError } = useQuery({
@@ -112,6 +189,7 @@ export default function Files() {
     setShowMkdir(false);
     setNewDirName('');
     setDeleteTarget(null);
+    setOfflineUnchecked(false);
   }, [c, s]);
 
   useEffect(() => {
@@ -126,9 +204,8 @@ export default function Files() {
       qc.invalidateQueries({
         queryKey: ['files', target.configId, target.sid, target.cid],
       });
-      qc.invalidateQueries({
-        queryKey: ['file-summaries', target.configId, target.sid],
-      });
+      // Mark summary stale — do not authorize another expensive scan.
+      void markExpensiveDiagnosticStale(qc, ['file-summaries', target.configId, target.sid]);
       // Only dismiss mkdir UI when it still belongs to the submitted scope.
       if (
         c === target.configId
@@ -151,9 +228,7 @@ export default function Files() {
       qc.invalidateQueries({
         queryKey: ['files', target.configId, target.sid, target.cid],
       });
-      qc.invalidateQueries({
-        queryKey: ['file-summaries', target.configId, target.sid],
-      });
+      void markExpensiveDiagnosticStale(qc, ['file-summaries', target.configId, target.sid]);
       if (shouldCloseFileDialog(deleteTargetRef.current, target)) {
         setDeleteTarget(null);
       }
@@ -246,7 +321,21 @@ export default function Files() {
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center justify-between text-xs font-medium uppercase tracking-wider text-muted-foreground">
               <span className="flex items-center gap-1.5"><Hash className="h-3.5 w-3.5" /> Channels</span>
-              {fetchingSummaries && <RefreshCw className="h-3 w-3 animate-spin text-sky-400" aria-label="Scanning storage" />}
+              <span className="flex items-center gap-1">
+                {fetchingSummaries && <RefreshCw className="h-3 w-3 animate-spin text-sky-400" aria-label="Scanning storage" />}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6"
+                  onClick={refreshSummaries}
+                  disabled={fetchingSummaries || channelIds.length === 0}
+                  aria-label="Refresh storage summary"
+                  title="Refresh storage summary"
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </Button>
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
@@ -254,6 +343,18 @@ export default function Files() {
               <div className="p-2 space-y-0.5">
                 {channels.map((ch) => {
                   const summary = summariesByChannel.get(ch.cid);
+                  const display = channelSummaryDisplay({
+                    offlineUnchecked,
+                    isFetching: fetchingSummaries,
+                    isError: summaryIsError,
+                    hasErrorData: summaryIsError,
+                    observation,
+                    currentChannelKey,
+                    channelId: ch.cid,
+                    summary,
+                    isQueryInvalidated: summaryStale,
+                  });
+                  const statusText = channelSummaryLabelText(display);
                   return (
                   <button
                     key={ch.cid}
@@ -267,15 +368,21 @@ export default function Files() {
                   >
                     <span className="block truncate">{ch.name}</span>
                     <span className="mt-1 flex min-h-3.5 items-center gap-2 font-mono-data text-[9px] text-muted-foreground/80">
-                      {loadingSummaries && !summary ? (
-                        <span>Scanning…</span>
-                      ) : summary?.unavailable ? (
-                        <span className="text-amber-400/80">Unavailable</span>
+                      {statusText ? (
+                        <span className={cn(
+                          display.kind === 'unavailable' || display.kind === 'error' ? 'text-amber-400/80' : undefined,
+                          display.kind === 'stale-cached' ? 'opacity-80' : undefined,
+                        )}>
+                          {statusText}
+                        </span>
                       ) : (
                         <>
                           <span className="flex items-center gap-0.5" title="Files"><File className="h-3 w-3" />{summary?.fileCount ?? 0}</span>
                           <span className="flex items-center gap-0.5" title="Folders"><Folder className="h-3 w-3" />{summary?.folderCount ?? 0}</span>
                           <span className="ml-auto flex items-center gap-0.5" title="Total size"><HardDrive className="h-3 w-3" />{formatBytes(summary?.totalSize ?? 0)}</span>
+                          {display.kind === 'stale-cached' && (
+                            <span className="text-amber-400/80" title="Summary may be outdated">Stale</span>
+                          )}
                         </>
                       )}
                     </span>
