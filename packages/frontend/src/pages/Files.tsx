@@ -34,6 +34,12 @@ import {
   retainSummaryQueryScope,
   type SummaryObservation,
 } from '@/lib/demand-driven-query-policy';
+import {
+  FILE_WRITE_READ_DOES_NOT_AUTHORIZE,
+  fileBrowseErrorMessage,
+  fileDeleteConfirmDescription,
+  fileWriteErrorMessage,
+} from '@/lib/action-guidance';
 import { cn, formatBytes } from '@/lib/utils';
 import {
   FolderOpen, File, Folder, ArrowLeft, FolderPlus, Trash2, Hash, HardDrive, AlertTriangle, RefreshCw,
@@ -247,7 +253,7 @@ export default function Files() {
         setNewDirName('');
       }
     },
-    onError: () => toast.error('Failed to create directory'),
+    onError: (error) => toast.error(fileWriteErrorMessage(error, 'create')),
   });
 
   const deleteMutation = useMutation({
@@ -263,7 +269,7 @@ export default function Files() {
         setDeleteTarget(null);
       }
     },
-    onError: () => toast.error('Failed to delete file'),
+    onError: (error) => toast.error(fileWriteErrorMessage(error, 'delete')),
   });
 
   const navigateTo = (entry: FileEntry) => {
@@ -473,12 +479,8 @@ export default function Files() {
               <div className="flex h-[min(400px,50dvh)] min-h-64 flex-col items-center justify-center gap-3 px-4 sm:px-8">
                 <AlertTriangle className="h-8 w-8 text-amber-400" />
                 <p className="text-sm font-medium text-foreground">File Browser Unavailable</p>
-                <p className="text-xs text-muted-foreground text-center max-w-md">
-                  {(filesError as any)?.response?.data?.error?.includes('SSH credentials not configured')
-                    ? 'File browsing requires SSH access because the TeamSpeak WebQuery HTTP API does not support file transfer commands. Please configure SSH credentials (username & password) in the server settings.'
-                    : (filesError as any)?.response?.data?.error?.includes('SSH')
-                      ? 'Could not connect to TeamSpeak server via SSH. Please check the SSH credentials and port in server settings.'
-                      : (filesError as any)?.response?.data?.details || (filesError as any)?.response?.data?.error || 'Failed to load files. Ensure SSH credentials are configured in server settings.'}
+                <p className="text-xs text-muted-foreground text-center max-w-md" role="alert">
+                  {fileBrowseErrorMessage(filesError)}
                 </p>
                 {(filesError as any)?.response?.data?.code != null && (
                   <p className="text-[10px] text-muted-foreground/60 mt-1">TS3 error code: {(filesError as any).response.data.code}</p>
@@ -554,9 +556,14 @@ export default function Files() {
       <Dialog open={showMkdir} onOpenChange={setShowMkdir}>
         <DialogContent>
           <DialogHeader><DialogTitle>Create Directory</DialogTitle></DialogHeader>
-          <div>
-            <Label className="text-xs">Directory Name</Label>
-            <Input value={newDirName} onChange={(e) => setNewDirName(e.target.value)} placeholder="New Folder" autoFocus />
+          <div className="space-y-2">
+            <div>
+              <Label className="text-xs">Directory Name</Label>
+              <Input value={newDirName} onChange={(e) => setNewDirName(e.target.value)} placeholder="New Folder" autoFocus />
+            </div>
+            <p role="note" className="text-xs text-muted-foreground" data-testid="file-write-read-not-authorize">
+              {FILE_WRITE_READ_DOES_NOT_AUTHORIZE}
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowMkdir(false)}>Cancel</Button>
@@ -570,7 +577,11 @@ export default function Files() {
         open={!!deleteTarget}
         onOpenChange={() => setDeleteTarget(null)}
         title="Delete File"
-        description={`Are you sure you want to delete "${deleteTarget?.entryName}" (${deleteTarget?.fullPath})? This cannot be undone.`}
+        description={
+          deleteTarget
+            ? fileDeleteConfirmDescription(deleteTarget.entryName ?? deleteTarget.fullPath, deleteTarget.fullPath)
+            : ''
+        }
         confirmLabel="Delete"
         destructive
         onConfirm={handleDelete}

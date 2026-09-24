@@ -7,6 +7,7 @@ import {
   diagnoseConnection,
   finalizeReport,
   sanitizeVersionString,
+  summarizeDiagnosticToast,
   type DiagnosticWebQueryClient,
 } from './connection-diagnostics.js';
 
@@ -210,5 +211,20 @@ describe('finalizeReport', () => {
     assert.equal(partial.success, false);
     assert.equal(partial.partial, true);
     assert.equal(partial.overall, 'partial');
+  });
+});
+
+describe('summarizeDiagnosticToast', () => {
+  it('success copy confirms read stages without claiming write authorization', () => {
+    const toast = summarizeDiagnosticToast({
+      success: true,
+      partial: false,
+      overall: 'ok',
+      stages: [],
+      version: '6.0.0-beta13',
+    });
+    assert.match(toast, /read stages OK/i);
+    assert.match(toast, /write actions still need/i);
+    assert.doesNotMatch(toast, /full admin/i);
   });
 });

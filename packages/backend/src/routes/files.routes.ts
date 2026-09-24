@@ -1,6 +1,11 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
-import { AppError, TSApiError } from '../middleware/error-handler.js';
+import {
+  AppError,
+  TSApiError,
+  TeamSpeakPermissionError,
+  isTeamSpeakPermissionError,
+} from '../middleware/error-handler.js';
 import { parseQueryResponse, tsEscape } from '@ts6/common';
 import type { BotEngine } from '../bot-engine/engine.js';
 
@@ -158,6 +163,40 @@ async function sshExecute(
   return parseQueryResponse(rawResponse);
 }
 
+function mapFileSshTransportError(err: Error, purpose: 'browse' | 'changes'): AppError | null {
+  const msg = err.message || '';
+  if (msg.includes('SSH not connected')) {
+    return new AppError(
+      502,
+      purpose === 'browse'
+        ? 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.'
+        : 'Could not change files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+    );
+  }
+  if (msg.includes('SSH credentials')) {
+    return new AppError(
+      400,
+      purpose === 'browse'
+        ? 'SSH credentials not configured for this server. File browsing requires SSH access because WebQuery HTTP does not support ft* commands.'
+        : 'SSH credentials not configured for this server. File changes require SSH access because WebQuery HTTP does not support ft* commands.',
+    );
+  }
+  return null;
+}
+
+function mapFileMutationError(err: unknown, actionHint: string): unknown {
+  if (err instanceof TSApiError && isTeamSpeakPermissionError(err)) {
+    return new TeamSpeakPermissionError(err.code, err.message, actionHint);
+  }
+  if (err instanceof TeamSpeakPermissionError) {
+    return new TeamSpeakPermissionError(err.tsCode, 'insufficient client permissions', actionHint);
+  }
+  if (err instanceof Error) {
+    return mapFileSshTransportError(err, 'changes') ?? err;
+  }
+  return err;
+}
+
 // Recursively summarize file trees for the channel selector.
 fileRoutes.get('/summary', async (req: Request, res: Response, next) => {
   try {
@@ -194,8 +233,9 @@ fileRoutes.get('/:cid', async (req: Request, res: Response, next) => {
     if (err instanceof TSApiError && err.code === 1281) {
       return res.json([]);
     }
-    if (err.message?.includes('SSH not connected') || err.message?.includes('SSH credentials')) {
-      return next(new AppError(400, 'SSH credentials not configured for this server. File browsing requires SSH access because WebQuery HTTP does not support ft* commands.'));
+    if (err instanceof Error) {
+      const mapped = mapFileSshTransportError(err, 'browse');
+      if (mapped) return next(mapped);
     }
     next(err);
   }
@@ -211,7 +251,9 @@ fileRoutes.post('/:cid/mkdir', requireRole('admin'), async (req: Request, res: R
     });
     fileSummaryCache.delete(fileSummaryKey(req, Number(req.params.cid)));
     res.json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(mapFileMutationError(err, 'creating directories'));
+  }
 });
 
 // Delete file
@@ -224,5 +266,7 @@ fileRoutes.delete('/:cid/file', requireRole('admin'), async (req: Request, res: 
     });
     fileSummaryCache.delete(fileSummaryKey(req, Number(req.params.cid)));
     res.json(result);
-  } catch (err) { next(err); }
+  } catch (err) {
+    next(mapFileMutationError(err, 'deleting files'));
+  }
 });

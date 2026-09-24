@@ -61,12 +61,41 @@ export class TeamSpeakLogviewIoError extends AppError {
   }
 }
 
+/**
+ * TeamSpeak Query permission denied (commonly error 2568).
+ * Read/list success elsewhere never implies authorization for this write (or a different read scope).
+ */
+export class TeamSpeakPermissionError extends AppError {
+  constructor(
+    public tsCode: number = 2568,
+    tsMessage = 'insufficient client permissions',
+    actionHint = 'this action',
+  ) {
+    super(
+      403,
+      `Insufficient TeamSpeak permission for ${actionHint}`,
+      `TeamSpeak denied the request (error ${tsCode}: ${tsMessage}). `
+        + 'Successful reads or connection diagnostics do not authorize writes — grant the Query identity the permissions required for this action.',
+    );
+    this.name = 'TeamSpeakPermissionError';
+  }
+}
+
 /** True when TeamSpeak reports logfile I/O failure from `logview` (error 2052 / matching message). */
 export function isTeamSpeakLogviewIoError(error: unknown): boolean {
   if (error instanceof TeamSpeakLogviewIoError) return true;
   if (error instanceof TSApiError) {
     if (error.code === 2052) return true;
     return /file\s+input\/output\s+error/i.test(error.message);
+  }
+  return false;
+}
+
+export function isTeamSpeakPermissionError(error: unknown): boolean {
+  if (error instanceof TeamSpeakPermissionError) return true;
+  if (error instanceof TSApiError) {
+    if (error.code === 2568) return true;
+    return /insufficient\s+(client\s+)?permissions?/i.test(error.message);
   }
   return false;
 }
@@ -82,8 +111,9 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
   const quietFlood = err instanceof TeamSpeakFloodError;
   const quietUnavailable = err instanceof TeamSpeakUnavailableError;
   const quietLogviewIo = err instanceof TeamSpeakLogviewIoError;
+  const quietPermission = err instanceof TeamSpeakPermissionError;
 
-  if (!quietTs && !quietFlood && !quietUnavailable && !quietLogviewIo) {
+  if (!quietTs && !quietFlood && !quietUnavailable && !quietLogviewIo && !quietPermission) {
     console.error(`[Error] ${err.name}: ${err.message}`);
   }
 
@@ -108,6 +138,16 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
     return;
   }
 
+  if (err instanceof TeamSpeakPermissionError) {
+    res.status(err.statusCode).json({
+      error: err.message,
+      details: err.details,
+      code: err.tsCode,
+      reason: 'ts_permission_denied',
+    });
+    return;
+  }
+
   if (err instanceof AppError) {
     res.status(err.statusCode).json({
       error: err.message,
@@ -125,6 +165,16 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
         details: mapped.details,
         code: mapped.tsCode,
         reason: 'ts_logview_io',
+      });
+      return;
+    }
+    if (isTeamSpeakPermissionError(err)) {
+      const mapped = new TeamSpeakPermissionError(err.code, err.message);
+      res.status(mapped.statusCode).json({
+        error: mapped.message,
+        details: mapped.details,
+        code: mapped.tsCode,
+        reason: 'ts_permission_denied',
       });
       return;
     }
