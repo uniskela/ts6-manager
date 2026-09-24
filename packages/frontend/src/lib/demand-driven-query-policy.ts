@@ -214,6 +214,7 @@ export function shouldScanOnTrigger(trigger: DiagnosticTrigger): boolean {
 }
 
 export type SummaryObservation = {
+  /** Channels included in the bounded scan request (≤256). */
   scannedChannelKey: string;
   scannedAt: number;
 };
@@ -224,12 +225,16 @@ export type ChannelSummaryDisplay =
   | { kind: 'stale-cached' }
   | { kind: 'not-scanned' }
   | { kind: 'unavailable' }
+  | { kind: 'partial' }
   | { kind: 'ready' }
   | { kind: 'error' };
 
 /**
  * Truthful per-channel label for the storage summary strip.
  * Never presents a missing observation as zero files.
+ *
+ * `eligibleChannelKey` is the bounded selection that may be scanned (first ≤256).
+ * Intentional omissions beyond the cap are `not-scanned`, not stale.
  */
 export function channelSummaryDisplay(input: {
   offlineUnchecked: boolean;
@@ -237,9 +242,16 @@ export function channelSummaryDisplay(input: {
   isError: boolean;
   hasErrorData: boolean;
   observation: SummaryObservation | null;
+  /** @deprecated Prefer eligibleChannelKey for stale comparison. */
   currentChannelKey: string;
+  /** Bounded eligible set (first ≤256 of current channels). */
+  eligibleChannelKey?: string;
   channelId: number;
-  summary?: { unavailable?: boolean } | null;
+  summary?: {
+    unavailable?: boolean;
+    notScanned?: boolean;
+    complete?: boolean;
+  } | null;
   isQueryInvalidated: boolean;
 }): ChannelSummaryDisplay {
   if (input.isFetching && !input.summary) return { kind: 'scanning' };
@@ -253,14 +265,20 @@ export function channelSummaryDisplay(input: {
         .filter(Boolean)
         .map(Number),
     );
-    if (!scannedIds.has(input.channelId)) return { kind: 'not-scanned' };
+    if (!scannedIds.has(input.channelId) || input.summary?.notScanned) {
+      return { kind: 'not-scanned' };
+    }
     if (input.isError) return { kind: 'error' };
     if (input.summary?.unavailable) return { kind: 'unavailable' };
+    const eligibleKey = input.eligibleChannelKey ?? input.currentChannelKey;
     if (
       input.isQueryInvalidated
-      || input.observation.scannedChannelKey !== input.currentChannelKey
+      || input.observation.scannedChannelKey !== eligibleKey
     ) {
       return { kind: 'stale-cached' };
+    }
+    if (input.summary && input.summary.complete === false) {
+      return { kind: 'partial' };
     }
     return { kind: 'ready' };
   }
@@ -279,6 +297,8 @@ export function channelSummaryLabelText(display: ChannelSummaryDisplay): string 
       return 'Not scanned.';
     case 'unavailable':
       return 'Unavailable';
+    case 'partial':
+      return 'Partial';
     case 'error':
       return 'Check failed.';
     case 'stale-cached':

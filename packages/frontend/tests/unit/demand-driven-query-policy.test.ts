@@ -231,12 +231,62 @@ describe('summary display honesty', () => {
       hasErrorData: false,
       observation: { scannedChannelKey: '10', scannedAt: 1 },
       currentChannelKey: channelCoverageKey([10, 99]),
+      eligibleChannelKey: channelCoverageKey([10]),
       channelId: 99,
       summary: null,
       isQueryInvalidated: false,
     });
     assert.equal(display.kind, 'not-scanned');
     assert.equal(channelSummaryLabelText(display), 'Not scanned.');
+  });
+
+  it('keeps first-256 eligible channels ready when extras are omitted (scenario 5)', () => {
+    const eligible = Array.from({ length: 256 }, (_, i) => i + 1);
+    const all = [...eligible, 257];
+    const displayScanned = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: channelCoverageKey(eligible), scannedAt: 1 },
+      currentChannelKey: channelCoverageKey(all),
+      eligibleChannelKey: channelCoverageKey(eligible),
+      channelId: 1,
+      summary: { complete: true },
+      isQueryInvalidated: false,
+    });
+    assert.equal(displayScanned.kind, 'ready');
+
+    const displayOmitted = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: channelCoverageKey(eligible), scannedAt: 1 },
+      currentChannelKey: channelCoverageKey(all),
+      eligibleChannelKey: channelCoverageKey(eligible),
+      channelId: 257,
+      summary: { notScanned: true },
+      isQueryInvalidated: false,
+    });
+    assert.equal(displayOmitted.kind, 'not-scanned');
+  });
+
+  it('labels incomplete trees as Partial', () => {
+    const display = channelSummaryDisplay({
+      offlineUnchecked: false,
+      isFetching: false,
+      isError: false,
+      hasErrorData: false,
+      observation: { scannedChannelKey: '10', scannedAt: 1 },
+      currentChannelKey: '10',
+      eligibleChannelKey: '10',
+      channelId: 10,
+      summary: { complete: false },
+      isQueryInvalidated: false,
+    });
+    assert.equal(display.kind, 'partial');
+    assert.equal(channelSummaryLabelText(display), 'Partial');
   });
 
   it('shows Check failed. for refresh errors that retain a prior observation', () => {
