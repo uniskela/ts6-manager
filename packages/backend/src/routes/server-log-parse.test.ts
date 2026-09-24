@@ -74,6 +74,7 @@ describe('parseServerLogLine', () => {
     const parsed = parseServerLogLine('2026-03-15 12:00:05.123456|ERROR   |VirtualServer |1  |boom');
     const formatted = formatLogTimestamp(parsed, 'local');
     assert.equal(formatted.text, '2026-03-15 12:00:05.123456');
-    assert.equal(formatted.zoneLabel, 'timezone unknown');
+    // Per-row zone labels are omitted; page UI surfaces LOG_TIMESTAMP_ZONE_UNKNOWN_HINT once.
+    assert.equal(formatted.zoneLabel, null);
   });
 });

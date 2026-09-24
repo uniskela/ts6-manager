@@ -28,6 +28,7 @@ import {
   formatLogTimestamp,
   levelBadgeLabel,
   logLevelMatchesFilter,
+  LOG_TIMESTAMP_ZONE_UNKNOWN_HINT,
   parseServerLogLine,
   type ServerLogLevel,
 } from '@/lib/server-logs';
@@ -287,6 +288,9 @@ export default function ServerLogs() {
       <p className="text-xs text-muted-foreground" data-testid="logs-filter-hint">
         Search and level filters apply to this page only. They do not fetch older history.
       </p>
+      <p className="text-xs text-muted-foreground" data-testid="logs-timezone-hint">
+        {LOG_TIMESTAMP_ZONE_UNKNOWN_HINT}
+      </p>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -322,7 +326,7 @@ export default function ServerLogs() {
               </p>
             ) : (
               filtered.map((entry, i) => {
-                const { text: tsText, zoneLabel } = formatLogTimestamp(entry.parsed);
+                const { text: tsText } = formatLogTimestamp(entry.parsed);
                 return (
                   <div
                     key={`${entry.lastPos ?? 'row'}-${i}`}
@@ -340,8 +344,7 @@ export default function ServerLogs() {
                     <div className="min-w-0 flex-1">
                       {tsText && (
                         <div className="text-[10px] text-muted-foreground font-mono-data mb-0.5 break-all">
-                          <span>{tsText}</span>
-                          {zoneLabel && <span className="ml-2 opacity-80">({zoneLabel})</span>}
+                          {tsText}
                         </div>
                       )}
                       <p className="text-xs font-mono-data text-muted-foreground leading-relaxed whitespace-pre-wrap break-all [overflow-wrap:anywhere]">

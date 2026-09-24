@@ -4,6 +4,7 @@ export {
   levelBadgeLabel,
   logLevelMatchesFilter,
   normalizeServerLogLevel,
+  LOG_TIMESTAMP_ZONE_UNKNOWN_HINT,
   parseServerLogLine,
   type LogTimestampZoneMode,
   type ParsedServerLogLine,
