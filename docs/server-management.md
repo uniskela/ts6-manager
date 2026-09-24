@@ -63,8 +63,10 @@ Authenticated SSH Query is used for features that require file-transfer or event
 The UI includes:
 
 - channel file browsing with upload/download;
-- server logs with filtering; and
+- **Server Logs 2.0** (admin-only): bounded TeamSpeak `logview` pages with Previous/Older cursor paging, Refresh back to the newest page, connection / virtual-server / instance scope labels, page-local search and level filters, and timezone-unknown source timestamps when TeamSpeak does not establish a zone; and
 - instance-level settings.
+
+Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS.
 
 ## Widgets
 

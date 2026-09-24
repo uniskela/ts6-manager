@@ -60,7 +60,7 @@ Keep the endpoint on a restricted interface/network. TS6 Manager does not scrape
 
 Beta13 server logs default to UTC. `TSSERVER_LOG_TIMEZONE` can select `utc` or `local`.
 
-TS6 Manager displays raw server log text and does not convert its timestamps.
+WebQuery `logview` does not report which zone produced a line. TS6 Manager therefore keeps the source timestamp text and labels it **timezone unknown** rather than converting to browser local or UTC. Browser local / UTC presentation is reserved for timestamps whose source timezone is established. Raw source text remains visible on each row.
 
 ## Compatibility CI
 

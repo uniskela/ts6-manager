@@ -42,8 +42,24 @@ export const messagesApi = {
 };
 
 export const logsApi = {
-  get: (configId: number, sid: number, lines = 100) =>
-    api.get(`/servers/${configId}/vs/${sid}/logs`, { params: { lines, reverse: 1 } }).then((r) => r.data),
+  getPage: (
+    configId: number,
+    sid: number,
+    options: {
+      lines?: number;
+      reverse?: 0 | 1;
+      instance?: 0 | 1;
+      beginPos?: string | null;
+    } = {},
+  ) =>
+    api.get(`/servers/${configId}/vs/${sid}/logs`, {
+      params: {
+        lines: options.lines ?? 100,
+        reverse: options.reverse ?? 1,
+        instance: options.instance ?? 0,
+        ...(options.beginPos ? { begin_pos: options.beginPos } : {}),
+      },
+    }).then((r) => r.data as import('@ts6/common').ServerLogPage),
 };
 
 export const filesApi = {

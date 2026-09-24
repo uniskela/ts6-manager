@@ -1,6 +1,6 @@
 # Plan: #91 Slice 3 — Logs 2.0
 
-Status: **design approved (Codex analysis); implementation not started**.  
+Status: **design approved; implementing on `cursor/logs-2-0-paging-2c1f`**.  
 Design attribution: Codex read-only analysis grounded on `main` @ [`bdcbaf3`](https://github.com/uniskela/ts6-manager/commit/bdcbaf3516cb4b886e87e3019133af7cc2964b24).
 
 Refs: [#91](https://github.com/uniskela/ts6-manager/issues/91). Keep separate from metrics Slice 1. Do not merge Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) based on this plan.

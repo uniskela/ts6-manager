@@ -100,13 +100,43 @@ const DEMO_TOKENS = [
   { token: 'DEMO-TOKEN-NOT-VALID', token_type: '0', token_id1: '8', token_id2: '0', token_created: '1700000000', token_description: 'Example privilege key' },
 ];
 
-const DEMO_LOGS = [
-  { last_pos: '5', file_size: '5', l: '[Demo] Virtual server started successfully.' },
-  { last_pos: '4', file_size: '5', l: '[Demo] Client Sample User connected.' },
-  { last_pos: '3', file_size: '5', l: '[Demo] Client joined channel General.' },
-  { last_pos: '2', file_size: '5', l: '[Demo] Channel Support was edited.' },
-  { last_pos: '1', file_size: '5', l: '[Demo] Scheduled maintenance check completed.' },
+/** Newest-first virtual-server logfile rows with TeamSpeak-shaped last_pos cursors. */
+const DEMO_VS_LOGS = [
+  { last_pos: '500', file_size: '500', l: '2026-03-15 12:00:05.123456|INFO    |VirtualServer |1  |Virtual server started successfully.' },
+  { last_pos: '400', file_size: '500', l: '2026-03-15 12:00:04.123456|WARNING |VirtualServer |1  |Client Sample User connected with an unusual client version.' },
+  { last_pos: '300', file_size: '500', l: '2026-03-15 12:00:03.123456|ERROR   |VirtualServer |1  |Failed to open channel file transfer for cid=4.' },
+  { last_pos: '200', file_size: '500', l: '2026-03-15 12:00:02.123456|DEBUG   |VirtualServer |1  |Permission cache refreshed for cldbid=12.' },
+  { last_pos: '100', file_size: '500', l: 'not a structured line — Unicode ✓ and spaces\\spath' },
+  { last_pos: '50', file_size: '500', l: '2026-03-15 12:00:00.000000|NOTICE  |VirtualServer |1  |Unrecognized level stays Unknown.' },
 ];
+
+/** Instance/master logfile rows — must not be labeled as the selected VS. */
+const DEMO_INSTANCE_LOGS = [
+  { last_pos: '300', file_size: '300', l: '2026-03-15 11:59:00.000000|INFO    |ServerLibPriv |   |TeamSpeak instance started.' },
+  { last_pos: '200', file_size: '300', l: '2026-03-15 11:58:00.000000|WARNING |Accounting    |   |License check deferred in demo mode.' },
+  { last_pos: '100', file_size: '300', l: '2026-03-15 11:57:00.000000|INFO    |Query         |   |WebQuery listener ready.' },
+];
+
+function demoLogView(params?: Record<string, any>) {
+  const instance = String(params?.instance ?? '0') === '1';
+  const source = instance ? DEMO_INSTANCE_LOGS : DEMO_VS_LOGS;
+  const fileSize = source[0]?.file_size ?? '0';
+  const linesRaw = Number(params?.lines ?? 100);
+  const lines = Number.isFinite(linesRaw)
+    ? Math.min(100, Math.max(1, Math.trunc(linesRaw)))
+    : 100;
+  const beginRaw = params?.begin_pos;
+  const beginPos = beginRaw === undefined || beginRaw === null || beginRaw === ''
+    ? null
+    : String(beginRaw);
+  let rows = source;
+  if (beginPos !== null && /^\d+$/.test(beginPos)) {
+    const cursor = BigInt(beginPos);
+    // Older page: rows whose last_pos is strictly below the continuation cursor.
+    rows = source.filter((row) => BigInt(row.last_pos) < cursor);
+  }
+  return clone(rows.slice(0, lines).map((row) => ({ ...row, file_size: fileSize })));
+}
 
 const MUTATION_COMMANDS = new Set([
   'channelcreate', 'channeledit', 'channeldelete', 'channelmove',
@@ -233,7 +263,7 @@ export class DemoWebQueryClient extends WebQueryClient {
       case 'privilegekeylist':
         return clone(DEMO_TOKENS);
       case 'logview':
-        return clone(DEMO_LOGS);
+        return demoLogView(params);
       case 'instanceinfo':
         return [{
           serverinstance_database_version: 'demo',
