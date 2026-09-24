@@ -1,4 +1,5 @@
 import api from './client';
+import type { RuntimeMediaDiagnosticReport } from '@ts6/common';
 
 export const settingsApi = {
   getYtCookieStatus: () => api.get('/settings/yt-cookies').then((r) => r.data),
@@ -15,6 +16,10 @@ export const settingsApi = {
     api.post('/settings/yt-cookies', { text }).then((r) => r.data),
 
   deleteYtCookies: () => api.delete('/settings/yt-cookies').then((r) => r.data),
+
+  /** Demand-driven bounded media tool + sidecar probes (not polled). */
+  getRuntimeDiagnostics: (): Promise<RuntimeMediaDiagnosticReport> =>
+    api.get('/settings/runtime-diagnostics').then((r) => r.data),
 
   getLimits: () => api.get('/settings/limits').then((r) => r.data),
 

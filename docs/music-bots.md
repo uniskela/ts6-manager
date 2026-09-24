@@ -88,4 +88,6 @@ Production containers do not self-update yt-dlp.
 
 The tool is installed at image build time and validated alongside FFmpeg and Node. To update the bundled extractor, pull a newer TS6 Manager image and recreate the container, or rebuild from a fresh image build.
 
+Administrators can confirm the currently bundled yt-dlp (and related media tools) with the demand-driven Runtime / media check on Settings → YouTube or Music Bots → Library. That check is not part of live bot status polling.
+
 A public-video smoke test is intentionally not a release gate because media availability, rate limits, and regional restrictions are external to the project.

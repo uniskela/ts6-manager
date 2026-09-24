@@ -7,6 +7,7 @@ import {
   channelSummaryLabelText,
   connectionScope,
   consumePageEntryAttempt,
+  decideGlobalPageEntryScan,
   decidePageEntryScan,
   deferCancelSummaryQuery,
   expensiveDiagnosticQueryOptions,
@@ -18,6 +19,7 @@ import {
   resetPageEntryAttemptsForTests,
   resetPendingSummaryCancelsForTests,
   retainSummaryQueryScope,
+  RUNTIME_MEDIA_DIAGNOSTICS_SCOPE,
   shouldScanOnTrigger,
 } from '../../src/lib/demand-driven-query-policy.ts';
 
@@ -25,6 +27,10 @@ describe('expensive diagnostic classification', () => {
   it('classifies file-summaries as expensive via key and meta', () => {
     assert.equal(
       isExpensiveDiagnosticQuery({ queryKey: ['file-summaries', 1, 1] }),
+      true,
+    );
+    assert.equal(
+      isExpensiveDiagnosticQuery({ queryKey: ['runtime-media-diagnostics'] }),
       true,
     );
     assert.equal(
@@ -36,6 +42,10 @@ describe('expensive diagnostic classification', () => {
     );
     assert.equal(
       isExpensiveDiagnosticQuery({ queryKey: ['channels', 1, 1] }),
+      false,
+    );
+    assert.equal(
+      isExpensiveDiagnosticQuery({ queryKey: ['music-bots'] }),
       false,
     );
     assert.equal(
@@ -61,6 +71,21 @@ describe('expensive diagnostic classification', () => {
     ] as const) {
       assert.equal(shouldScanOnTrigger(trigger), false, trigger);
     }
+  });
+
+  it('global runtime-media page-entry is one-shot', () => {
+    const first = decideGlobalPageEntryScan({
+      scope: RUNTIME_MEDIA_DIAGNOSTICS_SCOPE,
+      online: true,
+    });
+    assert.equal(first.action, 'authorize-entry-scan');
+    if (first.action === 'authorize-entry-scan') {
+      consumePageEntryAttempt(first.scope, false);
+    }
+    assert.equal(
+      decideGlobalPageEntryScan({ scope: RUNTIME_MEDIA_DIAGNOSTICS_SCOPE, online: true }).action,
+      'skip',
+    );
   });
 });
 

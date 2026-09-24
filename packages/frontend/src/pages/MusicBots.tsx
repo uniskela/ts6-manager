@@ -42,6 +42,7 @@ import {
   Video, MessageSquare,
 } from 'lucide-react';
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
+import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
 import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo, ChatCommandPreset } from '@ts6/common';
@@ -1178,6 +1179,7 @@ function LibraryTab() {
 
   return (
     <div className="space-y-4">
+      <RuntimeMediaDiagnostics focus={['yt-dlp', 'ffmpeg', 'ffprobe']} />
       {/* Server selector + actions */}
       <div className="flex items-center gap-2 flex-wrap">
         <Select value={String(configId)} onValueChange={(v) => setLibServerId(parseInt(v))}>

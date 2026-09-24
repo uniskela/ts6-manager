@@ -1,6 +1,6 @@
 /**
  * Settings routes — app-wide configuration (admin only).
- * Currently handles yt-dlp cookie file management.
+ * Handles yt-dlp cookies, app limits, and demand-driven runtime/media diagnostics.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -17,6 +17,7 @@ import {
   parseImportCap,
 } from '../utils/app-settings.js';
 import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
+import { diagnoseRuntimeMedia } from '../voice/audio/runtime-media-diagnostics.js';
 
 const settingsRoutes: Router = Router();
 
@@ -35,6 +36,14 @@ const ytCookiesLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many cookie settings requests, please try again later' },
+});
+
+const runtimeDiagnosticsLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many runtime diagnostic requests, please try again later' },
 });
 
 // Admin-only guard
@@ -112,6 +121,25 @@ settingsRoutes.delete('/yt-cookies', requireAdmin, ytCookiesLimiter, async (req:
     res.json({ success: true });
   } catch (err) { next(err); }
 });
+
+/**
+ * GET /api/settings/runtime-diagnostics — bounded yt-dlp/ffmpeg/ffprobe/sidecar probes.
+ * Demand-driven only (UI page entry / manual refresh). Not called from /api/health
+ * or music-bot status polling.
+ */
+settingsRoutes.get(
+  '/runtime-diagnostics',
+  requireAdmin,
+  runtimeDiagnosticsLimiter,
+  async (_req: Request, res: Response, next) => {
+    try {
+      const report = await diagnoseRuntimeMedia();
+      res.json(report);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
 
 // GET /api/settings/limits — App-wide numeric limits
 settingsRoutes.get('/limits', requireAdmin, async (req: Request, res: Response, next) => {

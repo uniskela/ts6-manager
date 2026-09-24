@@ -24,6 +24,7 @@ import {
   ConnectionDiagnosticStages,
   diagnosticToastMessage,
 } from '@/components/connections/ConnectionDiagnosticStages';
+import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
 import { DEFAULT_CONNECTION_FORM, type ConnectionFormState } from '@/content/connection-setup';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -959,6 +960,7 @@ function YouTubeTab() {
 
   return (
     <div className="max-w-lg space-y-4">
+      <RuntimeMediaDiagnostics focus={['yt-dlp', 'ffmpeg', 'ffprobe']} />
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">YouTube Cookies</CardTitle>
