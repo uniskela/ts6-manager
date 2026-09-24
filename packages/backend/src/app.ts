@@ -35,6 +35,8 @@ import { widgetRoutes } from './routes/widget.routes.js';
 import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
+import { activityJournalRoutes } from './routes/activity-journal.routes.js';
+
 import { requireServerAccess } from './middleware/server-access.js';
 import { createRequire } from 'module';
 
@@ -119,6 +121,8 @@ export function createApp(): Express {
   app.use('/api/widgets', widgetRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/audit', auditRoutes);
+  app.use('/api/activity-journal', activityJournalRoutes);
+
 
   // Error handler (must be last)
   app.use(errorHandler);

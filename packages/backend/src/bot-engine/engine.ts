@@ -255,6 +255,15 @@ export class BotEngine {
   private executionCounts: Map<number, number> = new Map();
   private running: boolean = false;
   private musicCommandHandler: MusicCommandHandler | null = null;
+  /** Stable listener so stop() does not wipe journal/music tsEvent subscribers. */
+  private readonly onTsEventBound = (
+    configId: number,
+    sid: number,
+    eventName: string,
+    data: Record<string, string>,
+  ) => this.onTsEvent(configId, sid, eventName, data);
+  /** Pairs currently retained under the `flow` session owner. */
+  private flowOwnedPairs = new Set<string>();
 
   constructor(
     private prisma: PrismaClient,
@@ -275,7 +284,7 @@ export class BotEngine {
     this.musicCommandHandler = handler;
     // Music bots may need SSH (command listeners / auto-discovery) even with no flows.
     if (this.running) {
-      this.setupSshConnections();
+      void this.syncSessionOwnership();
     }
   }
 
@@ -287,18 +296,20 @@ export class BotEngine {
     if (this.running) return;
 
     // Always register event listener (even if no flows yet — flows can be enabled later)
-    this.eventBridge.on('tsEvent', this.onTsEvent.bind(this));
+    this.eventBridge.on('tsEvent', this.onTsEventBound);
 
     await this.loadFlows();
 
     if (this.flows.size === 0) {
       console.log('[BotEngine] No enabled flows found, engine idle (will activate when flows are enabled)');
       this.running = true;
+      // Music (and later journal) may still need SSH — sync ownership without assuming flows.
+      await this.syncSessionOwnership();
       return;
     }
 
     // Setup SSH connections for all unique server+vserver pairs (non-blocking)
-    this.setupSshConnections();
+    await this.syncSessionOwnership();
 
     // Setup cron jobs
     this.setupCronJobs();
@@ -324,9 +335,15 @@ export class BotEngine {
     this.animationManager.stopAll();
     this.teardownCronJobs();
     this.webhookEntries = [];
-    this.eventBridge.removeAllListeners('tsEvent');
+    this.eventBridge.off('tsEvent', this.onTsEventBound);
     this.flows.clear();
     this.executionCounts.clear();
+    // Release only flow ownership — music/journal consumers keep their sessions.
+    for (const pair of [...this.flowOwnedPairs]) {
+      const [configId, sid] = pair.split(':').map(Number);
+      await this.eventBridge.releaseSession('flow', configId, sid);
+    }
+    this.flowOwnedPairs.clear();
   }
 
   async enableFlow(flowId: number): Promise<void> {
@@ -370,15 +387,8 @@ export class BotEngine {
       });
 
       if (hasEventTrigger) {
-        console.log(`[BotEngine] Flow needs SSH — connecting to server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
-        if (!this.eventBridge.isConnected(dbFlow.serverConfigId, dbFlow.virtualServerId)) {
-          // Non-blocking: SSH connects in background, events will flow once connected
-          this.eventBridge.connectServer(dbFlow.serverConfigId, dbFlow.virtualServerId).catch(err => {
-            console.error(`[BotEngine] SSH connection failed for ${dbFlow.serverConfigId}:${dbFlow.virtualServerId}: ${err.message}`);
-          });
-        } else {
-          console.log(`[BotEngine] SSH already connected for ${dbFlow.serverConfigId}:${dbFlow.virtualServerId}`);
-        }
+        console.log(`[BotEngine] Flow needs SSH — retaining session for server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
+        await this.syncSessionOwnership();
         // NEW: start/stop per-channel command listeners for this pair
         this.syncCommandListenersForPair(dbFlow.serverConfigId, dbFlow.virtualServerId);
       }
@@ -514,11 +524,16 @@ export class BotEngine {
     }
   }
 
-  private getNeededServerPairs(): Set<string> {
+  private getNeededFlowPairs(): Set<string> {
     const pairs = new Set<string>();
     for (const flow of this.flows.values()) {
       pairs.add(`${flow.serverConfigId}:${flow.virtualServerId}`);
     }
+    return pairs;
+  }
+
+  private getNeededMusicPairs(): Set<string> {
+    const pairs = new Set<string>();
     if (this.musicCommandHandler) {
       for (const pair of this.musicCommandHandler.getNeededServerPairs()) {
         pairs.add(pair);
@@ -527,51 +542,62 @@ export class BotEngine {
     return pairs;
   }
 
-  private setupSshConnections(): void {
-    const serverPairs = this.getNeededServerPairs();
-
-    for (const pair of serverPairs) {
-      const [configId, sid] = pair.split(':').map(Number);
-      // Non-blocking: don't await SSH connections during startup
-      this.eventBridge.connectServer(configId, sid).catch(err => {
-        console.error(`[BotEngine] SSH connection failed for ${pair}: ${err.message}`);
-      });
-      this.syncCommandListenersForPair(configId, sid);
-    }
+  /** @deprecated Prefer syncSessionOwnership — kept for call-site clarity during transition. */
+  private getNeededServerPairs(): Set<string> {
+    return new Set([...this.getNeededFlowPairs(), ...this.getNeededMusicPairs()]);
   }
 
-  private async cleanupUnusedSshConnections(): Promise<void> {
-    const neededPairs = this.getNeededServerPairs();
+  /**
+   * Retain/release flow session owners without stealing music/journal sessions.
+   * Disconnect happens only when EventBridge has no remaining owners.
+   */
+  private async syncSessionOwnership(): Promise<void> {
+    const flowNeeded = this.getNeededFlowPairs();
+    const musicNeeded = this.getNeededMusicPairs();
 
-    // 1) cleanup unused ssh connections
-    for (const key of this.eventBridge.getConnectedKeys()) {
-      if (!neededPairs.has(key)) {
-        const [configId, sid] = key.split(':').map(Number);
-        await this.eventBridge.disconnectServer(configId, sid);
+    for (const pair of flowNeeded) {
+      if (this.flowOwnedPairs.has(pair)) continue;
+      const [configId, sid] = pair.split(':').map(Number);
+      try {
+        await this.eventBridge.retainSession('flow', configId, sid);
+        this.flowOwnedPairs.add(pair);
+      } catch (err: any) {
+        console.error(`[BotEngine] Flow session retain failed for ${pair}: ${err.message}`);
       }
     }
+    for (const pair of [...this.flowOwnedPairs]) {
+      if (flowNeeded.has(pair)) continue;
+      const [configId, sid] = pair.split(':').map(Number);
+      await this.eventBridge.releaseSession('flow', configId, sid);
+      this.flowOwnedPairs.delete(pair);
+    }
 
-    // 2) sync command listeners per pair
-    for (const pair of neededPairs) {
+    // Music owns its own retains via MusicCommandHandler; we only sync CMD listeners here.
+    const allNeeded = new Set([...flowNeeded, ...musicNeeded]);
+    for (const pair of allNeeded) {
       const [configId, sid] = pair.split(':').map(Number);
       this.syncCommandListenersForPair(configId, sid);
     }
 
-    // 3) delete command listener for unused pairs
     for (const cmdKey of this.eventBridge.getCommandListenerKeys()) {
-      // expected: `${configId}:${sid}:cmd:${channelId}`
       const m = cmdKey.match(/^(\d+):(\d+):cmd:(\d+)$/);
       if (!m) continue;
-
       const configId = Number(m[1]);
       const sid = Number(m[2]);
       const channelId = Number(m[3]);
-
       const pairKey = `${configId}:${sid}`;
-      if (!neededPairs.has(pairKey)) {
+      if (!allNeeded.has(pairKey)) {
         await this.eventBridge.disconnectCommandListener(configId, sid, channelId);
       }
     }
+  }
+
+  private setupSshConnections(): void {
+    void this.syncSessionOwnership();
+  }
+
+  private async cleanupUnusedSshConnections(): Promise<void> {
+    await this.syncSessionOwnership();
   }
 
   private onTsEvent(configId: number, sid: number, eventName: string, data: Record<string, string>): void {
