@@ -30,5 +30,6 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 
 - [Architecture](architecture.md) — service and package layout
 - [Roadmap](roadmap.md) — implemented phases and public follow-up direction
+- [1.8 acceptance evidence](plans/91-slice-6-acceptance.md) — #91 / #101 shipped-status vs demonstrated behavior
 
 The source repository remains the canonical implementation. Hosted docs at [uniskela.com/docs/ts6-manager](https://uniskela.com/docs/ts6-manager/) are generated from these reviewed Markdown pages.

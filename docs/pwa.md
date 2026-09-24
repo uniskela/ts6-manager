@@ -26,6 +26,8 @@ An update never reloads a running session just because a new release was deploye
 
 After a successful first visit, the basic application interface can open without connectivity. **Live TeamSpeak administration always requires a connection to the backend and TeamSpeak server.** A server-unavailable notice warns when the browser is offline or the backend cannot be reached. Data still visible from the current session may be outdated; it is not an offline copy of your server.
 
+When connectivity returns, ordinary live lists may refresh. **Expensive diagnostics** (channel storage summaries and runtime/media probes) are marked stale and are **not** rescanned automatically — use **Refresh** on those surfaces when you want a new observation.
+
 API responses, authentication traffic, live server data, and administrative actions are not saved by the service worker. Actions are not queued for later replay. Sign-in and setup require connectivity. Remote fonts and media may be unavailable offline; system fonts remain usable. Previously cached static files can be removed by the browser under storage pressure, so offline opening is best-effort.
 
 Uninstalling the app does not necessarily clear its browser storage or sign you out. Use **Log out** before removing it on a shared device; use the browser's site-data controls when you need to clear stored data.
