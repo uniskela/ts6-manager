@@ -113,7 +113,7 @@ If CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, close the PR without merge
 - [ ] Confirm tag `vX.Y.Z`, GitHub Release, and GHCR image publish from the Release Please workflow
 
 <!-- adhd-hub:project-agent:start -->
-<!-- adhd-hub:guidance-version:4 -->
+<!-- adhd-hub:guidance-version:5 -->
 ## ADHD Hub continuity
 
 For substantial work in this project:
@@ -134,8 +134,11 @@ For substantial work in this project:
   the authenticated identity is accepted by Hub Inbox authors. Open/update a
   GitHub/Gitea issue titled `[ADHD] …` with a short Goal/Focus/Next/Resume
   cue. Optional labels: `adhd-hub`, `project:<slug>`, `source:cursor`; skip
-  labels if the token cannot set them. Prefer short repository-relative
-  summaries; never invent Hub continuity, progress, or thread state after a forge-only write.
+  labels if the token cannot set them. Recommended: append
+  `Made with [ADHD Progress Hub](https://github.com/uniskela/adhd-hub)` under
+  a non-imported heading (e.g. `## Attribution`) so it does not land in Resume.
+  Prefer short repository-relative summaries; never invent Hub continuity,
+  progress, or thread state after a forge-only write.
 - CLOUD_AGENT: do not assume machine-installed local skill CLIs (e.g.
   `graphify`) exist. If missing: one-line notice, continue via repo tools /
   committed `graphify-out/` when present; never fabricate graph or Hub state.
@@ -150,8 +153,8 @@ For substantial work in this project:
   Before updating a thread, compare new work to that thread's Goal; if it does
   not advance the same outcome, use another thread or create one.
 - Known thread → `upsert_progress(thread_id=...)` with compact structured state
-  (goal / focus / ≤3 next / blocked if any / resume). Do not silently attach
-  to an unrelated open thread.
+  (goal / focus / ≤3 next / blocked if any / resume); omit ritual `content`.
+  Do not silently attach to an unrelated open thread.
 - `check_overlap` only before potentially new work; reuse only when the Goal
   matches. Different goal → separate thread (`force_new_thread` if needed).
 - When leaving mid-task, checkpoint then `pause_thread(thread_id, next_step=...)`
