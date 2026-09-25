@@ -429,6 +429,31 @@ describe('FileSummaryScanCoordinator', () => {
     assert.ok(stamps[2]! - stamps[1]! >= 45, `gap 1→2 was ${stamps[2]! - stamps[1]!}ms`);
   });
 
+  it('paces concurrent summary requests on the same session (not per-budget only)', async () => {
+    const stamps: number[] = [];
+    const listPath: ListPathFn = async (cid) => {
+      stamps.push(Date.now());
+      return [{ name: `f${cid}.txt`, size: '1', type: '0' }];
+    };
+    await Promise.all([
+      coordinator.runRequest(baseCtx({
+        cids: [1],
+        minCommandGapMs: 50,
+        maxDepth: 0,
+        listPath,
+      })),
+      coordinator.runRequest(baseCtx({
+        cids: [2],
+        minCommandGapMs: 50,
+        maxDepth: 0,
+        listPath,
+      })),
+    ]);
+    assert.equal(stamps.length, 2);
+    const gap = Math.abs(stamps[1]! - stamps[0]!);
+    assert.ok(gap >= 45, `cross-request session gap was ${gap}ms`);
+  });
+
   it('paceListPathCommand is a no-op when minCommandGapMs is 0', async () => {
     const budget = createRequestBudget({
       deadlineAt: Date.now() + 5_000,
@@ -436,10 +461,35 @@ describe('FileSummaryScanCoordinator', () => {
       maxEntries: 100,
       minCommandGapMs: 0,
     });
-    const t0 = Date.now();
     await paceListPathCommand(budget);
     await paceListPathCommand(budget);
-    assert.ok(Date.now() - t0 < 30);
+    // gap≤0 returns before touching the request-local stamp (and never sleeps).
+    assert.equal(budget.lastListPathAtMs, 0);
+  });
+
+  it('does not start listPath after pacing if the deadline elapsed during the wait', async () => {
+    let listCalls = 0;
+    let now = 1_000;
+    const budgetDeadline = 1_200;
+    await coordinator.runRequest(baseCtx({
+      cids: [1],
+      minCommandGapMs: 80,
+      maxDepth: 1,
+      deadlineAt: budgetDeadline,
+      now: () => now,
+      listPath: async (_cid, path) => {
+        listCalls += 1;
+        if (path === '/') {
+          // Child path paces ~80ms wall-clock; expire the virtual deadline mid-wait.
+          void delay(20).then(() => {
+            now = budgetDeadline + 1;
+          });
+          return [{ name: 'dir', size: '0', type: '1' }];
+        }
+        return [{ name: 'a.txt', size: '1', type: '0' }];
+      },
+    }));
+    assert.equal(listCalls, 1, 'child listPath must not run after post-pace deadline recheck');
   });
 
   it('default min command gap matches the Query flood floor constant', () => {

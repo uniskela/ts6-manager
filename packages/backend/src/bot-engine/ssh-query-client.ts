@@ -46,6 +46,11 @@ export function isSshFloodError(error: unknown): boolean {
   return message.includes('ts error 524') || message.includes('client is flooding') || message.includes('flooding');
 }
 
+/** TeamSpeak 516 = event already registered; other notify failures must reject. */
+export function isAlreadyRegisteredNotifyError(error: unknown): boolean {
+  return String((error as { message?: string })?.message || '').includes('516');
+}
+
 export function sshFloodCooldownMs(strikes: number): number {
   return Math.min(
     SSH_FLOOD_MAX_COOLDOWN_MS,
@@ -272,7 +277,6 @@ export class SshQueryClient extends EventEmitter {
       await this.executeCommand(`clientupdate client_nickname=TS6-WebUI-Bot-${sid}-${this.nickSuffix}`);
     } catch { }
 
-    let registrationFailures = 0;
     for (const eventType of TS_EVENT_TYPES) {
       if (this.destroyed || !this.connected) {
         throw new Error('SSH disconnected while registering events');
@@ -287,12 +291,13 @@ export class SshQueryClient extends EventEmitter {
         await this.executeCommand(cmd);
       } catch (err: any) {
         // error id=516 = already registered, ignore
-        if (!err.message?.includes('516')) {
-          registrationFailures += 1;
+        if (isAlreadyRegisteredNotifyError(err)) {
+          // ok
+        } else {
+          // Flood and any other registration failure must reject so EventBridge
+          // can forceDisconnect (flood) or requestReconnect (non-flood).
           console.warn(`[SshQueryClient] Failed to register event ${eventType}: ${err.message}`);
-          // A flood response invalidates this Query session. Do not continue
-          // issuing registration commands and then report a false success.
-          if (isSshFloodError(err)) throw err;
+          throw err;
         }
       }
       // Pace registrations so reconnect after Files flood does not immediately re-trip 524.
@@ -303,10 +308,7 @@ export class SshQueryClient extends EventEmitter {
       throw new Error('SSH disconnected while registering events');
     }
 
-    console.log(
-      `[SshQueryClient] Events registered for sid=${sid}` +
-        (registrationFailures ? ` with ${registrationFailures} warning(s)` : ''),
-    );
+    console.log(`[SshQueryClient] Events registered for sid=${sid}`);
   }
 
   async registerCommandListener(sid: number, channelId: number): Promise<void> {
