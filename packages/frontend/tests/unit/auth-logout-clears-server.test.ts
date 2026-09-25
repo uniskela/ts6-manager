@@ -82,4 +82,33 @@ describe('auth logout clears server selection', () => {
     assert.equal(parsed.state?.selectedConfigId, null);
     assert.equal(parsed.state?.selectedSid, null);
   });
+
+  it('clears auth even when clearServer persist throws', () => {
+    useServerStore.getState().setServer(7, 2);
+    useAuthStore.getState().setAuth('access', 'refresh', {
+      id: 1,
+      username: 'admin',
+      displayName: 'Admin',
+      role: 'admin',
+    });
+
+    const originalClear = useServerStore.getState().clearServer;
+    useServerStore.setState({
+      clearServer: () => {
+        throw new Error('quota exceeded');
+      },
+    });
+
+    try {
+      assert.throws(() => useAuthStore.getState().logout(), /quota exceeded/);
+      assert.equal(useAuthStore.getState().accessToken, null);
+      assert.equal(useAuthStore.getState().refreshToken, null);
+      assert.equal(useAuthStore.getState().user, null);
+      // Selection may remain if clearServer never ran successfully.
+      assert.equal(useServerStore.getState().selectedConfigId, 7);
+      assert.equal(useServerStore.getState().selectedSid, 2);
+    } finally {
+      useServerStore.setState({ clearServer: originalClear });
+    }
+  });
 });

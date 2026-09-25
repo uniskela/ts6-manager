@@ -37,12 +37,14 @@ export const useAuthStore = create<AuthStore>()(
         set({ accessToken, refreshToken }),
       setUser: (user) => set({ user }),
       logout: () => {
+        // Clear auth first so a localStorage throw while persisting
+        // ts6-server cannot leave the session active.
+        set({ accessToken: null, refreshToken: null, user: null });
         // Drop persisted connection selection with the session. Leaving
         // selectedConfigId/selectedSid in ts6-server after logout can strand
         // Dashboard on an indefinite PageLoader when /api/servers never loads
         // (selection set, context never validates, no gateError).
         useServerStore.getState().clearServer();
-        set({ accessToken: null, refreshToken: null, user: null });
       },
       isAuthenticated: () => !!get().accessToken,
       isAdmin: () => get().user?.role === 'admin',
