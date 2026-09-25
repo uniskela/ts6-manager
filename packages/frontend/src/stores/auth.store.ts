@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useServerStore } from './server.store';
 
 interface UserInfo {
   id: number;
@@ -35,8 +36,27 @@ export const useAuthStore = create<AuthStore>()(
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
       setUser: (user) => set({ user }),
-      logout: () =>
-        set({ accessToken: null, refreshToken: null, user: null }),
+      logout: () => {
+        // Clear auth first so a localStorage throw while persisting
+        // ts6-server cannot leave the session active.
+        set({ accessToken: null, refreshToken: null, user: null });
+        // Drop persisted connection selection with the session. Leaving
+        // selectedConfigId/selectedSid in ts6-server after logout can strand
+        // Dashboard on an indefinite PageLoader when /api/servers never loads
+        // (selection set, context never validates, no gateError).
+        // Swallow persist failures so callers (navigate / refresh) still run.
+        try {
+          useServerStore.getState().clearServer();
+        } catch {
+          // clearServer may have updated memory before setItem threw, leaving
+          // a stale ts6-server key. Best-effort remove so reload cannot restore it.
+          try {
+            useServerStore.persist.clearStorage();
+          } catch {
+            // Auth is already cleared; do not block logout on storage cleanup.
+          }
+        }
+      },
       isAuthenticated: () => !!get().accessToken,
       isAdmin: () => get().user?.role === 'admin',
       canWrite: () => get().user?.role === 'admin',
