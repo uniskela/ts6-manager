@@ -224,9 +224,14 @@ export default function Files() {
     queryKey: ['files', c, s, selectedCid, currentPath],
     queryFn: () => filesApi.list(c!, s!, selectedCid!, currentPath),
     enabled: !!c && !!s && !!selectedCid,
-    retry: teamSpeakQueryRetry,
+    // SSH disconnect: surface error + Retry immediately; recover via refetchInterval.
+    // Other transient Query errors still use the shared retry budget.
+    retry: (failureCount, error) => {
+      if (isTeamSpeakSshDisconnected(error)) return false;
+      return teamSpeakQueryRetry(failureCount, error);
+    },
     retryDelay: teamSpeakQueryRetryDelay,
-    // After SSH recovers mid-cooldown, keep probing briefly without leaving sticky 502 UI.
+    // After SSH recovers mid-cooldown, keep probing without a sticky unavailable UI.
     refetchInterval: (query) => (
       isTeamSpeakSshDisconnected(query.state.error) ? 15_000 : false
     ),

@@ -341,14 +341,13 @@ export class EventBridge extends EventEmitter {
   }
 
   /**
-   * Remaining flood/reconnect pause for an existing SSH client (0 if connected or unknown).
-   * Used by Files routes to set Retry-After instead of a misleading 502.
+   * Remaining flood/reconnect pause for an existing SSH client (0 if unknown).
+   * Reports pause even while still connected — flood 524 sets pause before forced disconnect.
    */
   getSshReconnectPauseSeconds(configId: number, sid: number): number {
     const key = this.makeKey(configId, sid);
     const client = this.connections.get(key);
     if (!client) return 0;
-    if (client.isConnected) return 0;
     return client.getReconnectPauseSeconds();
   }
 
@@ -370,7 +369,15 @@ export class EventBridge extends EventEmitter {
       await this.connectServer(configId, sid);
       client = this.connections.get(key);
       if (!client || !client.isConnected) {
-        throw new Error('SSH not connected — check SSH credentials in server settings');
+        const serverConfig = await this.prisma.tsServerConfig.findUnique({
+          where: { id: configId },
+          select: { sshUsername: true, sshPassword: true, sshPort: true },
+        });
+        if (!serverConfig?.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) {
+          throw new Error('SSH credentials not configured for this server');
+        }
+        // Reconnecting / flood cooldown — not a permanent credentials failure.
+        throw new Error('SSH not connected');
       }
     }
 

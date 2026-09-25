@@ -108,23 +108,33 @@ async function sshExecute(
   return parseQueryResponse(rawResponse);
 }
 
-function mapFileSshTransportError(
+/** Exported for unit tests — maps SSH/flood transport failures for Files routes. */
+export function mapFileSshTransportError(
   err: Error,
   purpose: 'browse' | 'changes',
   retryAfterSeconds = 15,
 ): AppError | null {
-  const msg = err.message || '';
-  if (msg.includes('SSH not connected')) {
-    // 503 (not 502): Session is down/reconnecting — often Query flood cooldown after redeploy.
+  // Query flood on ft* — reconnectable; same 503 path as SSH disconnect.
+  if (err instanceof TSApiError && err.code === 524) {
     return new TeamSpeakSshDisconnectedError(purpose, retryAfterSeconds);
   }
-  if (msg.includes('SSH credentials')) {
+
+  const msg = err.message || '';
+  // Permanent missing credentials (must not match reconnectable "SSH not connected" text).
+  if (
+    /SSH credentials not configured/i.test(msg)
+    || (msg.includes('SSH credentials') && !msg.includes('SSH not connected'))
+  ) {
     return new AppError(
       400,
       purpose === 'browse'
         ? 'SSH credentials not configured for this server. File browsing requires SSH access because WebQuery HTTP does not support ft* commands.'
         : 'SSH credentials not configured for this server. File changes require SSH access because WebQuery HTTP does not support ft* commands.',
     );
+  }
+  if (msg.includes('SSH not connected')) {
+    // 503 (not 502): Session is down/reconnecting — often Query flood cooldown after redeploy.
+    return new TeamSpeakSshDisconnectedError(purpose, retryAfterSeconds);
   }
   return null;
 }
