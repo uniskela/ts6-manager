@@ -22,8 +22,10 @@ export class ChannelEditPacer {
 
   /** Wait out any remaining gap, then mark. */
   async waitAndMark(): Promise<void> {
-    const rem = this.remainingMs();
-    if (rem > 0) {
+    // Recheck after each sleep: a concurrent direct mark() may have moved the reservation.
+    for (;;) {
+      const rem = this.remainingMs();
+      if (rem <= 0) break;
       await new Promise<void>((resolve) => {
         setTimeout(resolve, rem);
       });

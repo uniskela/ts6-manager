@@ -272,6 +272,11 @@ export class BotEngine {
   private sshExpectedPairs = new Set<string>();
   /** Pairs whose animations have been armed (started) for the current engine run. */
   private animationsArmedPairs = new Set<string>();
+  /**
+   * Pairs allowed to arm/tick animations after the 90s registration fallback.
+   * Does not relax cron readiness — that stays gated on EventBridge registration.
+   */
+  private animationFallbackPairs = new Set<string>();
   /** Fallback timers when registerEvents never completes. */
   private botArmFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly onSshConnectedBound = (configId: number, sid: number) => {
@@ -358,6 +363,7 @@ export class BotEngine {
     this.teardownCronJobs();
     this.clearBotArmFallbacks();
     this.animationsArmedPairs.clear();
+    this.animationFallbackPairs.clear();
     this.sshExpectedPairs.clear();
     this.webhookEntries = [];
     this.eventBridge.off('tsEvent', this.onTsEventBound);
@@ -604,6 +610,7 @@ export class BotEngine {
       this.flowOwnedPairs.delete(pair);
       this.sshExpectedPairs.delete(pair);
       this.animationsArmedPairs.delete(pair);
+      this.animationFallbackPairs.delete(pair);
       this.clearBotArmFallback(pair);
     }
 
@@ -877,10 +884,10 @@ export class BotEngine {
         this.botArmFallbackTimers.delete(key);
         if (this.animationsArmedPairs.has(key)) return;
         console.warn(
-          `[BotEngine] Arming bots for ${key} after ${BOT_ARM_FALLBACK_MS}ms without EventBridge registration`,
+          `[BotEngine] Arming animations for ${key} after ${BOT_ARM_FALLBACK_MS}ms without EventBridge registration`,
         );
-        // Treat as no longer waiting on SSH so canArm succeeds.
-        this.sshExpectedPairs.delete(key);
+        // Animation-only escape hatch — do not clear sshExpectedPairs (cron stays gated).
+        this.animationFallbackPairs.add(key);
         this.armBotsForPairIfReady(configId, sid, { force: true });
       }, BOT_ARM_FALLBACK_MS);
       timer.unref?.();
@@ -934,7 +941,12 @@ export class BotEngine {
   }
 
   private getQueryHoldMsForPair(configId: number, sid: number): number {
-    return evaluateBotQueryReady(this.botQueryReadyInput(configId, sid)).holdMs;
+    const input = this.botQueryReadyInput(configId, sid);
+    // Animation fallback may arm before registration; ticks still respect flood pause.
+    if (this.animationFallbackPairs.has(`${configId}:${sid}`)) {
+      return evaluateBotQueryReady({ ...input, expectsSshRegistration: false }).holdMs;
+    }
+    return evaluateBotQueryReady(input).holdMs;
   }
 
   private clearBotArmFallback(key: string): void {

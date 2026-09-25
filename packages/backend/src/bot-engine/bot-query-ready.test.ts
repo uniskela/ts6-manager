@@ -113,4 +113,25 @@ describe('ChannelEditPacer', () => {
     pacer.mark(5_000);
     assert.equal(pacer.remainingMs(5_500), MIN_GLOBAL_CHANNEL_EDIT_GAP_MS - 500);
   });
+
+  it('rechecks the reservation after sleep when a concurrent mark() moved it', async () => {
+    const pacer = new ChannelEditPacer();
+    pacer.mark(Date.now());
+
+    const waiter = pacer.waitAndMark();
+    // Mid-wait, AnimationManager-style direct mark() moves the shared slot.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    pacer.mark(Date.now());
+
+    const started = Date.now();
+    await waiter;
+    const elapsed = Date.now() - started;
+    // Must wait nearly a full gap after the mid-flight mark, not the original short rem.
+    assert.ok(
+      elapsed >= MIN_GLOBAL_CHANNEL_EDIT_GAP_MS - 100,
+      `expected ~${MIN_GLOBAL_CHANNEL_EDIT_GAP_MS}ms after mid-flight mark, got ${elapsed}ms`,
+    );
+    // Fresh mark() at the end of waitAndMark — slot is reserved again.
+    assert.ok(pacer.remainingMs() > MIN_GLOBAL_CHANNEL_EDIT_GAP_MS - 200);
+  });
 });
