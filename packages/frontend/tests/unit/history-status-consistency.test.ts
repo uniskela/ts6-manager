@@ -22,6 +22,8 @@ function statusRow(
     sshConnected: true,
     sshRegistered: true,
     connectionGeneration: 1,
+    reconnectAttempt: 0,
+    nextRetryAt: null,
     ...overrides,
   };
 }
@@ -111,6 +113,27 @@ describe('resolveCaptureStatusDisplay', () => {
     });
     assert.deepEqual(display, { kind: 'stale', status: 'capturing' });
     assert.equal(captureStatusLabel(display), 'Capturing (stale)');
+  });
+
+  it('labels interrupted recovery separately from plain Interrupted', () => {
+    const display = resolveCaptureStatusDisplay({
+      configId: 1,
+      sid: 1,
+      statuses: [
+        statusRow({
+          serverConfigId: 1,
+          virtualServerId: 1,
+          status: 'interrupted',
+          reconnectAttempt: 2,
+        }),
+      ],
+      statusQueryStatus: 'success',
+      hasStatusData: true,
+    });
+    assert.equal(
+      captureStatusLabel(display, { reconnectAttempt: 2 }),
+      'Interrupted — reconnecting',
+    );
   });
 
   it('returns unknown when a failed refresh has no retained payload', () => {

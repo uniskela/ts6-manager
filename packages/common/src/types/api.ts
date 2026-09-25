@@ -418,6 +418,10 @@ export interface ActivityJournalStatus {
   sshConnected: boolean;
   sshRegistered: boolean;
   connectionGeneration: number;
+  /** Backoff attempts since last successful capture arm (0 when capturing). */
+  reconnectAttempt: number;
+  /** ISO time of next scheduled recovery tick, if any. */
+  nextRetryAt: string | null;
 }
 
 export interface ClientActivityEntry {

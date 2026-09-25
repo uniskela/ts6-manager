@@ -1,6 +1,10 @@
 /**
  * TeamSpeak activity journal (#91 Slice 5).
  * Observational join/leave capture with bounded queues and retention.
+ *
+ * Capture shares the main EventBridge SSH/Query session. Upstream Query floods
+ * (e.g. Files listing) can disconnect that session — journal reports interrupted
+ * and recovers with backoff; it does not rate-limit Files itself.
  */
 
 import type { PrismaClient } from '../../generated/prisma/index.js';
@@ -31,6 +35,8 @@ export interface ActivityJournalStatus {
   sshConnected: boolean;
   sshRegistered: boolean;
   connectionGeneration: number;
+  reconnectAttempt: number;
+  nextRetryAt: string | null;
 }
 
 interface PendingRecord {
@@ -56,6 +62,10 @@ const NICK_MAX = 30;
 const UID_MAX = 64;
 const RETENTION_INTERVAL_MS = 5 * 60 * 1000;
 const KNOWN_BOT_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
+/** Bound baseline clientlist so a flooded Query queue cannot strand status at Connecting. */
+export const BASELINE_TIMEOUT_MS = 8_000;
+const RECOVERY_BASE_DELAY_MS = 1_000;
+const RECOVERY_MAX_DELAY_MS = 30_000;
 
 function pairKey(configId: number, sid: number): string {
   return `${configId}:${sid}`;
@@ -64,13 +74,15 @@ function pairKey(configId: number, sid: number): string {
 /** Server join: came from nowhere (cfid=0). View-only enters have cfid>0. */
 export function isServerJoinEvent(data: Record<string, string>): boolean {
   const cfid = data.cfid ?? data.cfId;
-  return cfid === undefined || cfid === '' || cfid === '0';
+  if (cfid === undefined || cfid === '') return true;
+  return Number(cfid) === 0;
 }
 
 /** Server leave: going nowhere (ctid=0). Channel view leaves have ctid>0. */
 export function isServerLeaveEvent(data: Record<string, string>): boolean {
   const ctid = data.ctid ?? data.ctId;
-  return ctid === undefined || ctid === '' || ctid === '0';
+  if (ctid === undefined || ctid === '') return true;
+  return Number(ctid) === 0;
 }
 
 export function classifyClient(opts: {
@@ -100,10 +112,37 @@ export function resolveIdentityProvenance(
 
 /**
  * Accept events while capturing or while reporting a gap.
- * Block only before baseline (`connecting`) and when disabled.
+ * Joins are blocked before baseline (`connecting`); leaves still accepted —
+ * they cannot be manufactured by a registration flood.
  */
-export function isCaptureAccepting(status: ActivityCaptureStatus | undefined): boolean {
-  return status === 'capturing' || status === 'interrupted' || status === 'persistence_error';
+export function isCaptureAccepting(
+  status: ActivityCaptureStatus | undefined,
+  eventKind?: ActivityEventKind,
+): boolean {
+  if (status === 'capturing' || status === 'interrupted' || status === 'persistence_error') {
+    return true;
+  }
+  if (status === 'connecting' && eventKind === 'leave') return true;
+  return false;
+}
+
+export function recoveryDelayMs(attempt: number): number {
+  const capped = Math.min(Math.max(0, attempt), 15);
+  return Math.min(RECOVERY_BASE_DELAY_MS * 2 ** capped, RECOVERY_MAX_DELAY_MS);
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export class ActivityJournalService {
@@ -121,6 +160,10 @@ export class ActivityJournalService {
   private knownBotUids = new Set<string>();
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
   private knownBotTimer: ReturnType<typeof setInterval> | null = null;
+  private recoveryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private recoveryAttempt = new Map<string, number>();
+  private nextRetryAt = new Map<string, number>();
+  private arming = new Map<string, boolean>();
   private readonly onTsEventBound = (
     configId: number,
     sid: number,
@@ -174,6 +217,9 @@ export class ActivityJournalService {
       clearInterval(this.knownBotTimer);
       this.knownBotTimer = null;
     }
+    for (const key of [...this.recoveryTimers.keys()]) {
+      this.clearRecovery(key);
+    }
     for (const key of [...this.targets.keys()]) {
       await this.drainQueue(key);
       const [configId, sid] = key.split(':').map(Number);
@@ -183,6 +229,9 @@ export class ActivityJournalService {
     this.status.clear();
     this.baselineClids.clear();
     this.queues.clear();
+    this.recoveryAttempt.clear();
+    this.nextRetryAt.clear();
+    this.arming.clear();
   }
 
   /**
@@ -192,6 +241,7 @@ export class ActivityJournalService {
     const prefix = `${serverConfigId}:`;
     for (const key of [...this.targets.keys()]) {
       if (!key.startsWith(prefix)) continue;
+      this.clearRecovery(key);
       await this.drainQueue(key);
       const sid = parseInt(key.slice(prefix.length), 10);
       if (Number.isFinite(sid)) {
@@ -204,6 +254,9 @@ export class ActivityJournalService {
       this.dropped.delete(key);
       this.lastError.delete(key);
       this.lastPersistedAt.delete(key);
+      this.recoveryAttempt.delete(key);
+      this.nextRetryAt.delete(key);
+      this.arming.delete(key);
     }
     await this.prisma.activityJournalTarget.deleteMany({ where: { serverConfigId } });
     await this.prisma.clientActivity.deleteMany({ where: { serverConfigId } });
@@ -251,15 +304,22 @@ export class ActivityJournalService {
       this.targets.set(key, true);
       this.status.set(key, 'connecting');
       this.baselineClids.set(key, new Set());
+      this.recoveryAttempt.set(key, 0);
+      this.clearRecovery(key);
       await this.eventBridge.retainSession('journal', serverConfigId, virtualServerId);
       if (this.eventBridge.isRegistered(serverConfigId, virtualServerId)) {
         await this.onSshConnected(serverConfigId, virtualServerId);
+      } else {
+        this.scheduleRecovery(key);
       }
     } else {
+      this.clearRecovery(key);
       await this.drainQueue(key);
       this.targets.set(key, false);
       this.status.set(key, 'disabled');
       this.baselineClids.delete(key);
+      this.recoveryAttempt.delete(key);
+      this.nextRetryAt.delete(key);
       await this.eventBridge.releaseSession('journal', serverConfigId, virtualServerId);
     }
   }
@@ -270,6 +330,7 @@ export class ActivityJournalService {
     for (const key of keys) {
       const [serverConfigId, virtualServerId] = key.split(':').map(Number);
       const enabled = this.targets.get(key) === true;
+      const nextAt = this.nextRetryAt.get(key);
       out.push({
         serverConfigId,
         virtualServerId,
@@ -283,6 +344,8 @@ export class ActivityJournalService {
         sshConnected: this.eventBridge.isConnected(serverConfigId, virtualServerId),
         sshRegistered: this.eventBridge.isRegistered(serverConfigId, virtualServerId),
         connectionGeneration: this.eventBridge.getClientCacheGeneration(serverConfigId, virtualServerId),
+        reconnectAttempt: enabled ? (this.recoveryAttempt.get(key) ?? 0) : 0,
+        nextRetryAt: enabled && nextAt != null ? new Date(nextAt).toISOString() : null,
       });
     }
     return out.sort(
@@ -355,14 +418,18 @@ export class ActivityJournalService {
       const key = pairKey(row.serverConfigId, row.virtualServerId);
       this.targets.set(key, true);
       this.status.set(key, 'connecting');
+      this.recoveryAttempt.set(key, 0);
       try {
         await this.eventBridge.retainSession('journal', row.serverConfigId, row.virtualServerId);
         if (this.eventBridge.isRegistered(row.serverConfigId, row.virtualServerId)) {
           await this.onSshConnected(row.serverConfigId, row.virtualServerId);
+        } else {
+          this.scheduleRecovery(key);
         }
       } catch (err: any) {
         this.status.set(key, 'interrupted');
         this.lastError.set(key, err.message);
+        this.scheduleRecovery(key);
       }
     }
   }
@@ -370,22 +437,7 @@ export class ActivityJournalService {
   private async onSshConnected(configId: number, sid: number): Promise<void> {
     const key = pairKey(configId, sid);
     if (this.targets.get(key) !== true) return;
-
-    // Baseline currently-visible clients so registration floods are not journaled as joins.
-    const baseline = new Set<string>();
-    try {
-      const raw = await this.eventBridge.executeCommand(configId, sid, 'clientlist -uid');
-      const { parseQueryResponse } = await import('@ts6/common');
-      const rows = parseQueryResponse(raw.trim()) as Record<string, string>[];
-      for (const row of rows) {
-        if (row.clid) baseline.add(row.clid);
-      }
-    } catch (err: any) {
-      console.warn(`[ActivityJournal] Baseline clientlist failed for ${key}: ${err.message}`);
-    }
-    this.baselineClids.set(key, baseline);
-    this.status.set(key, 'capturing');
-    this.lastError.set(key, null);
+    await this.armCapture(configId, sid);
   }
 
   private onSshDisconnected(configId: number, sid: number): void {
@@ -393,6 +445,123 @@ export class ActivityJournalService {
     if (this.targets.get(key) !== true) return;
     this.status.set(key, 'interrupted');
     this.baselineClids.set(key, new Set());
+    this.lastError.set(key, 'Query session disconnected — reconnecting…');
+    this.scheduleRecovery(key);
+  }
+
+  private clearRecovery(key: string): void {
+    const timer = this.recoveryTimers.get(key);
+    if (timer) clearTimeout(timer);
+    this.recoveryTimers.delete(key);
+    this.nextRetryAt.delete(key);
+  }
+
+  private scheduleRecovery(key: string): void {
+    if (this.targets.get(key) !== true) return;
+    if (this.recoveryTimers.has(key)) return;
+    const attempt = this.recoveryAttempt.get(key) ?? 0;
+    const delay = recoveryDelayMs(attempt);
+    const runAt = Date.now() + delay;
+    this.nextRetryAt.set(key, runAt);
+    this.recoveryTimers.set(
+      key,
+      setTimeout(() => {
+        this.recoveryTimers.delete(key);
+        this.nextRetryAt.delete(key);
+        void this.attemptRecovery(key);
+      }, delay),
+    );
+  }
+
+  private async attemptRecovery(key: string): Promise<void> {
+    if (this.targets.get(key) !== true) return;
+    const current = this.status.get(key);
+    if (current === 'capturing' || current === 'disabled') return;
+
+    const [configId, sid] = key.split(':').map(Number);
+    const attempt = (this.recoveryAttempt.get(key) ?? 0) + 1;
+    this.recoveryAttempt.set(key, attempt);
+
+    // Stay honest: first enable uses connecting; post-drop recovery stays interrupted.
+    if (current !== 'connecting') {
+      this.status.set(key, 'interrupted');
+    }
+    this.lastError.set(key, `Reconnecting capture (attempt ${attempt})…`);
+
+    try {
+      // Nudge shared EventBridge ownership/connect (idempotent when already owned).
+      await this.eventBridge.retainSession('journal', configId, sid);
+      if (this.eventBridge.isRegistered(configId, sid)) {
+        await this.armCapture(configId, sid);
+        return;
+      }
+      this.scheduleRecovery(key);
+    } catch (err: any) {
+      this.status.set(key, 'interrupted');
+      this.lastError.set(key, err.message || 'Capture recovery failed');
+      this.scheduleRecovery(key);
+    }
+  }
+
+  /**
+   * Baseline visible clients then accept joins. Bounded so Query floods cannot
+   * leave status stuck on Connecting forever.
+   */
+  private async armCapture(configId: number, sid: number): Promise<void> {
+    const key = pairKey(configId, sid);
+    if (this.targets.get(key) !== true) return;
+    if (this.arming.get(key)) return;
+    this.arming.set(key, true);
+    try {
+      if (!this.eventBridge.isRegistered(configId, sid)) {
+        if (this.status.get(key) !== 'connecting') {
+          this.status.set(key, 'interrupted');
+        }
+        this.scheduleRecovery(key);
+        return;
+      }
+
+      // Keep accepting leaves while baseline runs; joins stay blocked until ready.
+      if (this.status.get(key) !== 'capturing') {
+        this.status.set(key, 'connecting');
+      }
+
+      const baseline = new Set<string>();
+      try {
+        const raw = await withTimeout(
+          this.eventBridge.executeCommand(configId, sid, 'clientlist -uid'),
+          BASELINE_TIMEOUT_MS,
+          'Activity journal baseline clientlist',
+        );
+        const { parseQueryResponse } = await import('@ts6/common');
+        const rows = parseQueryResponse(raw.trim()) as Record<string, string>[];
+        for (const row of rows) {
+          if (row.clid) baseline.add(row.clid);
+        }
+        this.lastError.set(key, null);
+      } catch (err: any) {
+        console.warn(`[ActivityJournal] Baseline clientlist failed for ${key}: ${err.message}`);
+        this.lastError.set(
+          key,
+          `Baseline incomplete (${err.message}); capturing without join suppression`,
+        );
+      }
+
+      if (this.targets.get(key) !== true) return;
+      if (!this.eventBridge.isRegistered(configId, sid)) {
+        this.status.set(key, 'interrupted');
+        this.baselineClids.set(key, new Set());
+        this.scheduleRecovery(key);
+        return;
+      }
+
+      this.baselineClids.set(key, baseline);
+      this.status.set(key, 'capturing');
+      this.recoveryAttempt.set(key, 0);
+      this.clearRecovery(key);
+    } finally {
+      this.arming.set(key, false);
+    }
   }
 
   private onTsEvent(
@@ -403,12 +572,11 @@ export class ActivityJournalService {
   ): void {
     const key = pairKey(configId, sid);
     if (this.targets.get(key) !== true) return;
-    // Block only before baseline / when disabled. Gap statuses still accept events.
-    if (!isCaptureAccepting(this.status.get(key))) return;
     // Ignore command-listener duplicates — main EventBridge stream only.
     if (data.__cmd_listener_channel_id) return;
 
     if (eventName === 'notifycliententerview') {
+      if (!isCaptureAccepting(this.status.get(key), 'join')) return;
       if (!isServerJoinEvent(data)) return;
       const clid = data.clid;
       if (!clid) return;
@@ -422,6 +590,7 @@ export class ActivityJournalService {
     }
 
     if (eventName === 'notifyclientleftview') {
+      if (!isCaptureAccepting(this.status.get(key), 'leave')) return;
       if (!isServerLeaveEvent(data)) return;
       const clid = data.clid;
       if (!clid) return;
@@ -554,6 +723,8 @@ export class ActivityJournalService {
     // Keep interrupted while the queue is still overflowing / non-empty after overflow
     // only when we just successfully wrote — restore once writes succeed again.
     this.status.set(key, 'capturing');
+    this.recoveryAttempt.set(key, 0);
+    this.clearRecovery(key);
   }
 
   private async drainQueue(key: string): Promise<void> {
