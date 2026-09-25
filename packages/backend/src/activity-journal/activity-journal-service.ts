@@ -742,8 +742,10 @@ export class ActivityJournalService {
             this.maybeRestoreCapturing(key);
           } catch (err: any) {
             if (!this.isCaptureEpochCurrent(key, epoch)) {
-              // Requeue for the new lifecycle; do not touch its error/dropped counters.
-              this.queues.get(key)?.unshift(...batch);
+              // Requeue only when still enabled (epoch bump); drop if target was disabled.
+              if (this.targets.get(key) === true) {
+                this.queues.get(key)?.unshift(...batch);
+              }
               return;
             }
             this.lastError.set(key, err.message);
