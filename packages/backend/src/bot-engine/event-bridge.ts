@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import type { PrismaClient } from '../../generated/prisma/index.js';
-import { SshQueryClient } from './ssh-query-client.js';
+import { SshQueryClient, formatFatalSshFailureMessage } from './ssh-query-client.js';
 import { decrypt } from '../utils/crypto.js';
 import { sanitizeTsServerHost, validateTsServerPort } from '../utils/validate-ts-host.js';
 import { ClientMetadataCache } from './client-metadata-cache.js';
@@ -35,6 +35,12 @@ export class EventBridge extends EventEmitter {
   private mainHelperChain: Promise<void> = Promise.resolve();
   /** Who is keeping each main SSH session alive (flows / music / journal). */
   private sessionOwners = new Map<string, Set<SessionOwnerKind>>();
+  /**
+   * Permanent connect failures (auth / host-key) after the client was removed.
+   * Preserved so executeCommand can surface a non-retryable error instead of
+   * generic "SSH not connected" (which Files maps to reconnectable 503).
+   */
+  private fatalSshFailures = new Map<string, string>();
   /** Shared leave/join identity enrichment (#74) — one boundary for flows + journal. */
   readonly clientCache = new ClientMetadataCache();
 
@@ -192,6 +198,8 @@ export class EventBridge extends EventEmitter {
     });
 
     this.connections.set(key, client);
+    // New attempt — drop stale fatal marker until this connect proves permanent failure.
+    this.fatalSshFailures.delete(key);
 
     try {
       await client.connect();
@@ -199,6 +207,8 @@ export class EventBridge extends EventEmitter {
       console.error(`[EventBridge] Initial SSH connection failed for ${key}: ${err.message}`);
       // Auto-reconnect is handled internally by SshQueryClient (unless fatal)
       if (client.hasFatalError) {
+        const detail = client.lastFatalError || err.message || 'SSH authentication failed';
+        this.fatalSshFailures.set(key, detail);
         this.forgetMainHelperLocation(key, { retainRemountTarget: false });
         this.mainHelperRemountAfterReconnect.delete(key);
         this.connections.delete(key);
@@ -214,6 +224,7 @@ export class EventBridge extends EventEmitter {
     const client = this.connections.get(key);
     this.registered.delete(key);
     this.clientCache.clearPair(configId, sid);
+    this.fatalSshFailures.delete(key);
     // Clear trusted location before destroy; retain remount target so reconnectConfig
     // (and SSH auto-reconnect) can park again after registerEvents.
     this.forgetMainHelperLocation(key);
@@ -364,6 +375,18 @@ export class EventBridge extends EventEmitter {
     const key = this.makeKey(configId, sid);
     let client = this.connections.get(key);
 
+    // Mid-session reconnect can mark the client fatal without running startServerConnection's
+    // catch (which owns fatalSshFailures). Drop the zombie so connectServer can retry with
+    // current credentials, and remember the reason if the retry also fails permanently.
+    if (client && !client.isConnected && client.hasFatalError) {
+      const detail = client.lastFatalError || 'SSH authentication failed';
+      this.fatalSshFailures.set(key, detail);
+      this.registered.delete(key);
+      this.connections.delete(key);
+      void client.destroy().catch(() => { /* ignore teardown races */ });
+      client = undefined;
+    }
+
     // Connect on demand if no connection exists yet
     if (!client || !client.isConnected) {
       await this.connectServer(configId, sid);
@@ -375,6 +398,13 @@ export class EventBridge extends EventEmitter {
         });
         if (!serverConfig?.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) {
           throw new Error('SSH credentials not configured for this server');
+        }
+        const fatal = this.fatalSshFailures.get(key)
+          || (client?.hasFatalError
+            ? client.lastFatalError || 'SSH authentication failed'
+            : null);
+        if (fatal) {
+          throw new Error(formatFatalSshFailureMessage(fatal));
         }
         // Reconnecting / flood cooldown — not a permanent credentials failure.
         throw new Error('SSH not connected');

@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { isSshFloodError, shouldReconnectAfterSshClose, sshFloodCooldownMs } from './ssh-query-client.js';
+import {
+  formatFatalSshFailureMessage,
+  isSshFatalConnectFailureMessage,
+  isSshFloodError,
+  shouldReconnectAfterSshClose,
+  sshFloodCooldownMs,
+} from './ssh-query-client.js';
 
 describe('shouldReconnectAfterSshClose', () => {
   it('retries a non-fatal close before the SSH handshake completes', () => {
@@ -16,6 +22,19 @@ describe('shouldReconnectAfterSshClose', () => {
   });
 });
 
+describe('fatal SSH connect failure messages', () => {
+  it('prefixes authentication and host-key details for Files mapping', () => {
+    const auth = formatFatalSshFailureMessage('All configured authentication methods failed');
+    assert.match(auth, /^SSH authentication failed:/);
+    assert.equal(isSshFatalConnectFailureMessage(auth), true);
+
+    const hostKey = formatFatalSshFailureMessage('SSH host key mismatch for example');
+    assert.match(hostKey, /^SSH host key verification failed:/);
+    assert.equal(isSshFatalConnectFailureMessage(hostKey), true);
+
+    assert.equal(isSshFatalConnectFailureMessage('SSH not connected'), false);
+  });
+});
 
 describe('SSH Query flood recovery', () => {
   it('recognizes TeamSpeak 524 flooding responses', () => {
