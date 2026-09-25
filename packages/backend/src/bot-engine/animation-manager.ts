@@ -1,5 +1,10 @@
 import { TSApiError } from '../middleware/error-handler.js';
 import type { WebQueryClient } from '../ts-client/webquery-client.js';
+import {
+  MIN_GLOBAL_CHANNEL_EDIT_GAP_MS,
+  webQueryChannelEditPacer,
+  type ChannelEditPacer,
+} from './channel-edit-pacer.js';
 
 export type AnimationStyle = 'scroll' | 'typewriter' | 'bounce' | 'blink' | 'wave' | 'alternateCase';
 
@@ -12,6 +17,16 @@ export interface AnimationConfig {
   timezone?: string;
   /** When true, BotEngine ignores notifychanneledited for this channel. */
   suppressEditEvents?: boolean;
+}
+
+export interface AnimationStartOptions {
+  /**
+   * Returns ms to hold (skip) this tick — e.g. EventBridge still registering
+   * events or SSH flood cooldown. 0 means Query is clear for cosmetic edits.
+   */
+  getQueryHoldMs?: () => number;
+  /** Override shared WebQuery channel-edit pacer (tests). */
+  channelEditPacer?: ChannelEditPacer;
 }
 
 interface ActiveAnimation {
@@ -32,8 +47,7 @@ const MAX_BACKOFF_MS = 60_000;
  */
 export const MIN_ANIMATION_INTERVAL_MS = 10_000;
 
-/** Minimum gap between any two channeledit frames across all active animations. */
-export const MIN_GLOBAL_CHANNEL_EDIT_GAP_MS = 3_000;
+export { MIN_GLOBAL_CHANNEL_EDIT_GAP_MS };
 
 export function effectiveAnimationIntervalMs(intervalSeconds: number): number {
   const requested = Number.isFinite(intervalSeconds) && intervalSeconds > 0
@@ -51,9 +65,25 @@ export function shouldBackoffAnimationError(message: string): boolean {
     lower.includes('etimedout') ||
     lower.includes('econnaborted') ||
     lower.includes('connection failed') ||
+    lower.includes('connection lost before handshake') ||
     lower.includes('flood') ||
+    lower.includes('still starting') ||
+    lower.includes('temporarily disconnected') ||
+    lower.includes('teamspeak unavailable') ||
     lower.includes('invalid apikey') ||
     lower.includes('invalid api key')
+  );
+}
+
+/** Quiet skip — do not log; Query is known unhealthy / registering. */
+export function shouldQuietSkipAnimationError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('still starting') ||
+    lower.includes('temporarily disconnected') ||
+    lower.includes('flood') ||
+    lower.includes('econnreset') ||
+    lower.includes('connection lost before handshake')
   );
 }
 
@@ -210,17 +240,19 @@ function resolveTimeVars(text: string, timezone?: string): string {
 
 export class AnimationManager {
   private animations: Map<number, ActiveAnimation> = new Map();
-  /** Shared across all flows so concurrent wave/scroll timers cannot cluster channeledits. */
-  private lastGlobalChannelEditAt = 0;
 
   startAnimation(
     flowId: number,
     sid: number,
     config: AnimationConfig,
     client: WebQueryClient,
+    options: AnimationStartOptions = {},
   ): void {
     // Stop existing animation for this flow
     this.stopAnimation(flowId);
+
+    const pacer = options.channelEditPacer ?? webQueryChannelEditPacer;
+    const getQueryHoldMs = options.getQueryHoldMs;
 
     // Animated channel names are cosmetic background traffic. Keep them well below
     // TeamSpeak Query anti-spam limits so dashboard/admin traffic has headroom.
@@ -257,6 +289,13 @@ export class AnimationManager {
       if (state.inFlight) return;
       if (Date.now() < state.pauseUntil) return;
 
+      // EventBridge still registering / SSH flood — skip without hitting WebQuery.
+      const bridgeHoldMs = getQueryHoldMs?.() ?? 0;
+      if (bridgeHoldMs > 0) {
+        state.pauseUntil = Date.now() + bridgeHoldMs;
+        return;
+      }
+
       // WebQuery flood recovery is a circuit breaker, not a queue. Cosmetic
       // animation frames should simply be skipped while TeamSpeak cools down.
       const queryCooldownMs = client.getFloodCooldownRemainingMs();
@@ -265,9 +304,9 @@ export class AnimationManager {
         return;
       }
 
-      const sinceGlobal = Date.now() - this.lastGlobalChannelEditAt;
-      if (this.lastGlobalChannelEditAt > 0 && sinceGlobal < MIN_GLOBAL_CHANNEL_EDIT_GAP_MS) {
-        state.pauseUntil = Date.now() + (MIN_GLOBAL_CHANNEL_EDIT_GAP_MS - sinceGlobal);
+      const globalGapMs = pacer.remainingMs();
+      if (globalGapMs > 0) {
+        state.pauseUntil = Date.now() + globalGapMs;
         return;
       }
 
@@ -282,7 +321,7 @@ export class AnimationManager {
         state.frameIndex++;
 
         // Reserve the global slot before awaiting so overlapping timers skip.
-        this.lastGlobalChannelEditAt = Date.now();
+        pacer.mark();
 
         await client.executePost(sid, 'channeledit', {
           cid: config.channelId,
@@ -301,7 +340,10 @@ export class AnimationManager {
           return;
         }
 
-        logError(message);
+        // During reconnect/flood storms, skip log spam; still back off so we do not hammer.
+        if (!shouldQuietSkipAnimationError(message)) {
+          logError(message);
+        }
 
         // Back off on transient connection failures and deterministic credential rejection.
         if (shouldBackoffAnimationError(message)) {

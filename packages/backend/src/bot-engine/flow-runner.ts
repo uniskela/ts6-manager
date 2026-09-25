@@ -17,6 +17,7 @@ import type {
 import axios from 'axios';
 import { validateUrl } from '../utils/url-validator.js';
 import { ALLOWED_WEBQUERY_COMMANDS } from './command-whitelist.js';
+import { webQueryChannelEditPacer } from './channel-edit-pacer.js';
 import crypto from 'crypto';
 import { createOwnedTempChannel, cleanupOwnedTempChannels } from './temp-channel-ownership.js';
 
@@ -431,6 +432,9 @@ export class FlowRunner {
     for (const [key, val] of Object.entries(data.params || {})) {
       resolved[key] = await ctx.resolveTemplate(val);
     }
+    // Share headroom with AnimationManager so Server Stats batches cannot cluster
+    // with cosmetic channel renames on the same Query antiflood budget.
+    await webQueryChannelEditPacer.waitAndMark();
     await client.executePost(ctx.sid, 'channeledit', resolved);
   }
 
