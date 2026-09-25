@@ -196,7 +196,9 @@ export default function ActivityJournal() {
       ? captureStatusForLive === 'connecting'
         ? 'Capture connecting…'
         : captureStatusForLive === 'interrupted'
-          ? 'Capture interrupted — reconnecting…'
+          ? ((pairStatus?.reconnectAttempt ?? 0) > 0
+            ? 'Capture interrupted — reconnecting…'
+            : 'Capture interrupted')
           : 'Journal history up to date'
       : 'This journal page loaded',
     refreshingLabel: 'Refreshing journal…',
