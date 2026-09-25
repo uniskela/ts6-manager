@@ -11,7 +11,10 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { NotebookPen, RefreshCw } from 'lucide-react';
-import { activityJournalHistoryRefetchInterval } from '@/lib/activity-journal-live';
+import {
+  activityJournalHistoryRefetchInterval,
+  activityJournalStatusRefetchInterval,
+} from '@/lib/activity-journal-live';
 import {
   shouldApplyJournalToggleResult,
   sameJournalTarget,
@@ -96,7 +99,17 @@ export default function ActivityJournal() {
   const statusQuery = useQuery({
     queryKey: ['activity-journal-status'],
     queryFn: () => activityJournalApi.getStatus(),
-    refetchInterval: 15_000,
+    refetchInterval: (query) => {
+      const rows = query.state.data?.statuses;
+      const pair =
+        c && s && rows
+          ? rows.find((row) => row.serverConfigId === c && row.virtualServerId === s)
+          : undefined;
+      return activityJournalStatusRefetchInterval({
+        enabled: pair?.enabled === true,
+        status: pair?.status ?? 'unknown',
+      });
+    },
   });
 
   const pairStatus = useMemo((): ActivityJournalStatus | null => {
@@ -179,7 +192,15 @@ export default function ActivityJournal() {
     hasError: !!backgroundError,
     livePolling: historyLive,
     idleLiveLabel: 'Live journal history active',
-    idleStaticLabel: onNewestPage ? 'Journal history up to date' : 'This journal page loaded',
+    idleStaticLabel: onNewestPage
+      ? captureStatusForLive === 'connecting'
+        ? 'Capture connecting…'
+        : captureStatusForLive === 'interrupted'
+          ? ((pairStatus?.reconnectAttempt ?? 0) > 0
+            ? 'Capture interrupted — reconnecting…'
+            : 'Capture interrupted')
+          : 'Journal history up to date'
+      : 'This journal page loaded',
     refreshingLabel: 'Refreshing journal…',
     degradedLabel: 'Journal updates interrupted',
   });
@@ -295,7 +316,9 @@ export default function ActivityJournal() {
         <div className="text-sm" data-testid="journal-capture-status">
           Status:{' '}
           <span className={cn('font-medium', STATUS_CLASS[statusClassKey], captureDisplay.kind === 'stale' && 'text-amber-600')}>
-            {captureStatusLabel(captureDisplay)}
+            {captureStatusLabel(captureDisplay, {
+              reconnectAttempt: pairStatus?.reconnectAttempt,
+            })}
           </span>
         </div>
         {pairStatus && pairStatus.droppedEvents > 0 && (

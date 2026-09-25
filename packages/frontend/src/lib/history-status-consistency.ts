@@ -72,9 +72,18 @@ export function resolveCaptureStatusDisplay(opts: {
   return { kind: 'current', status };
 }
 
-export function captureStatusLabel(display: CaptureStatusDisplay): string {
+export function captureStatusLabel(
+  display: CaptureStatusDisplay,
+  opts?: { reconnectAttempt?: number },
+): string {
   if (display.kind === 'unknown') return 'Unknown';
-  const base = CAPTURE_STATUS_LABEL[display.status];
+  let base = CAPTURE_STATUS_LABEL[display.status];
+  if (
+    display.status === 'interrupted'
+    && (opts?.reconnectAttempt ?? 0) > 0
+  ) {
+    base = 'Interrupted — reconnecting';
+  }
   return display.kind === 'stale' ? `${base} (stale)` : base;
 }
 
