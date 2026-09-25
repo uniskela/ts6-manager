@@ -64,7 +64,7 @@ The UI includes:
 
 - channel file browsing (create/delete via SSH Query; upload/download still use the TeamSpeak client);
 - action-local warnings that browsing a folder does **not** confirm permission to create or delete files;
-- demand-driven **storage summaries** on page entry or manual Refresh (not after PWA recovery, file mutations, or channel-list changes alone); at most 256 channels are scanned per pass, with remaining channels labelled **Not scanned.**; offline entry shows **Not checked.** until Refresh;
+- demand-driven **storage summaries** via **manual Refresh** only (not on Files page entry — a multi-channel `ftgetfilelist` burst trips Query flood and drops SSH browse; also not after PWA recovery, file mutations, or channel-list changes alone); at most 256 channels are scanned per pass, with remaining channels labelled **Not scanned.**; channels show **Not checked.** until Refresh;
 - file create/delete actions bound to the connection, virtual server, channel, and path captured when the dialog opened — switching servers cannot redirect a pending confirmation;
 - **Server Logs 2.0** (admin-only): bounded TeamSpeak `logview` pages with Previous/Older cursor paging, Refresh back to the newest page, connection / virtual-server / instance scope labels, page-local search and level filters, and source timestamps with a single page-level note that TeamSpeak does not report timezone (no per-row “timezone unknown”); and
 - instance-level settings.

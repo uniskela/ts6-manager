@@ -25,12 +25,9 @@ import {
   channelSummaryLabelText,
   connectionScope,
   consumePageEntryAttempt,
-  decidePageEntryScan,
   deferCancelSummaryQuery,
   expensiveDiagnosticQueryOptions,
-  hasConsumedPageEntryAttempt,
   markExpensiveDiagnosticStale,
-  pageEntryAttemptWasOffline,
   retainSummaryQueryScope,
   type SummaryObservation,
 } from '@/lib/demand-driven-query-policy';
@@ -105,8 +102,6 @@ export default function Files() {
   const omittedIdsRef = useRef(omittedIds);
   omittedIdsRef.current = omittedIds;
 
-  const [offlineUnchecked, setOfflineUnchecked] = useState(false);
-
   const summaryQueryKey = useMemo(() => ['file-summaries', c, s] as const, [c, s]);
 
   const {
@@ -157,46 +152,13 @@ export default function Files() {
     return map;
   }, [summaryData]);
 
-  // One bounded page-entry attempt per connection scope (survives /files remounts).
-  useEffect(() => {
-    if (!c || !s) return;
-    const scope = connectionScope(c, s);
-    const online = typeof navigator === 'undefined' ? true : navigator.onLine;
-    const decision = decidePageEntryScan({
-      configId: c,
-      sid: s,
-      hasChannels: channelIds.length > 0,
-      online,
-      entryAttemptScope: hasConsumedPageEntryAttempt(scope) ? scope : null,
-    });
-    if (decision.action === 'skip') {
-      if (decision.reason === 'already-attempted') {
-        setOfflineUnchecked(pageEntryAttemptWasOffline(scope));
-        return;
-      }
-      if (decision.reason === 'offline') {
-        // Consume the page-entry opportunity so reconnect/channel churn cannot defer a scan.
-        consumePageEntryAttempt(scope, true);
-        setOfflineUnchecked(true);
-      } else if (decision.reason === 'missing-context') {
-        // Offline with no channels yet still consumes the opportunity — decidePageEntryScan
-        // returns missing-context before it checks connectivity.
-        if (!online) {
-          consumePageEntryAttempt(scope, true);
-          setOfflineUnchecked(true);
-        } else {
-          setOfflineUnchecked(false);
-        }
-      }
-      return;
-    }
-    consumePageEntryAttempt(decision.scope, false);
-    setOfflineUnchecked(false);
-    void refetchSummaries();
-  }, [c, s, channelIds.length, refetchSummaries]);
+  // Storage summaries are manual Refresh only. A page-entry scan issues rapid
+  // ftgetfilelist across every channel and trips TeamSpeak Query flood (524),
+  // which takes down the shared SSH session used for ordinary file browse.
+  // Channels stay "Not checked." until the operator refreshes.
 
   // Connection revision: cancel in-flight summaries when the scope leaves.
-  // Defer cancel so StrictMode same-scope remount can retain the initial scan.
+  // Defer cancel so StrictMode same-scope remount can retain an in-flight scan.
   useEffect(() => {
     retainSummaryQueryScope(summaryQueryKey);
     return () => {
@@ -207,7 +169,6 @@ export default function Files() {
   const refreshSummaries = () => {
     if (!c || !s || channelIds.length === 0) return;
     consumePageEntryAttempt(connectionScope(c, s), false);
-    setOfflineUnchecked(false);
     // Compatible in-flight work is coalesced by TanStack Query on the same key.
     void refetchSummaries();
   };
@@ -417,7 +378,7 @@ export default function Files() {
                 {channels.map((ch) => {
                   const summary = summariesByChannel.get(ch.cid);
                   const display = channelSummaryDisplay({
-                    offlineUnchecked,
+                    offlineUnchecked: false,
                     isFetching: fetchingSummaries,
                     isError: summaryIsError,
                     hasErrorData: summaryIsError,
@@ -532,7 +493,7 @@ export default function Files() {
                   {fileBrowseErrorMessage(filesError)}
                 </p>
                 {(filesError as any)?.response?.data?.code != null && (
-                  <p className="text-[10px] text-muted-foreground/60 mt-1">TS3 error code: {(filesError as any).response.data.code}</p>
+                  <p className="text-[10px] text-muted-foreground/60 mt-1">TS error code: {(filesError as any).response.data.code}</p>
                 )}
                 <Button
                   size="sm"
@@ -607,7 +568,7 @@ export default function Files() {
 
       {/* Info notice */}
       <p className="text-xs text-muted-foreground text-center">
-        File upload/download is not available via WebQuery API. Use the TS3 client for file transfers.
+        File upload/download is not available via WebQuery API. Use the TS6 client for file transfers.
       </p>
 
       {/* Create Directory Dialog */}

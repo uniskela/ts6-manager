@@ -229,6 +229,11 @@ export class SshQueryClient extends EventEmitter {
     if (!this.connected || !this.shell) {
       throw new Error('SSH not connected');
     }
+    // Flood cooldown: do not enqueue more Query traffic while TeamSpeak is blocking us.
+    // (Connected can briefly remain true until forceDisconnect runs on the next tick.)
+    if (Date.now() < this.floodPauseUntil) {
+      throw new Error('SSH not connected');
+    }
 
     return new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -269,6 +274,12 @@ export class SshQueryClient extends EventEmitter {
 
     let registrationFailures = 0;
     for (const eventType of TS_EVENT_TYPES) {
+      if (this.destroyed || !this.connected) {
+        throw new Error('SSH disconnected while registering events');
+      }
+      if (Date.now() < this.floodPauseUntil) {
+        throw new Error('TS error 524: client is flooding');
+      }
       const cmd = eventType === 'channel'
         ? `servernotifyregister event=${eventType} id=0`
         : `servernotifyregister event=${eventType}`;
@@ -284,6 +295,8 @@ export class SshQueryClient extends EventEmitter {
           if (isSshFloodError(err)) throw err;
         }
       }
+      // Pace registrations so reconnect after Files flood does not immediately re-trip 524.
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     if (!this.connected) {
@@ -367,6 +380,16 @@ export class SshQueryClient extends EventEmitter {
   getReconnectPauseSeconds(): number {
     const remainingMs = Math.max(0, this.floodPauseUntil - Date.now());
     return Math.ceil(remainingMs / 1000);
+  }
+
+  /**
+   * Drop the Query session and schedule a non-fatal reconnect.
+   * Used when event registration fails so we do not sit connected-but-unregistered.
+   * Safe to call during flood cooldown (honours floodPauseUntil in scheduleReconnect).
+   */
+  requestReconnect(): void {
+    if (this.destroyed || this.fatalError) return;
+    this.forceDisconnect();
   }
 
   /**
@@ -566,6 +589,8 @@ export class SshQueryClient extends EventEmitter {
   private processQueue(): void {
     if (this.currentCommand || this.commandQueue.length === 0) return;
     if (!this.shell || !this.connected) return;
+    // Do not drain the queue into a session TeamSpeak already marked as flooding.
+    if (Date.now() < this.floodPauseUntil) return;
 
     this.currentCommand = this.commandQueue.shift()!;
     this.currentCommand.responseLines = [];

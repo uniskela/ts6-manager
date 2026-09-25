@@ -3,8 +3,11 @@ import { EventEmitter } from 'node:events';
 import { describe, it, beforeEach } from 'node:test';
 import {
   FILE_SUMMARY_MAX_CHANNELS,
+  FILE_SUMMARY_MIN_COMMAND_GAP_MS,
   FileSummaryScanCoordinator,
   abortSignalFromRequest,
+  createRequestBudget,
+  paceListPathCommand,
   selectChannelsForSummaryScan,
   type ListPathFn,
 } from './file-summary-scan.js';
@@ -63,6 +66,8 @@ describe('FileSummaryScanCoordinator', () => {
       maxEntries: 15_000,
       maxDepth: 32,
       maxEntriesPerChannel: 5_000,
+      // Tests disable flood pacing so timing stays deterministic and fast.
+      minCommandGapMs: 0,
       listPath: listPathFactory({
         '/': [
           { name: 'a.txt', size: '10', type: '0' },
@@ -406,6 +411,39 @@ describe('FileSummaryScanCoordinator', () => {
         return true;
       },
     );
+  });
+
+  it('paces successive listPath calls by at least minCommandGapMs (flood floor)', async () => {
+    const stamps: number[] = [];
+    await coordinator.runRequest(baseCtx({
+      cids: [1, 2, 3],
+      minCommandGapMs: 50,
+      maxDepth: 0,
+      listPath: async (cid) => {
+        stamps.push(Date.now());
+        return [{ name: `f${cid}.txt`, size: '1', type: '0' }];
+      },
+    }));
+    assert.equal(stamps.length, 3);
+    assert.ok(stamps[1]! - stamps[0]! >= 45, `gap 0→1 was ${stamps[1]! - stamps[0]!}ms`);
+    assert.ok(stamps[2]! - stamps[1]! >= 45, `gap 1→2 was ${stamps[2]! - stamps[1]!}ms`);
+  });
+
+  it('paceListPathCommand is a no-op when minCommandGapMs is 0', async () => {
+    const budget = createRequestBudget({
+      deadlineAt: Date.now() + 5_000,
+      maxCommands: 10,
+      maxEntries: 100,
+      minCommandGapMs: 0,
+    });
+    const t0 = Date.now();
+    await paceListPathCommand(budget);
+    await paceListPathCommand(budget);
+    assert.ok(Date.now() - t0 < 30);
+  });
+
+  it('default min command gap matches the Query flood floor constant', () => {
+    assert.equal(FILE_SUMMARY_MIN_COMMAND_GAP_MS, 400);
   });
 });
 

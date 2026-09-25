@@ -49,4 +49,9 @@ describe('SSH Query flood recovery', () => {
     assert.equal(sshFloodCooldownMs(4), 300_000);
     assert.equal(sshFloodCooldownMs(10), 300_000);
   });
+
+  it('treats Connection lost before handshake as non-flood (reconnect separately)', () => {
+    assert.equal(isSshFloodError(new Error('Connection lost before handshake')), false);
+    assert.equal(isSshFloodError(new Error('read ECONNRESET')), false);
+  });
 });

@@ -58,6 +58,8 @@ describe('expensive diagnostic classification', () => {
   });
 
   it('only authorizes scans for page entry and manual refresh', () => {
+    // Policy still lists page-entry; Files storage summaries intentionally use
+    // manual Refresh only (see Files.tsx) to avoid Query flood on load.
     assert.equal(shouldScanOnTrigger('page-entry-authorized'), true);
     assert.equal(shouldScanOnTrigger('manual-refresh'), true);
     for (const trigger of [

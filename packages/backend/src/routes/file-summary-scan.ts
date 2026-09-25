@@ -1,9 +1,11 @@
 /**
  * Slice 6 PR3 — bounded storage summary scans.
  *
- * Request-wide budgets, generation checks, shared-scan coalescing, and honest
- * partial / not-scanned results. Does not rewrite the SSH transport: callers
- * inject a listPath function (typically EventBridge.executeCommand → ftgetfilelist).
+ * Request-wide budgets, generation checks, shared-scan coalescing, honest
+ * partial / not-scanned results, and a minimum gap between ftgetfilelist calls
+ * so a multi-channel summary cannot trip TeamSpeak Query flood (524).
+ * Does not rewrite the SSH transport: callers inject a listPath function
+ * (typically EventBridge.executeCommand → ftgetfilelist).
  */
 
 export const FILE_SUMMARY_MAX_CHANNELS = 256;
@@ -13,6 +15,8 @@ export const FILE_SUMMARY_MAX_ENTRIES_PER_CHANNEL = 5_000;
 export const FILE_SUMMARY_MAX_COMMANDS_PER_REQUEST = 200;
 export const FILE_SUMMARY_MAX_ENTRIES_PER_REQUEST = 15_000;
 export const FILE_SUMMARY_DEADLINE_MS = 20_000;
+/** Floor between successive listPath (ftgetfilelist) calls within one request. */
+export const FILE_SUMMARY_MIN_COMMAND_GAP_MS = 400;
 
 export type TruncateReason =
   | 'budget-commands'
@@ -114,6 +118,8 @@ export type ScanRequestContext = {
   maxEntries: number;
   maxDepth: number;
   maxEntriesPerChannel: number;
+  /** Minimum real-time gap between listPath calls (0 disables). Default: FILE_SUMMARY_MIN_COMMAND_GAP_MS. */
+  minCommandGapMs?: number;
   signal?: AbortSignal;
   listPath: ListPathFn;
   getConnectionGeneration: () => number;
@@ -130,6 +136,9 @@ export type RequestBudget = {
   stopScheduling: boolean;
   truncateReason: TruncateReason | null;
   now: () => number;
+  minCommandGapMs: number;
+  /** Wall-clock time of the last listPath start (Date.now), for flood pacing. */
+  lastListPathAtMs: number;
 };
 
 export function createRequestBudget(input: {
@@ -137,6 +146,7 @@ export function createRequestBudget(input: {
   maxCommands: number;
   maxEntries: number;
   now?: () => number;
+  minCommandGapMs?: number;
 }): RequestBudget {
   return {
     deadlineAt: input.deadlineAt,
@@ -147,7 +157,25 @@ export function createRequestBudget(input: {
     stopScheduling: false,
     truncateReason: null,
     now: input.now ?? Date.now,
+    minCommandGapMs: input.minCommandGapMs ?? FILE_SUMMARY_MIN_COMMAND_GAP_MS,
+    lastListPathAtMs: 0,
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Wait until the configured gap has elapsed since the previous listPath (wall clock). */
+export async function paceListPathCommand(budget: RequestBudget): Promise<void> {
+  const gap = budget.minCommandGapMs;
+  if (gap <= 0) return;
+  const nowMs = Date.now();
+  if (budget.lastListPathAtMs > 0) {
+    const wait = budget.lastListPathAtMs + gap - nowMs;
+    if (wait > 0) await sleep(wait);
+  }
+  budget.lastListPathAtMs = Date.now();
 }
 
 export function budgetSnapshot(budget: RequestBudget, deadlineMs: number): FileSummaryBudgetSnapshot {
@@ -294,6 +322,7 @@ export class FileSummaryScanCoordinator {
       maxCommands: ctx.maxCommands,
       maxEntries: ctx.maxEntries,
       now,
+      minCommandGapMs: ctx.minCommandGapMs,
     });
 
     const omitted = ctx.omittedCids ?? [];
@@ -487,6 +516,7 @@ export class FileSummaryScanCoordinator {
       if (visited.has(path)) return;
       visited.add(path);
 
+      await paceListPathCommand(budget);
       budget.commandsUsed += 1;
       let entries: Record<string, string>[];
       try {

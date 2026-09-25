@@ -4,6 +4,12 @@
  * Expensive scans/summaries run only on authorized page entry or manual refresh.
  * PWA recovery, file mutations, channel-list changes, window focus, and idle
  * intervals mark stale / coverage-stale without starting a scan.
+ *
+ * Files storage summaries are an exception: the Files page uses **manual Refresh
+ * only**. A page-entry scan of every channel issues rapid `ftgetfilelist` calls
+ * and trips TeamSpeak Query flood protection, taking down the shared SSH session
+ * used for ordinary browse. Runtime/media probes may still use one page-entry
+ * opportunity.
  */
 
 export const EXPENSIVE_DIAGNOSTIC_QUERY_ROOTS = [

@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import type { PrismaClient } from '../../generated/prisma/index.js';
-import { SshQueryClient, formatFatalSshFailureMessage } from './ssh-query-client.js';
+import { SshQueryClient, formatFatalSshFailureMessage, isSshFloodError } from './ssh-query-client.js';
 import { decrypt } from '../utils/crypto.js';
 import { sanitizeTsServerHost, validateTsServerPort } from '../utils/validate-ts-host.js';
 import { ClientMetadataCache } from './client-metadata-cache.js';
@@ -175,6 +175,12 @@ export class EventBridge extends EventEmitter {
         this.emit('sshConnected', configId, sid);
       } catch (err: any) {
         console.error(`[EventBridge] Failed to register events for ${key}: ${err.message}`);
+        this.registered.delete(key);
+        // Flood already schedules forceDisconnect + cooldown. Other registration
+        // failures must not leave a connected-but-unregistered session (journal dead).
+        if (!isSshFloodError(err) && this.connections.get(key) === client) {
+          client.requestReconnect();
+        }
       }
     });
 
