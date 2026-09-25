@@ -22,7 +22,7 @@ export declare interface EventBridge {
 export class EventBridge extends EventEmitter {
   private connections: Map<string, SshQueryClient> = new Map();
   /** Reserve a pair before the async database lookup can start another SSH login. */
-  private connecting = new Map<string, Promise<void>>();
+  private connecting = new Map<string, Promise<boolean>>();
   private registered = new Set<string>();
   /** Channel the main SSH Query client currently occupies for music text (roaming helper). */
   private mainHelperChannel = new Map<string, number>();
@@ -113,22 +113,27 @@ export class EventBridge extends EventEmitter {
     };
   }
 
-  async connectServer(configId: number, sid: number): Promise<void> {
+  /**
+   * Ensure an SSH session exists for the pair.
+   * @returns true when SSH credentials are configured (connection may still be pending/failed);
+   *          false when the config is missing credentials / not found (WebQuery-only).
+   */
+  async connectServer(configId: number, sid: number): Promise<boolean> {
     const key = this.makeKey(configId, sid);
     const pending = this.connecting.get(key);
     if (pending) return pending;
-    if (this.connections.has(key)) return;
+    if (this.connections.has(key)) return true;
 
     const attempt = this.startServerConnection(configId, sid);
     this.connecting.set(key, attempt);
     try {
-      await attempt;
+      return await attempt;
     } finally {
       if (this.connecting.get(key) === attempt) this.connecting.delete(key);
     }
   }
 
-  private async startServerConnection(configId: number, sid: number): Promise<void> {
+  private async startServerConnection(configId: number, sid: number): Promise<boolean> {
     const key = this.makeKey(configId, sid);
 
     const serverConfig = await this.prisma.tsServerConfig.findUnique({
@@ -137,12 +142,12 @@ export class EventBridge extends EventEmitter {
 
     if (!serverConfig) {
       console.warn(`[EventBridge] Server config ${configId} not found`);
-      return;
+      return false;
     }
 
     if (!serverConfig.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) {
       console.warn(`[EventBridge] Server config ${configId} has no SSH credentials, skipping SSH connection`);
-      return;
+      return false;
     }
 
     const client = new SshQueryClient(this.buildSshOptions({
@@ -220,6 +225,8 @@ export class EventBridge extends EventEmitter {
         this.connections.delete(key);
       }
     }
+    // Credentials were present — registration is expected even if connect failed/retrying.
+    return true;
   }
 
   async disconnectServer(configId: number, sid: number): Promise<void> {
@@ -243,8 +250,9 @@ export class EventBridge extends EventEmitter {
   /**
    * Retain the main SSH session for a consumer. Connects on demand.
    * Releasing the last owner disconnects the session.
+   * @returns true when SSH credentials are configured for the pair (WebQuery-only otherwise).
    */
-  async retainSession(owner: SessionOwnerKind, configId: number, sid: number): Promise<void> {
+  async retainSession(owner: SessionOwnerKind, configId: number, sid: number): Promise<boolean> {
     const key = this.makeKey(configId, sid);
     let owners = this.sessionOwners.get(key);
     if (!owners) {
@@ -252,7 +260,7 @@ export class EventBridge extends EventEmitter {
       this.sessionOwners.set(key, owners);
     }
     owners.add(owner);
-    await this.connectServer(configId, sid);
+    return this.connectServer(configId, sid);
   }
 
   async releaseSession(owner: SessionOwnerKind, configId: number, sid: number): Promise<void> {

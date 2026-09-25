@@ -5,6 +5,7 @@ import {
   MIN_ANIMATION_INTERVAL_MS,
   MIN_GLOBAL_CHANNEL_EDIT_GAP_MS,
   shouldBackoffAnimationError,
+  shouldQuietSkipAnimationError,
 } from './animation-manager.js';
 
 describe('shouldBackoffAnimationError', () => {
@@ -17,10 +18,21 @@ describe('shouldBackoffAnimationError', () => {
     assert.equal(shouldBackoffAnimationError('socket hang up'), true);
     assert.equal(shouldBackoffAnimationError('ECONNRESET'), true);
     assert.equal(shouldBackoffAnimationError('TeamSpeak flood protection is active'), true);
+    assert.equal(shouldBackoffAnimationError('TeamSpeak Query is still starting'), true);
+    assert.equal(shouldBackoffAnimationError('Connection lost before handshake'), true);
+    assert.equal(shouldBackoffAnimationError('The EventBridge SSH session is temporarily disconnected'), true);
   });
 
   it('does not back off unrelated action errors', () => {
     assert.equal(shouldBackoffAnimationError('channel name is invalid'), false);
+  });
+});
+
+describe('shouldQuietSkipAnimationError', () => {
+  it('quiets reconnect/flood storms that would otherwise spam logs', () => {
+    assert.equal(shouldQuietSkipAnimationError('TeamSpeak Query is still starting'), true);
+    assert.equal(shouldQuietSkipAnimationError('ECONNRESET'), true);
+    assert.equal(shouldQuietSkipAnimationError('channel name is invalid'), false);
   });
 });
 

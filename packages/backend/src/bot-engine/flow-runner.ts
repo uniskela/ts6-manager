@@ -17,6 +17,7 @@ import type {
 import axios from 'axios';
 import { validateUrl } from '../utils/url-validator.js';
 import { ALLOWED_WEBQUERY_COMMANDS } from './command-whitelist.js';
+import { webQueryChannelEditPacer } from './channel-edit-pacer.js';
 import crypto from 'crypto';
 import { createOwnedTempChannel, cleanupOwnedTempChannels } from './temp-channel-ownership.js';
 
@@ -33,6 +34,8 @@ interface FlowInfo {
 
 export class FlowRunner {
   private voiceBotManager: VoiceBotManager | null = null;
+  /** Optional EventBridge/Query readiness probe (injected by BotEngine). */
+  private channelEditReadyCheck: ((configId: number, sid: number) => boolean) | null = null;
 
   constructor(
     private prisma: PrismaClient,
@@ -42,6 +45,10 @@ export class FlowRunner {
 
   setVoiceBotManager(manager: VoiceBotManager): void {
     this.voiceBotManager = manager;
+  }
+
+  setChannelEditReadyCheck(check: (configId: number, sid: number) => boolean): void {
+    this.channelEditReadyCheck = check;
   }
 
   async execute(
@@ -430,6 +437,17 @@ export class FlowRunner {
     const resolved: Record<string, string> = { cid };
     for (const [key, val] of Object.entries(data.params || {})) {
       resolved[key] = await ctx.resolveTemplate(val);
+    }
+    // Share headroom with AnimationManager so Server Stats batches cannot cluster
+    // with cosmetic channel renames on the same Query antiflood budget.
+    await webQueryChannelEditPacer.waitAndMark();
+    // Recheck after the pacer wait — registration may have dropped or a reconnect
+    // pause may have begun while we were waiting for the shared slot.
+    if (this.channelEditReadyCheck && !this.channelEditReadyCheck(ctx.configId, ctx.sid)) {
+      console.log(
+        `[FlowRunner] Skipping channeledit for ${ctx.configId}:${ctx.sid} — EventBridge/Query not ready after pace wait`,
+      );
+      return;
     }
     await client.executePost(ctx.sid, 'channeledit', resolved);
   }

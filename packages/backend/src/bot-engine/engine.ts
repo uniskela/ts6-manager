@@ -13,8 +13,16 @@ import type {
 } from '@ts6/common';
 import { AnimationManager } from './animation-manager.js';
 import type { AnimationConfig } from './animation-manager.js';
+import {
+  applyAnimationFallbackToHoldInput,
+  canArmBotsForPair,
+  evaluateBotQueryReady,
+} from './bot-query-ready.js';
 import type { MusicCommandHandler } from '../voice/music-command-handler.js';
 import crypto from 'crypto';
+
+/** Max wait for EventBridge registration before arming WebQuery-only bots anyway. */
+const BOT_ARM_FALLBACK_MS = 90_000;
 
 /**
  * Normalize flow data from the frontend editor format to the engine format.
@@ -264,6 +272,25 @@ export class BotEngine {
   ) => this.onTsEvent(configId, sid, eventName, data);
   /** Pairs currently retained under the `flow` session owner. */
   private flowOwnedPairs = new Set<string>();
+  /** Pairs that expect SSH event registration (connected or connecting with credentials). */
+  private sshExpectedPairs = new Set<string>();
+  /** Pairs whose animations have been armed (started) for the current engine run. */
+  private animationsArmedPairs = new Set<string>();
+  /**
+   * Pairs allowed to arm/tick animations after the 90s registration fallback.
+   * Does not relax cron readiness — that stays gated on EventBridge registration.
+   */
+  private animationFallbackPairs = new Set<string>();
+  /** Fallback timers when registerEvents never completes. */
+  private botArmFallbackTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly onSshConnectedBound = (configId: number, sid: number) => {
+    this.sshExpectedPairs.add(`${configId}:${sid}`);
+    this.armBotsForPairIfReady(configId, sid);
+  };
+  private readonly onSshDisconnectedBound = (configId: number, sid: number) => {
+    // Keep expectsSsh — reconnect will re-register; animation ticks hold via getQueryHoldMs.
+    console.log(`[BotEngine] SSH disconnected for ${configId}:${sid} — pausing cosmetic channel edits until events re-register`);
+  };
 
   constructor(
     private prisma: PrismaClient,
@@ -273,6 +300,9 @@ export class BotEngine {
   ) {
     this.eventBridge = new EventBridge(prisma);
     this.flowRunner = new FlowRunner(prisma, connectionPool, wss);
+    this.flowRunner.setChannelEditReadyCheck((configId, sid) =>
+      this.isPairReadyForBotTraffic(configId, sid),
+    );
     this.animationManager = new AnimationManager();
   }
 
@@ -297,6 +327,8 @@ export class BotEngine {
 
     // Always register event listener (even if no flows yet — flows can be enabled later)
     this.eventBridge.on('tsEvent', this.onTsEventBound);
+    this.eventBridge.on('sshConnected', this.onSshConnectedBound);
+    this.eventBridge.on('sshDisconnected', this.onSshDisconnectedBound);
 
     await this.loadFlows();
 
@@ -311,15 +343,17 @@ export class BotEngine {
     // Setup SSH connections for all unique server+vserver pairs (non-blocking)
     await this.syncSessionOwnership();
 
-    // Setup cron jobs
+    // Setup cron jobs (callbacks gate on EventBridge readiness)
     this.setupCronJobs();
 
     // Build webhook registry
     this.buildWebhookRegistry();
 
-    // Start animations for all loaded flows
+    // Defer animations until registerEvents finishes (or no-SSH / fallback).
+    // Starting on SSH `ready` while registerEvents is still async causes WebQuery
+    // channeledit + servernotifyregister to collide on instance antiflood.
     for (const flow of this.flows.values()) {
-      this.startAnimationsForFlow(flow.id, flow.serverConfigId, flow.virtualServerId);
+      this.scheduleBotsWhenReady(flow.serverConfigId, flow.virtualServerId);
     }
 
     this.running = true;
@@ -334,8 +368,14 @@ export class BotEngine {
     this.running = false;
     this.animationManager.stopAll();
     this.teardownCronJobs();
+    this.clearBotArmFallbacks();
+    this.animationsArmedPairs.clear();
+    this.animationFallbackPairs.clear();
+    this.sshExpectedPairs.clear();
     this.webhookEntries = [];
     this.eventBridge.off('tsEvent', this.onTsEventBound);
+    this.eventBridge.off('sshConnected', this.onSshConnectedBound);
+    this.eventBridge.off('sshDisconnected', this.onSshDisconnectedBound);
     this.flows.clear();
     this.executionCounts.clear();
     // Release only flow ownership — music/journal consumers keep their sessions.
@@ -380,16 +420,18 @@ export class BotEngine {
         triggerNodes,
       });
 
-      // Ensure SSH connection exists for event/command triggers
+      // Retain the flow session before scheduling cron jobs or animations so
+      // cron-only / animation-only pairs get a flow owner + sshExpectedPairs and
+      // wait for EventBridge registration (not treated as WebQuery-only).
+      await this.syncSessionOwnership();
+
       const hasEventTrigger = triggerNodes.some(t => {
         const td = t.data as any;
         return td.triggerType === 'event' || td.triggerType === 'command';
       });
 
       if (hasEventTrigger) {
-        console.log(`[BotEngine] Flow needs SSH — retaining session for server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
-        await this.syncSessionOwnership();
-        // NEW: start/stop per-channel command listeners for this pair
+        console.log(`[BotEngine] Flow has event/command trigger — syncing command listeners for server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
         this.syncCommandListenersForPair(dbFlow.serverConfigId, dbFlow.virtualServerId);
       }
 
@@ -399,8 +441,8 @@ export class BotEngine {
       // Add webhook entries for this flow
       this.buildWebhookRegistryForFlow(flowId);
 
-      // Start animations for any animatedChannel action nodes
-      this.startAnimationsForFlow(flowId, dbFlow.serverConfigId, dbFlow.virtualServerId);
+      // Defer animations until EventBridge events are registered for this pair.
+      this.scheduleBotsWhenReady(dbFlow.serverConfigId, dbFlow.virtualServerId, flowId);
 
       console.log(`[BotEngine] Flow ${flowId} ('${dbFlow.name}') enabled successfully`);
     } catch (err: any) {
@@ -559,10 +601,19 @@ export class BotEngine {
       if (this.flowOwnedPairs.has(pair)) continue;
       const [configId, sid] = pair.split(':').map(Number);
       try {
-        await this.eventBridge.retainSession('flow', configId, sid);
+        // retainSession returns whether SSH credentials are configured (not current
+        // isConnected/isRegistered). Pairs without credentials stay WebQuery-only.
+        const sshConfigured = await this.eventBridge.retainSession('flow', configId, sid);
         this.flowOwnedPairs.add(pair);
+        if (sshConfigured) {
+          this.sshExpectedPairs.add(pair);
+        }
       } catch (err: any) {
         console.error(`[BotEngine] Flow session retain failed for ${pair}: ${err.message}`);
+        // Preserve registration hold so cron/animations are not treated as WebQuery-only
+        // after a failed retain of a configured (or unknown) SSH pair. True WebQuery-only
+        // pairs return false from retainSession without throwing.
+        this.sshExpectedPairs.add(pair);
       }
     }
     for (const pair of [...this.flowOwnedPairs]) {
@@ -570,6 +621,14 @@ export class BotEngine {
       const [configId, sid] = pair.split(':').map(Number);
       await this.eventBridge.releaseSession('flow', configId, sid);
       this.flowOwnedPairs.delete(pair);
+      this.sshExpectedPairs.delete(pair);
+      this.animationsArmedPairs.delete(pair);
+      this.animationFallbackPairs.delete(pair);
+      this.clearBotArmFallback(pair);
+    }
+    // Drop hold markers for pairs no longer needed (incl. failed-retain orphans).
+    for (const pair of [...this.sshExpectedPairs]) {
+      if (!flowNeeded.has(pair)) this.sshExpectedPairs.delete(pair);
     }
 
     // Music owns its own retains via MusicCommandHandler; we only sync CMD listeners here.
@@ -776,6 +835,12 @@ export class BotEngine {
       }
 
       const task = cron.schedule(cronData.cronExpression, () => {
+        if (!this.isPairReadyForBotTraffic(flow.serverConfigId, flow.virtualServerId)) {
+          console.log(
+            `[BotEngine] Skipping cron for flow ${flowId} — EventBridge/Query not ready for ${flow.serverConfigId}:${flow.virtualServerId}`,
+          );
+          return;
+        }
         this.executeFlow(flow, triggerNode.id, 'cron', {});
       }, {
         timezone: cronData.timezone || 'UTC',
@@ -824,6 +889,97 @@ export class BotEngine {
       : [];
   }
 
+  private scheduleBotsWhenReady(configId: number, sid: number, flowId?: number): void {
+    const key = `${configId}:${sid}`;
+    this.armBotsForPairIfReady(configId, sid, { flowId });
+    if (this.animationsArmedPairs.has(key)) return;
+
+    // Already waiting on sshConnected; arm a fallback so WebQuery-only / stuck
+    // registration cannot leave animations silent forever.
+    if (!this.botArmFallbackTimers.has(key)) {
+      const timer = setTimeout(() => {
+        this.botArmFallbackTimers.delete(key);
+        if (this.animationsArmedPairs.has(key)) return;
+        console.warn(
+          `[BotEngine] Arming animations for ${key} after ${BOT_ARM_FALLBACK_MS}ms without EventBridge registration`,
+        );
+        // Animation-only escape hatch — do not clear sshExpectedPairs (cron stays gated).
+        this.animationFallbackPairs.add(key);
+        this.armBotsForPairIfReady(configId, sid, { force: true });
+      }, BOT_ARM_FALLBACK_MS);
+      timer.unref?.();
+      this.botArmFallbackTimers.set(key, timer);
+    }
+  }
+
+  private armBotsForPairIfReady(
+    configId: number,
+    sid: number,
+    opts?: { force?: boolean; flowId?: number },
+  ): void {
+    const key = `${configId}:${sid}`;
+    const input = this.botQueryReadyInput(configId, sid);
+    if (!opts?.force && !canArmBotsForPair(input)) {
+      if (!this.animationsArmedPairs.has(key)) {
+        console.log(
+          `[BotEngine] Deferring animations for ${key} until EventBridge events are registered`,
+        );
+      }
+      return;
+    }
+
+    const firstArm = !this.animationsArmedPairs.has(key);
+    this.animationsArmedPairs.add(key);
+    this.clearBotArmFallback(key);
+
+    for (const flow of this.flows.values()) {
+      if (flow.serverConfigId !== configId || flow.virtualServerId !== sid) continue;
+      // On first arm start every flow on the pair; later enableFlow passes flowId.
+      if (opts?.flowId !== undefined && !firstArm && flow.id !== opts.flowId) continue;
+      this.startAnimationsForFlow(flow.id, configId, sid);
+    }
+    if (firstArm) {
+      console.log(`[BotEngine] Armed bot channel-edit traffic for ${key}`);
+    }
+  }
+
+  private botQueryReadyInput(configId: number, sid: number) {
+    const key = `${configId}:${sid}`;
+    return {
+      isRegistered: this.eventBridge.isRegistered(configId, sid),
+      isConnected: this.eventBridge.isConnected(configId, sid),
+      sshReconnectPauseMs: this.eventBridge.getSshReconnectPauseSeconds(configId, sid) * 1000,
+      expectsSshRegistration: this.sshExpectedPairs.has(key),
+    };
+  }
+
+  private isPairReadyForBotTraffic(configId: number, sid: number): boolean {
+    return evaluateBotQueryReady(this.botQueryReadyInput(configId, sid)).ready;
+  }
+
+  private getQueryHoldMsForPair(configId: number, sid: number): number {
+    const input = this.botQueryReadyInput(configId, sid);
+    const holdInput = applyAnimationFallbackToHoldInput(
+      input,
+      this.animationFallbackPairs.has(`${configId}:${sid}`),
+    );
+    return evaluateBotQueryReady(holdInput).holdMs;
+  }
+
+  private clearBotArmFallback(key: string): void {
+    const timer = this.botArmFallbackTimers.get(key);
+    if (timer) {
+      clearTimeout(timer);
+      this.botArmFallbackTimers.delete(key);
+    }
+  }
+
+  private clearBotArmFallbacks(): void {
+    for (const key of [...this.botArmFallbackTimers.keys()]) {
+      this.clearBotArmFallback(key);
+    }
+  }
+
   private startAnimationsForFlow(flowId: number, serverConfigId: number, virtualServerId: number): void {
     const flow = this.flows.get(flowId);
     if (!flow) return;
@@ -849,7 +1005,9 @@ export class BotEngine {
           suppressEditEvents: d.suppressEditEvents !== false,
         };
 
-        this.animationManager.startAnimation(flowId, virtualServerId, config, client);
+        this.animationManager.startAnimation(flowId, virtualServerId, config, client, {
+          getQueryHoldMs: () => this.getQueryHoldMsForPair(serverConfigId, virtualServerId),
+        });
       }
     } catch (err: any) {
       console.error(`[BotEngine] Failed to start animations for flow ${flowId}: ${err.message}`);
