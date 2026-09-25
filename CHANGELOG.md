@@ -2,6 +2,15 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.2](https://github.com/uniskela/ts6-manager/compare/v1.8.1...v1.8.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* defer WebQuery channel edits until EventBridge ready ([#171](https://github.com/uniskela/ts6-manager/issues/171)) ([7d5ec10](https://github.com/uniskela/ts6-manager/commit/7d5ec10d0df1ca12adf60e719d0dab18c6861942))
+* harden Activity Journal leave capture and status ([#169](https://github.com/uniskela/ts6-manager/issues/169)) ([2355bfd](https://github.com/uniskela/ts6-manager/commit/2355bfd1aa68de4bf76141046a8a8f26e75cbf10))
+* stop Files summary scan from flooding Query ([#168](https://github.com/uniskela/ts6-manager/issues/168)) ([6e2171a](https://github.com/uniskela/ts6-manager/commit/6e2171a3927b05e2839103c4ed1ed8db6ffeb258))
+
 ## [1.8.1](https://github.com/uniskela/ts6-manager/compare/v1.8.0...v1.8.1) (2026-09-25)
 
 

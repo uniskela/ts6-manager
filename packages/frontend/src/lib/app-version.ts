@@ -1,6 +1,6 @@
 /** UI / build identity for this fork (sourced from package.json). */
 
-const version = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.8.1'; // x-release-please-version
+const version = typeof __APP_VERSION__ === 'string' && __APP_VERSION__ ? __APP_VERSION__ : '1.8.2'; // x-release-please-version
 
 export const APP_VERSION = version;
 export const APP_REPOSITORY_URL = 'https://github.com/uniskela/ts6-manager';
