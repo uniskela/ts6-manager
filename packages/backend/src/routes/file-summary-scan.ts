@@ -27,6 +27,14 @@ export type TruncateReason =
   | 'channel-cap'
   | 'request-budget';
 
+/** SSH disconnect / Query flood — must bubble to the HTTP route (not per-channel unavailable). */
+export function isPropagatingFileSshTransportError(err: unknown): boolean {
+  const code = Number((err as { code?: number })?.code);
+  if (code === 524) return true;
+  const msg = String((err as { message?: string })?.message || '');
+  return msg.includes('SSH not connected') || /SSH credentials not configured/i.test(msg);
+}
+
 export type ChannelFileSummaryComplete = {
   cid: number;
   fileCount: number;
@@ -531,6 +539,10 @@ export class FileSummaryScanCoordinator {
     } catch (err: unknown) {
       if ((err as { summaryDenied?: boolean })?.summaryDenied) {
         return { cid, unavailable: true, reason: 'denied' };
+      }
+      // Let SSH disconnect / flood reach the route mapper (503), not a 200 unavailable row.
+      if (isPropagatingFileSshTransportError(err)) {
+        throw err;
       }
       return { cid, unavailable: true, reason: 'error' };
     }

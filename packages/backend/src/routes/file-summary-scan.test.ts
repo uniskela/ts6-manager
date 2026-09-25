@@ -393,6 +393,20 @@ describe('FileSummaryScanCoordinator', () => {
     assert.ok('unavailable' in row && row.unavailable);
     assert.equal(row.reason, 'denied');
   });
+
+  it('propagates SSH disconnect instead of returning unavailable 200 rows', async () => {
+    await assert.rejects(
+      () => coordinator.runRequest(baseCtx({
+        listPath: async () => {
+          throw new Error('SSH not connected');
+        },
+      })),
+      (err: unknown) => {
+        assert.match(String((err as Error).message), /SSH not connected/);
+        return true;
+      },
+    );
+  });
 });
 
 describe('abortSignalFromRequest', () => {

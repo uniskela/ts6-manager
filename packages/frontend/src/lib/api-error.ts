@@ -22,6 +22,7 @@ export function isTeamSpeakLogviewIo(error: unknown): boolean {
 /** TeamSpeak Query still booting / resetting sockets (gated 503, or transport hang-ups). */
 export function isTeamSpeakStarting(error: unknown): boolean {
   if (isTeamSpeakLogviewIo(error)) return false;
+  if (isTeamSpeakSshDisconnected(error)) return false;
 
   const err = error as any;
   const status = err?.response?.status;
@@ -46,19 +47,35 @@ export function isTeamSpeakStarting(error: unknown): boolean {
   return false;
 }
 
+/** EventBridge SSH session temporarily down (often Query flood cooldown after redeploy). */
+export function isTeamSpeakSshDisconnected(error: unknown): boolean {
+  const err = error as any;
+  const reason = err?.response?.data?.reason;
+  if (reason === 'ts_ssh_disconnected') return true;
+
+  const status = err?.response?.status;
+  const text = `${err?.response?.data?.error || ''} ${err?.response?.data?.details || ''} ${err?.message || ''}`.toLowerCase();
+  if (status === 503 || status === 502) {
+    return text.includes('ssh is not connected') || text.includes('ssh not connected');
+  }
+  return false;
+}
+
 export function teamSpeakConnectionTitle(error: unknown, failedTitle = 'Connection failed'): string {
   if (isTeamSpeakLogviewIo(error)) return 'TeamSpeak log file unavailable';
+  if (isTeamSpeakSshDisconnected(error)) return 'SSH reconnecting';
   return isTeamSpeakStarting(error) ? 'TeamSpeak is still starting' : failedTitle;
 }
 
 export function teamSpeakRefreshTone(error: unknown | null | undefined): 'live' | 'degraded' | 'starting' {
   if (!error) return 'live';
-  return isTeamSpeakStarting(error) ? 'starting' : 'degraded';
+  if (isTeamSpeakStarting(error) || isTeamSpeakSshDisconnected(error)) return 'starting';
+  return 'degraded';
 }
 
 /**
  * Retry Query-backed pages through flood cooldowns and cold-start transport failures.
- * Flood (429): do not stampede. Starting only: keep trying a bit longer.
+ * Flood (429): do not stampede. Starting / SSH reconnect only: keep trying a bit longer.
  * Logview I/O (2052): never auto-retry — hammering TeamSpeak can worsen file locks.
  * Ordinary 503 (e.g. refresh-failure fixtures) use the short retry budget.
  */
@@ -66,7 +83,7 @@ export function teamSpeakQueryRetry(failureCount: number, error: unknown): boole
   if (isTeamSpeakLogviewIo(error)) return false;
   const status = (error as any)?.response?.status;
   if (status === 429) return false;
-  if (isTeamSpeakStarting(error)) return failureCount < 10;
+  if (isTeamSpeakStarting(error) || isTeamSpeakSshDisconnected(error)) return failureCount < 10;
   return failureCount < 3;
 }
 
@@ -78,9 +95,9 @@ export function teamSpeakQueryRetryDelay(attempt: number, error: unknown): numbe
   const retryAfter = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0
     ? retryAfterHeader
     : (Number.isFinite(retryAfterBody) && retryAfterBody > 0 ? retryAfterBody : 0);
-  if (retryAfter > 0) return Math.min(30_000, retryAfter * 1000);
+  if (retryAfter > 0) return Math.min(60_000, retryAfter * 1000);
 
-  if (isTeamSpeakStarting(error)) {
+  if (isTeamSpeakStarting(error) || isTeamSpeakSshDisconnected(error)) {
     return Math.min(8_000, 1_000 * 2 ** attempt);
   }
   return Math.min(1_500, 300 * 2 ** attempt);
