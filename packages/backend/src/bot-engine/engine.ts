@@ -417,16 +417,18 @@ export class BotEngine {
         triggerNodes,
       });
 
-      // Ensure SSH connection exists for event/command triggers
+      // Retain the flow session before scheduling cron jobs or animations so
+      // cron-only / animation-only pairs get a flow owner + sshExpectedPairs and
+      // wait for EventBridge registration (not treated as WebQuery-only).
+      await this.syncSessionOwnership();
+
       const hasEventTrigger = triggerNodes.some(t => {
         const td = t.data as any;
         return td.triggerType === 'event' || td.triggerType === 'command';
       });
 
       if (hasEventTrigger) {
-        console.log(`[BotEngine] Flow needs SSH — retaining session for server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
-        await this.syncSessionOwnership();
-        // NEW: start/stop per-channel command listeners for this pair
+        console.log(`[BotEngine] Flow has event/command trigger — syncing command listeners for server ${dbFlow.serverConfigId}, sid=${dbFlow.virtualServerId}...`);
         this.syncCommandListenersForPair(dbFlow.serverConfigId, dbFlow.virtualServerId);
       }
 

@@ -47,3 +47,50 @@ test('BotEngine stop removes only its tsEvent listener', () => {
   assert.equal(ee.listenerCount('tsEvent'), 1);
   assert.equal(ee.listeners('tsEvent')[0], journalListener);
 });
+
+test('enableFlow retains session for cron-only flows before scheduling', async () => {
+  const { BotEngine } = await import('../bot-engine/engine.js');
+
+  const prisma = {
+    botFlow: {
+      findUnique: async () => ({
+        id: 42,
+        name: 'cron-only',
+        enabled: true,
+        serverConfigId: 7,
+        virtualServerId: 1,
+        flowData: JSON.stringify({
+          nodes: [{
+            id: 't1',
+            type: 'trigger',
+            position: { x: 0, y: 0 },
+            data: { triggerType: 'cron', cronExpression: '0 * * * *', label: 'hourly' },
+          }],
+          edges: [],
+        }),
+      }),
+    },
+  };
+
+  const engine = new BotEngine(prisma as any, {} as any, { clients: new Set() } as any, {} as any) as any;
+  const retained: string[] = [];
+  let scheduled = false;
+
+  engine.eventBridge.retainSession = async (owner: string, configId: number, sid: number) => {
+    retained.push(`${owner}:${configId}:${sid}`);
+    return true;
+  };
+  engine.eventBridge.releaseSession = async () => {};
+  engine.eventBridge.getCommandListenerKeys = () => [];
+  engine.setupCronJobsForFlow = () => {};
+  engine.buildWebhookRegistryForFlow = () => {};
+  engine.scheduleBotsWhenReady = () => { scheduled = true; };
+  engine.syncCommandListenersForPair = () => {};
+
+  await engine.enableFlow(42);
+
+  assert.deepEqual(retained, ['flow:7:1']);
+  assert.equal(engine.sshExpectedPairs.has('7:1'), true);
+  assert.equal(engine.flowOwnedPairs.has('7:1'), true);
+  assert.equal(scheduled, true);
+});
