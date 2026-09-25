@@ -375,6 +375,18 @@ export class EventBridge extends EventEmitter {
     const key = this.makeKey(configId, sid);
     let client = this.connections.get(key);
 
+    // Mid-session reconnect can mark the client fatal without running startServerConnection's
+    // catch (which owns fatalSshFailures). Drop the zombie so connectServer can retry with
+    // current credentials, and remember the reason if the retry also fails permanently.
+    if (client && !client.isConnected && client.hasFatalError) {
+      const detail = client.lastFatalError || 'SSH authentication failed';
+      this.fatalSshFailures.set(key, detail);
+      this.registered.delete(key);
+      this.connections.delete(key);
+      void client.destroy().catch(() => { /* ignore teardown races */ });
+      client = undefined;
+    }
+
     // Connect on demand if no connection exists yet
     if (!client || !client.isConnected) {
       await this.connectServer(configId, sid);
@@ -387,7 +399,10 @@ export class EventBridge extends EventEmitter {
         if (!serverConfig?.sshUsername || !serverConfig.sshPassword || !serverConfig.sshPort) {
           throw new Error('SSH credentials not configured for this server');
         }
-        const fatal = this.fatalSshFailures.get(key);
+        const fatal = this.fatalSshFailures.get(key)
+          || (client?.hasFatalError
+            ? client.lastFatalError || 'SSH authentication failed'
+            : null);
         if (fatal) {
           throw new Error(formatFatalSshFailureMessage(fatal));
         }
