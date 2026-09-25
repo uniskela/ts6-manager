@@ -44,7 +44,12 @@ export const useAuthStore = create<AuthStore>()(
         // selectedConfigId/selectedSid in ts6-server after logout can strand
         // Dashboard on an indefinite PageLoader when /api/servers never loads
         // (selection set, context never validates, no gateError).
-        useServerStore.getState().clearServer();
+        // Swallow persist failures so callers (navigate / refresh) still run.
+        try {
+          useServerStore.getState().clearServer();
+        } catch {
+          // Best-effort: auth is already cleared.
+        }
       },
       isAuthenticated: () => !!get().accessToken,
       isAdmin: () => get().user?.role === 'admin',

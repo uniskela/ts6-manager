@@ -100,7 +100,8 @@ describe('auth logout clears server selection', () => {
     });
 
     try {
-      assert.throws(() => useAuthStore.getState().logout(), /quota exceeded/);
+      // logout must not throw so navigate('/login') / refresh callers still run
+      assert.doesNotThrow(() => useAuthStore.getState().logout());
       assert.equal(useAuthStore.getState().accessToken, null);
       assert.equal(useAuthStore.getState().refreshToken, null);
       assert.equal(useAuthStore.getState().user, null);
