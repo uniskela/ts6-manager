@@ -2,6 +2,15 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.1](https://github.com/uniskela/ts6-manager/compare/v1.8.0...v1.8.1) (2026-09-25)
+
+
+### Bug Fixes
+
+* clear server selection on logout ([#158](https://github.com/uniskela/ts6-manager/issues/158)) ([c70af91](https://github.com/uniskela/ts6-manager/commit/c70af913a491e38e145acc5f33b17ca231cc9225))
+* map fatal SSH auth to non-retryable Files error ([#161](https://github.com/uniskela/ts6-manager/issues/161)) ([ffc45af](https://github.com/uniskela/ts6-manager/commit/ffc45af8ce8662eb7054739a2f504e18d673156c))
+* recover Files browser after SSH flood disconnect ([#159](https://github.com/uniskela/ts6-manager/issues/159)) ([ad919d1](https://github.com/uniskela/ts6-manager/commit/ad919d1d421e7f738c8cd12dac24f6f3927c6888))
+
 ## [1.8.0](https://github.com/uniskela/ts6-manager/compare/v1.7.1...v1.8.0) (2026-09-24)
 
 
