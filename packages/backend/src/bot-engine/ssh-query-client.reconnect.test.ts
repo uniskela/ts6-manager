@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   formatFatalSshFailureMessage,
+  isAlreadyRegisteredNotifyError,
   isSshFatalConnectFailureMessage,
   isSshFloodError,
   shouldReconnectAfterSshClose,
@@ -48,5 +49,21 @@ describe('SSH Query flood recovery', () => {
     assert.equal(sshFloodCooldownMs(3), 240_000);
     assert.equal(sshFloodCooldownMs(4), 300_000);
     assert.equal(sshFloodCooldownMs(10), 300_000);
+  });
+
+  it('treats Connection lost before handshake as non-flood (reconnect separately)', () => {
+    assert.equal(isSshFloodError(new Error('Connection lost before handshake')), false);
+    assert.equal(isSshFloodError(new Error('read ECONNRESET')), false);
+  });
+
+  it('ignores already-registered (516) notify errors and rejects other failures', () => {
+    assert.equal(isAlreadyRegisteredNotifyError(new Error('TS error 516: already registered')), true);
+    assert.equal(isAlreadyRegisteredNotifyError(new Error('TS error 524: client is flooding')), false);
+    assert.equal(isAlreadyRegisteredNotifyError(new Error('TS error 2568: insufficient client permissions')), false);
+    // Different ID whose message text contains "516" must not be treated as already-registered.
+    assert.equal(
+      isAlreadyRegisteredNotifyError(new Error('TS error 2568: channel 516 already taken')),
+      false,
+    );
   });
 });

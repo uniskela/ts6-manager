@@ -41,6 +41,8 @@ Activity journal and administrative audit do not use `logview`, so they can look
 
 TS6 Manager automatically pauses WebQuery traffic and backs off SSH Query reconnects when TeamSpeak reports flood protection. The UI should show a temporary cooldown message and recover automatically after TeamSpeak accepts Query traffic again.
 
+**Files storage summaries:** Opening Files used to auto-scan every channel with `ftgetfilelist`, which commonly tripped flood protection and took down the shared EventBridge SSH session (file browse unavailable, CHANNELS “Check failed.”, journal leave/join interrupted). Summaries now run only on **manual Refresh**, with a minimum gap between `ftgetfilelist` calls. Ordinary channel browse still uses one listing at a time.
+
 If this happens repeatedly, verify the TeamSpeak Query allow-list. TeamSpeak 6 uses a **file path** for this setting:
 
 - command line: `--query-ip-allow-list <file>`

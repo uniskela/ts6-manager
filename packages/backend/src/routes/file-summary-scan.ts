@@ -1,9 +1,11 @@
 /**
  * Slice 6 PR3 — bounded storage summary scans.
  *
- * Request-wide budgets, generation checks, shared-scan coalescing, and honest
- * partial / not-scanned results. Does not rewrite the SSH transport: callers
- * inject a listPath function (typically EventBridge.executeCommand → ftgetfilelist).
+ * Request-wide budgets, generation checks, shared-scan coalescing, honest
+ * partial / not-scanned results, and a minimum gap between ftgetfilelist calls
+ * so a multi-channel summary cannot trip TeamSpeak Query flood (524).
+ * Does not rewrite the SSH transport: callers inject a listPath function
+ * (typically EventBridge.executeCommand → ftgetfilelist).
  */
 
 export const FILE_SUMMARY_MAX_CHANNELS = 256;
@@ -13,6 +15,8 @@ export const FILE_SUMMARY_MAX_ENTRIES_PER_CHANNEL = 5_000;
 export const FILE_SUMMARY_MAX_COMMANDS_PER_REQUEST = 200;
 export const FILE_SUMMARY_MAX_ENTRIES_PER_REQUEST = 15_000;
 export const FILE_SUMMARY_DEADLINE_MS = 20_000;
+/** Floor between successive listPath (ftgetfilelist) starts on a shared Query session. */
+export const FILE_SUMMARY_MIN_COMMAND_GAP_MS = 400;
 
 export type TruncateReason =
   | 'budget-commands'
@@ -114,11 +118,18 @@ export type ScanRequestContext = {
   maxEntries: number;
   maxDepth: number;
   maxEntriesPerChannel: number;
+  /** Minimum real-time gap between listPath calls (0 disables). Default: FILE_SUMMARY_MIN_COMMAND_GAP_MS. */
+  minCommandGapMs?: number;
   signal?: AbortSignal;
   listPath: ListPathFn;
   getConnectionGeneration: () => number;
   getCacheGeneration: () => number;
   now?: () => number;
+};
+
+/** Session-scoped gate so concurrent summary requests share one ftgetfilelist floor. */
+export type ListPathSessionPacer = {
+  pace: (minCommandGapMs: number) => Promise<void>;
 };
 
 export type RequestBudget = {
@@ -130,6 +141,15 @@ export type RequestBudget = {
   stopScheduling: boolean;
   truncateReason: TruncateReason | null;
   now: () => number;
+  minCommandGapMs: number;
+  /**
+   * Session-scoped pacer (configId:sid / shared SshQueryClient). When omitted,
+   * paceListPathCommand is a no-op for gap≤0 and uses a request-local fallback
+   * only for isolated unit tests of the helper.
+   */
+  sessionPacer?: ListPathSessionPacer;
+  /** Request-local fallback timestamp when sessionPacer is absent (tests). */
+  lastListPathAtMs: number;
 };
 
 export function createRequestBudget(input: {
@@ -137,6 +157,8 @@ export function createRequestBudget(input: {
   maxCommands: number;
   maxEntries: number;
   now?: () => number;
+  minCommandGapMs?: number;
+  sessionPacer?: ListPathSessionPacer;
 }): RequestBudget {
   return {
     deadlineAt: input.deadlineAt,
@@ -147,7 +169,63 @@ export function createRequestBudget(input: {
     stopScheduling: false,
     truncateReason: null,
     now: input.now ?? Date.now,
+    minCommandGapMs: input.minCommandGapMs ?? FILE_SUMMARY_MIN_COMMAND_GAP_MS,
+    sessionPacer: input.sessionPacer,
+    lastListPathAtMs: 0,
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type SessionPacerState = {
+  lastStartAtMs: number;
+  /** Serializes waiters so concurrent requests cannot race the last-start stamp. */
+  chain: Promise<void>;
+};
+
+/** Create a mutexed wall-clock pacer for one shared Query session. */
+export function createListPathSessionPacer(): ListPathSessionPacer {
+  const state: SessionPacerState = { lastStartAtMs: 0, chain: Promise.resolve() };
+  return {
+    async pace(minCommandGapMs: number): Promise<void> {
+      if (minCommandGapMs <= 0) return;
+      const run = async (): Promise<void> => {
+        const nowMs = Date.now();
+        if (state.lastStartAtMs > 0) {
+          const wait = state.lastStartAtMs + minCommandGapMs - nowMs;
+          if (wait > 0) await sleep(wait);
+        }
+        state.lastStartAtMs = Date.now();
+      };
+      const next = state.chain.then(run, run);
+      state.chain = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      await next;
+    },
+  };
+}
+
+/**
+ * Wait until minCommandGapMs has elapsed since the previous listPath start on
+ * this budget's session (or request-local fallback when no session pacer).
+ */
+export async function paceListPathCommand(budget: RequestBudget): Promise<void> {
+  const gap = budget.minCommandGapMs;
+  if (gap <= 0) return;
+  if (budget.sessionPacer) {
+    await budget.sessionPacer.pace(gap);
+    return;
+  }
+  const nowMs = Date.now();
+  if (budget.lastListPathAtMs > 0) {
+    const wait = budget.lastListPathAtMs + gap - nowMs;
+    if (wait > 0) await sleep(wait);
+  }
+  budget.lastListPathAtMs = Date.now();
 }
 
 export function budgetSnapshot(budget: RequestBudget, deadlineMs: number): FileSummaryBudgetSnapshot {
@@ -240,6 +318,8 @@ export class FileSummaryScanCoordinator {
   private cache = new Map<string, ChannelFileSummaryComplete>();
   private inFlight = new Map<string, InFlightEntry>();
   private cacheGenerations = new Map<string, number>();
+  /** One pacer per configId:sid — shared across concurrent /summary requests. */
+  private listPathPacers = new Map<string, ListPathSessionPacer>();
   private nextScanId = 1;
 
   private scopeKey(configId: number, sid: number): string {
@@ -248,6 +328,16 @@ export class FileSummaryScanCoordinator {
 
   private channelKey(configId: number, sid: number, cid: number): string {
     return `${configId}:${sid}:${cid}`;
+  }
+
+  private sessionPacer(configId: number, sid: number): ListPathSessionPacer {
+    const key = this.scopeKey(configId, sid);
+    let pacer = this.listPathPacers.get(key);
+    if (!pacer) {
+      pacer = createListPathSessionPacer();
+      this.listPathPacers.set(key, pacer);
+    }
+    return pacer;
   }
 
   getCacheGeneration(configId: number, sid: number): number {
@@ -282,6 +372,7 @@ export class FileSummaryScanCoordinator {
     this.cache.clear();
     this.inFlight.clear();
     this.cacheGenerations.clear();
+    this.listPathPacers.clear();
     this.nextScanId = 1;
   }
 
@@ -294,6 +385,8 @@ export class FileSummaryScanCoordinator {
       maxCommands: ctx.maxCommands,
       maxEntries: ctx.maxEntries,
       now,
+      minCommandGapMs: ctx.minCommandGapMs,
+      sessionPacer: this.sessionPacer(ctx.configId, ctx.sid),
     });
 
     const omitted = ctx.omittedCids ?? [];
@@ -487,6 +580,22 @@ export class FileSummaryScanCoordinator {
       if (visited.has(path)) return;
       visited.add(path);
 
+      await paceListPathCommand(budget);
+      if (isStopped()) {
+        truncateReason = 'cancelled';
+        return;
+      }
+      const gateAfterPace = assertCanSchedule(budget, {
+        signal: undefined,
+        connectionGeneration: ctx.connectionGeneration,
+        getConnectionGeneration: ctx.getConnectionGeneration,
+        cacheGeneration: ctx.cacheGeneration,
+        getCacheGeneration: ctx.getCacheGeneration,
+      });
+      if (gateAfterPace) {
+        truncateReason = gateAfterPace;
+        return;
+      }
       budget.commandsUsed += 1;
       let entries: Record<string, string>[];
       try {

@@ -46,6 +46,13 @@ export function isSshFloodError(error: unknown): boolean {
   return message.includes('ts error 524') || message.includes('client is flooding') || message.includes('flooding');
 }
 
+/** TeamSpeak 516 = event already registered; other notify failures must reject. */
+export function isAlreadyRegisteredNotifyError(error: unknown): boolean {
+  const message = String((error as { message?: string })?.message || '');
+  // Match the executeCommand wrap (`TS error <id>: <msg>`), not a bare "516" substring in msg.
+  return /\bTS error 516:/i.test(message);
+}
+
 export function sshFloodCooldownMs(strikes: number): number {
   return Math.min(
     SSH_FLOOD_MAX_COOLDOWN_MS,
@@ -229,6 +236,11 @@ export class SshQueryClient extends EventEmitter {
     if (!this.connected || !this.shell) {
       throw new Error('SSH not connected');
     }
+    // Flood cooldown: do not enqueue more Query traffic while TeamSpeak is blocking us.
+    // (Connected can briefly remain true until forceDisconnect runs on the next tick.)
+    if (Date.now() < this.floodPauseUntil) {
+      throw new Error('SSH not connected');
+    }
 
     return new Promise<string>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -267,8 +279,13 @@ export class SshQueryClient extends EventEmitter {
       await this.executeCommand(`clientupdate client_nickname=TS6-WebUI-Bot-${sid}-${this.nickSuffix}`);
     } catch { }
 
-    let registrationFailures = 0;
     for (const eventType of TS_EVENT_TYPES) {
+      if (this.destroyed || !this.connected) {
+        throw new Error('SSH disconnected while registering events');
+      }
+      if (Date.now() < this.floodPauseUntil) {
+        throw new Error('TS error 524: client is flooding');
+      }
       const cmd = eventType === 'channel'
         ? `servernotifyregister event=${eventType} id=0`
         : `servernotifyregister event=${eventType}`;
@@ -276,24 +293,24 @@ export class SshQueryClient extends EventEmitter {
         await this.executeCommand(cmd);
       } catch (err: any) {
         // error id=516 = already registered, ignore
-        if (!err.message?.includes('516')) {
-          registrationFailures += 1;
+        if (isAlreadyRegisteredNotifyError(err)) {
+          // ok
+        } else {
+          // Flood and any other registration failure must reject so EventBridge
+          // can forceDisconnect (flood) or requestReconnect (non-flood).
           console.warn(`[SshQueryClient] Failed to register event ${eventType}: ${err.message}`);
-          // A flood response invalidates this Query session. Do not continue
-          // issuing registration commands and then report a false success.
-          if (isSshFloodError(err)) throw err;
+          throw err;
         }
       }
+      // Pace registrations so reconnect after Files flood does not immediately re-trip 524.
+      await new Promise((r) => setTimeout(r, 250));
     }
 
     if (!this.connected) {
       throw new Error('SSH disconnected while registering events');
     }
 
-    console.log(
-      `[SshQueryClient] Events registered for sid=${sid}` +
-        (registrationFailures ? ` with ${registrationFailures} warning(s)` : ''),
-    );
+    console.log(`[SshQueryClient] Events registered for sid=${sid}`);
   }
 
   async registerCommandListener(sid: number, channelId: number): Promise<void> {
@@ -342,7 +359,7 @@ export class SshQueryClient extends EventEmitter {
     try {
       await this.executeCommand(`servernotifyregister event=textchannel id=${channelId}`);
     } catch (err: any) {
-      if (!err.message?.includes('516')) {
+      if (!isAlreadyRegisteredNotifyError(err)) {
         console.warn(`[SshQueryClient] Failed to register textchannel for channel ${channelId}: ${err.message}`);
       }
     }
@@ -367,6 +384,16 @@ export class SshQueryClient extends EventEmitter {
   getReconnectPauseSeconds(): number {
     const remainingMs = Math.max(0, this.floodPauseUntil - Date.now());
     return Math.ceil(remainingMs / 1000);
+  }
+
+  /**
+   * Drop the Query session and schedule a non-fatal reconnect.
+   * Used when event registration fails so we do not sit connected-but-unregistered.
+   * Safe to call during flood cooldown (honours floodPauseUntil in scheduleReconnect).
+   */
+  requestReconnect(): void {
+    if (this.destroyed || this.fatalError) return;
+    this.forceDisconnect();
   }
 
   /**
@@ -566,6 +593,8 @@ export class SshQueryClient extends EventEmitter {
   private processQueue(): void {
     if (this.currentCommand || this.commandQueue.length === 0) return;
     if (!this.shell || !this.connected) return;
+    // Do not drain the queue into a session TeamSpeak already marked as flooding.
+    if (Date.now() < this.floodPauseUntil) return;
 
     this.currentCommand = this.commandQueue.shift()!;
     this.currentCommand.responseLines = [];
