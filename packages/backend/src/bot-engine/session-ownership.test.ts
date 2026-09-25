@@ -94,3 +94,52 @@ test('enableFlow retains session for cron-only flows before scheduling', async (
   assert.equal(engine.flowOwnedPairs.has('7:1'), true);
   assert.equal(scheduled, true);
 });
+
+test('enableFlow preserves sshExpectedPairs hold when retainSession throws', async () => {
+  const { BotEngine } = await import('../bot-engine/engine.js');
+
+  const prisma = {
+    botFlow: {
+      findUnique: async () => ({
+        id: 43,
+        name: 'cron-retain-fail',
+        enabled: true,
+        serverConfigId: 8,
+        virtualServerId: 2,
+        flowData: JSON.stringify({
+          nodes: [{
+            id: 't1',
+            type: 'trigger',
+            position: { x: 0, y: 0 },
+            data: { triggerType: 'cron', cronExpression: '0 * * * *', label: 'hourly' },
+          }],
+          edges: [],
+        }),
+      }),
+    },
+  };
+
+  const engine = new BotEngine(prisma as any, {} as any, { clients: new Set() } as any, {} as any) as any;
+  let scheduled = false;
+
+  engine.eventBridge.retainSession = async () => {
+    throw new Error('SSH connect blew up');
+  };
+  engine.eventBridge.releaseSession = async () => {};
+  engine.eventBridge.getCommandListenerKeys = () => [];
+  engine.eventBridge.isRegistered = () => false;
+  engine.eventBridge.isConnected = () => false;
+  engine.eventBridge.getSshReconnectPauseSeconds = () => 0;
+  engine.setupCronJobsForFlow = () => {};
+  engine.buildWebhookRegistryForFlow = () => {};
+  engine.scheduleBotsWhenReady = () => { scheduled = true; };
+  engine.syncCommandListenersForPair = () => {};
+
+  await engine.enableFlow(43);
+
+  assert.equal(engine.flowOwnedPairs.has('8:2'), false);
+  // Failed retain must still gate cron/animations (not WebQuery-only).
+  assert.equal(engine.sshExpectedPairs.has('8:2'), true);
+  assert.equal(engine.isPairReadyForBotTraffic(8, 2), false);
+  assert.equal(scheduled, true);
+});

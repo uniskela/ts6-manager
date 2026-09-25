@@ -300,6 +300,9 @@ export class BotEngine {
   ) {
     this.eventBridge = new EventBridge(prisma);
     this.flowRunner = new FlowRunner(prisma, connectionPool, wss);
+    this.flowRunner.setChannelEditReadyCheck((configId, sid) =>
+      this.isPairReadyForBotTraffic(configId, sid),
+    );
     this.animationManager = new AnimationManager();
   }
 
@@ -607,6 +610,10 @@ export class BotEngine {
         }
       } catch (err: any) {
         console.error(`[BotEngine] Flow session retain failed for ${pair}: ${err.message}`);
+        // Preserve registration hold so cron/animations are not treated as WebQuery-only
+        // after a failed retain of a configured (or unknown) SSH pair. True WebQuery-only
+        // pairs return false from retainSession without throwing.
+        this.sshExpectedPairs.add(pair);
       }
     }
     for (const pair of [...this.flowOwnedPairs]) {
@@ -618,6 +625,10 @@ export class BotEngine {
       this.animationsArmedPairs.delete(pair);
       this.animationFallbackPairs.delete(pair);
       this.clearBotArmFallback(pair);
+    }
+    // Drop hold markers for pairs no longer needed (incl. failed-retain orphans).
+    for (const pair of [...this.sshExpectedPairs]) {
+      if (!flowNeeded.has(pair)) this.sshExpectedPairs.delete(pair);
     }
 
     // Music owns its own retains via MusicCommandHandler; we only sync CMD listeners here.
