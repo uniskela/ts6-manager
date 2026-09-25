@@ -45,6 +45,26 @@ export class TeamSpeakUnavailableError extends AppError {
 }
 
 /**
+ * EventBridge SSH session is down (often Query flood cooldown right after redeploy).
+ * Not a Bad Gateway — credentials may be fine; reconnect is expected.
+ */
+export class TeamSpeakSshDisconnectedError extends AppError {
+  constructor(
+    purpose: 'browse' | 'changes' = 'browse',
+    public retryAfterSeconds: number = 15,
+  ) {
+    super(
+      503,
+      purpose === 'browse'
+        ? 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.'
+        : 'Could not change files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+      `The EventBridge SSH session is temporarily disconnected (common for ~60s after TeamSpeak Query flood protection on container start). Wait about ${retryAfterSeconds}s and retry.`,
+    );
+    this.name = 'TeamSpeakSshDisconnectedError';
+  }
+}
+
+/**
  * TeamSpeak `logview` could not read its logfile (commonly error 2052).
  * This is a TeamSpeak host/filesystem issue (permissions, lock, rotation), not a Manager transport failure.
  */
@@ -110,20 +130,30 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
     err instanceof TSApiError && QUIET_TS_API_CODES.has(err.code);
   const quietFlood = err instanceof TeamSpeakFloodError;
   const quietUnavailable = err instanceof TeamSpeakUnavailableError;
+  const quietSshDisconnected = err instanceof TeamSpeakSshDisconnectedError;
   const quietLogviewIo = err instanceof TeamSpeakLogviewIoError;
   const quietPermission = err instanceof TeamSpeakPermissionError;
 
-  if (!quietTs && !quietFlood && !quietUnavailable && !quietLogviewIo && !quietPermission) {
+  if (!quietTs && !quietFlood && !quietUnavailable && !quietSshDisconnected && !quietLogviewIo && !quietPermission) {
     console.error(`[Error] ${err.name}: ${err.message}`);
   }
 
-  if (err instanceof TeamSpeakFloodError || err instanceof TeamSpeakUnavailableError) {
+  if (
+    err instanceof TeamSpeakFloodError
+    || err instanceof TeamSpeakUnavailableError
+    || err instanceof TeamSpeakSshDisconnectedError
+  ) {
     res.setHeader('Retry-After', String(err.retryAfterSeconds));
+    const reason = err instanceof TeamSpeakUnavailableError
+      ? 'ts_query_starting'
+      : err instanceof TeamSpeakSshDisconnectedError
+        ? 'ts_ssh_disconnected'
+        : 'ts_query_flood';
     res.status(err.statusCode).json({
       error: err.message,
       details: err.details,
       retryAfterSeconds: err.retryAfterSeconds,
-      reason: err instanceof TeamSpeakUnavailableError ? 'ts_query_starting' : 'ts_query_flood',
+      reason,
     });
     return;
   }

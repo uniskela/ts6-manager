@@ -30,6 +30,14 @@ describe('action-guidance prerequisites', () => {
       'ssh_failed',
     );
     assert.equal(
+      classifyActionPrerequisite(axiosLike(503, {
+        error: 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+        reason: 'ts_ssh_disconnected',
+        retryAfterSeconds: 45,
+      })),
+      'ssh_failed',
+    );
+    assert.equal(
       classifyActionPrerequisite(axiosLike(502, {
         error: 'Could not connect via SSH',
         details: 'SSH handshake failed',
@@ -76,11 +84,27 @@ describe('action-guidance prerequisites', () => {
     }));
     assert.match(browse, /requires SSH/i);
 
+    const reconnecting = fileBrowseErrorMessage(axiosLike(503, {
+      error: 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+      reason: 'ts_ssh_disconnected',
+      details: 'The EventBridge SSH session is temporarily disconnected',
+      retryAfterSeconds: 45,
+    }));
+    assert.match(reconnecting, /temporarily disconnected/i);
+    assert.match(reconnecting, /retry/i);
+    assert.doesNotMatch(reconnecting, /configure SSH credentials/i);
+
     const disconnected = fileWriteErrorMessage(axiosLike(502, {
       error: 'Could not change files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
     }), 'delete');
     assert.match(disconnected, /SSH connection failed/i);
     assert.doesNotMatch(disconnected, /SSH is required for file changes/i);
+
+    const writeReconnect = fileWriteErrorMessage(axiosLike(503, {
+      reason: 'ts_ssh_disconnected',
+      error: 'Could not change files: SSH is not connected.',
+    }), 'create');
+    assert.match(writeReconnect, /temporarily disconnected/i);
 
     const denied = fileWriteErrorMessage(axiosLike(403, {
       reason: 'ts_permission_denied',

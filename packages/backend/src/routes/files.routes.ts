@@ -4,6 +4,7 @@ import {
   AppError,
   TSApiError,
   TeamSpeakPermissionError,
+  TeamSpeakSshDisconnectedError,
   isTeamSpeakPermissionError,
 } from '../middleware/error-handler.js';
 import { parseQueryResponse, tsEscape } from '@ts6/common';
@@ -107,15 +108,15 @@ async function sshExecute(
   return parseQueryResponse(rawResponse);
 }
 
-function mapFileSshTransportError(err: Error, purpose: 'browse' | 'changes'): AppError | null {
+function mapFileSshTransportError(
+  err: Error,
+  purpose: 'browse' | 'changes',
+  retryAfterSeconds = 15,
+): AppError | null {
   const msg = err.message || '';
   if (msg.includes('SSH not connected')) {
-    return new AppError(
-      502,
-      purpose === 'browse'
-        ? 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.'
-        : 'Could not change files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
-    );
+    // 503 (not 502): Session is down/reconnecting — often Query flood cooldown after redeploy.
+    return new TeamSpeakSshDisconnectedError(purpose, retryAfterSeconds);
   }
   if (msg.includes('SSH credentials')) {
     return new AppError(
@@ -128,7 +129,24 @@ function mapFileSshTransportError(err: Error, purpose: 'browse' | 'changes'): Ap
   return null;
 }
 
-function mapFileMutationError(err: unknown, actionHint: string): unknown {
+/** Prefer flood/reconnect pause from EventBridge when the SSH client is mid-cooldown. */
+function sshDisconnectRetryAfterSeconds(req: Request): number {
+  try {
+    const engine: BotEngine | undefined = req.app.locals.botEngine;
+    const remaining = engine?.getEventBridge()?.getSshReconnectPauseSeconds(
+      getConfigId(req),
+      getSid(req),
+    );
+    if (typeof remaining === 'number' && Number.isFinite(remaining) && remaining > 0) {
+      return Math.min(300, Math.max(1, Math.ceil(remaining)));
+    }
+  } catch {
+    // Fall through to default.
+  }
+  return 15;
+}
+
+function mapFileMutationError(err: unknown, actionHint: string, req?: Request): unknown {
   if (err instanceof TSApiError && isTeamSpeakPermissionError(err)) {
     return new TeamSpeakPermissionError(err.code, err.message, actionHint);
   }
@@ -136,7 +154,8 @@ function mapFileMutationError(err: unknown, actionHint: string): unknown {
     return new TeamSpeakPermissionError(err.tsCode, 'insufficient client permissions', actionHint);
   }
   if (err instanceof Error) {
-    return mapFileSshTransportError(err, 'changes') ?? err;
+    const retryAfter = req ? sshDisconnectRetryAfterSeconds(req) : 15;
+    return mapFileSshTransportError(err, 'changes', retryAfter) ?? err;
   }
   return err;
 }
@@ -189,7 +208,13 @@ fileRoutes.get('/summary', async (req: Request, res: Response, next) => {
     });
 
     res.json(response);
-  } catch (err) { next(err); }
+  } catch (err) {
+    if (err instanceof Error) {
+      const mapped = mapFileSshTransportError(err, 'browse', sshDisconnectRetryAfterSeconds(req));
+      if (mapped) return next(mapped);
+    }
+    next(err);
+  }
 });
 
 // List files in a channel directory
@@ -208,7 +233,7 @@ fileRoutes.get('/:cid', async (req: Request, res: Response, next) => {
       return res.json([]);
     }
     if (err instanceof Error) {
-      const mapped = mapFileSshTransportError(err, 'browse');
+      const mapped = mapFileSshTransportError(err, 'browse', sshDisconnectRetryAfterSeconds(req));
       if (mapped) return next(mapped);
     }
     next(err);
@@ -226,7 +251,7 @@ fileRoutes.post('/:cid/mkdir', requireRole('admin'), async (req: Request, res: R
     fileSummaryScanCoordinator.invalidateChannel(getConfigId(req), getSid(req), Number(req.params.cid));
     res.json(result);
   } catch (err) {
-    next(mapFileMutationError(err, 'creating directories'));
+    next(mapFileMutationError(err, 'creating directories', req));
   }
 });
 
@@ -241,6 +266,6 @@ fileRoutes.delete('/:cid/file', requireRole('admin'), async (req: Request, res: 
     fileSummaryScanCoordinator.invalidateChannel(getConfigId(req), getSid(req), Number(req.params.cid));
     res.json(result);
   } catch (err) {
-    next(mapFileMutationError(err, 'deleting files'));
+    next(mapFileMutationError(err, 'deleting files', req));
   }
 });

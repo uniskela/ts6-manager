@@ -340,6 +340,18 @@ export class EventBridge extends EventEmitter {
     return client?.isConnected ?? false;
   }
 
+  /**
+   * Remaining flood/reconnect pause for an existing SSH client (0 if connected or unknown).
+   * Used by Files routes to set Retry-After instead of a misleading 502.
+   */
+  getSshReconnectPauseSeconds(configId: number, sid: number): number {
+    const key = this.makeKey(configId, sid);
+    const client = this.connections.get(key);
+    if (!client) return 0;
+    if (client.isConnected) return 0;
+    return client.getReconnectPauseSeconds();
+  }
+
   /** The main SSH session is usable for music discovery only after event registration. */
   isRegistered(configId: number, sid: number): boolean {
     return this.registered.has(this.makeKey(configId, sid)) && this.isConnected(configId, sid);

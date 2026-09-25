@@ -44,7 +44,7 @@ export function classifyActionPrerequisite(error: unknown): ActionPrerequisiteKi
     return 'permission_denied';
   }
   // Disconnected session ≠ missing credentials.
-  if (text.includes('ssh not connected')) {
+  if (reason === 'ts_ssh_disconnected' || text.includes('ssh not connected') || text.includes('ssh is not connected')) {
     return 'ssh_failed';
   }
   if (
@@ -61,10 +61,15 @@ export function classifyActionPrerequisite(error: unknown): ActionPrerequisiteKi
 
 /** Human-readable prerequisite / permission copy for file browser list failures. */
 export function fileBrowseErrorMessage(error: unknown): string {
+  const err = error as { response?: { data?: Record<string, unknown> } };
+  const reason = String(err?.response?.data?.reason || '');
   switch (classifyActionPrerequisite(error)) {
     case 'ssh_required':
       return 'File browsing requires SSH access because the TeamSpeak WebQuery HTTP API does not support file transfer commands. Configure SSH credentials (username and password) in server settings.';
     case 'ssh_failed':
+      if (reason === 'ts_ssh_disconnected') {
+        return 'SSH to TeamSpeak is temporarily disconnected (often after Query flood protection on startup). Wait a moment and retry — credentials are usually fine.';
+      }
       return 'Could not connect to TeamSpeak via SSH. Check the SSH credentials and port in server settings.';
     case 'permission_denied':
       return 'The Query identity lacks permission to list files in this channel. WebQuery read success does not grant file-transfer access.';
@@ -76,10 +81,15 @@ export function fileBrowseErrorMessage(error: unknown): string {
 /** Human-readable errors for mkdir / delete — never treat browse success as write auth. */
 export function fileWriteErrorMessage(error: unknown, action: 'create' | 'delete'): string {
   const verb = action === 'create' ? 'create directories' : 'delete files';
+  const err = error as { response?: { data?: Record<string, unknown> } };
+  const reason = String(err?.response?.data?.reason || '');
   switch (classifyActionPrerequisite(error)) {
     case 'ssh_required':
       return `Cannot ${verb}: SSH is required for file changes (WebQuery HTTP does not support ft* commands).`;
     case 'ssh_failed':
+      if (reason === 'ts_ssh_disconnected') {
+        return `Cannot ${verb}: SSH is temporarily disconnected. Wait for reconnect and retry.`;
+      }
       return `Cannot ${verb}: SSH connection failed. Check SSH credentials and port in server settings.`;
     case 'permission_denied':
       return `Insufficient TeamSpeak permission to ${verb}. Listing this folder does not authorize writes — grant the Query identity the required file-transfer permissions.`;

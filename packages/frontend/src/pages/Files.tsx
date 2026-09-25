@@ -51,6 +51,7 @@ import {
   FolderOpen, File, Folder, ArrowLeft, FolderPlus, Trash2, Hash, HardDrive, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { isTeamSpeakSshDisconnected, teamSpeakQueryRetry, teamSpeakQueryRetryDelay } from '@/lib/api-error';
 
 interface FileEntry {
   name: string;
@@ -212,11 +213,23 @@ export default function Files() {
   };
 
   // Fetch files in selected channel + path
-  const { data: fileData, isLoading: loadingFiles, error: filesError } = useQuery({
+  // Ordinary list (not Slice 6 expensive diagnostic): retry through SSH flood cooldown.
+  const {
+    data: fileData,
+    isLoading: loadingFiles,
+    isFetching: fetchingFiles,
+    error: filesError,
+    refetch: refetchFiles,
+  } = useQuery({
     queryKey: ['files', c, s, selectedCid, currentPath],
     queryFn: () => filesApi.list(c!, s!, selectedCid!, currentPath),
     enabled: !!c && !!s && !!selectedCid,
-    retry: false,
+    retry: teamSpeakQueryRetry,
+    retryDelay: teamSpeakQueryRetryDelay,
+    // After SSH recovers mid-cooldown, keep probing briefly without leaving sticky 502 UI.
+    refetchInterval: (query) => (
+      isTeamSpeakSshDisconnected(query.state.error) ? 15_000 : false
+    ),
   });
 
   const files: FileEntry[] = useMemo(() => {
@@ -516,6 +529,15 @@ export default function Files() {
                 {(filesError as any)?.response?.data?.code != null && (
                   <p className="text-[10px] text-muted-foreground/60 mt-1">TS3 error code: {(filesError as any).response.data.code}</p>
                 )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={fetchingFiles}
+                  onClick={() => { void refetchFiles(); }}
+                  aria-busy={fetchingFiles}
+                >
+                  {fetchingFiles ? 'Retrying…' : 'Retry'}
+                </Button>
               </div>
             ) : (
               <ScrollArea className="h-[min(460px,55dvh)] min-h-72">

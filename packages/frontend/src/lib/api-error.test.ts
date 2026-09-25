@@ -2,13 +2,15 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   isTeamSpeakLogviewIo,
+  isTeamSpeakSshDisconnected,
   isTeamSpeakStarting,
   teamSpeakConnectionTitle,
   teamSpeakQueryRetry,
+  teamSpeakQueryRetryDelay,
 } from './api-error.ts';
 
-function axiosLike(status: number, data: Record<string, unknown>) {
-  return { response: { status, data }, message: 'Request failed' };
+function axiosLike(status: number, data: Record<string, unknown>, headers?: Record<string, string>) {
+  return { response: { status, data, headers: headers ?? {} }, message: 'Request failed' };
 }
 
 describe('api-error logview I/O', () => {
@@ -42,5 +44,31 @@ describe('api-error logview I/O', () => {
     assert.equal(isTeamSpeakLogviewIo(hangup), false);
     assert.equal(isTeamSpeakStarting(hangup), true);
     assert.equal(teamSpeakQueryRetry(0, hangup), true);
+  });
+});
+
+describe('api-error SSH disconnect', () => {
+  it('detects ts_ssh_disconnected and retries through cooldown', () => {
+    const disconnected = axiosLike(503, {
+      error: 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+      reason: 'ts_ssh_disconnected',
+      retryAfterSeconds: 45,
+      details: 'The EventBridge SSH session is temporarily disconnected',
+    });
+    assert.equal(isTeamSpeakSshDisconnected(disconnected), true);
+    assert.equal(isTeamSpeakStarting(disconnected), false);
+    assert.equal(teamSpeakConnectionTitle(disconnected), 'SSH reconnecting');
+    assert.equal(teamSpeakQueryRetry(0, disconnected), true);
+    assert.equal(teamSpeakQueryRetry(9, disconnected), true);
+    assert.equal(teamSpeakQueryRetry(10, disconnected), false);
+    assert.equal(teamSpeakQueryRetryDelay(0, disconnected), 45_000);
+  });
+
+  it('still recognizes legacy 502 SSH-not-connected text for retry', () => {
+    const legacy = axiosLike(502, {
+      error: 'Could not browse files: SSH is not connected. Check SSH credentials and that the Query session is connected.',
+    });
+    assert.equal(isTeamSpeakSshDisconnected(legacy), true);
+    assert.equal(teamSpeakQueryRetry(0, legacy), true);
   });
 });

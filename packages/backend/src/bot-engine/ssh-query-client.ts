@@ -335,6 +335,12 @@ export class SshQueryClient extends EventEmitter {
     return this.fatalError;
   }
 
+  /** Seconds remaining before flood reconnect pause clears (0 if not pausing). */
+  getReconnectPauseSeconds(): number {
+    const remainingMs = Math.max(0, this.floodPauseUntil - Date.now());
+    return Math.ceil(remainingMs / 1000);
+  }
+
   /**
    * Close the SSH connection and wait for the underlying socket to finish
    * tearing down (ssh2 'close'), up to a short safety timeout. `ssh.end()`
