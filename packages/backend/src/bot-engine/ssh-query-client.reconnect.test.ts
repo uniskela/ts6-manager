@@ -57,8 +57,13 @@ describe('SSH Query flood recovery', () => {
   });
 
   it('ignores already-registered (516) notify errors and rejects other failures', () => {
-    assert.equal(isAlreadyRegisteredNotifyError(new Error('error id=516 msg=already registered')), true);
+    assert.equal(isAlreadyRegisteredNotifyError(new Error('TS error 516: already registered')), true);
     assert.equal(isAlreadyRegisteredNotifyError(new Error('TS error 524: client is flooding')), false);
-    assert.equal(isAlreadyRegisteredNotifyError(new Error('error id=2568 msg=insufficient client permissions')), false);
+    assert.equal(isAlreadyRegisteredNotifyError(new Error('TS error 2568: insufficient client permissions')), false);
+    // Different ID whose message text contains "516" must not be treated as already-registered.
+    assert.equal(
+      isAlreadyRegisteredNotifyError(new Error('TS error 2568: channel 516 already taken')),
+      false,
+    );
   });
 });

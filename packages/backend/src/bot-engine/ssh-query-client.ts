@@ -48,7 +48,9 @@ export function isSshFloodError(error: unknown): boolean {
 
 /** TeamSpeak 516 = event already registered; other notify failures must reject. */
 export function isAlreadyRegisteredNotifyError(error: unknown): boolean {
-  return String((error as { message?: string })?.message || '').includes('516');
+  const message = String((error as { message?: string })?.message || '');
+  // Match the executeCommand wrap (`TS error <id>: <msg>`), not a bare "516" substring in msg.
+  return /\bTS error 516:/i.test(message);
 }
 
 export function sshFloodCooldownMs(strikes: number): number {
@@ -357,7 +359,7 @@ export class SshQueryClient extends EventEmitter {
     try {
       await this.executeCommand(`servernotifyregister event=textchannel id=${channelId}`);
     } catch (err: any) {
-      if (!err.message?.includes('516')) {
+      if (!isAlreadyRegisteredNotifyError(err)) {
         console.warn(`[SshQueryClient] Failed to register textchannel for channel ${channelId}: ${err.message}`);
       }
     }
