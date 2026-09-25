@@ -502,6 +502,8 @@ export class ActivityJournalService {
     this.recoveryTimers.set(
       key,
       setTimeout(() => {
+        // Stale callback must not wipe a newer lifecycle's timer / nextRetryAt.
+        if (!this.isCaptureEpochCurrent(key, epoch)) return;
         this.recoveryTimers.delete(key);
         this.nextRetryAt.delete(key);
         void this.attemptRecovery(key, epoch);
@@ -731,12 +733,19 @@ export class ActivityJournalService {
         const queue = this.queues.get(key);
         while (queue && queue.length > 0) {
           const batch = queue.splice(0, 50);
+          const epoch = this.captureEpoch.get(key) ?? 0;
           try {
             await this.prisma.clientActivity.createMany({ data: batch });
+            if (!this.isCaptureEpochCurrent(key, epoch)) return;
             this.lastPersistedAt.set(key, new Date());
             this.lastError.set(key, null);
             this.maybeRestoreCapturing(key);
           } catch (err: any) {
+            if (!this.isCaptureEpochCurrent(key, epoch)) {
+              // Requeue for the new lifecycle; do not touch its error/dropped counters.
+              this.queues.get(key)?.unshift(...batch);
+              return;
+            }
             this.lastError.set(key, err.message);
             this.status.set(key, 'persistence_error');
             this.dropped.set(key, (this.dropped.get(key) ?? 0) + batch.length);
