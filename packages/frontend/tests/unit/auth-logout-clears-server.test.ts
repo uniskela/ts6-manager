@@ -3,6 +3,8 @@ import { before, beforeEach, describe, it } from 'node:test';
 
 class MemoryStorage implements Storage {
   #map = new Map<string, string>();
+  /** When true, setItem for ts6-server throws (simulates quota / write failure). */
+  rejectTs6ServerWrites = false;
 
   get length() {
     return this.#map.size;
@@ -25,17 +27,21 @@ class MemoryStorage implements Storage {
   }
 
   setItem(key: string, value: string) {
+    if (this.rejectTs6ServerWrites && key === 'ts6-server') {
+      throw new Error('quota exceeded');
+    }
     this.#map.set(key, String(value));
   }
 }
 
 describe('auth logout clears server selection', () => {
+  let storage: MemoryStorage;
   let useAuthStore: typeof import('../../src/stores/auth.store.ts').useAuthStore;
   let useServerStore: typeof import('../../src/stores/server.store.ts').useServerStore;
 
   before(async () => {
     // Zustand persist only writes when `window` looks like a browser.
-    const storage = new MemoryStorage();
+    storage = new MemoryStorage();
     Object.defineProperty(globalThis, 'localStorage', {
       configurable: true,
       value: storage,
@@ -49,6 +55,7 @@ describe('auth logout clears server selection', () => {
   });
 
   beforeEach(() => {
+    storage.rejectTs6ServerWrites = false;
     useServerStore.setState({ selectedConfigId: null, selectedSid: null });
     useAuthStore.setState({ accessToken: null, refreshToken: null, user: null });
     localStorage.clear();
@@ -111,5 +118,25 @@ describe('auth logout clears server selection', () => {
     } finally {
       useServerStore.setState({ clearServer: originalClear });
     }
+  });
+
+  it('removes stale ts6-server when persist write fails after clear', () => {
+    useServerStore.getState().setServer(7, 2);
+    useAuthStore.getState().setAuth('access', 'refresh', {
+      id: 1,
+      username: 'admin',
+      displayName: 'Admin',
+      role: 'admin',
+    });
+    assert.ok(localStorage.getItem('ts6-server'), 'seeded persist key');
+
+    // Reject writes (clearServer persist) but still allow removeItem (clearStorage).
+    storage.rejectTs6ServerWrites = true;
+
+    assert.doesNotThrow(() => useAuthStore.getState().logout());
+    assert.equal(useAuthStore.getState().accessToken, null);
+    assert.equal(useServerStore.getState().selectedConfigId, null);
+    assert.equal(useServerStore.getState().selectedSid, null);
+    assert.equal(localStorage.getItem('ts6-server'), null);
   });
 });

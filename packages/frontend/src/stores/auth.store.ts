@@ -48,7 +48,13 @@ export const useAuthStore = create<AuthStore>()(
         try {
           useServerStore.getState().clearServer();
         } catch {
-          // Best-effort: auth is already cleared.
+          // clearServer may have updated memory before setItem threw, leaving
+          // a stale ts6-server key. Best-effort remove so reload cannot restore it.
+          try {
+            useServerStore.persist.clearStorage();
+          } catch {
+            // Auth is already cleared; do not block logout on storage cleanup.
+          }
         }
       },
       isAuthenticated: () => !!get().accessToken,
