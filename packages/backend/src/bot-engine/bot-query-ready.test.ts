@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  applyAnimationFallbackToHoldInput,
   canArmBotsForPair,
   evaluateBotQueryReady,
 } from './bot-query-ready.js';
@@ -63,6 +64,46 @@ describe('evaluateBotQueryReady', () => {
     });
     assert.equal(r.ready, false);
     assert.ok(r.holdMs >= 5_000);
+  });
+});
+
+describe('applyAnimationFallbackToHoldInput', () => {
+  it('preserves registration hold while SSH is connected and registerEvents pending', () => {
+    const input = {
+      isRegistered: false,
+      isConnected: true,
+      sshReconnectPauseMs: 0,
+      expectsSshRegistration: true,
+    };
+    const holdInput = applyAnimationFallbackToHoldInput(input, true);
+    assert.equal(holdInput.expectsSshRegistration, true);
+    const r = evaluateBotQueryReady(holdInput);
+    assert.equal(r.ready, false);
+    assert.ok(r.holdMs > 0);
+  });
+
+  it('relaxes expectation when SSH is down after animation fallback', () => {
+    const input = {
+      isRegistered: false,
+      isConnected: false,
+      sshReconnectPauseMs: 0,
+      expectsSshRegistration: true,
+    };
+    const holdInput = applyAnimationFallbackToHoldInput(input, true);
+    assert.equal(holdInput.expectsSshRegistration, false);
+    const r = evaluateBotQueryReady(holdInput);
+    assert.equal(r.ready, true);
+    assert.equal(r.holdMs, 0);
+  });
+
+  it('is a no-op when animation fallback is inactive', () => {
+    const input = {
+      isRegistered: false,
+      isConnected: false,
+      sshReconnectPauseMs: 0,
+      expectsSshRegistration: true,
+    };
+    assert.equal(applyAnimationFallbackToHoldInput(input, false), input);
   });
 });
 

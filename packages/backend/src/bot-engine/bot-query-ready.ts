@@ -56,3 +56,18 @@ export function canArmBotsForPair(input: BotQueryReadyInput): boolean {
   if (!input.expectsSshRegistration) return true;
   return input.isRegistered;
 }
+
+/**
+ * Animation 90s fallback may relax the SSH-expectation gate for tick holds, but
+ * must not override an in-progress `registerEvents` window while SSH is up.
+ */
+export function applyAnimationFallbackToHoldInput(
+  input: BotQueryReadyInput,
+  animationFallback: boolean,
+): BotQueryReadyInput {
+  if (!animationFallback) return input;
+  if (input.expectsSshRegistration && input.isConnected && !input.isRegistered) {
+    return input;
+  }
+  return { ...input, expectsSshRegistration: false };
+}

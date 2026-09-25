@@ -13,7 +13,11 @@ import type {
 } from '@ts6/common';
 import { AnimationManager } from './animation-manager.js';
 import type { AnimationConfig } from './animation-manager.js';
-import { canArmBotsForPair, evaluateBotQueryReady } from './bot-query-ready.js';
+import {
+  applyAnimationFallbackToHoldInput,
+  canArmBotsForPair,
+  evaluateBotQueryReady,
+} from './bot-query-ready.js';
 import type { MusicCommandHandler } from '../voice/music-command-handler.js';
 import crypto from 'crypto';
 
@@ -592,11 +596,11 @@ export class BotEngine {
       if (this.flowOwnedPairs.has(pair)) continue;
       const [configId, sid] = pair.split(':').map(Number);
       try {
-        await this.eventBridge.retainSession('flow', configId, sid);
+        // retainSession returns whether SSH credentials are configured (not current
+        // isConnected/isRegistered). Pairs without credentials stay WebQuery-only.
+        const sshConfigured = await this.eventBridge.retainSession('flow', configId, sid);
         this.flowOwnedPairs.add(pair);
-        // retainSession awaits connect(); registerEvents still runs async on ready.
-        // If we are connected (or become registered), SSH registration is expected.
-        if (this.eventBridge.isConnected(configId, sid) || this.eventBridge.isRegistered(configId, sid)) {
+        if (sshConfigured) {
           this.sshExpectedPairs.add(pair);
         }
       } catch (err: any) {
@@ -942,11 +946,11 @@ export class BotEngine {
 
   private getQueryHoldMsForPair(configId: number, sid: number): number {
     const input = this.botQueryReadyInput(configId, sid);
-    // Animation fallback may arm before registration; ticks still respect flood pause.
-    if (this.animationFallbackPairs.has(`${configId}:${sid}`)) {
-      return evaluateBotQueryReady({ ...input, expectsSshRegistration: false }).holdMs;
-    }
-    return evaluateBotQueryReady(input).holdMs;
+    const holdInput = applyAnimationFallbackToHoldInput(
+      input,
+      this.animationFallbackPairs.has(`${configId}:${sid}`),
+    );
+    return evaluateBotQueryReady(holdInput).holdMs;
   }
 
   private clearBotArmFallback(key: string): void {

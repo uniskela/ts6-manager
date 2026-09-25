@@ -16,6 +16,7 @@ test('retain/release keeps session while another owner remains', async () => {
   bridge.connectServer = async (configId: number, sid: number) => {
     connected.push(`${configId}:${sid}`);
     bridge.connections.set(`${configId}:${sid}`, { isConnected: true, destroy: async () => {} });
+    return true;
   };
   bridge.disconnectServer = async (configId: number, sid: number) => {
     disconnected.push(`${configId}:${sid}`);
