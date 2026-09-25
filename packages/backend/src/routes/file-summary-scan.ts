@@ -32,7 +32,12 @@ export function isPropagatingFileSshTransportError(err: unknown): boolean {
   const code = Number((err as { code?: number })?.code);
   if (code === 524) return true;
   const msg = String((err as { message?: string })?.message || '');
-  return msg.includes('SSH not connected') || /SSH credentials not configured/i.test(msg);
+  return (
+    msg.includes('SSH not connected')
+    || /SSH credentials not configured/i.test(msg)
+    || /SSH authentication failed/i.test(msg)
+    || /SSH host key verification failed/i.test(msg)
+  );
 }
 
 export type ChannelFileSummaryComplete = {

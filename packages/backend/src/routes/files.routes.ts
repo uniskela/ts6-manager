@@ -9,6 +9,7 @@ import {
 } from '../middleware/error-handler.js';
 import { parseQueryResponse, tsEscape } from '@ts6/common';
 import type { BotEngine } from '../bot-engine/engine.js';
+import { isSshFatalConnectFailureMessage } from '../bot-engine/ssh-query-client.js';
 import {
   FILE_SUMMARY_DEADLINE_MS,
   FILE_SUMMARY_MAX_CHANNELS,
@@ -130,6 +131,17 @@ export function mapFileSshTransportError(
       purpose === 'browse'
         ? 'SSH credentials not configured for this server. File browsing requires SSH access because WebQuery HTTP does not support ft* commands.'
         : 'SSH credentials not configured for this server. File changes require SSH access because WebQuery HTTP does not support ft* commands.',
+    );
+  }
+  // Fatal auth / host-key after EventBridge removed the client — not reconnectable.
+  if (isSshFatalConnectFailureMessage(msg)) {
+    const isHostKey = /host key/i.test(msg);
+    return new AppError(
+      401,
+      isHostKey
+        ? 'SSH host key verification failed. Update or clear the pinned host key in server settings, then retry.'
+        : 'SSH authentication failed. Check the SSH username and password in server settings.',
+      msg,
     );
   }
   if (msg.includes('SSH not connected')) {

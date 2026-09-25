@@ -53,6 +53,22 @@ export function sshFloodCooldownMs(strikes: number): number {
   );
 }
 
+/** Stable executeCommand message after EventBridge removes a fatally failed client. */
+export function formatFatalSshFailureMessage(detail: string): string {
+  if (/host key/i.test(detail)) {
+    return `SSH host key verification failed: ${detail}`;
+  }
+  return `SSH authentication failed: ${detail}`;
+}
+
+/** True for permanent SSH connect failures (auth / host-key), not reconnectable disconnect. */
+export function isSshFatalConnectFailureMessage(message: string): boolean {
+  return (
+    /SSH authentication failed/i.test(message)
+    || /SSH host key verification failed/i.test(message)
+  );
+}
+
 export class SshQueryClient extends EventEmitter {
   private ssh: SSH2Client | null = null;
   private shell: ClientChannel | null = null;
@@ -66,11 +82,18 @@ export class SshQueryClient extends EventEmitter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private keepaliveTimer: ReturnType<typeof setInterval> | null = null;
   private fatalError: boolean = false;
+  /** Last auth/host-key failure message; cleared only when a new non-fatal connect starts. */
+  private lastFatalErrorMessage: string | null = null;
   private readonly nickSuffix = crypto.randomBytes(3).toString('hex');
   private reconnecting: boolean = false;
   private floodPauseUntil: number = 0;
   private floodStrikes: number = 0;
   private floodDisconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private markFatal(err: Error): void {
+    this.fatalError = true;
+    this.lastFatalErrorMessage = err.message;
+  }
 
   constructor(private options: SshQueryClientOptions) {
     super();
@@ -145,7 +168,7 @@ export class SshQueryClient extends EventEmitter {
       ssh.on('error', (err: Error) => {
         const isAuthError = err.message.includes('authentication') || err.message.includes('Auth');
         if (isAuthError) {
-          this.fatalError = true;
+          this.markFatal(err);
           console.error(`[SshQueryClient] Fatal auth error for ${this.options.host}:${this.options.port}: ${err.message}`);
         }
         this.emit('error', err);
@@ -185,7 +208,7 @@ export class SshQueryClient extends EventEmitter {
             const err = new Error(
               `SSH host key mismatch for ${this.options.host}: expected ${this.options.hostKeyFingerprint}, got ${fp}`,
             );
-            this.fatalError = true;
+            this.markFatal(err);
             this.emit('error', err);
             return false;
           }
@@ -333,6 +356,11 @@ export class SshQueryClient extends EventEmitter {
 
   get hasFatalError(): boolean {
     return this.fatalError;
+  }
+
+  /** Message from the last fatal auth/host-key failure, if any. */
+  get lastFatalError(): string | null {
+    return this.lastFatalErrorMessage;
   }
 
   /** Seconds remaining before flood reconnect pause clears (0 if not pausing). */
