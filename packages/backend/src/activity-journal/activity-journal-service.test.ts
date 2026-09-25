@@ -73,3 +73,13 @@ test('recovery backoff grows then caps', () => {
   assert.equal(recoveryDelayMs(10), 30_000);
   assert.equal(recoveryDelayMs(20), 30_000);
 });
+
+test('capture lifecycle epoch must match while enabled', () => {
+  // Mirrors ActivityJournalService.isCaptureEpochCurrent: stale attempts after
+  // disable/re-enable must not mutate the new lifecycle.
+  const current = (enabled: boolean, epoch: number, attemptEpoch: number) =>
+    enabled && epoch === attemptEpoch;
+  assert.equal(current(true, 2, 2), true);
+  assert.equal(current(true, 3, 2), false);
+  assert.equal(current(false, 2, 2), false);
+});

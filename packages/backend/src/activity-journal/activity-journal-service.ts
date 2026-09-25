@@ -164,6 +164,11 @@ export class ActivityJournalService {
   private recoveryAttempt = new Map<string, number>();
   private nextRetryAt = new Map<string, number>();
   private arming = new Map<string, boolean>();
+  /**
+   * Bumped on enable/disable/release/stop so in-flight recovery/arm after an
+   * await cannot mutate a newer (or disabled) lifecycle for the same key.
+   */
+  private captureEpoch = new Map<string, number>();
   private readonly onTsEventBound = (
     configId: number,
     sid: number,
@@ -218,7 +223,7 @@ export class ActivityJournalService {
       this.knownBotTimer = null;
     }
     for (const key of [...this.recoveryTimers.keys()]) {
-      this.clearRecovery(key);
+      this.invalidateCaptureLifecycle(key);
     }
     for (const key of [...this.targets.keys()]) {
       await this.drainQueue(key);
@@ -232,6 +237,7 @@ export class ActivityJournalService {
     this.recoveryAttempt.clear();
     this.nextRetryAt.clear();
     this.arming.clear();
+    this.captureEpoch.clear();
   }
 
   /**
@@ -241,7 +247,9 @@ export class ActivityJournalService {
     const prefix = `${serverConfigId}:`;
     for (const key of [...this.targets.keys()]) {
       if (!key.startsWith(prefix)) continue;
-      this.clearRecovery(key);
+      // Invalidate before awaits so in-flight recovery cannot re-arm this key.
+      this.invalidateCaptureLifecycle(key);
+      this.targets.set(key, false);
       await this.drainQueue(key);
       const sid = parseInt(key.slice(prefix.length), 10);
       if (Number.isFinite(sid)) {
@@ -257,6 +265,7 @@ export class ActivityJournalService {
       this.recoveryAttempt.delete(key);
       this.nextRetryAt.delete(key);
       this.arming.delete(key);
+      this.captureEpoch.delete(key);
     }
     await this.prisma.activityJournalTarget.deleteMany({ where: { serverConfigId } });
     await this.prisma.clientActivity.deleteMany({ where: { serverConfigId } });
@@ -301,25 +310,27 @@ export class ActivityJournalService {
     });
     const key = pairKey(serverConfigId, virtualServerId);
     if (enabled) {
+      const epoch = this.beginCaptureLifecycle(key);
       this.targets.set(key, true);
       this.status.set(key, 'connecting');
       this.baselineClids.set(key, new Set());
       this.recoveryAttempt.set(key, 0);
-      this.clearRecovery(key);
       await this.eventBridge.retainSession('journal', serverConfigId, virtualServerId);
+      if (!this.isCaptureEpochCurrent(key, epoch)) return;
       if (this.eventBridge.isRegistered(serverConfigId, virtualServerId)) {
-        await this.onSshConnected(serverConfigId, virtualServerId);
+        await this.armCapture(serverConfigId, virtualServerId, epoch);
       } else {
-        this.scheduleRecovery(key);
+        this.scheduleRecovery(key, epoch);
       }
     } else {
-      this.clearRecovery(key);
-      await this.drainQueue(key);
+      // Invalidate before awaits so a mid-flight attemptRecovery cannot re-arm.
+      this.invalidateCaptureLifecycle(key);
       this.targets.set(key, false);
       this.status.set(key, 'disabled');
       this.baselineClids.delete(key);
       this.recoveryAttempt.delete(key);
       this.nextRetryAt.delete(key);
+      await this.drainQueue(key);
       await this.eventBridge.releaseSession('journal', serverConfigId, virtualServerId);
     }
   }
@@ -416,20 +427,23 @@ export class ActivityJournalService {
     const rows = await this.prisma.activityJournalTarget.findMany({ where: { enabled: true } });
     for (const row of rows) {
       const key = pairKey(row.serverConfigId, row.virtualServerId);
+      const epoch = this.beginCaptureLifecycle(key);
       this.targets.set(key, true);
       this.status.set(key, 'connecting');
       this.recoveryAttempt.set(key, 0);
       try {
         await this.eventBridge.retainSession('journal', row.serverConfigId, row.virtualServerId);
+        if (!this.isCaptureEpochCurrent(key, epoch)) continue;
         if (this.eventBridge.isRegistered(row.serverConfigId, row.virtualServerId)) {
-          await this.onSshConnected(row.serverConfigId, row.virtualServerId);
+          await this.armCapture(row.serverConfigId, row.virtualServerId, epoch);
         } else {
-          this.scheduleRecovery(key);
+          this.scheduleRecovery(key, epoch);
         }
       } catch (err: any) {
+        if (!this.isCaptureEpochCurrent(key, epoch)) continue;
         this.status.set(key, 'interrupted');
         this.lastError.set(key, err.message);
-        this.scheduleRecovery(key);
+        this.scheduleRecovery(key, epoch);
       }
     }
   }
@@ -437,16 +451,35 @@ export class ActivityJournalService {
   private async onSshConnected(configId: number, sid: number): Promise<void> {
     const key = pairKey(configId, sid);
     if (this.targets.get(key) !== true) return;
-    await this.armCapture(configId, sid);
+    await this.armCapture(configId, sid, this.captureEpoch.get(key) ?? 0);
   }
 
   private onSshDisconnected(configId: number, sid: number): void {
     const key = pairKey(configId, sid);
     if (this.targets.get(key) !== true) return;
+    const epoch = this.captureEpoch.get(key) ?? 0;
     this.status.set(key, 'interrupted');
     this.baselineClids.set(key, new Set());
     this.lastError.set(key, 'Query session disconnected — reconnecting…');
-    this.scheduleRecovery(key);
+    this.scheduleRecovery(key, epoch);
+  }
+
+  /** Start a new enable lifecycle; cancels timers and invalidates in-flight work. */
+  private beginCaptureLifecycle(key: string): number {
+    this.clearRecovery(key);
+    const next = (this.captureEpoch.get(key) ?? 0) + 1;
+    this.captureEpoch.set(key, next);
+    return next;
+  }
+
+  /** Disable/stop/release: cancel timers and invalidate in-flight recovery/arm. */
+  private invalidateCaptureLifecycle(key: string): void {
+    this.clearRecovery(key);
+    this.captureEpoch.set(key, (this.captureEpoch.get(key) ?? 0) + 1);
+  }
+
+  private isCaptureEpochCurrent(key: string, epoch: number): boolean {
+    return this.targets.get(key) === true && (this.captureEpoch.get(key) ?? 0) === epoch;
   }
 
   private clearRecovery(key: string): void {
@@ -456,8 +489,8 @@ export class ActivityJournalService {
     this.nextRetryAt.delete(key);
   }
 
-  private scheduleRecovery(key: string): void {
-    if (this.targets.get(key) !== true) return;
+  private scheduleRecovery(key: string, epoch: number): void {
+    if (!this.isCaptureEpochCurrent(key, epoch)) return;
     if (this.recoveryTimers.has(key)) return;
     const attempt = this.recoveryAttempt.get(key) ?? 0;
     const delay = recoveryDelayMs(attempt);
@@ -468,13 +501,13 @@ export class ActivityJournalService {
       setTimeout(() => {
         this.recoveryTimers.delete(key);
         this.nextRetryAt.delete(key);
-        void this.attemptRecovery(key);
+        void this.attemptRecovery(key, epoch);
       }, delay),
     );
   }
 
-  private async attemptRecovery(key: string): Promise<void> {
-    if (this.targets.get(key) !== true) return;
+  private async attemptRecovery(key: string, epoch: number): Promise<void> {
+    if (!this.isCaptureEpochCurrent(key, epoch)) return;
     const current = this.status.get(key);
     if (current === 'capturing' || current === 'disabled') return;
 
@@ -491,15 +524,17 @@ export class ActivityJournalService {
     try {
       // Nudge shared EventBridge ownership/connect (idempotent when already owned).
       await this.eventBridge.retainSession('journal', configId, sid);
+      if (!this.isCaptureEpochCurrent(key, epoch)) return;
       if (this.eventBridge.isRegistered(configId, sid)) {
-        await this.armCapture(configId, sid);
+        await this.armCapture(configId, sid, epoch);
         return;
       }
-      this.scheduleRecovery(key);
+      this.scheduleRecovery(key, epoch);
     } catch (err: any) {
+      if (!this.isCaptureEpochCurrent(key, epoch)) return;
       this.status.set(key, 'interrupted');
       this.lastError.set(key, err.message || 'Capture recovery failed');
-      this.scheduleRecovery(key);
+      this.scheduleRecovery(key, epoch);
     }
   }
 
@@ -507,17 +542,18 @@ export class ActivityJournalService {
    * Baseline visible clients then accept joins. Bounded so Query floods cannot
    * leave status stuck on Connecting forever.
    */
-  private async armCapture(configId: number, sid: number): Promise<void> {
+  private async armCapture(configId: number, sid: number, epoch: number): Promise<void> {
     const key = pairKey(configId, sid);
-    if (this.targets.get(key) !== true) return;
+    if (!this.isCaptureEpochCurrent(key, epoch)) return;
     if (this.arming.get(key)) return;
     this.arming.set(key, true);
     try {
       if (!this.eventBridge.isRegistered(configId, sid)) {
+        if (!this.isCaptureEpochCurrent(key, epoch)) return;
         if (this.status.get(key) !== 'connecting') {
           this.status.set(key, 'interrupted');
         }
-        this.scheduleRecovery(key);
+        this.scheduleRecovery(key, epoch);
         return;
       }
 
@@ -533,6 +569,7 @@ export class ActivityJournalService {
           BASELINE_TIMEOUT_MS,
           'Activity journal baseline clientlist',
         );
+        if (!this.isCaptureEpochCurrent(key, epoch)) return;
         const { parseQueryResponse } = await import('@ts6/common');
         const rows = parseQueryResponse(raw.trim()) as Record<string, string>[];
         for (const row of rows) {
@@ -540,6 +577,7 @@ export class ActivityJournalService {
         }
         this.lastError.set(key, null);
       } catch (err: any) {
+        if (!this.isCaptureEpochCurrent(key, epoch)) return;
         console.warn(`[ActivityJournal] Baseline clientlist failed for ${key}: ${err.message}`);
         this.lastError.set(
           key,
@@ -547,11 +585,11 @@ export class ActivityJournalService {
         );
       }
 
-      if (this.targets.get(key) !== true) return;
+      if (!this.isCaptureEpochCurrent(key, epoch)) return;
       if (!this.eventBridge.isRegistered(configId, sid)) {
         this.status.set(key, 'interrupted');
         this.baselineClids.set(key, new Set());
-        this.scheduleRecovery(key);
+        this.scheduleRecovery(key, epoch);
         return;
       }
 
