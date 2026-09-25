@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { useServerStore } from './server.store';
 
 interface UserInfo {
   id: number;
@@ -35,8 +36,14 @@ export const useAuthStore = create<AuthStore>()(
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
       setUser: (user) => set({ user }),
-      logout: () =>
-        set({ accessToken: null, refreshToken: null, user: null }),
+      logout: () => {
+        // Drop persisted connection selection with the session. Leaving
+        // selectedConfigId/selectedSid in ts6-server after logout can strand
+        // Dashboard on an indefinite PageLoader when /api/servers never loads
+        // (selection set, context never validates, no gateError).
+        useServerStore.getState().clearServer();
+        set({ accessToken: null, refreshToken: null, user: null });
+      },
       isAuthenticated: () => !!get().accessToken,
       isAdmin: () => get().user?.role === 'admin',
       canWrite: () => get().user?.role === 'admin',
