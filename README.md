@@ -14,20 +14,26 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
+**Contents:** [Documentation](#documentation) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility-and-beta13-setup) · [Download progress](#download-progress) · [License](#license)
+
 ## Documentation
 
 The maintained public documentation is available at **[uniskela.com/docs/ts6-manager](https://uniskela.com/docs/ts6-manager/)** and is sourced from the reviewed Markdown files in [`docs/`](docs/index.md).
 
 Start with:
 
-- [Installation](docs/installation.md)
-- [Configuration](docs/configuration.md)
-- [Upgrading](docs/upgrading.md)
-- [TeamSpeak compatibility](docs/teamspeak-compatibility.md)
-- [Music bots](docs/music-bots.md)
-- [Bot flows](docs/bot-flows.md)
-- [Security](docs/security.md)
-- [Troubleshooting](docs/troubleshooting.md)
+- [Installation](https://uniskela.com/docs/ts6-manager/installation/)
+- [Configuration](https://uniskela.com/docs/ts6-manager/configuration/)
+- [Upgrading](https://uniskela.com/docs/ts6-manager/upgrading/)
+- [TeamSpeak compatibility](https://uniskela.com/docs/ts6-manager/teamspeak-compatibility/)
+- [Music bots](https://uniskela.com/docs/ts6-manager/music-bots/)
+- [Bot flows](https://uniskela.com/docs/ts6-manager/bot-flows/)
+- [Security](https://uniskela.com/docs/ts6-manager/security/)
+- [Troubleshooting](https://uniskela.com/docs/ts6-manager/troubleshooting/)
+- [Video streaming](https://uniskela.com/docs/ts6-manager/video-streaming/)
+- [Architecture](https://uniskela.com/docs/ts6-manager/architecture/)
+- [Environment variables](https://uniskela.com/docs/ts6-manager/environment-variables/)
+
 ## Screenshots
 
 ### Dashboard
@@ -94,7 +100,7 @@ Compare two to four entities from the same permission layer in a read-only table
 - Live video streaming from YouTube, Twitch, or direct URLs to TeamSpeak channels
 - WebRTC-based with Go sidecar relay (Pion) for low-latency delivery
 - Quality presets (480p, 720p, 1080p)
-- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](docs/video-streaming.md)); channel browsing, filtering, and music-bot streaming
+- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](https://uniskela.com/docs/ts6-manager/video-streaming/)); channel browsing, filtering, and music-bot streaming
 - In-browser preview with WebRTC playback
 - A/V synchronization via RTCP Sender Reports
 - Runs as a Docker sidecar container alongside the backend
