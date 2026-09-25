@@ -222,8 +222,11 @@ export class ActivityJournalService {
       clearInterval(this.knownBotTimer);
       this.knownBotTimer = null;
     }
-    for (const key of [...this.recoveryTimers.keys()]) {
+    // Invalidate every active target (not only pending timers) and mark disabled
+    // before awaits so in-flight arm/recovery cannot re-retain sessions.
+    for (const key of new Set([...this.targets.keys(), ...this.recoveryTimers.keys()])) {
       this.invalidateCaptureLifecycle(key);
+      if (this.targets.has(key)) this.targets.set(key, false);
     }
     for (const key of [...this.targets.keys()]) {
       await this.drainQueue(key);
@@ -237,7 +240,7 @@ export class ActivityJournalService {
     this.recoveryAttempt.clear();
     this.nextRetryAt.clear();
     this.arming.clear();
-    this.captureEpoch.clear();
+    // Keep captureEpoch — values must never reuse across stop/re-enable.
   }
 
   /**
@@ -265,7 +268,7 @@ export class ActivityJournalService {
       this.recoveryAttempt.delete(key);
       this.nextRetryAt.delete(key);
       this.arming.delete(key);
-      this.captureEpoch.delete(key);
+      // Keep captureEpoch entry so a later re-enable gets a fresh epoch.
     }
     await this.prisma.activityJournalTarget.deleteMany({ where: { serverConfigId } });
     await this.prisma.clientActivity.deleteMany({ where: { serverConfigId } });
