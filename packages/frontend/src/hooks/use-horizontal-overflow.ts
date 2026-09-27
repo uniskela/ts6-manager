@@ -36,7 +36,10 @@ export function useHorizontalOverflow(ref: RefObject<HTMLElement>): HorizontalOv
     update();
     revealActive();
     element.addEventListener('scroll', update, { passive: true });
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
+      update();
+      revealActive();
+    });
     resizeObserver?.observe(element);
     const mutationObserver = new MutationObserver(() => {
       revealActive();

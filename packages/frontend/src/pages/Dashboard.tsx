@@ -270,6 +270,9 @@ export default function Dashboard() {
     ? Math.min(Math.max((data.onlineUsers / data.maxClients) * 100, 0), 100)
     : 0;
   const roundedUtilisation = Math.round(utilisation);
+  // Classify the same rounded values that are displayed so badges never contradict the numbers.
+  const pingMs = Math.round(Number(data.ping || 0) * 10) / 10;
+  const packetLossPercent = Math.round(Number(data.packetloss || 0) * 10_000) / 100;
   const availableSlots = Math.max(data.maxClients - data.onlineUsers, 0);
   const backgroundError = gateError
     ? apiErrorMessage(
@@ -355,8 +358,8 @@ export default function Dashboard() {
           <div className="grid min-w-0 grid-cols-2 gap-3">
             <Metric icon={Hash} label="Channels" value={formatNumber(data.channelCount)} />
             <Metric icon={Clock} label="Uptime" value={formatUptime(data.uptime)} />
-            <Metric icon={Gauge} label="Ping" value={`${Number(data.ping || 0).toFixed(1)} ms`} health={classifyPing(Number(data.ping || 0))} />
-            <Metric icon={Radio} label="Packet loss" value={`${(Number(data.packetloss || 0) * 100).toFixed(2)}%`} health={classifyPacketLoss(Number(data.packetloss || 0))} />
+            <Metric icon={Gauge} label="Ping" value={`${pingMs.toFixed(1)} ms`} health={classifyPing(pingMs)} />
+            <Metric icon={Radio} label="Packet loss" value={`${packetLossPercent.toFixed(2)}%`} health={classifyPacketLoss(packetLossPercent / 100)} />
           </div>
         </div>
       </DataPanel>

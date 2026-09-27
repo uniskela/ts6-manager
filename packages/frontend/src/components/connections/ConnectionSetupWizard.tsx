@@ -396,7 +396,7 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-medium">Just exploring? Try a demo server</p>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  Synthetic channels, clients, groups, and logs. No network connection is made and no real TeamSpeak server is changed.
+                  Synthetic channels, clients, groups, and logs. Creating it makes no network connection and changes no real TeamSpeak server.
                 </p>
               </div>
               <Button
