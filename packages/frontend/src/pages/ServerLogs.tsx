@@ -7,6 +7,7 @@ import { useServerStore } from '@/stores/server.store';
 import { useServers, useVirtualServers } from '@/hooks/use-servers';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
@@ -147,7 +148,7 @@ export default function ServerLogs() {
     }));
   };
 
-  if (!c || !s) return <EmptyState icon={ScrollText} title="No server selected" />;
+  if (!c || !s) return <NoServerSelectedState pageTitle="Server Logs" icon={ScrollText} />;
 
   if (gateError && !hasPage) {
     const logviewIo = isTeamSpeakLogviewIo(gateError);

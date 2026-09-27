@@ -3,6 +3,7 @@ import { musicRequestsApi } from '@/api/music-requests.api';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { Music, ExternalLink, Clock } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { formatDistanceToNow } from 'date-fns';
@@ -17,7 +18,7 @@ export default function MusicRequests() {
         enabled: !!c,
     });
 
-    if (!c) return <EmptyState icon={Music} title="No server selected" />;
+    if (!c) return <NoServerSelectedState pageTitle="Music Request History" icon={Music} />;
     if (isLoading) return <PageLoader />;
 
     return (

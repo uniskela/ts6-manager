@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
-import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { cn } from '@/lib/utils';
 import {
@@ -661,7 +661,7 @@ export default function Permissions() {
     });
   }, [draft, saveMutation]);
 
-  if (!c || !s) return <EmptyState icon={Lock} title="No server selected" />;
+  if (!c || !s) return <NoServerSelectedState pageTitle="Permissions" icon={Lock} />;
   if (loadingDefs) return <PageLoader />;
 
   const entities = (() => {

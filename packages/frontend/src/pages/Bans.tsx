@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
-import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { formatDuration, timeAgo } from '@/lib/utils';
 import { Ban, Plus, Trash2 } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
@@ -53,7 +53,7 @@ export default function Bans() {
     },
   ], [deleteBan.mutate]);
 
-  if (!selectedConfigId || !selectedSid) return <EmptyState icon={Ban} title="No server selected" />;
+  if (!selectedConfigId || !selectedSid) return <NoServerSelectedState pageTitle="Bans" icon={Ban} />;
   if (isLoading) return <PageLoader />;
 
   const handleAdd = () => {

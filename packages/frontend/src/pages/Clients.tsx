@@ -20,6 +20,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { formatUptime } from '@/lib/utils';
@@ -417,7 +418,7 @@ export default function Clients() {
     void refetch();
   };
 
-  if (!selectedConfigId || !selectedSid) return <EmptyState icon={Users} title="No server selected" />;
+  if (!selectedConfigId || !selectedSid) return <NoServerSelectedState pageTitle="Clients" icon={Users} />;
   if (gateError && !hasClientData) {
     return (
       <div className="space-y-4">

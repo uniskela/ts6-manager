@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import {
   buildFilePath,
   canConfirmFileAction,
@@ -336,7 +337,7 @@ export default function Files() {
   // Breadcrumb parts
   const pathParts = currentPath.split('/').filter(Boolean);
 
-  if (!c || !s) return <EmptyState icon={FolderOpen} title="No server selected" />;
+  if (!c || !s) return <NoServerSelectedState pageTitle="File Browser" icon={FolderOpen} />;
 
   return (
     <div className="space-y-4">

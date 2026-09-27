@@ -15,6 +15,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { Shield, Plus, Trash2, Users, ChevronRight, UserMinus, UserPlus } from 'lucide-react';
@@ -41,7 +42,7 @@ export default function ServerGroups() {
     enabled: !!selectedConfigId && !!selectedSid && showAddMember,
   });
 
-  if (!selectedConfigId || !selectedSid) return <EmptyState icon={Shield} title="No server selected" />;
+  if (!selectedConfigId || !selectedSid) return <NoServerSelectedState pageTitle="Server Groups" icon={Shield} />;
   if (isLoading) return <PageLoader />;
   if (error) {
     return (

@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -432,7 +433,7 @@ export default function Channels() {
     return map;
   }, [clientData]);
 
-  if (!selectedConfigId || !selectedSid) return <EmptyState icon={Hash} title="No server selected" />;
+  if (!selectedConfigId || !selectedSid) return <NoServerSelectedState pageTitle="Channels" icon={Hash} />;
   const hasChannelData = Array.isArray(channelData);
   const gateError = channelsError || virtualServersError;
   const contextIsValid = !!virtualServers?.some((server: any) => Number(server.virtualserver_id) === selectedSid);

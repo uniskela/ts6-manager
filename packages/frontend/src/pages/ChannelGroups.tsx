@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { ShieldCheck } from 'lucide-react';
 
@@ -12,7 +13,7 @@ export default function ChannelGroups() {
   const { selectedConfigId, selectedSid } = useServerStore();
   const { data, isLoading, error, refetch, isFetching } = useChannelGroups();
 
-  if (!selectedConfigId || !selectedSid) return <EmptyState icon={ShieldCheck} title="No server selected" />;
+  if (!selectedConfigId || !selectedSid) return <NoServerSelectedState pageTitle="Channel Groups" icon={ShieldCheck} />;
   if (isLoading) return <PageLoader />;
   if (error) {
     return (

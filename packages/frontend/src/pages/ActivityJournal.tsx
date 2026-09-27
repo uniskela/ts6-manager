@@ -4,6 +4,7 @@ import { activityJournalApi } from '@/api/activity-journal.api';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -211,7 +212,7 @@ export default function ActivityJournal() {
   };
 
   if (!c || !s) {
-    return <EmptyState icon={NotebookPen} title="No server selected" description="Select a connection and virtual server to view the activity journal." />;
+    return <NoServerSelectedState pageTitle="Activity Journal" icon={NotebookPen} selectDescription="Select a connection and virtual server to view the activity journal." />;
   }
 
   if (statusQuery.isLoading && historyQuery.isLoading) return <PageLoader />;
