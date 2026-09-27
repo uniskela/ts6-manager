@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { HelpCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -20,19 +21,21 @@ interface ConnectionFormDialogProps {
 function FieldLabel({
   label,
   help,
+  htmlFor,
   tooltipAlign = 'center',
 }: {
   label: string;
   help: string;
+  htmlFor: string;
   tooltipAlign?: 'start' | 'center' | 'end';
 }) {
   return (
     <div className="flex items-center gap-1 min-w-0">
-      <Label className="text-xs truncate">{label}</Label>
+      <Label htmlFor={htmlFor} className="text-xs truncate">{label}</Label>
       <Tooltip>
         <TooltipTrigger asChild>
-          <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground">
-            <HelpCircle className="h-3 w-3" />
+          <button type="button" aria-label={`About ${label}`} className="shrink-0 rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            <HelpCircle className="h-3 w-3" aria-hidden="true" />
           </button>
         </TooltipTrigger>
         <TooltipContent side="top" align={tooltipAlign}>
@@ -53,10 +56,18 @@ export function ConnectionFormDialog({
   onSave,
 }: ConnectionFormDialogProps) {
   const canSave = !!form.name && !!form.host && (!!form.apiKey || !!editId);
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md [--dialog-max-height:90vh] overflow-y-auto">
+      <DialogContent
+        className="max-w-md [--dialog-max-height:90vh] overflow-y-auto"
+        onOpenAutoFocus={(event) => {
+          // The first focusable node is a help icon; opening its tooltip would cover the section copy.
+          event.preventDefault();
+          nameInputRef.current?.focus();
+        }}
+      >
         <TooltipProvider delayDuration={200}>
           <DialogHeader>
             <DialogTitle>{editId ? 'Edit Connection' : 'Add Connection'}</DialogTitle>
@@ -70,8 +81,10 @@ export function ConnectionFormDialog({
               </p>
 
               <div>
-                <FieldLabel label="Name" help={FIELD_HELP.name} />
+                <FieldLabel label="Name" htmlFor="connection-name" help={FIELD_HELP.name} />
                 <Input
+                  id="connection-name"
+                  ref={nameInputRef}
                   value={form.name}
                   onChange={(e) => onChange({ ...form, name: e.target.value })}
                   placeholder="My TS Server"
@@ -80,17 +93,19 @@ export function ConnectionFormDialog({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <FieldLabel label="Host" help={FIELD_HELP.host} />
+                  <FieldLabel label="Host" htmlFor="connection-host" help={FIELD_HELP.host} />
                   <Input
+                    id="connection-host"
                     value={form.host}
                     onChange={(e) => onChange({ ...form, host: e.target.value })}
                     placeholder="127.0.0.1"
                   />
                 </div>
                 <div>
-                  <FieldLabel label="WebQuery Port" help={FIELD_HELP.webqueryPort} tooltipAlign="end" />
+                  <FieldLabel label="WebQuery Port" htmlFor="connection-webquery-port" help={FIELD_HELP.webqueryPort} tooltipAlign="end" />
                   <Input
                     type="number"
+                    id="connection-webquery-port"
                     value={form.webqueryPort}
                     onChange={(e) => onChange({ ...form, webqueryPort: e.target.value })}
                   />
@@ -98,8 +113,9 @@ export function ConnectionFormDialog({
               </div>
 
               <div>
-                <FieldLabel label="API Key" help={FIELD_HELP.apiKey} />
+                <FieldLabel label="API Key" htmlFor="connection-api-key" help={FIELD_HELP.apiKey} />
                 <Input
+                  id="connection-api-key"
                   value={form.apiKey}
                   onChange={(e) => onChange({ ...form, apiKey: e.target.value })}
                   placeholder={editId ? '(unchanged — enter new key to update)' : 'WebQuery API Key'}
@@ -109,10 +125,11 @@ export function ConnectionFormDialog({
 
               <div className="flex items-center gap-2">
                 <Switch
+                  id="connection-use-https"
                   checked={form.useHttps}
                   onCheckedChange={(v) => onChange({ ...form, useHttps: v })}
                 />
-                <FieldLabel label="Use HTTPS" help={FIELD_HELP.useHttps} />
+                <FieldLabel label="Use HTTPS" htmlFor="connection-use-https" help={FIELD_HELP.useHttps} />
               </div>
             </div>
 
@@ -124,25 +141,28 @@ export function ConnectionFormDialog({
 
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <FieldLabel label="SSH Port" help={FIELD_HELP.sshPort} />
+                  <FieldLabel label="SSH Port" htmlFor="connection-ssh-port" help={FIELD_HELP.sshPort} />
                   <Input
                     type="number"
+                    id="connection-ssh-port"
                     value={form.sshPort}
                     onChange={(e) => onChange({ ...form, sshPort: e.target.value })}
                   />
                 </div>
                 <div>
-                  <FieldLabel label="SSH User" help={FIELD_HELP.sshUsername} tooltipAlign="center" />
+                  <FieldLabel label="SSH User" htmlFor="connection-ssh-user" help={FIELD_HELP.sshUsername} tooltipAlign="center" />
                   <Input
+                    id="connection-ssh-user"
                     value={form.sshUsername}
                     onChange={(e) => onChange({ ...form, sshUsername: e.target.value })}
                     placeholder="serveradmin"
                   />
                 </div>
                 <div>
-                  <FieldLabel label="SSH Password" help={FIELD_HELP.sshPassword} tooltipAlign="end" />
+                  <FieldLabel label="SSH Password" htmlFor="connection-ssh-password" help={FIELD_HELP.sshPassword} tooltipAlign="end" />
                   <Input
                     type="password"
+                    id="connection-ssh-password"
                     value={form.sshPassword}
                     onChange={(e) => onChange({ ...form, sshPassword: e.target.value })}
                   />
@@ -159,25 +179,28 @@ export function ConnectionFormDialog({
 
               <div className="flex items-center gap-2">
                 <Switch
+                  id="connection-metrics-enabled"
                   checked={form.metricsEnabled}
                   onCheckedChange={(v) => onChange({ ...form, metricsEnabled: v })}
                 />
-                <FieldLabel label="Enable metrics scrape" help={FIELD_HELP.metricsEnabled} />
+                <FieldLabel label="Enable metrics scrape" htmlFor="connection-metrics-enabled" help={FIELD_HELP.metricsEnabled} />
               </div>
 
               {form.metricsEnabled && (
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <FieldLabel label="Metrics port" help={FIELD_HELP.metricsPort} />
+                    <FieldLabel label="Metrics port" htmlFor="connection-metrics-port" help={FIELD_HELP.metricsPort} />
                     <Input
                       type="number"
+                      id="connection-metrics-port"
                       value={form.metricsPort}
                       onChange={(e) => onChange({ ...form, metricsPort: e.target.value })}
                     />
                   </div>
                   <div>
-                    <FieldLabel label="Metrics host (optional)" help={FIELD_HELP.metricsHost} tooltipAlign="end" />
+                    <FieldLabel label="Metrics host (optional)" htmlFor="connection-metrics-host" help={FIELD_HELP.metricsHost} tooltipAlign="end" />
                     <Input
+                      id="connection-metrics-host"
                       value={form.metricsHost}
                       onChange={(e) => onChange({ ...form, metricsHost: e.target.value })}
                       placeholder="Same as WebQuery host"
