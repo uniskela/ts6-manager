@@ -57,7 +57,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <PwaStatus />
-      <BrowserRouter>
+      <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <Suspense fallback={<PageLoader />}>
           <Routes>
             <Route path="/login" element={<Login />} />
