@@ -24,6 +24,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { DataPanel } from '@/components/shared/DataPanel';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { CONNECTION_SETUP_PATH } from '@/components/shared/NoServerSelectedState';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
@@ -173,7 +174,7 @@ export default function Dashboard() {
               </div>
               <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:shrink-0">
                 <Button size="sm" asChild>
-                  <Link to="/settings?tab=connections&wizard=1">Go to Connections</Link>
+                  <Link to={CONNECTION_SETUP_PATH}>Go to Connections</Link>
                 </Button>
                 <Button variant="ghost" size="icon" className="h-8 w-8" onClick={dismissNudge} aria-label="Dismiss connection setup suggestion">
                   <X className="h-4 w-4" />
@@ -189,9 +190,9 @@ export default function Dashboard() {
             ? 'Use the setup wizard in Settings → Connections to add your TeamSpeak server.'
             : 'Select a server connection from the header to view the dashboard.'}
         >
-          {hasNoConnections && (
+          {hasNoConnections && !showConnectionNudge && (
             <Button size="sm" asChild>
-              <Link to="/settings?tab=connections&wizard=1">Open connection setup</Link>
+              <Link to={CONNECTION_SETUP_PATH}>Open connection setup</Link>
             </Button>
           )}
         </EmptyState>

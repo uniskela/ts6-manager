@@ -66,12 +66,16 @@ test('configured connection without a virtual server preserves no-selection guid
   await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveCount(0);
 });
 
-test('no configured connection preserves onboarding and Settings wizard links', async ({ page, request }) => {
+test('no configured connection offers one Settings wizard link at a time', async ({ page, request }) => {
   await signInAsAdmin(page, request, 'no-connections');
 
   await expect(page.getByText('Connect your TeamSpeak server to get started')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'No server connection configured' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Go to Connections' })).toHaveAttribute('href', '/settings?tab=connections&wizard=1');
+  await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Dismiss connection setup suggestion' }).click();
+  await expect(page.getByRole('link', { name: 'Go to Connections' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveAttribute('href', '/settings?tab=connections&wizard=1');
 });
 
