@@ -130,7 +130,7 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
 
   return (
     <>
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 flex-1 flex-col" data-nav-scroll-container>
         <ScrollArea ref={scrollRootRef} type="auto" className="h-full py-2">
           <nav className="space-y-1 px-2" aria-label={mobile ? 'Mobile navigation' : 'Primary navigation'}>
             {navSections

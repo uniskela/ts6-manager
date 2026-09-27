@@ -118,7 +118,7 @@ for (const [width, height, navigationName, opensSheet] of [
     await page.setViewportSize({ width, height });
     await signInAsAdmin(page, request);
     if (opensSheet) await page.getByRole('button', { name: 'Open navigation menu' }).click();
-    const container = page.getByRole('navigation', { name: navigationName }).locator('xpath=ancestor::div[contains(@class, "min-h-0")][1]');
+    const container = page.getByRole('navigation', { name: navigationName }).locator('xpath=ancestor::div[@data-nav-scroll-container][1]');
 
     await expect(container.locator('[data-nav-scroll-edge="bottom"]')).toHaveCount(1);
     await expect(container.locator('[data-nav-scroll-edge="top"]')).toHaveCount(0);
