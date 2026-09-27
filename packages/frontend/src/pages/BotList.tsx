@@ -113,7 +113,7 @@ export default function BotList() {
                   <Button variant="outline" size="sm" className="h-7 text-xs flex-1" onClick={() => navigate(`/bots/${bot.id}`)}>
                     <Pencil className="h-3 w-3 mr-1" /> Edit Flow
                   </Button>
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(bot.id)}>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(bot.id)} aria-label={`Delete ${bot.name}`} title={`Delete ${bot.name}`}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
