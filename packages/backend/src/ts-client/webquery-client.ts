@@ -111,9 +111,18 @@ export function createWebQueryClient(
   return new WebQueryClient(endpoint, apiKey);
 }
 
+function createWebQueryKeepAliveAgent(useHttps: boolean): http.Agent | https.Agent {
+  // Single persistent TCP connection so TS does not register each request as a
+  // separate "serveradmin" query client (serveradmin, serveradmin1, ...).
+  return useHttps
+    ? new https.Agent({ keepAlive: true, maxSockets: 1, rejectUnauthorized: !config.tsAllowSelfSigned })
+    : new http.Agent({ keepAlive: true, maxSockets: 1 });
+}
+
 export class WebQueryClient {
   private http: AxiosInstance;
   private agent: http.Agent | https.Agent;
+  private readonly useHttps: boolean;
   private queue: QueueEntry<any>[] = [];
   private pumping = false;
   private nextAllowedAt = 0;
@@ -125,15 +134,8 @@ export class WebQueryClient {
     apiKey: string,
   ) {
     const baseURL = endpoint.origin;
-    const useHttpsResolved = endpoint.useHttps;
-
-    // Use a single persistent TCP connection (keep-alive) to the TS WebQuery API.
-    // Without this, each concurrent request opens a new TCP connection, and the
-    // TS server registers each one as a separate "serveradmin" query client
-    // (serveradmin, serveradmin1, serveradmin2, ...).
-    this.agent = useHttpsResolved
-      ? new https.Agent({ keepAlive: true, maxSockets: 1, rejectUnauthorized: !config.tsAllowSelfSigned })
-      : new http.Agent({ keepAlive: true, maxSockets: 1 });
+    this.useHttps = endpoint.useHttps;
+    this.agent = createWebQueryKeepAliveAgent(this.useHttps);
 
     this.http = axios.create({
       baseURL,
@@ -143,9 +145,22 @@ export class WebQueryClient {
       maxRedirects: 0,
       maxContentLength: 2 * 1024 * 1024,
       maxBodyLength: 2 * 1024 * 1024,
-      httpAgent: useHttpsResolved ? undefined : this.agent,
-      httpsAgent: useHttpsResolved ? this.agent : undefined,
+      httpAgent: this.useHttps ? undefined : this.agent,
+      httpsAgent: this.useHttps ? this.agent : undefined,
     });
+  }
+
+  /**
+   * Drop keep-alive sockets so the next dial re-resolves hostname DNS.
+   * Needed after Docker recreate when the service name points at a new container IP
+   * but free/open sockets still target the previous peer.
+   */
+  private recreateKeepAliveAgent(): void {
+    const previous = this.agent;
+    this.agent = createWebQueryKeepAliveAgent(this.useHttps);
+    this.http.defaults.httpAgent = this.useHttps ? undefined : this.agent;
+    this.http.defaults.httpsAgent = this.useHttps ? this.agent : undefined;
+    previous.destroy();
   }
 
   /**
@@ -257,6 +272,8 @@ export class WebQueryClient {
 
   /**
    * Retry once on stale keep-alive / reset sockets.
+   * Recreate the keep-alive agent before retry so hostname dials re-resolve DNS
+   * instead of reusing a socket pinned to a dead container IP.
    * Never retry flood errors (that makes anti-spam worse).
    */
   private async withTransientRetry<T>(op: () => Promise<T>): Promise<T> {
@@ -270,6 +287,7 @@ export class WebQueryClient {
         toTsApiError(error);
       }
 
+      this.recreateKeepAliveAgent();
       await new Promise((r) => setTimeout(r, 150));
       try {
         return await op();
