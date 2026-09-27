@@ -108,6 +108,23 @@ test('existing fully expanded sidebars adopt the compact defaults once, then kee
   expect(persisted.state.sidebarSections).toMatchObject({ security: false, system: false, automation: true });
 });
 
+for (const [width, height] of [[1366, 768], [1440, 900]] as const) {
+  test(`default sidebar shows every section heading without scrolling at ${width}x${height}`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height });
+    await signInAsAdmin(page, request);
+
+    const nav = page.getByRole('navigation', { name: 'Primary navigation' });
+    const headingsInView = await nav.evaluate((element) => {
+      const viewport = element.closest<HTMLElement>('[data-radix-scroll-area-viewport]')!.getBoundingClientRect();
+      return [...element.querySelectorAll<HTMLElement>('button[aria-expanded]')]
+        .map((button) => button.getBoundingClientRect())
+        .every((rect) => rect.top >= viewport.top && rect.bottom <= viewport.bottom);
+    });
+    expect(headingsInView).toBe(true);
+    await expect(page.locator('[data-nav-scroll-edge]')).toHaveCount(0);
+  });
+}
+
 test('collapsed sections advertise their size and still reveal the active destination', async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await signInAsAdmin(page, request);

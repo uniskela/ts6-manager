@@ -30,8 +30,9 @@ export const DEFAULT_BACKGROUND_MOTION: BackgroundMotion = 'system';
 export const DEFAULT_BACKGROUND_INTENSITY: BackgroundIntensity = 'normal';
 export const DEFAULT_CUSTOM_CSS_TEXT = '';
 export const DEFAULT_CUSTOM_CSS_ENABLED = false;
-// System and Automation start collapsed so every section heading fits common
-// viewport heights; a collapsed section still shows its active destination.
+// System and Automation start collapsed so every section heading fits the
+// desktop sidebar at 1366×768 and above; a collapsed section still shows its
+// active destination.
 export const DEFAULT_SIDEBAR_SECTIONS: SidebarSections = {
   overview: true,
   management: true,

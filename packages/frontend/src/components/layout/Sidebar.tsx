@@ -118,7 +118,7 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
       aria-current={settingsActive ? 'page' : undefined}
       className={cn(
         'flex items-center gap-2.5 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-        mobile ? 'min-h-10 px-2.5 py-2' : 'px-2.5 py-1.5',
+        mobile ? 'min-h-10 px-2.5 py-2' : 'px-2.5 py-1',
         collapsed && 'justify-center px-0 py-2',
         settingsActive && 'bg-sidebar-accent text-sidebar-accent-foreground',
       )}
@@ -152,7 +152,7 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
                       aria-current={isActive ? 'page' : undefined}
                       className={cn(
                         'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                        mobile ? 'min-h-10 px-2.5 py-2' : 'px-2.5 py-1.5',
+                        mobile ? 'min-h-10 px-2.5 py-2' : 'px-2.5 py-1',
                         collapsed && 'justify-center px-0 py-2',
                         isActive
                           ? 'bg-sidebar-accent text-sidebar-accent-foreground'
@@ -178,8 +178,8 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
                 };
 
                 return (
-                  <div key={section.id}>
-                    {si > 0 && !mobile && <Separator className="my-2 bg-sidebar-border" />}
+                  <div key={section.id} className={cn(si > 0 && !collapsed && !mobile && 'pt-1.5')}>
+                    {si > 0 && collapsed && <Separator className="my-2 bg-sidebar-border" />}
                     {!collapsed && (
                       <button
                         type="button"
