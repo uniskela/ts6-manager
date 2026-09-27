@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
@@ -11,6 +11,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useUiStore, type SidebarSectionId } from '@/stores/ui.store';
 import { useAuthStore } from '@/stores/auth.store';
+import { useScrollEdges } from '@/hooks/use-scroll-edges';
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -107,6 +108,8 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
   const sidebarSections = useUiStore((s) => s.sidebarSections);
   const toggleSidebarSection = useUiStore((s) => s.toggleSidebarSection);
   const settingsActive = location.pathname.startsWith('/settings');
+  const scrollRootRef = useRef<HTMLDivElement>(null);
+  const scrollEdges = useScrollEdges(scrollRootRef);
   const settingsLink = (
     <NavLink
       to="/settings"
@@ -127,86 +130,94 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
 
   return (
     <>
-      <ScrollArea className="flex-1 py-2">
-        <nav className="space-y-1 px-2" aria-label={mobile ? 'Mobile navigation' : 'Primary navigation'}>
-          {navSections
-            .filter((section) => !section.adminOnly || isAdmin)
-            .map((section, si) => {
-              const visibleItems = section.items.filter((item) => !item.adminOnly || isAdmin);
-              if (visibleItems.length === 0) return null;
-              const expanded = sidebarSections[section.id];
-              const activeItem = visibleItems.find(item => location.pathname === item.to || location.pathname.startsWith(item.to + '/'));
-              const contentId = `${mobile ? 'mobile' : 'desktop'}-${section.id}-navigation`;
-              const renderItem = (item: (typeof visibleItems)[number]) => {
-                const isActive = location.pathname === item.to || location.pathname.startsWith(item.to + '/');
-                const link = (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    onClick={onNavigate}
-                    aria-label={collapsed ? item.label : undefined}
-                    aria-current={isActive ? 'page' : undefined}
-                    className={cn(
-                      'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      mobile ? 'min-h-10 px-2.5 py-2' : 'px-2.5 py-1.5',
-                      collapsed && 'justify-center px-0 py-2',
-                      isActive
-                        ? 'bg-sidebar-accent text-sidebar-accent-foreground'
-                        : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
-                    )}
-                  >
-                    <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
-                    {!collapsed && <span>{item.label}</span>}
-                  </NavLink>
-                );
-
-                if (collapsed) {
-                  return (
-                    <Tooltip key={item.to}>
-                      <TooltipTrigger asChild>{link}</TooltipTrigger>
-                      <TooltipContent side="right" className="font-medium">
-                        {item.label}
-                      </TooltipContent>
-                    </Tooltip>
-                  );
-                }
-                return link;
-              };
-
-              return (
-                <div key={section.id}>
-                  {si > 0 && !mobile && <Separator className="my-2 bg-sidebar-border" />}
-                  {!collapsed && (
-                    <button
-                      type="button"
-                      aria-expanded={expanded}
-                      aria-controls={contentId}
-                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${section.label} section`}
-                      onClick={() => toggleSidebarSection(section.id)}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <ScrollArea ref={scrollRootRef} type="auto" className="h-full py-2">
+          <nav className="space-y-1 px-2" aria-label={mobile ? 'Mobile navigation' : 'Primary navigation'}>
+            {navSections
+              .filter((section) => !section.adminOnly || isAdmin)
+              .map((section, si) => {
+                const visibleItems = section.items.filter((item) => !item.adminOnly || isAdmin);
+                if (visibleItems.length === 0) return null;
+                const expanded = sidebarSections[section.id];
+                const activeItem = visibleItems.find(item => location.pathname === item.to || location.pathname.startsWith(item.to + '/'));
+                const contentId = `${mobile ? 'mobile' : 'desktop'}-${section.id}-navigation`;
+                const renderItem = (item: (typeof visibleItems)[number]) => {
+                  const isActive = location.pathname === item.to || location.pathname.startsWith(item.to + '/');
+                  const link = (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      onClick={onNavigate}
+                      aria-label={collapsed ? item.label : undefined}
+                      aria-current={isActive ? 'page' : undefined}
                       className={cn(
-                        'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/55 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                        mobile && 'min-h-9',
+                        'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                        mobile ? 'min-h-10 px-2.5 py-2' : 'px-2.5 py-1.5',
+                        collapsed && 'justify-center px-0 py-2',
+                        isActive
+                          ? 'bg-sidebar-accent text-sidebar-accent-foreground'
+                          : 'text-sidebar-foreground hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground',
                       )}
                     >
-                      <span>{section.label}</span>
-                      {expanded
-                        ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-                        : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
-                    </button>
-                  )}
-                  <div id={contentId} hidden={!collapsed && !expanded} className="space-y-1">
-                    {(collapsed || expanded) && visibleItems.map(renderItem)}
-                  </div>
-                  {!collapsed && !expanded && activeItem && (
-                    <div className="space-y-1" data-active-section-destination={section.id}>
-                      {renderItem(activeItem)}
+                      <item.icon className={cn('h-4 w-4 shrink-0', isActive && 'text-primary')} />
+                      {!collapsed && <span>{item.label}</span>}
+                    </NavLink>
+                  );
+
+                  if (collapsed) {
+                    return (
+                      <Tooltip key={item.to}>
+                        <TooltipTrigger asChild>{link}</TooltipTrigger>
+                        <TooltipContent side="right" className="font-medium">
+                          {item.label}
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  }
+                  return link;
+                };
+
+                return (
+                  <div key={section.id}>
+                    {si > 0 && !mobile && <Separator className="my-2 bg-sidebar-border" />}
+                    {!collapsed && (
+                      <button
+                        type="button"
+                        aria-expanded={expanded}
+                        aria-controls={contentId}
+                        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${section.label} section`}
+                        onClick={() => toggleSidebarSection(section.id)}
+                        className={cn(
+                          'flex w-full items-center justify-between rounded-md px-2 py-1 text-left text-[10px] font-semibold uppercase tracking-widest text-sidebar-foreground/55 hover:bg-sidebar-accent/50 hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                          mobile && 'min-h-9',
+                        )}
+                      >
+                        <span>{section.label}</span>
+                        {expanded
+                          ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                          : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
+                      </button>
+                    )}
+                    <div id={contentId} hidden={!collapsed && !expanded} className="space-y-1">
+                      {(collapsed || expanded) && visibleItems.map(renderItem)}
                     </div>
-                  )}
-                </div>
-              );
-            })}
-        </nav>
-      </ScrollArea>
+                    {!collapsed && !expanded && activeItem && (
+                      <div className="space-y-1" data-active-section-destination={section.id}>
+                        {renderItem(activeItem)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+          </nav>
+        </ScrollArea>
+        {scrollEdges.top && (
+          <div aria-hidden="true" data-nav-scroll-edge="top" className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-sidebar to-transparent" />
+        )}
+        {scrollEdges.bottom && (
+          <div aria-hidden="true" data-nav-scroll-edge="bottom" className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-sidebar to-transparent" />
+        )}
+      </div>
 
       <div className="border-t border-sidebar-border p-2 space-y-1">
         {collapsed ? (
