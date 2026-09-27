@@ -2,6 +2,15 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.3](https://github.com/uniskela/ts6-manager/compare/v1.8.2...v1.8.3) (2026-09-27)
+
+
+### Bug Fixes
+
+* re-resolve WebQuery host after keep-alive peer death ([#173](https://github.com/uniskela/ts6-manager/issues/173)) ([8fe807b](https://github.com/uniskela/ts6-manager/commit/8fe807b10479e564d6fa3641471cf6d64d0429d4)), closes [#166](https://github.com/uniskela/ts6-manager/issues/166)
+* show hidden sidebar destinations and resolve server context before guidance ([ab75757](https://github.com/uniskela/ts6-manager/commit/ab75757616941c44a4dc680d832c3738ce3e1209))
+* UI/UX audit follow-ups for empty states and onboarding ([#174](https://github.com/uniskela/ts6-manager/issues/174)) ([42eb3cd](https://github.com/uniskela/ts6-manager/commit/42eb3cde076c54ec7d35ef9b96e47522e902df75))
+
 ## [1.8.2](https://github.com/uniskela/ts6-manager/compare/v1.8.1...v1.8.2) (2026-09-25)
 
 
