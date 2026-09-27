@@ -2,6 +2,14 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.4](https://github.com/uniskela/ts6-manager/compare/v1.8.3...v1.8.4) (2026-09-27)
+
+
+### Bug Fixes
+
+* sidebar fit, badge contrast, and tab overflow follow-ups to [#177](https://github.com/uniskela/ts6-manager/issues/177) ([aae476d](https://github.com/uniskela/ts6-manager/commit/aae476d130962951d44499ea7fb55efde4594efe))
+* UI/UX audit follow-ups for navigation, mobile chrome, and accessibility ([512ff44](https://github.com/uniskela/ts6-manager/commit/512ff44825ab914681031aba836a5490bfd0dca1))
+
 ## [1.8.3](https://github.com/uniskela/ts6-manager/compare/v1.8.2...v1.8.3) (2026-09-27)
 
 

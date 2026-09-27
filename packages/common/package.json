@@ -1,6 +1,6 @@
 {
   "name": "@ts6/common",
-  "version": "1.8.3",
+  "version": "1.8.4",
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
