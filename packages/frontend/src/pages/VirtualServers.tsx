@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { formatUptime } from '@/lib/utils';
@@ -32,7 +33,7 @@ export default function VirtualServers() {
   const actionGuards = useRef(new Set<string>());
   const stopCancelButton = useRef<HTMLButtonElement>(null);
 
-  if (!selectedConfigId) return <EmptyState icon={Server} title="No server selected" />;
+  if (!selectedConfigId) return <NoServerSelectedState pageTitle="Virtual Servers" icon={Server} />;
   if (isLoading && data === undefined) return <PageLoader />;
   if (error && data === undefined) {
     return (

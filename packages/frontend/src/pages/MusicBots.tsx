@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { Link as RouterLink } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicRequestsApi } from '@/api/music-requests.api';
 import { musicBotsApi } from '@/api/music.api';
@@ -19,6 +20,7 @@ import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { CONNECTION_SETUP_PATH, useHasNoConnections } from '@/components/shared/NoServerSelectedState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
@@ -730,6 +732,7 @@ function BotsTab() {
 
   const bots = Array.isArray(data) ? data : [];
   const serverList = Array.isArray(servers) ? servers : [];
+  const hasNoConnections = useHasNoConnections();
 
   if (isLoading) return <PageLoader />;
 
@@ -817,12 +820,18 @@ function BotsTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">{formatNumber(bots.length)} music bot{bots.length !== 1 ? 's' : ''}</p>
-        <Button size="sm" onClick={() => { resetForm(); setShowCreate(true); }}>
+        <Button size="sm" disabled={hasNoConnections} onClick={() => { resetForm(); setShowCreate(true); }}>
           <Plus className="h-4 w-4 mr-1" /> New Bot
         </Button>
       </div>
 
-      {bots.length === 0 ? (
+      {bots.length === 0 && hasNoConnections ? (
+        <EmptyState icon={Music} title="Connect a TeamSpeak server first" description="Music bots join a server connection. Add one in Settings → Connections, then create your first bot.">
+          <Button size="sm" asChild>
+            <RouterLink to={CONNECTION_SETUP_PATH}>Open connection setup</RouterLink>
+          </Button>
+        </EmptyState>
+      ) : bots.length === 0 ? (
         <EmptyState icon={Music} title="No music bots yet" description="Create your first voice bot to play music on your TeamSpeak server." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useBots, useCreateBot, useToggleBot } from '@/hooks/use-bots';
 import { useServerStore } from '@/stores/server.store';
 import { botsApi } from '@/api/bots.api';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { CONNECTION_SETUP_PATH, useHasNoConnections } from '@/components/shared/NoServerSelectedState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -35,6 +36,7 @@ export default function BotList() {
   const [newDesc, setNewDesc] = useState('');
 
   const bots = Array.isArray(data) ? data : [];
+  const hasNoConnections = useHasNoConnections();
 
   if (isLoading) return <PageLoader />;
 
@@ -54,12 +56,18 @@ export default function BotList() {
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold">Bot Flows</h1>
         <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-          <Button variant="outline" size="sm" onClick={() => setShowTemplates(true)}><LayoutTemplate className="h-4 w-4 mr-1" /> From Template</Button>
-          <Button size="sm" onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" /> New Bot</Button>
+          <Button variant="outline" size="sm" disabled={hasNoConnections} onClick={() => setShowTemplates(true)}><LayoutTemplate className="h-4 w-4 mr-1" /> From Template</Button>
+          <Button size="sm" disabled={hasNoConnections} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" /> New Bot</Button>
         </div>
       </div>
 
-      {bots.length === 0 ? (
+      {bots.length === 0 && hasNoConnections ? (
+        <EmptyState icon={Bot} title="Connect a TeamSpeak server first" description="Bot flows run against a server connection. Add one in Settings → Connections, then create your first flow.">
+          <Button size="sm" asChild>
+            <Link to={CONNECTION_SETUP_PATH}>Open connection setup</Link>
+          </Button>
+        </EmptyState>
+      ) : bots.length === 0 ? (
         <EmptyState icon={Bot} title="No bot flows yet" description="Create your first automation flow to get started." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

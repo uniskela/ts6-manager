@@ -4,6 +4,7 @@ import { serversApi } from '@/api/servers.api';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -70,7 +71,7 @@ export default function Instance() {
     onError: (error) => toast.error(apiErrorMessage(error, 'Failed to update instance settings')),
   });
 
-  if (!c) return <EmptyState icon={Cpu} title="No server selected" />;
+  if (!c) return <NoServerSelectedState pageTitle="Instance" icon={Cpu} />;
   if ((loadingInfo || loadingHost) && !info && !host) return <PageLoader />;
 
   const loadError = infoError || hostError || versionError;

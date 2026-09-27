@@ -5,7 +5,7 @@ import { useServerStore } from '@/stores/server.store';
 import { DataTable } from '@/components/shared/DataTable';
 import { Button } from '@/components/ui/button';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
-import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { KeyRound, Trash2, Copy } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
@@ -42,7 +42,7 @@ export default function Tokens() {
     )},
   ], [deleteToken.mutate]);
 
-  if (!c || !s) return <EmptyState icon={KeyRound} title="No server selected" />;
+  if (!c || !s) return <NoServerSelectedState pageTitle="Privilege Keys" icon={KeyRound} />;
   if (isLoading) return <PageLoader />;
 
   return (

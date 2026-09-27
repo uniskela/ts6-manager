@@ -4,7 +4,7 @@ import { complaintsApi } from '@/api/bans.api';
 import { useServerStore } from '@/stores/server.store';
 import { DataTable } from '@/components/shared/DataTable';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
-import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { MessageSquareWarning } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { timeAgo } from '@/lib/utils';
@@ -21,7 +21,7 @@ export default function Complaints() {
     { accessorKey: 'timestamp', header: 'When', cell: ({ getValue }) => <span className="text-xs text-muted-foreground">{timeAgo(getValue() as number)}</span> },
   ], []);
 
-  if (!c || !s) return <EmptyState icon={MessageSquareWarning} title="No server selected" />;
+  if (!c || !s) return <NoServerSelectedState pageTitle="Complaints" icon={MessageSquareWarning} />;
   if (isLoading) return <PageLoader />;
 
   return (

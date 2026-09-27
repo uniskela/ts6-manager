@@ -21,11 +21,17 @@ async function signInForTables(
   await page.getByLabel('Password', { exact: true }).fill('test-password');
   await page.getByRole('button', { name: 'Sign In' }).click();
   await expect(page).toHaveURL('/dashboard');
+  // Wait for ServerSelector auto-select so Clients/Complaints render the table, not the empty state.
+  await expect(page.getByLabel('Select server connection')).toContainText('Primary connection');
+  await expect(page.getByLabel('Select virtual server')).toContainText('Operations Voice');
 }
 
 async function openTable(page: Page, path: '/clients' | '/complaints') {
+  const title = path === '/clients' ? 'Clients' : 'Complaints';
+  const region = path === '/clients' ? 'Clients table' : 'Complaints table';
   await page.goto(path);
-  await expect(page.getByRole('heading')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: title })).toBeVisible();
+  await expect(page.getByRole('region', { name: region })).toBeVisible();
 }
 
 test.beforeEach(async ({ request }) => {

@@ -4,7 +4,7 @@ import { messagesApi } from '@/api/bans.api';
 import { useServerStore } from '@/stores/server.store';
 import { DataTable } from '@/components/shared/DataTable';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
-import { EmptyState } from '@/components/shared/EmptyState';
+import { NoServerSelectedState } from '@/components/shared/NoServerSelectedState';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -59,7 +59,7 @@ export default function Messages() {
     },
   ], [deleteMutation.mutate]);
 
-  if (!c || !s) return <EmptyState icon={Mail} title="No server selected" />;
+  if (!c || !s) return <NoServerSelectedState pageTitle="Offline Messages" icon={Mail} />;
   if (isLoading) return <PageLoader />;
 
   const handleSend = () => {
