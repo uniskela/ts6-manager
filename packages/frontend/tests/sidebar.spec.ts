@@ -24,6 +24,23 @@ const destinations = [
   'Settings',
 ] as const;
 
+const defaultSections = {
+  overview: true,
+  management: true,
+  security: true,
+  content: true,
+  system: false,
+  automation: false,
+} as const;
+
+async function expectDefaultSections(page: Page) {
+  for (const [index, label] of sectionLabels.entries()) {
+    const expanded = defaultSections[sectionIds[index]];
+    await expect(page.getByRole('button', { name: `${expanded ? 'Collapse' : 'Expand'} ${label} section` }))
+      .toHaveAttribute('aria-expanded', String(expanded));
+  }
+}
+
 async function signInAsAdmin(page: Page, request: APIRequestContext) {
   await request.post('/__test/auth?on');
   await page.goto('/login');
@@ -49,23 +66,72 @@ test('old UI preferences migrate without disturbing appearance or whole-sidebar 
 
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'black');
   await expect(page.locator('html')).toHaveAttribute('data-accent', 'violet');
-  for (const label of sectionLabels) {
-    await expect(page.getByRole('button', { name: `Collapse ${label} section` })).toHaveAttribute('aria-expanded', 'true');
-  }
+  await expectDefaultSections(page);
 
   const state = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
   expect(state).toMatchObject({
     sidebarCollapsed: false,
     baseTheme: 'black',
     accent: 'violet',
-    sidebarSections: Object.fromEntries(sectionIds.map(id => [id, true])),
+    sidebarSections: defaultSections,
   });
+});
+
+test('existing fully expanded sidebars adopt the compact defaults once, then keep user choices', async ({ page, request }) => {
+  await page.addInitScript(() => {
+    if (sessionStorage.getItem('seeded')) return;
+    sessionStorage.setItem('seeded', '1');
+    localStorage.setItem('ts6-ui', JSON.stringify({
+      state: {
+        sidebarCollapsed: false,
+        sidebarSections: { overview: true, management: true, security: false, content: true, system: true, automation: true },
+        baseTheme: 'dark',
+        accent: 'cyan',
+      },
+      version: 6,
+    }));
+  });
+
+  await signInAsAdmin(page, request);
+  await expect(page.getByRole('button', { name: 'Expand Security section' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Expand System section' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('button', { name: 'Expand Automation section' })).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.getByRole('link', { name: 'Music Bots', exact: true })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Expand Automation section' }).click();
+  await expect(page.getByRole('link', { name: 'Music Bots', exact: true })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Collapse Automation section' })).toHaveAttribute('aria-expanded', 'true');
+  const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!));
+  expect(persisted.version).toBe(7);
+  expect(persisted.state.sidebarSections).toMatchObject({ security: false, system: false, automation: true });
+});
+
+test('collapsed sections advertise their size and still reveal the active destination', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await signInAsAdmin(page, request);
+
+  const automation = page.getByRole('button', { name: 'Expand Automation section' });
+  await expect(automation.locator('[data-section-count]')).toHaveText('3');
+  await expect(page.getByRole('button', { name: 'Collapse Management section' }).locator('[data-section-count]')).toHaveCount(0);
+
+  await page.goto('/iptv');
+  await expect(page.getByRole('link', { name: 'IPTV', exact: true })).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('link', { name: 'Music Bots', exact: true })).toHaveCount(0);
 });
 
 test('every section is keyboard controlled, persists independently, and keeps the active destination visible', async ({ page, request }) => {
   await signInAsAdmin(page, request);
 
   for (const label of sectionLabels) {
+    const expanded = defaultSections[sectionIds[sectionLabels.indexOf(label)]];
+    if (!expanded) {
+      const expand = page.getByRole('button', { name: `Expand ${label} section` });
+      await expand.focus();
+      await page.keyboard.press('Space');
+      await expect(page.getByRole('button', { name: `Collapse ${label} section` })).toHaveAttribute('aria-expanded', 'true');
+    }
     const control = page.getByRole('button', { name: `Collapse ${label} section` });
     await control.focus();
     await page.keyboard.press('Space');
@@ -118,6 +184,8 @@ for (const [width, height, navigationName, opensSheet] of [
     await page.setViewportSize({ width, height });
     await signInAsAdmin(page, request);
     if (opensSheet) await page.getByRole('button', { name: 'Open navigation menu' }).click();
+    await page.getByRole('button', { name: 'Expand Automation section' }).click();
+    await scrollNavigation(page, navigationName, 'top');
     const container = page.getByRole('navigation', { name: navigationName }).locator('xpath=ancestor::div[@data-nav-scroll-container][1]');
 
     await expect(container.locator('[data-nav-scroll-edge="bottom"]')).toHaveCount(1);
@@ -145,8 +213,12 @@ for (const [width, height] of [[390, 844], [768, 1024]] as const) {
     await signInAsAdmin(page, request);
     await page.getByRole('button', { name: 'Open navigation menu' }).click();
 
-    const automation = page.getByRole('button', { name: 'Collapse Automation section' });
+    await expect(page.getByRole('link', { name: 'Music Bots', exact: true })).toHaveCount(0);
+    const automation = page.getByRole('button', { name: 'Expand Automation section' });
     await automation.focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('link', { name: 'Music Bots', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Collapse Automation section' }).focus();
     await page.keyboard.press('Enter');
     await expect(page.getByRole('button', { name: 'Expand Automation section' })).toHaveAttribute('aria-expanded', 'false');
     await expect(page.getByRole('link', { name: 'Music Bots', exact: true })).toHaveCount(0);

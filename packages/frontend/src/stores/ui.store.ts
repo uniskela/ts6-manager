@@ -30,14 +30,17 @@ export const DEFAULT_BACKGROUND_MOTION: BackgroundMotion = 'system';
 export const DEFAULT_BACKGROUND_INTENSITY: BackgroundIntensity = 'normal';
 export const DEFAULT_CUSTOM_CSS_TEXT = '';
 export const DEFAULT_CUSTOM_CSS_ENABLED = false;
+// System and Automation start collapsed so every section heading fits common
+// viewport heights; a collapsed section still shows its active destination.
 export const DEFAULT_SIDEBAR_SECTIONS: SidebarSections = {
   overview: true,
   management: true,
   security: true,
   content: true,
-  system: true,
-  automation: true,
+  system: false,
+  automation: false,
 };
+const COMPACT_SIDEBAR_DEFAULTS_VERSION = 7;
 
 function isBaseTheme(value: unknown): value is BaseTheme {
   return typeof value === 'string' && BASE_THEMES.includes(value as BaseTheme);
@@ -73,11 +76,16 @@ function isPermissionLabelMode(value: unknown): value is PermissionLabelMode {
   return value === 'simple' || value === 'technical';
 }
 
-function migrateSidebarSections(value: unknown): SidebarSections {
+function migrateSidebarSections(value: unknown, fromVersion?: number): SidebarSections {
   const sections = value && typeof value === 'object' ? value as Record<string, unknown> : {};
-  return Object.fromEntries(
-    SIDEBAR_SECTION_IDS.map(id => [id, typeof sections[id] === 'boolean' ? sections[id] : true]),
+  const migrated = Object.fromEntries(
+    SIDEBAR_SECTION_IDS.map(id => [id, typeof sections[id] === 'boolean' ? sections[id] : DEFAULT_SIDEBAR_SECTIONS[id]]),
   ) as SidebarSections;
+  if (fromVersion !== undefined && fromVersion < COMPACT_SIDEBAR_DEFAULTS_VERSION) {
+    migrated.system = false;
+    migrated.automation = false;
+  }
+  return migrated;
 }
 
 export function applyAppearance(baseTheme: BaseTheme, accent: Accent) {
@@ -94,13 +102,13 @@ export function applyAppearance(baseTheme: BaseTheme, accent: Accent) {
   }
 }
 
-function migrateUiState(persisted: unknown) {
+function migrateUiState(persisted: unknown, fromVersion?: number) {
   const state = persisted && typeof persisted === 'object' ? persisted as Record<string, unknown> : {};
   const legacyTheme = isBaseTheme(state.theme) ? state.theme : undefined;
   const customCssText = sanitizeCustomCssText(state.customCssText);
   return {
     sidebarCollapsed: state.sidebarCollapsed === true,
-    sidebarSections: migrateSidebarSections(state.sidebarSections),
+    sidebarSections: migrateSidebarSections(state.sidebarSections, fromVersion),
     baseTheme: isBaseTheme(state.baseTheme) ? state.baseTheme : legacyTheme ?? DEFAULT_BASE_THEME,
     accent: isAccent(state.accent) ? state.accent : DEFAULT_ACCENT,
     background: isBackground(state.background) ? state.background : DEFAULT_BACKGROUND,
@@ -207,8 +215,8 @@ export const useUiStore = create<UiStore>()(
     }),
     {
       name: 'ts6-ui',
-      version: 6,
-      migrate: migrateUiState,
+      version: COMPACT_SIDEBAR_DEFAULTS_VERSION,
+      migrate: (persisted, fromVersion) => migrateUiState(persisted, fromVersion),
       merge: (persisted, current) => ({ ...current, ...migrateUiState(persisted) }),
       partialize: ({
         sidebarCollapsed, sidebarSections, baseTheme, accent, background, backgroundMotion, backgroundIntensity,
