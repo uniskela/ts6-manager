@@ -319,6 +319,7 @@ const server = createServer(async (req, res) => {
       botScenario = url.searchParams.get('scenario') || 'normal';
       botUpdateRequests = [];
       if (botScenario === 'server-update') bots[0].name = 'Server refreshed';
+      if (botScenario === 'empty') bots = [];
     }
     if (url.pathname === '/__test/data-table' && url.searchParams.has('scenario')) {
       dataTableScenario = url.searchParams.get('scenario') || 'normal';

@@ -39,6 +39,36 @@ test('configured connections without a selection point to the header selector', 
   await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveCount(0);
 });
 
+test('automation pages block creation until a connection exists', async ({ page, request }) => {
+  await request.post('/__test/bots?scenario=empty');
+  await signIn(page, request, { scenario: 'no-connections' });
+
+  await page.goto('/bots');
+  await expect(page.getByRole('heading', { name: 'Connect a TeamSpeak server first' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Bot' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'From Template' })).toBeDisabled();
+
+  await page.goto('/music-bots');
+  await expect(page.getByRole('heading', { name: 'Connect a TeamSpeak server first' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Bot' })).toBeDisabled();
+  await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveAttribute('href', '/settings?tab=connections&wizard=1');
+
+  await request.post('/__test/dashboard?scenario=normal');
+  await page.goto('/music-bots');
+  await expect(page.getByRole('heading', { name: 'No music bots yet' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Bot' })).toBeEnabled();
+});
+
+test('existing bot flows stay listed while creation waits for a connection', async ({ page, request }) => {
+  await signIn(page, request, { scenario: 'no-connections' });
+
+  await page.goto('/bots');
+  await expect(page.getByRole('heading', { level: 1, name: 'Bot Flows' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'New Bot' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'From Template' })).toBeDisabled();
+  await expect(page.getByRole('heading', { name: 'No bot flows yet' })).toHaveCount(0);
+});
+
 test('viewers without connections are not sent to admin-only setup', async ({ page, request }) => {
   await signIn(page, request, { scenario: 'no-connections', role: 'viewer' });
   await page.goto('/channels');

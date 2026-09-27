@@ -8,6 +8,12 @@ import { useAuthStore } from '@/stores/auth.store';
 
 export const CONNECTION_SETUP_PATH = '/settings?tab=connections&wizard=1';
 
+/** True only once the connection list has loaded and is empty. */
+export function useHasNoConnections() {
+  const { data: servers, isSuccess } = useServers();
+  return isSuccess && Array.isArray(servers) && servers.length === 0;
+}
+
 interface NoServerSelectedStateProps {
   pageTitle: string;
   icon: LucideIcon;
@@ -24,9 +30,8 @@ export function NoServerSelectedState({
   icon,
   selectDescription = 'Choose a server connection from the selector in the header.',
 }: NoServerSelectedStateProps) {
-  const { data: servers, isSuccess } = useServers();
   const isAdmin = useAuthStore((state) => state.isAdmin());
-  const hasNoConnections = isSuccess && Array.isArray(servers) && servers.length === 0;
+  const hasNoConnections = useHasNoConnections();
 
   let title = 'No server selected';
   let description = selectDescription;
