@@ -631,6 +631,9 @@ const server = createServer(async (req, res) => {
                 serverName: 'Operations Voice with an intentionally long server name that must wrap without overflowing the page header',
               };
             }
+            if (dashboardScenario === 'degraded') {
+              return { ...base, ping: 142.5, packetloss: 0.083 };
+            }
             if (dashboardScenario === 'zero-capacity') {
               return { ...base, onlineUsers: 0, maxClients: 0, bandwidth: { incoming: 0, outgoing: 0 }, packetloss: 0, ping: 0 };
             }

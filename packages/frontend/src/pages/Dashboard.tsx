@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ElementType, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import {
+  AlertTriangle,
   ArrowDownToLine,
   ArrowUpFromLine,
   Clock,
@@ -18,6 +19,8 @@ import { useServers, useVirtualServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { useAuthStore } from '@/stores/auth.store';
 import { NUDGE_DISMISS_STORAGE_KEY } from '@/content/connection-setup';
+import { classifyPacketLoss, classifyPing, METRIC_HEALTH_LABEL, type MetricHealth } from '@/lib/connection-health';
+import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -74,14 +77,37 @@ const chartColours = {
   border: 'hsl(var(--border))',
 };
 
-function Metric({ label, value, icon: Icon }: { label: string; value: string | number; icon: ElementType }) {
+function Metric({ label, value, icon: Icon, health = 'normal' }: { label: string; value: string | number; icon: ElementType; health?: MetricHealth }) {
   return (
-    <div className="min-w-0 rounded-lg border border-border/70 bg-muted/30 p-3">
-      <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+    <div
+      data-health={health}
+      className={cn(
+        'min-w-0 rounded-lg border bg-muted/30 p-3 transition-colors',
+        health === 'normal' && 'border-border/70',
+        health === 'elevated' && 'border-warning/40 bg-warning/5',
+        health === 'high' && 'border-destructive/40 bg-destructive/5',
+      )}
+    >
+      <div className="mb-2 flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
         <Icon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-        <span>{label}</span>
+        <span className="truncate">{label}</span>
+        {health !== 'normal' && (
+          <Badge variant={health === 'high' ? 'destructive' : 'warning'} className="ml-auto shrink-0 px-1.5 text-[10px]">
+            <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />
+            {METRIC_HEALTH_LABEL[health]}
+          </Badge>
+        )}
       </div>
-      <p className="break-words font-mono-data text-lg font-semibold text-foreground">{value}</p>
+      <p
+        className={cn(
+          'break-words font-mono-data text-lg font-semibold',
+          health === 'normal' && 'text-foreground',
+          health === 'elevated' && 'text-warning',
+          health === 'high' && 'text-destructive',
+        )}
+      >
+        {value}
+      </p>
     </div>
   );
 }
@@ -244,6 +270,9 @@ export default function Dashboard() {
     ? Math.min(Math.max((data.onlineUsers / data.maxClients) * 100, 0), 100)
     : 0;
   const roundedUtilisation = Math.round(utilisation);
+  // Classify the same rounded values that are displayed so badges never contradict the numbers.
+  const pingMs = Math.round(Number(data.ping || 0) * 10) / 10;
+  const packetLossPercent = Math.round(Number(data.packetloss || 0) * 10_000) / 100;
   const availableSlots = Math.max(data.maxClients - data.onlineUsers, 0);
   const backgroundError = gateError
     ? apiErrorMessage(
@@ -329,8 +358,8 @@ export default function Dashboard() {
           <div className="grid min-w-0 grid-cols-2 gap-3">
             <Metric icon={Hash} label="Channels" value={formatNumber(data.channelCount)} />
             <Metric icon={Clock} label="Uptime" value={formatUptime(data.uptime)} />
-            <Metric icon={Gauge} label="Ping" value={`${Number(data.ping || 0).toFixed(1)} ms`} />
-            <Metric icon={Radio} label="Packet loss" value={`${(Number(data.packetloss || 0) * 100).toFixed(2)}%`} />
+            <Metric icon={Gauge} label="Ping" value={`${pingMs.toFixed(1)} ms`} health={classifyPing(pingMs)} />
+            <Metric icon={Radio} label="Packet loss" value={`${packetLossPercent.toFixed(2)}%`} health={classifyPacketLoss(packetLossPercent / 100)} />
           </div>
         </div>
       </DataPanel>

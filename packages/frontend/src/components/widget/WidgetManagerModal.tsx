@@ -130,7 +130,7 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {view !== 'list' && (
-              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setView('list')}>
+              <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setView('list')} aria-label="Back to widget list" title="Back to widget list">
                 <ArrowLeft className="h-4 w-4" />
               </Button>
             )}
@@ -290,6 +290,8 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
                     <Button
                       size="icon" variant="ghost"
                       className="absolute top-1 right-1 h-7 w-7"
+                      aria-label="Copy iframe embed code"
+                      title="Copy iframe embed code"
                       onClick={() => copyText(`<iframe src="${origin}/widget/${embedTarget.token}" width="420" height="600" frameborder="0" scrolling="auto" style="border-radius:8px;border:none;"></iframe>`)}
                     >
                       <Copy className="h-3.5 w-3.5" />
@@ -304,7 +306,7 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
                       <code className="flex-1 bg-muted rounded-md p-2 text-xs font-mono break-all">
                         {`${origin}/api/widget/${embedTarget.token}/image.svg`}
                       </code>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" onClick={() => copyText(`${origin}/api/widget/${embedTarget.token}/image.svg`)}>
+                      <Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" aria-label="Copy SVG image URL" title="Copy SVG image URL" onClick={() => copyText(`${origin}/api/widget/${embedTarget.token}/image.svg`)}>
                         <Copy className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -315,7 +317,7 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
                       <code className="flex-1 bg-muted rounded-md p-2 text-xs font-mono break-all">
                         {`${origin}/api/widget/${embedTarget.token}/image.png`}
                       </code>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" onClick={() => copyText(`${origin}/api/widget/${embedTarget.token}/image.png`)}>
+                      <Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" aria-label="Copy PNG image URL" title="Copy PNG image URL" onClick={() => copyText(`${origin}/api/widget/${embedTarget.token}/image.png`)}>
                         <Copy className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -326,7 +328,7 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
                       <code className="flex-1 bg-muted rounded-md p-2 text-xs font-mono break-all">
                         {`<img src="${origin}/api/widget/${embedTarget.token}/image.png" alt="TeamSpeak Server" />`}
                       </code>
-                      <Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" onClick={() => copyText(`<img src="${origin}/api/widget/${embedTarget.token}/image.png" alt="TeamSpeak Server" />`)}>
+                      <Button size="icon" variant="ghost" className="h-7 w-7 flex-shrink-0" aria-label="Copy HTML img tag" title="Copy HTML img tag" onClick={() => copyText(`<img src="${origin}/api/widget/${embedTarget.token}/image.png" alt="TeamSpeak Server" />`)}>
                         <Copy className="h-3.5 w-3.5" />
                       </Button>
                     </div>
@@ -342,6 +344,8 @@ export function WidgetManagerModal({ open, onOpenChange }: Props) {
                     <Button
                       size="icon" variant="ghost"
                       className="absolute top-1 right-1 h-7 w-7"
+                      aria-label="Copy forum BBCode"
+                      title="Copy forum BBCode"
                       onClick={() => copyText(`[img]${origin}/api/widget/${embedTarget.token}/image.png[/img]`)}
                     >
                       <Copy className="h-3.5 w-3.5" />

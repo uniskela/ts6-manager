@@ -199,6 +199,8 @@ interface TreeNodeProps {
   setDraggedCid: (cid: number | null) => void;
 }
 
+const channelActionClass = 'flex h-9 w-9 items-center justify-center rounded transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:h-7 sm:w-7';
+
 function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, showQueryClients, clientsByChannel, onDelete, onEdit, onMove, onDrop, draggedCid, setDraggedCid }: TreeNodeProps) {
   const [expanded, setExpanded] = useState(true);
   const [dropOver, setDropOver] = useState(false);
@@ -281,7 +283,7 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, showQueryCli
           <div className="touch-action-reveal flex items-center gap-0.5 transition-opacity">
             <button
               onClick={() => onMove(node)}
-              className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7"
+              className={cn(channelActionClass, 'text-muted-foreground hover:bg-muted hover:text-foreground')}
               aria-label={`Move ${node.channel_name}`}
               title={`Move ${node.channel_name}`}
             >
@@ -289,15 +291,16 @@ function ChannelTreeNode({ node, depth = 0, isAdmin, configId, sid, showQueryCli
             </button>
             <button
               onClick={() => onEdit(node)}
-              className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:h-7 sm:w-7"
+              className={cn(channelActionClass, 'text-muted-foreground hover:bg-muted hover:text-foreground')}
               aria-label={`Edit ${node.channel_name}`}
               title={`Edit ${node.channel_name}`}
             >
               <Pencil className="h-3 w-3" />
             </button>
+            <span aria-hidden="true" className="mx-1 h-4 w-px bg-border" />
             <button
               onClick={() => onDelete(node.cid, node.channel_name)}
-              className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/20 hover:text-destructive sm:h-7 sm:w-7"
+              className={cn(channelActionClass, 'text-destructive/70 hover:bg-destructive/15 hover:text-destructive')}
               aria-label={`Delete ${node.channel_name}`}
               title={`Delete ${node.channel_name}`}
             >

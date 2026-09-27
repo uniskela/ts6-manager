@@ -60,7 +60,7 @@ export function TemplateGallery({ open, onOpenChange, onSelect }: TemplateGaller
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               {selected && (
-                <Button variant="ghost" size="icon" className="h-6 w-6 mr-1" onClick={handleBack}>
+                <Button variant="ghost" size="icon" className="h-6 w-6 mr-1" onClick={handleBack} aria-label="Back to templates" title="Back to templates">
                   <ArrowLeft className="h-4 w-4" />
                 </Button>
               )}

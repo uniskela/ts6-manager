@@ -392,8 +392,30 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
 
         {step === 0 && (
           <div className="space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed border-primary/40 bg-primary/5 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-medium">Just exploring? Try a demo server</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  Synthetic channels, clients, groups, and logs. Creating it makes no network connection and changes no real TeamSpeak server.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={handleCreateDemo}
+                disabled={createDemoServer.isPending}
+              >
+                {createDemoServer.isPending ? (
+                  <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Creating…</>
+                ) : (
+                  <><TestTube className="h-3 w-3 mr-1" /> Create demo server</>
+                )}
+              </Button>
+            </div>
+
             <p className="text-xs text-muted-foreground">
-              Choose how your TeamSpeak server is deployed relative to ts6-manager.
+              Or choose how your real TeamSpeak server is deployed relative to ts6-manager.
             </p>
 
             <div className="rounded-md border border-border p-3 space-y-2">
@@ -511,34 +533,6 @@ export function ConnectionSetupWizard({ open, onOpenChange, onComplete }: Connec
               );
             })}
 
-            <div className="rounded-md border border-dashed border-primary/40 bg-primary/5 p-3 space-y-2">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs font-medium">Demo server — no TeamSpeak required</p>
-                    <Badge variant="outline" className="text-[10px]">Demo</Badge>
-                  </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Create a local synthetic server with generic channels, clients, groups, permissions, bans, tokens, and logs for UI/UX testing.
-                  </p>
-                  <p className="mt-1 text-[10px] text-muted-foreground">
-                    No network connection is made and no real TeamSpeak server is changed. Simulated changes reset with the demo data.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  onClick={handleCreateDemo}
-                  disabled={createDemoServer.isPending}
-                >
-                  {createDemoServer.isPending ? (
-                    <><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Creating…</>
-                  ) : (
-                    <><TestTube className="h-3 w-3 mr-1" /> Create demo server</>
-                  )}
-                </Button>
-              </div>
-            </div>
           </div>
         )}
 

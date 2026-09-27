@@ -193,9 +193,16 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
                         )}
                       >
                         <span>{section.label}</span>
-                        {expanded
-                          ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
-                          : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
+                        <span className="flex items-center gap-1.5">
+                          {!expanded && (
+                            <span aria-hidden="true" data-section-count className="rounded bg-sidebar-accent px-1.5 font-mono-data text-[10px] font-medium tracking-normal text-sidebar-foreground/75">
+                              {visibleItems.length}
+                            </span>
+                          )}
+                          {expanded
+                            ? <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
+                            : <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />}
+                        </span>
                       </button>
                     )}
                     <div id={contentId} hidden={!collapsed && !expanded} className="space-y-1">
@@ -215,7 +222,9 @@ function NavigationContent({ collapsed = false, mobile = false, onNavigate }: Na
           <div aria-hidden="true" data-nav-scroll-edge="top" className="pointer-events-none absolute inset-x-0 top-0 h-6 bg-gradient-to-b from-sidebar to-transparent" />
         )}
         {scrollEdges.bottom && (
-          <div aria-hidden="true" data-nav-scroll-edge="bottom" className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-sidebar to-transparent" />
+          <div aria-hidden="true" data-nav-scroll-edge="bottom" className="pointer-events-none absolute inset-x-0 bottom-0 flex h-12 items-end justify-center bg-gradient-to-t from-sidebar via-sidebar/85 to-transparent pb-1">
+            <ChevronDown className="h-4 w-4 text-sidebar-foreground/60" />
+          </div>
         )}
       </div>
 

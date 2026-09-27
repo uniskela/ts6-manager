@@ -58,6 +58,26 @@ test('zero capacity and zero telemetry render finite, useful values', async ({ p
   await expect(page.locator('body')).not.toContainText('Infinity');
 });
 
+test('healthy telemetry carries no warning while degraded telemetry is labelled, not colour-only', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await expect(page.getByText('18.4 ms')).toBeVisible();
+  await expect(page.locator('[data-health]:not([data-health="normal"])')).toHaveCount(0);
+
+  await setScenario(request, 'degraded');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.reload();
+
+  const ping = page.locator('[data-health]').filter({ hasText: 'Ping' });
+  const loss = page.locator('[data-health]').filter({ hasText: 'Packet loss' });
+  await expect(ping).toHaveAttribute('data-health', 'elevated');
+  await expect(ping).toContainText('Elevated');
+  await expect(ping).toContainText('142.5 ms');
+  await expect(loss).toHaveAttribute('data-health', 'high');
+  await expect(loss).toContainText('High');
+  await expect(loss).toContainText('8.30%');
+  await expectNoHorizontalOverflow(page);
+});
+
 test('configured connection without a virtual server preserves no-selection guidance', async ({ page, request }) => {
   await signInAsAdmin(page, request, 'no-selection');
 

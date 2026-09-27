@@ -450,7 +450,7 @@ export default function Files() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex min-w-0 items-center gap-2 overflow-x-auto">
                 {selectedCid && currentPath !== '/' && (
-                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={goUp}>
+                  <Button variant="ghost" size="icon" className="h-7 w-7" onClick={goUp} aria-label="Go to parent folder" title="Go to parent folder">
                     <ArrowLeft className="h-3.5 w-3.5" />
                   </Button>
                 )}

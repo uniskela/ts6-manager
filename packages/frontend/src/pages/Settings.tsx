@@ -673,7 +673,7 @@ function ConnectionsTab() {
                       </Button>
                     </>
                   )}
-                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(server.id)}>
+                  <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(server.id)} aria-label={`Delete connection ${server.name}`} title="Delete connection">
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
                 </div>
@@ -831,10 +831,10 @@ function UsersTab() {
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <div className="inline-flex items-center gap-0.5">
-                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Reset Password" onClick={() => { setResetPwUserId(u.id); setResetPwValue(''); }}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Reset password" aria-label={`Reset password for ${u.username}`} onClick={() => { setResetPwUserId(u.id); setResetPwValue(''); }}>
                         <KeyRound className="h-3.5 w-3.5" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(u.id)} disabled={isProtected}>
+                      <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:text-destructive" onClick={() => setDeleteId(u.id)} disabled={isProtected} aria-label={`Delete user ${u.username}`} title="Delete user">
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
