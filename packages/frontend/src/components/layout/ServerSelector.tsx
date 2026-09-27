@@ -1,8 +1,20 @@
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useServers, useVirtualServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { Server } from 'lucide-react';
+
+/** Below `sm` the side labels are screen-reader-only, so the trigger carries a visible caption instead. */
+function TriggerValue({ caption, children }: { caption: string; children: ReactNode }) {
+  return (
+    <span className="!flex min-w-0 flex-1 flex-col items-start text-left leading-tight">
+      <span aria-hidden="true" className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">
+        {caption}
+      </span>
+      <span className="block w-full truncate">{children}</span>
+    </span>
+  );
+}
 
 export function ServerSelector() {
   const { selectedConfigId, selectedSid, setServer, setSid } = useServerStore();
@@ -45,7 +57,9 @@ export function ServerSelector() {
         onValueChange={(v) => setServer(parseInt(v))}
       >
         <SelectTrigger className="h-10 min-w-0 flex-1 px-2 text-xs sm:px-3 md:h-8 md:w-[180px] md:flex-none" aria-label="Select server connection">
-          <SelectValue placeholder="Select server..." />
+          <TriggerValue caption="Connection">
+            <SelectValue placeholder="Select server..." />
+          </TriggerValue>
         </SelectTrigger>
         <SelectContent>
           {servers?.map((s: any) => (
@@ -67,7 +81,9 @@ export function ServerSelector() {
             disabled={contextLoading || !virtualServers?.length}
           >
             <SelectTrigger className="h-10 min-w-0 flex-1 px-2 text-xs sm:px-3 md:h-8 md:w-[160px] md:flex-none" aria-label="Select virtual server">
-              <SelectValue placeholder={contextLoading ? 'Loading virtual servers…' : 'No virtual server'} />
+              <TriggerValue caption="Virtual server">
+                <SelectValue placeholder={contextLoading ? 'Loading virtual servers…' : 'No virtual server'} />
+              </TriggerValue>
             </SelectTrigger>
             <SelectContent>
               {virtualServers?.map((vs: any) => (

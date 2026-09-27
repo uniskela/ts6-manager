@@ -1,19 +1,32 @@
 import * as React from 'react';
 import * as TabsPrimitive from '@radix-ui/react-tabs';
 import { cn } from '@/lib/utils';
+import { useHorizontalOverflow } from '@/hooks/use-horizontal-overflow';
 
 const Tabs = TabsPrimitive.Root;
 
 const TabsList = React.forwardRef<
   React.ElementRef<typeof TabsPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof TabsPrimitive.List>
->(({ className, ...props }, ref) => (
-  <TabsPrimitive.List
-    ref={ref}
-    className={cn('flex h-10 max-w-full items-center justify-start overflow-x-auto overscroll-x-contain rounded-lg bg-muted p-1 text-muted-foreground sm:inline-flex sm:h-9 sm:justify-center', className)}
-    {...props}
-  />
-));
+>(({ className, ...props }, forwardedRef) => {
+  const listRef = React.useRef<HTMLDivElement | null>(null);
+  const overflow = useHorizontalOverflow(listRef);
+  const setRefs = React.useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    if (typeof forwardedRef === 'function') forwardedRef(node);
+    else if (forwardedRef) (forwardedRef as React.MutableRefObject<HTMLDivElement | null>).current = node;
+  }, [forwardedRef]);
+
+  return (
+    <TabsPrimitive.List
+      ref={setRefs}
+      data-overflow-start={overflow.start || undefined}
+      data-overflow-end={overflow.end || undefined}
+      className={cn('scroll-fade-x flex h-10 max-w-full items-center justify-start overflow-x-auto overscroll-x-contain rounded-lg bg-muted p-1 text-muted-foreground sm:inline-flex sm:h-9 sm:justify-center', className)}
+      {...props}
+    />
+  );
+});
 TabsList.displayName = TabsPrimitive.List.displayName;
 
 const TabsTrigger = React.forwardRef<
