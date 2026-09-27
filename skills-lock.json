@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "adhd-hub-projects": {
+      "source": "uniskela/adhd-hub",
+      "sourceType": "github",
+      "skillPath": "skills/adhd-hub-projects/SKILL.md",
+      "computedHash": "8299cd6b22a4832bbd7bda48a188ae9c21fe4d3c0cbbd2ac25faa51324cb3ed0"
+    },
+    "adhd-hub-session": {
+      "source": "uniskela/adhd-hub",
+      "sourceType": "github",
+      "skillPath": "skills/adhd-hub-session/SKILL.md",
+      "computedHash": "fcc5caa405152ee3deaee04902e791a556357da24077913fa9a3bff5ade49860"
+    },
+    "env-check": {
+      "source": "uniskela/adhd-hub",
+      "sourceType": "github",
+      "skillPath": "skills/env-check/SKILL.md",
+      "computedHash": "8c43170351f0ed786f2a3661765d8e03ecef4804f9f1124a0bda0f3fa7eeeca0"
+    }
+  }
+}
