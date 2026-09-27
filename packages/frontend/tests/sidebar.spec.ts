@@ -103,6 +103,42 @@ test('icon-only desktop navigation keeps every destination accessible and discov
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
+async function scrollNavigation(page: Page, navigationName: string, to: 'top' | 'bottom') {
+  await page.getByRole('navigation', { name: navigationName }).evaluate((nav, position) => {
+    const viewport = nav.closest<HTMLElement>('[data-radix-scroll-area-viewport]')!;
+    viewport.scrollTop = position === 'bottom' ? viewport.scrollHeight : 0;
+  }, to);
+}
+
+for (const [width, height, navigationName, opensSheet] of [
+  [1024, 700, 'Primary navigation', false],
+  [390, 844, 'Mobile navigation', true],
+] as const) {
+  test(`overflowing navigation shows where hidden destinations are at ${width}x${height}`, async ({ page, request }) => {
+    await page.setViewportSize({ width, height });
+    await signInAsAdmin(page, request);
+    if (opensSheet) await page.getByRole('button', { name: 'Open navigation menu' }).click();
+    const container = page.getByRole('navigation', { name: navigationName }).locator('xpath=ancestor::div[@data-nav-scroll-container][1]');
+
+    await expect(container.locator('[data-nav-scroll-edge="bottom"]')).toHaveCount(1);
+    await expect(container.locator('[data-nav-scroll-edge="top"]')).toHaveCount(0);
+
+    await scrollNavigation(page, navigationName, 'bottom');
+    await expect(container.locator('[data-nav-scroll-edge="bottom"]')).toHaveCount(0);
+    await expect(container.locator('[data-nav-scroll-edge="top"]')).toHaveCount(1);
+    await expect(page.getByRole('link', { name: 'IPTV', exact: true })).toBeInViewport();
+
+    await page.getByRole('link', { name: 'IPTV', exact: true }).click();
+    await expect(page).toHaveURL('/iptv');
+  });
+}
+
+test('navigation that fits shows no scroll edges', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1440, height: 1400 });
+  await signInAsAdmin(page, request);
+  await expect(page.locator('[data-nav-scroll-edge]')).toHaveCount(0);
+});
+
 for (const [width, height] of [[390, 844], [768, 1024]] as const) {
   test(`mobile section navigation remains compact and usable at ${width}x${height}`, async ({ page, request }) => {
     await page.setViewportSize({ width, height });
