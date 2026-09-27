@@ -75,6 +75,12 @@ test('healthy telemetry carries no warning while degraded telemetry is labelled,
   await expect(loss).toHaveAttribute('data-health', 'high');
   await expect(loss).toContainText('High');
   await expect(loss).toContainText('8.30%');
+  for (const [card, label] of [[ping, 'Ping'], [loss, 'Packet loss']] as const) {
+    const cardBox = (await card.boundingBox())!;
+    const labelBox = (await card.getByText(label, { exact: true }).boundingBox())!;
+    expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
+    expect(await card.getByText(label, { exact: true }).evaluate((el) => el.scrollWidth <= el.getBoundingClientRect().width + 1)).toBe(true);
+  }
   await expectNoHorizontalOverflow(page);
 });
 

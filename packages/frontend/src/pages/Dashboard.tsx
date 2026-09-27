@@ -88,9 +88,9 @@ function Metric({ label, value, icon: Icon, health = 'normal' }: { label: string
         health === 'high' && 'border-destructive/40 bg-destructive/5',
       )}
     >
-      <div className="mb-2 flex min-w-0 items-center gap-2 text-xs font-medium text-muted-foreground">
+      <div className="mb-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs font-medium text-muted-foreground">
         <Icon className="h-3.5 w-3.5 shrink-0 text-primary" aria-hidden="true" />
-        <span className="truncate">{label}</span>
+        <span>{label}</span>
         {health !== 'normal' && (
           <Badge variant={health === 'high' ? 'destructive' : 'warning'} className="ml-auto shrink-0 px-1.5 text-[10px]">
             <AlertTriangle className="mr-1 h-3 w-3" aria-hidden="true" />

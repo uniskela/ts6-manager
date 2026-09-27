@@ -22,26 +22,33 @@ export function useHorizontalOverflow(ref: RefObject<HTMLElement>): HorizontalOv
       setOverflow((current) => (current.start === next.start && current.end === next.end ? current : next));
     };
 
-    const revealActive = () => {
+    const revealActive = (animate = true) => {
       const active = element.querySelector<HTMLElement>('[data-state="active"]');
       if (!active || element.scrollWidth <= element.clientWidth) return;
       const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       const left = active.getBoundingClientRect().left - element.getBoundingClientRect().left + element.scrollLeft;
       const right = left + active.offsetWidth;
       if (left < element.scrollLeft || right > element.scrollLeft + element.clientWidth) {
-        element.scrollTo({ left: Math.max(0, left - 16), behavior: reduceMotion ? 'auto' : 'smooth' });
+        element.scrollTo({ left: Math.max(0, left - 16), behavior: animate && !reduceMotion ? 'smooth' : 'auto' });
       }
     };
 
     update();
-    revealActive();
+    revealActive(false);
     element.addEventListener('scroll', update, { passive: true });
     const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => {
       update();
-      revealActive();
+      revealActive(false);
     });
-    resizeObserver?.observe(element);
-    const mutationObserver = new MutationObserver(() => {
+    const observeSize = () => {
+      resizeObserver?.disconnect();
+      resizeObserver?.observe(element);
+      // Triggers widen in place when web fonts swap in, without resizing a full-width list.
+      for (const child of Array.from(element.children)) resizeObserver?.observe(child);
+    };
+    observeSize();
+    const mutationObserver = new MutationObserver((records) => {
+      if (records.some((record) => record.type === 'childList')) observeSize();
       revealActive();
       update();
     });
