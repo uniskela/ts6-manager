@@ -20,10 +20,10 @@ Run early in a session (or when continuity / credentials / browser tests / local
 From a checkout that includes this skill:
 
 ```bash
-bash skills/env-check/scripts/check_runtime.sh
+bash .agents/skills/env-check/scripts/check_runtime.sh
 ```
 
-Or after `npx skills add ./skills -g` / `uniskela/adhd-hub`, run the installed copy of `scripts/check_runtime.sh`.
+Or after `npx skills add ./skills -g` / `uniskela/adhd-hub` (source-tree `skills/` layout), run the installed copy of `scripts/check_runtime.sh`.
 
 Output lines:
 
@@ -68,4 +68,4 @@ When `RUNTIME_ENV: LOCAL_WORKSPACE` (including local Docker / localhost):
 2. **Runtime env** → choose tests, credentials, tooling constraints, and whether local skill CLIs are expected
 3. Prefer Hub MCP whenever it is available, on either runtime
 
-See also: `adhd-hub-session` (full Hub protocol), [docs/forge-issue-inbox.md](../../docs/forge-issue-inbox.md).
+See also: `adhd-hub-session` (full Hub protocol), [forge-issue-inbox.md](https://github.com/uniskela/adhd-hub/blob/main/docs/forge-issue-inbox.md).
