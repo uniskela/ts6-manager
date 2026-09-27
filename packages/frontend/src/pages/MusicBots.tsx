@@ -20,7 +20,7 @@ import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
-import { CONNECTION_SETUP_PATH, useHasNoConnections } from '@/components/shared/NoServerSelectedState';
+import { CONNECTION_SETUP_PATH, ConnectionRequiredNotice, useConnectionAvailability } from '@/components/shared/NoServerSelectedState';
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
@@ -732,7 +732,8 @@ function BotsTab() {
 
   const bots = Array.isArray(data) ? data : [];
   const serverList = Array.isArray(servers) ? servers : [];
-  const hasNoConnections = useHasNoConnections();
+  const { isPending: connectionsPending, hasNoConnections } = useConnectionAvailability();
+  const createBlocked = connectionsPending || hasNoConnections;
 
   if (isLoading) return <PageLoader />;
 
@@ -820,10 +821,14 @@ function BotsTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">{formatNumber(bots.length)} music bot{bots.length !== 1 ? 's' : ''}</p>
-        <Button size="sm" disabled={hasNoConnections} onClick={() => { resetForm(); setShowCreate(true); }}>
+        <Button size="sm" disabled={createBlocked} onClick={() => { resetForm(); setShowCreate(true); }}>
           <Plus className="h-4 w-4 mr-1" /> New Bot
         </Button>
       </div>
+
+      {bots.length > 0 && hasNoConnections && (
+        <ConnectionRequiredNotice>New music bots need a TeamSpeak server connection.</ConnectionRequiredNotice>
+      )}
 
       {bots.length === 0 && hasNoConnections ? (
         <EmptyState icon={Music} title="Connect a TeamSpeak server first" description="Music bots join a server connection. Add one in Settings → Connections, then create your first bot.">

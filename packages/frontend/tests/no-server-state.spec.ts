@@ -29,13 +29,14 @@ for (const [width, height] of [[390, 844], [1440, 900]] as const) {
   });
 }
 
-test('configured connections without a selection point to the header selector', async ({ page, request }) => {
+test('a selected connection without virtual servers explains that instead of asking for a selection', async ({ page, request }) => {
   await signIn(page, request, { scenario: 'no-selection' });
   await page.goto('/bans');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Bans' })).toBeVisible();
-  await expect(page.getByRole('heading', { name: 'No server selected' })).toBeVisible();
-  await expect(page.getByText('Choose a server connection from the selector in the header.')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No virtual server available' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'View virtual servers' })).toHaveAttribute('href', '/servers');
+  await expect(page.getByRole('heading', { name: 'No server selected' })).toHaveCount(0);
   await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveCount(0);
 });
 
@@ -67,6 +68,8 @@ test('existing bot flows stay listed while creation waits for a connection', asy
   await expect(page.getByRole('button', { name: 'New Bot' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'From Template' })).toBeDisabled();
   await expect(page.getByRole('heading', { name: 'No bot flows yet' })).toHaveCount(0);
+  await expect(page.getByRole('status').filter({ hasText: 'New bot flows need a TeamSpeak server connection.' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveAttribute('href', '/settings?tab=connections&wizard=1');
 });
 
 test('viewers without connections are not sent to admin-only setup', async ({ page, request }) => {
