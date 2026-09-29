@@ -44,6 +44,19 @@ Ideas, bug reports, and patches from the upstream tracker that informed or were 
 
 Ideas and patches adapted or cherry-picked from community forks. Where source code was directly adapted, [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) records the licence/provenance evidence observed for the source revision used. That historical record should not be read as a claim about the current licensing of every external repository. See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
+### Reports and verification on this fork
+
+Issue reports and operator follow-up on `uniskela/ts6-manager` that shaped shipped fixes (distinct from upstream `clusterzx` tracker rows above):
+
+| Report | Reporter | What we shipped |
+|--------|----------|-----------------|
+| [Issue #184](https://github.com/uniskela/ts6-manager/issues/184) / [PR #187](https://github.com/uniskela/ts6-manager/pull/187) | [@D3nnis3n](https://github.com/D3nnis3n) | Ship pinned Deno for yt-dlp YouTube EJS / `n` challenge solving; confirmed Deno + playback path |
+| [Issue #185](https://github.com/uniskela/ts6-manager/issues/185) / [PR #190](https://github.com/uniskela/ts6-manager/pull/190) | [@D3nnis3n](https://github.com/D3nnis3n) | Clearer native-metrics provenance when scrape fails; Docker ↔ native TeamSpeak metrics reachability guidance; confirmed **WebQuery + native metrics** after bridge bind + `host.docker.internal` |
+
+Adopted in **v1.8.5**.
+
+### Community forks
+
 | Fork | Author | Commits / area | Adopted in uniskela |
 |------|--------|----------------|---------------------|
 | [LgnRorooo/ts6-manager](https://github.com/LgnRorooo/ts6-manager) | [@LgnRorooo](https://github.com/LgnRorooo) | [`4c734a6`](https://github.com/LgnRorooo/ts6-manager/commit/4c734a62ec65f28a96b134ff56e24bb2b091e773): playlist/repeat/seek/remove chat controls and real download progress | Selectively adapted with server/user scoping, ambiguity handling, bounded jobs and existing playback primitives for v1.6.0 |
