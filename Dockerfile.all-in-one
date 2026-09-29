@@ -92,7 +92,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/apply-schema.sh \
       /usr/local/bin/start-backend.sh \
       /usr/local/bin/sidecar \
  && mkdir -p /app/packages/backend/data /data/music /root/.config/yt-dlp \
- && printf '%s\n' '--js-runtimes deno' '--js-runtimes node' > /root/.config/yt-dlp/config
+ && printf '%s\n' '--js-runtimes deno' > /root/.config/yt-dlp/config
 
 # Only publish nginx (:80) from compose. Backend/sidecar stay loopback-only inside the container.
 EXPOSE 80

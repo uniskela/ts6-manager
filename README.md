@@ -467,9 +467,11 @@ semantics and does not download media eagerly.
 Production containers do not self-update packages. yt-dlp is installed at image
 build time using pip’s required PEP-668 option; builds check `yt-dlp --version`,
 `ffmpeg -version`, `node --version`, and `deno --version`. A pinned Deno binary
-(see `.deno-version`) is installed so yt-dlp can solve YouTube EJS / `n`
-challenges; Node remains enabled as a fallback JS runtime. Pull a newly built
-TS6 Manager image and recreate the container to refresh bundled yt-dlp and Deno.
+(see `.deno-version`) is the yt-dlp JavaScript runtime for YouTube EJS / `n`
+challenges (`--js-runtimes deno` only). Image Node stays at 20 for the Nest
+backend and is not configured as an EJS fallback (yt-dlp requires Node 22+).
+Pull a newly built TS6 Manager image and recreate the container to refresh
+bundled yt-dlp and Deno.
 Rebuilding with a fresh image build also refreshes them. No in-app package
 updater is provided. Extractor tests use structured fixtures; a public-video
 smoke test is deliberately not a release gate because availability, rate limits

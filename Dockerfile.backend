@@ -79,7 +79,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/apply-schema.sh \
  && chmod +x /usr/local/bin/apply-schema.sh \
       /usr/local/bin/start-backend-standalone.sh \
  && mkdir -p data /data/music /root/.config/yt-dlp \
- && printf '%s\n' '--js-runtimes deno' '--js-runtimes node' > /root/.config/yt-dlp/config
+ && printf '%s\n' '--js-runtimes deno' > /root/.config/yt-dlp/config
 
 EXPOSE 3001
 CMD ["/usr/local/bin/start-backend-standalone.sh"]
