@@ -27,10 +27,15 @@ import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
 import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
 
+// Fixed presets are the IPTV default: Auto probes the source first, which is a
+// second connection that single-connection IPTV services may refuse.
 const PRESETS = [
+  { value: 'auto', label: 'Auto (probe)' },
   { value: '480p', label: '480p' },
   { value: '720p', label: '720p' },
   { value: '1080p', label: '1080p' },
+  { value: '1440p', label: '1440p' },
+  { value: '2160p', label: '2160p' },
 ];
 
 const ACCEPT_PLAYLIST = '.m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain';

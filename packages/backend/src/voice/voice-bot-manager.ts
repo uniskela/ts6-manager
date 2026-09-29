@@ -2,13 +2,15 @@ import { EventEmitter } from 'events';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
-import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus } from './voice-bot.js';
+import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus, type VideoStreamStartOptions } from './voice-bot.js';
+import type { MediaSessionInfo } from '@ts6/common';
+import { MediaSessionConflictError } from './media-session.js';
 import { generateIdentity, generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
 import type { QueueItem } from './playlist/queue.js';
 import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
-import { loadMaxVideoDuration } from '../utils/app-settings.js';
+import { loadMaxVideoDuration, loadVideoStreamingSettings } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
 
@@ -99,7 +101,13 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   private createBotInstance(config: VoiceBotConfig): VoiceBot {
-    const bot = new VoiceBot(config);
+    // Streaming defaults are read when a stream starts, so admin changes apply
+    // to the next stream without restarting bots.
+    const bot = new VoiceBot({
+      ...config,
+      loadVideoSettings: config.loadVideoSettings
+        ?? (() => loadVideoStreamingSettings(this.prisma, config.serverConfigId)),
+    });
 
     bot.on('statusChange', (status: VoiceBotStatus) => {
       this.broadcast('music:bot:status', { botId: config.id, status });
@@ -178,13 +186,18 @@ export class VoiceBotManager extends EventEmitter {
       }
     });
 
+    // A confirmed switch stopped one of this bot's sessions (media audit listens).
+    bot.on('mediaSessionReplaced', (session: MediaSessionInfo) => {
+      this.emit('mediaSessionReplaced', session);
+    });
+
     // Video streaming events
     bot.on('videoStreamStarted', (data: any) => {
       this.broadcast('music:bot:videoStreamStarted', { botId: config.id, ...data });
     });
 
-    bot.on('videoStreamStopped', () => {
-      this.broadcast('music:bot:videoStreamStopped', { botId: config.id });
+    bot.on('videoStreamStopped', (lastStop?: { reason: string; at: number; detail: string | null } | null) => {
+      this.broadcast('music:bot:videoStreamStopped', { botId: config.id, lastStop: lastStop ?? null });
     });
 
     bot.on('videoViewerJoined', (viewer: any) => {
@@ -329,6 +342,82 @@ export class VoiceBotManager extends EventEmitter {
       }
     })();
     this.identityJobs.set(botId, job);
+  }
+
+  /** Serializes the check-and-claim part of video starts across bots. */
+  private videoClaimLock: Promise<void> = Promise.resolve();
+
+  /** Every bot's active media session (cheap: no sidecar or TeamSpeak calls). */
+  listMediaSessions(): MediaSessionInfo[] {
+    const sessions: MediaSessionInfo[] = [];
+    for (const bot of this.bots.values()) {
+      const session = bot.mediaSession;
+      if (session) sessions.push(session);
+    }
+    return sessions;
+  }
+
+  /**
+   * Throw MediaSessionConflictError unless every session a video start on
+   * `bot` would replace is confirmed. Returns the other bots whose video will
+   * be replaced. Synchronous, so routes can check before auditing.
+   */
+  assertVideoCanStart(bot: VoiceBot, replaceSessionIds: string[] = []): VoiceBot[] {
+    const confirmed = new Set(replaceSessionIds);
+    const otherVideo = [...this.bots.values()]
+      .filter((b) => b !== bot)
+      .map((b) => ({ bot: b, session: b.videoSessionInfo() }))
+      .filter((x): x is { bot: VoiceBot; session: MediaSessionInfo } => x.session != null);
+    const ownMusic = bot.musicSessionInfo();
+    const conflicts = [...otherVideo.map((x) => x.session), ...(ownMusic ? [ownMusic] : [])];
+    if (conflicts.some((c) => c.state === 'starting' || !confirmed.has(c.id))) {
+      throw new MediaSessionConflictError('video', conflicts);
+    }
+    return otherVideo.map((x) => x.bot);
+  }
+
+  /**
+   * Start video on `bot` under the single-session rules: only one video stream
+   * runs at a time (the sidecar is shared) and a bot never plays music and video
+   * together. Any session that would be replaced must be named in
+   * `replaceSessionIds`; otherwise this throws MediaSessionConflictError listing
+   * every conflict so one confirmation covers them all.
+   *
+   * Returns the sessions actually replaced under `videoClaimLock` (other bots'
+   * video and this bot's music), so callers can audit stops without a stale
+   * pre-dispatch snapshot.
+   */
+  async startVideoStream(
+    bot: VoiceBot,
+    source: string,
+    options: VideoStreamStartOptions = {},
+  ): Promise<MediaSessionInfo[]> {
+    const replaced: MediaSessionInfo[] = [];
+    let started!: Promise<void>;
+    const release = this.videoClaimLock;
+    let unlock!: () => void;
+    this.videoClaimLock = new Promise<void>((resolve) => { unlock = resolve; });
+    await release;
+    try {
+      const otherVideo = this.assertVideoCanStart(bot, options.replaceSessionIds);
+      for (const other of otherVideo) {
+        const session = other.videoSessionInfo();
+        await other.stopVideoStream('replaced_by_video', `Replaced by a stream on ${bot.currentConfig.name}`);
+        if (session) {
+          replaced.push(session);
+          this.emit('mediaSessionReplaced', session);
+        }
+      }
+      const ownMusic = bot.musicSessionInfo();
+      if (ownMusic) replaced.push(ownMusic);
+      // startVideoStream claims its session synchronously, so the lock can be
+      // released before the (possibly long) download and sidecar start.
+      started = bot.startVideoStream(source, options);
+    } finally {
+      unlock();
+    }
+    await started;
+    return replaced;
   }
 
   getBot(id: number): VoiceBot | undefined {

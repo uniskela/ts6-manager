@@ -1,5 +1,7 @@
 import axios from 'axios';
 import { useAuthStore } from '../stores/auth.store';
+import { useMediaSwitchStore } from '../stores/media-switch.store';
+import { conflictIsReplaceable, isMediaSessionConflict, withReplaceSessionIds } from '../lib/media-switch';
 
 const api = axios.create({
   baseURL: '/api',
@@ -103,6 +105,19 @@ api.interceptors.response.use(
         original.headers.Authorization = `Bearer ${newToken}`;
         return api(original);
       }
+    }
+    // Single media session: confirm replacing the active music/video, then
+    // resend the same request naming exactly the sessions it may stop.
+    const data = error.response?.data;
+    if (error.response?.status === 409 && original && !original._mediaSwitchRetry && isMediaSessionConflict(data)) {
+      const confirmed = await useMediaSwitchStore.getState().request(data);
+      if (confirmed && conflictIsReplaceable(data)) {
+        original._mediaSwitchRetry = true;
+        original.data = JSON.stringify(withReplaceSessionIds(original.data, data.conflicts.map((c) => c.id)));
+        return api(original);
+      }
+      data.error = 'Cancelled — what was playing keeps playing.';
+      data.details = undefined;
     }
     return Promise.reject(error);
   },

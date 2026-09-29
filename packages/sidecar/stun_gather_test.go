@@ -47,7 +47,7 @@ func TestUnansweredSTUNServerDoesNotHoldAViewer(t *testing.T) {
 	s := NewSidecar()
 
 	start := time.Now()
-	if _, err := s.CreatePeer("stun-timeout-test"); err != nil {
+	if _, err := s.CreatePeer("stun-timeout-test", ""); err != nil {
 		t.Fatalf("CreatePeer: %v", err)
 	}
 	took := time.Since(start)

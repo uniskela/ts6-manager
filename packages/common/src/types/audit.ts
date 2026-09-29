@@ -51,6 +51,13 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.yt_cookies_changed',
   'settings.yt_cookies_removed',
   'settings.limits_update',
+  'settings.video_streaming_update',
+  'media.music.start',
+  'media.music.stop',
+  'media.video.start',
+  'media.video.stop',
+  'media.video.source_change',
+  'media.session.switch',
 ] as const;
 
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];
@@ -93,6 +100,7 @@ export const ADMIN_AUDIT_TARGET_TYPES = [
   'flow',
   'user',
   'settings',
+  'music_bot',
 ] as const;
 
 export type AdminAuditTargetType = (typeof ADMIN_AUDIT_TARGET_TYPES)[number];

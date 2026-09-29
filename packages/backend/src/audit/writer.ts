@@ -284,9 +284,33 @@ export async function runRemoteAudited<T>(
   dispatch: () => Promise<T>,
   options?: {
     resolveTargetId?: (result: T) => string | number | null | undefined;
+    /**
+     * Side effects the dispatch carried out (e.g. sessions a media switch
+     * stopped), read once it returns or throws: a stop that happened before a
+     * failed start still happened. Recorded as completed rows under the same
+     * operationId; best-effort like completion.
+     */
+    relatedAfter?: () => BaseEventInput[];
   },
 ): Promise<T> {
   const attempt = await beginRemoteAttempt(prisma, input);
+  const recordRelated = async () => {
+    for (const extra of options?.relatedAfter?.() ?? []) {
+      try {
+        await prisma.adminAuditEvent.create({
+          data: buildRow({
+            ...extra,
+            operationId: attempt.operationId,
+            outcome: 'success',
+            resultCode: 'ok',
+            completedAt: new Date(),
+          }),
+        });
+      } catch {
+        // The side effect already happened; a lost row must not fail the request.
+      }
+    }
+  };
   try {
     const result = await dispatch();
     try {
@@ -298,6 +322,7 @@ export async function runRemoteAudited<T>(
     } catch {
       // Dispatch already succeeded — leave pending for stale resolution; do not fail the request.
     }
+    await recordRelated();
     return result;
   } catch (err) {
     try {
@@ -305,7 +330,7 @@ export async function runRemoteAudited<T>(
     } catch {
       // Leave pending; retention will mark unknown.
     }
+    await recordRelated();
     throw err;
   }
 }
-

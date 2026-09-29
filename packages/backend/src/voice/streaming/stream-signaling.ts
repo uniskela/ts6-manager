@@ -40,11 +40,23 @@ export interface SignalingMessage {
 export class StreamSignaling extends EventEmitter {
   private client: Ts3Client;
   private activeStreams: Map<string, ActiveStream> = new Map();
+  private readonly onCommand = (parsed: any) => this.handleCommand(parsed);
 
   constructor(client: Ts3Client) {
     super();
     this.client = client;
-    this.client.on('command', (parsed: any) => this.handleCommand(parsed));
+    this.client.on('command', this.onCommand);
+  }
+
+  /**
+   * Detach from the client and drop every listener. Without this each stream
+   * start left a live command listener behind, so later join requests were
+   * handled once per earlier stream.
+   */
+  dispose(): void {
+    this.client.removeListener('command', this.onCommand);
+    this.removeAllListeners();
+    this.activeStreams.clear();
   }
 
   getActiveStreams(): Map<string, ActiveStream> {

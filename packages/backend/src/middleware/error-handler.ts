@@ -133,8 +133,9 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
   const quietSshDisconnected = err instanceof TeamSpeakSshDisconnectedError;
   const quietLogviewIo = err instanceof TeamSpeakLogviewIoError;
   const quietPermission = err instanceof TeamSpeakPermissionError;
+  const quietConflict = err instanceof AppError && err.name === 'MediaSessionConflictError';
 
-  if (!quietTs && !quietFlood && !quietUnavailable && !quietSshDisconnected && !quietLogviewIo && !quietPermission) {
+  if (!quietTs && !quietFlood && !quietUnavailable && !quietSshDisconnected && !quietLogviewIo && !quietPermission && !quietConflict) {
     console.error(`[Error] ${err.name}: ${err.message}`);
   }
 
@@ -174,6 +175,19 @@ export function errorHandler(err: Error, _req: Request, res: Response, _next: Ne
       details: err.details,
       code: err.tsCode,
       reason: 'ts_permission_denied',
+    });
+    return;
+  }
+
+  // Media session conflicts carry the sessions a confirmed retry must name.
+  const conflict = err as AppError & { requested?: unknown; conflicts?: unknown };
+  if (err instanceof AppError && err.name === 'MediaSessionConflictError') {
+    res.status(err.statusCode).json({
+      error: err.message,
+      details: err.details,
+      reason: 'media_session_conflict',
+      requested: conflict.requested,
+      conflicts: conflict.conflicts,
     });
     return;
   }

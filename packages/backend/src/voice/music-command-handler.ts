@@ -30,6 +30,8 @@ import {
   channelListenerKey,
   parseCommandChannelIds,
 } from './music-command-channels.js';
+import { MediaSessionConflictError } from './media-session.js';
+import { parseStreamStartOptions } from './streaming/start-options.js';
 
 interface BotChannelConfig {
   serverConfigId: number;
@@ -1321,7 +1323,7 @@ export class MusicCommandHandler {
       streamUrl: station.url,
     };
 
-    await bot.playStream(queueItem);
+    await bot.playStream(queueItem, this.chatMusicSwitch(bot));
     this.reply(bot, userClid, `Now playing: ${station.name}`);
   }
 
@@ -2036,7 +2038,7 @@ export class MusicCommandHandler {
     const alreadyPlaying = bot.status === 'playing' || bot.status === 'paused';
     if (!alreadyPlaying) {
       bot.queue.playAt(bot.queue.length - 1);
-      await bot.play(firstItem);
+      await bot.play(firstItem, this.chatMusicSwitch(bot));
     }
 
     const rest = urlsToPlay.slice(1);
@@ -2163,7 +2165,7 @@ export class MusicCommandHandler {
     bot.queue.addMany(items);
     if (bot.status === 'connected' && !bot.nowPlaying) {
       const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
-      if (first) await bot.play(first); // VoiceBot owns local/stream playlist resolution.
+      if (first) await bot.play(first, this.chatMusicSwitch(bot)); // VoiceBot owns local/stream playlist resolution.
     }
     this.reply(bot, userClid, `Queued playlist "${playlist.name.slice(0, 60)}" (${items.length} tracks).`);
   }
@@ -2259,9 +2261,9 @@ export class MusicCommandHandler {
         return;
       }
       if (item.streamUrl) {
-        await bot.playStream(item);
+        await bot.playStream(item, this.chatMusicSwitch(bot));
       } else {
-        await bot.play(item);
+        await bot.play(item, this.chatMusicSwitch(bot));
       }
       this.reply(bot, userClid, `Playing #${idx + 1}: ${item.title}`);
       return;
@@ -2331,9 +2333,9 @@ export class MusicCommandHandler {
     const next = bot.queue.next();
     if (next) {
       if (next.streamUrl) {
-        await bot.playStream(next);
+        await bot.playStream(next, this.chatMusicSwitch(bot));
       } else {
-        await bot.play(next);
+        await bot.play(next, this.chatMusicSwitch(bot));
       }
       this.reply(bot, userClid, `Skipped to: ${next.title}`);
     } else {
@@ -2346,9 +2348,9 @@ export class MusicCommandHandler {
     const prev = bot.queue.previous();
     if (prev) {
       if (prev.streamUrl) {
-        await bot.playStream(prev);
+        await bot.playStream(prev, this.chatMusicSwitch(bot));
       } else {
-        await bot.play(prev);
+        await bot.play(prev, this.chatMusicSwitch(bot));
       }
       this.reply(bot, userClid, `Previous: ${prev.title}`);
     } else {
@@ -2411,7 +2413,7 @@ export class MusicCommandHandler {
 
   private async handleStream(bot: VoiceBot, userClid: number, args: string): Promise<void> {
     if (!args) {
-      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: 480p, 720p, 1080p');
+      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: auto, 480p, 720p, 1080p, 1440p, 2160p');
       return;
     }
 
@@ -2422,6 +2424,14 @@ export class MusicCommandHandler {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       this.reply(bot, userClid, 'Please provide a valid URL.');
       return;
+    }
+
+    if (preset) {
+      const parsed = parseStreamStartOptions({ preset });
+      if (!parsed.ok) {
+        this.reply(bot, userClid, parsed.error);
+        return;
+      }
     }
 
     if (bot.videoStreaming) {
@@ -2437,11 +2447,37 @@ export class MusicCommandHandler {
 
     this.reply(bot, userClid, 'Starting video stream...');
     try {
-      await bot.startVideoStream(url, preset);
+      await this.voiceBotManager.startVideoStream(bot, url, { preset, ...this.chatVideoSwitch(bot) });
       this.reply(bot, userClid, `Video stream started: ${url}`);
     } catch (err: any) {
-      this.reply(bot, userClid, `Failed to start stream: ${err.message}`);
+      this.reply(bot, userClid, `Failed to start stream: ${this.streamStartError(err)}`);
     }
+  }
+
+  private streamStartError(err: any): string {
+    if (err instanceof MediaSessionConflictError) {
+      const other = err.conflicts.find((c) => c.kind === 'video');
+      if (other) return `another stream is running on ${other.botName} — stop it there first`;
+    }
+    return err?.message ?? String(err);
+  }
+
+  /**
+   * A chat music command is an explicit request on this bot, so it may replace
+   * this bot's own video stream (VoiceBot records `replaced_by_music`).
+   */
+  private chatMusicSwitch(bot: VoiceBot): { replaceSessionIds: string[] } {
+    const video = bot.videoSessionInfo();
+    return { replaceSessionIds: video ? [video.id] : [] };
+  }
+
+  /**
+   * A chat stream command may replace this bot's own music, but never another
+   * bot's stream — that must be stopped first (or switched from the web UI).
+   */
+  private chatVideoSwitch(bot: VoiceBot): { replaceSessionIds: string[] } {
+    const music = bot.musicSessionInfo();
+    return { replaceSessionIds: music ? [music.id] : [] };
   }
 
   private async handleStopStream(bot: VoiceBot, userClid: number): Promise<void> {
@@ -2449,7 +2485,7 @@ export class MusicCommandHandler {
       this.reply(bot, userClid, 'No active video stream.');
       return;
     }
-    await bot.stopVideoStream();
+    await bot.stopVideoStream('manual', 'Stopped by chat command');
     this.reply(bot, userClid, 'Video stream stopped.');
   }
 
@@ -2506,17 +2542,17 @@ export class MusicCommandHandler {
     }
 
     if (bot.videoStreaming) {
-      await bot.setVideoSource(channel.url);
+      await bot.setVideoSource(channel.url, undefined, 'live');
       this.reply(bot, userClid, `Now streaming: ${channel.name}`);
       return;
     }
 
     this.reply(bot, userClid, `Starting stream: ${channel.name}...`);
     try {
-      await bot.startVideoStream(channel.url);
+      await this.voiceBotManager.startVideoStream(bot, channel.url, { sourceMode: 'live', ...this.chatVideoSwitch(bot) });
       this.reply(bot, userClid, `Video stream started: ${channel.name}`);
     } catch (err: any) {
-      this.reply(bot, userClid, `Failed to start stream: ${err.message}`);
+      this.reply(bot, userClid, `Failed to start stream: ${this.streamStartError(err)}`);
     }
   }
 

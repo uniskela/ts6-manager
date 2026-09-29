@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Link as RouterLink } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicRequestsApi } from '@/api/music-requests.api';
 import { musicBotsApi } from '@/api/music.api';
@@ -61,6 +61,9 @@ import { TS6_CHAT_RESPONSE_EXAMPLE } from '@/lib/ts6-chat-format';
 import { Ts6ChatResponseEditor } from '@/components/Ts6ChatResponseEditor';
 import { apiErrorMessage } from '@/lib/api-error';
 import { formatNumber } from '@/lib/formatting';
+
+/** Tabs addressable as `/music-bots?tab=…` (the Bot hub links to them). */
+const MUSIC_TABS = ['bots', 'queue', 'video', 'library', 'playlists', 'commands', 'radio'];
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -3216,14 +3219,32 @@ function RadioTab() {
 function VideoTab() {
   const { data } = useMusicBots();
   const bots = Array.isArray(data) ? data : [];
-  const [selectedBotId, setSelectedBotId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  // `?bot=` lets the Bot hub open a specific bot's stream controls.
+  const linkedBot = Number(searchParams.get('bot')) || null;
+  const [selectedBotId, setSelectedBotId] = useState<number | null>(linkedBot);
+
+  const selectBot = (id: number) => {
+    setSelectedBotId(id);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('bot', String(id));
+      return next;
+    }, { replace: true });
+  };
+
+  // Keep selection in sync when the bot query param changes later.
+  useEffect(() => {
+    if (linkedBot != null) setSelectedBotId(linkedBot);
+  }, [linkedBot]);
 
   // Auto-select first running bot
   const runningBots = bots.filter((b: MusicBotSummary) => b.status !== 'stopped' && b.status !== 'error');
   useEffect(() => {
     if (!selectedBotId && runningBots.length > 0) {
-      setSelectedBotId(runningBots[0].id);
+      selectBot(runningBots[0].id);
     }
+  // Intentionally omit selectBot: only react to selection / bot list changes.
   }, [runningBots, selectedBotId]);
 
   const selectedBot = bots.find((b: MusicBotSummary) => b.id === selectedBotId);
@@ -3239,7 +3260,7 @@ function VideoTab() {
             <Label className="shrink-0">Select Bot:</Label>
             <Select
               value={selectedBotId ? String(selectedBotId) : ''}
-              onValueChange={(v) => setSelectedBotId(parseInt(v))}
+              onValueChange={(v) => selectBot(parseInt(v))}
             >
               <SelectTrigger className="w-64">
                 <SelectValue placeholder="Choose a bot..." />
@@ -3255,7 +3276,14 @@ function VideoTab() {
           </div>
 
           {selectedBot ? (
-            <VideoStreamTab botId={selectedBot.id} botStatus={selectedBot.status} />
+            <VideoStreamTab
+              botId={selectedBot.id}
+              botStatus={selectedBot.status}
+              server={{
+                id: selectedBot.serverConfigId,
+                name: selectedBot.serverConfig?.name ?? `Server ${selectedBot.serverConfigId}`,
+              }}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">Select a bot to manage video streaming.</p>
           )}
@@ -3446,6 +3474,15 @@ function QueueTab() {
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function MusicBots() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activeTab = tabParam && MUSIC_TABS.includes(tabParam) ? tabParam : 'bots';
+  const setActiveTab = (tab: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (tab === 'bots') next.delete('tab'); else next.set('tab', tab);
+    if (tab !== 'video') next.delete('bot');
+    setSearchParams(next, { replace: true });
+  };
   const botQuery = useMusicBots();
   const botCount = Array.isArray(botQuery.data) ? botQuery.data.length : 0;
   const backgroundError = botQuery.error
@@ -3470,7 +3507,7 @@ export default function MusicBots() {
         />
       )}
 
-      <Tabs defaultValue="bots" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList>
           <TabsTrigger value="bots"><Music2 className="h-3.5 w-3.5 mr-1.5" /> Bots</TabsTrigger>
           <TabsTrigger value="queue"><ListMusic className="h-3.5 w-3.5 mr-1.5" /> Queue</TabsTrigger>

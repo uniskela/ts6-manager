@@ -148,6 +148,14 @@ export class Ts3Client extends EventEmitter {
     return Array.from(this.channelMembers);
   }
 
+  /** Channel name for `cid` from the channel list received at connect, if known. */
+  getChannelName(cid: number): string | null {
+    for (const [name, id] of this.channelMap) {
+      if (id === cid) return name;
+    }
+    return null;
+  }
+
   getCurrentChannelId(): number {
     return this.currentChannelId;
   }

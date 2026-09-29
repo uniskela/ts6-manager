@@ -6,7 +6,88 @@ TS6 Manager includes a Go/Pion media sidecar for low-latency video delivery to T
 
 The streaming path can accept supported YouTube, Twitch, direct media URLs, and IPTV sources.
 
-The UI exposes quality presets such as 480p, 720p, and 1080p.
+## Quality
+
+Pick **Auto** or a fixed preset: 480p, 720p, 1080p, 1440p or 2160p.
+
+- **Auto** probes the source with `ffprobe` and uses the largest preset the source fits without upscaling, up to the **Auto limit** (default 1080p). A 720p channel stays 720p even when the limit is 2160p. If the probe fails, Auto uses 720p (or the limit, if lower) and says so.
+- **Fixed presets** skip the probe. Prefer them for IPTV services that allow only one connection, since the probe is a second one.
+- The stream panel shows *requested → actual*, e.g. `Auto → 1080p (source 1920×1080)`.
+- Leave the bitrate empty to use the preset's bitrate. Admins can set a **bitrate limit** that clamps every stream.
+- Every stream is capped at **9500 kbps**, whatever the preset, custom bitrate or limit says: TeamSpeak drops a stream above 10 Mbit/s, which would look like an encoder failure. 2160p therefore uses 9500 kbps.
+- Software VP8 and VP9 are held at the target bitrate (`-minrate`); without it libvpx overshoots on detailed video.
+
+1440p and 2160p need a fast CPU with software encoders; a hardware encoder is recommended.
+
+## Encoders
+
+| Encoder | Codec | Notes |
+|---|---|---|
+| VP8 (software) | VP8 | Default; `libvpx` realtime |
+| VP9 (software) | VP9 | `libvpx-vp9` realtime |
+| H.264 (software) | H.264 | `libx264`, offered as **Constrained High** — the only H.264 profile the TeamSpeak client renders |
+| VP8 / VP9 / H.264 (VAAPI) | same | GPU encode through VAAPI; H.264 uses Constrained High as well |
+
+**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first VAAPI encoder (H.264, then VP9, then VP8) that passed the sidecar's test encode.
+
+If a hardware encoder cannot open the device or exits during startup, the sidecar restarts with the software encoder **of the same codec** (so connected viewers keep working) and the stream panel shows the fallback and its reason. Use **Check encoders** under *Streaming defaults* to run the test encodes on demand; routine status polling never runs them.
+
+### Enabling VAAPI (Intel / AMD GPUs)
+
+1. Pass the render node through to the sidecar container, for example in `docker-compose.yml`:
+
+   ```yaml
+   sidecar:
+     devices:
+       - /dev/dri:/dev/dri
+   ```
+
+2. The sidecar and all-in-one images include Mesa's VAAPI driver (`mesa-va-drivers`, AMD and older Intel) and, on amd64, Intel's `intel-media-va-driver`. For the all-in-one image, pass `/dev/dri` to that container instead.
+3. Open *Streaming defaults* → **Check encoders** and confirm the VAAPI rows pass. Set `VAAPI_DEVICE` if your render node is not `/dev/dri/renderD128`.
+4. Optionally set `VIDEO_HW_DECODE=1` to decode on the GPU too.
+
+NVENC is not supported yet.
+
+## Source type and stream health
+
+Every stream has a source type:
+
+| Type | Used for | Behaviour |
+|---|---|---|
+| **Live** | IPTV channels (default), live URLs | never loops; if it stops, the stream stops as *source unreachable* |
+| **On demand** | remote videos | paced playback; stops as *source ended* when it finishes |
+| **Local file** | files under the music directory, downloaded clips | paced; admin backgrounds loop |
+
+**Detect** (the default for URLs) uses the Auto-quality probe: a source without a duration is live. The URL itself (for example `.m3u8`) is never used to guess, because IPTV providers often use opaque URLs. With a fixed preset there is no probe, so a URL is treated as on demand unless you pick **Live**.
+
+While a stream runs, the backend samples the sidecar's encode stats every 10 seconds (in-memory counters, not a diagnostic probe). The stream panel and Bot Hub show the source type and encode speed (for example `1.01x · 30 fps`). If encoding stays below 0.9x for 20 seconds after a 15-second startup grace, a warning names the speed, dropped packets, preset, encoder and source type — for example *Encoding below realtime (0.62x for 40 s) at 1080p with VP8 (software) from a live source*. Use a lower preset or a hardware encoder.
+
+If ffmpeg stops on its own, the stream stops instead of showing a frozen picture, with a reason: *source ended*, *source unreachable* (network/HTTP errors, or a live source ending), or *encoder failure*.
+
+### Live pacing (issue #72)
+
+Live inputs are read with `-re` like everything else. Measured on a 4-core host with the sidecar's 720p30 VP8 pipeline against live HLS (MPEG-TS) and CMAF (fMP4 with a `moov` repeated in every segment): `-re` held a steady ~1.01x at 30 fps, while reading without it burst to ~2x at startup (the buffered live-edge segments) before settling. The `Found duplicated MOOV Atom. Skipped it` messages from such CMAF sources were harmless in that test. Sustained ~0.5x therefore points at host encode capacity (or a provider-specific timestamp problem), which the health warning now makes visible. Set `VIDEO_LIVE_PACING=source` on the sidecar to let live sources set their own pace instead.
+
+## One media session at a time
+
+- A bot plays **music or video, never both**.
+- Only **one video stream** runs at a time across all bots, because they share the media sidecar.
+
+Starting something that would replace what is playing asks for confirmation first ("Replace what is playing?"), listing exactly what will stop. The server only replaces the sessions you confirmed, so double clicks, two admins, or a chat command racing a UI click cannot silently stop each other's media. Something that is still *starting* cannot be replaced — wait for it to finish, then try again.
+
+Chat commands are explicit requests on one bot: `!play` on a bot that is streaming video stops that bot's stream, and `!stream` / `!tv` stop that bot's music. A chat command never stops another bot's stream.
+
+The stop reason says what happened, for example *Replaced by music* or *Replaced by a stream on Bravo*.
+
+## Stopping and stop reasons
+
+A stream stops on its own when:
+
+- **nobody watches it** — no TeamSpeak client has had it open for the no-viewer timeout (default 5 minutes; Off, 1, 5, 10, 30 minutes or custom). While it counts down, the stream panel shows **Auto-stop in m:ss**. The browser preview does not count as a viewer. Each stream can override the timeout without changing the saved default;
+- **the bot's channel is empty** for `BOT_AUTO_STOP_EMPTY_SECONDS` (separate setting);
+- **a downloaded clip ends**.
+
+After a stream stops, the tab shows the last reason, for example *Last stream: Stopped after 5 minutes with no viewers · 8 min ago*.
 
 ## IPTV playlists
 
@@ -48,7 +129,7 @@ Do not expose the sidecar directly to the public network.
 
 If a stream does not start, check:
 
-1. the backend can reach `SIDECAR_URL`;
+1. the backend can reach `SIDECAR_URL`, and the sidecar image is the same release as the backend (an older sidecar ignores encoder selection and always sends VP8 — the stream panel says so);
 2. backend and sidecar use the same `SIDECAR_SECRET`;
 3. the media volume is mounted at the same path in both containers; and
 4. the source URL is still available to yt-dlp/FFmpeg.

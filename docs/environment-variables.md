@@ -18,6 +18,18 @@
 | `YT_COOKIE_FILE` | — | Optional Netscape-format yt-dlp cookie file |
 | `TS_ALLOW_SELF_SIGNED` | `false` | Allow self-signed TeamSpeak WebQuery TLS certificates |
 
+### Video streaming defaults
+
+These seed the **Streaming defaults** shown to admins on the Video Stream tab. A value saved in the UI overrides the environment value; each stream can still override quality, encoder and the no-viewer stop. Admins can also override any of them for one server ("Applies to: <server> only"); fields left equal to the global value keep inheriting it.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `VIDEO_NO_VIEWER_TIMEOUT_SECONDS` | `300` | Stop a video stream no TeamSpeak client has open for this long; `0` disables. Separate from the channel-empty stop (`BOT_AUTO_STOP_EMPTY_SECONDS`) |
+| `VIDEO_AUTO_MAX_PRESET` | `1080p` | Highest preset **Auto** quality may pick (`720p`–`2160p`) |
+| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi` |
+| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first VAAPI encoder that passes the sidecar test encode |
+| `VIDEO_MAX_BITRATE_KBPS` | `0` | Clamp every stream bitrate (kbps); `0` = no clamp |
+
 ## Frontend development
 
 | Variable | Default/example | Purpose |
@@ -53,5 +65,13 @@ The values below are code defaults. Compose files may override them.
 | `VIDEO_CPU_USED` | `4` | libvpx realtime speed/quality trade-off |
 | `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
 | `VIDEO_BUFSIZE` | automatic | Optional explicit bitrate buffer |
+| `VIDEO_LIVE_PACING` | `re` | `re` reads live sources with `-re` (measured steady ~1.0x); `source` lets the live source pace input (startup burst) |
+| `VIDEO_GOP` | `15` | Keyframe interval in frames (new viewers start at a keyframe) |
+| `VIDEO_VP9_CPU_USED` | `8` | libvpx-vp9 realtime speed/quality trade-off |
+| `VIDEO_X264_PRESET` | `veryfast` | libx264 preset for software H.264 |
+| `VAAPI_DEVICE` | `/dev/dri/renderD128` | Render node used by VAAPI encoders |
+| `VAAPI_LOW_POWER` | `0` | Try the low-power (VDEnc) entrypoint first; the capability probe also retries it automatically |
+| `VAAPI_VERIFY_MS` | `1500` | How long a hardware encoder must survive startup before the sidecar trusts it (otherwise it falls back to software) |
+| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`); ffmpeg falls back to software decode for unsupported codecs |
 
 TeamSpeak beta13 Query environment variables belong on the TeamSpeak server/container, not on TS6 Manager. See [TeamSpeak compatibility](teamspeak-compatibility.md).

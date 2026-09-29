@@ -27,6 +27,9 @@ services:
     volumes:
       - backend-data:/app/packages/backend/data
       - music-data:/data/music
+    # Optional: VAAPI hardware video encoding (Intel/AMD GPU). See docs/video-streaming.md.
+    # devices:
+    #   - /dev/dri:/dev/dri
     ports:
       # Sidecar (:9800) and backend (:3001) are intentionally not published
       - "${HOST_PORT:-3000}:80"

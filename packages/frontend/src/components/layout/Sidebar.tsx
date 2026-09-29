@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
-  ScrollText, Settings, Bot, Cpu, ChevronDown, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github, BookOpen, Menu,
+  ScrollText, Settings, Bot, LayoutGrid, Cpu, ChevronDown, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github, BookOpen, Menu,
   ClipboardList, NotebookPen,
 
   type LucideIcon,
@@ -89,6 +89,7 @@ const navSections: NavSection[] = [
     label: 'Automation',
     adminOnly: true,
     items: [
+      { to: '/bot-hub', icon: LayoutGrid, label: 'Bot Hub', adminOnly: true },
       { to: '/bots', icon: Bot, label: 'Bot Flows', adminOnly: true },
       { to: '/music-bots', icon: Music, label: 'Music Bots', adminOnly: true },
       { to: '/iptv', icon: Tv, label: 'IPTV', adminOnly: true },
