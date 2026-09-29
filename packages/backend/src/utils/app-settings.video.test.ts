@@ -6,8 +6,12 @@ import {
   VIDEO_MAX_BITRATE_KEY,
   VIDEO_NO_VIEWER_TIMEOUT_KEY,
   VIDEO_PREFER_HARDWARE_KEY,
+  loadServerVideoStreamingSettings,
+  loadVideoStreamingSettings,
+  parseServerOverrides,
   parseVideoStreamingSettings,
   parseVideoStreamingUpdate,
+  videoServerOverridesKey,
   videoStreamingDefaults,
 } from './app-settings.js';
 
@@ -77,5 +81,43 @@ describe('video streaming settings', () => {
     ]) {
       assert.equal(parseVideoStreamingUpdate(body).ok, false, JSON.stringify(body));
     }
+  });
+});
+
+describe('per-server video defaults', () => {
+  function prismaWith(rows: Record<string, string>) {
+    return {
+      appSetting: {
+        findMany: async ({ where }: any) => Object.entries(rows)
+          .filter(([key]) => where.key.in.includes(key))
+          .map(([key, value]) => ({ key, value })),
+      },
+    } as any;
+  }
+
+  it('drops invalid override fields', () => {
+    assert.deepEqual(
+      parseServerOverrides('{"autoMaxPreset":"2160p","defaultEncoder":"nvenc","noViewerTimeoutSec":60,"junk":1}'),
+      { autoMaxPreset: '2160p', noViewerTimeoutSec: 60 },
+    );
+    assert.deepEqual(parseServerOverrides('not json'), {});
+  });
+
+  it('merges a server\'s overrides over the global defaults', async () => {
+    const prisma = prismaWith({
+      [VIDEO_NO_VIEWER_TIMEOUT_KEY]: '600',
+      [videoServerOverridesKey(2)]: '{"autoMaxPreset":"2160p","preferHardware":true}',
+    });
+    const s2 = await loadVideoStreamingSettings(prisma, 2);
+    assert.equal(s2.noViewerTimeoutSec, 600, 'inherits global');
+    assert.equal(s2.autoMaxPreset, '2160p');
+    assert.equal(s2.preferHardware, true);
+    const s3 = await loadVideoStreamingSettings(prisma, 3);
+    assert.equal(s3.autoMaxPreset, videoStreamingDefaults().autoMaxPreset, 'other servers unaffected');
+
+    const detail = await loadServerVideoStreamingSettings(prisma, 2);
+    assert.deepEqual(detail.overrides, { autoMaxPreset: '2160p', preferHardware: true });
+    assert.equal(detail.global.noViewerTimeoutSec, 600);
+    assert.equal(detail.effective.autoMaxPreset, '2160p');
   });
 });

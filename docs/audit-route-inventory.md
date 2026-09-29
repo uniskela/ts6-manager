@@ -26,6 +26,7 @@ Prefer the same patterns:
 | `flow.create` / `update` / `delete` / `enable` / `disable` | `/api/bots` mutations |
 | `user.create` / `update` / `delete` | `/api/users` mutations |
 | `settings.yt_cookies_*` / `settings.limits_update` / `settings.video_streaming_update` | `/api/settings` mutations |
+| `media.music.start` / `media.music.stop` / `media.video.start` / `media.video.stop` / `media.video.source_change` / `media.session.switch` | Music Bot and IPTV media routes (target: `music_bot`; no source URLs or titles). Confirm prompts (409 conflicts) are not audited; confirmed replacements record `media.session.switch` |
 
 ## Remaining (not yet instrumented)
 

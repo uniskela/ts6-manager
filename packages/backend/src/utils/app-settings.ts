@@ -98,11 +98,49 @@ export function parseVideoStreamingSettings(
   };
 }
 
-export async function loadVideoStreamingSettings(prisma: PrismaClient): Promise<VideoStreamSettings> {
+/** App setting holding one server's overrides as JSON (same field names as VideoStreamSettings). */
+export function videoServerOverridesKey(serverConfigId: number): string {
+  return `video_streaming_server:${serverConfigId}`;
+}
+
+/** Validate stored/submitted overrides; invalid fields are dropped. */
+export function parseServerOverrides(raw: unknown): Partial<VideoStreamSettings> {
+  let obj: unknown = raw;
+  if (typeof raw === 'string') {
+    try { obj = JSON.parse(raw); } catch { return {}; }
+  }
+  if (!obj || typeof obj !== 'object') return {};
+  const out: Partial<VideoStreamSettings> = {};
+  for (const field of ['noViewerTimeoutSec', 'autoMaxPreset', 'defaultEncoder', 'preferHardware', 'maxBitrateKbps'] as const) {
+    const value = (obj as Record<string, unknown>)[field];
+    if (value === undefined) continue;
+    if (parseVideoStreamingUpdate({ [field]: value }).ok) (out as Record<string, unknown>)[field] = value;
+  }
+  return out;
+}
+
+export async function loadVideoStreamingSettings(
+  prisma: PrismaClient,
+  serverConfigId?: number,
+): Promise<VideoStreamSettings> {
+  const keys: string[] = [...VIDEO_STREAMING_SETTING_KEYS];
+  if (serverConfigId != null) keys.push(videoServerOverridesKey(serverConfigId));
+  const rows = await prisma.appSetting.findMany({ where: { key: { in: keys } } });
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  const global = parseVideoStreamingSettings(map);
+  if (serverConfigId == null) return global;
+  return { ...global, ...parseServerOverrides(map.get(videoServerOverridesKey(serverConfigId))) };
+}
+
+/** Global defaults, one server's overrides, and the merged result. */
+export async function loadServerVideoStreamingSettings(prisma: PrismaClient, serverConfigId: number) {
   const rows = await prisma.appSetting.findMany({
-    where: { key: { in: [...VIDEO_STREAMING_SETTING_KEYS] } },
+    where: { key: { in: [...VIDEO_STREAMING_SETTING_KEYS, videoServerOverridesKey(serverConfigId)] } },
   });
-  return parseVideoStreamingSettings(new Map(rows.map((r) => [r.key, r.value])));
+  const map = new Map(rows.map((r) => [r.key, r.value]));
+  const global = parseVideoStreamingSettings(map);
+  const overrides = parseServerOverrides(map.get(videoServerOverridesKey(serverConfigId)));
+  return { global, overrides, effective: { ...global, ...overrides } };
 }
 
 export type VideoStreamingUpdate =

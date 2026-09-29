@@ -3261,7 +3261,14 @@ function VideoTab() {
           </div>
 
           {selectedBot ? (
-            <VideoStreamTab botId={selectedBot.id} botStatus={selectedBot.status} />
+            <VideoStreamTab
+              botId={selectedBot.id}
+              botStatus={selectedBot.status}
+              server={{
+                id: selectedBot.serverConfigId,
+                name: selectedBot.serverConfig?.name ?? `Server ${selectedBot.serverConfigId}`,
+              }}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">Select a bot to manage video streaming.</p>
           )}

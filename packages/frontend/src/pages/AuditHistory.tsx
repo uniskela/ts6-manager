@@ -73,6 +73,12 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'settings.yt_cookies_removed': 'Remove yt-dlp cookies',
   'settings.limits_update': 'Update app limits',
   'settings.video_streaming_update': 'Update video streaming defaults',
+  'media.music.start': 'Start music',
+  'media.music.stop': 'Stop music',
+  'media.video.start': 'Start video stream',
+  'media.video.stop': 'Stop video stream',
+  'media.video.source_change': 'Change stream source',
+  'media.session.switch': 'Switch media (replace what was playing)',
 };
 
 const RESULT_CODE_LABELS: Record<AdminAuditResultCode, string> = {
@@ -100,6 +106,7 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   flow: 'Flow',
   user: 'User',
   settings: 'Settings',
+  music_bot: 'Music bot',
 };
 
 const AUDIT_GRID =

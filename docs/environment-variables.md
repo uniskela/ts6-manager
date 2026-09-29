@@ -20,7 +20,7 @@
 
 ### Video streaming defaults
 
-These seed the **Streaming defaults** shown to admins on the Video Stream tab. A value saved in the UI overrides the environment value; each stream can still override quality, encoder and the no-viewer stop.
+These seed the **Streaming defaults** shown to admins on the Video Stream tab. A value saved in the UI overrides the environment value; each stream can still override quality, encoder and the no-viewer stop. Admins can also override any of them for one server ("Applies to: <server> only"); fields left equal to the global value keep inheriting it.
 
 | Variable | Default | Purpose |
 |---|---|---|

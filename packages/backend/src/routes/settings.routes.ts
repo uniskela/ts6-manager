@@ -18,7 +18,10 @@ import {
   parseVideoDuration,
   parseImportCap,
   loadVideoStreamingSettings,
+  loadServerVideoStreamingSettings,
+  parseServerOverrides,
   parseVideoStreamingUpdate,
+  videoServerOverridesKey,
 } from '../utils/app-settings.js';
 import { SidecarClient } from '../voice/streaming/sidecar-client.js';
 import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
@@ -239,6 +242,63 @@ settingsRoutes.put('/video-streaming', requireAdmin, async (req: Request, res: R
     );
 
     res.json(await loadVideoStreamingSettings(prisma));
+  } catch (err) { next(err); }
+});
+
+function parseServerId(raw: unknown): number {
+  const id = Number(raw);
+  if (!Number.isInteger(id) || id <= 0) throw new AppError(400, 'Invalid server id');
+  return id;
+}
+
+// GET /api/settings/video-streaming/servers/:serverConfigId — global, overrides, effective.
+settingsRoutes.get('/video-streaming/servers/:serverConfigId', async (req: Request, res: Response, next) => {
+  try {
+    const id = parseServerId(req.params.serverConfigId);
+    res.json(await loadServerVideoStreamingSettings(req.app.locals.prisma, id));
+  } catch (err) { next(err); }
+});
+
+// PUT /api/settings/video-streaming/servers/:serverConfigId — replace this server's
+// overrides. Fields equal to the global default are not stored (they inherit).
+settingsRoutes.put('/video-streaming/servers/:serverConfigId', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const id = parseServerId(req.params.serverConfigId);
+    const server = await prisma.tsServerConfig.findUnique({ where: { id }, select: { id: true } });
+    if (!server) throw new AppError(404, 'Server not found');
+
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    for (const [field, value] of Object.entries(body)) {
+      const check = parseVideoStreamingUpdate({ [field]: value });
+      if (!check.ok) throw new AppError(400, check.error);
+    }
+    const { global } = await loadServerVideoStreamingSettings(prisma, id);
+    const submitted = parseServerOverrides(body);
+    const overrides = Object.fromEntries(
+      Object.entries(submitted).filter(([k, v]) => (global as unknown as Record<string, unknown>)[k] !== v),
+    );
+    const key = videoServerOverridesKey(id);
+
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.video_streaming_update',
+        connectionId: id,
+        target: { type: 'settings', id: 'video-streaming:server' },
+      },
+      async (tx) => {
+        if (Object.keys(overrides).length === 0) {
+          await tx.appSetting.deleteMany({ where: { key } });
+        } else {
+          const value = JSON.stringify(overrides);
+          await tx.appSetting.upsert({ where: { key }, create: { key, value }, update: { value } });
+        }
+      },
+    );
+
+    res.json(await loadServerVideoStreamingSettings(prisma, id));
   } catch (err) { next(err); }
 });
 

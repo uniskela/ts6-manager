@@ -13,6 +13,7 @@ import {
 import { MAX_IPTV_UPLOAD_BYTES } from '../iptv/iptv-storage.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
+import { runMediaAudited } from './media-audit.js';
 
 export const iptvRoutes: Router = Router();
 
@@ -280,9 +281,14 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
 
     // If already streaming, just switch the source; otherwise start a stream.
     if (bot.videoStreaming) {
-      await bot.setVideoSource(channel.url, undefined, parsed.options.sourceMode);
+      await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(channel.url, undefined, parsed.options.sourceMode));
     } else {
-      await manager.startVideoStream(bot, channel.url, parsed.options);
+      manager.assertVideoCanStart(bot, parsed.options.replaceSessionIds);
+      await runMediaAudited(
+        req, bot, 'media.video.start',
+        () => manager.startVideoStream(bot, channel.url, parsed.options),
+        parsed.options.replaceSessionIds,
+      );
     }
 
     res.json({ success: true, channel: { id: channel.id, name: channel.name } });
@@ -297,7 +303,7 @@ iptvRoutes.post('/stop', async (req: Request, res: Response, next) => {
     if (!botId) throw new AppError(400, 'botId is required');
     const bot = manager.getBot(parseInt(botId));
     if (!bot) throw new AppError(404, 'Music bot not found or not running');
-    await bot.stopVideoStream('manual', 'Stopped from the IPTV page');
+    await runMediaAudited(req, bot, 'media.video.stop', () => bot.stopVideoStream('manual', 'Stopped from the IPTV page'));
     res.json({ success: true });
   } catch (err) { next(err); }
 });

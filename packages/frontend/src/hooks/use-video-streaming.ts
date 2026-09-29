@@ -6,7 +6,7 @@ import { expensiveDiagnosticQueryOptions } from '../lib/demand-driven-query-poli
 export const VIDEO_STREAMING_SETTINGS_QUERY_KEY = ['video-streaming-settings'] as const;
 export const VIDEO_ENCODER_CAPABILITIES_QUERY_KEY = ['video-encoder-capabilities'] as const;
 
-/** Admin defaults applied to new video streams. */
+/** Admin defaults applied to new video streams (global). */
 export function useVideoStreamingSettings() {
   return useQuery({
     queryKey: VIDEO_STREAMING_SETTINGS_QUERY_KEY,
@@ -15,11 +15,35 @@ export function useVideoStreamingSettings() {
   });
 }
 
+/** Global defaults, one server's overrides and the effective result. */
+export function useServerVideoStreamingSettings(serverConfigId: number | null | undefined) {
+  return useQuery({
+    queryKey: [...VIDEO_STREAMING_SETTINGS_QUERY_KEY, 'server', serverConfigId],
+    queryFn: () => settingsApi.getServerVideoStreaming(serverConfigId!),
+    enabled: !!serverConfigId,
+    staleTime: 60_000,
+  });
+}
+
 export function useUpdateVideoStreamingSettings() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Partial<VideoStreamSettings>) => settingsApi.updateVideoStreaming(data),
-    onSuccess: (settings) => qc.setQueryData(VIDEO_STREAMING_SETTINGS_QUERY_KEY, settings),
+    onSuccess: (settings) => {
+      qc.setQueryData(VIDEO_STREAMING_SETTINGS_QUERY_KEY, settings);
+      // Server views merge over the global defaults.
+      qc.invalidateQueries({ queryKey: [...VIDEO_STREAMING_SETTINGS_QUERY_KEY, 'server'] });
+    },
+  });
+}
+
+export function useUpdateServerVideoStreamingSettings(serverConfigId: number | null | undefined) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: Partial<VideoStreamSettings>) =>
+      settingsApi.updateServerVideoStreaming(serverConfigId!, data),
+    onSuccess: (detail) =>
+      qc.setQueryData([...VIDEO_STREAMING_SETTINGS_QUERY_KEY, 'server', serverConfigId], detail),
   });
 }
 

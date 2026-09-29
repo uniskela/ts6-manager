@@ -25,7 +25,7 @@ import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
-import { useVideoStreamingSettings } from '@/hooks/use-video-streaming';
+import { useServerVideoStreamingSettings, useVideoStreamingSettings } from '@/hooks/use-video-streaming';
 import { useAuthStore } from '@/stores/auth.store';
 import {
   ENCODER_LABELS,
@@ -62,9 +62,11 @@ const FPS_OPTIONS = [
 interface VideoStreamTabProps {
   botId: number;
   botStatus: string;
+  /** The bot's server: its effective defaults are shown, and admins can override them. */
+  server?: { id: number; name: string } | null;
 }
 
-export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
+export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps) {
   const [sourceUrl, setSourceUrl] = useState('');
   const [preset, setPreset] = useState<VideoQualityRequest>('auto');
   const [encoder, setEncoder] = useState<'default' | VideoEncoderRequest>('default');
@@ -75,7 +77,9 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
   const [streamVolume, setStreamVolume] = useState(100);
 
   const isAdmin = useAuthStore((state) => state.isAdmin());
-  const { data: defaults } = useVideoStreamingSettings();
+  const { data: globalDefaults } = useVideoStreamingSettings();
+  const { data: serverDefaults } = useServerVideoStreamingSettings(server?.id);
+  const defaults = serverDefaults?.effective ?? globalDefaults;
   const { data: streamStatus } = useVideoStreamStatus(botId);
   const startStream = useStartVideoStream();
   const stopStream = useStopVideoStream();
@@ -488,7 +492,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
         </Card>
       )}
 
-      {isAdmin && <VideoStreamDefaultsCard />}
+      {isAdmin && <VideoStreamDefaultsCard server={server} />}
     </div>
   );
 }

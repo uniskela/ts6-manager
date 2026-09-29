@@ -14,6 +14,7 @@ import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/mus
 import { playerWidgetToken } from './widget-public.routes.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { parseReplaceSessionIds } from '../voice/media-session.js';
+import { runMediaAudited } from './media-audit.js';
 import type { BotMediaOverview } from '@ts6/common';
 
 export const musicBotRoutes: Router = Router();
@@ -283,7 +284,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
     // Add to queue so repeat modes work, then play
     bot.queue.add(queueItem);
     bot.queue.playAt(bot.queue.length - 1);
-    await bot.play(queueItem, { replaceSessionIds });
+    await runMediaAudited(req, bot, 'media.music.start', () => bot.play(queueItem, { replaceSessionIds }), replaceSessionIds);
 
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -398,7 +399,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     };
     bot.queue.add(firstItem);
     bot.queue.playAt(bot.queue.length - 1);
-    await bot.play(firstItem, { replaceSessionIds });
+    await runMediaAudited(req, bot, 'media.music.start', () => bot.play(firstItem, { replaceSessionIds }), replaceSessionIds);
     await saveHistory(firstUrl, firstItem.title);
 
     // Queue remaining playlist tracks in the background.
@@ -515,7 +516,7 @@ musicBotRoutes.post('/:id/play-radio', async (req: Request, res: Response, next)
       streamUrl: station.url,
     };
 
-    await bot.playStream(queueItem, { replaceSessionIds });
+    await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(queueItem, { replaceSessionIds }), replaceSessionIds);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -550,7 +551,7 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
     invalidatePlaylistExpansion(id);
-    bot.stopAudio();
+    await runMediaAudited(req, bot, 'media.music.stop', async () => bot.stopAudio());
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -714,8 +715,8 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       const item = bot.queue.playAt(playIndex);
       if (item) {
         try {
-          if (item.streamUrl) await bot.playStream(item, { replaceSessionIds });
-          else await bot.play(item, { replaceSessionIds });
+          if (item.streamUrl) await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(item, { replaceSessionIds }), replaceSessionIds);
+          else await runMediaAudited(req, bot, 'media.music.start', () => bot.play(item, { replaceSessionIds }), replaceSessionIds);
         } catch (err: any) {
           playError = err.message || String(err);
           console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
@@ -795,9 +796,9 @@ musicBotRoutes.post('/:id/queue/:index/play', async (req: Request, res: Response
     if (!item) throw new AppError(400, 'Invalid queue index');
 
     if (item.streamUrl) {
-      await bot.playStream(item, { replaceSessionIds });
+      await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(item, { replaceSessionIds }), replaceSessionIds);
     } else {
-      await bot.play(item, { replaceSessionIds });
+      await runMediaAudited(req, bot, 'media.music.start', () => bot.play(item, { replaceSessionIds }), replaceSessionIds);
     }
     res.json({ success: true, nowPlaying: { title: item.title, artist: item.artist } });
   } catch (err) { next(err); }
@@ -850,7 +851,13 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     const safeSource = assertVideoSource(req.body?.source);
     const parsed = parseStreamStartOptions(req.body);
     if (!parsed.ok) throw new AppError(400, parsed.error);
-    await manager.startVideoStream(bot, safeSource, parsed.options);
+    // Conflicts answer 409 before an audit row exists; only real starts are audited.
+    manager.assertVideoCanStart(bot, parsed.options.replaceSessionIds);
+    await runMediaAudited(
+      req, bot, 'media.video.start',
+      () => manager.startVideoStream(bot, safeSource, parsed.options),
+      parsed.options.replaceSessionIds,
+    );
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });
@@ -861,7 +868,7 @@ musicBotRoutes.post('/:id/stream/stop', async (req: Request, res: Response, next
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    await bot.stopVideoStream('manual', 'Stopped from the web UI');
+    await runMediaAudited(req, bot, 'media.video.stop', () => bot.stopVideoStream('manual', 'Stopped from the web UI'));
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -876,7 +883,7 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     const safeSource = assertVideoSource(source);
     const parsed = parseStreamStartOptions({ sourceMode: req.body?.sourceMode });
     if (!parsed.ok) throw new AppError(400, parsed.error);
-    await bot.setVideoSource(safeSource, volume, parsed.options.sourceMode);
+    await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode));
     res.json({ success: true });
   } catch (err) { next(err); }
 });

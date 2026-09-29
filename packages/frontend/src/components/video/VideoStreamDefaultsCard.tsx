@@ -15,6 +15,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
+  useServerVideoStreamingSettings,
+  useUpdateServerVideoStreamingSettings,
   useUpdateVideoStreamingSettings,
   useVideoEncoderCapabilities,
   useVideoStreamingSettings,
@@ -29,9 +31,29 @@ import {
 
 const TIMEOUT_PRESETS = ['0', '60', '300', '600', '1800'];
 
-export function VideoStreamDefaultsCard() {
-  const { data: settings } = useVideoStreamingSettings();
-  const update = useUpdateVideoStreamingSettings();
+const FIELD_LABELS: Record<keyof VideoStreamSettings, string> = {
+  noViewerTimeoutSec: 'no-viewer stop',
+  autoMaxPreset: 'Auto limit',
+  defaultEncoder: 'encoder',
+  preferHardware: 'hardware preference',
+  maxBitrateKbps: 'bitrate limit',
+};
+
+interface VideoStreamDefaultsCardProps {
+  /** The selected bot's server; enables per-server overrides. */
+  server?: { id: number; name: string } | null;
+}
+
+export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps) {
+  const [scope, setScope] = useState<'global' | 'server'>('global');
+  const serverScope = scope === 'server' && !!server;
+  const globalQuery = useVideoStreamingSettings();
+  const serverQuery = useServerVideoStreamingSettings(server?.id);
+  const settings = serverScope ? serverQuery.data?.effective : globalQuery.data;
+  const overrides = serverQuery.data?.overrides ?? {};
+  const updateGlobal = useUpdateVideoStreamingSettings();
+  const updateServer = useUpdateServerVideoStreamingSettings(server?.id);
+  const update = serverScope ? updateServer : updateGlobal;
   const encoders = useVideoEncoderCapabilities();
   const [draft, setDraft] = useState<VideoStreamSettings | null>(null);
   const [customTimeout, setCustomTimeout] = useState(false);
@@ -41,6 +63,13 @@ export function VideoStreamDefaultsCard() {
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
+
+  // Switching scope edits a different record: start from its saved values.
+  useEffect(() => {
+    draftRef.current = null;
+    prevSettingsRef.current = null;
+    setDraft(null);
+  }, [serverScope]);
 
   useEffect(() => {
     if (!settings) return;
@@ -63,7 +92,9 @@ export function VideoStreamDefaultsCard() {
 
   const save = () => {
     update.mutate(draft, {
-      onSuccess: () => toast.success('Streaming defaults saved — they apply to the next stream'),
+      onSuccess: () => toast.success(serverScope
+        ? `Defaults for ${server?.name} saved — they apply to the next stream there`
+        : 'Streaming defaults saved — they apply to the next stream'),
       onError: (e) => toast.error(apiErrorMessage(e, 'Failed to save streaming defaults')),
     });
   };
@@ -81,6 +112,25 @@ export function VideoStreamDefaultsCard() {
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
+        {server && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor="defaults-scope" className="text-sm">Applies to</Label>
+            <Select value={scope} onValueChange={(v) => setScope(v as 'global' | 'server')}>
+              <SelectTrigger id="defaults-scope" className="w-56"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="global">All servers</SelectItem>
+                <SelectItem value="server">{server.name} only</SelectItem>
+              </SelectContent>
+            </Select>
+            {serverScope && (
+              <span className="text-xs text-muted-foreground">
+                {Object.keys(overrides).length > 0
+                  ? `Overrides: ${(Object.keys(overrides) as Array<keyof VideoStreamSettings>).map((k) => FIELD_LABELS[k]).join(', ')}`
+                  : 'Inherits every global default'}
+              </span>
+            )}
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="no-viewer-timeout">Stop when nobody watches</Label>
@@ -178,6 +228,19 @@ export function VideoStreamDefaultsCard() {
           {dirty && (
             <Button size="sm" variant="ghost" onClick={() => settings && setDraft(settings)}>
               Reset
+            </Button>
+          )}
+          {serverScope && Object.keys(overrides).length > 0 && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={updateServer.isPending}
+              onClick={() => updateServer.mutate({}, {
+                onSuccess: () => toast.success(`${server?.name} now uses the global defaults`),
+                onError: (e) => toast.error(apiErrorMessage(e, 'Failed to reset server defaults')),
+              })}
+            >
+              Use global defaults
             </Button>
           )}
         </div>
