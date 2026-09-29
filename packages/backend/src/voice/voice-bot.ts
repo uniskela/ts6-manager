@@ -757,6 +757,7 @@ export class VoiceBot extends EventEmitter {
     if (next) {
       this.play(next).catch((err) => this.emit('error', err));
     } else {
+      this.endMusicSession('source_ended', 'Queue finished');
       this.resetNickname();
       if (!this._videoStreaming) this.stopAutoStopTimer();
     }
@@ -840,6 +841,7 @@ export class VoiceBot extends EventEmitter {
         this.streamKill = null;
         this._nowPlaying = null;
         this._status = 'connected';
+        this.endMusicSession('source_ended', 'Stream ended');
         this.emit('statusChange', this._status);
         this.emit('trackEnd', item);
       });

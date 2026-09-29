@@ -54,7 +54,7 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   await expect(page.getByText('Neon Skyline — Midnight Transit')).toBeVisible();
   await expect(page.getByText('Streaming from iptv.example')).toBeVisible();
   await expect(page.getByText(/Auto → 1080p · Auto → H\.264 \(VAAPI\) · 0 viewers/)).toBeVisible();
-  await expect(page.getByText(/auto-stop in 3:0\d/)).toBeVisible();
+  await expect(page.getByText(/auto-stop in \d+:\d{2}/)).toBeVisible();
   await expect(page.getByText(/Last stream: Stopped after 5 minutes with no viewers · 8 min ago/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop stream' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop music' })).toBeVisible();

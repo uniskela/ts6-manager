@@ -3219,17 +3219,32 @@ function RadioTab() {
 function VideoTab() {
   const { data } = useMusicBots();
   const bots = Array.isArray(data) ? data : [];
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   // `?bot=` lets the Bot hub open a specific bot's stream controls.
   const linkedBot = Number(searchParams.get('bot')) || null;
   const [selectedBotId, setSelectedBotId] = useState<number | null>(linkedBot);
+
+  const selectBot = (id: number) => {
+    setSelectedBotId(id);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('bot', String(id));
+      return next;
+    }, { replace: true });
+  };
+
+  // Keep selection in sync when the bot query param changes later.
+  useEffect(() => {
+    if (linkedBot != null) setSelectedBotId(linkedBot);
+  }, [linkedBot]);
 
   // Auto-select first running bot
   const runningBots = bots.filter((b: MusicBotSummary) => b.status !== 'stopped' && b.status !== 'error');
   useEffect(() => {
     if (!selectedBotId && runningBots.length > 0) {
-      setSelectedBotId(runningBots[0].id);
+      selectBot(runningBots[0].id);
     }
+  // Intentionally omit selectBot: only react to selection / bot list changes.
   }, [runningBots, selectedBotId]);
 
   const selectedBot = bots.find((b: MusicBotSummary) => b.id === selectedBotId);
@@ -3245,7 +3260,7 @@ function VideoTab() {
             <Label className="shrink-0">Select Bot:</Label>
             <Select
               value={selectedBotId ? String(selectedBotId) : ''}
-              onValueChange={(v) => setSelectedBotId(parseInt(v))}
+              onValueChange={(v) => selectBot(parseInt(v))}
             >
               <SelectTrigger className="w-64">
                 <SelectValue placeholder="Choose a bot..." />

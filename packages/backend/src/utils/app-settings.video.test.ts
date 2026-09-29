@@ -103,6 +103,13 @@ describe('per-server video defaults', () => {
     assert.deepEqual(parseServerOverrides('not json'), {});
   });
 
+  it('stores normalized numbers and bools from stringy override input', () => {
+    assert.deepEqual(
+      parseServerOverrides('{"noViewerTimeoutSec":"60","maxBitrateKbps":"0","preferHardware":true}'),
+      { noViewerTimeoutSec: 60, maxBitrateKbps: 0, preferHardware: true },
+    );
+  });
+
   it('merges a server\'s overrides over the global defaults', async () => {
     const prisma = prismaWith({
       [VIDEO_NO_VIEWER_TIMEOUT_KEY]: '600',

@@ -483,6 +483,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       queueItem: { id: firstItem.id, title: firstItem.title },
     });
   } catch (err: any) {
+    if (err instanceof AppError) return next(err);
     next(new AppError(500, `Failed to play URL: ${err.message}`));
   }
 });
@@ -685,7 +686,6 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
     const replaceSessionIds = parseReplaceSessionIds(req.body);
-    bot.assertMusicCanStart(replaceSessionIds);
 
     const { playlistId, clearFirst, autoplay } = req.body;
     const playlist = await prisma.playlist.findUnique({
@@ -693,8 +693,6 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
     });
     if (!playlist) throw new AppError(404, 'Playlist not found');
-
-    if (clearFirst) bot.queue.clear();
 
     const items = playlist.songs.map((ps: any) => ({
       id: String(ps.song.id),
@@ -706,10 +704,14 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       sourceUrl: ps.song.sourceUrl ?? undefined,
     }));
 
+    const shouldAutoplay = autoplay ?? clearFirst;
+    // Only require a session replace when this load will actually start playback.
+    if (shouldAutoplay && items.length > 0) bot.assertMusicCanStart(replaceSessionIds);
+
+    if (clearFirst) bot.queue.clear();
     bot.queue.addMany(items);
 
     let playError: string | undefined;
-    const shouldAutoplay = autoplay ?? clearFirst;
     if (shouldAutoplay && items.length > 0) {
       const playIndex = clearFirst ? 0 : bot.queue.length - items.length;
       const item = bot.queue.playAt(playIndex);
