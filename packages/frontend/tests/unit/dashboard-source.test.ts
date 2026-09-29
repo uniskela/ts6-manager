@@ -42,6 +42,26 @@ describe('dashboardSourceLabel', () => {
 });
 
 describe('dashboardSourceHint', () => {
+  it('uses neutral wording when provenance is missing', () => {
+    const hint = dashboardSourceHint(undefined);
+    assert.equal(hint, 'Dashboard uses authenticated WebQuery.');
+    assert.doesNotMatch(String(hint), /scrape is off/i);
+  });
+
+  it('uses neutral wording when metrics provenance is absent', () => {
+    const hint = dashboardSourceHint({ webquery: { status: 'current' } });
+    assert.equal(hint, 'Dashboard uses authenticated WebQuery.');
+    assert.doesNotMatch(String(hint), /scrape is off/i);
+  });
+
+  it('reserves scrape-off wording for explicit disabled metrics', () => {
+    const hint = dashboardSourceHint({
+      webquery: { status: 'current' },
+      metrics: { status: 'disabled' },
+    });
+    assert.match(String(hint), /scrape is off/i);
+  });
+
   it('mentions localhost bind for unreachable', () => {
     const hint = dashboardSourceHint({
       webquery: { status: 'current' },

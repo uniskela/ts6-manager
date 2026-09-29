@@ -22,7 +22,11 @@ export function dashboardSourceLabel(dataSource: DashboardDataSource | undefined
 /** Longer hint for the provenance badge title attribute. */
 export function dashboardSourceHint(dataSource: DashboardDataSource | undefined): string | undefined {
   const metrics = dataSource?.metrics;
-  if (!metrics || metrics.status === 'disabled') {
+  // Missing provenance ≠ scrape disabled — only claim "off" when status is explicit.
+  if (!metrics) {
+    return 'Dashboard uses authenticated WebQuery.';
+  }
+  if (metrics.status === 'disabled') {
     return 'Dashboard uses authenticated WebQuery only. Native metrics scrape is off for this connection.';
   }
   if (metrics.status === 'current') {
