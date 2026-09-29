@@ -6,6 +6,7 @@ import {
   completeRemoteAttempt,
   recordLocalSuccess,
   markPartial,
+  runRemoteAudited,
 } from './writer.js';
 
 const SECRET = 'super-secret-apikey-value-xyz';
@@ -40,6 +41,11 @@ function createMemoryPrisma() {
           count += 1;
         }
         return { count };
+      },
+      update: async ({ where, data }: { where: Row; data: Row }) => {
+        const row = rows.find((r) => r.id === where.id);
+        if (row) Object.assign(row, data);
+        return row;
       },
       findMany: async () => rows.slice(),
     },
@@ -163,5 +169,23 @@ describe('admin audit writer privacy', () => {
       }),
       /Invalid audit action/,
     );
+  });
+
+  it('related rows share the operation and outcome but keep their own targets', async () => {
+    const { prisma, rows } = createMemoryPrisma();
+    const actor = { id: 1, username: 'admin' };
+    await runRemoteAudited(
+      prisma,
+      { actor, action: 'media.session.switch', connectionId: 4, target: { type: 'music_bot', id: 12 } },
+      async () => ({ id: 99 }),
+      {
+        resolveTargetId: (r) => r.id,
+        related: [{ actor, action: 'media.video.stop', connectionId: 9, target: { type: 'music_bot', id: 20 } }],
+      },
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].operationId, rows[1].operationId);
+    assert.deepEqual(rows.map((r) => r.outcome), ['success', 'success']);
+    assert.deepEqual(rows.map((r) => r.targetId), ['99', '20']);
   });
 });

@@ -117,16 +117,16 @@ export interface AuditAttemptHandle {
 export async function beginRemoteAttempt(
   prisma: PrismaLike,
   input: BaseEventInput,
+  related: BaseEventInput[] = [],
 ): Promise<AuditAttemptHandle> {
   const operationId = randomUUID();
-  const row = buildRow({
-    ...input,
-    operationId,
-    outcome: 'pending',
-    resultCode: null,
-    completedAt: null,
-  });
-  const created = await prisma.adminAuditEvent.create({ data: row });
+  const pending = { operationId, outcome: 'pending' as const, resultCode: null, completedAt: null };
+  const created = await prisma.adminAuditEvent.create({ data: buildRow({ ...input, ...pending }) });
+  // Side effects of the same operation (e.g. sessions a media switch stops)
+  // share its operationId, so completion gives them the same outcome.
+  for (const extra of related) {
+    await prisma.adminAuditEvent.create({ data: buildRow({ ...extra, ...pending }) });
+  }
   return { operationId, eventId: created.id };
 }
 
@@ -284,17 +284,28 @@ export async function runRemoteAudited<T>(
   dispatch: () => Promise<T>,
   options?: {
     resolveTargetId?: (result: T) => string | number | null | undefined;
+    /** Rows for side effects of this operation, completed with the same outcome. */
+    related?: BaseEventInput[];
   },
 ): Promise<T> {
-  const attempt = await beginRemoteAttempt(prisma, input);
+  const attempt = await beginRemoteAttempt(prisma, input, options?.related);
   try {
     const result = await dispatch();
     try {
+      const targetId = options?.resolveTargetId ? options.resolveTargetId(result) : undefined;
+      const hasRelated = (options?.related?.length ?? 0) > 0;
       await completeRemoteAttempt(prisma, attempt.operationId, {
         outcome: 'success',
         resultCode: 'ok',
-        targetId: options?.resolveTargetId ? options.resolveTargetId(result) : undefined,
+        // Related rows keep their own targets; set the resolved one on the primary row only.
+        targetId: hasRelated ? undefined : targetId,
       });
+      if (hasRelated && targetId !== undefined) {
+        await prisma.adminAuditEvent.update({
+          where: { id: attempt.eventId },
+          data: { targetId: normalizeTargetId(targetId) },
+        });
+      }
     } catch {
       // Dispatch already succeeded — leave pending for stale resolution; do not fail the request.
     }

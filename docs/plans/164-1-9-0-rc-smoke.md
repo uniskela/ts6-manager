@@ -92,7 +92,7 @@ Use at least one live HLS channel and, if available, one CMAF channel whose segm
 
 | # | Check | Expected |
 | --- | --- | --- |
-| 7.1 | *Audit History* after sections 5–6 | Rows for music start/stop, video start/stop, source change, and session switch. A switch lists what it replaced |
+| 7.1 | *Audit History* after sections 5–6 | Rows for music start/stop, video start/stop, source change, and session switch. Each switch has a stop row per replaced session (on the bot that lost it) with the same operation ID |
 | 7.2 | Inspect those rows and the backend log | No full URLs, query strings, tokens, or IPTV credentials. Only the hostname or file name appears |
 | 7.3 | Save global and per-server streaming defaults | `settings.video_streaming_update` rows. The server scope shows *Overrides: …* and *Use global defaults* clears them |
 
