@@ -466,11 +466,14 @@ semantics and does not download media eagerly.
 
 Production containers do not self-update packages. yt-dlp is installed at image
 build time using pip’s required PEP-668 option; builds check `yt-dlp --version`,
-`ffmpeg -version` and `node --version`. Pull a newly built TS6 Manager image and
-recreate the container to refresh bundled yt-dlp. Rebuilding with a fresh image
-build also refreshes it. No in-app package updater is provided. Extractor tests use
-structured fixtures; a public-video smoke test is deliberately not a release gate
-because availability, rate limits and regional restrictions are outside our control.
+`ffmpeg -version`, `node --version`, and `deno --version`. A pinned Deno binary
+(see `.deno-version`) is installed so yt-dlp can solve YouTube EJS / `n`
+challenges; Node remains enabled as a fallback JS runtime. Pull a newly built
+TS6 Manager image and recreate the container to refresh bundled yt-dlp and Deno.
+Rebuilding with a fresh image build also refreshes them. No in-app package
+updater is provided. Extractor tests use structured fixtures; a public-video
+smoke test is deliberately not a release gate because availability, rate limits
+and regional restrictions are outside our control.
 
 ## License
 

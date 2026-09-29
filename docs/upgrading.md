@@ -35,7 +35,7 @@ Release images are produced from immutable Release Please tags. Pulling a newly 
 
 ### yt-dlp lifecycle
 
-Release images pin the exact yt-dlp version recorded in `.yt-dlp-version`. The backend reports that bundled version at startup but does not update it at runtime, so restarting the same image cannot silently change media-extractor behaviour.
+Release images pin the exact yt-dlp version recorded in `.yt-dlp-version`. The backend reports that bundled version at startup but does not update it at runtime, so restarting the same image cannot silently change media-extractor behaviour. The same images pin Deno (`.deno-version`) so yt-dlp can run YouTube EJS challenge solvers without operators installing a JS runtime by hand.
 
 A scheduled GitHub Actions check compares the pin with yt-dlp's latest stable release once a week. When a newer stable version is available, it opens a normal `fix(deps)` pull request instead of changing production automatically. The update PR is expected to pass the application validation and container build/security gates before it is merged. Release Please can then include the dependency refresh in a patch release.
 

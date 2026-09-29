@@ -88,6 +88,8 @@ If an extractor has changed upstream, pull a newer TS6 Manager image or rebuild 
 
 The Settings → YouTube Runtime / media strip shows the bundled yt-dlp version when you refresh diagnostics. It never updates the tool in place.
 
+Production images also ship a pinned **Deno** binary (plus Node) so yt-dlp can run YouTube EJS / `n` challenge solvers. Cookies alone are not enough when that challenge fails. If logs show `n challenge solving failed` or ask for a JavaScript runtime, pull or rebuild an image that includes Deno (see `.deno-version`) rather than installing a runtime into a running container.
+
 For media requiring login, age, or member access, configure an appropriate cookie file and protect it like a credential.
 
 ## Database/schema problems after upgrade

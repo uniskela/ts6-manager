@@ -30,6 +30,8 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
 FROM node:20-slim AS production
 ARG GIT_SHA=
 COPY .yt-dlp-version /tmp/yt-dlp-version
+COPY .deno-version /tmp/deno-version
+COPY docker-commands/install-deno.sh /tmp/install-deno.sh
 # Sidecar connectivity is deployment-specific. Compose files that run a sidecar
 # set SIDECAR_URL and SIDECAR_SECRET explicitly; standalone/local backend images
 # must be able to start with sidecar integration disabled.
@@ -44,11 +46,17 @@ RUN apt-get update && \
       python3 \
       python3-pip \
       ca-certificates \
+      curl \
+      unzip \
     && YT_DLP_VERSION="$(tr -d '[:space:]' < /tmp/yt-dlp-version)" \
     && test -n "$YT_DLP_VERSION" \
     && python3 -m pip install --break-system-packages --no-cache-dir "yt-dlp[default]==${YT_DLP_VERSION}" \
     && test "$(yt-dlp --version)" = "$YT_DLP_VERSION" \
     && rm -f /tmp/yt-dlp-version \
+    && sed -i 's/\r$//' /tmp/install-deno.sh \
+    && chmod +x /tmp/install-deno.sh \
+    && /tmp/install-deno.sh \
+    && rm -f /tmp/install-deno.sh \
     && rm -rf /usr/local/lib/node_modules/npm \
               /usr/local/lib/node_modules/corepack \
               /root/.cache/node/corepack \
@@ -57,6 +65,7 @@ RUN apt-get update && \
     && yt-dlp --version \
     && ffmpeg -version \
     && node --version \
+    && deno --version \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -70,7 +79,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/apply-schema.sh \
  && chmod +x /usr/local/bin/apply-schema.sh \
       /usr/local/bin/start-backend-standalone.sh \
  && mkdir -p data /data/music /root/.config/yt-dlp \
- && echo "--js-runtimes node" > /root/.config/yt-dlp/config
+ && printf '%s\n' '--js-runtimes deno' '--js-runtimes node' > /root/.config/yt-dlp/config
 
 EXPOSE 3001
 CMD ["/usr/local/bin/start-backend-standalone.sh"]
