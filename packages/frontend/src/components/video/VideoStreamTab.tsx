@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
-import type { VideoEncoderRequest, VideoQualityRequest } from '@ts6/common';
+import type { VideoEncoderRequest, VideoQualityRequest, VideoSourceModeRequest } from '@ts6/common';
 import { VideoPlayer } from './VideoPlayer';
 import { VideoStreamDefaultsCard } from './VideoStreamDefaultsCard';
 import {
@@ -32,6 +32,9 @@ import {
   ENCODER_OPTIONS,
   NO_VIEWER_TIMEOUT_OPTIONS,
   QUALITY_OPTIONS,
+  SOURCE_MODE_LABELS,
+  SOURCE_MODE_OPTIONS,
+  healthLabel,
   encoderLabel,
   formatClock,
   formatTimeout,
@@ -66,6 +69,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
   const [preset, setPreset] = useState<VideoQualityRequest>('auto');
   const [encoder, setEncoder] = useState<'default' | VideoEncoderRequest>('default');
   const [noViewerTimeout, setNoViewerTimeout] = useState('default');
+  const [sourceMode, setSourceMode] = useState<VideoSourceModeRequest>('auto');
   const [framerate, setFramerate] = useState('30');
   const [bitrate, setBitrate] = useState('');
   const [streamVolume, setStreamVolume] = useState(100);
@@ -91,6 +95,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
       preset,
       encoder: encoder === 'default' ? undefined : encoder,
       noViewerTimeoutSec: noViewerTimeout === 'default' ? undefined : Number(noViewerTimeout),
+      sourceMode,
       framerate: Number(framerate),
       bitrate: bitrate.trim() || undefined,
       volume: streamVolume,
@@ -230,6 +235,25 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                   </div>
 
                   <div className="space-y-2">
+                    <Label>Source type</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {SOURCE_MODE_OPTIONS.map((o) => (
+                        <Button
+                          key={o.value}
+                          variant={sourceMode === o.value ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => setSourceMode(o.value)}
+                        >
+                          {o.label}
+                        </Button>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Live sources never loop or &quot;end&quot;; Detect uses the Auto-quality probe (fixed presets treat URLs as on demand). Local files are always files.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
                     <Label>Frame Rate (FPS)</Label>
                     <div className="flex gap-2">
                       {FPS_OPTIONS.map((fps) => (
@@ -362,6 +386,12 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                     <dd className="font-medium">{streamStatus.framerate} · {streamStatus.bitrate}</dd>
                   </div>
                   <div>
+                    <dt className="text-muted-foreground">Source · Encode</dt>
+                    <dd className={streamStatus.health?.belowRealtime ? 'font-medium text-warning' : 'font-medium'}>
+                      {streamStatus.sourceMode ? SOURCE_MODE_LABELS[streamStatus.sourceMode] : '—'} · {healthLabel(streamStatus.health)}
+                    </dd>
+                  </div>
+                  <div>
                     <dt className="text-muted-foreground">Viewers</dt>
                     <dd className="font-medium">{streamStatus.viewerCount}</dd>
                   </div>
@@ -382,6 +412,12 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                     </dd>
                   </div>
                 </dl>
+                {streamStatus.health?.warning && (
+                  <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>{streamStatus.health.warning}</span>
+                  </p>
+                )}
                 {streamStatus.encoder?.fallbackReason && (
                   <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
                     <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />

@@ -60,6 +60,13 @@ export function parseStreamStartOptions(body: Record<string, unknown> | null | u
     options.noViewerTimeoutSec = sec;
   }
 
+  if (b.sourceMode != null && b.sourceMode !== '') {
+    if (!['auto', 'live', 'vod'].includes(String(b.sourceMode))) {
+      return { ok: false, error: 'sourceMode must be auto, live or vod' };
+    }
+    options.sourceMode = b.sourceMode as 'auto' | 'live' | 'vod';
+  }
+
   const replace = parseReplaceSessionIds(b);
   if (replace.length > 0) options.replaceSessionIds = replace;
 

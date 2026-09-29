@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { parseProbeResolution, probeSourceResolution, sourceProbeArgs } from './source-probe.js';
+import { parseProbe, parseProbeResolution, probeSourceResolution, sourceProbeArgs } from './source-probe.js';
 
 describe('source probe', () => {
   it('bounds network reads for http sources only', () => {
@@ -24,5 +24,17 @@ describe('source probe', () => {
     assert.equal(await probeSourceResolution('https://example.com/x', failing), null);
     assert.equal(await probeSourceResolution('-i /etc/passwd', failing), null);
     assert.equal(calls, 1);
+  });
+
+  it('reads duration to tell live from VOD', () => {
+    assert.ok(sourceProbeArgs('x.mp4').includes('stream=width,height:format=duration'));
+    assert.deepEqual(parseProbe('{"streams":[{"width":1280,"height":720}],"format":{"duration":"61.5"}}'), {
+      resolution: { width: 1280, height: 720 }, durationSec: 61.5,
+    });
+    // Live HLS: ffprobe reports no duration.
+    assert.deepEqual(parseProbe('{"streams":[{"width":1920,"height":1080}],"format":{}}'), {
+      resolution: { width: 1920, height: 1080 }, durationSec: null,
+    });
+    assert.equal(parseProbe(null), null);
   });
 });

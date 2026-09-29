@@ -267,6 +267,8 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
       encoder: req.body.encoder,
       noViewerTimeoutSec: req.body.noViewerTimeoutSec,
       replaceSessionIds: req.body.replaceSessionIds,
+      // IPTV channels are live unless the caller says otherwise.
+      sourceMode: req.body.sourceMode ?? 'live',
     });
     if (!parsed.ok) throw new AppError(400, parsed.error);
 
@@ -278,7 +280,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
 
     // If already streaming, just switch the source; otherwise start a stream.
     if (bot.videoStreaming) {
-      await bot.setVideoSource(channel.url);
+      await bot.setVideoSource(channel.url, undefined, parsed.options.sourceMode);
     } else {
       await manager.startVideoStream(bot, channel.url, parsed.options);
     }

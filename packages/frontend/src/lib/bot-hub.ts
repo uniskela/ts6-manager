@@ -3,7 +3,9 @@
  */
 
 import type { BotMediaOverview } from '@ts6/common';
-import { formatClock, lastStopLabel, qualityLabel, encoderLabel, formatTimeout } from './video-streaming';
+import {
+  SOURCE_MODE_LABELS, formatClock, lastStopLabel, qualityLabel, encoderLabel, formatTimeout, healthLabel,
+} from './video-streaming';
 
 export type HubTone = 'live' | 'music' | 'idle' | 'offline';
 
@@ -37,6 +39,8 @@ export function hubFacts(bot: BotMediaOverview, now: number): string[] {
   if (bot.video) {
     facts.push(qualityLabel(bot.video.quality, bot.video.preset));
     facts.push(encoderLabel(bot.video.encoder));
+    if (bot.video.sourceMode) facts.push(SOURCE_MODE_LABELS[bot.video.sourceMode]);
+    if (bot.video.health?.speed != null) facts.push(healthLabel(bot.video.health));
     facts.push(`${bot.video.viewerCount} viewer${bot.video.viewerCount === 1 ? '' : 's'}`);
     if (bot.video.startedAt) facts.push(`up ${formatClock(now - bot.video.startedAt)}`);
     if (bot.video.noViewer.stopAt) {

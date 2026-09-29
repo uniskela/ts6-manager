@@ -270,6 +270,28 @@ export interface VideoStreamPreset {
   framerate: number;
 }
 
+/**
+ * How the source behaves: `live` never ends and is not looped, `vod` is a
+ * remote file-like source, `file` is local. Never inferred from a URL suffix.
+ */
+export type VideoSourceMode = 'live' | 'vod' | 'file';
+export type VideoSourceModeRequest = 'auto' | VideoSourceMode;
+
+/** Encode health while streaming (from the sidecar, sampled every ~10 s). */
+export interface VideoStreamHealth {
+  /** ffmpeg encode speed; ~1.0 is realtime. */
+  speed: number | null;
+  fps: number | null;
+  droppedFrames: number;
+  rtpDrops: number;
+  /** Sustained below realtime after startup (not a transient). */
+  belowRealtime: boolean;
+  belowRealtimeSecs: number;
+  /** Human-readable warning with context, when below realtime. */
+  warning: string | null;
+  checkedAt: number;
+}
+
 export interface VideoStreamQualityInfo {
   requested: VideoQualityRequest;
   actual: VideoStreamPresetKey;
@@ -314,6 +336,8 @@ export interface VideoStreamStatus {
   sidecar: { videoPort: number; audioPort: number } | null;
   quality: VideoStreamQualityInfo | null;
   encoder: VideoStreamEncoderInfo | null;
+  sourceMode: VideoSourceMode | null;
+  health: VideoStreamHealth | null;
   noViewer: {
     /** 0 = disabled. */
     timeoutSec: number;
@@ -370,6 +394,8 @@ export interface StartVideoStreamRequest {
   noViewerTimeoutSec?: number;
   /** Session IDs from a media_session_conflict the caller agrees to replace. */
   replaceSessionIds?: string[];
+  /** Source behaviour; `auto` detects live vs VOD when the source is probed. */
+  sourceMode?: VideoSourceModeRequest;
 }
 
 export interface SetVideoSourceRequest {

@@ -3,6 +3,9 @@
  */
 
 import type {
+  VideoSourceMode,
+  VideoSourceModeRequest,
+  VideoStreamHealth,
   MediaStopInfo,
   MediaStopReason,
   VideoEncoderId,
@@ -109,4 +112,23 @@ export function lastStopLabel(stop: MediaStopInfo | null | undefined, now: numbe
   const agoMin = Math.floor(Math.max(0, now - stop.at) / 60_000);
   const ago = agoMin < 1 ? 'just now' : agoMin < 60 ? `${agoMin} min ago` : `${Math.floor(agoMin / 60)} h ago`;
   return `${base} · ${ago}`;
+}
+
+export const SOURCE_MODE_OPTIONS: ReadonlyArray<{ value: VideoSourceModeRequest; label: string }> = [
+  { value: 'auto', label: 'Detect' },
+  { value: 'live', label: 'Live' },
+  { value: 'vod', label: 'On demand' },
+];
+
+export const SOURCE_MODE_LABELS: Record<VideoSourceMode, string> = {
+  live: 'Live',
+  vod: 'On demand',
+  file: 'Local file',
+};
+
+/** "1.01x · 30 fps" or "—" before the first sample. */
+export function healthLabel(h: VideoStreamHealth | null | undefined): string {
+  if (!h || h.speed == null) return '—';
+  const fps = h.fps != null ? ` · ${Math.round(h.fps)} fps` : '';
+  return `${h.speed.toFixed(2)}x${fps}`;
 }

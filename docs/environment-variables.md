@@ -65,6 +65,7 @@ The values below are code defaults. Compose files may override them.
 | `VIDEO_CPU_USED` | `4` | libvpx realtime speed/quality trade-off |
 | `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
 | `VIDEO_BUFSIZE` | automatic | Optional explicit bitrate buffer |
+| `VIDEO_LIVE_PACING` | `re` | `re` reads live sources with `-re` (measured steady ~1.0x); `source` lets the live source pace input (startup burst) |
 | `VIDEO_GOP` | `15` | Keyframe interval in frames (new viewers start at a keyframe) |
 | `VIDEO_VP9_CPU_USED` | `8` | libvpx-vp9 realtime speed/quality trade-off |
 | `VIDEO_X264_PRESET` | `veryfast` | libx264 preset for software H.264 |

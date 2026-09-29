@@ -68,3 +68,16 @@ export function selectEncoder(
   const reason = caps.vaapiDevicePresent ? 'no VAAPI encoder passed the test encode' : 'no VAAPI device';
   return { selected: 'vp8', note: `Hardware preferred but ${reason} — using software VP8` };
 }
+
+const ENCODER_NAMES: Record<VideoEncoderId, string> = {
+  vp8: 'VP8 (software)',
+  vp9: 'VP9 (software)',
+  h264: 'H.264 (software)',
+  vp8_vaapi: 'VP8 (VAAPI)',
+  vp9_vaapi: 'VP9 (VAAPI)',
+  h264_vaapi: 'H.264 (VAAPI)',
+};
+
+export function encoderDisplayName(id: VideoEncoderId): string {
+  return ENCODER_NAMES[id] ?? id;
+}

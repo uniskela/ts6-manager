@@ -389,6 +389,12 @@ type Sidecar struct {
 
 	caps capabilityCache
 
+	// Encode health for the current ffmpeg run (guarded by statusMu) and RTP
+	// queue-full drop counters (atomic, reset per run).
+	health        *healthTracker
+	rtpVideoDrops uint64
+	rtpAudioDrops uint64
+
 	// Atomic timestamps for RTCP Sender Report generation
 	lastVideoRTPTs  uint64 // atomic: latest video RTP timestamp seen
 	lastAudioRTPTs  uint64 // atomic: latest audio RTP timestamp seen
@@ -496,6 +502,7 @@ func (s *Sidecar) readVideoRTP() {
 		select {
 		case s.videoQueue <- cloned:
 		default:
+			atomic.AddUint64(&s.rtpVideoDrops, 1)
 			if count%120 == 0 {
 				log.Printf("[VIDEO] queue full, dropping packet ts=%d", cloned.Timestamp)
 			}
@@ -539,6 +546,7 @@ func (s *Sidecar) readAudioRTP() {
 		select {
 		case s.audioQueue <- cloned:
 		default:
+			atomic.AddUint64(&s.rtpAudioDrops, 1)
 			if count%200 == 0 {
 				log.Printf("[AUDIO] queue full, dropping packet ts=%d", cloned.Timestamp)
 			}
@@ -963,6 +971,8 @@ type SourceRequest struct {
 	Volume    int
 	Loop      bool
 	Encoder   string
+	// Mode is live, vod or file ("" = infer from the source).
+	Mode string
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -977,6 +987,19 @@ type EncoderSession struct {
 	ExitError      string     `json:"exitError,omitempty"`
 	StartedAt      *time.Time `json:"startedAt,omitempty"`
 	gen            uint64
+}
+
+// streamHealth reports encode speed and drops for the current run (nil when idle).
+func (s *Sidecar) streamHealth() *StreamHealth {
+	s.statusMu.Lock()
+	h := s.health
+	running := s.encoder.State == "running"
+	s.statusMu.Unlock()
+	if h == nil || !running {
+		return nil
+	}
+	snap := h.snapshot(atomic.LoadUint64(&s.rtpVideoDrops), atomic.LoadUint64(&s.rtpAudioDrops))
+	return &snap
 }
 
 func (s *Sidecar) encoderSession() EncoderSession {
@@ -1050,18 +1073,24 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 		fps = envIntOrDefault("VIDEO_FRAMERATE", 30)
 	}
 
-	args := []string{}
+	// Periodic progress lines feed the encode-health tracker.
+	args := []string{"-stats_period", "2"}
 	args = append(args, hwInitArgs(spec, req.Source != "")...)
 
 	source := req.Source
 	if source != "" {
+		mode := resolveSourceMode(req.Mode, source)
 		if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 			args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
-		} else if req.Loop {
+		} else if req.Loop && mode == modeFile {
 			args = append(args, "-stream_loop", "-1")
 		}
 
-		args = append(args, "-fflags", "+genpts+discardcorrupt", "-re", "-i", source)
+		args = append(args, "-fflags", "+genpts+discardcorrupt")
+		if mode != modeLive || !livePacedBySource() {
+			args = append(args, "-re")
+		}
+		args = append(args, "-i", source)
 	} else {
 		args = append(args, "-re", "-f", "lavfi", "-i", fmt.Sprintf("color=c=black:s=%dx%d:r=1", w, h))
 	}
@@ -1125,11 +1154,11 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 }
 
 // launchFFmpegLocked starts ffmpeg and returns a channel closed on exit.
-func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64) (<-chan struct{}, *tailBuffer, error) {
+func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64, health *healthTracker) (<-chan struct{}, *tailBuffer, error) {
 	tail := &tailBuffer{}
 	cmd := exec.Command(getFfmpegPath(), args...)
 	cmd.Stdout = nil
-	cmd.Stderr = io.MultiWriter(os.Stderr, tail)
+	cmd.Stderr = io.MultiWriter(os.Stderr, tail, health)
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
@@ -1221,8 +1250,15 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 		s.statusMu.Unlock()
 
 		args := s.buildFFmpegArgs(req, spec, lowPower)
-		log.Printf("[FFmpeg] Starting: encoder=%s video=:%d audio=:%d", spec.ID, s.videoPort, s.audioPort)
-		done, tail, err := s.launchFFmpegLocked(args, gen)
+		mode := resolveSourceMode(req.Mode, req.Source)
+		health := newHealthTracker(mode, nil)
+		atomic.StoreUint64(&s.rtpVideoDrops, 0)
+		atomic.StoreUint64(&s.rtpAudioDrops, 0)
+		s.statusMu.Lock()
+		s.health = health
+		s.statusMu.Unlock()
+		log.Printf("[FFmpeg] Starting: encoder=%s mode=%s video=:%d audio=:%d", spec.ID, mode, s.videoPort, s.audioPort)
+		done, tail, err := s.launchFFmpegLocked(args, gen, health)
 		if err != nil {
 			log.Printf("[FFmpeg] Start error: %v", err)
 			s.statusMu.Lock()
@@ -1292,6 +1328,7 @@ func (s *Sidecar) GetStats() map[string]interface{} {
 		"source":    s.source,
 		"codec":     s.currentCodec(),
 		"encoder":   s.encoderSession(),
+		"health":    s.streamHealth(),
 	}
 }
 
@@ -1443,6 +1480,8 @@ func main() {
 			Loop *bool `json:"loop"`
 			// Encoder is a registry ID (vp8, h264_vaapi, ...); empty keeps VP8.
 			Encoder string `json:"encoder"`
+			// Mode is live, vod or file; empty infers it from the source.
+			Mode string `json:"mode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1481,6 +1520,7 @@ func main() {
 			Volume:    vol,
 			Loop:      loop,
 			Encoder:   encoderID,
+			Mode:      req.Mode,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)

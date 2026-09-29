@@ -87,6 +87,12 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
         {facts.length > 0 && (
           <p className="text-xs text-muted-foreground">{facts.join(' · ')}</p>
         )}
+        {bot.video?.health?.warning && (
+          <p className="flex items-start gap-1.5 text-xs text-warning">
+            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="line-clamp-3">{bot.video.health.warning}</span>
+          </p>
+        )}
         {bot.video?.encoder?.fallbackReason && (
           <p className="flex items-start gap-1.5 text-xs text-warning">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />

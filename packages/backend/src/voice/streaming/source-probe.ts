@@ -48,11 +48,41 @@ export function sourceProbeArgs(source: string): string[] {
   }
   args.push(
     '-select_streams', 'v:0',
-    '-show_entries', 'stream=width,height',
+    '-show_entries', 'stream=width,height:format=duration',
     '-of', 'json',
     source,
   );
   return args;
+}
+
+export interface SourceProbe {
+  resolution: SourceResolution | null;
+  /** Finite duration in seconds; null for live sources (ffprobe reports none). */
+  durationSec: number | null;
+}
+
+export function parseProbe(stdout: string | null): SourceProbe | null {
+  if (!stdout) return null;
+  try {
+    const parsed = JSON.parse(stdout) as { format?: { duration?: string } };
+    const duration = Number(parsed.format?.duration);
+    return {
+      resolution: parseProbeResolution(stdout),
+      durationSec: Number.isFinite(duration) && duration > 0 ? duration : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** One bounded ffprobe for Auto quality and live/VOD detection; null on failure. */
+export async function probeSource(
+  source: string,
+  run: ProbeRunner = runFfprobe,
+  timeoutMs: number = SOURCE_PROBE_TIMEOUT_MS,
+): Promise<SourceProbe | null> {
+  if (!source || source.startsWith('-')) return null;
+  return parseProbe(await run(sourceProbeArgs(source), timeoutMs));
 }
 
 export function parseProbeResolution(stdout: string | null): SourceResolution | null {

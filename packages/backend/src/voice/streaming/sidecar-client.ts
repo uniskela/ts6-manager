@@ -3,7 +3,7 @@
  * Manages peers, media sources, and health checks.
  */
 
-import type { VideoCodec, VideoEncoderCapabilities, VideoEncoderId } from '@ts6/common';
+import type { VideoCodec, VideoEncoderCapabilities, VideoEncoderId, VideoSourceMode } from '@ts6/common';
 
 /** Encoder the sidecar reports running after POST /source. */
 export interface SidecarEncoderSession {
@@ -24,6 +24,22 @@ export interface SidecarSourceOptions {
   volume?: number;
   loop?: boolean;
   encoder?: VideoEncoderId;
+  mode?: VideoSourceMode;
+}
+
+/** Encode health from GET /stats (sidecar 1.9+; absent on older sidecars). */
+export interface SidecarStreamHealth {
+  mode: string;
+  speed: number;
+  fps: number;
+  frames: number;
+  droppedFrames: number;
+  duplicatedFrames: number;
+  rtpVideoDrops: number;
+  rtpAudioDrops: number;
+  belowRealtime: boolean;
+  belowRealtimeSecs: number;
+  sampleAgeSecs: number;
 }
 
 export interface SidecarStats {
@@ -32,6 +48,8 @@ export interface SidecarStats {
   peerCount: number;
   peers: Record<string, { active: boolean; state: string }>;
   source: string;
+  encoder?: SidecarEncoderSession;
+  health?: SidecarStreamHealth | null;
 }
 
 export class SidecarClient {
@@ -93,8 +111,9 @@ export class SidecarClient {
     await this.call('POST', '/source/stop');
   }
 
-  async getStats(): Promise<SidecarStats> {
-    return this.call('GET', '/stats');
+  /** In-memory counters only (no probes); bounded so a hung sidecar cannot stall callers. */
+  async getStats(timeoutMs = 3_000): Promise<SidecarStats> {
+    return this.call('GET', '/stats', undefined, timeoutMs);
   }
 
   async getHealth(): Promise<{ status: string; videoPort: number; audioPort: number }> {

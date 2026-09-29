@@ -2542,14 +2542,14 @@ export class MusicCommandHandler {
     }
 
     if (bot.videoStreaming) {
-      await bot.setVideoSource(channel.url);
+      await bot.setVideoSource(channel.url, undefined, 'live');
       this.reply(bot, userClid, `Now streaming: ${channel.name}`);
       return;
     }
 
     this.reply(bot, userClid, `Starting stream: ${channel.name}...`);
     try {
-      await this.voiceBotManager.startVideoStream(bot, channel.url, this.chatVideoSwitch(bot));
+      await this.voiceBotManager.startVideoStream(bot, channel.url, { sourceMode: 'live', ...this.chatVideoSwitch(bot) });
       this.reply(bot, userClid, `Video stream started: ${channel.name}`);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to start stream: ${this.streamStartError(err)}`);

@@ -132,3 +132,30 @@ func TestFFmpegHardwareFailureFallsBackToSoftware(t *testing.T) {
 	}
 	t.Logf("fallback reason: %s", session.FallbackReason)
 }
+
+// TestFFmpegProgressFeedsHealth runs a deliberately slow encode (1080p60 VP8,
+// best quality, one thread) and checks the tracker sees below-realtime speed.
+func TestFFmpegProgressFeedsHealth(t *testing.T) {
+	if os.Getenv("SIDECAR_FFMPEG_IT") != "1" {
+		t.Skip("set SIDECAR_FFMPEG_IT=1 to run against a real ffmpeg")
+	}
+	h := newHealthTracker(modeLive, nil)
+	// Bounded run: a slow encode never finishes 20s of input in 8s; the
+	// progress lines seen before the deadline are what matters.
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, getFfmpegPath(), "-hide_banner", "-nostdin", "-stats_period", "1",
+		"-re", "-f", "lavfi", "-i", "testsrc2=s=1920x1080:r=60:d=20",
+		"-c:v", "libvpx", "-cpu-used", "0", "-deadline", "good", "-threads", "1", "-b:v", "8000k",
+		"-f", "null", "-")
+	cmd.Stderr = h
+	_ = cmd.Run()
+	snap := h.snapshot(0, 0)
+	if snap.Frames == 0 || snap.Speed <= 0 {
+		t.Fatalf("no progress parsed: %+v", snap)
+	}
+	if snap.Speed >= 1 {
+		t.Skipf("host encoded 1080p60 VP8 best-quality in realtime (%.2fx); cannot demonstrate a slow encode here", snap.Speed)
+	}
+	t.Logf("slow encode observed: speed=%.2fx fps=%.1f frames=%d", snap.Speed, snap.FPS, snap.Frames)
+}

@@ -112,3 +112,59 @@ describe('video no-viewer auto-stop', () => {
     assert.equal(sidecarCalls.filter((c) => c === 'stopSource').length, 1);
   });
 });
+
+describe('video encode health (#72)', () => {
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1_000_000 });
+  });
+  afterEach(() => {
+    mock.timers.reset();
+  });
+
+  it('surfaces a sustained below-realtime warning with context', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    b._videoPreset = '1080p';
+    b._videoSourceMode = 'live';
+    b._videoEncoder = { requested: 'auto', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null };
+    b.sidecarHttp.getStats = async () => ({
+      encoder: { state: 'running' },
+      health: {
+        mode: 'live', speed: 0.55, fps: 16, frames: 900, droppedFrames: 3, duplicatedFrames: 0,
+        rtpVideoDrops: 5, rtpAudioDrops: 1, belowRealtime: true, belowRealtimeSecs: 31, sampleAgeSecs: 1,
+      },
+    });
+    await bot.pollVideoHealth();
+    const health = bot.videoStreamStatus.health!;
+    assert.equal(health.speed, 0.55);
+    assert.equal(health.rtpDrops, 6);
+    assert.equal(health.belowRealtime, true);
+    assert.match(health.warning ?? '', /0\.55x for 31 s, 6 packets dropped\) at 1080p with VP8 \(software\) from a live source/);
+    assert.equal(bot.videoStreamStatus.sourceMode, 'live');
+  });
+
+  it('stops the stream with a truthful reason when ffmpeg exits', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    b._videoSourceMode = 'live';
+    b.sidecarHttp.getStats = async () => ({ encoder: { state: 'exited', exitError: '<source> Server returned 404 Not Found' } });
+    const poll = bot.pollVideoHealth();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await poll;
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.videoStreamStatus.lastStop?.reason, 'source_unreachable');
+    assert.match(bot.videoStreamStatus.lastStop?.detail ?? '', /404/);
+  });
+
+  it('ignores older sidecars that report no health', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    b.sidecarHttp.getStats = async () => ({ videoPort: 1, audioPort: 2 });
+    await bot.pollVideoHealth();
+    assert.equal(bot.videoStreaming, true);
+    assert.equal(bot.videoStreamStatus.health, null);
+  });
+});

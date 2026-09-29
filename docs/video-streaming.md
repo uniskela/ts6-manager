@@ -46,6 +46,26 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
 
 NVENC is not supported yet.
 
+## Source type and stream health
+
+Every stream has a source type:
+
+| Type | Used for | Behaviour |
+|---|---|---|
+| **Live** | IPTV channels (default), live URLs | never loops; if it stops, the stream stops as *source unreachable* |
+| **On demand** | remote videos | paced playback; stops as *source ended* when it finishes |
+| **Local file** | files under the music directory, downloaded clips | paced; admin backgrounds loop |
+
+**Detect** (the default for URLs) uses the Auto-quality probe: a source without a duration is live. The URL itself (for example `.m3u8`) is never used to guess, because IPTV providers often use opaque URLs. With a fixed preset there is no probe, so a URL is treated as on demand unless you pick **Live**.
+
+While a stream runs, the backend samples the sidecar's encode stats every 10 seconds (in-memory counters, not a diagnostic probe). The stream panel and Bot Hub show the source type and encode speed (for example `1.01x · 30 fps`). If encoding stays below 0.9x for 20 seconds after a 15-second startup grace, a warning names the speed, dropped packets, preset, encoder and source type — for example *Encoding below realtime (0.62x for 40 s) at 1080p with VP8 (software) from a live source*. Use a lower preset or a hardware encoder.
+
+If ffmpeg stops on its own, the stream stops instead of showing a frozen picture, with a reason: *source ended*, *source unreachable* (network/HTTP errors, or a live source ending), or *encoder failure*.
+
+### Live pacing (issue #72)
+
+Live inputs are read with `-re` like everything else. Measured on a 4-core host with the sidecar's 720p30 VP8 pipeline against live HLS (MPEG-TS) and CMAF (fMP4 with a `moov` repeated in every segment): `-re` held a steady ~1.01x at 30 fps, while reading without it burst to ~2x at startup (the buffered live-edge segments) before settling. The `Found duplicated MOOV Atom. Skipped it` messages from such CMAF sources were harmless in that test. Sustained ~0.5x therefore points at host encode capacity (or a provider-specific timestamp problem), which the health warning now makes visible. Set `VIDEO_LIVE_PACING=source` on the sidecar to let live sources set their own pace instead.
+
 ## One media session at a time
 
 - A bot plays **music or video, never both**.

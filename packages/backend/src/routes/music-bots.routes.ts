@@ -874,7 +874,9 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     if (!bot) throw new AppError(404, 'Music bot not found');
     const { source, volume } = req.body;
     const safeSource = assertVideoSource(source);
-    await bot.setVideoSource(safeSource, volume);
+    const parsed = parseStreamStartOptions({ sourceMode: req.body?.sourceMode });
+    if (!parsed.ok) throw new AppError(400, parsed.error);
+    await bot.setVideoSource(safeSource, volume, parsed.options.sourceMode);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
