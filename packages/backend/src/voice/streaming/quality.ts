@@ -110,8 +110,14 @@ export function parseBitrateKbps(value: string | null | undefined): number | nul
 }
 
 /**
+ * TeamSpeak drops a stream above 10 Mbit/s, which looks like an encoder
+ * failure, so every stream stays under this ceiling whatever is configured.
+ */
+export const TS_STREAM_MAX_KBPS = 9500;
+
+/**
  * Effective bitrate: the request (when valid) or the preset's bitrate, then
- * clamped to maxKbps when set.
+ * clamped to maxKbps when set and always to TS_STREAM_MAX_KBPS.
  */
 export function effectiveBitrate(
   requested: string | null | undefined,
@@ -119,6 +125,6 @@ export function effectiveBitrate(
   maxKbps: number,
 ): string {
   const kbps = parseBitrateKbps(requested) ?? parseBitrateKbps(presetBitrate) ?? 2500;
-  const clamped = maxKbps > 0 ? Math.min(kbps, maxKbps) : kbps;
-  return `${clamped}k`;
+  const limit = maxKbps > 0 ? Math.min(maxKbps, TS_STREAM_MAX_KBPS) : TS_STREAM_MAX_KBPS;
+  return `${Math.min(kbps, limit)}k`;
 }

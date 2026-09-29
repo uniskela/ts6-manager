@@ -29,6 +29,7 @@ function fakeStreaming(bot: VoiceBot, timeoutSec: number) {
   b.signaling = {
     sendRemoveClient: () => {},
     sendStreamStop: () => { sidecarCalls.push('stopstream'); },
+    dispose: () => { sidecarCalls.push('dispose'); },
   };
   return { b, sidecarCalls };
 }
@@ -66,6 +67,7 @@ describe('video no-viewer auto-stop', () => {
     assert.equal(status.lastStop?.detail, 'Stopped after 5 minutes with no viewers');
     assert.ok(sidecarCalls.includes('stopSource'));
     assert.ok(sidecarCalls.includes('stopstream'));
+    assert.ok(sidecarCalls.includes('dispose'), 'stopping detaches stream signaling from the client');
   });
 
   it('cancels the countdown when a viewer joins and restarts it when they leave', () => {

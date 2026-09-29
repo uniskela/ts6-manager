@@ -180,6 +180,11 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool) []string {
 	if spec.Hardware && lowPower {
 		args = append(args, "-low_power", "1")
 	}
+	if !spec.Hardware && (spec.Codec == codecVP8 || spec.Codec == codecVP9) {
+		// libvpx treats -maxrate as a hint and stays VBR unless -minrate
+		// matches the target; VP9 was measured at ~2x its bitrate without it.
+		rate = append(rate, "-minrate", vBitrate)
+	}
 	args = append(args, rate...)
 	if spec.Codec == codecVP9 {
 		// ffmpeg still labels VP9 RTP packetization experimental.

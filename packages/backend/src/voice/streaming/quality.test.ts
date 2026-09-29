@@ -79,9 +79,12 @@ describe('bitrates', () => {
   });
 
   it('uses the preset bitrate unless overridden, then clamps', () => {
-    assert.equal(effectiveBitrate(null, '14000k', 0), '14000k');
-    assert.equal(effectiveBitrate(null, '14000k', 8000), '8000k');
-    assert.equal(effectiveBitrate('3000k', '14000k', 8000), '3000k');
+    assert.equal(effectiveBitrate(null, '9500k', 0), '9500k');
+    assert.equal(effectiveBitrate(null, '9500k', 8000), '8000k');
+    assert.equal(effectiveBitrate('3000k', '9500k', 8000), '3000k');
+    // TeamSpeak's ceiling applies even with no admin limit, or a higher one.
+    assert.equal(effectiveBitrate('20000k', '4500k', 0), '9500k');
+    assert.equal(effectiveBitrate('12M', '4500k', 50000), '9500k');
     assert.equal(effectiveBitrate('20000k', '4500k', 8000), '8000k');
     assert.equal(effectiveBitrate('garbage', '4500k', 0), '4500k');
   });

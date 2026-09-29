@@ -217,7 +217,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
               value={draft.maxBitrateKbps}
               onChange={(e) => set('maxBitrateKbps', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
             />
-            <p className="text-xs text-muted-foreground">0 = no limit. Clamps every preset and custom bitrate.</p>
+            <p className="text-xs text-muted-foreground">0 = no limit. Clamps every preset and custom bitrate; streams never exceed TeamSpeak's 9500 kbps ceiling.</p>
           </div>
         </div>
 

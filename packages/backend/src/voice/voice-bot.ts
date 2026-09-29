@@ -1550,6 +1550,7 @@ export class VoiceBot extends EventEmitter {
           this.clearNoViewerTimer();
           this.stopHealthMonitor();
           this._videoSessionId = null;
+          this.releaseSignaling();
           this.recordVideoStop('sidecar_failure', `Media sidecar exited (code ${code ?? 'unknown'})`);
           if (this._status !== 'playing') {
             this.stopAutoStopTimer();
@@ -1621,7 +1622,21 @@ export class VoiceBot extends EventEmitter {
       audio: true,
     });
 
-    const stream = await streamPromise;
+    let stream: ActiveStream;
+    try {
+      stream = await streamPromise;
+    } catch (err) {
+      // The server never confirmed: undo the signaling and a local sidecar,
+      // so a retry does not stack listeners on top of this attempt's.
+      this.releaseSignaling();
+      this._videoEncoder = null;
+      if (this.sidecarProc) {
+        await this.sidecarProc.stop();
+        this.sidecarProc = null;
+      }
+      this.sidecarHttp = null;
+      throw err;
+    }
     this._activeStreamId = stream.id;
     this._videoStreaming = true;
     this._videoSource = source;
@@ -1640,7 +1655,7 @@ export class VoiceBot extends EventEmitter {
       this._videoQuality = null;
       this._videoEncoder = null;
       this.clearNoViewerTimer();
-      this.signaling = null;
+      this.releaseSignaling();
       if (this.sidecarProc) {
         await this.sidecarProc.stop();
         this.sidecarProc = null;
@@ -1705,7 +1720,7 @@ export class VoiceBot extends EventEmitter {
       this._videoStreaming = false;
       this._videoStartedAt = null;
       this._videoSessionId = null;
-      this.signaling = null;
+      this.releaseSignaling();
       this.cleanupVideoTempFile();
       if (this._status !== 'playing') {
         this.stopAutoStopTimer();
@@ -1799,6 +1814,12 @@ export class VoiceBot extends EventEmitter {
   async addWebRtcIceCandidate(candidate: string, sdpMid: string, sdpMLineIndex: number): Promise<void> {
     if (!this.sidecarHttp) throw new Error('No sidecar');
     await this.sidecarHttp.addIceCandidate('webui-preview', candidate, sdpMid, sdpMLineIndex);
+  }
+
+  /** Detach the current stream signaling from the client, if any. */
+  private releaseSignaling(): void {
+    this.signaling?.dispose();
+    this.signaling = null;
   }
 
   private setupSignalingListeners(): void {

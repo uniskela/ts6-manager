@@ -55,6 +55,22 @@ func TestEncoderArgsHardwareUsesUploadAndLowPower(t *testing.T) {
 	}
 }
 
+func TestLibvpxHoldsBitrateWithMinrate(t *testing.T) {
+	for _, id := range []string{"vp8", "vp9"} {
+		spec, _ := lookupEncoder(id)
+		args := strings.Join(encoderArgs(spec, "5500k", false), " ")
+		if !strings.Contains(args, "-minrate 5500k") {
+			t.Errorf("%s needs -minrate to hold its bitrate: %s", id, args)
+		}
+	}
+	for _, id := range []string{"h264", "vp9_vaapi", "h264_vaapi"} {
+		spec, _ := lookupEncoder(id)
+		if args := strings.Join(encoderArgs(spec, "5500k", false), " "); strings.Contains(args, "-minrate") {
+			t.Errorf("%s holds -maxrate on its own and must not get -minrate: %s", id, args)
+		}
+	}
+}
+
 func TestBuildFFmpegArgsSoftwareKeepsVP8Contract(t *testing.T) {
 	s := NewSidecar()
 	s.videoPort, s.audioPort = 5000, 5002

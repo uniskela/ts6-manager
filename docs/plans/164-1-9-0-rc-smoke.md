@@ -27,6 +27,8 @@ Stream the same 720p on-demand source to a TeamSpeak client for each encoder. Fo
 | 1.2 | VP9 (software) | Same as 1.1 |
 | 1.3 | H.264 (software) | Same as 1.1. The picture is not black (Constrained High profile is negotiated) |
 | 1.4 | Change the source mid-stream (same encoder) | Viewers keep the stream without rejoining |
+| 1.5 | H.264 (software, then VAAPI if available) at **1080p** and **1440p** | Picture renders. The offer always declares level 3.1 (`640c1f`); if the client shows black or rejects the stream only above 720p, report it, because the level then has to follow the frame size |
+| 1.6 | Stop a stream, start another on the same bot, repeat 3–4 times, then have a viewer join | The viewer joins once and gets a picture; the backend log shows one join per request, not one per earlier stream |
 
 ## 2. VAAPI (GPU host)
 
@@ -50,6 +52,7 @@ Pass `/dev/dri` through as described in [Video streaming → Enabling VAAPI](../
 | 3.3 | Auto with a portrait (9:16) source | A preset that fits without upscaling beyond about 11% |
 | 3.4 | Auto with an unreachable probe (bad URL) | Falls back to 720p (or the limit if lower) and says so, or stops as *source unreachable* |
 | 3.5 | Bitrate limit 2000 kbps with the 1080p preset | Encoded bitrate is at most about 2000 kbps (sidecar stats / TS client stats) |
+| 3.5a | 2160p (or a custom 20000k bitrate) with no limit set | The client reports about 9.5 Mbit/s or less and the stream keeps running |
 | 3.6 | 1440p and 2160p on software VP8 on a small host | Runs, or shows the below-realtime warning (section 5), never a silent freeze |
 
 ## 4. Live IPTV (issue #72)
