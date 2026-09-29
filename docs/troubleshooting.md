@@ -69,6 +69,19 @@ Check:
 
 Transient closes during the initial handshake are retried. Authentication and host-key failures need configuration changes.
 
+## Dashboard stays on WebQuery only after enabling metrics
+
+Native metrics are opt-in on the connection **and** must be reachable from the ts6-manager backend.
+
+Check:
+
+1. TeamSpeak has metrics enabled (`TSSERVER_METRICS_ENABLED=1` / equivalent UI).
+2. The metrics bind address is reachable from the manager. The TeamSpeak default is **localhost-only** (`TSSERVER_METRICS_IP=127.0.0.1`). When the manager runs in another container or host, bind a private interface (commonly `0.0.0.0` on a closed Docker network) and firewall the port.
+3. Connection **metrics port** matches TeamSpeak (default `9187`), and **metrics host** overrides the WebQuery host when the listener is elsewhere.
+4. The dashboard badge: **WebQuery only** means scrape is off; **WebQuery · metrics unreachable/timed out/…** means scrape is on but failed — hover the badge for the operator hint.
+
+Do not expose the metrics port on the public internet; it is unauthenticated.
+
 ## Sidecar or video streaming errors
 
 For a split-stack deployment verify:

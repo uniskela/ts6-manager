@@ -73,3 +73,47 @@ export function takeTrackedIfReadyOrCancel<T>(
   cancel();
   return cancelledValue;
 }
+
+/**
+ * Brief wait after WebQuery so a nearly-finished metrics scrape can still be
+ * used without Promise.all-blocking on the full metrics timeout.
+ * Default keeps dashboard latency bounded while avoiding always-cancel races.
+ */
+export const DEFAULT_METRICS_POST_WEBQUERY_GRACE_MS = 750;
+
+/**
+ * After WebQuery is ready: take metrics if settled, else wait up to `graceMs`,
+ * then take or cancel. Still must not await the full metrics timeout.
+ */
+export async function takeTrackedWithGraceOrCancel<T>(
+  tracked: TrackedPromise<T>,
+  cancel: () => void,
+  cancelledValue: T,
+  graceMs: number = DEFAULT_METRICS_POST_WEBQUERY_GRACE_MS,
+): Promise<T> {
+  if (tracked.isSettled() && !tracked.isRejected()) {
+    return tracked.value() as T;
+  }
+  if (tracked.isSettled() && tracked.isRejected()) {
+    cancel();
+    return cancelledValue;
+  }
+
+  if (graceMs > 0) {
+    await Promise.race([
+      tracked.promise.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, graceMs);
+      }),
+    ]);
+    if (tracked.isSettled() && !tracked.isRejected()) {
+      return tracked.value() as T;
+    }
+  }
+
+  cancel();
+  return cancelledValue;
+}
