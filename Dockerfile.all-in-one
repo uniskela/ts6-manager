@@ -40,12 +40,12 @@ ENV NODE_ENV=production \
     DATABASE_URL=file:/app/packages/backend/data/ts6webui.db \
     GIT_SHA=$GIT_SHA
 
-# intel-media-va-driver (amd64) backs the optional VAAPI video encoders when
-# /dev/dri is passed through; software encoding does not need it.
+# mesa-va-drivers (all arches) and intel-media-va-driver (amd64) back optional
+# VAAPI encoders when /dev/dri is passed through; software encoding does not need them.
 RUN apt-get update && \
     apt-get upgrade -y && \
-    VAAPI_PACKAGES="" && \
-    if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="intel-media-va-driver"; fi && \
+    VAAPI_PACKAGES="mesa-va-drivers" && \
+    if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="$VAAPI_PACKAGES intel-media-va-driver"; fi && \
     apt-get install -y --no-install-recommends \
       $VAAPI_PACKAGES \
       openssl \

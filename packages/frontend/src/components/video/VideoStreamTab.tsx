@@ -346,7 +346,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                     <dt className="text-muted-foreground">Quality</dt>
                     <dd className="font-medium">
                       {qualityLabel(streamStatus.quality, streamStatus.preset)}
-                      {streamStatus.quality?.sourceWidth && streamStatus.quality.sourceHeight && (
+                      {!!streamStatus.quality?.sourceWidth && !!streamStatus.quality.sourceHeight && (
                         <span className="font-normal text-muted-foreground">
                           {' '}(source {streamStatus.quality.sourceWidth}×{streamStatus.quality.sourceHeight})
                         </span>

@@ -4,7 +4,7 @@
  * Lives beside the stream controls so these settings stay in the media surface.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Check, Loader2, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import type { VideoEncoderRequest, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
@@ -35,12 +35,24 @@ export function VideoStreamDefaultsCard() {
   const encoders = useVideoEncoderCapabilities();
   const [draft, setDraft] = useState<VideoStreamSettings | null>(null);
   const [customTimeout, setCustomTimeout] = useState(false);
+  const draftRef = useRef<VideoStreamSettings | null>(null);
+  const prevSettingsRef = useRef<VideoStreamSettings | null>(null);
 
   useEffect(() => {
-    if (settings) {
+    draftRef.current = draft;
+  }, [draft]);
+
+  useEffect(() => {
+    if (!settings) return;
+    const prev = prevSettingsRef.current;
+    const current = draftRef.current;
+    const acceptServer =
+      current === null || (prev !== null && JSON.stringify(current) === JSON.stringify(prev));
+    if (acceptServer) {
       setDraft(settings);
       setCustomTimeout(!TIMEOUT_PRESETS.includes(String(settings.noViewerTimeoutSec)));
     }
+    prevSettingsRef.current = settings;
   }, [settings]);
 
   if (!draft) return null;

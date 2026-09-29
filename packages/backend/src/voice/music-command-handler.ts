@@ -31,6 +31,7 @@ import {
   parseCommandChannelIds,
 } from './music-command-channels.js';
 import { MediaSessionConflictError } from './media-session.js';
+import { parseStreamStartOptions } from './streaming/start-options.js';
 
 interface BotChannelConfig {
   serverConfigId: number;
@@ -2412,7 +2413,7 @@ export class MusicCommandHandler {
 
   private async handleStream(bot: VoiceBot, userClid: number, args: string): Promise<void> {
     if (!args) {
-      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: 480p, 720p, 1080p');
+      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: auto, 480p, 720p, 1080p, 1440p, 2160p');
       return;
     }
 
@@ -2423,6 +2424,14 @@ export class MusicCommandHandler {
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       this.reply(bot, userClid, 'Please provide a valid URL.');
       return;
+    }
+
+    if (preset) {
+      const parsed = parseStreamStartOptions({ preset });
+      if (!parsed.ok) {
+        this.reply(bot, userClid, parsed.error);
+        return;
+      }
     }
 
     if (bot.videoStreaming) {
