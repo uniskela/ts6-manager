@@ -2,6 +2,14 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.8.5](https://github.com/uniskela/ts6-manager/compare/v1.8.4...v1.8.5) (2026-09-29)
+
+
+### Bug Fixes
+
+* ship Deno for yt-dlp YouTube n-challenge solving ([#187](https://github.com/uniskela/ts6-manager/issues/187)) ([30a8dc6](https://github.com/uniskela/ts6-manager/commit/30a8dc670addabd1c26c0008f4f468c434350c12))
+* surface native metrics failures and soften scrape race ([#190](https://github.com/uniskela/ts6-manager/issues/190)) ([2415dc0](https://github.com/uniskela/ts6-manager/commit/2415dc0cfd453d2062fb88b2df2f197562336c40))
+
 ## [1.8.4](https://github.com/uniskela/ts6-manager/compare/v1.8.3...v1.8.4) (2026-09-27)
 
 
