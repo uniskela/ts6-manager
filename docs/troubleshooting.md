@@ -88,6 +88,8 @@ If an extractor has changed upstream, pull a newer TS6 Manager image or rebuild 
 
 The Settings → YouTube Runtime / media strip shows the bundled yt-dlp version when you refresh diagnostics. It never updates the tool in place.
 
+Production images ship a pinned **Deno** binary as yt-dlp’s YouTube EJS / `n` challenge runtime (`--js-runtimes deno`). Node in the image is for the Nest backend only (Node 20) and is not configured for EJS. Cookies alone are not enough when that challenge fails. If logs show `n challenge solving failed` or ask for a JavaScript runtime, pull or rebuild an image that includes Deno (see `.deno-version`) rather than installing a runtime into a running container.
+
 For media requiring login, age, or member access, configure an appropriate cookie file and protect it like a credential.
 
 ## Database/schema problems after upgrade

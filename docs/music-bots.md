@@ -86,7 +86,7 @@ Progress endpoints require an authenticated administrator, the matching server, 
 
 Production containers do not self-update yt-dlp.
 
-The tool is installed at image build time and validated alongside FFmpeg and Node. To update the bundled extractor, pull a newer TS6 Manager image and recreate the container, or rebuild from a fresh image build.
+The tool is installed at image build time and validated alongside FFmpeg, Node, and Deno. Deno (pinned in `.deno-version`) is the only yt-dlp JavaScript runtime configured for YouTube challenge solving (`--js-runtimes deno`). Image Node remains 20 for the Nest backend and is not an EJS fallback. To update the bundled extractor or Deno, pull a newer TS6 Manager image and recreate the container, or rebuild from a fresh image build.
 
 Administrators can confirm the currently bundled yt-dlp (and related media tools) with the demand-driven Runtime / media check on Settings → YouTube or Music Bots → Library. That check is not part of live bot status polling.
 
