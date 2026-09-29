@@ -6,7 +6,7 @@ function setup() {
   const rows: Array<Record<string, unknown>> = [];
   const prisma = {
     adminAuditEvent: {
-      create: async ({ data }: { data: Record<string, unknown> }) => { rows.push({ ...data }); return { id: 'e1', ...data }; },
+      create: async ({ data }: { data: Record<string, unknown> }) => { rows.push({ ...data }); return { id: `e${rows.length}`, ...data }; },
       updateMany: async ({ where, data }: any) => {
         for (const r of rows) if (r.operationId === where.operationId) Object.assign(r, data);
         return { count: 1 };
@@ -35,23 +35,22 @@ describe('media audit', () => {
 
   it('records a confirmed replacement as a session switch', async () => {
     const { rows, req, bot } = setup();
-    await runMediaAudited(req, bot, 'media.music.start', async () => undefined, ['0f8fad5b-d9cb-469f-a165-70867728950e']);
+    await runMediaAudited(req, bot, 'media.music.start', async () => [], ['0f8fad5b-d9cb-469f-a165-70867728950e']);
     assert.equal(rows[0].action, 'media.session.switch');
   });
 
-  it('records a stop row for each replaced session under the same operation', async () => {
+  it('records a stop row for each session dispatch actually replaced', async () => {
     const { rows, req, bot } = setup();
     const videoId = '0f8fad5b-d9cb-469f-a165-70867728950e';
     const musicId = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
     req.app.locals.voiceBotManager = {
-      listMediaSessions: () => [
-        { id: videoId, kind: 'video', state: 'active', botId: 20, botName: 'Bravo', startedAt: 1, label: 'iptv.example' },
-        { id: musicId, kind: 'music', state: 'active', botId: 12, botName: 'Alpha', startedAt: 1, label: 'Song' },
-        { id: 'a3bb189e-8bf9-3888-9912-ace4e6543002', kind: 'music', state: 'active', botId: 30, botName: 'Other', startedAt: 1, label: null },
-      ],
       getBot: (id: number) => ({ 20: { currentConfig: { serverConfigId: 9 } }, 12: { currentConfig: { serverConfigId: 4 } } } as any)[id],
     };
-    await runMediaAudited(req, bot, 'media.video.start', async () => undefined, [videoId, musicId]);
+    const replaced = [
+      { id: videoId, kind: 'video' as const, state: 'active' as const, botId: 20, botName: 'Bravo', startedAt: 1, label: 'iptv.example' },
+      { id: musicId, kind: 'music' as const, state: 'active' as const, botId: 12, botName: 'Alpha', startedAt: 1, label: 'Song' },
+    ];
+    await runMediaAudited(req, bot, 'media.video.start', async () => replaced, [videoId, musicId]);
 
     assert.equal(rows.length, 3);
     assert.equal(rows[0].action, 'media.session.switch');
@@ -63,17 +62,26 @@ describe('media audit', () => {
     assert.ok(!JSON.stringify(rows).includes('Song'));
   });
 
-  it('gives replaced-session rows the switch outcome on failure', async () => {
+  it('does not invent stop rows for sessions gone before dispatch', async () => {
+    const { rows, req, bot } = setup();
+    const staleId = '0f8fad5b-d9cb-469f-a165-70867728950e';
+    // Caller still confirmed the id, but dispatch replaced nothing (session already ended).
+    await runMediaAudited(req, bot, 'media.video.start', async () => [], [staleId]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].action, 'media.session.switch');
+    assert.equal(rows[0].outcome, 'success');
+  });
+
+  it('omits related stop rows when a switch dispatch fails', async () => {
     const { rows, req, bot } = setup();
     const videoId = '0f8fad5b-d9cb-469f-a165-70867728950e';
-    req.app.locals.voiceBotManager = {
-      listMediaSessions: () => [{ id: videoId, kind: 'video', state: 'active', botId: 20, botName: 'B', startedAt: 1, label: null }],
-      getBot: () => undefined,
-    };
-    await assert.rejects(runMediaAudited(req, bot, 'media.music.start', async () => { throw new Error('boom'); }, [videoId]), /boom/);
-    assert.equal(rows.length, 2);
-    assert.ok(rows.every((r) => r.outcome === 'failure'));
-    assert.equal(rows[1].connectionId, null);
+    await assert.rejects(
+      runMediaAudited(req, bot, 'media.music.start', async () => { throw new Error('boom'); }, [videoId]),
+      /boom/,
+    );
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].action, 'media.session.switch');
+    assert.equal(rows[0].outcome, 'failure');
   });
 
   it('records failures with a classified code and rethrows', async () => {

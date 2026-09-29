@@ -286,14 +286,32 @@ export async function runRemoteAudited<T>(
     resolveTargetId?: (result: T) => string | number | null | undefined;
     /** Rows for side effects of this operation, completed with the same outcome. */
     related?: BaseEventInput[];
+    /**
+     * Build related rows from the dispatch result (e.g. sessions actually
+     * replaced). Inserted as pending after dispatch succeeds, then completed
+     * with the primary row.
+     */
+    resolveRelated?: (result: T) => BaseEventInput[];
   },
 ): Promise<T> {
   const attempt = await beginRemoteAttempt(prisma, input, options?.related);
   try {
     const result = await dispatch();
     try {
+      const resolvedRelated = options?.resolveRelated?.(result) ?? [];
+      if (resolvedRelated.length > 0) {
+        const pending = {
+          operationId: attempt.operationId,
+          outcome: 'pending' as const,
+          resultCode: null,
+          completedAt: null,
+        };
+        for (const extra of resolvedRelated) {
+          await prisma.adminAuditEvent.create({ data: buildRow({ ...extra, ...pending }) });
+        }
+      }
       const targetId = options?.resolveTargetId ? options.resolveTargetId(result) : undefined;
-      const hasRelated = (options?.related?.length ?? 0) > 0;
+      const hasRelated = (options?.related?.length ?? 0) > 0 || resolvedRelated.length > 0;
       await completeRemoteAttempt(prisma, attempt.operationId, {
         outcome: 'success',
         resultCode: 'ok',

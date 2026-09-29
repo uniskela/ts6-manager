@@ -377,8 +377,17 @@ export class VoiceBotManager extends EventEmitter {
    * together. Any session that would be replaced must be named in
    * `replaceSessionIds`; otherwise this throws MediaSessionConflictError listing
    * every conflict so one confirmation covers them all.
+   *
+   * Returns the sessions actually replaced under `videoClaimLock` (other bots'
+   * video and this bot's music), so callers can audit stops without a stale
+   * pre-dispatch snapshot.
    */
-  async startVideoStream(bot: VoiceBot, source: string, options: VideoStreamStartOptions = {}): Promise<void> {
+  async startVideoStream(
+    bot: VoiceBot,
+    source: string,
+    options: VideoStreamStartOptions = {},
+  ): Promise<MediaSessionInfo[]> {
+    const replaced: MediaSessionInfo[] = [];
     let started!: Promise<void>;
     const release = this.videoClaimLock;
     let unlock!: () => void;
@@ -387,8 +396,12 @@ export class VoiceBotManager extends EventEmitter {
     try {
       const otherVideo = this.assertVideoCanStart(bot, options.replaceSessionIds);
       for (const other of otherVideo) {
+        const session = other.videoSessionInfo();
+        if (session) replaced.push(session);
         await other.stopVideoStream('replaced_by_video', `Replaced by a stream on ${bot.currentConfig.name}`);
       }
+      const ownMusic = bot.musicSessionInfo();
+      if (ownMusic) replaced.push(ownMusic);
       // startVideoStream claims its session synchronously, so the lock can be
       // released before the (possibly long) download and sidecar start.
       started = bot.startVideoStream(source, options);
@@ -396,6 +409,7 @@ export class VoiceBotManager extends EventEmitter {
       unlock();
     }
     await started;
+    return replaced;
   }
 
   getBot(id: number): VoiceBot | undefined {

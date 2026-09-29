@@ -578,12 +578,15 @@ export class VoiceBot extends EventEmitter {
     await this.start();
   }
 
-  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<void> {
+  /** Returns sessions actually replaced (this bot's video) when starting music. */
+  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
+    const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
-      await this.replaceVideoWithMusic(options.replaceSessionIds);
+      const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
+      if (session) replaced.push(session);
     }
     this.beginMusicSession();
 
@@ -607,7 +610,7 @@ export class VoiceBot extends EventEmitter {
           item.streamUrl = streamUrl;
           if (!item.duration && info.duration) item.duration = info.duration;
           await this.playStream(item);
-          return;
+          return replaced;
         } catch (streamErr: any) {
           console.warn(
             `[VoiceBot ${this.config.id}] YouTube stream failed for “${item.title}”, falling back to download: ${streamErr.message}`,
@@ -625,6 +628,7 @@ export class VoiceBot extends EventEmitter {
       this.emit('statusChange', this._status);
       throw err;
     }
+    return replaced;
   }
 
   /** Start or restart bounded-memory local file decoding at the requested position. */
@@ -795,15 +799,18 @@ export class VoiceBot extends EventEmitter {
     return dl.filePath;
   }
 
-  async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<void> {
+  /** Returns sessions actually replaced (this bot's video) when starting a stream. */
+  async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
     if (!item.streamUrl) {
       throw new Error('No streamUrl provided');
     }
+    const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
-      await this.replaceVideoWithMusic(options.replaceSessionIds);
+      const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
+      if (session) replaced.push(session);
     }
     this.beginMusicSession();
 
@@ -911,6 +918,7 @@ export class VoiceBot extends EventEmitter {
       this.emit('statusChange', this._status);
       throw err;
     }
+    return replaced;
   }
 
   /** Stop current audio without disconnecting the bot (used by clear-queue). */
@@ -1239,10 +1247,12 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Stop this bot's video for music, only when the caller confirmed that session. */
-  private async replaceVideoWithMusic(replaceSessionIds: string[] | undefined): Promise<void> {
-    if (!this.videoSessionInfo()) return;
+  private async replaceVideoWithMusic(replaceSessionIds: string[] | undefined): Promise<MediaSessionInfo | null> {
+    const video = this.videoSessionInfo();
+    if (!video) return null;
     this.assertMusicCanStart(replaceSessionIds);
     await this.stopVideoStream('replaced_by_music', 'Replaced by music');
+    return video;
   }
 
   get videoStreamStatus(): VideoStreamStatus {

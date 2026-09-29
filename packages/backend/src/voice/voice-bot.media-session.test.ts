@@ -108,10 +108,32 @@ describe('single video stream across bots', () => {
     assert.equal(stops.length, 0);
 
     const ids = err.conflicts.map((c: any) => c.id);
-    await m.startVideoStream(b, 'https://example.com/v.mp4', { replaceSessionIds: ids });
+    const replaced = await m.startVideoStream(b, 'https://example.com/v.mp4', { replaceSessionIds: ids });
     assert.deepEqual(stops, ['replaced_by_video']);
     assert.equal(b.lastMusicStop?.reason, 'replaced_by_video');
     assert.equal(started, 1);
+    assert.deepEqual(replaced.map((s) => `${s.botName}:${s.kind}`), ['Alpha:video', 'Bravo:music']);
+  });
+
+  it('omits sessions that ended before the lock-held stop', async () => {
+    const a = makeBot(1, 'Alpha');
+    const b = makeBot(2, 'Bravo');
+    fakeVideo(a);
+    const m = manager([a, b]);
+    (b as any).startVideoStreamClaimed = async () => {};
+    const session = a.videoSessionInfo()!;
+    let infoCalls = 0;
+    a.videoSessionInfo = () => {
+      infoCalls++;
+      // assertVideoCanStart sees the session; the lock-held capture does not.
+      return infoCalls === 1 ? session : null;
+    };
+    (a as any).stopVideoStream = async () => {};
+    const replaced = await m.startVideoStream(b, 'https://example.com/v.mp4', {
+      replaceSessionIds: [session.id],
+    });
+    assert.deepEqual(replaced, []);
+    assert.ok(infoCalls >= 2);
   });
 
   it('never replaces a stream that is still starting', async () => {

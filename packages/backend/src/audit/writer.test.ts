@@ -188,4 +188,27 @@ describe('admin audit writer privacy', () => {
     assert.deepEqual(rows.map((r) => r.outcome), ['success', 'success']);
     assert.deepEqual(rows.map((r) => r.targetId), ['99', '20']);
   });
+
+  it('resolveRelated builds side-effect rows from the dispatch result', async () => {
+    const { prisma, rows } = createMemoryPrisma();
+    const actor = { id: 1, username: 'admin' };
+    await runRemoteAudited(
+      prisma,
+      { actor, action: 'media.session.switch', connectionId: 4, target: { type: 'music_bot', id: 12 } },
+      async () => [{ botId: 20, connectionId: 9 }],
+      {
+        resolveRelated: (result) => result.map((s) => ({
+          actor,
+          action: 'media.video.stop' as const,
+          connectionId: s.connectionId,
+          target: { type: 'music_bot' as const, id: s.botId },
+        })),
+      },
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].action, 'media.session.switch');
+    assert.equal(rows[1].action, 'media.video.stop');
+    assert.equal(rows[1].targetId, '20');
+    assert.ok(rows.every((r) => r.operationId === rows[0].operationId && r.outcome === 'success'));
+  });
 });
