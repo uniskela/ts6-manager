@@ -165,6 +165,7 @@ export class VoiceBot extends EventEmitter {
   private _videoQuality: VideoStreamQualityInfo | null = null;
   private _videoEncoder: VideoStreamEncoderInfo | null = null;
   private _videoStopping = false;
+  private _videoStopPromise: Promise<void> | null = null;
   private _lastVideoStop: MediaStopInfo | null = null;
   private _noViewerTimeoutSec = 0;
   private _noViewerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -609,7 +610,7 @@ export class VoiceBot extends EventEmitter {
           const { streamUrl, info } = await resolveYouTubeAudioStream(item.sourceUrl);
           item.streamUrl = streamUrl;
           if (!item.duration && info.duration) item.duration = info.duration;
-          await this.playStream(item);
+          await this.startStream(item, {}, true);
           return replaced;
         } catch (streamErr: any) {
           console.warn(
@@ -801,6 +802,18 @@ export class VoiceBot extends EventEmitter {
 
   /** Returns sessions actually replaced (this bot's video) when starting a stream. */
   async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
+    return this.startStream(item, options, false);
+  }
+
+  /**
+   * `fallbackPending`: play() will download this same item if the stream
+   * fails, so a failure keeps the session, status and now-playing for it.
+   */
+  private async startStream(
+    item: QueueItem,
+    options: MusicStartOptions,
+    fallbackPending: boolean,
+  ): Promise<MediaSessionInfo[]> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
@@ -912,6 +925,9 @@ export class VoiceBot extends EventEmitter {
       this.stopIcyPolling();
       this._isStreaming = false;
       this.streamKill = null;
+      // play() falls back to downloading this same item: keep its session,
+      // status and now-playing, and let play() end them if that fails too.
+      if (fallbackPending) throw err;
       this.endMusicSession('source_unreachable', 'Stream could not be opened');
       this._status = 'connected';
       this._nowPlaying = null;
@@ -1252,6 +1268,7 @@ export class VoiceBot extends EventEmitter {
     if (!video) return null;
     this.assertMusicCanStart(replaceSessionIds);
     await this.stopVideoStream('replaced_by_music', 'Replaced by music');
+    this.emit('mediaSessionReplaced', video);
     return video;
   }
 
@@ -1503,7 +1520,10 @@ export class VoiceBot extends EventEmitter {
     this._videoStarting = true;
     this._videoSessionId = newMediaSessionId();
     try {
-      if (music) this.clearPlayback('replaced_by_video', 'Replaced by a video stream');
+      if (music) {
+        this.clearPlayback('replaced_by_video', 'Replaced by a video stream');
+        this.emit('mediaSessionReplaced', music);
+      }
       await this.startVideoStreamClaimed(source, options);
     } catch (err) {
       if (!this._videoStreaming) this._videoSessionId = null;
@@ -1685,8 +1705,21 @@ export class VoiceBot extends EventEmitter {
     this.startHealthMonitor();
   }
 
-  /** Stop video streaming, recording why it stopped. */
-  async stopVideoStream(reason: MediaStopReason = 'manual', detail: string | null = null): Promise<void> {
+  /**
+   * Stop video streaming, recording why it stopped. A caller that arrives
+   * while a stop is running waits for that same stop, so nothing (music, a
+   * new stream) starts before the old stream is gone.
+   */
+  stopVideoStream(reason: MediaStopReason = 'manual', detail: string | null = null): Promise<void> {
+    if (!this._videoStopPromise) {
+      this._videoStopPromise = this.stopVideoStreamOnce(reason, detail).finally(() => {
+        this._videoStopPromise = null;
+      });
+    }
+    return this._videoStopPromise;
+  }
+
+  private async stopVideoStreamOnce(reason: MediaStopReason, detail: string | null): Promise<void> {
     if (!this._videoStreaming || this._videoStopping) return;
     this._videoStopping = true;
 

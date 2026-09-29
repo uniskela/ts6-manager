@@ -186,6 +186,11 @@ export class VoiceBotManager extends EventEmitter {
       }
     });
 
+    // A confirmed switch stopped one of this bot's sessions (media audit listens).
+    bot.on('mediaSessionReplaced', (session: MediaSessionInfo) => {
+      this.emit('mediaSessionReplaced', session);
+    });
+
     // Video streaming events
     bot.on('videoStreamStarted', (data: any) => {
       this.broadcast('music:bot:videoStreamStarted', { botId: config.id, ...data });
@@ -397,8 +402,11 @@ export class VoiceBotManager extends EventEmitter {
       const otherVideo = this.assertVideoCanStart(bot, options.replaceSessionIds);
       for (const other of otherVideo) {
         const session = other.videoSessionInfo();
-        if (session) replaced.push(session);
         await other.stopVideoStream('replaced_by_video', `Replaced by a stream on ${bot.currentConfig.name}`);
+        if (session) {
+          replaced.push(session);
+          this.emit('mediaSessionReplaced', session);
+        }
       }
       const ownMusic = bot.musicSessionInfo();
       if (ownMusic) replaced.push(ownMusic);

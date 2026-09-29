@@ -80,9 +80,31 @@ describe('single active media session (per bot)', () => {
     assert.throws(() => bot.assertMusicCanStart(undefined), MediaSessionConflictError);
     assert.doesNotThrow(() => bot.assertMusicCanStart([video.id]));
 
+    const reported: string[] = [];
+    bot.on('mediaSessionReplaced', (s: { id: string }) => reported.push(s.id));
     (bot as any).pipeline.toPcmStream = async () => { throw new Error('no network in tests'); };
     await assert.rejects(bot.playStream(item, { replaceSessionIds: [video.id] }), /no network/);
     assert.deepEqual(stops, ['replaced_by_music']);
+    assert.deepEqual(reported, [video.id], 'the stop is reported even though the music start failed');
+  });
+
+  it('keeps the music session when a YouTube stream falls back to a download', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const before = bot.musicSessionInfo()!;
+    const item = { id: '3', title: 'Clip', source: 'youtube' as const, filePath: '', streamUrl: 'https://example.com/a' };
+    (bot as any)._nowPlaying = item;
+    (bot as any).pipeline.toPcmStream = async () => { throw new Error('403'); };
+
+    await assert.rejects((bot as any).startStream(item, {}, true), /403/);
+    assert.equal(bot.status, 'playing', 'play() is about to play the download');
+    assert.equal(bot.musicSessionInfo()?.id, before.id);
+    assert.equal(bot.lastMusicStop, null);
+
+    // Without a pending fallback the failure ends the session.
+    await assert.rejects(bot.playStream(item), /403/);
+    assert.equal(bot.musicSessionInfo(), null);
+    assert.equal(bot.lastMusicStop?.reason, 'source_unreachable');
   });
 });
 
@@ -108,7 +130,11 @@ describe('single video stream across bots', () => {
     assert.equal(stops.length, 0);
 
     const ids = err.conflicts.map((c: any) => c.id);
+    const reported: string[] = [];
+    m.on('mediaSessionReplaced', (s: { botName: string; kind: string }) => reported.push(`${s.botName}:${s.kind}`));
+    b.on('mediaSessionReplaced', (s: { botName: string; kind: string }) => reported.push(`${s.botName}:${s.kind}`));
     const replaced = await m.startVideoStream(b, 'https://example.com/v.mp4', { replaceSessionIds: ids });
+    assert.deepEqual(reported, ['Alpha:video', 'Bravo:music'], 'each stop is reported once, as it happens');
     assert.deepEqual(stops, ['replaced_by_video']);
     assert.equal(b.lastMusicStop?.reason, 'replaced_by_video');
     assert.equal(started, 1);

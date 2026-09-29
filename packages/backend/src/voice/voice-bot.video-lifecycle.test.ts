@@ -42,6 +42,24 @@ describe('video no-viewer auto-stop', () => {
     mock.timers.reset();
   });
 
+  it('makes a concurrent stop wait for the one already running', async () => {
+    const bot = makeBot();
+    const { sidecarCalls } = fakeStreaming(bot, 0);
+    const first = bot.stopVideoStream('manual', 'first');
+    const second = bot.stopVideoStream('replaced_by_music', 'second');
+    assert.equal(first, second, 'both callers share one stop');
+    let secondDone = false;
+    void second.then(() => { secondDone = true; });
+    await Promise.resolve();
+    assert.equal(secondDone, false, 'the second caller does not return while the stream is still up');
+
+    mock.timers.tick(1_000);
+    await first;
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.videoStreamStatus.lastStop?.detail, 'first');
+    assert.equal(sidecarCalls.filter((c) => c === 'stopstream').length, 1);
+  });
+
   it('counts down with no viewers and records a truthful stop reason', async () => {
     const bot = makeBot();
     const { b, sidecarCalls } = fakeStreaming(bot, 300);

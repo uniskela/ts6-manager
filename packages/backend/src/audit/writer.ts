@@ -117,16 +117,16 @@ export interface AuditAttemptHandle {
 export async function beginRemoteAttempt(
   prisma: PrismaLike,
   input: BaseEventInput,
-  related: BaseEventInput[] = [],
 ): Promise<AuditAttemptHandle> {
   const operationId = randomUUID();
-  const pending = { operationId, outcome: 'pending' as const, resultCode: null, completedAt: null };
-  const created = await prisma.adminAuditEvent.create({ data: buildRow({ ...input, ...pending }) });
-  // Side effects of the same operation (e.g. sessions a media switch stops)
-  // share its operationId, so completion gives them the same outcome.
-  for (const extra of related) {
-    await prisma.adminAuditEvent.create({ data: buildRow({ ...extra, ...pending }) });
-  }
+  const row = buildRow({
+    ...input,
+    operationId,
+    outcome: 'pending',
+    resultCode: null,
+    completedAt: null,
+  });
+  const created = await prisma.adminAuditEvent.create({ data: row });
   return { operationId, eventId: created.id };
 }
 
@@ -284,49 +284,45 @@ export async function runRemoteAudited<T>(
   dispatch: () => Promise<T>,
   options?: {
     resolveTargetId?: (result: T) => string | number | null | undefined;
-    /** Rows for side effects of this operation, completed with the same outcome. */
-    related?: BaseEventInput[];
     /**
-     * Build related rows from the dispatch result (e.g. sessions actually
-     * replaced). Inserted as pending after dispatch succeeds, then completed
-     * with the primary row.
+     * Side effects the dispatch carried out (e.g. sessions a media switch
+     * stopped), read once it returns or throws: a stop that happened before a
+     * failed start still happened. Recorded as completed rows under the same
+     * operationId; best-effort like completion.
      */
-    resolveRelated?: (result: T) => BaseEventInput[];
+    relatedAfter?: () => BaseEventInput[];
   },
 ): Promise<T> {
-  const attempt = await beginRemoteAttempt(prisma, input, options?.related);
+  const attempt = await beginRemoteAttempt(prisma, input);
+  const recordRelated = async () => {
+    for (const extra of options?.relatedAfter?.() ?? []) {
+      try {
+        await prisma.adminAuditEvent.create({
+          data: buildRow({
+            ...extra,
+            operationId: attempt.operationId,
+            outcome: 'success',
+            resultCode: 'ok',
+            completedAt: new Date(),
+          }),
+        });
+      } catch {
+        // The side effect already happened; a lost row must not fail the request.
+      }
+    }
+  };
   try {
     const result = await dispatch();
     try {
-      const resolvedRelated = options?.resolveRelated?.(result) ?? [];
-      if (resolvedRelated.length > 0) {
-        const pending = {
-          operationId: attempt.operationId,
-          outcome: 'pending' as const,
-          resultCode: null,
-          completedAt: null,
-        };
-        for (const extra of resolvedRelated) {
-          await prisma.adminAuditEvent.create({ data: buildRow({ ...extra, ...pending }) });
-        }
-      }
-      const targetId = options?.resolveTargetId ? options.resolveTargetId(result) : undefined;
-      const hasRelated = (options?.related?.length ?? 0) > 0 || resolvedRelated.length > 0;
       await completeRemoteAttempt(prisma, attempt.operationId, {
         outcome: 'success',
         resultCode: 'ok',
-        // Related rows keep their own targets; set the resolved one on the primary row only.
-        targetId: hasRelated ? undefined : targetId,
+        targetId: options?.resolveTargetId ? options.resolveTargetId(result) : undefined,
       });
-      if (hasRelated && targetId !== undefined) {
-        await prisma.adminAuditEvent.update({
-          where: { id: attempt.eventId },
-          data: { targetId: normalizeTargetId(targetId) },
-        });
-      }
     } catch {
       // Dispatch already succeeded — leave pending for stale resolution; do not fail the request.
     }
+    await recordRelated();
     return result;
   } catch (err) {
     try {
@@ -334,7 +330,7 @@ export async function runRemoteAudited<T>(
     } catch {
       // Leave pending; retention will mark unknown.
     }
+    await recordRelated();
     throw err;
   }
 }
-

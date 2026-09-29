@@ -171,16 +171,17 @@ describe('admin audit writer privacy', () => {
     );
   });
 
-  it('related rows share the operation and outcome but keep their own targets', async () => {
+  it('records side effects after dispatch under the same operation', async () => {
     const { prisma, rows } = createMemoryPrisma();
     const actor = { id: 1, username: 'admin' };
+    const stopped: number[] = [];
     await runRemoteAudited(
       prisma,
       { actor, action: 'media.session.switch', connectionId: 4, target: { type: 'music_bot', id: 12 } },
-      async () => ({ id: 99 }),
+      async () => { stopped.push(20); return { id: 99 }; },
       {
         resolveTargetId: (r) => r.id,
-        related: [{ actor, action: 'media.video.stop', connectionId: 9, target: { type: 'music_bot', id: 20 } }],
+        relatedAfter: () => stopped.map((id) => ({ actor, action: 'media.video.stop' as const, connectionId: 9, target: { type: 'music_bot' as const, id } })),
       },
     );
     assert.equal(rows.length, 2);
@@ -189,26 +190,17 @@ describe('admin audit writer privacy', () => {
     assert.deepEqual(rows.map((r) => r.targetId), ['99', '20']);
   });
 
-  it('resolveRelated builds side-effect rows from the dispatch result', async () => {
+  it('records side effects that happened before a failed dispatch', async () => {
     const { prisma, rows } = createMemoryPrisma();
     const actor = { id: 1, username: 'admin' };
-    await runRemoteAudited(
+    const stopped: number[] = [];
+    await assert.rejects(runRemoteAudited(
       prisma,
       { actor, action: 'media.session.switch', connectionId: 4, target: { type: 'music_bot', id: 12 } },
-      async () => [{ botId: 20, connectionId: 9 }],
-      {
-        resolveRelated: (result) => result.map((s) => ({
-          actor,
-          action: 'media.video.stop' as const,
-          connectionId: s.connectionId,
-          target: { type: 'music_bot' as const, id: s.botId },
-        })),
-      },
-    );
-    assert.equal(rows.length, 2);
-    assert.equal(rows[0].action, 'media.session.switch');
-    assert.equal(rows[1].action, 'media.video.stop');
-    assert.equal(rows[1].targetId, '20');
-    assert.ok(rows.every((r) => r.operationId === rows[0].operationId && r.outcome === 'success'));
+      async () => { stopped.push(20); throw new Error('start failed'); },
+      { relatedAfter: () => stopped.map((id) => ({ actor, action: 'media.video.stop' as const, connectionId: 9, target: { type: 'music_bot' as const, id } })) },
+    ), /start failed/);
+    assert.deepEqual(rows.map((r) => [r.action, r.outcome]), [['media.session.switch', 'failure'], ['media.video.stop', 'success']]);
+    assert.equal(rows[0].operationId, rows[1].operationId);
   });
 });
