@@ -69,6 +69,19 @@ Check:
 
 Transient closes during the initial handshake are retried. Authentication and host-key failures need configuration changes.
 
+## Dashboard stays on WebQuery only after enabling metrics
+
+Native metrics are opt-in on the connection **and** must be reachable from the ts6-manager backend.
+
+Check:
+
+1. TeamSpeak has metrics enabled (`TSSERVER_METRICS_ENABLED=1` / equivalent UI).
+2. The metrics bind address is reachable from the manager. The TeamSpeak default is **localhost-only** (`TSSERVER_METRICS_IP=127.0.0.1`). When the manager runs in another container or host, bind a private interface (commonly `0.0.0.0` on a closed Docker network) and firewall the port.
+3. Connection **metrics port** matches TeamSpeak (default `9187`), and **metrics host** overrides the WebQuery host when the listener is elsewhere.
+4. The dashboard badge: **WebQuery only** means scrape is off; **WebQuery · metrics unreachable/timed out/…** means scrape is on but failed — hover the badge for the operator hint.
+
+Do not expose the metrics port on the public internet; it is unauthenticated.
+
 ## Sidecar or video streaming errors
 
 For a split-stack deployment verify:
@@ -87,6 +100,8 @@ yt-dlp is bundled into the production backend image and does not self-update at 
 If an extractor has changed upstream, pull a newer TS6 Manager image or rebuild the image so a newer bundled yt-dlp can be installed.
 
 The Settings → YouTube Runtime / media strip shows the bundled yt-dlp version when you refresh diagnostics. It never updates the tool in place.
+
+Production images ship a pinned **Deno** binary as yt-dlp’s YouTube EJS / `n` challenge runtime (`--js-runtimes deno`). Node in the image is for the Nest backend only (Node 20) and is not configured for EJS. Cookies alone are not enough when that challenge fails. If logs show `n challenge solving failed` or ask for a JavaScript runtime, pull or rebuild an image that includes Deno (see `.deno-version`) rather than installing a runtime into a running container.
 
 For media requiring login, age, or member access, configure an appropriate cookie file and protect it like a credential.
 

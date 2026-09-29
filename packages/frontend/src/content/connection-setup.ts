@@ -85,9 +85,9 @@ export const FIELD_HELP = {
   sshPort: 'SSH ServerQuery port (default 10022). Used for file browser, bot events, and music bot chat commands.',
   sshUsername: 'ServerQuery SSH username (commonly serveradmin).',
   sshPassword: 'ServerQuery SSH password. Stored encrypted; leave blank when editing to keep the existing password.',
-  metricsEnabled: 'Opt-in scrape of the TeamSpeak native Prometheus metrics listener for richer dashboard capacity/traffic data. Keep the metrics port private — it is unauthenticated.',
+  metricsEnabled: 'Opt-in scrape of the TeamSpeak native Prometheus metrics listener for richer dashboard capacity/traffic data. Keep the metrics port private — it is unauthenticated. TeamSpeak defaults to localhost-only bind (`TSSERVER_METRICS_IP`); set a reachability address (for example `0.0.0.0` on a private Docker network) so the manager backend can scrape it.',
   metricsPort: 'TeamSpeak metrics HTTP port (default 9187). Separate from WebQuery; does not use HTTPS or the API key.',
-  metricsHost: 'Optional host override when the metrics listener binds a different address than WebQuery. Leave blank to use the WebQuery host.',
+  metricsHost: 'Optional host override when the metrics listener binds a different address than WebQuery. Leave blank to use the WebQuery host. Use this when metrics listen on another hostname/IP than Query.',
 } as const;
 
 export const FEATURE_MATRIX = [

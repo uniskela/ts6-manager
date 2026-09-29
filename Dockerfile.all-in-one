@@ -33,6 +33,8 @@ RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
 FROM node:20-slim AS production
 ARG GIT_SHA=
 COPY .yt-dlp-version /tmp/yt-dlp-version
+COPY .deno-version /tmp/deno-version
+COPY docker-commands/install-deno.sh /tmp/install-deno.sh
 ENV NODE_ENV=production \
     SIDECAR_URL=http://127.0.0.1:9800 \
     DATABASE_URL=file:/app/packages/backend/data/ts6webui.db \
@@ -55,11 +57,16 @@ RUN apt-get update && \
       supervisor \
       netcat-openbsd \
       curl \
+      unzip \
     && YT_DLP_VERSION="$(tr -d '[:space:]' < /tmp/yt-dlp-version)" \
     && test -n "$YT_DLP_VERSION" \
     && python3 -m pip install --break-system-packages --no-cache-dir "yt-dlp[default]==${YT_DLP_VERSION}" \
     && test "$(yt-dlp --version)" = "$YT_DLP_VERSION" \
     && rm -f /tmp/yt-dlp-version \
+    && sed -i 's/\r$//' /tmp/install-deno.sh \
+    && chmod +x /tmp/install-deno.sh \
+    && /tmp/install-deno.sh \
+    && rm -f /tmp/install-deno.sh \
     && rm -rf /usr/local/lib/node_modules/npm \
               /usr/local/lib/node_modules/corepack \
               /root/.cache/node/corepack \
@@ -68,6 +75,7 @@ RUN apt-get update && \
     && yt-dlp --version \
     && ffmpeg -version \
     && node --version \
+    && deno --version \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -89,7 +97,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/apply-schema.sh \
       /usr/local/bin/start-backend.sh \
       /usr/local/bin/sidecar \
  && mkdir -p /app/packages/backend/data /data/music /root/.config/yt-dlp \
- && echo "--js-runtimes node" > /root/.config/yt-dlp/config
+ && printf '%s\n' '--js-runtimes deno' > /root/.config/yt-dlp/config
 
 # Only publish nginx (:80) from compose. Backend/sidecar stay loopback-only inside the container.
 EXPOSE 80

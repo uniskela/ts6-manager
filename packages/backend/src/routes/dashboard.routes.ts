@@ -9,7 +9,7 @@ import {
   type MetricsAugmentation,
   type MetricsProvenance,
 } from '../ts-client/metrics-map.js';
-import { takeTrackedIfReadyOrCancel, trackPromise } from '../ts-client/metrics-race.js';
+import { takeTrackedWithGraceOrCancel, trackPromise } from '../ts-client/metrics-race.js';
 
 export const dashboardRoutes: Router = Router({ mergeParams: true });
 
@@ -171,9 +171,9 @@ dashboardRoutes.get('/', async (req: Request, res: Response, next) => {
     const pool: ConnectionPool = req.app.locals.connectionPool;
     const configId = parseInt(String(req.params.configId), 10);
 
-    // Start WebQuery and metrics concurrently. When WebQuery completes, use
-    // metrics only if already ready; otherwise cancel the outstanding scrape
-    // (do not Promise.all-wait on metrics).
+    // Start WebQuery and metrics concurrently. After WebQuery completes, wait a
+    // short grace window for metrics; do not Promise.all on the full scrape timeout.
+    // Missed scrapes may still finish and warm MetricsClient cache for the next poll.
     const metricsAbort = new AbortController();
     const webqueryTask = fetchWebQueryDashboard(req, sid);
 
@@ -196,14 +196,17 @@ dashboardRoutes.get('/', async (req: Request, res: Response, next) => {
 
     const webquery = await webqueryTask;
 
-    const scrapePhase = takeTrackedIfReadyOrCancel(
+    // Brief grace after WebQuery so a nearly-finished scrape can still win.
+    // Do not abort on miss: let the in-flight scrape finish and warm the cache
+    // for the next dashboard poll (10s). cancelPending remains for destroy/refresh.
+    const scrapePhase = await takeTrackedWithGraceOrCancel(
       metricsScrapeTask,
-      () => {
-        metricsAbort.abort();
-        pool.getMetricsClient(configId)?.cancelPending();
-      },
+      () => undefined,
       { kind: 'cancelled' } satisfies MetricsScrapePhase,
     );
+
+    const metricsClient = pool.getMetricsClient(configId);
+    const cachedScrape = metricsClient?.peekFreshCache() ?? null;
 
     let metrics: MetricsFetchBundle;
     switch (scrapePhase.kind) {
@@ -211,29 +214,55 @@ dashboardRoutes.get('/', async (req: Request, res: Response, next) => {
         metrics = { provenance: { status: 'disabled' } };
         break;
       case 'cancelled':
-        metrics = {
-          provenance: {
-            status: 'unavailable',
-            reason: 'timeout',
-            fetchedAt: new Date().toISOString(),
-          },
-        };
+        metrics = cachedScrape
+          ? mapScrapeToBundle(
+            cachedScrape,
+            sid,
+            webquery.data.virtualserverUniqueIdentifier,
+          )
+          : {
+            provenance: {
+              status: 'unavailable',
+              reason: 'timeout',
+              fetchedAt: new Date().toISOString(),
+            },
+          };
         break;
       case 'unreachable':
-        metrics = {
-          provenance: {
-            status: 'unavailable',
-            reason: 'unreachable',
-            fetchedAt: scrapePhase.fetchedAt,
-          },
-        };
+        metrics = cachedScrape
+          ? mapScrapeToBundle(
+            cachedScrape,
+            sid,
+            webquery.data.virtualserverUniqueIdentifier,
+          )
+          : {
+            provenance: {
+              status: 'unavailable',
+              reason: 'unreachable',
+              fetchedAt: scrapePhase.fetchedAt,
+            },
+          };
         break;
       case 'scrape':
-        metrics = mapScrapeToBundle(
-          scrapePhase.result,
-          sid,
-          webquery.data.virtualserverUniqueIdentifier,
-        );
+        if (scrapePhase.result.ok) {
+          metrics = mapScrapeToBundle(
+            scrapePhase.result,
+            sid,
+            webquery.data.virtualserverUniqueIdentifier,
+          );
+        } else if (cachedScrape) {
+          metrics = mapScrapeToBundle(
+            cachedScrape,
+            sid,
+            webquery.data.virtualserverUniqueIdentifier,
+          );
+        } else {
+          metrics = mapScrapeToBundle(
+            scrapePhase.result,
+            sid,
+            webquery.data.virtualserverUniqueIdentifier,
+          );
+        }
         break;
       default:
         metrics = {

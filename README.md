@@ -436,7 +436,10 @@ by default (`TSSERVER_METRICS_ENABLED=0`); the default port is `9187`. The endpo
 is unauthenticated. Bind it to a restricted interface (`TSSERVER_METRICS_IP`) and
 apply firewall/network restrictions rather than exposing it publicly. Per-packet
 voice diagnostics (`TSSERVER_METRICS_VOICE`) add overhead: benchmark before enabling
-on busy production servers. TS6 Manager neither scrapes nor proxies these metrics.
+on busy production servers. When a connection enables **metrics scrape**, TS6 Manager
+fetches `/metrics` from the configured host/port (defaulting to the WebQuery host)
+to augment the dashboard; keep that listener private and reachable from the backend
+(not localhost-only when the manager is remote).
 
 Server logs default to UTC in beta13. Administrators can select `utc` or `local`
 using `TSSERVER_LOG_TIMEZONE`. TS6 Manager displays raw log text without converting
@@ -466,11 +469,16 @@ semantics and does not download media eagerly.
 
 Production containers do not self-update packages. yt-dlp is installed at image
 build time using pip’s required PEP-668 option; builds check `yt-dlp --version`,
-`ffmpeg -version` and `node --version`. Pull a newly built TS6 Manager image and
-recreate the container to refresh bundled yt-dlp. Rebuilding with a fresh image
-build also refreshes it. No in-app package updater is provided. Extractor tests use
-structured fixtures; a public-video smoke test is deliberately not a release gate
-because availability, rate limits and regional restrictions are outside our control.
+`ffmpeg -version`, `node --version`, and `deno --version`. A pinned Deno binary
+(see `.deno-version`) is the yt-dlp JavaScript runtime for YouTube EJS / `n`
+challenges (`--js-runtimes deno` only). Image Node stays at 20 for the Nest
+backend and is not configured as an EJS fallback (yt-dlp requires Node 22+).
+Pull a newly built TS6 Manager image and recreate the container to refresh
+bundled yt-dlp and Deno.
+Rebuilding with a fresh image build also refreshes them. No in-app package
+updater is provided. Extractor tests use structured fixtures; a public-video
+smoke test is deliberately not a release gate because availability, rate limits
+and regional restrictions are outside our control.
 
 ## License
 
