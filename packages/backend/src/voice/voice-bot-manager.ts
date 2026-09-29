@@ -8,7 +8,7 @@ import type { QueueItem } from './playlist/queue.js';
 import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
-import { loadMaxVideoDuration } from '../utils/app-settings.js';
+import { loadMaxVideoDuration, loadVideoStreamingSettings } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
 
@@ -99,7 +99,12 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   private createBotInstance(config: VoiceBotConfig): VoiceBot {
-    const bot = new VoiceBot(config);
+    // Streaming defaults are read when a stream starts, so admin changes apply
+    // to the next stream without restarting bots.
+    const bot = new VoiceBot({
+      ...config,
+      loadVideoSettings: config.loadVideoSettings ?? (() => loadVideoStreamingSettings(this.prisma)),
+    });
 
     bot.on('statusChange', (status: VoiceBotStatus) => {
       this.broadcast('music:bot:status', { botId: config.id, status });
@@ -183,8 +188,8 @@ export class VoiceBotManager extends EventEmitter {
       this.broadcast('music:bot:videoStreamStarted', { botId: config.id, ...data });
     });
 
-    bot.on('videoStreamStopped', () => {
-      this.broadcast('music:bot:videoStreamStopped', { botId: config.id });
+    bot.on('videoStreamStopped', (lastStop?: { reason: string; at: number; detail: string | null } | null) => {
+      this.broadcast('music:bot:videoStreamStopped', { botId: config.id, lastStop: lastStop ?? null });
     });
 
     bot.on('videoViewerJoined', (viewer: any) => {

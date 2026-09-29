@@ -7,10 +7,32 @@ import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
-import { SidecarClient } from './streaming/sidecar-client.js';
+import type {
+  MediaStopInfo,
+  MediaStopReason,
+  VideoEncoderCapabilities,
+  VideoEncoderRequest,
+  VideoQualityRequest,
+  VideoStreamEncoderInfo,
+  VideoStreamPresetKey,
+  VideoStreamQualityInfo,
+  VideoStreamSettings,
+} from '@ts6/common';
+import { SidecarClient, type SidecarEncoderSession } from './streaming/sidecar-client.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
 import { STREAM_PRESETS, DEFAULT_PRESET, type VideoViewerInfo, type VideoStreamStatus } from './streaming/types.js';
 import { downloadVideoForStream, safeUnlinkStreamTemp, resolvePathUnderMusicDir } from './streaming/video-download.js';
+import { effectiveBitrate, normalizeQualityRequest, resolveQuality } from './streaming/quality.js';
+import {
+  ENCODER_CODEC,
+  isEncoderId,
+  isHardwareEncoder,
+  normalizeEncoderRequest,
+  selectEncoder,
+} from './streaming/encoders.js';
+import { probeSourceResolution } from './streaming/source-probe.js';
+import { channelEmptyStopDetail, noViewersStopDetail } from './streaming/lifecycle.js';
+import { videoStreamingDefaults } from '../utils/app-settings.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
@@ -39,6 +61,19 @@ export interface VoiceBotConfig {
   autoStopEmptySeconds?: number;
   maxVideoDurationSec?: number;
   videoStreamVolume?: number;
+  /** Loads admin video-streaming defaults when a stream starts (falls back to env defaults). */
+  loadVideoSettings?: () => Promise<VideoStreamSettings>;
+}
+
+/** Per-stream overrides; anything omitted uses the admin defaults. */
+export interface VideoStreamStartOptions {
+  preset?: VideoQualityRequest | string;
+  encoder?: VideoEncoderRequest | string;
+  framerate?: number;
+  bitrate?: string;
+  volume?: number;
+  /** One-session no-viewer timeout (seconds, 0 = off); does not change the saved default. */
+  noViewerTimeoutSec?: number;
 }
 
 export class VoiceBot extends EventEmitter {
@@ -96,9 +131,19 @@ export class VoiceBot extends EventEmitter {
   private _videoStreaming: boolean = false;
   private _activeStreamId: string | null = null;
   private _videoSource: string | null = null;
-  private _videoPreset: string = DEFAULT_PRESET;
-  private _videoFramerate: number = STREAM_PRESETS[DEFAULT_PRESET]?.framerate ?? 30;
-  private _videoBitrate: string = STREAM_PRESETS[DEFAULT_PRESET]?.bitrate ?? '2500k';
+  private _videoPreset: VideoStreamPresetKey = DEFAULT_PRESET;
+  private _videoFramerate: number = STREAM_PRESETS[DEFAULT_PRESET].framerate;
+  private _videoBitrate: string = STREAM_PRESETS[DEFAULT_PRESET].bitrate;
+  private _videoRequestedFramerate: number | null = null;
+  private _videoRequestedBitrate: string | null = null;
+  private _videoSettings: VideoStreamSettings = videoStreamingDefaults();
+  private _videoQuality: VideoStreamQualityInfo | null = null;
+  private _videoEncoder: VideoStreamEncoderInfo | null = null;
+  private _videoStopping = false;
+  private _lastVideoStop: MediaStopInfo | null = null;
+  private _noViewerTimeoutSec = 0;
+  private _noViewerTimer: ReturnType<typeof setTimeout> | null = null;
+  private _noViewerStopAt: number | null = null;
   private _videoStartedAt: number | null = null;
   private _viewers: Map<number, VideoViewerInfo> = new Map();
   private _videoTempFile: string | null = null;
@@ -286,7 +331,8 @@ export class VoiceBot extends EventEmitter {
         console.log(`[VoiceBot ${this.config.id}] Auto-stop: channel empty for ${graceSec}s`);
         this.stopAutoStopTimer();
         if (this._videoStreaming) {
-          this.stopVideoStream().catch((err) => this.emit('error', err));
+          this.stopVideoStream('channel_empty', channelEmptyStopDetail(graceSec))
+            .catch((err) => this.emit('error', err));
         } else {
           this.clearPlayback();
         }
@@ -324,7 +370,7 @@ export class VoiceBot extends EventEmitter {
     this._videoEndTimer = setTimeout(() => {
       this._videoEndTimer = null;
       console.log(`[VoiceBot ${this.config.id}] Video ended, auto-stopping`);
-      this.stopVideoStream().catch((err) => this.emit('error', err));
+      this.stopVideoStream('source_ended', 'Video reached its end').catch((err) => this.emit('error', err));
     }, (durationSec + 2) * 1000);
   }
 
@@ -468,7 +514,7 @@ export class VoiceBot extends EventEmitter {
     this._nowPlaying = null;
     // Stop video stream if active
     if (this._videoStreaming) {
-      await this.stopVideoStream();
+      await this.stopVideoStream('bot_stopped', 'Music bot was stopped');
     }
     this.client.disconnect();
   }
@@ -1051,17 +1097,141 @@ export class VoiceBot extends EventEmitter {
       viewerCount: this._viewers.size,
       viewers: Array.from(this._viewers.values()),
       sidecar: null,
+      quality: this._videoStreaming ? this._videoQuality : null,
+      encoder: this._videoStreaming ? this._videoEncoder : null,
+      noViewer: { timeoutSec: this._noViewerTimeoutSec, stopAt: this._noViewerStopAt },
+      lastStop: this._lastVideoStop,
     };
   }
 
-  /** Start video streaming to TS6 via WebRTC */
-  async startVideoStream(
-    source: string,
-    preset?: string,
-    framerate?: number,
-    bitrate?: string,
-    volume?: number,
+  private async loadVideoSettings(): Promise<VideoStreamSettings> {
+    if (!this.config.loadVideoSettings) return videoStreamingDefaults();
+    try {
+      return await this.config.loadVideoSettings();
+    } catch (err: any) {
+      console.warn(`[VoiceBot ${this.config.id}] Could not load video settings, using defaults: ${err.message}`);
+      return videoStreamingDefaults();
+    }
+  }
+
+  // ─── No-viewer auto-stop ──────────────────────────────────
+
+  private clearNoViewerTimer(): void {
+    if (this._noViewerTimer) {
+      clearTimeout(this._noViewerTimer);
+      this._noViewerTimer = null;
+    }
+    this._noViewerStopAt = null;
+  }
+
+  /**
+   * Count down while nobody (no TeamSpeak viewer) watches the stream, and stop
+   * it when the countdown ends. Separate from the channel-empty auto-stop: a
+   * full channel where nobody opened the stream still frees the encoder.
+   */
+  private refreshNoViewerTimer(): void {
+    if (!this._videoStreaming || this._noViewerTimeoutSec <= 0 || this._viewers.size > 0) {
+      this.clearNoViewerTimer();
+      return;
+    }
+    if (this._noViewerTimer) return;
+
+    const timeoutSec = this._noViewerTimeoutSec;
+    this._noViewerStopAt = Date.now() + timeoutSec * 1000;
+    this._noViewerTimer = setTimeout(() => {
+      this._noViewerTimer = null;
+      this._noViewerStopAt = null;
+      if (!this._videoStreaming || this._viewers.size > 0) return;
+      console.log(`[VoiceBot ${this.config.id}] Auto-stop: no stream viewers for ${timeoutSec}s`);
+      this.stopVideoStream('no_viewers', noViewersStopDetail(timeoutSec))
+        .catch((err) => this.emit('error', err));
+    }, timeoutSec * 1000);
+  }
+
+  private recordVideoStop(reason: MediaStopReason, detail: string | null): void {
+    this._lastVideoStop = { reason, at: Date.now(), detail };
+  }
+
+  // ─── Source / encoder application ─────────────────────────
+
+  /** Record what the sidecar reports running; an old sidecar ignores encoders and runs VP8. */
+  private applyEncoderSession(session: SidecarEncoderSession | null): void {
+    const enc = this._videoEncoder;
+    if (!enc) return;
+    if (!session || !isEncoderId(session.active)) {
+      this._videoEncoder = {
+        ...enc,
+        active: 'vp8',
+        codec: 'vp8',
+        hardware: false,
+        fallbackReason: enc.selected === 'vp8'
+          ? null
+          : 'Sidecar did not report encoder support — update the sidecar image',
+      };
+      return;
+    }
+    this._videoEncoder = {
+      ...enc,
+      active: session.active,
+      codec: ENCODER_CODEC[session.active],
+      hardware: isHardwareEncoder(session.active),
+      fallbackReason: session.fallbackReason || null,
+    };
+    if (session.fallbackReason) {
+      console.warn(
+        `[VoiceBot ${this.config.id}] Encoder fallback ${session.requested} → ${session.active}: ${session.fallbackReason}`,
+      );
+    }
+  }
+
+  /** (Re)start sidecar ffmpeg for an already-resolved path at `quality`. */
+  private async sendSourceToSidecar(
+    sourcePath: string,
+    loop: boolean,
+    quality: VideoStreamQualityInfo,
   ): Promise<void> {
+    if (!this.sidecarHttp || !this._videoEncoder) throw new Error('No active video stream');
+    const preset = STREAM_PRESETS[quality.actual];
+    const framerate = this._videoRequestedFramerate && this._videoRequestedFramerate > 0
+      ? this._videoRequestedFramerate
+      : preset.framerate;
+    const bitrate = effectiveBitrate(this._videoRequestedBitrate, preset.bitrate, this._videoSettings.maxBitrateKbps);
+
+    const session = await this.sidecarHttp.setSource(sourcePath, {
+      width: quality.width,
+      height: quality.height,
+      framerate,
+      bitrate,
+      volume: this._videoStreamVolume,
+      loop,
+      encoder: this._videoEncoder.selected,
+    });
+
+    this._videoQuality = quality;
+    this._videoPreset = quality.actual;
+    this._videoFramerate = framerate;
+    this._videoBitrate = bitrate;
+    this.applyEncoderSession(session);
+  }
+
+  /**
+   * Resolve (download/validate) a source, pick its quality — Auto probes the
+   * source resolution, fixed presets never probe — and hand it to the sidecar.
+   */
+  private async applyVideoSource(source: string, requested: VideoQualityRequest): Promise<void> {
+    const limit = this._videoSettings.autoMaxPreset;
+    const maxHeight = STREAM_PRESETS[requested === 'auto' ? limit : requested].height;
+    const resolved = await this.resolveStreamSource(source, maxHeight);
+    const probed = requested === 'auto' ? await probeSourceResolution(resolved.path) : null;
+    const quality = resolveQuality(requested, limit, probed);
+    if (quality.note) {
+      console.log(`[VoiceBot ${this.config.id}] Auto quality → ${quality.actual}: ${quality.note}`);
+    }
+    await this.sendSourceToSidecar(resolved.path, resolved.loop, quality);
+  }
+
+  /** Start video streaming to TS6 via WebRTC */
+  async startVideoStream(source: string, options: VideoStreamStartOptions = {}): Promise<void> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
@@ -1069,23 +1239,26 @@ export class VoiceBot extends EventEmitter {
       throw new Error('Video stream already active');
     }
 
-    if (volume != null) {
-      this._videoStreamVolume = Math.max(0, Math.min(100, volume));
+    if (options.volume != null) {
+      this._videoStreamVolume = Math.max(0, Math.min(100, options.volume));
     }
+
+    const settings = await this.loadVideoSettings();
+    this._videoSettings = settings;
+    const requestedQuality = normalizeQualityRequest(
+      options.preset ?? this.config.streamPreset,
+      DEFAULT_PRESET,
+    );
+    const requestedEncoder = normalizeEncoderRequest(options.encoder, settings.defaultEncoder);
+    const timeoutOverride = Number(options.noViewerTimeoutSec);
+    this._noViewerTimeoutSec = options.noViewerTimeoutSec != null && Number.isFinite(timeoutOverride)
+      ? Math.max(0, Math.floor(timeoutOverride))
+      : settings.noViewerTimeoutSec;
+    this._videoRequestedFramerate = options.framerate && options.framerate > 0 ? options.framerate : null;
+    this._videoRequestedBitrate = options.bitrate?.trim() || null;
 
     const sidecarBinary = this.config.sidecarBinaryPath || process.env.SIDECAR_BINARY_PATH || 'sidecar';
     const sidecarPort = this.config.sidecarPort || 9800;
-    this._videoPreset = preset ?? this.config.streamPreset ?? DEFAULT_PRESET;
-    const presetConfig = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
-    const effectiveFramerate = framerate && framerate > 0
-      ? framerate
-      : presetConfig.framerate;
-    const effectiveBitrate = bitrate?.trim()
-      ? bitrate.trim()
-      : presetConfig.bitrate;
-
-    this._videoFramerate = effectiveFramerate;
-    this._videoBitrate = effectiveBitrate;
 
     // Check if sidecar URL is set (Docker mode — sidecar runs as separate container)
     const sidecarUrl = process.env.SIDECAR_URL;
@@ -1098,9 +1271,6 @@ export class VoiceBot extends EventEmitter {
       const sidecarConfig: SidecarConfig = {
         binaryPath: sidecarBinary,
         port: sidecarPort,
-        videoBitrate: effectiveBitrate,
-        videoResolution: { width: presetConfig.width, height: presetConfig.height },
-        videoFramerate: effectiveFramerate,
       };
 
       this.sidecarProc = new SidecarProcess(sidecarConfig);
@@ -1111,6 +1281,8 @@ export class VoiceBot extends EventEmitter {
           this._videoStreaming = false;
           this._activeStreamId = null;
           this._viewers.clear();
+          this.clearNoViewerTimer();
+          this.recordVideoStop('sidecar_failure', `Media sidecar exited (code ${code ?? 'unknown'})`);
           if (this._status !== 'playing') {
             this.stopAutoStopTimer();
           }
@@ -1130,6 +1302,27 @@ export class VoiceBot extends EventEmitter {
     // Wait for sidecar to be healthy
     await this.sidecarHttp.waitHealthy();
     console.log(`[VoiceBot ${this.config.id}] Sidecar ready`);
+
+    // Resolve `auto` before any viewer can join: peers must negotiate the
+    // codec ffmpeg will send. Capabilities are probed only when hardware is wanted.
+    let caps: VideoEncoderCapabilities | null = null;
+    if (requestedEncoder === 'auto' && settings.preferHardware) {
+      try {
+        caps = await this.sidecarHttp.getEncoders();
+      } catch (err: any) {
+        console.warn(`[VoiceBot ${this.config.id}] Encoder capability probe failed: ${err.message}`);
+      }
+    }
+    const selection = selectEncoder(requestedEncoder, settings.preferHardware, caps);
+    this._videoEncoder = {
+      requested: requestedEncoder,
+      selected: selection.selected,
+      active: selection.selected,
+      codec: ENCODER_CODEC[selection.selected],
+      hardware: isHardwareEncoder(selection.selected),
+      fallbackReason: null,
+      note: selection.note,
+    };
 
     // Setup stream signaling on the TS3 client
     this.signaling = new StreamSignaling(this.client);
@@ -1167,16 +1360,7 @@ export class VoiceBot extends EventEmitter {
     this._videoStartedAt = Date.now();
 
     try {
-      const resolved = await this.resolveStreamSource(source, presetConfig.height);
-      await this.sidecarHttp.setSource(
-        resolved.path,
-        presetConfig.width,
-        presetConfig.height,
-        effectiveFramerate,
-        effectiveBitrate,
-        this._videoStreamVolume,
-        resolved.loop,
-      );
+      await this.applyVideoSource(source, requestedQuality);
     } catch (err) {
       if (this.signaling && this._activeStreamId) {
         this.signaling.sendStreamStop(this._activeStreamId);
@@ -1185,6 +1369,9 @@ export class VoiceBot extends EventEmitter {
       this._videoSource = null;
       this._videoStreaming = false;
       this._videoStartedAt = null;
+      this._videoQuality = null;
+      this._videoEncoder = null;
+      this.clearNoViewerTimer();
       this.signaling = null;
       if (this.sidecarProc) {
         await this.sidecarProc.stop();
@@ -1194,64 +1381,75 @@ export class VoiceBot extends EventEmitter {
       throw err;
     }
 
-    console.log(`[VoiceBot ${this.config.id}] Video stream started: ${stream.id}, source: ${source}`);
+    console.log(
+      `[VoiceBot ${this.config.id}] Video stream started: ${stream.id} ` +
+      `(quality ${requestedQuality}→${this._videoPreset}, encoder ${this._videoEncoder?.active})`,
+    );
     this.emit('videoStreamStarted', { streamId: stream.id, source, preset: this._videoPreset });
     this.emit('statusChange', this._status);
     this.startAutoStopTimer();
+    this.refreshNoViewerTimer();
   }
 
-  /** Stop video streaming */
-  async stopVideoStream(): Promise<void> {
-    if (!this._videoStreaming) return;
+  /** Stop video streaming, recording why it stopped. */
+  async stopVideoStream(reason: MediaStopReason = 'manual', detail: string | null = null): Promise<void> {
+    if (!this._videoStreaming || this._videoStopping) return;
+    this._videoStopping = true;
 
-    this.clearVideoEndTimer();
-    this._videoDurationSec = null;
+    try {
+      this.clearVideoEndTimer();
+      this.clearNoViewerTimer();
+      this._videoDurationSec = null;
 
-    // Remove all viewers from TS6 stream first
-    if (this.signaling && this._activeStreamId) {
-      for (const [clid] of this._viewers) {
-        this.signaling.sendRemoveClient(clid, this._activeStreamId);
+      // Remove all viewers from TS6 stream first
+      if (this.signaling && this._activeStreamId) {
+        for (const [clid] of this._viewers) {
+          this.signaling.sendRemoveClient(clid, this._activeStreamId);
+        }
       }
+
+      // Stop ffmpeg and close WebRTC peers
+      try { await this.sidecarHttp?.stopSource(); } catch { /* ignore */ }
+      for (const [clid] of this._viewers) {
+        try { await this.sidecarHttp?.closePeer(String(clid)); } catch { /* ignore */ }
+      }
+      this._viewers.clear();
+
+      // Stop TS6 stream
+      if (this.signaling && this._activeStreamId) {
+        console.log(`[VoiceBot ${this.config.id}] Sending stopstream: ${this._activeStreamId}`);
+        this.signaling.sendStreamStop(this._activeStreamId);
+      }
+
+      // Wait for the stopstream command to be sent and ACKed over UDP
+      await new Promise((r) => setTimeout(r, 1000));
+
+      // Stop sidecar process (only in local mode)
+      if (this.sidecarProc) {
+        await this.sidecarProc.stop();
+        this.sidecarProc = null;
+      }
+
+      this._activeStreamId = null;
+      this._videoSource = null;
+      this._videoStreaming = false;
+      this._videoStartedAt = null;
+      this.signaling = null;
+      this.cleanupVideoTempFile();
+      if (this._status !== 'playing') {
+        this.stopAutoStopTimer();
+      }
+      this.recordVideoStop(reason, detail);
+    } finally {
+      this._videoStopping = false;
     }
 
-    // Stop ffmpeg and close WebRTC peers
-    try { await this.sidecarHttp?.stopSource(); } catch { /* ignore */ }
-    for (const [clid] of this._viewers) {
-      try { await this.sidecarHttp?.closePeer(String(clid)); } catch { /* ignore */ }
-    }
-    this._viewers.clear();
-
-    // Stop TS6 stream
-    if (this.signaling && this._activeStreamId) {
-      console.log(`[VoiceBot ${this.config.id}] Sending stopstream: ${this._activeStreamId}`);
-      this.signaling.sendStreamStop(this._activeStreamId);
-    }
-
-    // Wait for the stopstream command to be sent and ACKed over UDP
-    await new Promise((r) => setTimeout(r, 1000));
-
-    // Stop sidecar process (only in local mode)
-    if (this.sidecarProc) {
-      await this.sidecarProc.stop();
-      this.sidecarProc = null;
-    }
-
-    this._activeStreamId = null;
-    this._videoSource = null;
-    this._videoStreaming = false;
-    this._videoStartedAt = null;
-    this.signaling = null;
-    this.cleanupVideoTempFile();
-    if (this._status !== 'playing') {
-      this.stopAutoStopTimer();
-    }
-
-    console.log(`[VoiceBot ${this.config.id}] Video stream stopped`);
-    this.emit('videoStreamStopped');
+    console.log(`[VoiceBot ${this.config.id}] Video stream stopped (${reason})`);
+    this.emit('videoStreamStopped', this._lastVideoStop);
     this.emit('statusChange', this._status);
   }
 
-  /** Change video source while streaming */
+  /** Change video source while streaming (keeps the stream's quality request and encoder). */
   async setVideoSource(source: string, volume?: number): Promise<void> {
     if (!this._videoStreaming || !this.sidecarHttp) {
       throw new Error('No active video stream');
@@ -1260,19 +1458,8 @@ export class VoiceBot extends EventEmitter {
       this._videoStreamVolume = Math.max(0, Math.min(100, volume));
     }
     this._videoSource = source;
-    const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
-    const resolved = await this.resolveStreamSource(source, currentPreset.height);
-
-    await this.sidecarHttp.setSource(
-      resolved.path,
-      currentPreset.width,
-      currentPreset.height,
-      this._videoFramerate,
-      this._videoBitrate,
-      this._videoStreamVolume,
-      resolved.loop,
-    );
-    console.log(`[VoiceBot ${this.config.id}] Video source changed: ${source}`);
+    await this.applyVideoSource(source, this._videoQuality?.requested ?? this._videoPreset);
+    console.log(`[VoiceBot ${this.config.id}] Video source changed`);
     this.emit('videoSourceChanged', source);
   }
 
@@ -1282,7 +1469,9 @@ export class VoiceBot extends EventEmitter {
       throw new Error('No active video stream');
     }
     this._videoStreamVolume = Math.max(0, Math.min(100, volume));
-    const currentPreset = STREAM_PRESETS[this._videoPreset] || STREAM_PRESETS[DEFAULT_PRESET];
+    // Reuse the resolved quality: a volume change must not re-probe the source.
+    const quality = this._videoQuality ?? resolveQuality(this._videoPreset, this._videoSettings.autoMaxPreset, null);
+    const maxHeight = STREAM_PRESETS[quality.actual].height;
     let sourcePath: string;
     let loop = true;
     if (this._videoTempFile) {
@@ -1290,24 +1479,16 @@ export class VoiceBot extends EventEmitter {
         sourcePath = resolvePathUnderMusicDir(this._videoTempFile);
         loop = false;
       } catch {
-        const resolved = await this.resolveStreamSource(this._videoSource, currentPreset.height);
+        const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
         sourcePath = resolved.path;
         loop = resolved.loop;
       }
     } else {
-      const resolved = await this.resolveStreamSource(this._videoSource, currentPreset.height);
+      const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
       sourcePath = resolved.path;
       loop = resolved.loop;
     }
-    await this.sidecarHttp.setSource(
-      sourcePath,
-      currentPreset.width,
-      currentPreset.height,
-      this._videoFramerate,
-      this._videoBitrate,
-      this._videoStreamVolume,
-      loop,
-    );
+    await this.sendSourceToSidecar(sourcePath, loop, quality);
     // setSource restarts ffmpeg from the beginning for volume changes, so
     // refresh the auto-stop timer from now for non-looping on-demand clips.
     if (!loop && this._videoDurationSec != null) {
@@ -1325,12 +1506,13 @@ export class VoiceBot extends EventEmitter {
     this.signaling.sendRemoveClient(clid, this._activeStreamId);
     this._viewers.delete(clid);
     this.emit('videoViewerLeft', clid);
+    this.refreshNoViewerTimer();
   }
 
   /** Get WebRTC offer for WebUI preview player */
   async getWebRtcOffer(): Promise<{ sdp: string } | null> {
     if (!this._videoStreaming || !this.sidecarHttp) return null;
-    return this.sidecarHttp.createPeer('webui-preview');
+    return this.sidecarHttp.createPeer('webui-preview', this._videoEncoder?.codec);
   }
 
   /** Set WebRTC answer from WebUI preview player */
@@ -1367,6 +1549,7 @@ export class VoiceBot extends EventEmitter {
         this.sidecarHttp?.closePeer(String(clid)).catch(() => { });
         this._viewers.delete(clid);
         this.emit('videoViewerLeft', clid);
+        this.refreshNoViewerTimer();
       }
     });
   }
@@ -1417,7 +1600,7 @@ export class VoiceBot extends EventEmitter {
         try { await this.sidecarHttp.closePeer(String(viewerClid)); } catch { /* ignore */ }
       }
 
-      const result = await this.sidecarHttp.createPeer(String(viewerClid));
+      const result = await this.sidecarHttp.createPeer(String(viewerClid), this._videoEncoder?.codec);
 
       const viewer: VideoViewerInfo = {
         clid: viewerClid,
@@ -1432,6 +1615,8 @@ export class VoiceBot extends EventEmitter {
     } catch (err: any) {
       console.error(`[VoiceBot ${this.config.id}] handleViewerJoin error (clid=${viewerClid}): ${err.message}`);
       this._viewers.delete(viewerClid);
+    } finally {
+      this.refreshNoViewerTimer();
     }
   }
 }

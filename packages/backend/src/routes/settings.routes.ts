@@ -1,6 +1,8 @@
 /**
- * Settings routes — app-wide configuration (admin only).
- * Handles yt-dlp cookies, app limits, and demand-driven runtime/media diagnostics.
+ * Settings routes — app-wide configuration (admin only, except reading the
+ * video streaming defaults).
+ * Handles yt-dlp cookies, app limits, video streaming defaults, and
+ * demand-driven runtime/media diagnostics.
  */
 
 import { Router, type Request, type Response } from 'express';
@@ -15,7 +17,10 @@ import {
   MAX_PLAYLIST_IMPORT_KEY,
   parseVideoDuration,
   parseImportCap,
+  loadVideoStreamingSettings,
+  parseVideoStreamingUpdate,
 } from '../utils/app-settings.js';
+import { SidecarClient } from '../voice/streaming/sidecar-client.js';
 import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
 import { diagnoseRuntimeMedia } from '../voice/audio/runtime-media-diagnostics.js';
 
@@ -199,5 +204,68 @@ settingsRoutes.put('/limits', requireAdmin, async (req: Request, res: Response, 
     res.json({ success: true });
   } catch (err) { next(err); }
 });
+
+// GET /api/settings/video-streaming — defaults applied to new video streams.
+// Readable by any signed-in user so stream controls can describe them.
+settingsRoutes.get('/video-streaming', async (req: Request, res: Response, next) => {
+  try {
+    res.json(await loadVideoStreamingSettings(req.app.locals.prisma));
+  } catch (err) { next(err); }
+});
+
+// PUT /api/settings/video-streaming — update streaming defaults (next stream start).
+settingsRoutes.put('/video-streaming', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const parsed = parseVideoStreamingUpdate(req.body);
+    if (!parsed.ok) throw new AppError(400, parsed.error);
+
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.video_streaming_update',
+        target: { type: 'settings', id: 'video-streaming' },
+      },
+      async (tx) => {
+        for (const row of parsed.rows) {
+          await tx.appSetting.upsert({
+            where: { key: row.key },
+            create: row,
+            update: { value: row.value },
+          });
+        }
+      },
+    );
+
+    res.json(await loadVideoStreamingSettings(prisma));
+  } catch (err) { next(err); }
+});
+
+/**
+ * GET /api/settings/video-encoders — encoder capabilities from the sidecar.
+ * The sidecar caches its test encodes; `?refresh=1` re-runs them. On demand only.
+ */
+settingsRoutes.get(
+  '/video-encoders',
+  requireAdmin,
+  runtimeDiagnosticsLimiter,
+  async (req: Request, res: Response, next) => {
+    try {
+      const url = (process.env.SIDECAR_URL || '').trim();
+      const client = new SidecarClient(url || Number(process.env.SIDECAR_PORT) || 9800);
+      try {
+        res.json(await client.getEncoders(req.query.refresh === '1'));
+      } catch {
+        throw new AppError(
+          503,
+          url
+            ? 'Media sidecar did not answer — check SIDECAR_URL/SIDECAR_SECRET and that the sidecar image is up to date'
+            : 'Media sidecar is not running — it starts with a video stream, or set SIDECAR_URL',
+        );
+      }
+    } catch (err) { next(err); }
+  },
+);
 
 export { settingsRoutes };

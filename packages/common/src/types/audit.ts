@@ -51,6 +51,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.yt_cookies_changed',
   'settings.yt_cookies_removed',
   'settings.limits_update',
+  'settings.video_streaming_update',
 ] as const;
 
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

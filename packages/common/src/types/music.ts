@@ -185,7 +185,31 @@ export interface YouTubeUrlInfo {
 
 // === Video Streaming Types ===
 
-export type VideoStreamPresetKey = '480p' | '720p' | '1080p';
+export const VIDEO_STREAM_PRESET_KEYS = ['480p', '720p', '1080p', '1440p', '2160p'] as const;
+export type VideoStreamPresetKey = (typeof VIDEO_STREAM_PRESET_KEYS)[number];
+
+/** A fixed preset, or `auto` to pick the largest preset the source fills (capped by the Auto limit). */
+export type VideoQualityRequest = 'auto' | VideoStreamPresetKey;
+
+export const VIDEO_ENCODER_IDS = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi'] as const;
+export type VideoEncoderId = (typeof VIDEO_ENCODER_IDS)[number];
+/** `auto` picks software VP8, or the first working VAAPI encoder when hardware is preferred. */
+export type VideoEncoderRequest = 'auto' | VideoEncoderId;
+export type VideoCodec = 'vp8' | 'vp9' | 'h264';
+
+/** Why a media session stopped (1.9.0 truthful lifecycle). */
+export type MediaStopReason =
+  | 'manual'
+  | 'no_viewers'
+  | 'channel_empty'
+  | 'source_ended'
+  | 'source_unreachable'
+  | 'encoder_failure'
+  | 'sidecar_failure'
+  | 'replaced_by_music'
+  | 'replaced_by_video'
+  | 'server_disconnect'
+  | 'bot_stopped';
 
 export interface VideoStreamPreset {
   label: string;
@@ -195,15 +219,87 @@ export interface VideoStreamPreset {
   framerate: number;
 }
 
+export interface VideoStreamQualityInfo {
+  requested: VideoQualityRequest;
+  actual: VideoStreamPresetKey;
+  width: number;
+  height: number;
+  /** Probed source resolution (Auto only). */
+  sourceWidth: number | null;
+  sourceHeight: number | null;
+  /** Why Auto chose what it chose, when not obvious (probe failure, capped by limit). */
+  note: string | null;
+}
+
+export interface VideoStreamEncoderInfo {
+  requested: VideoEncoderRequest;
+  /** Encoder the backend asked the sidecar for (after resolving `auto`). */
+  selected: VideoEncoderId;
+  /** Encoder the sidecar reports running; differs from `selected` after a hardware fallback. */
+  active: VideoEncoderId;
+  codec: VideoCodec;
+  hardware: boolean;
+  fallbackReason: string | null;
+  note: string | null;
+}
+
+export interface MediaStopInfo {
+  reason: MediaStopReason;
+  at: number;
+  detail: string | null;
+}
+
 export interface VideoStreamStatus {
   streaming: boolean;
   streamId: string | null;
   source: string | null;
+  /** Actual preset in use (for Auto, the resolved preset). */
   preset: string;
+  framerate: number;
+  bitrate: string;
   startedAt: number | null;
   viewerCount: number;
   viewers: VideoViewerInfo[];
   sidecar: { videoPort: number; audioPort: number } | null;
+  quality: VideoStreamQualityInfo | null;
+  encoder: VideoStreamEncoderInfo | null;
+  noViewer: {
+    /** 0 = disabled. */
+    timeoutSec: number;
+    /** Epoch ms when the stream auto-stops unless a viewer joins; null while viewers are watching. */
+    stopAt: number | null;
+  };
+  lastStop: MediaStopInfo | null;
+}
+
+/** Admin defaults for new video streams (per-stream requests may override). */
+export interface VideoStreamSettings {
+  /** Stop a stream nobody watches after this many seconds; 0 = off. */
+  noViewerTimeoutSec: number;
+  /** Highest preset Auto may select. */
+  autoMaxPreset: VideoStreamPresetKey;
+  defaultEncoder: VideoEncoderRequest;
+  /** Let `auto` use a working VAAPI encoder. */
+  preferHardware: boolean;
+  /** Clamp for any stream bitrate in kbps; 0 = no clamp. */
+  maxBitrateKbps: number;
+}
+
+export interface VideoEncoderCapability {
+  id: VideoEncoderId;
+  codec: VideoCodec;
+  hardware: boolean;
+  available: boolean;
+  lowPower?: boolean;
+  error?: string;
+}
+
+export interface VideoEncoderCapabilities {
+  checkedAt: string;
+  vaapiDevice: string;
+  vaapiDevicePresent: boolean;
+  hwDecode: boolean;
+  encoders: VideoEncoderCapability[];
 }
 
 export interface VideoViewerInfo {
@@ -214,7 +310,13 @@ export interface VideoViewerInfo {
 
 export interface StartVideoStreamRequest {
   source: string;
-  preset?: VideoStreamPresetKey;
+  preset?: VideoQualityRequest;
+  encoder?: VideoEncoderRequest;
+  framerate?: number;
+  bitrate?: string;
+  volume?: number;
+  /** One-session override of the no-viewer timeout (seconds, 0 = off). */
+  noViewerTimeoutSec?: number;
 }
 
 export interface SetVideoSourceRequest {

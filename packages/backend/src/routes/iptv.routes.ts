@@ -12,6 +12,7 @@ import {
 } from '../iptv/iptv-service.js';
 import { MAX_IPTV_UPLOAD_BYTES } from '../iptv/iptv-storage.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
+import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 
 export const iptvRoutes: Router = Router();
 
@@ -259,8 +260,14 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    const { botId, channelId, preset } = req.body;
+    const { botId, channelId } = req.body;
     if (!botId || !channelId) throw new AppError(400, 'botId and channelId are required');
+    const parsed = parseStreamStartOptions({
+      preset: req.body.preset,
+      encoder: req.body.encoder,
+      noViewerTimeoutSec: req.body.noViewerTimeoutSec,
+    });
+    if (!parsed.ok) throw new AppError(400, parsed.error);
 
     const channel = await prisma.iptvChannel.findUnique({ where: { id: parseInt(channelId) } });
     if (!channel) throw new AppError(404, 'Channel not found');
@@ -272,7 +279,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
     if (bot.videoStreaming) {
       await bot.setVideoSource(channel.url);
     } else {
-      await bot.startVideoStream(channel.url, preset);
+      await bot.startVideoStream(channel.url, parsed.options);
     }
 
     res.json({ success: true, channel: { id: channel.id, name: channel.name } });
@@ -287,7 +294,7 @@ iptvRoutes.post('/stop', async (req: Request, res: Response, next) => {
     if (!botId) throw new AppError(400, 'botId is required');
     const bot = manager.getBot(parseInt(botId));
     if (!bot) throw new AppError(404, 'Music bot not found or not running');
-    await bot.stopVideoStream();
+    await bot.stopVideoStream('manual', 'Stopped from the IPTV page');
     res.json({ success: true });
   } catch (err) { next(err); }
 });

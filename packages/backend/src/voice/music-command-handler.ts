@@ -2437,7 +2437,7 @@ export class MusicCommandHandler {
 
     this.reply(bot, userClid, 'Starting video stream...');
     try {
-      await bot.startVideoStream(url, preset);
+      await bot.startVideoStream(url, { preset });
       this.reply(bot, userClid, `Video stream started: ${url}`);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to start stream: ${err.message}`);
@@ -2449,7 +2449,7 @@ export class MusicCommandHandler {
       this.reply(bot, userClid, 'No active video stream.');
       return;
     }
-    await bot.stopVideoStream();
+    await bot.stopVideoStream('manual', 'Stopped by chat command');
     this.reply(bot, userClid, 'Video stream stopped.');
   }
 

@@ -72,6 +72,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'settings.yt_cookies_changed': 'Update yt-dlp cookies',
   'settings.yt_cookies_removed': 'Remove yt-dlp cookies',
   'settings.limits_update': 'Update app limits',
+  'settings.video_streaming_update': 'Update video streaming defaults',
 };
 
 const RESULT_CODE_LABELS: Record<AdminAuditResultCode, string> = {

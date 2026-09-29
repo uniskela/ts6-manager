@@ -12,6 +12,7 @@ import {
 } from '../voice/audio/apple-music.js';
 import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/music-command-channels.js';
 import { playerWidgetToken } from './widget-public.routes.js';
+import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 
 export const musicBotRoutes: Router = Router();
 
@@ -801,9 +802,10 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    const { source, preset, framerate, bitrate, volume } = req.body;
-    const safeSource = assertVideoSource(source);
-    await bot.startVideoStream(safeSource, preset, framerate, bitrate, volume);
+    const safeSource = assertVideoSource(req.body?.source);
+    const parsed = parseStreamStartOptions(req.body);
+    if (!parsed.ok) throw new AppError(400, parsed.error);
+    await bot.startVideoStream(safeSource, parsed.options);
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });
@@ -814,7 +816,7 @@ musicBotRoutes.post('/:id/stream/stop', async (req: Request, res: Response, next
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    await bot.stopVideoStream();
+    await bot.stopVideoStream('manual', 'Stopped from the web UI');
     res.json({ success: true });
   } catch (err) { next(err); }
 });
