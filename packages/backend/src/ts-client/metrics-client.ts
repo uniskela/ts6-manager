@@ -27,6 +27,8 @@ export const METRICS_PATH = '/metrics';
 export const METRICS_TIMEOUT_MS = 3_000;
 /** Cap response body (including decompressed) to limit memory abuse. */
 export const METRICS_MAX_BYTES = 1 * 1024 * 1024;
+/** Reuse a recent successful scrape when the live race loses to WebQuery. */
+export const METRICS_CACHE_MAX_AGE_MS = 15_000;
 
 export type MetricsScrapeFailureReason = 'timeout' | 'unreachable' | 'invalid';
 
@@ -61,10 +63,31 @@ export class MetricsClient {
   private agent: http.Agent;
   private endpoint: ValidatedTsServerEndpoint;
   private activeControllers = new Set<AbortController>();
+  private lastOk: {
+    body: string;
+    contentType: string;
+    fetchedAt: string;
+    cachedAtMs: number;
+  } | null = null;
 
   constructor(endpoint: ValidatedTsServerEndpoint) {
     this.endpoint = endpoint;
     this.agent = new http.Agent({ keepAlive: false, maxSockets: 2 });
+  }
+
+  /**
+   * Return a recent successful scrape body when the concurrent dashboard race
+   * cancelled the live attempt. Never returns failures from cache.
+   */
+  peekFreshCache(maxAgeMs: number = METRICS_CACHE_MAX_AGE_MS): Extract<MetricsScrapeResult, { ok: true }> | null {
+    if (!this.lastOk) return null;
+    if (Date.now() - this.lastOk.cachedAtMs > maxAgeMs) return null;
+    return {
+      ok: true,
+      body: this.lastOk.body,
+      contentType: this.lastOk.contentType,
+      fetchedAt: this.lastOk.fetchedAt,
+    };
   }
 
   /**
@@ -137,6 +160,12 @@ export class MetricsClient {
       if (!body.trim()) {
         return { ok: false, reason: 'invalid', fetchedAt };
       }
+      this.lastOk = {
+        body,
+        contentType,
+        fetchedAt,
+        cachedAtMs: Date.now(),
+      };
       return { ok: true, body, contentType, fetchedAt };
     } catch (error: any) {
       if (
@@ -183,6 +212,7 @@ export class MetricsClient {
 
   destroy(): void {
     this.cancelPending();
+    this.lastOk = null;
     this.agent.destroy();
   }
 }

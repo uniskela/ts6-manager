@@ -34,8 +34,32 @@ describe('MetricsClient', () => {
       assert.equal(method, 'GET');
       assert.equal(path, METRICS_PATH);
       assert.equal(sawAuth, false);
+      const cached = client.peekFreshCache();
+      assert.ok(cached);
+      assert.match(cached.body, /placeholder/);
     } finally {
       client.destroy();
+      await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
+    }
+  });
+
+  it('clears peekFreshCache on destroy', async () => {
+    const server = createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('cached 1\n');
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+
+    const client = createMetricsClient('127.0.0.1', address.port);
+    try {
+      const result = await client.scrape();
+      assert.equal(result.ok, true);
+      assert.ok(client.peekFreshCache());
+      client.destroy();
+      assert.equal(client.peekFreshCache(), null);
+    } finally {
       await new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve())));
     }
   });

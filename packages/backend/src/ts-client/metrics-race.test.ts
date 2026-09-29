@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { takeTrackedIfReadyOrCancel, trackPromise } from './metrics-race.js';
+import {
+  takeTrackedIfReadyOrCancel,
+  takeTrackedWithGraceOrCancel,
+  trackPromise,
+} from './metrics-race.js';
 
 describe('trackPromise / takeTrackedIfReadyOrCancel', () => {
   it('returns metrics when already settled before the peek', async () => {
@@ -35,5 +39,44 @@ describe('trackPromise / takeTrackedIfReadyOrCancel', () => {
     // Late settle must not throw unhandled.
     resolveMetrics({ status: 'current' });
     await tracked.promise;
+  });
+});
+
+describe('takeTrackedWithGraceOrCancel', () => {
+  it('returns metrics that settle during the grace window', async () => {
+    let cancelled = false;
+    let resolveMetrics!: (value: { status: string }) => void;
+    const tracked = trackPromise(new Promise<{ status: string }>((resolve) => {
+      resolveMetrics = resolve;
+    }));
+
+    const pending = takeTrackedWithGraceOrCancel(
+      tracked,
+      () => { cancelled = true; },
+      { status: 'timeout' },
+      200,
+    );
+    setTimeout(() => resolveMetrics({ status: 'current' }), 40);
+    const result = await pending;
+    assert.deepEqual(result, { status: 'current' });
+    assert.equal(cancelled, false);
+  });
+
+  it('cancels after grace when metrics stay pending', async () => {
+    let cancelled = false;
+    const tracked = trackPromise(new Promise<{ status: string }>(() => {
+      /* never settles */
+    }));
+
+    const started = Date.now();
+    const result = await takeTrackedWithGraceOrCancel(
+      tracked,
+      () => { cancelled = true; },
+      { status: 'timeout' },
+      80,
+    );
+    assert.deepEqual(result, { status: 'timeout' });
+    assert.equal(cancelled, true);
+    assert.ok(Date.now() - started >= 70);
   });
 });

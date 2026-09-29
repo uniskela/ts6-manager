@@ -31,6 +31,7 @@ import { CONNECTION_SETUP_PATH } from '@/components/shared/NoServerSelectedState
 import { PageHeader } from '@/components/shared/PageHeader';
 import { RefreshStatus, StaleDataNotice } from '@/components/shared/RefreshStatus';
 import { WidgetManagerModal } from '@/components/widget/WidgetManagerModal';
+import { dashboardSourceHint, dashboardSourceLabel } from '@/lib/dashboard-source';
 import { formatBytes, formatUptime } from '@/lib/utils';
 import { formatLocalTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage, isTeamSpeakStarting, teamSpeakConnectionTitle, teamSpeakRefreshTone } from '@/lib/api-error';
@@ -54,11 +55,6 @@ interface DashboardData {
       reason?: 'timeout' | 'unreachable' | 'invalid' | 'unscoped';
     };
   };
-}
-
-function dashboardSourceLabel(dataSource: DashboardData['dataSource']): string {
-  if (dataSource?.metrics.status === 'current') return 'WebQuery + native metrics';
-  return 'WebQuery only';
 }
 
 interface BandwidthSample {
@@ -300,7 +296,11 @@ export default function Dashboard() {
         ) : undefined}
         metadata={(
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Badge variant="outline" className="font-mono-data text-[10px]">
+            <Badge
+              variant="outline"
+              className="font-mono-data text-[10px]"
+              title={dashboardSourceHint(data.dataSource)}
+            >
               {dashboardSourceLabel(data.dataSource)}
             </Badge>
             <RefreshStatus

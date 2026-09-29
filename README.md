@@ -436,7 +436,10 @@ by default (`TSSERVER_METRICS_ENABLED=0`); the default port is `9187`. The endpo
 is unauthenticated. Bind it to a restricted interface (`TSSERVER_METRICS_IP`) and
 apply firewall/network restrictions rather than exposing it publicly. Per-packet
 voice diagnostics (`TSSERVER_METRICS_VOICE`) add overhead: benchmark before enabling
-on busy production servers. TS6 Manager neither scrapes nor proxies these metrics.
+on busy production servers. When a connection enables **metrics scrape**, TS6 Manager
+fetches `/metrics` from the configured host/port (defaulting to the WebQuery host)
+to augment the dashboard; keep that listener private and reachable from the backend
+(not localhost-only when the manager is remote).
 
 Server logs default to UTC in beta13. Administrators can select `utc` or `local`
 using `TSSERVER_LOG_TIMEZONE`. TS6 Manager displays raw log text without converting
