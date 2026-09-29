@@ -54,7 +54,7 @@ Beta13 provides optional external Prometheus monitoring.
 - `TSSERVER_METRICS_IP` controls the bind address.
 - `TSSERVER_METRICS_VOICE` enables per-packet voice diagnostics and adds overhead.
 
-Keep the endpoint on a restricted interface/network. TS6 Manager does not scrape or proxy these metrics.
+Keep the endpoint on a restricted interface/network — it is unauthenticated, so do **not** expose it on the public internet. When a connection enables metrics scrape, TS6 Manager fetches `/metrics` from the configured host/port (defaulting to the WebQuery host). The listener must be reachable from the **manager backend** (for example on a private Docker network). TeamSpeak’s default bind is often localhost-only; that works only when the manager shares that loopback.
 
 ## Log timezone
 
