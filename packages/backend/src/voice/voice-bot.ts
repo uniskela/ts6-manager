@@ -757,6 +757,8 @@ export class VoiceBot extends EventEmitter {
     if (next) {
       this.play(next).catch((err) => this.emit('error', err));
     } else {
+      // The queue ran out: the music session is over, not merely paused.
+      this.endMusicSession('source_ended', 'Queue finished');
       this.resetNickname();
       if (!this._videoStreaming) this.stopAutoStopTimer();
     }
@@ -835,6 +837,7 @@ export class VoiceBot extends EventEmitter {
 
       stream.process.on('close', () => {
         if (epoch !== this.loopEpoch) return;
+        this.endMusicSession('source_ended', 'Stream ended');
         this.client.sendVoiceStop();
         this._isStreaming = false;
         this.streamKill = null;

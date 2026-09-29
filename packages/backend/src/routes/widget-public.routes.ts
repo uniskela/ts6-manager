@@ -19,7 +19,7 @@ setInterval(() => {
   for (const [key, entry] of widgetDataCache) {
     if (entry.expiresAt < now) widgetDataCache.delete(key);
   }
-}, 60_000);
+}, 60_000).unref(); // housekeeping only; never keep the process alive on its own
 
 async function getWidgetData(token: string, req: Request): Promise<WidgetData | null> {
   const cached = widgetDataCache.get(token);

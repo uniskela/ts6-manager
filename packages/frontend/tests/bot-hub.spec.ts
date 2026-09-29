@@ -2,6 +2,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 
 async function signIn(page: Page, request: APIRequestContext) {
   await request.post('/__test/reset');
+  await request.post('/__test/docs?on');
   await request.post('/__test/auth?on');
   await page.goto('/login');
   await page.getByLabel('Username').fill('admin');
@@ -54,7 +55,8 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   await expect(page.getByText('Neon Skyline — Midnight Transit')).toBeVisible();
   await expect(page.getByText('Streaming from iptv.example')).toBeVisible();
   await expect(page.getByText(/Auto → 1080p · Auto → H\.264 \(VAAPI\) · 0 viewers/)).toBeVisible();
-  await expect(page.getByText(/auto-stop in 3:0\d/)).toBeVisible();
+  // The fixture counts down from ~3:05; assert the format, not a moment.
+  await expect(page.getByText(/auto-stop in \d+:\d{2}/)).toBeVisible();
   await expect(page.getByText(/Last stream: Stopped after 5 minutes with no viewers · 8 min ago/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop stream' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop music' })).toBeVisible();
@@ -64,4 +66,9 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   await page.getByRole('link', { name: /Video streaming/ }).click();
   await expect(page).toHaveURL('/music-bots?tab=video');
   await expect(page.getByRole('tab', { name: 'Video' })).toHaveAttribute('aria-selected', 'true');
+
+  // A bot link selects that bot, and the selector keeps the URL in sync.
+  await page.goto('/music-bots?tab=video&bot=7');
+  const botSelect = page.getByText('Select Bot:').locator('..').getByRole('combobox');
+  await expect(botSelect).toContainText('Aurora Radio');
 });

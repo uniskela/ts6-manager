@@ -3219,18 +3219,17 @@ function RadioTab() {
 function VideoTab() {
   const { data } = useMusicBots();
   const bots = Array.isArray(data) ? data : [];
-  const [searchParams] = useSearchParams();
-  // `?bot=` lets the Bot hub open a specific bot's stream controls.
+  const [searchParams, setSearchParams] = useSearchParams();
+  // `?bot=` is the selection (the Bot hub links to it; refresh and shared
+  // links keep it). Without one, the first running bot is shown.
   const linkedBot = Number(searchParams.get('bot')) || null;
-  const [selectedBotId, setSelectedBotId] = useState<number | null>(linkedBot);
-
-  // Auto-select first running bot
   const runningBots = bots.filter((b: MusicBotSummary) => b.status !== 'stopped' && b.status !== 'error');
-  useEffect(() => {
-    if (!selectedBotId && runningBots.length > 0) {
-      setSelectedBotId(runningBots[0].id);
-    }
-  }, [runningBots, selectedBotId]);
+  const selectedBotId = linkedBot ?? runningBots[0]?.id ?? null;
+  const setSelectedBotId = (id: number) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('bot', String(id));
+    setSearchParams(next, { replace: true });
+  };
 
   const selectedBot = bots.find((b: MusicBotSummary) => b.id === selectedBotId);
 

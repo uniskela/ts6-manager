@@ -145,3 +145,16 @@ describe('bot hub overview', () => {
     assert.ok(!('source' in (overview.video as object)));
   });
 });
+
+describe('music session end', () => {
+  it('ends the session when the queue runs out', () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const first = bot.musicSessionInfo()!;
+    (bot as any).finishFileTrack();
+    assert.equal(bot.status, 'connected');
+    assert.equal(bot.lastMusicStop?.reason, 'source_ended');
+    fakeMusic(bot);
+    assert.notEqual(bot.musicSessionInfo()!.id, first.id, 'later music is a new session');
+  });
+});
