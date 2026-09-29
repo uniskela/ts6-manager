@@ -38,6 +38,18 @@ v1.6 adds:
 - pruned production Node runtimes; and
 - a four-image Trivy gate for fixable HIGH/CRITICAL findings.
 
+### Media session and streaming — v1.9.0
+
+Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192). Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198) is the pending release vehicle.
+
+- **Bot Hub** (Automation → Bot Hub) shows each bot's current track or stream, channel, video quality and encoder, viewer count, uptime, no-viewer auto-stop countdown, and last stop reason. It reads in-memory bot state only.
+- One active media session: a bot plays music or video, never both, and only one video stream runs at a time across bots.
+- **Auto** quality up to 2160p, plus VAAPI encode with software fallback of the same codec.
+- Live versus on-demand source mode, with encode-health warnings when encoding stays below realtime.
+- No-viewer auto-stop (default 5 minutes; the browser preview does not count as a viewer).
+
+Operator detail: [Music bots — Bot Hub](music-bots.md#bot-hub) and [Video streaming](video-streaming.md).
+
 ## Follow-up direction
 
 Planned work remains intentionally separated into dedicated changes.

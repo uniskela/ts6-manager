@@ -15,9 +15,9 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 ## Use TS6 Manager
 
 - [Server management](server-management.md) — virtual servers, channels, clients, permissions, files, logs, and widgets
-- [Music bots](music-bots.md) — queues, radio, local media, yt-dlp, chat commands, and progress jobs
+- [Music bots](music-bots.md) — Bot Hub, queues, radio, local media, yt-dlp, chat commands, and one media session (music or video)
 - [Bot flows](bot-flows.md) — triggers, conditions, actions, variables, and temporary-channel ownership
-- [Video streaming](video-streaming.md) — WebRTC sidecar and streaming behavior
+- [Video streaming](video-streaming.md) — Auto quality up to 2160p, VAAPI with software fallback, live source health, and no-viewer auto-stop
 
 ## Deploy and operate
 
