@@ -40,4 +40,10 @@ describe('parseStreamStartOptions', () => {
       assert.equal(parseStreamStartOptions(body).ok, false, JSON.stringify(body));
     }
   });
+
+  it('never takes a LAN host allowance from the request body', () => {
+    const parsed = parseStreamStartOptions({ preset: '720p', localHosts: ['192.168.1.20'] } as any);
+    assert.ok(parsed.ok);
+    assert.equal((parsed as any).options.localHosts, undefined);
+  });
 });

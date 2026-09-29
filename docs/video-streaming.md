@@ -79,6 +79,12 @@ Chat commands are explicit requests on one bot: `!play` on a bot that is streami
 
 The stop reason says what happened, for example *Replaced by music* or *Replaced by a stream on Bravo*.
 
+### When TeamSpeak refuses or throttles the bot
+
+- If TeamSpeak refuses to start a stream, the start fails at once with the server's reason, for example *TeamSpeak refused the stream: insufficient client permissions (error 2568)*. It no longer waits out a silent 10-second timeout.
+- If the server's anti-flood protection blocks the bot (error 524, *client is flooding*), the bot stops sending chat replies and ignores chat commands for 30 seconds. Each further 524 restarts the 30 seconds, because every command sent while blocked extends the block. Once the hold ends, the bot says once in the channel that commands came in too fast. To exempt the bot entirely, grant its identity `b_client_ignore_antiflood` in TeamSpeak.
+- A bot that TeamSpeak turns away because the server is full, the server password is wrong or the bot is banned stops at once with that reason, instead of retrying.
+
 ## Stopping and stop reasons
 
 A stream stops on its own when:
@@ -103,6 +109,18 @@ The IPTV page manages M3U/M3U8 playlist sources for the selected server. Adminis
 Uploaded sources are stored as application assets on the backend data volume (not TeamSpeak channel file storage). A full restore of uploaded playlists needs both the database and the `backend-data` volume. XMLTV/EPG upload, Xtream credential forms, and source export remain separate follow-ups.
 
 ![IPTV playlist and channel browser](iptv.png)
+
+### Playlists and channels on your local network
+
+For safety, ts6-manager refuses links to private addresses (`192.168.x.x`, `10.x.x.x` and so on), so a pasted link cannot make the server reach devices on your network. That also blocks an IPTV proxy running at home, such as Threadfin, xTeVe, TVHeadend or a router's IPTV service.
+
+Admins can allow those hosts under **IPTV → Local network sources**. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`threadfin.lan`).
+
+- The allowance covers IPTV only: playlist refreshes, channels started from the IPTV page, and `!tv <name>`. With `!tv`, users pick a channel name from your playlist, never a URL.
+- Links typed in chat (`!stream`, `!play`), the video URL box and flow HTTP nodes stay blocked from private addresses.
+- Loopback (`127.0.0.1`), link-local and cloud metadata addresses can never be allowed. Inside a container, loopback is the container itself, so use the host's LAN address instead.
+- Each playlist redirect is checked again, so a redirect cannot leave the allowed hosts.
+- The list is empty by default, and changing it is recorded in the audit log.
 
 ## Architecture
 

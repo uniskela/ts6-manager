@@ -228,3 +228,25 @@ test('ensureHomeChannelDiscovered waits for clientlist to set home cid', async (
   assert.equal(home, 34);
   assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
 });
+
+test('connection refusals (full, wrong password, banned) disconnect at once', () => {
+  for (const [id, msg] of [['1027', 'server\\smaxclient\\sreached'], ['1028', 'invalid\\sserver\\spassword'], ['3329', 'you\\sare\\sbanned']]) {
+    const client = new Ts3Client();
+    const errors: string[] = [];
+    let disconnected = 0;
+    client.on('error', (err: Error) => errors.push(err.message));
+    (client as any).disconnect = () => { disconnected++; };
+    feed(client, `error id=${id} msg=${msg}`);
+    assert.equal(disconnected, 1, `error ${id} must end the connection`);
+    assert.match(errors[0] ?? '', new RegExp(`TS3 error ${id}`));
+  }
+});
+
+test('a permission error on one command does not end the connection', () => {
+  const client = new Ts3Client();
+  let disconnected = 0;
+  client.on('error', () => {});
+  (client as any).disconnect = () => { disconnected++; };
+  feed(client, 'error id=2568 msg=insufficient\\sclient\\spermissions');
+  assert.equal(disconnected, 0);
+});

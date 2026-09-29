@@ -110,6 +110,19 @@ Use at least one live HLS channel and, if available, one CMAF channel whose segm
 
 ---
 
+## 9. Follow-up fixes ([#197](https://github.com/uniskela/ts6-manager/issues/197))
+
+| # | Check | Expected |
+| --- | --- | --- |
+| 9.1 | Add a LAN IPTV playlist (for example Threadfin at `192.168.x.x`) with **Local network sources** empty | Refresh fails with *private IP addresses are blocked* |
+| 9.2 | Add that host under *IPTV → Local network sources*, refresh, then stream a channel from the IPTV page and with `!tv <name>` | Playlist loads and both starts play. The audit log shows *Update allowed local IPTV hosts* |
+| 9.3 | `!stream http://<that LAN host>/…` in chat | Still refused: the allowance is for IPTV only |
+| 9.4 | Try to save `127.0.0.1` as a local host | Refused with an explanation |
+| 9.5 | Remove the bot's permission to stream, then start a stream | Fails at once with *TeamSpeak refused the stream: … (error …)*, not after 10 s |
+| 9.6 | Send a burst of chat commands quickly (for example `!stream` / `!stopstream` repeatedly) until the server reports flooding | The bot goes quiet, then says once *Commands came in too fast…*. Commands work normally afterwards |
+| 9.7 | Start a bot against a full server, then with a wrong server password | The bot stops at once with the server's reason. No retry loop in the log |
+| 9.8 | Watch a stream from a client on the same LAN | Picture within about a second of joining (early connection candidates are no longer dropped) |
+
 ## Sign-off
 
 | Area | Result | Host / client | Notes |
@@ -122,5 +135,6 @@ Use at least one live HLS channel and, if available, one CMAF channel whose segm
 | 6 Single session | | | |
 | 7 Audit | | | |
 | 8 Long music | | | |
+| 9 Follow-up fixes | | | |
 
 Any **Fail** blocks the release PR unless the behavior is already documented as a known limitation in [Video streaming](../video-streaming.md) or the release notes.

@@ -458,6 +458,7 @@ const server = createServer(async (req, res) => {
         reason: 'No local server detected in the production test environment.',
       }
       : url.pathname === '/api/widgets' && allowTestAuth ? []
+      : url.pathname === '/api/settings/iptv-network' && allowTestAuth && testRole === 'admin' ? { allowedLocalHosts: [] }
       : url.pathname === '/api/iptv/playlists' && allowTestAuth
         ? (docsScenario || iptvScenario === 'populated' ? [{
             id: 41,

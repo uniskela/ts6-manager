@@ -362,7 +362,14 @@ type Peer struct {
 	Started    bool
 	mu         sync.Mutex
 	stopSR     chan struct{}
+	// pendingICE holds candidates that arrived before the viewer's answer;
+	// SetAnswer flushes them. Guarded by mu.
+	pendingICE []webrtc.ICECandidateInit
 }
+
+// maxPendingICE bounds the candidates held for a peer that has not answered
+// yet, so a peer that never answers cannot grow the buffer without limit.
+const maxPendingICE = 64
 
 type Sidecar struct {
 	peers     map[string]*Peer
@@ -929,12 +936,31 @@ func (s *Sidecar) SetAnswer(id, sdp string) error {
 		return nil
 	}
 
-	return peer.PC.SetRemoteDescription(webrtc.SessionDescription{
+	if err := peer.PC.SetRemoteDescription(webrtc.SessionDescription{
 		Type: webrtc.SDPTypeAnswer,
 		SDP:  sdp,
-	})
+	}); err != nil {
+		return err
+	}
+
+	pending := peer.pendingICE
+	peer.pendingICE = nil
+	for _, c := range pending {
+		if err := peer.PC.AddICECandidate(c); err != nil {
+			log.Printf("[API] Dropping early ICE candidate for peer %s: %v", id, err)
+		}
+	}
+	if len(pending) > 0 {
+		debugf("[API] Applied %d early ICE candidate(s) for peer: %s", len(pending), id)
+	}
+	return nil
 }
 
+// AddICECandidate applies a remote candidate. Viewers trickle candidates as
+// soon as they have the offer, often before their answer reaches us; Pion
+// rejects those until the remote description is set, so they are held and
+// applied by SetAnswer. They are usually the host candidates, which give the
+// most direct path.
 func (s *Sidecar) AddICECandidate(id string, candidate string, sdpMid string, sdpMLineIndex uint16) error {
 	s.peersLock.RLock()
 	peer, exists := s.peers[id]
@@ -943,11 +969,23 @@ func (s *Sidecar) AddICECandidate(id string, candidate string, sdpMid string, sd
 		return fmt.Errorf("peer %s not found", id)
 	}
 
-	return peer.PC.AddICECandidate(webrtc.ICECandidateInit{
+	init := webrtc.ICECandidateInit{
 		Candidate:     candidate,
 		SDPMid:        &sdpMid,
 		SDPMLineIndex: &sdpMLineIndex,
-	})
+	}
+
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if peer.PC.RemoteDescription() == nil {
+		if len(peer.pendingICE) >= maxPendingICE {
+			debugf("[API] Early ICE candidate buffer full for peer %s; dropping candidate", id)
+			return nil
+		}
+		peer.pendingICE = append(peer.pendingICE, init)
+		return nil
+	}
+	return peer.PC.AddICECandidate(init)
 }
 
 func (s *Sidecar) ClosePeer(id string) {
