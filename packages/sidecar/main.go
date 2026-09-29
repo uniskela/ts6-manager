@@ -1183,8 +1183,12 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	spec := requested
 	fallbackReason := ""
 	lowPower := os.Getenv("VAAPI_LOW_POWER") == "1"
+	// When the capability cache already probed this encoder, lowPower is known.
+	// Otherwise allow one flip of lowPower before software fallback (matches probeOneEncoder).
+	probe, capsKnown := s.caps.peek().find(spec.ID)
+	triedLowPowerToggle := !spec.Hardware || capsKnown
 	if spec.Hardware {
-		if probe, known := s.caps.peek().find(spec.ID); known {
+		if capsKnown {
 			if !probe.Available {
 				fallbackReason = probe.Error
 				if fallbackReason == "" {
@@ -1238,8 +1242,14 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 			if reason == "" {
 				reason = "hardware encoder exited during startup"
 			}
-			log.Printf("[FFmpeg] %s failed (%s); falling back to software", spec.ID, reason)
 			s.ffmpeg = nil
+			if !triedLowPowerToggle {
+				triedLowPowerToggle = true
+				lowPower = !lowPower
+				log.Printf("[FFmpeg] %s failed (%s); retrying with low_power=%v", spec.ID, reason, lowPower)
+				continue
+			}
+			log.Printf("[FFmpeg] %s failed (%s); falling back to software", spec.ID, reason)
 			fallbackReason = reason
 			spec = softwareEncoderFor(spec.Codec)
 			continue

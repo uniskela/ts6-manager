@@ -1411,7 +1411,7 @@ export class VoiceBot extends EventEmitter {
           if (this._status !== 'playing') {
             this.stopAutoStopTimer();
           }
-          this.emit('videoStreamStopped');
+          this.emit('videoStreamStopped', this._lastVideoStop);
           this.emit('statusChange', this._status);
         }
       });
