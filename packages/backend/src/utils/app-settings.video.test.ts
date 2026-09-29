@@ -103,10 +103,10 @@ describe('per-server video defaults', () => {
     assert.deepEqual(parseServerOverrides('not json'), {});
   });
 
-  it('stores overrides in their contract types, not raw strings', () => {
+  it('stores normalized numbers and bools from stringy override input', () => {
     assert.deepEqual(
-      parseServerOverrides({ maxBitrateKbps: ' 5000 ', noViewerTimeoutSec: '0', preferHardware: true }),
-      { maxBitrateKbps: 5000, noViewerTimeoutSec: 0, preferHardware: true },
+      parseServerOverrides('{"noViewerTimeoutSec":"60","maxBitrateKbps":"0","preferHardware":true}'),
+      { noViewerTimeoutSec: 60, maxBitrateKbps: 0, preferHardware: true },
     );
   });
 

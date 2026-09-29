@@ -114,15 +114,14 @@ export function parseServerOverrides(raw: unknown): Partial<VideoStreamSettings>
   for (const field of ['noViewerTimeoutSec', 'autoMaxPreset', 'defaultEncoder', 'preferHardware', 'maxBitrateKbps'] as const) {
     const value = (obj as Record<string, unknown>)[field];
     if (value === undefined) continue;
-    // Store the parser's normalized value in its contract type, never the raw
-    // input ("60" must become 60, "false" must become false).
     const check = parseVideoStreamingUpdate({ [field]: value });
     if (!check.ok) continue;
-    const normalized = check.rows[0].value;
+    // Store normalized types (numbers/bools), not raw input strings like "60".
+    const raw = check.rows[0].value;
     (out as Record<string, unknown>)[field] =
-      field === 'noViewerTimeoutSec' || field === 'maxBitrateKbps' ? Number(normalized)
-        : field === 'preferHardware' ? normalized === 'true'
-          : normalized;
+      field === 'noViewerTimeoutSec' || field === 'maxBitrateKbps' ? Number(raw)
+        : field === 'preferHardware' ? raw === 'true'
+          : raw;
   }
   return out;
 }

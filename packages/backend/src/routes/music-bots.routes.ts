@@ -483,8 +483,6 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       queueItem: { id: firstItem.id, title: firstItem.title },
     });
   } catch (err: any) {
-    // Keep typed errors intact: a 409 media_session_conflict must reach the
-    // client with its conflicts so the switch confirmation can open.
     if (err instanceof AppError) return next(err);
     next(new AppError(500, `Failed to play URL: ${err.message}`));
   }
@@ -696,14 +694,6 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     });
     if (!playlist) throw new AppError(404, 'Playlist not found');
 
-    // Only a load that starts playback can replace this bot's video; queueing
-    // alone never needs confirmation. Checked before the queue changes.
-    if ((autoplay ?? clearFirst) && playlist.songs.length > 0) {
-      bot.assertMusicCanStart(replaceSessionIds);
-    }
-
-    if (clearFirst) bot.queue.clear();
-
     const items = playlist.songs.map((ps: any) => ({
       id: String(ps.song.id),
       title: ps.song.title,
@@ -714,10 +704,14 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       sourceUrl: ps.song.sourceUrl ?? undefined,
     }));
 
+    const shouldAutoplay = autoplay ?? clearFirst;
+    // Only require a session replace when this load will actually start playback.
+    if (shouldAutoplay && items.length > 0) bot.assertMusicCanStart(replaceSessionIds);
+
+    if (clearFirst) bot.queue.clear();
     bot.queue.addMany(items);
 
     let playError: string | undefined;
-    const shouldAutoplay = autoplay ?? clearFirst;
     if (shouldAutoplay && items.length > 0) {
       const playIndex = clearFirst ? 0 : bot.queue.length - items.length;
       const item = bot.queue.playAt(playIndex);
