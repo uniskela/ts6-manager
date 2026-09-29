@@ -124,9 +124,11 @@ test('Ban sends selected duration and reason, maps permanent to zero, and closes
   await openClientAction(page, 'Ban client');
   await dialog.getByLabel('Duration').click();
   await page.getByRole('option', { name: 'Permanent' }).click();
-  // The closing Select returns focus to its trigger; wait for that before
-  // focusing the confirm button, or Enter can land on the Select and reopen it.
+  // Closing Select restores focus to its trigger asynchronously. Wait for the
+  // listbox to unmount *and* the trigger to be focused before moving focus, or
+  // focus() on Ban can be stolen and Enter reopens the Select.
   await expect(page.getByRole('listbox')).toHaveCount(0);
+  await expect(dialog.getByLabel('Duration')).toBeFocused();
   const confirmBan = dialog.getByRole('button', { name: 'Ban client' });
   await confirmBan.focus();
   await expect(confirmBan).toBeFocused();

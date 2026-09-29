@@ -64,7 +64,10 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   if (process.env.BOT_HUB_SCREENSHOT) await page.screenshot({ path: process.env.BOT_HUB_SCREENSHOT, fullPage: true });
 
   await page.getByRole('link', { name: /Video streaming/ }).click();
-  await expect(page).toHaveURL('/music-bots?tab=video');
+  // VideoTab auto-selects the first running bot and may append `&bot=` after landing.
+  await expect(page).toHaveURL((url) => (
+    url.pathname === '/music-bots' && url.searchParams.get('tab') === 'video'
+  ));
   await expect(page.getByRole('tab', { name: 'Video' })).toHaveAttribute('aria-selected', 'true');
 
   // A bot link selects that bot, and the selector keeps the URL in sync.
