@@ -1,10 +1,12 @@
 import api from './client';
-import type { StartVideoStreamRequest, VideoStreamStatus } from '@ts6/common';
+import type { BotMediaOverview, StartVideoStreamRequest, VideoStreamStatus } from '@ts6/common';
 
 // === Music Bot API ===
 
 export const musicBotsApi = {
   list: () => api.get('/music-bots').then((r) => r.data),
+  /** Bot hub overview; in-memory state only, safe to poll. */
+  media: (): Promise<BotMediaOverview[]> => api.get('/music-bots/media').then((r) => r.data),
   get: (id: number) => api.get(`/music-bots/${id}`).then((r) => r.data),
   create: (data: any) => api.post('/music-bots', data).then((r) => r.data),
   update: (id: number, data: any) => api.put(`/music-bots/${id}`, data).then((r) => r.data),

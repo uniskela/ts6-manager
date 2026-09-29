@@ -8,6 +8,7 @@ import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
 import type {
+  BotMediaOverview,
   MediaSessionInfo,
   MediaStopInfo,
   MediaStopReason,
@@ -259,6 +260,11 @@ export class VoiceBot extends EventEmitter {
 
   getCurrentChannelId(): number {
     return this.client.getCurrentChannelId();
+  }
+
+  getCurrentChannelName(): string | null {
+    const cid = this.client.getCurrentChannelId();
+    return cid > 0 ? this.client.getChannelName(cid) : null;
   }
 
   /** Apply home cid from SSH clientlist when voice discovery left homeCid=0. */
@@ -1169,6 +1175,33 @@ export class VoiceBot extends EventEmitter {
 
   get lastMusicStop(): MediaStopInfo | null {
     return this._lastMusicStop;
+  }
+
+  /** Bot hub summary: no sidecar or Query calls, no source URLs. */
+  mediaOverview(): Omit<BotMediaOverview, 'serverName' | 'botName' | 'serverConfigId'> {
+    const cid = this.client.getCurrentChannelId();
+    const progress = this.playbackProgress;
+    const video = this.videoStreamStatus;
+    const { source: _source, viewers: _viewers, sidecar: _sidecar, ...videoSummary } = video;
+    return {
+      botId: this.config.id,
+      status: this._status,
+      channelId: cid > 0 ? cid : null,
+      channelName: this.getCurrentChannelName(),
+      session: this.mediaSession,
+      music: this.musicActive
+        ? {
+          title: this._nowPlaying?.title ?? null,
+          artist: this._nowPlaying?.artist ?? null,
+          live: this._isStreaming,
+          position: progress?.position ?? null,
+          duration: progress && progress.duration > 0 ? progress.duration : null,
+        }
+        : null,
+      video: video.streaming ? videoSummary : null,
+      lastMusicStop: this._lastMusicStop,
+      lastVideoStop: this._lastVideoStop,
+    };
   }
 
   /**

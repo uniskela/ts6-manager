@@ -132,3 +132,16 @@ describe('single video stream across bots', () => {
     await first;
   });
 });
+
+describe('bot hub overview', () => {
+  it('summarizes a stream without exposing its source URL', () => {
+    const bot = makeBot(4, 'Delta');
+    fakeVideo(bot);
+    const overview = bot.mediaOverview();
+    assert.equal(overview.session?.kind, 'video');
+    assert.equal(overview.session?.label, 'iptv.example');
+    assert.ok(overview.video, 'video summary present while streaming');
+    assert.ok(!JSON.stringify(overview).includes('user:pw'), 'no credentials in the hub payload');
+    assert.ok(!('source' in (overview.video as object)));
+  });
+});

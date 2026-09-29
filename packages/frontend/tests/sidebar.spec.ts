@@ -18,6 +18,7 @@ const destinations = [
   'Server Logs',
   'Instance',
   'Music Request History',
+  'Bot Hub',
   'Bot Flows',
   'Music Bots',
   'IPTV',
@@ -130,7 +131,7 @@ test('collapsed sections advertise their size and still reveal the active destin
   await signInAsAdmin(page, request);
 
   const automation = page.getByRole('button', { name: 'Expand Automation section' });
-  await expect(automation.locator('[data-section-count]')).toHaveText('3');
+  await expect(automation.locator('[data-section-count]')).toHaveText('4');
   await expect(page.getByRole('button', { name: 'Collapse Management section' }).locator('[data-section-count]')).toHaveCount(0);
 
   await page.goto('/iptv');

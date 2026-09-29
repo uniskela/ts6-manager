@@ -14,6 +14,7 @@ import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/mus
 import { playerWidgetToken } from './widget-public.routes.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { parseReplaceSessionIds } from '../voice/media-session.js';
+import type { BotMediaOverview } from '@ts6/common';
 
 export const musicBotRoutes: Router = Router();
 
@@ -61,6 +62,35 @@ musicBotRoutes.get('/', async (req: Request, res: Response, next) => {
         createdAt: b.createdAt,
       };
     }));
+  } catch (err) { next(err); }
+});
+
+// GET /media — Bot hub overview: every bot's media session. Cheap enough to
+// poll (in-memory state only; never calls the sidecar or TeamSpeak Query).
+musicBotRoutes.get('/media', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const manager: VoiceBotManager = req.app.locals.voiceBotManager;
+    const dbBots = await prisma.musicBot.findMany({
+      select: { id: true, name: true, serverConfigId: true, serverConfig: { select: { name: true } } },
+      orderBy: { id: 'asc' },
+    });
+    const overview: BotMediaOverview[] = dbBots.map((b: any) => {
+      const bot = manager.getBot(b.id);
+      const base = {
+        botName: b.name as string,
+        serverConfigId: b.serverConfigId as number,
+        serverName: (b.serverConfig?.name as string | undefined) ?? null,
+      };
+      if (!bot) {
+        return {
+          ...base, botId: b.id, status: 'stopped', channelId: null, channelName: null, session: null,
+          music: null, video: null, lastMusicStop: null, lastVideoStop: null,
+        };
+      }
+      return { ...base, ...bot.mediaOverview() };
+    });
+    res.json(overview);
   } catch (err) { next(err); }
 });
 

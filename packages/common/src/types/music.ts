@@ -238,6 +238,30 @@ export interface MediaSessionConflictBody {
   conflicts: MediaSessionInfo[];
 }
 
+/** One bot's media state for the Bot hub (cheap to poll: no sidecar or Query calls). */
+export interface BotMediaOverview {
+  botId: number;
+  botName: string;
+  serverConfigId: number;
+  serverName: string | null;
+  status: string;
+  channelId: number | null;
+  channelName: string | null;
+  session: MediaSessionInfo | null;
+  music: {
+    title: string | null;
+    artist: string | null;
+    /** Radio / live audio stream rather than a track. */
+    live: boolean;
+    position: number | null;
+    duration: number | null;
+  } | null;
+  /** Video details while streaming (no source URL — see `session.label`). */
+  video: Omit<VideoStreamStatus, 'source' | 'viewers' | 'sidecar'> | null;
+  lastMusicStop: MediaStopInfo | null;
+  lastVideoStop: MediaStopInfo | null;
+}
+
 export interface VideoStreamPreset {
   label: string;
   width: number;

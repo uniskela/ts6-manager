@@ -122,7 +122,10 @@ export function useStopPlayback() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (botId: number) => musicBotsApi.stopPlayback(botId),
-    onSuccess: (_, botId) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
+    onSuccess: (_, botId) => {
+      qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });
+      qc.invalidateQueries({ queryKey: ['bot-media'] });
+    },
   });
 }
 
@@ -257,6 +260,7 @@ export function useStopVideoStream() {
   return useMutation({
     mutationFn: (botId: number) => musicBotsApi.stopStream(botId),
     onSuccess: (_, botId) => {
+      qc.invalidateQueries({ queryKey: ['bot-media'] });
       qc.invalidateQueries({ queryKey: ['video-stream-status', botId] });
       qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });
     },
@@ -287,5 +291,15 @@ export function useKickVideoViewer() {
     mutationFn: ({ botId, clid }: { botId: number; clid: number }) =>
       musicBotsApi.kickViewer(botId, clid),
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['video-stream-status', botId] }),
+  });
+}
+
+// === Bot hub ===
+
+export function useBotMedia() {
+  return useQuery({
+    queryKey: ['bot-media'],
+    queryFn: musicBotsApi.media,
+    refetchInterval: 3000,
   });
 }
