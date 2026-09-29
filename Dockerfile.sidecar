@@ -2,12 +2,17 @@ FROM golang:1.25-bookworm AS build
 WORKDIR /src
 COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
 RUN go mod download
-COPY packages/sidecar/main.go .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar main.go
+COPY packages/sidecar/*.go ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar .
 
 FROM debian:bookworm-slim
+# intel-media-va-driver lets the optional VAAPI encoders use Intel iGPUs when
+# /dev/dri is passed through (see docs/video-streaming.md). Software encoding
+# is unaffected when no device is mapped.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ffmpeg ca-certificates && \
+    VAAPI_PACKAGES="" && \
+    if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="intel-media-va-driver"; fi && \
+    apt-get install -y --no-install-recommends ffmpeg ca-certificates $VAAPI_PACKAGES && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build /sidecar /usr/local/bin/sidecar
 EXPOSE 9800

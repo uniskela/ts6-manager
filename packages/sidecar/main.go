@@ -4,6 +4,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -11,7 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"runtime"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -351,6 +352,7 @@ type createInFlight struct {
 
 type Peer struct {
 	ID         string
+	Codec      string
 	PC         *webrtc.PeerConnection
 	VideoTrack *webrtc.TrackLocalStaticRTP
 	AudioTrack *webrtc.TrackLocalStaticRTP
@@ -374,8 +376,18 @@ type Sidecar struct {
 
 	ffmpeg     *exec.Cmd
 	ffmpegLock sync.Mutex
+	ffmpegGen  uint64
 	source     string
 	running    bool
+
+	// streamCodec is the codec family ffmpeg currently packetizes (string).
+	streamCodec atomic.Value
+
+	// Encoder session state reported by /stats; guarded by statusMu.
+	statusMu sync.Mutex
+	encoder  EncoderSession
+
+	caps capabilityCache
 
 	// Atomic timestamps for RTCP Sender Report generation
 	lastVideoRTPTs  uint64 // atomic: latest video RTP timestamp seen
@@ -400,7 +412,7 @@ type Sidecar struct {
 }
 
 func NewSidecar() *Sidecar {
-	return &Sidecar{
+	s := &Sidecar{
 		peers:         make(map[string]*Peer),
 		creating:      make(map[string]*createInFlight),
 		syncBuffer:    time.Duration(envIntOrDefault("SYNC_PLAYOUT_BUFFER_MS", 50)) * time.Millisecond,
@@ -409,6 +421,15 @@ func NewSidecar() *Sidecar {
 		videoQueue:    make(chan *rtp.Packet, envIntOrDefault("VIDEO_QUEUE_SIZE", 1024)),
 		audioQueue:    make(chan *rtp.Packet, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
 	}
+	s.streamCodec.Store(codecVP8)
+	return s
+}
+
+func (s *Sidecar) currentCodec() string {
+	if c, ok := s.streamCodec.Load().(string); ok && c != "" {
+		return c
+	}
+	return codecVP8
 }
 
 func (s *Sidecar) StartRTP() error {
@@ -530,6 +551,7 @@ func (s *Sidecar) processVideoRTP() {
 	haveTS := false
 
 	for pkt := range s.videoQueue {
+		codec := s.currentCodec()
 		if !haveTS || pkt.Timestamp != lastTS {
 			now := time.Now()
 			extraDelay := s.computeTrackDelay("video", pkt.Timestamp, now)
@@ -543,14 +565,15 @@ func (s *Sidecar) processVideoRTP() {
 		s.peersLock.RLock()
 		for _, peer := range s.peers {
 			peer.mu.Lock()
-			active := peer.Active
+			// A peer negotiated for another codec cannot decode this stream.
+			active := peer.Active && peer.Codec == codec
 			started := peer.Started
 			track := peer.VideoTrack
 
-			if active && !started && isVP8KeyframeStart(pkt.Payload) {
+			if active && !started && isKeyframeStart(codec, pkt.Payload) {
 				peer.Started = true
 				started = true
-				log.Printf("[Peer %s] First VP8 keyframe seen at ts=%d - opening stream gate", peer.ID, pkt.Timestamp)
+				log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", peer.ID, codec, pkt.Timestamp)
 			}
 
 			peer.mu.Unlock()
@@ -600,7 +623,14 @@ func (s *Sidecar) processAudioRTP() {
 // carries every local candidate and none has to be trickled to the viewer
 // afterwards. That also makes the slowest STUN server the time a viewer waits
 // to join, which is what stunGatherTimeout bounds.
-func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
+func (s *Sidecar) CreatePeer(id string, codec string) (sdp string, err error) {
+	if codec == "" {
+		codec = s.currentCodec()
+	}
+	if !validCodec(codec) {
+		return "", fmt.Errorf("unsupported codec %q", codec)
+	}
+
 	s.peersLock.Lock()
 
 	// If a create for this ID is already in progress, wait for it FIRST.
@@ -614,7 +644,8 @@ func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 	// Reuse existing peer/offer only when no create is currently in flight.
 	if existing, exists := s.peers[id]; exists {
 		state := existing.PC.ICEConnectionState()
-		if state != webrtc.ICEConnectionStateClosed &&
+		if existing.Codec == codec &&
+			state != webrtc.ICEConnectionStateClosed &&
 			state != webrtc.ICEConnectionStateFailed &&
 			state != webrtc.ICEConnectionStateDisconnected {
 			if ld := existing.PC.LocalDescription(); ld != nil {
@@ -646,14 +677,11 @@ func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 		iceServers = append(iceServers, webrtc.ICEServer{URLs: []string{stun}})
 	}
 
+	videoCapability := codecCapability(codec)
 	m := &webrtc.MediaEngine{}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
-		RTPCodecCapability: webrtc.RTPCodecCapability{
-			MimeType:    webrtc.MimeTypeVP8,
-			ClockRate:   90000,
-			SDPFmtpLine: "",
-		},
-		PayloadType: 96,
+		RTPCodecCapability: videoCapability,
+		PayloadType:        96,
 	}, webrtc.RTPCodecTypeVideo); err != nil {
 		return "", err
 	}
@@ -689,10 +717,7 @@ func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 		return "", fmt.Errorf("create PeerConnection: %w", err)
 	}
 
-	videoTrack, err := webrtc.NewTrackLocalStaticRTP(
-		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeVP8, ClockRate: 90000},
-		"video", "ts6-stream",
-	)
+	videoTrack, err := webrtc.NewTrackLocalStaticRTP(videoCapability, "video", "ts6-stream")
 	if err != nil {
 		pc.Close()
 		return "", err
@@ -718,6 +743,7 @@ func (s *Sidecar) CreatePeer(id string) (sdp string, err error) {
 
 	peer := &Peer{
 		ID:         id,
+		Codec:      codec,
 		PC:         pc,
 		VideoTrack: videoTrack,
 		AudioTrack: audioTrack,
@@ -927,44 +953,111 @@ func (s *Sidecar) ClosePeer(id string) {
 	s.peersLock.Unlock()
 }
 
-func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate int, bitrate string, volume int, loop bool) {
-	s.ffmpegLock.Lock()
-	defer s.ffmpegLock.Unlock()
+// SourceRequest is one POST /source call.
+type SourceRequest struct {
+	Source    string
+	Width     int
+	Height    int
+	Framerate int
+	Bitrate   string
+	Volume    int
+	Loop      bool
+	Encoder   string
+}
 
-	if err := validSource(source); err != nil {
-		log.Printf("[FFmpeg] Rejected source: %v", err)
-		return
+// EncoderSession reports which encoder is actually running, so a hardware
+// fallback is visible instead of silent.
+type EncoderSession struct {
+	Requested      string     `json:"requested"`
+	Active         string     `json:"active"`
+	Codec          string     `json:"codec"`
+	Hardware       bool       `json:"hardware"`
+	FallbackReason string     `json:"fallbackReason,omitempty"`
+	State          string     `json:"state"`
+	ExitError      string     `json:"exitError,omitempty"`
+	StartedAt      *time.Time `json:"startedAt,omitempty"`
+	gen            uint64
+}
+
+func (s *Sidecar) encoderSession() EncoderSession {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	return s.encoder
+}
+
+// tailBuffer keeps the last few KB of ffmpeg stderr for exit/fallback reasons.
+type tailBuffer struct {
+	mu  sync.Mutex
+	buf []byte
+}
+
+func (t *tailBuffer) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.buf = append(t.buf, p...)
+	if len(t.buf) > 4096 {
+		t.buf = t.buf[len(t.buf)-4096:]
 	}
+	return len(p), nil
+}
 
-	s.StopFFmpegLocked()
-	s.resetSyncTiming()
-	s.drainRTPQueues()
-	s.resetPeerStreamState()
+// summary summarizes the end of ffmpeg's stderr for a status reason: the
+// last two lines (the final one is often a generic wrapper), URLs redacted.
+func (t *tailBuffer) summary() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return summarizeFFmpegError(string(t.buf))
+}
 
-	s.source = source
+var urlPattern = regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.-]*://\S+`)
 
-	w := width
-	h := height
-	fps := framerate
+func summarizeFFmpegError(out string) string {
+	lines := []string{}
+	for _, l := range strings.Split(strings.ReplaceAll(out, "\r", "\n"), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			lines = append(lines, l)
+		}
+	}
+	if len(lines) > 2 {
+		lines = lines[len(lines)-2:]
+	}
+	summary := urlPattern.ReplaceAllString(strings.Join(lines, "; "), "<source>")
+	if len(summary) > 240 {
+		summary = summary[:240]
+	}
+	return summary
+}
+
+// hwVerifyWindow is how long a hardware encoder must survive before the
+// sidecar trusts it; VAAPI init/encode failures exit well inside this.
+func hwVerifyWindow() time.Duration {
+	return time.Duration(envIntOrDefault("VAAPI_VERIFY_MS", 1500)) * time.Millisecond
+}
+
+// buildFFmpegArgs assembles the full ffmpeg command line for req and spec.
+func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower bool) []string {
+	w := req.Width
+	h := req.Height
+	fps := req.Framerate
 
 	if w <= 0 {
 		w = envIntOrDefault("VIDEO_WIDTH", 1280)
 	}
-
 	if h <= 0 {
 		h = envIntOrDefault("VIDEO_HEIGHT", 720)
 	}
-
 	if fps <= 0 {
 		fps = envIntOrDefault("VIDEO_FRAMERATE", 30)
 	}
 
 	args := []string{}
+	args = append(args, hwInitArgs(spec, req.Source != "")...)
 
+	source := req.Source
 	if source != "" {
 		if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
 			args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
-		} else if loop {
+		} else if req.Loop {
 			args = append(args, "-stream_loop", "-1")
 		}
 
@@ -973,7 +1066,7 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 		args = append(args, "-re", "-f", "lavfi", "-i", fmt.Sprintf("color=c=black:s=%dx%d:r=1", w, h))
 	}
 
-	vBitrate := strings.TrimSpace(bitrate)
+	vBitrate := strings.TrimSpace(req.Bitrate)
 	if vBitrate == "" {
 		vBitrate = envOrDefault("VIDEO_BITRATE", "1500k")
 	}
@@ -981,32 +1074,18 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 
 	if source != "" {
 		vf := fmt.Sprintf(
-			"fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p",
-			fps, w, h, w, h,
+			"fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,%s",
+			fps, w, h, w, h, uploadFilter(spec),
 		)
 		args = append(args,
 			"-map", "0:v:0",
 			"-vf", vf,
 		)
+	} else if spec.Hardware {
+		args = append(args, "-vf", uploadFilter(spec))
 	}
+	args = append(args, encoderArgs(spec, vBitrate, lowPower)...)
 	args = append(args,
-		"-pix_fmt", "yuv420p",
-		"-c:v", "libvpx",
-		// Lower = better quality/bit; 6 was for single-core encode. With -threads/-row-mt
-		// there is headroom to trade some speed for quality (override via VIDEO_CPU_USED).
-		"-cpu-used", envOrDefault("VIDEO_CPU_USED", "4"),
-		"-deadline", "realtime",
-		// libvpx does not auto-scale across cores without these.
-		"-threads", strconv.Itoa(envIntOrDefault("VIDEO_ENCODE_THREADS", runtime.NumCPU())),
-		"-row-mt", "1",
-		"-lag-in-frames", "0",
-		"-error-resilient", "1",
-		"-b:v", vBitrate,
-		"-maxrate", vBitrate,
-		"-bufsize", videoBufsize(vBitrate),
-		"-keyint_min", "15",
-		"-g", "15",
-		"-auto-alt-ref", "0",
 		"-payload_type", "96",
 		"-ssrc", "11111111",
 		"-f", "rtp",
@@ -1024,8 +1103,8 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 		if audioDelayMs > 0 {
 			audioFilters = append(audioFilters, fmt.Sprintf("adelay=delays=%d:all=1", audioDelayMs))
 		}
-		if volume >= 0 && volume <= 100 && volume != 100 {
-			audioFilters = append(audioFilters, fmt.Sprintf("volume=%.2f", float64(volume)/100.0))
+		if req.Volume >= 0 && req.Volume <= 100 && req.Volume != 100 {
+			audioFilters = append(audioFilters, fmt.Sprintf("volume=%.2f", float64(req.Volume)/100.0))
 		}
 		if len(audioFilters) > 0 {
 			args = append(args, "-af", strings.Join(audioFilters, ","))
@@ -1042,29 +1121,145 @@ func (s *Sidecar) StartFFmpeg(source string, width int, height int, framerate in
 			fmt.Sprintf("rtp://127.0.0.1:%d", s.audioPort),
 		)
 	}
+	return args
+}
 
-	log.Printf("[FFmpeg] Starting: source=%s video=:%d audio=:%d", source, s.videoPort, s.audioPort)
-
+// launchFFmpegLocked starts ffmpeg and returns a channel closed on exit.
+func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64) (<-chan struct{}, *tailBuffer, error) {
+	tail := &tailBuffer{}
 	cmd := exec.Command(getFfmpegPath(), args...)
 	cmd.Stdout = nil
-	cmd.Stderr = os.Stderr
+	cmd.Stderr = io.MultiWriter(os.Stderr, tail)
 	if err := cmd.Start(); err != nil {
-		log.Printf("[FFmpeg] Start error: %v", err)
-		return
+		return nil, nil, err
 	}
 	s.ffmpeg = cmd
 
+	done := make(chan struct{})
 	go func() {
 		err := cmd.Wait()
 		log.Printf("[FFmpeg] Exited: %v", err)
+		s.statusMu.Lock()
+		if s.encoder.gen == gen && atomic.LoadUint64(&s.ffmpegGen) == gen {
+			s.encoder.State = "exited"
+			if err != nil {
+				reason := tail.summary()
+				if reason == "" {
+					reason = err.Error()
+				}
+				s.encoder.ExitError = reason
+			}
+		}
+		s.statusMu.Unlock()
+		close(done)
 	}()
+	return done, tail, nil
+}
+
+// StartFFmpeg (re)starts the encoder for req. A hardware encoder that is known
+// unavailable, or that exits inside hwVerifyWindow, is replaced by the
+// software encoder of the same codec and the reason is reported.
+func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
+	s.ffmpegLock.Lock()
+	defer s.ffmpegLock.Unlock()
+
+	if err := validSource(req.Source); err != nil {
+		log.Printf("[FFmpeg] Rejected source: %v", err)
+		return EncoderSession{}, err
+	}
+	requested, ok := lookupEncoder(req.Encoder)
+	if !ok {
+		return EncoderSession{}, fmt.Errorf("unknown encoder %q", req.Encoder)
+	}
+
+	s.StopFFmpegLocked()
+	s.resetSyncTiming()
+	s.drainRTPQueues()
+	s.resetPeerStreamState()
+
+	s.source = req.Source
+	s.streamCodec.Store(requested.Codec)
+
+	spec := requested
+	fallbackReason := ""
+	lowPower := os.Getenv("VAAPI_LOW_POWER") == "1"
+	if spec.Hardware {
+		if probe, known := s.caps.peek().find(spec.ID); known {
+			if !probe.Available {
+				fallbackReason = probe.Error
+				if fallbackReason == "" {
+					fallbackReason = "hardware encoder unavailable"
+				}
+				spec = softwareEncoderFor(spec.Codec)
+			} else {
+				lowPower = probe.LowPower
+			}
+		} else if !vaapiDevicePresent() {
+			fallbackReason = "VAAPI device not present"
+			spec = softwareEncoderFor(spec.Codec)
+		}
+	}
+
+	for {
+		gen := atomic.AddUint64(&s.ffmpegGen, 1)
+		now := time.Now().UTC()
+		s.statusMu.Lock()
+		s.encoder = EncoderSession{
+			Requested:      requested.ID,
+			Active:         spec.ID,
+			Codec:          spec.Codec,
+			Hardware:       spec.Hardware,
+			FallbackReason: fallbackReason,
+			State:          "running",
+			StartedAt:      &now,
+			gen:            gen,
+		}
+		s.statusMu.Unlock()
+
+		args := s.buildFFmpegArgs(req, spec, lowPower)
+		log.Printf("[FFmpeg] Starting: encoder=%s video=:%d audio=:%d", spec.ID, s.videoPort, s.audioPort)
+		done, tail, err := s.launchFFmpegLocked(args, gen)
+		if err != nil {
+			log.Printf("[FFmpeg] Start error: %v", err)
+			s.statusMu.Lock()
+			s.encoder.State = "exited"
+			s.encoder.ExitError = err.Error()
+			s.statusMu.Unlock()
+			return s.encoderSession(), fmt.Errorf("start ffmpeg: %w", err)
+		}
+
+		if !spec.Hardware {
+			return s.encoderSession(), nil
+		}
+
+		select {
+		case <-done:
+			reason := tail.summary()
+			if reason == "" {
+				reason = "hardware encoder exited during startup"
+			}
+			log.Printf("[FFmpeg] %s failed (%s); falling back to software", spec.ID, reason)
+			s.ffmpeg = nil
+			fallbackReason = reason
+			spec = softwareEncoderFor(spec.Codec)
+			continue
+		case <-time.After(hwVerifyWindow()):
+			return s.encoderSession(), nil
+		}
+	}
 }
 
 func (s *Sidecar) StopFFmpegLocked() {
+	atomic.AddUint64(&s.ffmpegGen, 1)
 	if s.ffmpeg != nil && s.ffmpeg.Process != nil {
 		s.ffmpeg.Process.Kill()
 		s.ffmpeg = nil
 	}
+	s.statusMu.Lock()
+	if s.encoder.State == "running" {
+		s.encoder.State = "stopped"
+	}
+	s.statusMu.Unlock()
 }
 
 func (s *Sidecar) GetStats() map[string]interface{} {
@@ -1085,6 +1280,8 @@ func (s *Sidecar) GetStats() map[string]interface{} {
 		"peerCount": len(s.peers),
 		"peers":     peers,
 		"source":    s.source,
+		"codec":     s.currentCodec(),
+		"encoder":   s.encoderSession(),
 	}
 }
 
@@ -1148,15 +1345,20 @@ func main() {
 
 	mux.HandleFunc("POST /peer/create", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			ID string `json:"id"`
+			ID    string `json:"id"`
+			Codec string `json:"codec"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		debugf("[API] Peer create requested: %s", req.ID)
+		debugf("[API] Peer create requested: %s (codec=%s)", req.ID, req.Codec)
+		if req.Codec != "" && !validCodec(req.Codec) {
+			http.Error(w, "unsupported codec", 400)
+			return
+		}
 
-		sdp, err := sidecar.CreatePeer(req.ID)
+		sdp, err := sidecar.CreatePeer(req.ID, req.Codec)
 		if err != nil {
 			log.Printf("[API] CreatePeer error: %v", err)
 			http.Error(w, err.Error(), 500)
@@ -1229,6 +1431,8 @@ func main() {
 			// Loop defaults to true (prior behavior for local backgrounds) when omitted;
 			// the backend sets false for on-demand downloaded clips.
 			Loop *bool `json:"loop"`
+			// Encoder is a registry ID (vp8, h264_vaapi, ...); empty keeps VP8.
+			Encoder string `json:"encoder"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1248,10 +1452,32 @@ func main() {
 				vol = 100
 			}
 		}
+		encoderID := req.Encoder
+		if encoderID == "" {
+			encoderID = "vp8"
+		}
+		if _, ok := lookupEncoder(encoderID); !ok {
+			http.Error(w, "unknown encoder", 400)
+			return
+		}
 		loop := req.Loop == nil || *req.Loop
-		log.Printf("[API] Setting source: %s (%dx%d @ %dfps vol=%d loop=%v)", req.Source, req.Width, req.Height, req.Framerate, vol, loop)
-		sidecar.StartFFmpeg(req.Source, req.Width, req.Height, req.Framerate, req.Bitrate, vol, loop)
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		log.Printf("[API] Setting source (%dx%d @ %dfps vol=%d loop=%v encoder=%s)", req.Width, req.Height, req.Framerate, vol, loop, encoderID)
+		session, err := sidecar.StartFFmpeg(SourceRequest{
+			Source:    req.Source,
+			Width:     req.Width,
+			Height:    req.Height,
+			Framerate: req.Framerate,
+			Bitrate:   req.Bitrate,
+			Volume:    vol,
+			Loop:      loop,
+			Encoder:   encoderID,
+		})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "encoder": session})
 	}))
 
 	mux.HandleFunc("POST /source/stop", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
@@ -1263,6 +1489,14 @@ func main() {
 		sidecar.ffmpegLock.Unlock()
 
 		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	}))
+
+	// GET /encoders returns cached encoder capabilities; the first call (or
+	// ?refresh=1) runs short test encodes, so callers use it on demand only.
+	mux.HandleFunc("GET /encoders", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
+		caps := sidecar.caps.get(r.URL.Query().Get("refresh") == "1")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(caps)
 	}))
 
 	mux.HandleFunc("GET /stats", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {

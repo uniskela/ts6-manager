@@ -5,8 +5,8 @@ FROM golang:1.25-bookworm AS sidecar-build
 WORKDIR /src
 COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
 RUN go mod download
-COPY packages/sidecar/main.go .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar main.go
+COPY packages/sidecar/*.go ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar .
 
 FROM node:20-slim AS build
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
@@ -38,9 +38,14 @@ ENV NODE_ENV=production \
     DATABASE_URL=file:/app/packages/backend/data/ts6webui.db \
     GIT_SHA=$GIT_SHA
 
+# intel-media-va-driver (amd64) backs the optional VAAPI video encoders when
+# /dev/dri is passed through; software encoding does not need it.
 RUN apt-get update && \
     apt-get upgrade -y && \
+    VAAPI_PACKAGES="" && \
+    if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="intel-media-va-driver"; fi && \
     apt-get install -y --no-install-recommends \
+      $VAAPI_PACKAGES \
       openssl \
       ffmpeg \
       python3 \
