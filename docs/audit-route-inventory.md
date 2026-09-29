@@ -25,7 +25,7 @@ Prefer the same patterns:
 | `connection.create` / `update` / `credentials_changed` / `delete` | `POST/PUT/DELETE /api/servers` |
 | `flow.create` / `update` / `delete` / `enable` / `disable` | `/api/bots` mutations |
 | `user.create` / `update` / `delete` | `/api/users` mutations |
-| `settings.yt_cookies_*` / `settings.limits_update` | `/api/settings` mutations |
+| `settings.yt_cookies_*` / `settings.limits_update` / `settings.video_streaming_update` | `/api/settings` mutations |
 
 ## Remaining (not yet instrumented)
 

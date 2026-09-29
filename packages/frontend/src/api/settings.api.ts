@@ -1,5 +1,9 @@
 import api from './client';
-import type { RuntimeMediaDiagnosticReport } from '@ts6/common';
+import type {
+  RuntimeMediaDiagnosticReport,
+  VideoEncoderCapabilities,
+  VideoStreamSettings,
+} from '@ts6/common';
 
 export const settingsApi = {
   getYtCookieStatus: () => api.get('/settings/yt-cookies').then((r) => r.data),
@@ -25,4 +29,15 @@ export const settingsApi = {
 
   updateLimits: (data: { maxVideoDuration?: number; maxPlaylistImport?: number }) =>
     api.put('/settings/limits', data).then((r) => r.data),
+
+  getVideoStreaming: (): Promise<VideoStreamSettings> =>
+    api.get('/settings/video-streaming').then((r) => r.data),
+
+  updateVideoStreaming: (data: Partial<VideoStreamSettings>): Promise<VideoStreamSettings> =>
+    api.put('/settings/video-streaming', data).then((r) => r.data),
+
+  /** Encoder test encodes run on the sidecar; demand-driven only (first call / refresh). */
+  getVideoEncoders: (refresh = false): Promise<VideoEncoderCapabilities> =>
+    api.get('/settings/video-encoders', { params: refresh ? { refresh: '1' } : undefined, timeout: 60000 })
+      .then((r) => r.data),
 };

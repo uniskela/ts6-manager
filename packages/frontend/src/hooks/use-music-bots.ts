@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicBotsApi } from '../api/music.api';
+import type { StartVideoStreamRequest } from '@ts6/common';
 
 export function useMusicBots() {
   return useQuery({
@@ -242,21 +243,8 @@ export function useVideoStreamStatus(botId: number | null) {
 export function useStartVideoStream() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({
-      botId,
-      source,
-      preset,
-      framerate,
-      bitrate,
-      volume,
-    }: {
-      botId: number;
-      source: string;
-      preset?: string;
-      framerate?: number;
-      bitrate?: string;
-      volume?: number;
-    }) => musicBotsApi.startStream(botId, source, preset, framerate, bitrate, volume),
+    mutationFn: ({ botId, ...request }: { botId: number } & StartVideoStreamRequest) =>
+      musicBotsApi.startStream(botId, request),
     onSuccess: (_, { botId }) => {
       qc.invalidateQueries({ queryKey: ['video-stream-status', botId] });
       qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });

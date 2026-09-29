@@ -1,4 +1,5 @@
 import api from './client';
+import type { StartVideoStreamRequest, VideoStreamStatus } from '@ts6/common';
 
 // === Music Bot API ===
 
@@ -42,14 +43,17 @@ export const musicBotsApi = {
   // start/source await a full video download server-side before responding
   // (often past the client's default 15s timeout), so they get a longer,
   // bounded timeout of their own instead of the global default.
-  startStream: (id: number, source: string, preset?: string, framerate?: number, bitrate?: string, volume?: number) =>
-    api.post(`/music-bots/${id}/stream/start`, { source, preset, framerate, bitrate, volume }, { timeout: 120000 }).then((r) => r.data),
+  // Auto quality and hardware-encoder startup add a bounded source probe /
+  // test encode on top of the download, hence the same long timeout.
+  startStream: (id: number, request: StartVideoStreamRequest) =>
+    api.post(`/music-bots/${id}/stream/start`, request, { timeout: 120000 }).then((r) => r.data),
   stopStream: (id: number) => api.post(`/music-bots/${id}/stream/stop`).then((r) => r.data),
   setStreamSource: (id: number, source: string, volume?: number) =>
     api.post(`/music-bots/${id}/stream/source`, { source, volume }, { timeout: 120000 }).then((r) => r.data),
   setStreamVolume: (id: number, volume: number) =>
     api.post(`/music-bots/${id}/stream/volume`, { volume }).then((r) => r.data),
-  streamStatus: (id: number) => api.get(`/music-bots/${id}/stream/status`).then((r) => r.data),
+  streamStatus: (id: number): Promise<VideoStreamStatus> =>
+    api.get(`/music-bots/${id}/stream/status`).then((r) => r.data),
   kickViewer: (id: number, clid: number) => api.delete(`/music-bots/${id}/stream/viewer/${clid}`).then((r) => r.data),
   webrtcOffer: (id: number) => api.post(`/music-bots/${id}/stream/webrtc/offer`).then((r) => r.data),
   webrtcAnswer: (id: number, sdp: string) =>

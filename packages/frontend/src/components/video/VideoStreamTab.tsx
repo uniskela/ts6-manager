@@ -1,11 +1,14 @@
 /**
  * Video Stream Tab — embedded in the MusicBots page.
- * Controls video streaming: source input, quality preset, start/stop,
- * live WebRTC preview, and viewer management.
+ * Controls video streaming: source input, quality (Auto or a preset), encoder,
+ * no-viewer auto-stop, start/stop, live WebRTC preview, and viewer management.
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle } from 'lucide-react';
+import type { VideoEncoderRequest, VideoQualityRequest } from '@ts6/common';
 import { VideoPlayer } from './VideoPlayer';
+import { VideoStreamDefaultsCard } from './VideoStreamDefaultsCard';
 import {
   useVideoStreamStatus,
   useStartVideoStream,
@@ -20,13 +23,32 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
+import { useVideoStreamingSettings } from '@/hooks/use-video-streaming';
+import { useAuthStore } from '@/stores/auth.store';
+import {
+  ENCODER_LABELS,
+  ENCODER_OPTIONS,
+  NO_VIEWER_TIMEOUT_OPTIONS,
+  QUALITY_OPTIONS,
+  encoderLabel,
+  formatClock,
+  formatTimeout,
+  lastStopLabel,
+  qualityLabel,
+} from '@/lib/video-streaming';
 
-const PRESETS = [
-  { value: '480p', label: '480p (854x480, 1 Mbps)' },
-  { value: '720p', label: '720p (1280x720, 2.5 Mbps)' },
-  { value: '1080p', label: '1080p (1920x1080, 4.5 Mbps)' },
-];
+/** Current time: every second while live (countdown, uptime), every 30s otherwise ("8 min ago"). */
+function useNow(live: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    setNow(Date.now());
+    const t = setInterval(() => setNow(Date.now()), live ? 1000 : 30_000);
+    return () => clearInterval(t);
+  }, [live]);
+  return now;
+}
 
 const FPS_OPTIONS = [
   { value: '24', label: '24 FPS' },
@@ -41,11 +63,15 @@ interface VideoStreamTabProps {
 
 export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
   const [sourceUrl, setSourceUrl] = useState('');
-  const [preset, setPreset] = useState('720p');
+  const [preset, setPreset] = useState<VideoQualityRequest>('auto');
+  const [encoder, setEncoder] = useState<'default' | VideoEncoderRequest>('default');
+  const [noViewerTimeout, setNoViewerTimeout] = useState('default');
   const [framerate, setFramerate] = useState('30');
-  const [bitrate, setBitrate] = useState('2500k');
+  const [bitrate, setBitrate] = useState('');
   const [streamVolume, setStreamVolume] = useState(100);
 
+  const isAdmin = useAuthStore((state) => state.isAdmin());
+  const { data: defaults } = useVideoStreamingSettings();
   const { data: streamStatus } = useVideoStreamStatus(botId);
   const startStream = useStartVideoStream();
   const stopStream = useStopVideoStream();
@@ -55,6 +81,7 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
 
   const isStreaming = streamStatus?.streaming ?? false;
   const isBotConnected = botStatus === 'connected' || botStatus === 'playing' || botStatus === 'paused';
+  const now = useNow(isStreaming);
 
   const handleStart = () => {
     if (!sourceUrl.trim()) return;
@@ -62,8 +89,10 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
       botId,
       source: sourceUrl.trim(),
       preset,
+      encoder: encoder === 'default' ? undefined : encoder,
+      noViewerTimeoutSec: noViewerTimeout === 'default' ? undefined : Number(noViewerTimeout),
       framerate: Number(framerate),
-      bitrate: bitrate.trim(),
+      bitrate: bitrate.trim() || undefined,
       volume: streamVolume,
     });
   };
@@ -77,15 +106,14 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
     setSource.mutate({ botId, source: sourceUrl.trim() });
   };
 
-  const formatDuration = (ms: number) => {
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return h > 0
-      ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`
-      : `${m}:${String(sec).padStart(2, '0')}`;
-  };
+  const defaultEncoderLabel = defaults
+    ? (defaults.defaultEncoder === 'auto'
+      ? `Auto${defaults.preferHardware ? ', prefer hardware' : ''}`
+      : ENCODER_LABELS[defaults.defaultEncoder])
+    : '…';
+  const selectedQuality = QUALITY_OPTIONS.find((q) => q.value === preset);
+  const stopAt = streamStatus?.noViewer?.stopAt ?? null;
+  const lastStop = lastStopLabel(streamStatus?.lastStop, now);
 
   return (
     <div className="space-y-4">
@@ -143,18 +171,61 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
               {!isStreaming && (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Quality Preset</Label>
-                    <div className="flex gap-2">
-                      {PRESETS.map((p) => (
+                    <Label>Quality</Label>
+                    <div className="flex flex-wrap gap-2">
+                      {QUALITY_OPTIONS.map((p) => (
                         <Button
                           key={p.value}
                           variant={preset === p.value ? 'default' : 'outline'}
                           size="sm"
                           onClick={() => setPreset(p.value)}
+                          title={p.hint}
                         >
-                          {p.value}
+                          {p.label}
                         </Button>
                       ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {preset === 'auto'
+                        ? `Matches the source resolution up to ${defaults?.autoMaxPreset ?? '1080p'} and never upscales (probes the source first).`
+                        : `${selectedQuality?.hint ?? ''} — fixed presets skip the source probe.`}
+                      {(preset === '1440p' || preset === '2160p') && ' High presets need a fast CPU or a hardware encoder.'}
+                    </p>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="stream-encoder">Encoder</Label>
+                      <Select value={encoder} onValueChange={(v) => setEncoder(v as typeof encoder)}>
+                        <SelectTrigger id="stream-encoder"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default ({defaultEncoderLabel})</SelectItem>
+                          {ENCODER_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        Hardware encoders fall back to software (same codec) if the GPU cannot run them.
+                      </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="stream-no-viewer">Stop when nobody watches</Label>
+                      <Select value={noViewerTimeout} onValueChange={setNoViewerTimeout}>
+                        <SelectTrigger id="stream-no-viewer"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {NO_VIEWER_TIMEOUT_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.value === 'default' && defaults
+                                ? `Default (${formatTimeout(defaults.noViewerTimeoutSec)})`
+                                : o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">
+                        This stream only; the saved default is unchanged.
+                      </p>
                     </div>
                   </div>
 
@@ -178,10 +249,11 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                     <Input
                       value={bitrate}
                       onChange={(e) => setBitrate(e.target.value)}
-                      placeholder="e.g. 1500k, 2500k, 4500k"
+                      placeholder="Preset default"
                     />
                     <p className="text-xs text-muted-foreground">
-                      Examples: 1500k, 2500k, 4500k, 6000k
+                      Leave empty for the preset's bitrate, or e.g. 2500k, 6000k.
+                      {defaults && defaults.maxBitrateKbps > 0 && ` Limited to ${defaults.maxBitrateKbps}k.`}
                     </p>
                   </div>
                   <div className="space-y-2">
@@ -237,6 +309,10 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                 )}
               </div>
 
+              {!isStreaming && lastStop && (
+                <p className="text-xs text-muted-foreground">Last stream: {lastStop}</p>
+              )}
+
               {(startStream.isError || stopStream.isError || setSource.isError) && (
                 <p className="text-sm text-red-500">
                   {(startStream.error as any)?.message ||
@@ -258,19 +334,61 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
           <CardContent>
             <VideoPlayer botId={botId} streaming={isStreaming} />
             {isStreaming && streamStatus && (
-              <div className="mt-3 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                <span>Preset: <strong>{streamStatus.preset}</strong></span>
-                <span>FPS: <strong>{streamStatus.framerate}</strong></span>
-                <span>Bitrate: <strong>{streamStatus.bitrate}</strong></span>
-                {streamStatus.source && (
-                  <span className="truncate max-w-xs">
-                    Source: <strong>{streamStatus.source}</strong>
-                  </span>
+              <div className="mt-3 space-y-2">
+                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
+                  <div>
+                    <dt className="text-muted-foreground">Quality</dt>
+                    <dd className="font-medium">
+                      {qualityLabel(streamStatus.quality, streamStatus.preset)}
+                      {streamStatus.quality?.sourceWidth && streamStatus.quality.sourceHeight && (
+                        <span className="font-normal text-muted-foreground">
+                          {' '}(source {streamStatus.quality.sourceWidth}×{streamStatus.quality.sourceHeight})
+                        </span>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Encoder</dt>
+                    <dd className="font-medium">{encoderLabel(streamStatus.encoder)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">FPS · Bitrate</dt>
+                    <dd className="font-medium">{streamStatus.framerate} · {streamStatus.bitrate}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Viewers</dt>
+                    <dd className="font-medium">{streamStatus.viewerCount}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">Uptime</dt>
+                    <dd className="font-medium">
+                      {streamStatus.startedAt ? formatClock(now - streamStatus.startedAt) : '—'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">No-viewer stop</dt>
+                    <dd className={stopAt ? 'font-medium text-warning' : 'font-medium'}>
+                      {stopAt
+                        ? `Auto-stop in ${formatClock(stopAt - now)}`
+                        : streamStatus.noViewer?.timeoutSec
+                          ? `After ${formatTimeout(streamStatus.noViewer.timeoutSec)} idle`
+                          : 'Off'}
+                    </dd>
+                  </div>
+                </dl>
+                {streamStatus.encoder?.fallbackReason && (
+                  <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span>Hardware encoder fell back to software: {streamStatus.encoder.fallbackReason}</span>
+                  </p>
                 )}
-                {streamStatus.startedAt && (
-                  <span>
-                    Uptime: <strong>{formatDuration(Date.now() - streamStatus.startedAt)}</strong>
-                  </span>
+                {[streamStatus.encoder?.note, streamStatus.quality?.note].filter(Boolean).map((note) => (
+                  <p key={note} className="text-xs text-muted-foreground">{note}</p>
+                ))}
+                {streamStatus.source && (
+                  <p className="truncate text-xs text-muted-foreground">
+                    Source: <strong>{streamStatus.source}</strong>
+                  </p>
                 )}
               </div>
             )}
@@ -327,6 +445,8 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
           </CardContent>
         </Card>
       )}
+
+      {isAdmin && <VideoStreamDefaultsCard />}
     </div>
   );
 }
