@@ -40,7 +40,7 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
        - /dev/dri:/dev/dri
    ```
 
-2. The sidecar and all-in-one images include Intel's `intel-media-va-driver` (amd64). AMD GPUs need Mesa's VAAPI driver (`mesa-va-drivers`) in a custom image. For the all-in-one image, pass `/dev/dri` to that container instead.
+2. The sidecar and all-in-one images include Mesa's VAAPI driver (`mesa-va-drivers`, AMD and older Intel) and, on amd64, Intel's `intel-media-va-driver`. For the all-in-one image, pass `/dev/dri` to that container instead.
 3. Open *Streaming defaults* → **Check encoders** and confirm the VAAPI rows pass. Set `VAAPI_DEVICE` if your render node is not `/dev/dri/renderD128`.
 4. Optionally set `VIDEO_HW_DECODE=1` to decode on the GPU too.
 
