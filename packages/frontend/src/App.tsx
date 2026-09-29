@@ -5,6 +5,7 @@ import { AppLayout } from '@/components/layout/AppLayout';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { useAuthStore } from '@/stores/auth.store';
 import { PwaStatus } from '@/components/shared/PwaStatus';
+import { MediaSwitchDialog } from '@/components/media/MediaSwitchDialog';
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const isAdmin = useAuthStore((s) => s.isAdmin());
@@ -57,6 +58,7 @@ export function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <PwaStatus />
+      <MediaSwitchDialog />
       <BrowserRouter>
         <Suspense fallback={<PageLoader />}>
           <Routes>

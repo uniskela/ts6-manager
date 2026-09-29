@@ -27,6 +27,7 @@ function fixture(status = 'connected') {
     playbackProgress: { position: 60, duration: 100 },
     play: async (item: any) => played.push(item), seek: async (n: number) => seeks.push(n),
     clearPlayback: () => {},
+    videoSessionInfo: () => null, musicSessionInfo: () => null,
   };
   const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
   return { bot, command, replies, played, seeks, playlists };

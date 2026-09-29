@@ -8,6 +8,7 @@ import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
 import type {
+  MediaSessionInfo,
   MediaStopInfo,
   MediaStopReason,
   VideoEncoderCapabilities,
@@ -33,6 +34,7 @@ import {
 import { probeSourceResolution } from './streaming/source-probe.js';
 import { channelEmptyStopDetail, noViewersStopDetail } from './streaming/lifecycle.js';
 import { videoStreamingDefaults } from '../utils/app-settings.js';
+import { MediaSessionConflictError, newMediaSessionId, safeSourceLabel } from './media-session.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
@@ -74,6 +76,13 @@ export interface VideoStreamStartOptions {
   volume?: number;
   /** One-session no-viewer timeout (seconds, 0 = off); does not change the saved default. */
   noViewerTimeoutSec?: number;
+  /** Media session IDs the caller confirmed may be replaced (see media-session.ts). */
+  replaceSessionIds?: string[];
+}
+
+/** Options for starting music; `replaceSessionIds` confirms stopping this bot's video. */
+export interface MusicStartOptions {
+  replaceSessionIds?: string[];
 }
 
 export class VoiceBot extends EventEmitter {
@@ -144,6 +153,11 @@ export class VoiceBot extends EventEmitter {
   private _noViewerTimeoutSec = 0;
   private _noViewerTimer: ReturnType<typeof setTimeout> | null = null;
   private _noViewerStopAt: number | null = null;
+  private _videoSessionId: string | null = null;
+  private _videoStarting = false;
+  private _musicSessionId: string | null = null;
+  private _musicStartedAt: number | null = null;
+  private _lastMusicStop: MediaStopInfo | null = null;
   private _videoStartedAt: number | null = null;
   private _viewers: Map<number, VideoViewerInfo> = new Map();
   private _videoTempFile: string | null = null;
@@ -334,7 +348,7 @@ export class VoiceBot extends EventEmitter {
           this.stopVideoStream('channel_empty', channelEmptyStopDetail(graceSec))
             .catch((err) => this.emit('error', err));
         } else {
-          this.clearPlayback();
+          this.clearPlayback('channel_empty', channelEmptyStopDetail(graceSec));
         }
       }
     }, 5000);
@@ -510,6 +524,7 @@ export class VoiceBot extends EventEmitter {
     this.stopAutoStopTimer();
     this.stopIcyPolling();
     this.resetNickname();
+    if (this.musicActive) this.endMusicSession('bot_stopped', 'Music bot was stopped');
     this.stopPlayback();
     this._nowPlaying = null;
     // Stop video stream if active
@@ -536,10 +551,14 @@ export class VoiceBot extends EventEmitter {
     await this.start();
   }
 
-  async play(item: QueueItem): Promise<void> {
+  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<void> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
+    if (this._videoStreaming || this._videoStarting) {
+      await this.replaceVideoWithMusic(options.replaceSessionIds);
+    }
+    this.beginMusicSession();
 
     this.stopIcyPolling();
     this.stopPlayback();
@@ -573,6 +592,7 @@ export class VoiceBot extends EventEmitter {
       await this.startFileStream(filePath, 0);
       this.startAutoStopTimer();
     } catch (err) {
+      this.endMusicSession('source_unreachable', 'Track could not be played');
       this._status = 'connected';
       this._nowPlaying = null;
       this.emit('statusChange', this._status);
@@ -747,13 +767,17 @@ export class VoiceBot extends EventEmitter {
     return dl.filePath;
   }
 
-  async playStream(item: QueueItem): Promise<void> {
+  async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<void> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
     if (!item.streamUrl) {
       throw new Error('No streamUrl provided');
     }
+    if (this._videoStreaming || this._videoStarting) {
+      await this.replaceVideoWithMusic(options.replaceSessionIds);
+    }
+    this.beginMusicSession();
 
     this.stopIcyPolling();
     this.stopPlayback();
@@ -848,8 +872,11 @@ export class VoiceBot extends EventEmitter {
       this.playbackTimer = setTimeout(tick, 200);
       this.startAutoStopTimer();
     } catch (err) {
+      // A failed start must not leave ICY polling running for a dead stream.
+      this.stopIcyPolling();
       this._isStreaming = false;
       this.streamKill = null;
+      this.endMusicSession('source_unreachable', 'Stream could not be opened');
       this._status = 'connected';
       this._nowPlaying = null;
       this.emit('statusChange', this._status);
@@ -858,7 +885,8 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Stop current audio without disconnecting the bot (used by clear-queue). */
-  clearPlayback(): void {
+  clearPlayback(reason: MediaStopReason = 'manual', detail: string | null = null): void {
+    if (this.musicActive) this.endMusicSession(reason, detail);
     this.stopIcyPolling();
     this.stopPlayback();
     try {
@@ -954,7 +982,7 @@ export class VoiceBot extends EventEmitter {
     this.emit('volumeChange', this.config.volume);
   }
 
-  skip(): void {
+  skip(options: MusicStartOptions = {}): void {
     this.stopIcyPolling();
     this.stopPlayback();
     this._nowPlaying = null;
@@ -963,13 +991,13 @@ export class VoiceBot extends EventEmitter {
 
     const next = this.queue.next();
     if (next) {
-      this.play(next).catch((err) => this.emit('error', err));
+      this.play(next, options).catch((err) => this.emit('error', err));
     } else {
       this.resetNickname();
     }
   }
 
-  previous(): void {
+  previous(options: MusicStartOptions = {}): void {
     this.stopIcyPolling();
     this.stopPlayback();
     this._nowPlaying = null;
@@ -978,13 +1006,14 @@ export class VoiceBot extends EventEmitter {
 
     const prev = this.queue.previous();
     if (prev) {
-      this.play(prev).catch((err) => this.emit('error', err));
+      this.play(prev, options).catch((err) => this.emit('error', err));
     } else {
       this.resetNickname();
     }
   }
 
   stopAudio(): void {
+    if (this.musicActive) this.endMusicSession('manual', null);
     this.stopIcyPolling();
     this.stopPlayback();
     this.client.sendVoiceStop();
@@ -1083,6 +1112,81 @@ export class VoiceBot extends EventEmitter {
 
   get videoStreaming(): boolean {
     return this._videoStreaming;
+  }
+
+  // ─── Media sessions (music XOR video) ─────────────────────
+
+  private get musicActive(): boolean {
+    return this._status === 'playing' || this._status === 'paused';
+  }
+
+  private beginMusicSession(): void {
+    if (!this._musicSessionId) {
+      this._musicSessionId = newMediaSessionId();
+      this._musicStartedAt = Date.now();
+    }
+  }
+
+  private endMusicSession(reason: MediaStopReason, detail: string | null): void {
+    this._lastMusicStop = { reason, at: Date.now(), detail };
+    this._musicSessionId = null;
+    this._musicStartedAt = null;
+  }
+
+  /** This bot's music session, when music is playing or paused. */
+  musicSessionInfo(): MediaSessionInfo | null {
+    if (!this.musicActive) return null;
+    this.beginMusicSession();
+    return {
+      id: this._musicSessionId!,
+      kind: 'music',
+      state: 'active',
+      botId: this.config.id,
+      botName: this.config.name,
+      startedAt: this._musicStartedAt,
+      label: this._nowPlaying?.title ?? null,
+    };
+  }
+
+  /** This bot's video session, while starting or streaming. */
+  videoSessionInfo(): MediaSessionInfo | null {
+    if (!this._videoSessionId || (!this._videoStreaming && !this._videoStarting)) return null;
+    return {
+      id: this._videoSessionId,
+      kind: 'video',
+      state: this._videoStreaming ? 'active' : 'starting',
+      botId: this.config.id,
+      botName: this.config.name,
+      startedAt: this._videoStartedAt,
+      label: safeSourceLabel(this._videoSource),
+    };
+  }
+
+  /** The bot's one active media session, if any. */
+  get mediaSession(): MediaSessionInfo | null {
+    return this.videoSessionInfo() ?? this.musicSessionInfo();
+  }
+
+  get lastMusicStop(): MediaStopInfo | null {
+    return this._lastMusicStop;
+  }
+
+  /**
+   * Fail fast (before downloads or queue changes) when starting music would
+   * replace this bot's video and the caller has not confirmed that session.
+   */
+  assertMusicCanStart(replaceSessionIds: string[] | undefined): void {
+    const video = this.videoSessionInfo();
+    if (video && (video.state === 'starting' || !replaceSessionIds?.includes(video.id))) {
+      throw new MediaSessionConflictError('music', [video]);
+    }
+  }
+
+  /** Stop this bot's video for music, only when the caller confirmed that session. */
+  private async replaceVideoWithMusic(replaceSessionIds: string[] | undefined): Promise<void> {
+    if (!this.videoSessionInfo()) return;
+    this.assertMusicCanStart(replaceSessionIds);
+    await this.stopVideoStream('replaced_by_music', 'Replaced by music');
   }
 
   get videoStreamStatus(): VideoStreamStatus {
@@ -1235,10 +1339,30 @@ export class VoiceBot extends EventEmitter {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
-    if (this._videoStreaming) {
+    if (this._videoStreaming || this._videoStarting) {
       throw new Error('Video stream already active');
     }
+    const music = this.musicSessionInfo();
+    if (music && !options.replaceSessionIds?.includes(music.id)) {
+      throw new MediaSessionConflictError('video', [music]);
+    }
 
+    // Claim the session synchronously so concurrent starts (double clicks,
+    // chat commands, other admins) see it before the first await.
+    this._videoStarting = true;
+    this._videoSessionId = newMediaSessionId();
+    try {
+      if (music) this.clearPlayback('replaced_by_video', 'Replaced by a video stream');
+      await this.startVideoStreamClaimed(source, options);
+    } catch (err) {
+      if (!this._videoStreaming) this._videoSessionId = null;
+      throw err;
+    } finally {
+      this._videoStarting = false;
+    }
+  }
+
+  private async startVideoStreamClaimed(source: string, options: VideoStreamStartOptions): Promise<void> {
     if (options.volume != null) {
       this._videoStreamVolume = Math.max(0, Math.min(100, options.volume));
     }
@@ -1282,6 +1406,7 @@ export class VoiceBot extends EventEmitter {
           this._activeStreamId = null;
           this._viewers.clear();
           this.clearNoViewerTimer();
+          this._videoSessionId = null;
           this.recordVideoStop('sidecar_failure', `Media sidecar exited (code ${code ?? 'unknown'})`);
           if (this._status !== 'playing') {
             this.stopAutoStopTimer();
@@ -1434,6 +1559,7 @@ export class VoiceBot extends EventEmitter {
       this._videoSource = null;
       this._videoStreaming = false;
       this._videoStartedAt = null;
+      this._videoSessionId = null;
       this.signaling = null;
       this.cleanupVideoTempFile();
       if (this._status !== 'playing') {

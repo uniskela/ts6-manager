@@ -2,7 +2,9 @@ import { EventEmitter } from 'events';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
-import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus } from './voice-bot.js';
+import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus, type VideoStreamStartOptions } from './voice-bot.js';
+import type { MediaSessionInfo } from '@ts6/common';
+import { MediaSessionConflictError } from './media-session.js';
 import { generateIdentity, generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
 import type { QueueItem } from './playlist/queue.js';
 import type { MusicCommandHandler } from './music-command-handler.js';
@@ -334,6 +336,56 @@ export class VoiceBotManager extends EventEmitter {
       }
     })();
     this.identityJobs.set(botId, job);
+  }
+
+  /** Serializes the check-and-claim part of video starts across bots. */
+  private videoClaimLock: Promise<void> = Promise.resolve();
+
+  /** Every bot's active media session (cheap: no sidecar or TeamSpeak calls). */
+  listMediaSessions(): MediaSessionInfo[] {
+    const sessions: MediaSessionInfo[] = [];
+    for (const bot of this.bots.values()) {
+      const session = bot.mediaSession;
+      if (session) sessions.push(session);
+    }
+    return sessions;
+  }
+
+  /**
+   * Start video on `bot` under the single-session rules: only one video stream
+   * runs at a time (the sidecar is shared) and a bot never plays music and video
+   * together. Any session that would be replaced must be named in
+   * `replaceSessionIds`; otherwise this throws MediaSessionConflictError listing
+   * every conflict so one confirmation covers them all.
+   */
+  async startVideoStream(bot: VoiceBot, source: string, options: VideoStreamStartOptions = {}): Promise<void> {
+    let started!: Promise<void>;
+    const release = this.videoClaimLock;
+    let unlock!: () => void;
+    this.videoClaimLock = new Promise<void>((resolve) => { unlock = resolve; });
+    await release;
+    try {
+      const confirmed = new Set(options.replaceSessionIds ?? []);
+      const otherVideo = [...this.bots.values()]
+        .filter((b) => b !== bot)
+        .map((b) => ({ bot: b, session: b.videoSessionInfo() }))
+        .filter((x): x is { bot: VoiceBot; session: MediaSessionInfo } => x.session != null);
+      const ownMusic = bot.musicSessionInfo();
+      const conflicts = [...otherVideo.map((x) => x.session), ...(ownMusic ? [ownMusic] : [])];
+      const unconfirmed = conflicts.filter((c) => c.state === 'starting' || !confirmed.has(c.id));
+      if (unconfirmed.length > 0) {
+        throw new MediaSessionConflictError('video', conflicts);
+      }
+      for (const { bot: other } of otherVideo) {
+        await other.stopVideoStream('replaced_by_video', `Replaced by a stream on ${bot.currentConfig.name}`);
+      }
+      // startVideoStream claims its session synchronously, so the lock can be
+      // released before the (possibly long) download and sidecar start.
+      started = bot.startVideoStream(source, options);
+    } finally {
+      unlock();
+    }
+    await started;
   }
 
   getBot(id: number): VoiceBot | undefined {

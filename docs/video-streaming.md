@@ -46,6 +46,17 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
 
 NVENC is not supported yet.
 
+## One media session at a time
+
+- A bot plays **music or video, never both**.
+- Only **one video stream** runs at a time across all bots, because they share the media sidecar.
+
+Starting something that would replace what is playing asks for confirmation first ("Replace what is playing?"), listing exactly what will stop. The server only replaces the sessions you confirmed, so double clicks, two admins, or a chat command racing a UI click cannot silently stop each other's media. Something that is still *starting* cannot be replaced — wait for it to finish, then try again.
+
+Chat commands are explicit requests on one bot: `!play` on a bot that is streaming video stops that bot's stream, and `!stream` / `!tv` stop that bot's music. A chat command never stops another bot's stream.
+
+The stop reason says what happened, for example *Replaced by music* or *Replaced by a stream on Bravo*.
+
 ## Stopping and stop reasons
 
 A stream stops on its own when:

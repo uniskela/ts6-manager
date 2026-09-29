@@ -309,6 +309,12 @@ export function VideoStreamTab({ botId, botStatus }: VideoStreamTabProps) {
                 )}
               </div>
 
+              {!isStreaming && (botStatus === 'playing' || botStatus === 'paused') && (
+                <p className="text-xs text-warning">
+                  Music is playing on this bot. Starting a stream stops it — you will be asked to confirm.
+                </p>
+              )}
+
               {!isStreaming && lastStop && (
                 <p className="text-xs text-muted-foreground">Last stream: {lastStop}</p>
               )}

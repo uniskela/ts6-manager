@@ -266,6 +266,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
       preset: req.body.preset,
       encoder: req.body.encoder,
       noViewerTimeoutSec: req.body.noViewerTimeoutSec,
+      replaceSessionIds: req.body.replaceSessionIds,
     });
     if (!parsed.ok) throw new AppError(400, parsed.error);
 
@@ -279,7 +280,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
     if (bot.videoStreaming) {
       await bot.setVideoSource(channel.url);
     } else {
-      await bot.startVideoStream(channel.url, parsed.options);
+      await manager.startVideoStream(bot, channel.url, parsed.options);
     }
 
     res.json({ success: true, channel: { id: channel.id, name: channel.name } });

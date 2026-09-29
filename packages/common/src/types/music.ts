@@ -211,6 +211,33 @@ export type MediaStopReason =
   | 'server_disconnect'
   | 'bot_stopped';
 
+export type MediaKind = 'music' | 'video';
+
+/**
+ * The media a bot is playing. Music and video never run at once on a bot, and
+ * only one video stream runs at a time (the media sidecar is shared).
+ */
+export interface MediaSessionInfo {
+  /** Opaque ID; send it back as `replaceSessionIds` to confirm a switch. */
+  id: string;
+  kind: MediaKind;
+  state: 'starting' | 'active';
+  botId: number;
+  botName: string;
+  startedAt: number | null;
+  /** Track title, or a credential-free source label (host / file name) for video. */
+  label: string | null;
+}
+
+/** 409 body when a start would replace media the caller has not confirmed. */
+export interface MediaSessionConflictBody {
+  error: string;
+  details?: string;
+  reason: 'media_session_conflict';
+  requested: MediaKind;
+  conflicts: MediaSessionInfo[];
+}
+
 export interface VideoStreamPreset {
   label: string;
   width: number;
@@ -317,6 +344,8 @@ export interface StartVideoStreamRequest {
   volume?: number;
   /** One-session override of the no-viewer timeout (seconds, 0 = off). */
   noViewerTimeoutSec?: number;
+  /** Session IDs from a media_session_conflict the caller agrees to replace. */
+  replaceSessionIds?: string[];
 }
 
 export interface SetVideoSourceRequest {

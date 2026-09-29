@@ -13,6 +13,7 @@ import {
 import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/music-command-channels.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
+import { parseReplaceSessionIds } from '../voice/media-session.js';
 
 export const musicBotRoutes: Router = Router();
 
@@ -230,6 +231,8 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
 
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
     if (bot.status !== 'connected' && bot.status !== 'playing' && bot.status !== 'paused') {
       throw new AppError(400, 'Bot is not connected');
     }
@@ -250,7 +253,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
     // Add to queue so repeat modes work, then play
     bot.queue.add(queueItem);
     bot.queue.playAt(bot.queue.length - 1);
-    await bot.play(queueItem);
+    await bot.play(queueItem, { replaceSessionIds });
 
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -266,6 +269,8 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
 
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
     if (bot.status !== 'connected' && bot.status !== 'playing' && bot.status !== 'paused') {
       throw new AppError(400, 'Bot is not connected');
     }
@@ -363,7 +368,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     };
     bot.queue.add(firstItem);
     bot.queue.playAt(bot.queue.length - 1);
-    await bot.play(firstItem);
+    await bot.play(firstItem, { replaceSessionIds });
     await saveHistory(firstUrl, firstItem.title);
 
     // Queue remaining playlist tracks in the background.
@@ -462,6 +467,8 @@ musicBotRoutes.post('/:id/play-radio', async (req: Request, res: Response, next)
 
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
     if (bot.status !== 'connected' && bot.status !== 'playing' && bot.status !== 'paused') {
       throw new AppError(400, 'Bot is not connected');
     }
@@ -478,7 +485,7 @@ musicBotRoutes.post('/:id/play-radio', async (req: Request, res: Response, next)
       streamUrl: station.url,
     };
 
-    await bot.playStream(queueItem);
+    await bot.playStream(queueItem, { replaceSessionIds });
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -524,7 +531,9 @@ musicBotRoutes.post('/:id/skip', async (req: Request, res: Response, next) => {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    bot.skip();
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
+    bot.skip({ replaceSessionIds });
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -535,7 +544,9 @@ musicBotRoutes.post('/:id/previous', async (req: Request, res: Response, next) =
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    bot.previous();
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
+    bot.previous({ replaceSessionIds });
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -642,6 +653,8 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
 
     const { playlistId, clearFirst, autoplay } = req.body;
     const playlist = await prisma.playlist.findUnique({
@@ -671,8 +684,8 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       const item = bot.queue.playAt(playIndex);
       if (item) {
         try {
-          if (item.streamUrl) await bot.playStream(item);
-          else await bot.play(item);
+          if (item.streamUrl) await bot.playStream(item, { replaceSessionIds });
+          else await bot.play(item, { replaceSessionIds });
         } catch (err: any) {
           playError = err.message || String(err);
           console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
@@ -744,15 +757,17 @@ musicBotRoutes.post('/:id/queue/:index/play', async (req: Request, res: Response
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
+    const replaceSessionIds = parseReplaceSessionIds(req.body);
+    bot.assertMusicCanStart(replaceSessionIds);
 
     const index = parseInt(req.params.index as string);
     const item = bot.queue.playAt(index);
     if (!item) throw new AppError(400, 'Invalid queue index');
 
     if (item.streamUrl) {
-      await bot.playStream(item);
+      await bot.playStream(item, { replaceSessionIds });
     } else {
-      await bot.play(item);
+      await bot.play(item, { replaceSessionIds });
     }
     res.json({ success: true, nowPlaying: { title: item.title, artist: item.artist } });
   } catch (err) { next(err); }
@@ -805,7 +820,7 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     const safeSource = assertVideoSource(req.body?.source);
     const parsed = parseStreamStartOptions(req.body);
     if (!parsed.ok) throw new AppError(400, parsed.error);
-    await bot.startVideoStream(safeSource, parsed.options);
+    await manager.startVideoStream(bot, safeSource, parsed.options);
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });

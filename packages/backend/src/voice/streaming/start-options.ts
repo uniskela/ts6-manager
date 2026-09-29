@@ -7,6 +7,7 @@ import type { VideoStreamStartOptions } from '../voice-bot.js';
 import { isPresetKey } from './types.js';
 import { isEncoderId } from './encoders.js';
 import { MAX_NO_VIEWER_TIMEOUT_SEC, parseBoundedInt } from '../../utils/app-settings.js';
+import { parseReplaceSessionIds } from '../media-session.js';
 
 export type ParsedStartOptions =
   | { ok: true; options: VideoStreamStartOptions }
@@ -58,6 +59,9 @@ export function parseStreamStartOptions(body: Record<string, unknown> | null | u
     }
     options.noViewerTimeoutSec = sec;
   }
+
+  const replace = parseReplaceSessionIds(b);
+  if (replace.length > 0) options.replaceSessionIds = replace;
 
   return { ok: true, options };
 }
