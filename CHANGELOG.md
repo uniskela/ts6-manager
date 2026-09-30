@@ -2,6 +2,13 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.9.1](https://github.com/uniskela/ts6-manager/compare/v1.9.0...v1.9.1) (2026-09-30)
+
+
+### Bug Fixes
+
+* preview ICE timeout and loopback NAT misconfig ([#202](https://github.com/uniskela/ts6-manager/issues/202)) ([88932f5](https://github.com/uniskela/ts6-manager/commit/88932f57df8657df7f9e89139f4a3ff31df8dd4b))
+
 ## [1.9.0](https://github.com/uniskela/ts6-manager/compare/v1.8.5...v1.9.0) (2026-09-30)
 
 
