@@ -42,6 +42,24 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
       });
       pcRef.current = pc;
 
+      // Hold local candidates until the answer is accepted. Trickling ICE
+      // before SetAnswer makes Pion reject host candidates (#202).
+      const pendingIce: RTCIceCandidate[] = [];
+      let answerReady = false;
+
+      const sendIce = async (candidate: RTCIceCandidate) => {
+        try {
+          await musicBotsApi.webrtcIce(
+            botId,
+            candidate.candidate,
+            candidate.sdpMid || '0',
+            candidate.sdpMLineIndex ?? 0,
+          );
+        } catch {
+          /* ignore ICE errors */
+        }
+      };
+
       pc.ontrack = (ev) => {
         if (videoRef.current && ev.streams[0]) {
           videoRef.current.srcObject = ev.streams[0];
@@ -50,24 +68,26 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
 
       pc.oniceconnectionstatechange = () => {
         const state = pc.iceConnectionState;
-        if (state === 'connected') {
+        if (state === 'connected' || state === 'completed') {
           setConnected(true);
-        } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+          setError(null);
+        } else if (state === 'failed') {
+          setConnected(false);
+          setError(
+            'Preview connection failed (ICE). Check reverse-proxy WebSocket headers and that UDP/STUN can reach the host running the media sidecar.',
+          );
+        } else if (state === 'disconnected' || state === 'closed') {
           setConnected(false);
         }
       };
 
-      pc.onicecandidate = async (ev) => {
-        if (ev.candidate) {
-          try {
-            await musicBotsApi.webrtcIce(
-              botId,
-              ev.candidate.candidate,
-              ev.candidate.sdpMid || '0',
-              ev.candidate.sdpMLineIndex ?? 0
-            );
-          } catch { /* ignore ICE errors */ }
+      pc.onicecandidate = (ev) => {
+        if (!ev.candidate) return;
+        if (!answerReady) {
+          pendingIce.push(ev.candidate);
+          return;
         }
+        void sendIce(ev.candidate);
       };
 
       // Set remote offer
@@ -76,10 +96,14 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
         sdp: offerSdp,
       }));
 
-      // Create and send answer
+      // Create and send answer before flushing buffered ICE candidates
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await musicBotsApi.webrtcAnswer(botId, answer.sdp!);
+      answerReady = true;
+      for (const candidate of pendingIce) {
+        await sendIce(candidate);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to connect');
       cleanup();
@@ -122,7 +146,7 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
         </div>
       )}
       {error && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-2">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 gap-2 px-4 text-center">
           <p className="text-red-400 text-sm">{error}</p>
           <button
             onClick={connect}

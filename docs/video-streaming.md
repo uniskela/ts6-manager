@@ -6,6 +6,9 @@ TS6 Manager includes a Go/Pion media sidecar for low-latency video delivery to T
 
 The streaming path can accept supported YouTube, Twitch, direct media URLs, and IPTV sources.
 
+- **YouTube** is downloaded with yt-dlp to a short-lived file under the music directory (avoids googlevideo 403s from datacenter IPs), then encoded.
+- **Twitch** (live or VOD) is resolved with yt-dlp to a direct media URL and fed to ffmpeg — it is not downloaded to a `.stream-*.mp4` temp file (live Twitch cannot finish that path).
+
 ## Quality
 
 Pick **Auto** or a fixed preset: 480p, 720p, 1080p, 1440p or 2160p.

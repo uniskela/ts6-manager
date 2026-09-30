@@ -122,8 +122,19 @@ Do not discard the persistent volume as a first troubleshooting step.
 Check:
 
 - the public frontend origin matches `FRONTEND_URL`;
-- WebSocket upgrades are supported by the reverse proxy; and
+- WebSocket upgrades are supported by the reverse proxy (see [Reverse proxy](reverse-proxy.md) for a full NGINX example); and
 - the public domain routes to the frontend/nginx service, not directly to the internal sidecar.
+
+## Browser preview stuck on “Connecting to stream…”
+
+Signaling for the WebUI preview goes through the HTTP API. Media uses WebRTC/UDP to the sidecar host. A reverse proxy that only forwards HTTP does not carry that UDP path.
+
+Check:
+
+- the stream actually started (TeamSpeak viewers / stream status), not only the preview pane;
+- ICE failure text in the preview pane (after #202) — if ICE fails, confirm LAN/UDP reachability to the host running the sidecar;
+- WebSocket upgrade headers on the outer reverse proxy so live UI updates still work;
+- Twitch live URLs use yt-dlp URL resolve (not a temp download) — see #203 if Twitch sources fail before the preview can attach.
 
 ## Appearance custom CSS made the UI unusable
 

@@ -87,20 +87,111 @@ export function resolvePathUnderMusicDir(filePath: string): string {
   return path.join(musicRoot, realBase);
 }
 
-function isYtDlpStreamHost(url: string): boolean {
+/** Hostname classification for stream URL handling (exported for unit tests). */
+export function classifyStreamHost(url: string): 'youtube' | 'twitch' | 'other' {
   let hostname: string;
   try {
     hostname = new URL(url).hostname.toLowerCase();
   } catch {
-    return false;
+    return 'other';
   }
-  return (
+  if (
     hostname === 'youtube.com' ||
     hostname.endsWith('.youtube.com') ||
-    hostname === 'youtu.be' ||
-    hostname === 'twitch.tv' ||
-    hostname.endsWith('.twitch.tv')
+    hostname === 'youtu.be'
+  ) {
+    return 'youtube';
+  }
+  if (hostname === 'twitch.tv' || hostname.endsWith('.twitch.tv')) {
+    return 'twitch';
+  }
+  return 'other';
+}
+
+function isYoutubeStreamHost(url: string): boolean {
+  return classifyStreamHost(url) === 'youtube';
+}
+
+function isTwitchStreamHost(url: string): boolean {
+  return classifyStreamHost(url) === 'twitch';
+}
+
+/**
+ * Resolve a Twitch (live or VOD) page URL to a direct media URL for ffmpeg.
+ * Live Twitch cannot be downloaded to a fixed `.stream-*.mp4` the way YouTube
+ * VODs are — yt-dlp either never finishes or exits without creating the file,
+ * which previously surfaced as "Local video file not found" (#203).
+ */
+async function resolveTwitchStreamUrl(
+  url: string,
+  maxHeight: number,
+): Promise<DownloadedStreamVideo> {
+  // Prefer a single muxed stream so ffmpeg gets one `-i` URL (Twitch often
+  // exposes HLS playlists that already include audio).
+  const formatFilter = `best[height<=${maxHeight}]/best`;
+
+  const { stdout, stderr, code } = await new Promise<{
+    stdout: string;
+    stderr: string;
+    code: number | null;
+  }>((resolve, reject) => {
+    const args = [
+      ...getCookieArgs(),
+      '-f', formatFilter,
+      '--dump-single-json',
+      '--no-download',
+      '--no-playlist',
+      '--no-warnings',
+      '--',
+      url,
+    ];
+    const proc = spawn('yt-dlp', args, { shell: false });
+    let out = '';
+    let err = '';
+    proc.stdout.on('data', (chunk: Buffer) => { out += chunk.toString(); });
+    proc.stderr.on('data', (chunk: Buffer) => { err += chunk.toString(); });
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      reject(new Error('Twitch URL resolve timed out after 2 minutes'));
+    }, 2 * 60_000);
+    proc.on('close', (exitCode) => {
+      clearTimeout(timer);
+      resolve({ stdout: out, stderr: err, code: exitCode });
+    });
+    proc.on('error', (spawnErr) => {
+      clearTimeout(timer);
+      reject(new Error(`yt-dlp not found: ${spawnErr.message}`));
+    });
+  });
+
+  if (code !== 0) {
+    throw new Error(`yt-dlp failed to resolve Twitch URL (code ${code}): ${stderr.slice(0, 280)}`);
+  }
+
+  let data: Record<string, unknown>;
+  try {
+    const jsonLine =
+      stdout.trim().split('\n').find((line) => line.startsWith('{')) || stdout.trim();
+    data = JSON.parse(jsonLine);
+  } catch {
+    throw new Error('Failed to parse yt-dlp Twitch metadata');
+  }
+
+  const streamUrl = typeof data.url === 'string' ? data.url.trim() : '';
+  if (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://')) {
+    throw new Error('yt-dlp did not return a playable Twitch stream URL');
+  }
+
+  const isLive = data.is_live === true || data.live_status === 'is_live';
+  const rawDuration = typeof data.duration === 'number' ? data.duration : NaN;
+  const durationSec =
+    !isLive && Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : null;
+
+  console.log(
+    `[VideoDownload] Resolved Twitch ${isLive ? 'live' : 'VOD'} URL for ffmpeg` +
+      (durationSec != null ? ` (${durationSec}s)` : ''),
   );
+  return { path: streamUrl, durationSec };
 }
 
 /** Probe a local media file's duration in seconds, or null if unknown. */
@@ -130,8 +221,14 @@ export interface DownloadedStreamVideo {
 }
 
 /**
- * Download on-demand video via proxied yt-dlp to a temp file under MUSIC_DIR,
- * then stream from disk (avoids datacenter-IP YouTube 403 on googlevideo URLs).
+ * Prepare a video source for the sidecar.
+ *
+ * - YouTube: download via yt-dlp to a temp file under MUSIC_DIR (avoids
+ *   datacenter-IP 403 on googlevideo URLs), then stream from disk.
+ * - Twitch: resolve a direct media URL with yt-dlp (live-safe; no temp file).
+ * - Other http(s): pass through for ffmpeg.
+ * - Bare filenames: resolve under MUSIC_DIR.
+ *
  * Adapted from uniplayer1/ts6-manager; duration probe inspired by DomeNinchen/ts6forkmanager.
  */
 export async function downloadVideoForStream(
@@ -154,7 +251,11 @@ export async function downloadVideoForStream(
     throw new Error(`Video source blocked: ${check.error}`);
   }
 
-  if (!isYtDlpStreamHost(url)) {
+  if (isTwitchStreamHost(url)) {
+    return resolveTwitchStreamUrl(url, maxHeight);
+  }
+
+  if (!isYoutubeStreamHost(url)) {
     return { path: url, durationSec: null };
   }
 
@@ -200,12 +301,23 @@ export async function downloadVideoForStream(
   });
 
   // Re-resolve via allowlisted basename (tempName is server-generated).
-  const canonicalTemp = resolvePathUnderMusicDir(tempName);
-  const durationSec = await probeVideoDurationSec(canonicalTemp);
-  console.log(
-    `[VideoDownload] Downloaded: ${canonicalTemp} (${fs.statSync(canonicalTemp).size} bytes, ${durationSec ?? 'unknown'}s)`,
-  );
-  return { path: canonicalTemp, durationSec };
+  // Missing output after a "successful" exit used to throw the same
+  // "Local video file not found" as a bad local filename — clarify it.
+  try {
+    const canonicalTemp = resolvePathUnderMusicDir(tempName);
+    const durationSec = await probeVideoDurationSec(canonicalTemp);
+    console.log(
+      `[VideoDownload] Downloaded: ${canonicalTemp} (${fs.statSync(canonicalTemp).size} bytes, ${durationSec ?? 'unknown'}s)`,
+    );
+    return { path: canonicalTemp, durationSec };
+  } catch (err: any) {
+    if (err?.message === 'Local video file not found') {
+      throw new Error(
+        'yt-dlp finished but the stream temp file was missing — the source may be live or unsupported for download',
+      );
+    }
+    throw err;
+  }
 }
 
 /**
