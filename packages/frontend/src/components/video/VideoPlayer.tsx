@@ -8,7 +8,6 @@ import { Volume2, VolumeX } from 'lucide-react';
 import { musicBotsApi } from '@/api/music.api';
 import {
   PREVIEW_ICE_TIMEOUT_MS,
-  isBrowserOnLoopback,
   offerAdvertisesLoopbackOnly,
   previewIceErrorMessage,
 } from '@/lib/preview-webrtc';
@@ -52,17 +51,10 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
       // Get SDP offer from backend (which gets it from sidecar)
       const { sdp: offerSdp } = await musicBotsApi.webrtcOffer(botId);
 
-      // Same-host Docker defaults advertise 127.0.0.1. A reverse-proxied /
-      // remote WebUI cannot use those candidates — fail fast with guidance
-      // instead of hanging on “Connecting to stream…” (#202 follow-up).
-      if (
-        typeof window !== 'undefined' &&
-        !isBrowserOnLoopback(window.location.hostname) &&
-        offerAdvertisesLoopbackOnly(offerSdp)
-      ) {
-        setError(previewIceErrorMessage('loopback-mismatch'));
-        return;
-      }
+      // Note loopback-only host candidates for failure guidance. Do not reject
+      // early based on the page hostname — a same-host browser opened via a
+      // LAN/proxy name can still reach 127.0.0.1 on that machine (#202 CR).
+      const loopbackOnlyOffer = offerAdvertisesLoopbackOnly(offerSdp);
 
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -91,7 +83,9 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
         if (pcRef.current !== pc) return;
         clearIceTimer();
         setConnected(false);
-        setError(previewIceErrorMessage(kind));
+        setError(
+          previewIceErrorMessage(loopbackOnlyOffer ? 'loopback-mismatch' : kind),
+        );
         pc.close();
         if (pcRef.current === pc) pcRef.current = null;
       };
@@ -138,6 +132,9 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
       for (const candidate of pendingIce) {
         await sendIce(candidate);
       }
+
+      // Stale connect() after cleanup/remount must not clear a newer timer.
+      if (pcRef.current !== pc) return;
 
       // Browsers often stay in ICE "checking" forever when candidates are
       // unreachable (e.g. NAT1TO1=127.0.0.1 for a remote client) and never

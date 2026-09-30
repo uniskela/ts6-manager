@@ -62,10 +62,11 @@ describe('SDP host candidates', () => {
 });
 
 describe('previewIceErrorMessage', () => {
-  it('mentions NAT1TO1 for loopback mismatch', () => {
+  it('mentions NAT1TO1 / bind split for loopback mismatch', () => {
     const msg = previewIceErrorMessage('loopback-mismatch');
     assert.match(msg, /127\.0\.0\.1/);
     assert.match(msg, /WEBRTC_NAT1TO1_IP/);
+    assert.match(msg, /WEBRTC_BIND_IP/);
   });
 
   it('mentions timeout vs failed', () => {

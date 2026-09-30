@@ -137,7 +137,7 @@ In the standard split-stack compose file:
 - the sidecar listens on port 9800 inside the Docker network;
 - port 9800 is **not** published to the host;
 - browser WebRTC media uses a separate UDP path (not the HTTP sidecar port);
-- set `WEBRTC_UDP_PORT` (and publish that UDP port bound to `WEBRTC_BIND_IP`) plus an IPv4 `WEBRTC_NAT1TO1_IP` when the browser is outside the Docker network — `docker-compose.pr-test.yml` enables UDP `10000` on `127.0.0.1` with advertise IP `127.0.0.1` for **same-host** browsers; for a reverse-proxied or remote WebUI use a LAN/Tailscale IPv4 for both advertise and bind (not `127.0.0.1`);
+- set `WEBRTC_UDP_PORT` plus an IPv4 `WEBRTC_NAT1TO1_IP` (address advertised to the browser) and publish that UDP port with `WEBRTC_BIND_IP` (Docker host bind) when the browser is outside the Docker network — `docker-compose.pr-test.yml` enables UDP `10000` on `127.0.0.1` with advertise IP `127.0.0.1` for **same-host** browsers; for LAN/Tailscale clients advertise that reachable IPv4; for public-NAT clients advertise the public IPv4 and forward UDP to the host (bind may stay on a local host address);
 - backend-to-sidecar mutating requests use `SIDECAR_SECRET`; and
 - the backend and sidecar share the media volume.
 

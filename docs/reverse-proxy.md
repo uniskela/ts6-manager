@@ -63,8 +63,9 @@ In-browser preview signaling uses ordinary HTTPS API calls through the reverse p
 If the preview stays on “Connecting to stream…” and then reports an ICE failure or timeout:
 
 - confirm WebSocket/upgrade headers above so the rest of the live UI stays healthy;
-- confirm the browser can reach the Docker/host network for WebRTC UDP — with `WEBRTC_UDP_PORT` published and `WEBRTC_NAT1TO1_IP` / `WEBRTC_BIND_IP` set to an IP that browser can reach (same LAN or Tailscale usually works; a remote public reverse proxy alone does not forward WebRTC media);
-- **avoid** `127.0.0.1` for those values when the WebUI is opened via a public hostname — loopback advertise/bind only works for a browser on the Docker host itself;
+- remember NGINX does **not** carry WebRTC media — only signaling;
+- set `WEBRTC_NAT1TO1_IP` to an IPv4 the **browser** can dial (LAN or Tailscale for local clients; public IPv4 when the browser is on the Internet), and publish `WEBRTC_UDP_PORT` with `WEBRTC_BIND_IP` on the Docker host (bind may differ from the advertised address when a firewall/NAT forwards UDP);
+- **avoid** advertising `127.0.0.1` unless the browser is on the Docker host itself;
 - see [Troubleshooting](troubleshooting.md) for reverse-proxy and streaming checks.
 
 ## TLS

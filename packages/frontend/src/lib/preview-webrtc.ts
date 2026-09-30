@@ -55,15 +55,19 @@ export function offerAdvertisesLoopbackOnly(sdp: string): boolean {
 export type PreviewIceFailureKind = 'failed' | 'timeout' | 'loopback-mismatch';
 
 const BASE_HINT =
-  'Check WEBRTC_UDP_PORT is published, WEBRTC_NAT1TO1_IP / WEBRTC_BIND_IP are an IPv4 the browser can reach (not 127.0.0.1 for a remote/reverse-proxied WebUI), and UDP is allowed through the host firewall. NGINX only proxies signaling — not WebRTC media.';
+  'Check WEBRTC_UDP_PORT is published, WEBRTC_NAT1TO1_IP is an IPv4 the browser can reach ' +
+  '(not 127.0.0.1 for a remote client), WEBRTC_BIND_IP publishes that UDP port on the Docker host, ' +
+  'and UDP is allowed/forwarded. NGINX only proxies signaling — not WebRTC media.';
 
 export function previewIceErrorMessage(kind: PreviewIceFailureKind): string {
   switch (kind) {
     case 'loopback-mismatch':
       return (
-        'Preview cannot reach the media sidecar: the offer advertises loopback (127.0.0.1) host candidates, ' +
-        'but this WebUI is not on localhost. Set WEBRTC_NAT1TO1_IP and WEBRTC_BIND_IP to a LAN/Tailscale IPv4 ' +
-        'the browser can reach, and publish UDP on that address — not 127.0.0.1.'
+        'Preview ICE failed: the offer only advertises loopback (127.0.0.1) host candidates. ' +
+        'That works for a browser on the Docker host itself, but not for a remote client. ' +
+        'Set WEBRTC_NAT1TO1_IP to a LAN/Tailscale/public IPv4 the browser can reach, publish ' +
+        'WEBRTC_UDP_PORT (WEBRTC_BIND_IP may stay on a local host address if the network forwards UDP), ' +
+        'and avoid advertising 127.0.0.1 for remote preview.'
       );
     case 'timeout':
       return `Preview connection timed out (ICE). ${BASE_HINT}`;
