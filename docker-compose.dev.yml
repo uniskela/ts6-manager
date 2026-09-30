@@ -35,9 +35,14 @@ services:
       - MUSIC_DIR=/data/music
       - VIDEO_QUEUE_SIZE=8192
       - AUDIO_QUEUE_SIZE=16384
+      # Optional browser WebRTC preview (same as docker-compose.yml):
+      # - WEBRTC_UDP_PORT=${WEBRTC_UDP_PORT:-10000}
+      # - WEBRTC_NAT1TO1_IP=${WEBRTC_NAT1TO1_IP}
     volumes:
       # Must match the backend mount — pre-downloaded videos are read by ffmpeg here.
       - music-data:/data/music
+    # ports:
+    #   - "${WEBRTC_BIND_IP:-127.0.0.1}:${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
     networks:
       - ts6-network
 

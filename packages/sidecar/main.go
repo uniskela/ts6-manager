@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/pion/ice/v4"
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/intervalpli"
 	"github.com/pion/rtcp"
@@ -381,6 +382,13 @@ type Sidecar struct {
 	videoConn *net.UDPConn
 	audioConn *net.UDPConn
 
+	// Optional shared ICE UDP mux so Docker can publish one host UDP port for
+	// browser WebRTC preview (see WEBRTC_UDP_PORT / WEBRTC_NAT1TO1_IP).
+	iceUDPPort      int
+	iceUDPConn      *net.UDPConn
+	iceUDPMux       ice.UDPMux
+	iceAdvertiseIPs []string
+
 	ffmpeg     *exec.Cmd
 	ffmpegLock sync.Mutex
 	ffmpegGen  uint64
@@ -726,6 +734,9 @@ func (s *Sidecar) CreatePeer(id string, codec string) (sdp string, err error) {
 
 	se := webrtc.SettingEngine{}
 	se.SetSTUNGatherTimeout(stunGatherTimeout)
+	if err := s.applyICESettings(&se); err != nil {
+		return "", fmt.Errorf("ICE settings: %w", err)
+	}
 	api := webrtc.NewAPI(webrtc.WithMediaEngine(m), webrtc.WithInterceptorRegistry(i), webrtc.WithSettingEngine(se))
 
 	pc, err := api.NewPeerConnection(webrtc.Configuration{
@@ -1415,6 +1426,8 @@ func (s *Sidecar) Stop() {
 		delete(s.peers, id)
 	}
 	s.peersLock.Unlock()
+
+	s.stopICEMedia()
 }
 
 func requireSidecarAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -1447,6 +1460,9 @@ func main() {
 	}
 
 	sidecar := NewSidecar()
+	if err := sidecar.startICEMedia(); err != nil {
+		log.Fatalf("Failed to start ICE media: %v", err)
+	}
 	if err := sidecar.StartRTP(); err != nil {
 		log.Fatalf("Failed to start RTP: %v", err)
 	}

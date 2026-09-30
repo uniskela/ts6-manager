@@ -133,6 +133,7 @@ Check:
 
 - the stream actually started (TeamSpeak viewers / stream status), not only the preview pane;
 - ICE failure text in the preview pane (after #202) — if ICE fails, confirm LAN/UDP reachability to the host running the sidecar;
+- for Docker: `WEBRTC_UDP_PORT` is set and published (pr-test defaults to UDP `10000` on `127.0.0.1`), and `WEBRTC_NAT1TO1_IP` / `WEBRTC_BIND_IP` are an IPv4 address the browser can reach (not a container `172.x` address);
 - WebSocket upgrade headers on the outer reverse proxy so live UI updates still work;
 - Twitch live URLs use yt-dlp URL resolve (not a temp download) — see #203 if Twitch sources fail before the preview can attach.
 

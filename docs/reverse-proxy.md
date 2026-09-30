@@ -63,7 +63,7 @@ In-browser preview signaling uses ordinary HTTPS API calls through the reverse p
 If the preview stays on “Connecting to stream…” and then reports an ICE failure:
 
 - confirm WebSocket/upgrade headers above so the rest of the live UI stays healthy;
-- confirm the browser can reach the Docker/host network for ephemeral UDP (same LAN usually works; a remote public reverse proxy alone does not forward WebRTC media);
+- confirm the browser can reach the Docker/host network for WebRTC UDP — with `WEBRTC_UDP_PORT` published and `WEBRTC_NAT1TO1_IP` set to an IP that browser can reach (same LAN or Tailscale usually works; a remote public reverse proxy alone does not forward WebRTC media);
 - see [Troubleshooting](troubleshooting.md) for reverse-proxy and streaming checks.
 
 ## TLS
