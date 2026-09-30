@@ -168,7 +168,7 @@ export default function BotHub() {
         ) : query.isError ? (
           <EmptyState icon={AlertTriangle} title="Could not load bot media" description={apiErrorMessage(query.error, 'Try again in a moment.')} />
         ) : bots.length === 0 ? (
-          <EmptyState icon={Music} title="No music bots yet" description="Create a music bot to play music, radio, video or IPTV into a channel.">
+          <EmptyState icon={Music} title="No media bots yet" description="Create a media bot to play music, radio, video or IPTV into a channel.">
             <Button asChild size="sm"><Link to="/media-bots">Go to Media Bots</Link></Button>
           </EmptyState>
         ) : (

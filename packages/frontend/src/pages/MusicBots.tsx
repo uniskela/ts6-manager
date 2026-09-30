@@ -201,7 +201,7 @@ function ImportQueueOptions({
   if (!configId || running.length === 0) {
     return (
       <p className="text-[10px] text-muted-foreground">
-        Start a music bot on this server to import directly to its queue.
+        Start a media bot on this server to import directly to its queue.
       </p>
     );
   }
@@ -850,24 +850,24 @@ function BotsTab() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">{formatNumber(bots.length)} music bot{bots.length !== 1 ? 's' : ''}</p>
+        <p className="text-sm text-muted-foreground">{formatNumber(bots.length)} media bot{bots.length !== 1 ? 's' : ''}</p>
         <Button size="sm" disabled={createBlocked} onClick={() => { resetForm(); setShowCreate(true); }}>
           <Plus className="h-4 w-4 mr-1" /> New Bot
         </Button>
       </div>
 
       {bots.length > 0 && hasNoConnections && (
-        <ConnectionRequiredNotice>New music bots need a TeamSpeak server connection.</ConnectionRequiredNotice>
+        <ConnectionRequiredNotice>New media bots need a TeamSpeak server connection.</ConnectionRequiredNotice>
       )}
 
       {bots.length === 0 && hasNoConnections ? (
-        <EmptyState icon={Music} title="Connect a TeamSpeak server first" description="Music bots join a server connection. Add one in Settings → Connections, then create your first bot.">
+        <EmptyState icon={Music} title="Connect a TeamSpeak server first" description="Media bots join a server connection. Add one in Settings → Connections, then create your first bot.">
           <Button size="sm" asChild>
             <RouterLink to={CONNECTION_SETUP_PATH}>Open connection setup</RouterLink>
           </Button>
         </EmptyState>
       ) : bots.length === 0 ? (
-        <EmptyState icon={Music} title="No music bots yet" description="Create your first voice bot to play music on your TeamSpeak server." />
+        <EmptyState icon={Music} title="No media bots yet" description="Create your first voice bot to play music, radio, or video on your TeamSpeak server." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {bots.map((bot: MusicBotSummary) => (
@@ -1173,7 +1173,7 @@ function LibraryTab() {
   const handleImportPlaylist = (reimport = false, queueOnly = false) => {
     if (!configId || !ytUrl.trim()) return;
     if (queueOnly && !importQueueBotId) {
-      toast.error('Select a running music bot to import to its queue');
+      toast.error('Select a running media bot to import to its queue');
       return;
     }
     const musicBotId = importQueueBotId ? parseInt(importQueueBotId, 10) : undefined;
@@ -1843,7 +1843,7 @@ function PlaylistsTab() {
   const handleAddImportPlaylist = (reimport = false, queueOnly = false) => {
     if (!selectedConfigId || !addYtUrl.trim()) return;
     if (queueOnly && !importQueueBotId) {
-      toast.error('Select a running music bot to import to its queue');
+      toast.error('Select a running media bot to import to its queue');
       return;
     }
     const musicBotId = importQueueBotId ? parseInt(importQueueBotId, 10) : undefined;
@@ -2842,7 +2842,7 @@ function CommandsTab() {
           <DialogHeader>
             <DialogTitle>Add chat command</DialogTitle>
             <DialogDescription>
-              When someone types !name in the music bot channel, the bot replies with your response.
+              When someone types !name in the media bot channel, the bot replies with your response.
               Use the formatting toolbar to match TS6 chat styling.
             </DialogDescription>
           </DialogHeader>
@@ -3141,7 +3141,7 @@ function RadioTab() {
 
       {runningBots.length === 0 && (
         <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
-          <p className="text-xs text-amber-500">Start a music bot first to play radio stations.</p>
+          <p className="text-xs text-amber-500">Start a media bot first to play radio stations.</p>
         </div>
       )}
 
@@ -3306,7 +3306,7 @@ function VideoTab() {
   return (
     <div className="space-y-4">
       {bots.length === 0 ? (
-        <EmptyState icon={Video} title="No bots available" description="Create a music bot first, then use it for video streaming." />
+        <EmptyState icon={Video} title="No bots available" description="Create a media bot first, then use it for video streaming." />
       ) : (
         <>
           {/* Bot selector */}
