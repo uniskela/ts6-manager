@@ -134,10 +134,12 @@ In the standard split-stack compose file:
 
 - the sidecar listens on port 9800 inside the Docker network;
 - port 9800 is **not** published to the host;
+- browser WebRTC media uses a separate UDP path (not the HTTP sidecar port);
+- set `WEBRTC_UDP_PORT` (and publish that UDP port) plus `WEBRTC_NAT1TO1_IP` when the browser is outside the Docker network — `docker-compose.pr-test.yml` enables UDP `10000` with advertise IP `127.0.0.1` by default;
 - backend-to-sidecar mutating requests use `SIDECAR_SECRET`; and
 - the backend and sidecar share the media volume.
 
-The all-in-one image keeps the backend and sidecar on loopback behind nginx.
+The all-in-one image keeps the backend and sidecar on loopback behind nginx. For browser preview from outside that container, publish the same WebRTC UDP mux port and set `WEBRTC_NAT1TO1_IP` (see commented mappings in `docker-compose.all-in-one.yml`).
 
 ## Synchronization
 

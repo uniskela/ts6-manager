@@ -18,6 +18,10 @@
 # Metrics: TeamSpeak publishes Prometheus text on TCP 9187 (GET /metrics).
 # Manager connection seed does not opt into metrics yet — enable in Settings →
 # Connections (metricsEnabled / port 9187) when testing the manager scrape path.
+# Browser video preview (WebRTC): sidecar publishes UDP WEBRTC_UDP_PORT (default
+# 10000) and rewrites ICE host candidates to WEBRTC_NAT1TO1_IP (default 127.0.0.1
+# for a browser on the same host). For a remote browser (LAN/Tailscale), set
+# WEBRTC_NAT1TO1_IP to an IP that browser can reach.
 # Manager-only (no TeamSpeak): use docker-compose.local.yml instead.
 #
 # Tear down:
@@ -129,8 +133,13 @@ services:
       MUSIC_DIR: /data/music
       VIDEO_QUEUE_SIZE: 8192
       AUDIO_QUEUE_SIZE: 16384
+      # Fixed UDP mux so the host can publish one WebRTC media port (see docs/video-streaming.md).
+      WEBRTC_UDP_PORT: ${WEBRTC_UDP_PORT:-10000}
+      WEBRTC_NAT1TO1_IP: ${WEBRTC_NAT1TO1_IP:-127.0.0.1}
     volumes:
       - pr-test-music-data:/data/music
+    ports:
+      - "${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
     networks:
       - ts6-pr-test
 

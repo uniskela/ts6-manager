@@ -47,6 +47,8 @@ The values below are code defaults. Compose files may override them.
 |---|---|---|
 | `SIDECAR_PORT` | `9800` | Sidecar HTTP port |
 | `SIDECAR_SECRET` | — | Shared backend/sidecar secret |
+| `WEBRTC_UDP_PORT` | unset | When set (for example `10000`), bind a shared ICE UDP mux on that port so Docker can publish one host UDP mapping for browser WebRTC preview. Leave unset to keep ephemeral ICE ports (Docker host browsers usually cannot reach them). |
+| `WEBRTC_NAT1TO1_IP` | unset | Comma-separated host/LAN/Tailscale IPs to advertise as ICE **host** candidates (replaces container-private addresses). Pair with `WEBRTC_UDP_PORT` and a published UDP mapping. `docker-compose.pr-test.yml` defaults to `127.0.0.1` for same-host browsers. |
 | `MUSIC_DIR` | `/data/music` | Shared media directory |
 | `VIDEO_QUEUE_SIZE` | `1024` | Video RTP queue |
 | `AUDIO_QUEUE_SIZE` | `2048` | Audio RTP queue |
