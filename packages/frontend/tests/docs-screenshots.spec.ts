@@ -61,8 +61,8 @@ test.describe('maintained documentation screenshots', () => {
     await expect(page.getByText('Live monitoring active')).toBeVisible();
     await capture(page, 'dashboard.png');
 
-    await page.goto('/music-bots');
-    await expect(page.getByRole('heading', { name: 'Music Bots' })).toBeVisible();
+    await page.goto('/media-bots');
+    await expect(page.getByRole('heading', { name: 'Media Bots' })).toBeVisible();
     await expect(page.getByText('Aurora Radio')).toBeVisible();
     await expect(page.getByText('Neon Skyline')).toBeVisible();
     await expect(page.getByText('Queue (3)')).toBeVisible();

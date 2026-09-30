@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { Link as RouterLink, useSearchParams } from 'react-router-dom';
+import { Link as RouterLink, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicRequestsApi } from '@/api/music-requests.api';
 import { musicBotsApi } from '@/api/music.api';
@@ -45,6 +45,8 @@ import {
 } from 'lucide-react';
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
+import { MediaPlaySplitButton } from '@/components/media/MediaPlaySplitButton';
+import type { MediaPlayAction } from '@/lib/media-bot-play';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
 import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo, ChatCommandPreset } from '@ts6/common';
@@ -62,7 +64,7 @@ import { Ts6ChatResponseEditor } from '@/components/Ts6ChatResponseEditor';
 import { apiErrorMessage } from '@/lib/api-error';
 import { formatNumber } from '@/lib/formatting';
 
-/** Tabs addressable as `/music-bots?tab=…` (the Bot hub links to them). */
+/** Tabs addressable as `/media-bots?tab=…` (the Bot hub links to them). */
 const MUSIC_TABS = ['bots', 'queue', 'video', 'library', 'playlists', 'commands', 'radio'];
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
@@ -246,12 +248,13 @@ const statusColors: Record<string, string> = {
 
 // ─── Bot Player Card ─────────────────────────────────────────────────────────
 
-function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
+function BotPlayerCard({ bot, onEdit, onDelete, onPlayAction }: {
   bot: MusicBotSummary;
   onEdit: () => void;
   onDelete: () => void;
-  onPlay: () => void;
+  onPlayAction: (action: MediaPlayAction) => void;
 }) {
+  const navigate = useNavigate();
   const startBot = useStartMusicBot();
   const stopBot = useStopMusicBot();
   const { data: state } = useMusicBotState(
@@ -280,6 +283,27 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
   const isPlaying = state?.status === 'playing';
   const isPaused = state?.status === 'paused';
   const isStreaming = state?.isStreaming ?? false;
+
+  const handlePlayAction = (action: MediaPlayAction) => {
+    if (action === 'song' || action === 'playlist') {
+      onPlayAction(action);
+      return;
+    }
+    if (action === 'iptv') {
+      const params = new URLSearchParams({ bot: String(bot.id) });
+      if (bot.serverConfigId) params.set('server', String(bot.serverConfigId));
+      navigate(`/iptv?${params}`);
+      onPlayAction(action);
+      return;
+    }
+    const params = new URLSearchParams({
+      tab: action,
+      bot: String(bot.id),
+    });
+    if (bot.serverConfigId) params.set('server', String(bot.serverConfigId));
+    navigate(`/media-bots?${params}`);
+    onPlayAction(action);
+  };
 
   return (
     <Card className="group hover:border-primary/30 transition-colors">
@@ -312,18 +336,13 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
         {/* Status badges */}
         <div className="flex items-center gap-2 flex-wrap">
           <Badge variant="outline" className="text-[10px] capitalize">{bot.status}</Badge>
-          <Badge variant="outline" className="text-[10px]">{bot.nickname}</Badge>
+          {bot.nickname && bot.nickname !== bot.name && (
+            <Badge variant="outline" className="text-[10px]">{bot.nickname}</Badge>
+          )}
           {bot.serverConfig && (
             <Badge variant="secondary" className="text-[10px]">{bot.serverConfig.name}</Badge>
           )}
         </div>
-
-        {/* Play button when connected but idle */}
-        {isRunning && !state?.nowPlaying && (
-          <Button variant="outline" size="sm" className="w-full h-8 text-xs" onClick={onPlay}>
-            <Play className="h-3.5 w-3.5 mr-1.5" /> Play Song...
-          </Button>
-        )}
 
         {/* Now Playing */}
         {state?.nowPlaying && (
@@ -453,11 +472,12 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
               >
                 <PowerOff className="h-3 w-3 mr-1" /> Stop
               </Button>
-              <Button variant="ghost" size="sm" className="h-7 text-xs"
-                onClick={onPlay}
-              >
-                <Music2 className="h-3 w-3 mr-1" /> Play...
-              </Button>
+              <MediaPlaySplitButton
+                botId={bot.id}
+                botName={bot.name}
+                className="flex-1"
+                onAction={handlePlayAction}
+              />
               {state?.nowPlaying && (
                 <Button variant="ghost" size="sm" className="h-7 text-xs"
                   onClick={() => stopPlayback.mutate(bot.id)}
@@ -523,7 +543,7 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlay }: {
 
 // ─── Play Song Dialog ─────────────────────────────────────────────────────────
 
-function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLoadPlaylist, mode = 'play' }: {
+function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLoadPlaylist, mode = 'play', initialTab = 'songs' }: {
   botId: number | null;
   onClose: () => void;
   onPlaySong: (songId: number) => void;
@@ -532,6 +552,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
   onLoadPlaylist: (playlistId: number) => void;
   /** play = Bots tab (play/queue/load); queue = Queue tab (enqueue / append only). */
   mode?: 'play' | 'queue';
+  initialTab?: 'songs' | 'playlists' | 'history';
 }) {
   const { selectedConfigId } = useServerStore();
   const { data: servers } = useServers();
@@ -544,8 +565,12 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
     queryFn: () => musicRequestsApi.list(configId!),
     enabled: !!configId && mode === 'play',
   });
-  const [tab, setTab] = useState<'songs' | 'playlists' | 'history'>('songs');
+  const [tab, setTab] = useState<'songs' | 'playlists' | 'history'>(initialTab);
   const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    if (botId !== null) setTab(initialTab);
+  }, [botId, initialTab]);
 
   const serverList = Array.isArray(servers) ? servers : [];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
@@ -711,12 +736,13 @@ function BotsTab() {
   const [editBot, setEditBot] = useState<MusicBotSummary | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showPlayDialog, setShowPlayDialog] = useState<number | null>(null);
+  const [playDialogTab, setPlayDialogTab] = useState<'songs' | 'playlists'>('songs');
 
   // Create form
   const [form, setForm] = useState({
     name: '',
     serverConfigId: '',
-    nickname: 'MusicBot',
+    nickname: 'MediaBot',
     serverPassword: '',
     defaultChannel: '',
     commandChannelsText: '',
@@ -748,7 +774,7 @@ function BotsTab() {
     createBot.mutate({
       name: createdName,
       serverConfigId: configId,
-      nickname: form.nickname || 'MusicBot',
+      nickname: form.name.trim() || 'MediaBot',
       serverPassword: form.serverPassword || undefined,
       defaultChannel: form.defaultChannel || undefined,
       commandChannelIds: parseCommandChannelsInput(form.commandChannelsText),
@@ -758,7 +784,7 @@ function BotsTab() {
       volume: form.volume,
       autoStart: form.autoStart,
     }, {
-      onSuccess: () => { toast.success('Music bot created'); setShowCreate(false); resetForm(); },
+      onSuccess: () => { toast.success('Media bot created'); setShowCreate(false); resetForm(); },
       onError: async (err) => {
         // Proxy/client often abort (499 / timeout) while the bot row already exists.
         if (isMusicBotCreateTransportFailure(err)) {
@@ -772,7 +798,7 @@ function BotsTab() {
               (b: MusicBotSummary) => b.name === createdName && !knownIds.has(b.id),
             );
             if (appeared) {
-              toast.success('Music bot created');
+              toast.success('Media bot created');
               setShowCreate(false);
               resetForm();
               return;
@@ -790,7 +816,7 @@ function BotsTab() {
     if (!editBot) return;
     updateBot.mutate({ id: editBot.id, data: {
       name: form.name,
-      nickname: form.nickname,
+      nickname: form.name.trim(),
       serverPassword: form.serverPassword || undefined,
       defaultChannel: form.defaultChannel || undefined,
       commandChannelIds: parseCommandChannelsInput(form.commandChannelsText),
@@ -809,7 +835,7 @@ function BotsTab() {
     setForm({
       name: '',
       serverConfigId: '',
-      nickname: 'MusicBot',
+      nickname: 'MediaBot',
       serverPassword: '',
       defaultChannel: '',
       commandChannelsText: '',
@@ -864,7 +890,12 @@ function BotsTab() {
                 setEditBot(bot);
               }}
               onDelete={() => setDeleteId(bot.id)}
-              onPlay={() => setShowPlayDialog(bot.id)}
+              onPlayAction={(action) => {
+                if (action === 'song' || action === 'playlist') {
+                  setPlayDialogTab(action === 'playlist' ? 'playlists' : 'songs');
+                  setShowPlayDialog(bot.id);
+                }
+              }}
             />
           ))}
         </div>
@@ -873,11 +904,11 @@ function BotsTab() {
       {/* Create / Edit Dialog */}
       <Dialog open={showCreate || editBot !== null} onOpenChange={(open) => { if (!open) { setShowCreate(false); setEditBot(null); } }}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editBot ? 'Edit Music Bot' : 'New Music Bot'}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editBot ? 'Edit Media Bot' : 'New Media Bot'}</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Name</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My Music Bot" />
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My Media Bot" />
             </div>
             {!editBot && (
               <div>
@@ -895,10 +926,6 @@ function BotsTab() {
             <div>
               <Label className="text-xs">Voice Port</Label>
               <Input type="number" value={form.voicePort} onChange={(e) => setForm({ ...form, voicePort: parseInt(e.target.value) || 9987 })} placeholder="9987" />
-            </div>
-            <div>
-              <Label className="text-xs">Nickname</Label>
-              <Input value={form.nickname} onChange={(e) => setForm({ ...form, nickname: e.target.value })} placeholder="MusicBot" />
             </div>
             <div>
               <Label className="text-xs">Server Password</Label>
@@ -954,8 +981,8 @@ function BotsTab() {
       <ConfirmDialog
         open={deleteId !== null}
         onOpenChange={() => setDeleteId(null)}
-        title="Delete Music Bot?"
-        description="This will permanently delete this music bot and disconnect it from the server."
+        title="Delete Media Bot?"
+        description="This will permanently delete this media bot and disconnect it from the server."
         onConfirm={() => {
           if (deleteId) deleteBot.mutate(deleteId, { onSuccess: () => { toast.success('Bot deleted'); setDeleteId(null); } });
         }}
@@ -965,6 +992,7 @@ function BotsTab() {
       {/* Play Song Dialog */}
       <PlaySongDialog
         botId={showPlayDialog}
+        initialTab={playDialogTab}
         onClose={() => setShowPlayDialog(null)}
         onPlaySong={(songId) => {
           if (showPlayDialog) {
@@ -2960,9 +2988,12 @@ function CommandsTab() {
 // ─── Radio Tab ───────────────────────────────────────────────────────────────
 
 function RadioTab() {
-  const { selectedConfigId } = useServerStore();
+  const [searchParams] = useSearchParams();
+  const linkedBot = Number(searchParams.get('bot')) || null;
+  const linkedServer = Number(searchParams.get('server')) || null;
+  const { selectedConfigId, setServer } = useServerStore();
   const { data: servers } = useServers();
-  const [serverId, setServerId] = useState<number | null>(selectedConfigId);
+  const [serverId, setServerId] = useState<number | null>(linkedServer || selectedConfigId);
   const configId = serverId || selectedConfigId;
 
   const { data: stations, isLoading } = useRadioStations(configId);
@@ -2977,7 +3008,8 @@ function RadioTab() {
     (b: MusicBotSummary) => b.status !== 'stopped' && b.status !== 'error'
   );
 
-  const [selectedBotId, setSelectedBotId] = useState<number | null>(null);
+  const [selectedBotId, setSelectedBotId] = useState<number | null>(linkedBot);
+  const appliedLinkedBot = useRef<number | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
@@ -2986,13 +3018,34 @@ function RadioTab() {
   const serverList = Array.isArray(servers) ? servers : [];
   const stationList = (Array.isArray(stations) ? stations : []) as RadioStationInfo[];
   const presetList = (Array.isArray(presets) ? presets : []) as RadioPreset[];
+  const runningBotIds = runningBots.map((b: MusicBotSummary) => b.id).join(',');
 
-  // Auto-select first running bot
   useEffect(() => {
-    if (!selectedBotId && runningBots.length > 0) {
-      setSelectedBotId(runningBots[0].id);
+    if (linkedServer) {
+      setServerId(linkedServer);
+      setServer(linkedServer);
     }
-  }, [runningBots, selectedBotId]);
+  }, [linkedServer, setServer]);
+
+  // Apply ?bot= once when that bot is running; do not fight later manual selection.
+  useEffect(() => {
+    if (!linkedBot) {
+      appliedLinkedBot.current = null;
+      return;
+    }
+    if (linkedBot === appliedLinkedBot.current) return;
+    if (runningBots.some((b: MusicBotSummary) => b.id === linkedBot)) {
+      setSelectedBotId(linkedBot);
+      appliedLinkedBot.current = linkedBot;
+    }
+  }, [linkedBot, runningBotIds, runningBots]);
+
+  useEffect(() => {
+    setSelectedBotId((current) => {
+      if (current && runningBots.some((b: MusicBotSummary) => b.id === current)) return current;
+      return runningBots[0]?.id ?? null;
+    });
+  }, [runningBotIds, runningBots]);
 
   const handleAddStation = () => {
     if (!configId || !addForm.name || !addForm.url) return;
@@ -3486,13 +3539,13 @@ export default function MusicBots() {
   const botQuery = useMusicBots();
   const botCount = Array.isArray(botQuery.data) ? botQuery.data.length : 0;
   const backgroundError = botQuery.error
-    ? apiErrorMessage(botQuery.error, 'Music bot refresh failed. The last successful state is still displayed where available.')
+    ? apiErrorMessage(botQuery.error, 'Media bot refresh failed. The last successful state is still displayed where available.')
     : null;
 
   return (
     <div className="space-y-5">
       <PageHeader
-        title="Music Bots"
+        title="Media Bots"
         icon={Music}
         description="Manage voice bots, playback, queues, media, and radio."
         badge={<Badge variant="secondary">{formatNumber(botCount)} configured</Badge>}

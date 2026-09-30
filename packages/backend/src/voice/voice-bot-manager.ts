@@ -263,7 +263,7 @@ export class VoiceBotManager extends EventEmitter {
       data: {
         name: data.name,
         serverConfigId: data.serverConfigId,
-        nickname: data.nickname ?? 'MusicBot',
+        nickname: data.nickname ?? 'MediaBot',
         serverPassword: data.serverPassword,
         defaultChannel: data.defaultChannel,
         channelPassword: data.channelPassword,

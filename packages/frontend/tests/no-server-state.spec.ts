@@ -49,13 +49,13 @@ test('automation pages block creation until a connection exists', async ({ page,
   await expect(page.getByRole('button', { name: 'New Bot' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'From Template' })).toBeDisabled();
 
-  await page.goto('/music-bots');
+  await page.goto('/media-bots');
   await expect(page.getByRole('heading', { name: 'Connect a TeamSpeak server first' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'New Bot' })).toBeDisabled();
   await expect(page.getByRole('link', { name: 'Open connection setup' })).toHaveAttribute('href', '/settings?tab=connections&wizard=1');
 
   await request.post('/__test/dashboard?scenario=normal');
-  await page.goto('/music-bots');
+  await page.goto('/media-bots');
   await expect(page.getByRole('heading', { name: 'No music bots yet' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'New Bot' })).toBeEnabled();
 });

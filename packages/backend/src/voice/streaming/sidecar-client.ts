@@ -27,6 +27,8 @@ export interface SidecarSourceOptions {
   mode?: VideoSourceMode;
   /** Admin-approved LAN hosts (IPTV only); the sidecar blocks every other private address. */
   allowedHosts?: string[];
+  /** libvpx -cpu-used override; omit or 0 keeps sidecar env default. */
+  cpuUsed?: number;
 }
 
 /** Encode health from GET /stats (sidecar 1.9+; absent on older sidecars). */
