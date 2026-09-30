@@ -268,9 +268,15 @@ describe('client moderation audit instrumentation', () => {
       assert.equal(rows[0].action, 'client.permission_add');
       assert.equal(rows[1].action, 'client.permission_delete');
       assert.equal(rows[0].targetId, '55');
+      // Assert field absence — never substring-match numeric permvalue against
+      // JSON that includes randomUUID operationIds (hex can contain "999").
+      for (const row of rows) {
+        assert.equal('permsid' in row, false);
+        assert.equal('permvalue' in row, false);
+        assert.equal('permid' in row, false);
+      }
       assert.equal(JSON.stringify(rows).includes(SECRET), false);
       assert.equal(JSON.stringify(rows).includes('permsid'), false);
-      assert.equal(JSON.stringify(rows).includes('999'), false);
     } finally {
       await close();
     }
