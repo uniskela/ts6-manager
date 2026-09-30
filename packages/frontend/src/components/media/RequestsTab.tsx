@@ -21,8 +21,7 @@ function runningBotsForServer(bots: MusicBotSummary[], configId: number | null):
   return bots.filter(
     (b) =>
       b.serverConfigId === configId &&
-      b.status !== 'stopped' &&
-      b.status !== 'error',
+      (b.status === 'connected' || b.status === 'playing' || b.status === 'paused'),
   );
 }
 
