@@ -11,6 +11,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useMusicBots, usePlayUrl } from '@/hooks/use-music-bots';
 import { apiErrorMessage } from '@/lib/api-error';
+import { toastMediaStarted } from '@/lib/media-start-toast';
 import { cn } from '@/lib/utils';
 import { useServerStore } from '@/stores/server.store';
 import type { MusicBotSummary } from '@ts6/common';
@@ -71,8 +72,10 @@ export function RequestsTab() {
     playUrl.mutate(
       { botId: selectedBot.id, url: req.url, enqueue },
       {
-        onSuccess: () =>
-          toast.success(enqueue ? `Queued on ${selectedBot.name}` : `Playing on ${selectedBot.name}`),
+        onSuccess: () => {
+          if (enqueue) toast.success(`Queued on ${selectedBot.name}`);
+          else toastMediaStarted(`Playing on ${selectedBot.name}`);
+        },
         onError: (err) =>
           toast.error(apiErrorMessage(err, enqueue ? 'Failed to enqueue' : 'Failed to play')),
       },

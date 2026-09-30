@@ -29,6 +29,7 @@ import { apiErrorMessage, isTeamSpeakStarting, teamSpeakConnectionTitle, teamSpe
 import { Users, MoreHorizontal, LogOut, Ban, Zap, Youtube, Radio, Copy } from 'lucide-react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { toast } from 'sonner';
+import { toastMediaStarted } from '@/lib/media-start-toast';
 import type { MusicBotSummary, RadioStationInfo } from '@ts6/common';
 import { useVirtualServers } from '@/hooks/use-servers';
 
@@ -228,7 +229,7 @@ export default function Clients() {
     const botId = parseInt(selectedBotId, 10);
     const url = ytUrl.trim();
     if (!botId || !url) {
-      toast.error('Select a music bot and paste a YouTube, Spotify, or Apple Music URL');
+      toast.error('Select a media bot and paste a YouTube, Spotify, or Apple Music URL');
       return;
     }
     playUrl.mutate(
@@ -236,10 +237,10 @@ export default function Clients() {
       {
         onSuccess: (res: any) => {
           const count = res?.queued ?? 1;
-          toast.success(
+          toastMediaStarted(
             res?.playlist
-              ? `Playing playlist (${count} tracks) on music bot`
-              : 'Playing on music bot',
+              ? `Playing playlist (${count} tracks)`
+              : 'Playing',
           );
           closePlayDialog();
         },
@@ -254,14 +255,14 @@ export default function Clients() {
     const botId = parseInt(selectedBotId, 10);
     const stationId = parseInt(selectedStationId, 10);
     if (!botId || !stationId) {
-      toast.error('Select a music bot and a radio station');
+      toast.error('Select a media bot and a radio station');
       return;
     }
     playRadio.mutate(
       { botId, stationId },
       {
         onSuccess: () => {
-          toast.success('Playing radio on music bot');
+          toastMediaStarted('Playing radio');
           closePlayDialog();
         },
         onError: (err: any) => {
@@ -639,11 +640,11 @@ export default function Clients() {
             <DialogTitle>Play URL{playClientName ? ` (from ${playClientName})` : ''}</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Paste a YouTube / YouTube Music, Spotify, or Apple Music song or playlist URL. Playback uses the selected music bot&apos;s channel (Apple Music / Spotify resolve via YouTube).
+            Paste a YouTube / YouTube Music, Spotify, or Apple Music song or playlist URL. Playback uses the selected media bot&apos;s channel (Apple Music / Spotify resolve via YouTube).
           </p>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Music bot</Label>
+              <Label className="text-xs">Media bot</Label>
               <Select value={selectedBotId} onValueChange={setSelectedBotId}>
                 <SelectTrigger className="cursor-pointer">
                   <SelectValue placeholder={runningBots.length === 0 ? 'No running bots' : 'Select bot...'} />
@@ -687,11 +688,11 @@ export default function Clients() {
             <DialogTitle>Play Radio{playClientName ? ` (from ${playClientName})` : ''}</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Stream a saved radio station on a running music bot. Add stations under Music → Radio.
+            Stream a saved radio station on a running media bot. Add stations under Media Bots → Radio.
           </p>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Music bot</Label>
+              <Label className="text-xs">Media bot</Label>
               <Select value={selectedBotId} onValueChange={setSelectedBotId}>
                 <SelectTrigger className="cursor-pointer">
                   <SelectValue placeholder={runningBots.length === 0 ? 'No running bots' : 'Select bot...'} />

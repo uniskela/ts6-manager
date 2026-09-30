@@ -46,7 +46,42 @@ export function resolveSourceMode(
 }
 
 const SOURCE_FAILURE =
-  /server returned|connection (refused|reset|timed out)|timed out|failed to resolve|name or service|no such file|invalid data found|end of file|http error|404|403|401|i\/o error/i;
+  /server returned|connection (refused|reset|timed out)|timed out|failed to resolve|name or service|no such file|invalid data found|end of file|http error|\b(?:400\s+Bad Request|401\s+Unauthorized|403\s+Forbidden|404\s+Not Found)\b|i\/o error|matches no streams|stream map|empty segment/i;
+
+/**
+ * Turn ffmpeg/sidecar stderr into a short operator-facing line (no pointer
+ * addresses, no duplicated HTTP noise).
+ */
+export function humanizeSourceError(raw: string): string {
+  const err = raw.trim();
+  if (!err) return 'Source became unreachable';
+  if (/matches no streams|stream map|empty segment/i.test(err)) {
+    return 'Playlist has no playable streams (variants failed or empty)';
+  }
+  const codeMatch = err.match(/\bHTTP error\s+(\d{3})\b/i)
+    ?? err.match(/\bServer returned\s+(\d{3})\b/i)
+    ?? err.match(/\b([45]\d{2})\s+(?:Bad Request|Not Found|Forbidden|Unauthorized)\b/i);
+  if (codeMatch) {
+    const code = codeMatch[1];
+    if (code === '400') return 'Source returned 400 Bad Request — URL may be invalid or expired';
+    if (code === '401') return 'Source returned 401 Unauthorized — credentials or a token may be required';
+    if (code === '403') return 'Source returned 403 Forbidden — access may be blocked';
+    if (code === '404') return 'Source returned 404 Not Found — stream URL may be dead or moved';
+    return `Source returned HTTP ${code}`;
+  }
+  if (/connection (refused|reset|timed out)|timed out|failed to resolve|name or service/i.test(err)) {
+    return 'Could not reach the media source (network or DNS failure)';
+  }
+  // Strip ffmpeg channel tags like `[https @ 0x…]` and `<source>` markers.
+  const cleaned = err
+    .replace(/\[[^\]]*@\s*0x[0-9a-fA-F]+\]\s*/g, '')
+    .replace(/<source>\s*/gi, '')
+    .replace(/\s*;\s*/g, ' — ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!cleaned) return 'Source became unreachable';
+  return cleaned.length > 140 ? `${cleaned.slice(0, 137)}…` : cleaned;
+}
 
 /**
  * Why ffmpeg stopped on its own. `exitError` is the sidecar's URL-redacted
@@ -60,15 +95,21 @@ export function classifyEncoderExit(opts: {
 }): { reason: MediaStopReason; detail: string } {
   const err = opts.exitError?.trim() || null;
   if (err && SOURCE_FAILURE.test(err)) {
-    return { reason: 'source_unreachable', detail: `Source stopped responding: ${err}` };
+    return { reason: 'source_unreachable', detail: humanizeSourceError(err) };
   }
   if (!err && opts.mode !== 'live' && !opts.loop) {
     return { reason: 'source_ended', detail: 'Video reached its end' };
   }
   if (opts.mode === 'live') {
-    return { reason: 'source_unreachable', detail: err ? `Live source ended: ${err}` : 'Live source ended' };
+    return {
+      reason: 'source_unreachable',
+      detail: err ? humanizeSourceError(err) : 'Live source ended',
+    };
   }
-  return { reason: 'encoder_failure', detail: err ? `Encoder stopped: ${err}` : 'Encoder stopped unexpectedly' };
+  return {
+    reason: 'encoder_failure',
+    detail: err ? `Encoder stopped: ${humanizeSourceError(err)}` : 'Encoder stopped unexpectedly',
+  };
 }
 
 /** "Encoding below realtime (0.62x for 40 s) — …" or null. */

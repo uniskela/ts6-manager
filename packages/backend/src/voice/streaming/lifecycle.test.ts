@@ -36,7 +36,24 @@ describe('encoder exit classification', () => {
   it('network and HTTP errors mean the source is unreachable', () => {
     const c = classifyEncoderExit({ mode: 'vod', loop: false, exitError: '<source> Server returned 403 Forbidden' });
     assert.equal(c.reason, 'source_unreachable');
-    assert.match(c.detail, /403/);
+    assert.equal(c.detail, 'Source returned 403 Forbidden — access may be blocked');
+  });
+  it('HTTP 400 and empty HLS maps become short operator wording', () => {
+    const bad = classifyEncoderExit({
+      mode: 'live',
+      loop: false,
+      exitError: '[https @ 0x615d916dab80] HTTP error 400 Bad Request; <source> Server returned 400 Bad Request',
+    });
+    assert.equal(bad.reason, 'source_unreachable');
+    assert.equal(bad.detail, 'Source returned 400 Bad Request — URL may be invalid or expired');
+
+    const empty = classifyEncoderExit({
+      mode: 'live',
+      loop: false,
+      exitError: "Stream map '0:v:0' matches no streams.; To ignore this, add a trailing '?' to the map.",
+    });
+    assert.equal(empty.reason, 'source_unreachable');
+    assert.equal(empty.detail, 'Playlist has no playable streams (variants failed or empty)');
   });
   it('a live source ending is never "reached its end"', () => {
     assert.equal(classifyEncoderExit({ mode: 'live', loop: false, exitError: null }).reason, 'source_unreachable');
@@ -44,6 +61,15 @@ describe('encoder exit classification', () => {
   it('other failures are encoder failures', () => {
     const c = classifyEncoderExit({ mode: 'file', loop: true, exitError: 'Error initializing output stream 0:0' });
     assert.equal(c.reason, 'encoder_failure');
+  });
+  it('bare bitrate/resolution numbers are not treated as HTTP failures', () => {
+    const c = classifyEncoderExit({
+      mode: 'file',
+      loop: true,
+      exitError: 'Encoder buffer 400 kbps at 1080x720',
+    });
+    assert.equal(c.reason, 'encoder_failure');
+    assert.match(c.detail, /^Encoder stopped:/);
   });
 });
 

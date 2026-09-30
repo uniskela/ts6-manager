@@ -49,6 +49,7 @@ import { MediaPlaySplitButton } from '@/components/media/MediaPlaySplitButton';
 import { RequestsTab } from '@/components/media/RequestsTab';
 import type { MediaPlayAction } from '@/lib/media-bot-play';
 import { toast } from 'sonner';
+import { toastMediaStarted } from '@/lib/media-start-toast';
 import { formatBytes } from '@/lib/utils';
 import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo, ChatCommandPreset } from '@ts6/common';
 import {
@@ -998,7 +999,7 @@ function BotsTab() {
         onPlaySong={(songId) => {
           if (showPlayDialog) {
             playSong.mutate({ botId: showPlayDialog, songId }, {
-              onSuccess: () => { toast.success('Playing'); setShowPlayDialog(null); },
+              onSuccess: () => { toastMediaStarted('Playing'); setShowPlayDialog(null); },
               onError: () => toast.error('Failed to play song'),
             });
           }
@@ -1006,7 +1007,7 @@ function BotsTab() {
         onPlayUrl={(url) => {
           if (showPlayDialog) {
             playUrl.mutate({ botId: showPlayDialog, url }, {
-              onSuccess: () => { toast.success('Playing URL'); setShowPlayDialog(null); },
+              onSuccess: () => { toastMediaStarted('Playing URL'); setShowPlayDialog(null); },
               onError: () => toast.error('Failed to play URL'),
             });
           }
@@ -1026,7 +1027,7 @@ function BotsTab() {
                 if (data?.playError) {
                   toast.error(`Playlist queued but playback failed: ${data.playError}`);
                 } else {
-                  toast.success('Playlist loaded');
+                  toastMediaStarted('Playlist loaded');
                 }
                 setShowPlayDialog(null);
               },
@@ -3076,7 +3077,7 @@ function RadioTab() {
       return;
     }
     playRadio.mutate({ botId: selectedBotId, stationId }, {
-      onSuccess: () => toast.success('Playing radio'),
+      onSuccess: () => toastMediaStarted('Playing radio'),
       onError: () => toast.error('Failed to play radio'),
     });
   };
