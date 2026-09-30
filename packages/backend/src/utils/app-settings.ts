@@ -1,3 +1,4 @@
+import { parseLocalHostAllowlist } from './url-validator.js';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
 import { DEFAULT_AUTO_MAX_PRESET, isPresetKey } from '../voice/streaming/types.js';
@@ -186,4 +187,52 @@ export function parseVideoStreamingUpdate(body: Record<string, unknown> | null |
 
   if (rows.length === 0) return { ok: false, error: 'No video streaming settings supplied' };
   return { ok: true, rows };
+}
+
+// --- IPTV sources on the local network ---------------------------------------
+
+export const IPTV_LOCAL_HOSTS_KEY = 'iptv_allowed_local_hosts';
+export const MAX_IPTV_LOCAL_HOSTS = 32;
+
+/**
+ * Operator-approved LAN hosts for IPTV playlists and channels (IPs, CIDRs or
+ * hostnames). Invalid stored entries are dropped rather than trusted.
+ */
+export async function loadIptvLocalHosts(prisma: PrismaClient): Promise<string[]> {
+  const row = await prisma.appSetting.findUnique({ where: { key: IPTV_LOCAL_HOSTS_KEY } });
+  if (!row?.value) return [];
+  try {
+    const value: unknown = JSON.parse(row.value);
+    if (!Array.isArray(value)) return [];
+    const entries = value.filter((v): v is string => typeof v === 'string');
+    const { invalid } = parseLocalHostAllowlist(entries);
+    return entries.filter((e) => !invalid.includes(e)).slice(0, MAX_IPTV_LOCAL_HOSTS);
+  } catch {
+    return [];
+  }
+}
+
+export type IptvLocalHostsUpdate = { ok: true; value: string[] } | { ok: false; error: string };
+
+export function parseIptvLocalHostsUpdate(body: Record<string, unknown> | null | undefined): IptvLocalHostsUpdate {
+  const raw = body?.allowedLocalHosts;
+  if (!Array.isArray(raw) || raw.some((v) => typeof v !== 'string')) {
+    return { ok: false, error: 'allowedLocalHosts must be a list of hosts' };
+  }
+  const entries = [...new Set((raw as string[]).map((v) => v.trim().toLowerCase()).filter(Boolean))];
+  if (entries.length > MAX_IPTV_LOCAL_HOSTS) {
+    return { ok: false, error: `At most ${MAX_IPTV_LOCAL_HOSTS} hosts` };
+  }
+  if (entries.some((e) => e.length > 255)) {
+    return { ok: false, error: 'Host entries are limited to 255 characters' };
+  }
+  const { invalid } = parseLocalHostAllowlist(entries);
+  if (invalid.length > 0) {
+    return {
+      ok: false,
+      error: `Not allowed: ${invalid.join(', ')}. Use a LAN IP (192.168.1.20), a range (192.168.1.0/24) or a hostname; `
+        + 'loopback, link-local and cloud metadata addresses stay blocked.',
+    };
+  }
+  return { ok: true, value: entries };
 }

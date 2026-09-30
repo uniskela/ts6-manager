@@ -73,6 +73,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'settings.yt_cookies_removed': 'Remove yt-dlp cookies',
   'settings.limits_update': 'Update app limits',
   'settings.video_streaming_update': 'Update video streaming defaults',
+  'settings.iptv_network_update': 'Update allowed local IPTV hosts',
   'media.music.start': 'Start music',
   'media.music.stop': 'Stop music',
   'media.video.start': 'Start video stream',

@@ -1,4 +1,5 @@
 import type { PrismaClient } from '../../generated/prisma/index.js';
+import { loadIptvLocalHosts } from '../utils/app-settings.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import type { VoiceBot } from './voice-bot.js';
 import type { QueueItem } from './playlist/queue.js';
@@ -885,6 +886,13 @@ export class MusicCommandHandler {
 
     const msg = (data.msg || '').trim();
     if (!msg.startsWith(CMD_PREFIX)) return;
+    // During TeamSpeak's anti-flood block every action and reply would be
+    // refused and extend the block: set the command aside (the bot says once
+    // afterwards that commands were ignored).
+    if (bot.floodHoldActive) {
+      bot.noteIgnoredCommand();
+      return;
+    }
 
     const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
     const command = parts[0].toLowerCase();
@@ -1227,6 +1235,8 @@ export class MusicCommandHandler {
    * listener and optimistically change the bot's channel id.
    */
   private async reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void> {
+    // A reply made after the flood block tripped part-way through a command is dropped too.
+    if (bot.floodHoldActive) return;
     const botId = bot.currentConfig.id;
     const replyChannelId = this.activeReplyChannel.get(`${botId}:${targetClid}`);
     const cfg = this.botChannelConfig.get(botId);
@@ -2542,14 +2552,19 @@ export class MusicCommandHandler {
     }
 
     if (bot.videoStreaming) {
-      await bot.setVideoSource(channel.url, undefined, 'live');
+      await bot.setVideoSource(channel.url, undefined, 'live', await loadIptvLocalHosts(this.prisma));
       this.reply(bot, userClid, `Now streaming: ${channel.name}`);
       return;
     }
 
     this.reply(bot, userClid, `Starting stream: ${channel.name}...`);
     try {
-      await this.voiceBotManager.startVideoStream(bot, channel.url, { sourceMode: 'live', ...this.chatVideoSwitch(bot) });
+      await this.voiceBotManager.startVideoStream(bot, channel.url, {
+        sourceMode: 'live',
+        // The channel URL comes from an admin playlist; users only pick a name.
+        localHosts: await loadIptvLocalHosts(this.prisma),
+        ...this.chatVideoSwitch(bot),
+      });
       this.reply(bot, userClid, `Video stream started: ${channel.name}`);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to start stream: ${this.streamStartError(err)}`);

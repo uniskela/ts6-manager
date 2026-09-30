@@ -52,6 +52,13 @@ export const settingsApi = {
   ): Promise<ServerVideoStreamingSettings> =>
     api.put(`/settings/video-streaming/servers/${serverConfigId}`, data).then((r) => r.data),
 
+  /** LAN hosts allowed for admin-configured IPTV playlists and channels. */
+  getIptvNetwork: (): Promise<{ allowedLocalHosts: string[] }> =>
+    api.get('/settings/iptv-network').then((r) => r.data),
+
+  updateIptvNetwork: (allowedLocalHosts: string[]): Promise<{ allowedLocalHosts: string[] }> =>
+    api.put('/settings/iptv-network', { allowedLocalHosts }).then((r) => r.data),
+
   /** Encoder test encodes run on the sidecar; demand-driven only (first call / refresh). */
   getVideoEncoders: (refresh = false): Promise<VideoEncoderCapabilities> =>
     api.get('/settings/video-encoders', { params: refresh ? { refresh: '1' } : undefined, timeout: 60000 })

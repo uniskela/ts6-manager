@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { IptvLocalHostsCard } from '@/components/iptv/IptvLocalHostsCard';
+import { useAuthStore } from '@/stores/auth.store';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -424,6 +426,7 @@ export default function Iptv() {
   const { data: servers } = useServers();
   const serverList = Array.isArray(servers) ? servers : [];
   const { selectedConfigId, setServer } = useServerStore();
+  const isAdmin = useAuthStore((state) => state.isAdmin());
 
   // Default to the first server if none selected.
   useEffect(() => {
@@ -591,6 +594,8 @@ export default function Iptv() {
           )}
         </>
       )}
+
+      {isAdmin && <IptvLocalHostsCard />}
 
       <AddPlaylistDialog open={addOpen} onClose={() => setAddOpen(false)} serverConfigId={selectedConfigId} />
       <ReplaceFileDialog

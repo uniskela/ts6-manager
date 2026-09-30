@@ -130,8 +130,16 @@ test('Ban sends selected duration and reason, maps permanent to zero, and closes
   await expect(page.getByRole('listbox')).toHaveCount(0);
   await expect(dialog.getByLabel('Duration')).toBeFocused();
   const confirmBan = dialog.getByRole('button', { name: 'Ban client' });
-  await confirmBan.focus();
-  await expect(confirmBan).toBeFocused();
+  // Radix can hand focus back to the Select trigger a frame or two after the
+  // listbox unmounts, so re-focus until focus stays on the confirm button
+  // across two animation frames (focus() alone passes before any handoff).
+  await expect(async () => {
+    await confirmBan.focus();
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    await expect(confirmBan).toBeFocused({ timeout: 100 });
+  }).toPass({ timeout: 5_000 });
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await actionRequests(request)).length).toBe(1);
   writes = await actionRequests(request);

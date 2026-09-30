@@ -101,3 +101,17 @@ test('idle playlist append resumes existing queue order instead of jumping past 
   assert.equal(f.played.length, 1);
   assert.equal(f.played[0].title, 'Already queued');
 });
+test('commands during a TeamSpeak flood hold are set aside, not run or answered', async () => {
+  const f = fixture();
+  let ignored = 0;
+  Object.assign(f.bot, { floodHoldActive: true, noteIgnoredCommand: () => { ignored++; } });
+  await f.command('!pl 3');
+  await f.command('!repeat');
+  assert.equal(f.played.length, 0);
+  assert.equal(f.replies.length, 0);
+  assert.equal(ignored, 2);
+
+  // Plain chat is not a command and is not counted.
+  await f.command('hello');
+  assert.equal(ignored, 2);
+});

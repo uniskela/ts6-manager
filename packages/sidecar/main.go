@@ -362,7 +362,14 @@ type Peer struct {
 	Started    bool
 	mu         sync.Mutex
 	stopSR     chan struct{}
+	// pendingICE holds candidates that arrived before the viewer's answer;
+	// SetAnswer flushes them. Guarded by mu.
+	pendingICE []webrtc.ICECandidateInit
 }
+
+// maxPendingICE bounds the candidates held for a peer that has not answered
+// yet, so a peer that never answers cannot grow the buffer without limit.
+const maxPendingICE = 64
 
 type Sidecar struct {
 	peers     map[string]*Peer
@@ -379,6 +386,9 @@ type Sidecar struct {
 	ffmpegGen  uint64
 	source     string
 	running    bool
+	// egress is the current remote source's connection proxy (nil for local
+	// files or with SIDECAR_EGRESS_PROXY=off); guarded by ffmpegLock.
+	egress *egressProxy
 
 	// streamCodec is the codec family ffmpeg currently packetizes (string).
 	streamCodec atomic.Value
@@ -929,12 +939,31 @@ func (s *Sidecar) SetAnswer(id, sdp string) error {
 		return nil
 	}
 
-	return peer.PC.SetRemoteDescription(webrtc.SessionDescription{
+	if err := peer.PC.SetRemoteDescription(webrtc.SessionDescription{
 		Type: webrtc.SDPTypeAnswer,
 		SDP:  sdp,
-	})
+	}); err != nil {
+		return err
+	}
+
+	pending := peer.pendingICE
+	peer.pendingICE = nil
+	for _, c := range pending {
+		if err := peer.PC.AddICECandidate(c); err != nil {
+			log.Printf("[API] Dropping early ICE candidate for peer %s: %v", id, err)
+		}
+	}
+	if len(pending) > 0 {
+		debugf("[API] Applied %d early ICE candidate(s) for peer: %s", len(pending), id)
+	}
+	return nil
 }
 
+// AddICECandidate applies a remote candidate. Viewers trickle candidates as
+// soon as they have the offer, often before their answer reaches us; Pion
+// rejects those until the remote description is set, so they are held and
+// applied by SetAnswer. They are usually the host candidates, which give the
+// most direct path.
 func (s *Sidecar) AddICECandidate(id string, candidate string, sdpMid string, sdpMLineIndex uint16) error {
 	s.peersLock.RLock()
 	peer, exists := s.peers[id]
@@ -943,11 +972,23 @@ func (s *Sidecar) AddICECandidate(id string, candidate string, sdpMid string, sd
 		return fmt.Errorf("peer %s not found", id)
 	}
 
-	return peer.PC.AddICECandidate(webrtc.ICECandidateInit{
+	init := webrtc.ICECandidateInit{
 		Candidate:     candidate,
 		SDPMid:        &sdpMid,
 		SDPMLineIndex: &sdpMLineIndex,
-	})
+	}
+
+	peer.mu.Lock()
+	defer peer.mu.Unlock()
+	if peer.PC.RemoteDescription() == nil {
+		if len(peer.pendingICE) >= maxPendingICE {
+			debugf("[API] Early ICE candidate buffer full for peer %s; dropping candidate", id)
+			return nil
+		}
+		peer.pendingICE = append(peer.pendingICE, init)
+		return nil
+	}
+	return peer.PC.AddICECandidate(init)
 }
 
 func (s *Sidecar) ClosePeer(id string) {
@@ -973,6 +1014,9 @@ type SourceRequest struct {
 	Encoder   string
 	// Mode is live, vod or file ("" = infer from the source).
 	Mode string
+	// AllowedHosts are the LAN hosts an admin allowed for this source (IPTV
+	// only); ffmpeg may reach no other private address.
+	AllowedHosts []string
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -1080,7 +1124,10 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 	source := req.Source
 	if source != "" {
 		mode := resolveSourceMode(req.Mode, source)
-		if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
+		if isRemoteSource(source) {
+			if s.egress != nil {
+				args = append(args, egressInputArgs(s.egress.URL())...)
+			}
 			args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
 		} else if req.Loop && mode == modeFile {
 			args = append(args, "-stream_loop", "-1")
@@ -1157,6 +1204,9 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64, health *healthTracker) (<-chan struct{}, *tailBuffer, error) {
 	tail := &tailBuffer{}
 	cmd := exec.Command(getFfmpegPath(), args...)
+	if s.egress != nil {
+		cmd.Env = egressCommandEnv()
+	}
 	cmd.Stdout = nil
 	cmd.Stderr = io.MultiWriter(os.Stderr, tail, health)
 	if err := cmd.Start(); err != nil {
@@ -1205,6 +1255,15 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	s.resetSyncTiming()
 	s.drainRTPQueues()
 	s.resetPeerStreamState()
+
+	// One proxy per source, kept across the hardware-fallback relaunches below.
+	if isRemoteSource(req.Source) && egressEnabled() {
+		proxy, err := startEgressProxy(&egressPolicy{allow: parseHostAllowlist(req.AllowedHosts)})
+		if err != nil {
+			return EncoderSession{}, fmt.Errorf("start egress proxy: %w", err)
+		}
+		s.egress = proxy
+	}
 
 	s.source = req.Source
 	s.streamCodec.Store(requested.Codec)
@@ -1300,6 +1359,10 @@ func (s *Sidecar) StopFFmpegLocked() {
 	if s.ffmpeg != nil && s.ffmpeg.Process != nil {
 		s.ffmpeg.Process.Kill()
 		s.ffmpeg = nil
+	}
+	if s.egress != nil {
+		s.egress.Close()
+		s.egress = nil
 	}
 	s.statusMu.Lock()
 	if s.encoder.State == "running" {
@@ -1482,6 +1545,8 @@ func main() {
 			Encoder string `json:"encoder"`
 			// Mode is live, vod or file; empty infers it from the source.
 			Mode string `json:"mode"`
+			// AllowedHosts are admin-approved LAN hosts (IPTV sources only).
+			AllowedHosts []string `json:"allowedHosts"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1512,15 +1577,16 @@ func main() {
 		loop := req.Loop == nil || *req.Loop
 		log.Printf("[API] Setting source (%dx%d @ %dfps vol=%d loop=%v encoder=%s)", req.Width, req.Height, req.Framerate, vol, loop, encoderID)
 		session, err := sidecar.StartFFmpeg(SourceRequest{
-			Source:    req.Source,
-			Width:     req.Width,
-			Height:    req.Height,
-			Framerate: req.Framerate,
-			Bitrate:   req.Bitrate,
-			Volume:    vol,
-			Loop:      loop,
-			Encoder:   encoderID,
-			Mode:      req.Mode,
+			Source:       req.Source,
+			Width:        req.Width,
+			Height:       req.Height,
+			Framerate:    req.Framerate,
+			Bitrate:      req.Bitrate,
+			Volume:       vol,
+			Loop:         loop,
+			Encoder:      encoderID,
+			Mode:         req.Mode,
+			AllowedHosts: req.AllowedHosts,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)
@@ -1528,6 +1594,30 @@ func main() {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "encoder": session})
+	}))
+
+	// POST /probe reads a remote source's video size and duration for Auto
+	// quality, through the same egress policy as streaming it.
+	mux.HandleFunc("POST /probe", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Source       string   `json:"source"`
+			AllowedHosts []string `json:"allowedHosts"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if !isRemoteSource(req.Source) {
+			http.Error(w, "only http(s) sources are probed here", 400)
+			return
+		}
+		out, err := probeRemoteSource(r.Context(), req.Source, &egressPolicy{allow: parseHostAllowlist(req.AllowedHosts)})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(out)
 	}))
 
 	mux.HandleFunc("POST /source/stop", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {

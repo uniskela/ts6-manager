@@ -52,6 +52,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.yt_cookies_removed',
   'settings.limits_update',
   'settings.video_streaming_update',
+  'settings.iptv_network_update',
   'media.music.start',
   'media.music.stop',
   'media.video.start',

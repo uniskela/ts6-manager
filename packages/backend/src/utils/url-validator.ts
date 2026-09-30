@@ -1,4 +1,5 @@
 import { lookup } from 'dns/promises';
+import { BlockList, isIP } from 'net';
 
 const BLOCKED_HOSTNAMES = new Set([
   'localhost',
@@ -40,9 +41,91 @@ export function isPrivateIP(ip: string): boolean {
   return false;
 }
 
+/**
+ * Private addresses no allowlist can open: loopback, link-local, "this
+ * network" and cloud metadata. From inside a container, loopback is the
+ * container itself, never the LAN device an operator means.
+ */
+export function isNeverAllowedIP(ip: string): boolean {
+  const lower = ip.toLowerCase().replace(/^\[|\]$/g, '');
+  if (CLOUD_METADATA_IPS.has(lower)) return true;
+  if (lower.startsWith('::ffff:')) return isNeverAllowedIP(lower.slice(7));
+  const parts = lower.split('.');
+  if (parts.length === 4) {
+    const [a, b] = parts.map(Number);
+    return a === 127 || a === 0 || (a === 169 && b === 254);
+  }
+  return lower === '::1' || lower === '::' || lower.startsWith('fe80:');
+}
+
+/**
+ * Operator-approved LAN hosts (IPs, CIDRs or hostnames) for sources the admin
+ * configured, such as IPTV playlists on a local proxy. Never used for URLs
+ * typed by users.
+ */
+export class LocalHostAllowlist {
+  private readonly blocks = new BlockList();
+  private readonly hosts = new Set<string>();
+  private size = 0;
+
+  add(entry: string): boolean {
+    const value = entry.trim().toLowerCase();
+    if (!value) return false;
+    const [addr, prefix] = value.split('/');
+    const family = isIP(addr);
+    if (family) {
+      if (isNeverAllowedIP(addr)) return false;
+      const type = family === 6 ? 'ipv6' : 'ipv4';
+      if (prefix === undefined) {
+        this.blocks.addAddress(addr, type);
+      } else {
+        const bits = Number(prefix);
+        const max = family === 6 ? 128 : 32;
+        // At least a /8 (IPv4) or /16 (IPv6): no "allow everything" entries.
+        const min = family === 6 ? 16 : 8;
+        if (!/^\d+$/.test(prefix) || bits < min || bits > max) return false;
+        this.blocks.addSubnet(addr, bits, type);
+      }
+    } else {
+      if (prefix !== undefined || !HOSTNAME_RE.test(value) || BLOCKED_HOSTNAMES.has(value)) return false;
+      this.hosts.add(value);
+    }
+    this.size++;
+    return true;
+  }
+
+  get isEmpty(): boolean {
+    return this.size === 0;
+  }
+
+  /** True when the (private) address may be used for `hostname`. */
+  permits(hostname: string, ip: string): boolean {
+    const addr = ip.replace(/^\[|\]$/g, '');
+    if (isNeverAllowedIP(addr)) return false;
+    if (this.hosts.has(hostname.toLowerCase())) return true;
+    const family = isIP(addr);
+    if (!family) return false;
+    return this.blocks.check(addr, family === 6 ? 'ipv6' : 'ipv4');
+  }
+}
+
+const HOSTNAME_RE = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/;
+
+/** Build an allowlist, returning entries that were rejected. */
+export function parseLocalHostAllowlist(entries: readonly string[]): { allowlist: LocalHostAllowlist; invalid: string[] } {
+  const allowlist = new LocalHostAllowlist();
+  const invalid: string[] = [];
+  for (const entry of entries) {
+    if (!allowlist.add(entry)) invalid.push(entry);
+  }
+  return { allowlist, invalid };
+}
+
 export interface ValidateUrlOptions {
   allowedProtocols?: string[];
   skipDnsCheck?: boolean;
+  /** Operator-approved LAN hosts; only for admin-configured sources. */
+  localAllowlist?: LocalHostAllowlist;
 }
 
 export interface ValidateUrlResult {
@@ -83,8 +166,12 @@ export async function validateUrl(
     return { valid: false, error: 'Cloud metadata endpoint is blocked' };
   }
 
+  const allowlist = options.localAllowlist;
+  const literal = hostname.replace(/^\[|\]$/g, '');
+
   // Check if hostname is a literal IP
-  if (isPrivateIP(hostname)) {
+  if (isPrivateIP(literal)) {
+    if (allowlist?.permits(hostname, literal)) return { valid: true };
     return { valid: false, error: 'Private/reserved IP addresses are blocked' };
   }
 
@@ -93,6 +180,7 @@ export async function validateUrl(
     try {
       const { address } = await lookup(hostname);
       if (isPrivateIP(address)) {
+        if (allowlist?.permits(hostname, address)) return { valid: true };
         return { valid: false, error: `Hostname "${hostname}" resolves to a private IP (${address})` };
       }
       if (CLOUD_METADATA_IPS.has(address)) {
