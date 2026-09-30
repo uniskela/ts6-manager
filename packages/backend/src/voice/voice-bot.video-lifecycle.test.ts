@@ -188,3 +188,37 @@ describe('video encode health (#72)', () => {
     assert.equal(bot.videoStreamStatus.health, null);
   });
 });
+
+describe('video source probe', () => {
+  it('probes remote sources through the sidecar with the source allowlist', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    const calls: Array<{ source: string; hosts: string[] }> = [];
+    b._videoLocalHosts = ['192.168.1.20'];
+    b.sidecarHttp = {
+      probe: async (source: string, hosts: string[]) => {
+        calls.push({ source, hosts });
+        return '{"streams":[{"width":1920,"height":1080}],"format":{"duration":"12.5"}}';
+      },
+    };
+    const probe = await b.probeStreamSource('http://192.168.1.20/movie.mp4', false);
+    assert.deepEqual(calls, [{ source: 'http://192.168.1.20/movie.mp4', hosts: ['192.168.1.20'] }]);
+    assert.deepEqual(probe, { resolution: { width: 1920, height: 1080 }, durationSec: 12.5 });
+  });
+
+  it('treats a failed sidecar probe as unknown without logging the URL', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b.sidecarHttp = {
+      probe: async () => { throw new Error('Sidecar /probe: 422 probe failed: https://user:pw@iptv.example/x'); },
+    };
+    const warn = mock.method(console, 'warn', () => {});
+    try {
+      assert.equal(await b.probeStreamSource('https://user:pw@iptv.example/x', false), null);
+      assert.equal(warn.mock.callCount(), 1);
+      assert.doesNotMatch(String(warn.mock.calls[0].arguments[0]), /iptv\.example|pw/);
+    } finally {
+      warn.mock.restore();
+    }
+  });
+});

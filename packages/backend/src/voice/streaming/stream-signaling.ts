@@ -37,10 +37,13 @@ export interface SignalingMessage {
   stream?: ActiveStream;
 }
 
+let setupReturnCodeSeq = 0;
+
 export class StreamSignaling extends EventEmitter {
   private client: Ts3Client;
   private activeStreams: Map<string, ActiveStream> = new Map();
   private readonly onCommand = (parsed: any) => this.handleCommand(parsed);
+  private setupReturnCode: string | null = null;
 
   constructor(client: Ts3Client) {
     super();
@@ -65,6 +68,9 @@ export class StreamSignaling extends EventEmitter {
 
   private handleCommand(parsed: any): void {
     switch (parsed.name) {
+      case 'error':
+        this.handleReply(parsed);
+        break;
       case 'notifystreamstarted':
         this.handleStreamStarted(parsed);
         break;
@@ -232,6 +238,12 @@ export class StreamSignaling extends EventEmitter {
 
   // --- Outgoing commands ---
 
+  /**
+   * Ask the server to announce our stream. The command carries a return_code
+   * the server echoes on its `error` reply, so a refusal (for example 524,
+   * client is flooding) is reported as `setupRefused` instead of looking like
+   * no reply at all.
+   */
   sendSetupStream(params: {
     name?: string;
     type?: number;
@@ -241,6 +253,7 @@ export class StreamSignaling extends EventEmitter {
     viewerLimit?: number;
     audio?: boolean;
   } = {}): void {
+    this.setupReturnCode = `setupstream-${++setupReturnCodeSeq}`;
     this.client.sendCommand(buildCommand('setupstream', {
       name: params.name || 'Bot Stream',
       type: String(params.type ?? 3),
@@ -249,7 +262,18 @@ export class StreamSignaling extends EventEmitter {
       mode: String(params.mode ?? 1),
       viewer_limit: String(params.viewerLimit ?? 0),
       audio: params.audio === false ? '0' : '1',
+      return_code: this.setupReturnCode,
     }));
+  }
+
+  private handleReply(parsed: any): void {
+    const p = parsed.params ?? {};
+    if (!this.setupReturnCode || p.return_code !== this.setupReturnCode) return;
+    this.setupReturnCode = null;
+    const id = parseInt(p.id || '0', 10);
+    if (id !== 0) {
+      this.emit('setupRefused', { id, msg: p.msg || 'unknown error' });
+    }
   }
 
   sendJoinResponse(viewerClid: number, streamId: string, accept: boolean = true, offerSdp?: string): void {

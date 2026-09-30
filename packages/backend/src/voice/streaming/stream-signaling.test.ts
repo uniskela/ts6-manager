@@ -27,4 +27,37 @@ describe('stream signaling lifecycle', () => {
     assert.deepEqual(secondJoins, ['42']);
     assert.equal(client.listenerCount('command'), 1);
   });
+
+  it('reports a refused setupstream by its return_code', () => {
+    const client = new EventEmitter();
+    const sent: string[] = [];
+    (client as any).sendCommand = (cmd: string) => sent.push(cmd);
+    const signaling = new StreamSignaling(client as any);
+    const refusals: Array<{ id: number; msg: string }> = [];
+    signaling.on('setupRefused', (r: { id: number; msg: string }) => refusals.push(r));
+
+    signaling.sendSetupStream({ name: 'Bot Stream' });
+    const code = /return_code=(\S+)/.exec(sent[0])?.[1];
+    assert.ok(code, 'setupstream carries a return_code');
+
+    // A reply to some other command is not ours.
+    client.emit('command', { name: 'error', params: { id: '524', msg: 'client is flooding', return_code: 'other' } });
+    assert.equal(refusals.length, 0);
+
+    client.emit('command', { name: 'error', params: { id: '524', msg: 'client is flooding', return_code: code } });
+    assert.deepEqual(refusals, [{ id: 524, msg: 'client is flooding' }]);
+  });
+
+  it('treats an ok reply to setupstream as no refusal', () => {
+    const client = new EventEmitter();
+    const sent: string[] = [];
+    (client as any).sendCommand = (cmd: string) => sent.push(cmd);
+    const signaling = new StreamSignaling(client as any);
+    let refused = 0;
+    signaling.on('setupRefused', () => { refused++; });
+    signaling.sendSetupStream();
+    const code = /return_code=(\S+)/.exec(sent[0])?.[1];
+    client.emit('command', { name: 'error', params: { id: '0', msg: 'ok', return_code: code } });
+    assert.equal(refused, 0);
+  });
 });

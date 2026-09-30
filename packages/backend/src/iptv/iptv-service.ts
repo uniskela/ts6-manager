@@ -1,5 +1,6 @@
 import type { PrismaClient } from '../../generated/prisma/index.js';
-import { validateUrl } from '../utils/url-validator.js';
+import { validateUrl, parseLocalHostAllowlist, type LocalHostAllowlist } from '../utils/url-validator.js';
+import { loadIptvLocalHosts } from '../utils/app-settings.js';
 import { parseM3U, type ParsedChannel } from './m3u-parser.js';
 import {
   deleteIptvSourceFile,
@@ -44,7 +45,9 @@ export async function refreshPlaylist(prisma: PrismaClient, playlistId: number):
   if (!playlist) throw new Error('Playlist not found');
 
   try {
-    const content = await loadPlaylistContent(playlist);
+    // Admin-approved LAN hosts (Threadfin, xTeVe, a router proxy …); URL playlists are admin-configured.
+    const { allowlist } = parseLocalHostAllowlist(await loadIptvLocalHosts(prisma));
+    const content = await loadPlaylistContent(playlist, allowlist);
     const parsed = parseM3U(content);
     // Uploaded sources must produce channels; URL refresh may still clear channels
     // if a remote provider temporarily returns an empty list.
@@ -69,18 +72,21 @@ export async function refreshPlaylist(prisma: PrismaClient, playlistId: number):
   }
 }
 
-async function loadPlaylistContent(playlist: {
-  sourceType: string;
-  url: string | null;
-  sourcePath: string | null;
-}): Promise<string> {
+async function loadPlaylistContent(
+  playlist: {
+    sourceType: string;
+    url: string | null;
+    sourcePath: string | null;
+  },
+  localAllowlist: LocalHostAllowlist,
+): Promise<string> {
   const sourceType = (playlist.sourceType || 'url') as IptvSourceType;
   if (sourceType === 'upload') {
     if (!playlist.sourcePath) throw new Error('Uploaded playlist is missing its source file');
     return readIptvSourceFile(playlist.sourcePath);
   }
   if (!playlist.url) throw new Error('Playlist URL is missing');
-  return fetchPlaylist(playlist.url);
+  return fetchPlaylist(playlist.url, localAllowlist);
 }
 
 export async function createUploadedPlaylist(
@@ -263,7 +269,7 @@ async function replaceChannels(
   ]);
 }
 
-async function fetchPlaylist(url: string): Promise<string> {
+async function fetchPlaylist(url: string, localAllowlist: LocalHostAllowlist): Promise<string> {
   const MAX_REDIRECTS = 5;
   let current = url;
 
@@ -271,7 +277,8 @@ async function fetchPlaylist(url: string): Promise<string> {
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      const check = await validateUrl(current, { allowedProtocols: ['http:', 'https:'] });
+      // Every redirect hop is re-checked, so a redirect cannot leave the allowlist.
+      const check = await validateUrl(current, { allowedProtocols: ['http:', 'https:'], localAllowlist });
       if (!check.valid) throw new Error(`Playlist URL blocked: ${check.error}`);
 
       const res = await fetch(current, { signal: controller.signal, redirect: 'manual' });

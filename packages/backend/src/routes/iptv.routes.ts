@@ -14,6 +14,7 @@ import { MAX_IPTV_UPLOAD_BYTES } from '../iptv/iptv-storage.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { runMediaAudited } from './media-audit.js';
+import { loadIptvLocalHosts } from '../utils/app-settings.js';
 
 export const iptvRoutes: Router = Router();
 
@@ -279,14 +280,18 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
     const bot = manager.getBot(parseInt(botId));
     if (!bot) throw new AppError(404, 'Music bot not found or not running');
 
+    // Channels come from admin-configured playlists, so they may use the
+    // admin-approved LAN hosts (set server-side, never from the request body).
+    const localHosts = await loadIptvLocalHosts(prisma);
+
     // If already streaming, just switch the source; otherwise start a stream.
     if (bot.videoStreaming) {
-      await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(channel.url, undefined, parsed.options.sourceMode));
+      await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(channel.url, undefined, parsed.options.sourceMode, localHosts));
     } else {
       manager.assertVideoCanStart(bot, parsed.options.replaceSessionIds);
       await runMediaAudited(
         req, bot, 'media.video.start',
-        () => manager.startVideoStream(bot, channel.url, parsed.options),
+        () => manager.startVideoStream(bot, channel.url, { ...parsed.options, localHosts }),
         parsed.options.replaceSessionIds,
       );
     }

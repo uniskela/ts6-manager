@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import type { Readable } from 'stream';
-import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand } from './tslib/index.js';
+import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, CONNECTION_REFUSED_ERRORS } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
@@ -36,7 +36,7 @@ import {
   normalizeEncoderRequest,
   selectEncoder,
 } from './streaming/encoders.js';
-import { probeSource } from './streaming/source-probe.js';
+import { probeSource, type SourceProbe } from './streaming/source-probe.js';
 import {
   belowRealtimeWarning,
   channelEmptyStopDetail,
@@ -91,12 +91,23 @@ export interface VideoStreamStartOptions {
   replaceSessionIds?: string[];
   /** live / vod, or auto (detect when the source is probed). Local files are always `file`. */
   sourceMode?: VideoSourceModeRequest;
+  /**
+   * Admin-approved LAN hosts this source may use. Set only by the IPTV page
+   * and `!tv` for channels from admin-configured playlists; never from a
+   * request body or a URL a user typed.
+   */
+  localHosts?: string[];
 }
 
 /** How often a running stream's encode health is sampled from the sidecar. */
 const VIDEO_HEALTH_INTERVAL_MS = 10_000;
 
 /** Options for starting music; `replaceSessionIds` confirms stopping this bot's video. */
+/** TeamSpeak "client is flooding" (anti-flood block). */
+const FLOOD_ERROR_ID = 524;
+/** How long chat stays quiet after a 524; restarted by each further 524. */
+const FLOOD_HOLD_MS = 30_000;
+
 export interface MusicStartOptions {
   replaceSessionIds?: string[];
 }
@@ -166,6 +177,14 @@ export class VoiceBot extends EventEmitter {
   private _videoEncoder: VideoStreamEncoderInfo | null = null;
   private _videoStopping = false;
   private _videoStopPromise: Promise<void> | null = null;
+  /** LAN hosts the current video source may use (IPTV only; empty otherwise). */
+  private _videoLocalHosts: string[] = [];
+  /** Stream notifications last only as long as the connection: register once per connection. */
+  private _streamNotificationsRegistered = false;
+  /** TeamSpeak anti-flood (error 524): chat is held until this time. */
+  private _floodHoldUntil = 0;
+  private _floodHoldTimer: ReturnType<typeof setTimeout> | null = null;
+  private _floodIgnoredCommands = 0;
   private _lastVideoStop: MediaStopInfo | null = null;
   private _noViewerTimeoutSec = 0;
   private _noViewerTimer: ReturnType<typeof setTimeout> | null = null;
@@ -206,6 +225,7 @@ export class VoiceBot extends EventEmitter {
     });
 
     this.client.on('disconnected', () => {
+      this._streamNotificationsRegistered = false;
       this.stopIcyPolling();
       this.stopPlayback();
       this._status = 'stopped';
@@ -218,10 +238,12 @@ export class VoiceBot extends EventEmitter {
       const id = parseInt(params.id || '0');
       const msg = params.msg || 'unknown error';
       this._lastError = `TS3 error ${id}: ${msg}`;
-      // Fatal errors that should not trigger reconnect
-      // 3329 = banned, 1796 = max clients reached
-      // 2568 = insufficient client permissions — operation-level, not fatal
-      if (id === 3329 || id === 1796) {
+      // The server refused the connection (full, wrong password, banned):
+      // reconnecting cannot help.
+      if (id === FLOOD_ERROR_ID) {
+        this.startFloodHold();
+      }
+      if (CONNECTION_REFUSED_ERRORS.has(id)) {
         this._status = 'error';
         this.emit('statusChange', this._status);
         this.emit('fatalError', this._lastError);
@@ -317,8 +339,43 @@ export class VoiceBot extends EventEmitter {
     this.client.moveToChannel(channelId);
   }
 
-  /** Private (DM) text to a client. */
+  /**
+   * True while TeamSpeak's anti-flood block is likely active. Every command a
+   * blocked client sends is refused and extends the block, so chat replies and
+   * chat commands are set aside until it passes.
+   */
+  get floodHoldActive(): boolean {
+    return Date.now() < this._floodHoldUntil;
+  }
+
+  /** A chat command arrived during the flood hold and was ignored. */
+  noteIgnoredCommand(): void {
+    this._floodIgnoredCommands++;
+  }
+
+  private startFloodHold(): void {
+    this._floodHoldUntil = Date.now() + FLOOD_HOLD_MS;
+    if (this._floodHoldTimer) clearTimeout(this._floodHoldTimer);
+    this._floodHoldTimer = setTimeout(() => this.endFloodHold(), FLOOD_HOLD_MS);
+    this._floodHoldTimer.unref?.();
+    console.warn(`[VoiceBot ${this.config.id}] TeamSpeak reported flooding (524); holding chat for ${FLOOD_HOLD_MS / 1000}s`);
+  }
+
+  private endFloodHold(): void {
+    this._floodHoldTimer = null;
+    // Timers and Date.now() are separate clocks; end the hold explicitly so
+    // the notice below is never swallowed by the hold it announces.
+    this._floodHoldUntil = 0;
+    const ignored = this._floodIgnoredCommands;
+    this._floodIgnoredCommands = 0;
+    if (ignored > 0) {
+      this.sendChannelMessage('Commands came in too fast for the TeamSpeak server and were ignored. You can try again now.');
+    }
+  }
+
+  /** Private (DM) text to a client. Dropped during a flood hold. */
   sendTextMessage(targetClid: number, msg: string): void {
+    if (this.floodHoldActive) return;
     const cmd = buildCommand('sendtextmessage', {
       targetmode: 1,
       target: targetClid,
@@ -327,8 +384,9 @@ export class VoiceBot extends EventEmitter {
     this.client.sendCommand(cmd);
   }
 
-  /** Channel chat in the bot's current channel (visible to everyone there). */
+  /** Channel chat in the bot's current channel (visible to everyone there). Dropped during a flood hold. */
   sendChannelMessage(msg: string): void {
+    if (this.floodHoldActive) return;
     const cmd = buildCommand('sendtextmessage', {
       targetmode: 2,
       msg,
@@ -425,9 +483,14 @@ export class VoiceBot extends EventEmitter {
     maxHeight: number,
   ): Promise<{ path: string; loop: boolean; live?: boolean; durationSec: number | null }> {
     const maxDur = this.config.maxVideoDurationSec ?? 900;
-    const { path: filePath, durationSec, live } = await downloadVideoForStream(source, maxHeight, maxDur);
+    const { path: filePath, durationSec, live } = await downloadVideoForStream(source, maxHeight, maxDur, {
+      localHosts: this._videoLocalHosts,
+    });
     const isDownloadedTemp = filePath.includes('.stream-') && filePath.endsWith('.mp4');
 
+    // Clear any prior end-stop timer; applyVideoSource schedules a new one only
+    // after sendSourceToSidecar succeeds (avoids Auto probe + setup eating the
+    // 2s slack and stopping a short VOD before playback starts).
     this.clearVideoEndTimer();
     this._videoDurationSec = null;
     if (isDownloadedTemp) {
@@ -442,14 +505,13 @@ export class VoiceBot extends EventEmitter {
           `[VoiceBot ${this.config.id}] Could not probe video duration; auto-stop fallback in ${stopAfter}s`,
         );
       }
-      this.scheduleVideoEndStop(stopAfter);
       return { path: filePath, loop: false, live, durationSec };
     }
 
-    // Resolved remote VOD (e.g. Twitch) with a known duration: stop when it ends.
+    // Resolved remote VOD (e.g. Twitch) with a known duration — timer starts
+    // after the sidecar accepts the source in applyVideoSource.
     if (live === false && durationSec != null && durationSec > 0) {
       this._videoDurationSec = durationSec;
-      this.scheduleVideoEndStop(durationSec);
       return { path: filePath, loop: false, live, durationSec };
     }
 
@@ -550,6 +612,8 @@ export class VoiceBot extends EventEmitter {
       channelPassword: this.config.channelPassword,
     };
 
+    // A new connection has no server-side notification registrations yet.
+    this._streamNotificationsRegistered = false;
     await this.client.connect(opts);
     this._status = 'connected';
     this.emit('statusChange', this._status);
@@ -1479,6 +1543,7 @@ export class VoiceBot extends EventEmitter {
       loop,
       encoder: this._videoEncoder.selected,
       mode,
+      allowedHosts: this._videoLocalHosts,
     });
 
     this._videoSourceMode = mode;
@@ -1493,6 +1558,26 @@ export class VoiceBot extends EventEmitter {
   }
 
   /**
+   * Local files are probed here. Remote sources are probed by the sidecar,
+   * through the egress checks that also cover redirects and HLS segments.
+   */
+  private async probeStreamSource(path: string, isLocal: boolean): Promise<SourceProbe | null> {
+    if (isLocal) return probeSource(path);
+    const sidecar = this.sidecarHttp;
+    if (!sidecar) return null;
+    const allowedHosts = this._videoLocalHosts;
+    return probeSource(path, async (_args, timeoutMs) => {
+      try {
+        return await sidecar.probe(path, allowedHosts, timeoutMs + 2_000);
+      } catch (err: any) {
+        // The error can quote the source URL, which may carry credentials.
+        console.warn(`[VoiceBot ${this.config.id}] Source probe failed (${err?.name ?? 'error'})`);
+        return null;
+      }
+    });
+  }
+
+  /**
    * Resolve (download/validate) a source, pick its quality — Auto probes the
    * source resolution, fixed presets never probe — and hand it to the sidecar.
    */
@@ -1504,7 +1589,7 @@ export class VoiceBot extends EventEmitter {
     // Only Auto probes; the same probe tells live (no duration) from VOD.
     // Fixed presets skip the probe — use extractor live/VOD hints (Twitch) so
     // live streams are not mislabeled as VOD (#203 / Claude review on #204).
-    const probe = requested === 'auto' ? await probeSource(resolved.path) : null;
+    const probe = requested === 'auto' ? await this.probeStreamSource(resolved.path, isLocal) : null;
     const quality = resolveQuality(requested, limit, probe?.resolution ?? null);
     const hint =
       resolved.live === undefined
@@ -1515,6 +1600,17 @@ export class VoiceBot extends EventEmitter {
       console.log(`[VoiceBot ${this.config.id}] Auto quality → ${quality.actual}: ${quality.note}`);
     }
     await this.sendSourceToSidecar(resolved.path, resolved.loop && mode === 'file', quality, mode);
+
+    // Pass-through / remote VOD: drop any prior YouTube download temp so a later
+    // volume change cannot restart the old file. Keep temp for downloaded clips.
+    const isDownloadedTemp = resolved.path.includes('.stream-') && resolved.path.endsWith('.mp4');
+    if (!isDownloadedTemp) {
+      this.cleanupVideoTempFile();
+    }
+    // Start the end-stop clock only after the sidecar accepted the source.
+    if (!resolved.loop && this._videoDurationSec != null) {
+      this.scheduleVideoEndStop(this._videoDurationSec);
+    }
   }
 
   /** Start video streaming to TS6 via WebRTC */
@@ -1565,6 +1661,7 @@ export class VoiceBot extends EventEmitter {
       ? Math.max(0, Math.floor(timeoutOverride))
       : settings.noViewerTimeoutSec;
     this._videoSourceModeRequest = options.sourceMode ?? 'auto';
+    this._videoLocalHosts = options.localHosts ?? [];
     this._videoRequestedFramerate = options.framerate && options.framerate > 0 ? options.framerate : null;
     this._videoRequestedBitrate = options.bitrate?.trim() || null;
 
@@ -1641,19 +1738,35 @@ export class VoiceBot extends EventEmitter {
     // Setup stream signaling on the TS3 client
     this.signaling = new StreamSignaling(this.client);
     this.setupSignalingListeners();
-    this.signaling.registerStreamNotifications();
+    if (!this._streamNotificationsRegistered) {
+      this.signaling.registerStreamNotifications();
+      this._streamNotificationsRegistered = true;
+    }
 
-    // Wait for server to confirm stream
+    // Wait for the server to announce the stream, or to refuse it.
+    const signaling = this.signaling;
     const streamPromise = new Promise<ActiveStream>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('setupstream timeout')), 10000);
+      const timeout = setTimeout(() => {
+        console.warn(`[VoiceBot ${this.config.id}] No reply to setupstream within 10s`);
+        reject(new Error('TeamSpeak did not answer the stream request within 10 seconds'));
+      }, 10000);
       const handler = (stream: ActiveStream) => {
         if (stream.clid === this.client.getClientId()) {
           clearTimeout(timeout);
-          this.signaling!.removeListener('streamStarted', handler);
+          signaling.removeListener('streamStarted', handler);
+          signaling.removeListener('setupRefused', refused);
           resolve(stream);
         }
       };
-      this.signaling!.on('streamStarted', handler);
+      const refused = ({ id, msg }: { id: number; msg: string }) => {
+        clearTimeout(timeout);
+        signaling.removeListener('streamStarted', handler);
+        signaling.removeListener('setupRefused', refused);
+        console.warn(`[VoiceBot ${this.config.id}] setupstream refused by the server: ${msg} (error ${id})`);
+        reject(new Error(`TeamSpeak refused the stream: ${msg} (error ${id})`));
+      };
+      signaling.on('streamStarted', handler);
+      signaling.on('setupRefused', refused);
     });
 
     // Send setupstream command
@@ -1695,6 +1808,7 @@ export class VoiceBot extends EventEmitter {
       }
       this._activeStreamId = null;
       this._videoSource = null;
+      this._videoLocalHosts = [];
       this._videoStreaming = false;
       this._videoStartedAt = null;
       this._videoQuality = null;
@@ -1775,6 +1889,7 @@ export class VoiceBot extends EventEmitter {
 
       this._activeStreamId = null;
       this._videoSource = null;
+      this._videoLocalHosts = [];
       this._videoStreaming = false;
       this._videoStartedAt = null;
       this._videoSessionId = null;
@@ -1794,12 +1909,19 @@ export class VoiceBot extends EventEmitter {
   }
 
   /** Change video source while streaming (keeps the stream's quality request and encoder). */
-  async setVideoSource(source: string, volume?: number, sourceMode?: VideoSourceModeRequest): Promise<void> {
+  async setVideoSource(
+    source: string,
+    volume?: number,
+    sourceMode?: VideoSourceModeRequest,
+    localHosts: string[] = [],
+  ): Promise<void> {
     if (!this._videoStreaming || !this.sidecarHttp) {
       throw new Error('No active video stream');
     }
-    // A new source is a new kind of input: default back to detection.
+    // A new source is a new kind of input: default back to detection, and it
+    // only gets the LAN allowance its own caller grants.
     this._videoSourceModeRequest = sourceMode ?? 'auto';
+    this._videoLocalHosts = localHosts;
     if (volume != null) {
       this._videoStreamVolume = Math.max(0, Math.min(100, volume));
     }

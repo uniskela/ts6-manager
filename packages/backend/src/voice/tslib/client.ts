@@ -44,6 +44,15 @@ export const enum PacketType {
 }
 
 // Packet flags
+/**
+ * Errors that mean the server refused the connection itself, so retrying
+ * cannot help. Seen on TeamSpeak 6 (6.0.0-beta13.1): 1027 server full,
+ * 1028 wrong server password, 3329 banned. 1796 is kept for older servers.
+ * 2568 (insufficient client permissions) belongs to a single command and is
+ * deliberately not here.
+ */
+export const CONNECTION_REFUSED_ERRORS: ReadonlySet<number> = new Set([1027, 1028, 1796, 3329]);
+
 const FLAG_FRAGMENTED = 0x10;
 const FLAG_NEWPROTOCOL = 0x20;
 const FLAG_COMPRESSED = 0x40;
@@ -906,10 +915,9 @@ export class Ts3Client extends EventEmitter {
       }
       case "error": {
         this.emit("ts3error", parsed.params);
-        // Fatal TS3 errors: reject connect promise and disconnect immediately
-        // 2568 = insufficient client permissions — not fatal (uniplayer1/ts6-manager)
+        // Connection refusals: reject connect promise and disconnect immediately
         const errId = parseInt(parsed.params.id || "0");
-        if (errId === 3329 || errId === 1796) {
+        if (CONNECTION_REFUSED_ERRORS.has(errId)) {
           const errMsg = parsed.params.msg || "unknown error";
           this.emit("error", new Error(`TS3 error ${errId}: ${errMsg}`));
           this.disconnect();

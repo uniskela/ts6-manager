@@ -22,6 +22,9 @@ import {
   parseServerOverrides,
   parseVideoStreamingUpdate,
   videoServerOverridesKey,
+  IPTV_LOCAL_HOSTS_KEY,
+  loadIptvLocalHosts,
+  parseIptvLocalHostsUpdate,
 } from '../utils/app-settings.js';
 import { SidecarClient } from '../voice/streaming/sidecar-client.js';
 import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
@@ -242,6 +245,37 @@ settingsRoutes.put('/video-streaming', requireAdmin, async (req: Request, res: R
     );
 
     res.json(await loadVideoStreamingSettings(prisma));
+  } catch (err) { next(err); }
+});
+
+// GET /api/settings/iptv-network — LAN hosts allowed for admin-configured IPTV sources.
+settingsRoutes.get('/iptv-network', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    res.json({ allowedLocalHosts: await loadIptvLocalHosts(req.app.locals.prisma) });
+  } catch (err) { next(err); }
+});
+
+// PUT /api/settings/iptv-network — replace the allowed local IPTV hosts.
+settingsRoutes.put('/iptv-network', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const parsed = parseIptvLocalHostsUpdate(req.body);
+    if (!parsed.ok) throw new AppError(400, parsed.error);
+    const value = JSON.stringify(parsed.value);
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.iptv_network_update',
+        target: { type: 'settings', id: 'iptv-network' },
+      },
+      (tx) => tx.appSetting.upsert({
+        where: { key: IPTV_LOCAL_HOSTS_KEY },
+        create: { key: IPTV_LOCAL_HOSTS_KEY, value },
+        update: { value },
+      }),
+    );
+    res.json({ allowedLocalHosts: parsed.value });
   } catch (err) { next(err); }
 });
 

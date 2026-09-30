@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
-import { validateUrl } from '../../utils/url-validator.js';
+import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
@@ -265,6 +265,7 @@ export async function downloadVideoForStream(
   url: string,
   maxHeight: number = 720,
   maxDurationSec: number = 900,
+  options: { localHosts?: string[] } = {},
 ): Promise<DownloadedStreamVideo> {
   rejectYtDlpOptionUrl(url);
 
@@ -276,7 +277,10 @@ export async function downloadVideoForStream(
     return { path: resolvePathUnderMusicDir(url), durationSec: null };
   }
 
-  const check = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
+  const localAllowlist = options.localHosts?.length
+    ? parseLocalHostAllowlist(options.localHosts).allowlist
+    : undefined;
+  const check = await validateUrl(url, { allowedProtocols: ['http:', 'https:'], localAllowlist });
   if (!check.valid) {
     throw new Error(`Video source blocked: ${check.error}`);
   }
@@ -286,6 +290,8 @@ export async function downloadVideoForStream(
   }
 
   if (!isYoutubeStreamHost(url)) {
+    // Redirects and HLS segment URLs are checked by the sidecar's egress
+    // proxy, with the same localHosts allowance (see docs/video-streaming.md).
     return { path: url, durationSec: null };
   }
 
