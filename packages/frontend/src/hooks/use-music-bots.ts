@@ -96,8 +96,8 @@ export function usePlaySong() {
 export function usePlayUrl() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ botId, url }: { botId: number; url: string }) =>
-      musicBotsApi.playUrl(botId, url),
+    mutationFn: ({ botId, url, enqueue }: { botId: number; url: string; enqueue?: boolean }) =>
+      musicBotsApi.playUrl(botId, url, { enqueue }),
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
   });
 }

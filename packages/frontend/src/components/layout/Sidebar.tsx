@@ -3,7 +3,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
-  ScrollText, Settings, Bot, LayoutGrid, Cpu, ChevronDown, ChevronLeft, ChevronRight, Music, ListMusic, Tv, Github, BookOpen, Menu,
+  ScrollText, Settings, Bot, LayoutGrid, Cpu, ChevronDown, ChevronLeft, ChevronRight, Music, Tv, Github, BookOpen, Menu,
   ClipboardList, NotebookPen,
 
   type LucideIcon,
@@ -81,7 +81,6 @@ const navSections: NavSection[] = [
       { to: '/activity-journal', icon: NotebookPen, label: 'Activity Journal', adminOnly: true },
 
       { to: '/instance', icon: Cpu, label: 'Instance', adminOnly: true },
-      { to: '/music-requests', icon: ListMusic, label: 'Music Request History', adminOnly: true },
     ],
   },
   {

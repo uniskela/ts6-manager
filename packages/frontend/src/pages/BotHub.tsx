@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 
 const SECTIONS = [
   { to: '/bots', icon: Bot, title: 'Bot Flows', text: 'Event-driven automations and chat commands.' },
-  { to: '/media-bots', icon: Music, title: 'Media Bots', text: 'Bots, queues, library, playlists and radio.' },
+  { to: '/media-bots', icon: Music, title: 'Media Bots', text: 'Bots, queues, library, playlists, radio, and !play requests.' },
   { to: '/media-bots?tab=video', icon: Video, title: 'Video streaming', text: 'Stream a URL or file into a channel; quality and encoder defaults.' },
   { to: '/iptv', icon: Tv, title: 'IPTV', text: 'Playlists and live channels streamed through a bot.' },
 ] as const;

@@ -17,7 +17,6 @@ const destinations = [
   'Messages',
   'Server Logs',
   'Instance',
-  'Music Request History',
   'Bot Hub',
   'Bot Flows',
   'Media Bots',
