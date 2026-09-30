@@ -2,6 +2,24 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.9.0](https://github.com/uniskela/ts6-manager/compare/v1.8.5...v1.9.0) (2026-09-30)
+
+
+### Features
+
+* 1.9.0 media — Bot Hub, single media session, [#150](https://github.com/uniskela/ts6-manager/issues/150) streaming, [#72](https://github.com/uniskela/ts6-manager/issues/72) diagnostics ([#192](https://github.com/uniskela/ts6-manager/issues/192)) ([cb8f9d8](https://github.com/uniskela/ts6-manager/commit/cb8f9d8494a077d16aa2fa7a3bf07964db26d625))
+* allow LAN IPTV hosts and harden stream start (ICE, refusals, flood hold) ([#199](https://github.com/uniskela/ts6-manager/issues/199)) ([32ff88a](https://github.com/uniskela/ts6-manager/commit/32ff88acea1442fdb03cdc89d364489152dc1450))
+* Media Bot UX and encode profiles ([#209](https://github.com/uniskela/ts6-manager/issues/209)) ([407ac97](https://github.com/uniskela/ts6-manager/commit/407ac97f02041d89a66c34842a847a122066fc7a))
+* Media Bots Requests tab for !play history ([#211](https://github.com/uniskela/ts6-manager/issues/211)) ([ca35af6](https://github.com/uniskela/ts6-manager/commit/ca35af6f60cf2a3ece25443538f888681f280f91))
+
+
+### Bug Fixes
+
+* clearer stream errors and media-start Bot Hub toast ([#214](https://github.com/uniskela/ts6-manager/issues/214)) ([bcc8a68](https://github.com/uniskela/ts6-manager/commit/bcc8a6868d0457b9ceb8621d18c2c6bc20629d86))
+* publish WebRTC UDP mux for Docker browser preview ([#208](https://github.com/uniskela/ts6-manager/issues/208)) ([7f181be](https://github.com/uniskela/ts6-manager/commit/7f181be72ea9cc9daa8733a0911b095f6e36f655))
+* say media bots in Bot Hub and Media Bots copy ([#213](https://github.com/uniskela/ts6-manager/issues/213)) ([384beba](https://github.com/uniskela/ts6-manager/commit/384beba036d8c16008cc2c8971061ad2cff31e48))
+* Twitch live URLs ([#203](https://github.com/uniskela/ts6-manager/issues/203)) and browser preview ICE ([#202](https://github.com/uniskela/ts6-manager/issues/202)) ([#204](https://github.com/uniskela/ts6-manager/issues/204)) ([1d5c220](https://github.com/uniskela/ts6-manager/commit/1d5c2206684f715b3c15bfe1bebfd026091cec3c))
+
 ## [1.8.5](https://github.com/uniskela/ts6-manager/compare/v1.8.4...v1.8.5) (2026-09-29)
 
 
