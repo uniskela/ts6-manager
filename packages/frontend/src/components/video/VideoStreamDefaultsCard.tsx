@@ -254,7 +254,10 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
                   value={draft.cpuUsed}
                   onChange={(e) => setAdvanced('cpuUsed', Math.min(8, Math.max(0, Math.floor(Number(e.target.value) || 0))))}
                 />
-                <p className="text-xs text-muted-foreground">Higher is faster / softer (software VP8/VP9). Hardware ignores this.</p>
+                <p className="text-xs text-muted-foreground">
+                  0 = use sidecar default (VIDEO_CPU_USED / VIDEO_VP9_CPU_USED).
+                  1–8 override software VP8/VP9 (higher is faster / softer). Hardware ignores this.
+                </p>
               </div>
 
               <div className="space-y-2">

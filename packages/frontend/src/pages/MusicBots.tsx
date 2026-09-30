@@ -285,17 +285,23 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlayAction }: {
   const isStreaming = state?.isStreaming ?? false;
 
   const handlePlayAction = (action: MediaPlayAction) => {
-    if (action === 'song') {
+    if (action === 'song' || action === 'playlist') {
       onPlayAction(action);
       return;
     }
     if (action === 'iptv') {
-      navigate('/iptv');
+      const params = new URLSearchParams({ bot: String(bot.id) });
+      if (bot.serverConfigId) params.set('server', String(bot.serverConfigId));
+      navigate(`/iptv?${params}`);
       onPlayAction(action);
       return;
     }
-    const tab = action === 'playlist' ? 'playlists' : action;
-    navigate(`/media-bots?tab=${tab}&bot=${bot.id}`);
+    const params = new URLSearchParams({
+      tab: action,
+      bot: String(bot.id),
+    });
+    if (bot.serverConfigId) params.set('server', String(bot.serverConfigId));
+    navigate(`/media-bots?${params}`);
     onPlayAction(action);
   };
 
@@ -537,7 +543,7 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlayAction }: {
 
 // ─── Play Song Dialog ─────────────────────────────────────────────────────────
 
-function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLoadPlaylist, mode = 'play' }: {
+function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLoadPlaylist, mode = 'play', initialTab = 'songs' }: {
   botId: number | null;
   onClose: () => void;
   onPlaySong: (songId: number) => void;
@@ -546,6 +552,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
   onLoadPlaylist: (playlistId: number) => void;
   /** play = Bots tab (play/queue/load); queue = Queue tab (enqueue / append only). */
   mode?: 'play' | 'queue';
+  initialTab?: 'songs' | 'playlists' | 'history';
 }) {
   const { selectedConfigId } = useServerStore();
   const { data: servers } = useServers();
@@ -558,8 +565,12 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
     queryFn: () => musicRequestsApi.list(configId!),
     enabled: !!configId && mode === 'play',
   });
-  const [tab, setTab] = useState<'songs' | 'playlists' | 'history'>('songs');
+  const [tab, setTab] = useState<'songs' | 'playlists' | 'history'>(initialTab);
   const [filter, setFilter] = useState('');
+
+  useEffect(() => {
+    if (botId !== null) setTab(initialTab);
+  }, [botId, initialTab]);
 
   const serverList = Array.isArray(servers) ? servers : [];
   const songList = (Array.isArray(songs) ? songs : []) as SongInfo[];
@@ -725,6 +736,7 @@ function BotsTab() {
   const [editBot, setEditBot] = useState<MusicBotSummary | null>(null);
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [showPlayDialog, setShowPlayDialog] = useState<number | null>(null);
+  const [playDialogTab, setPlayDialogTab] = useState<'songs' | 'playlists'>('songs');
 
   // Create form
   const [form, setForm] = useState({
@@ -878,7 +890,12 @@ function BotsTab() {
                 setEditBot(bot);
               }}
               onDelete={() => setDeleteId(bot.id)}
-              onPlayAction={(action) => { if (action === 'song') setShowPlayDialog(bot.id); }}
+              onPlayAction={(action) => {
+                if (action === 'song' || action === 'playlist') {
+                  setPlayDialogTab(action === 'playlist' ? 'playlists' : 'songs');
+                  setShowPlayDialog(bot.id);
+                }
+              }}
             />
           ))}
         </div>
@@ -975,6 +992,7 @@ function BotsTab() {
       {/* Play Song Dialog */}
       <PlaySongDialog
         botId={showPlayDialog}
+        initialTab={playDialogTab}
         onClose={() => setShowPlayDialog(null)}
         onPlaySong={(songId) => {
           if (showPlayDialog) {
@@ -2970,9 +2988,12 @@ function CommandsTab() {
 // ─── Radio Tab ───────────────────────────────────────────────────────────────
 
 function RadioTab() {
-  const { selectedConfigId } = useServerStore();
+  const [searchParams] = useSearchParams();
+  const linkedBot = Number(searchParams.get('bot')) || null;
+  const linkedServer = Number(searchParams.get('server')) || null;
+  const { selectedConfigId, setServer } = useServerStore();
   const { data: servers } = useServers();
-  const [serverId, setServerId] = useState<number | null>(selectedConfigId);
+  const [serverId, setServerId] = useState<number | null>(linkedServer || selectedConfigId);
   const configId = serverId || selectedConfigId;
 
   const { data: stations, isLoading } = useRadioStations(configId);
@@ -2987,7 +3008,8 @@ function RadioTab() {
     (b: MusicBotSummary) => b.status !== 'stopped' && b.status !== 'error'
   );
 
-  const [selectedBotId, setSelectedBotId] = useState<number | null>(null);
+  const [selectedBotId, setSelectedBotId] = useState<number | null>(linkedBot);
+  const appliedLinkedBot = useRef<number | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
@@ -2996,13 +3018,34 @@ function RadioTab() {
   const serverList = Array.isArray(servers) ? servers : [];
   const stationList = (Array.isArray(stations) ? stations : []) as RadioStationInfo[];
   const presetList = (Array.isArray(presets) ? presets : []) as RadioPreset[];
+  const runningBotIds = runningBots.map((b: MusicBotSummary) => b.id).join(',');
 
-  // Auto-select first running bot
   useEffect(() => {
-    if (!selectedBotId && runningBots.length > 0) {
-      setSelectedBotId(runningBots[0].id);
+    if (linkedServer) {
+      setServerId(linkedServer);
+      setServer(linkedServer);
     }
-  }, [runningBots, selectedBotId]);
+  }, [linkedServer, setServer]);
+
+  // Apply ?bot= once when that bot is running; do not fight later manual selection.
+  useEffect(() => {
+    if (!linkedBot) {
+      appliedLinkedBot.current = null;
+      return;
+    }
+    if (linkedBot === appliedLinkedBot.current) return;
+    if (runningBots.some((b: MusicBotSummary) => b.id === linkedBot)) {
+      setSelectedBotId(linkedBot);
+      appliedLinkedBot.current = linkedBot;
+    }
+  }, [linkedBot, runningBotIds, runningBots]);
+
+  useEffect(() => {
+    setSelectedBotId((current) => {
+      if (current && runningBots.some((b: MusicBotSummary) => b.id === current)) return current;
+      return runningBots[0]?.id ?? null;
+    });
+  }, [runningBotIds, runningBots]);
 
   const handleAddStation = () => {
     if (!configId || !addForm.name || !addForm.url) return;

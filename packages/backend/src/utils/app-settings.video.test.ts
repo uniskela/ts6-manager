@@ -157,6 +157,15 @@ describe('per-server video defaults', () => {
     );
   });
 
+  it('preserves a named encodeProfile when the override matches that profile', () => {
+    assert.deepEqual(
+      parseServerOverrides(
+        '{"encodeProfile":"performance","autoMaxPreset":"720p","maxBitrateKbps":2500,"cpuUsed":6}',
+      ),
+      { encodeProfile: 'performance', autoMaxPreset: '720p', maxBitrateKbps: 2500, cpuUsed: 6 },
+    );
+  });
+
   it('merges a server\'s overrides over the global defaults', async () => {
     const prisma = prismaWith({
       [VIDEO_NO_VIEWER_TIMEOUT_KEY]: '600',

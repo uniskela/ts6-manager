@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   useIptvPlaylists, useCreateIptvPlaylist, useUploadIptvPlaylist, useReplaceIptvPlaylistFile,
   useDeleteIptvPlaylist, useRefreshIptvPlaylist,
@@ -50,7 +51,11 @@ function formatFileSize(bytes: number): string {
 
 // ─── Channel browser ─────────────────────────────────────────────────────────
 
-function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bots: any[] }) {
+function ChannelBrowser({ playlist, bots, preferredBotId }: {
+  playlist: IptvPlaylistSummary;
+  bots: any[];
+  preferredBotId?: number | null;
+}) {
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [group, setGroup] = useState('');
@@ -78,12 +83,32 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
   const eligibleBots = bots.filter(
     (b) => b.serverConfigId === playlist.serverConfigId && b.status !== 'stopped' && b.status !== 'error',
   );
+  const eligibleBotIds = eligibleBots.map((b) => b.id).join(',');
   const [botId, setBotId] = useState<string>('');
+  const appliedPreferredBot = useRef<number | null>(null);
   const [preset, setPreset] = useState('720p');
 
   useEffect(() => {
-    if (!botId && eligibleBots.length > 0) setBotId(String(eligibleBots[0].id));
-  }, [eligibleBots, botId]);
+    if (!preferredBotId) {
+      appliedPreferredBot.current = null;
+    }
+  }, [preferredBotId]);
+
+  useEffect(() => {
+    if (
+      preferredBotId
+      && preferredBotId !== appliedPreferredBot.current
+      && eligibleBots.some((b) => b.id === preferredBotId)
+    ) {
+      setBotId(String(preferredBotId));
+      appliedPreferredBot.current = preferredBotId;
+      return;
+    }
+    setBotId((current) => {
+      if (current && eligibleBots.some((b) => b.id === Number(current))) return current;
+      return eligibleBots[0] ? String(eligibleBots[0].id) : '';
+    });
+  }, [preferredBotId, eligibleBotIds, eligibleBots, playlist.serverConfigId]);
 
   const channels: IptvChannelInfo[] = data?.channels ?? [];
   const total = data?.total ?? 0;
@@ -423,15 +448,22 @@ function ReplaceFileDialog({
 // ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function Iptv() {
+  const [searchParams] = useSearchParams();
+  const linkedBot = Number(searchParams.get('bot')) || null;
+  const linkedServer = Number(searchParams.get('server')) || null;
   const { data: servers } = useServers();
   const serverList = Array.isArray(servers) ? servers : [];
   const { selectedConfigId, setServer } = useServerStore();
   const isAdmin = useAuthStore((state) => state.isAdmin());
 
-  // Default to the first server if none selected.
+  // Prefer ?server= from Media Bot Play, else default to the first server.
   useEffect(() => {
+    if (linkedServer) {
+      setServer(linkedServer);
+      return;
+    }
     if (!selectedConfigId && serverList.length > 0) setServer(serverList[0].id);
-  }, [serverList, selectedConfigId, setServer]);
+  }, [serverList, selectedConfigId, setServer, linkedServer]);
 
   const { data: playlists, isLoading, error, refetch, isFetching } = useIptvPlaylists(selectedConfigId ?? undefined);
   const { data: bots } = useMusicBots();
@@ -588,7 +620,7 @@ export default function Iptv() {
                 <CardTitle className="text-sm flex items-center gap-2"><Radio className="h-4 w-4" /> {selectedPlaylist.name} — Channels</CardTitle>
               </CardHeader>
               <CardContent>
-                <ChannelBrowser playlist={selectedPlaylist} bots={botList} />
+                <ChannelBrowser playlist={selectedPlaylist} bots={botList} preferredBotId={linkedBot} />
               </CardContent>
             </Card>
           )}

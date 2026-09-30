@@ -46,7 +46,7 @@ function media(now: number) {
 
 test('Bot Hub shows each bot\'s active media session and links to its sections', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
-  await page.route('**/api/media-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
   await signIn(page, request);
 
   await page.goto('/bot-hub');

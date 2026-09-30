@@ -21,8 +21,9 @@ export function isMediaPlayAction(value: unknown): value is MediaPlayAction {
 }
 
 export function getLastPlayAction(botId: number): MediaPlayAction {
-  if (typeof localStorage === 'undefined') return 'song';
   try {
+    // typeof can throw SecurityError when storage access is denied by policy.
+    if (typeof localStorage === 'undefined') return 'song';
     const raw = localStorage.getItem(`${STORAGE_PREFIX}${botId}`);
     return isMediaPlayAction(raw) ? raw : 'song';
   } catch {
@@ -31,10 +32,10 @@ export function getLastPlayAction(botId: number): MediaPlayAction {
 }
 
 export function setLastPlayAction(botId: number, action: MediaPlayAction): void {
-  if (typeof localStorage === 'undefined') return;
   try {
+    if (typeof localStorage === 'undefined') return;
     localStorage.setItem(`${STORAGE_PREFIX}${botId}`, action);
   } catch {
-    /* quota / private mode */
+    /* quota / private mode / SecurityError */
   }
 }

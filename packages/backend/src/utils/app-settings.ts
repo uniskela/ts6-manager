@@ -158,25 +158,31 @@ export function parseServerOverrides(raw: unknown): Partial<VideoStreamSettings>
     try { obj = JSON.parse(raw); } catch { return {}; }
   }
   if (!obj || typeof obj !== 'object') return {};
-  const out: Partial<VideoStreamSettings> = {};
+  // Validate fields one-by-one (ignore profile side effects), then normalize together
+  // so a complete named profile stays named instead of collapsing to custom.
+  const accepted: Record<string, unknown> = {};
   for (const field of [
     'noViewerTimeoutSec', 'autoMaxPreset', 'defaultEncoder', 'preferHardware',
     'maxBitrateKbps', 'encodeProfile', 'cpuUsed',
   ] as const) {
     const value = (obj as Record<string, unknown>)[field];
     if (value === undefined) continue;
-    const check = parseVideoStreamingUpdate({ [field]: value });
-    if (!check.ok) continue;
-    for (const row of check.rows) {
-      if (row.key === VIDEO_NO_VIEWER_TIMEOUT_KEY) out.noViewerTimeoutSec = Number(row.value);
-      else if (row.key === VIDEO_AUTO_MAX_PRESET_KEY) out.autoMaxPreset = row.value as VideoStreamPresetKey;
-      else if (row.key === VIDEO_DEFAULT_ENCODER_KEY) {
-        out.defaultEncoder = row.value as VideoStreamSettings['defaultEncoder'];
-      } else if (row.key === VIDEO_PREFER_HARDWARE_KEY) out.preferHardware = row.value === 'true';
-      else if (row.key === VIDEO_MAX_BITRATE_KEY) out.maxBitrateKbps = Number(row.value);
-      else if (row.key === VIDEO_ENCODE_PROFILE_KEY) out.encodeProfile = row.value as VideoEncodeProfile;
-      else if (row.key === VIDEO_CPU_USED_KEY) out.cpuUsed = Number(row.value);
-    }
+    if (!parseVideoStreamingUpdate({ [field]: value }).ok) continue;
+    accepted[field] = value;
+  }
+  if (Object.keys(accepted).length === 0) return {};
+  const check = parseVideoStreamingUpdate(accepted);
+  if (!check.ok) return {};
+  const out: Partial<VideoStreamSettings> = {};
+  for (const row of check.rows) {
+    if (row.key === VIDEO_NO_VIEWER_TIMEOUT_KEY) out.noViewerTimeoutSec = Number(row.value);
+    else if (row.key === VIDEO_AUTO_MAX_PRESET_KEY) out.autoMaxPreset = row.value as VideoStreamPresetKey;
+    else if (row.key === VIDEO_DEFAULT_ENCODER_KEY) {
+      out.defaultEncoder = row.value as VideoStreamSettings['defaultEncoder'];
+    } else if (row.key === VIDEO_PREFER_HARDWARE_KEY) out.preferHardware = row.value === 'true';
+    else if (row.key === VIDEO_MAX_BITRATE_KEY) out.maxBitrateKbps = Number(row.value);
+    else if (row.key === VIDEO_ENCODE_PROFILE_KEY) out.encodeProfile = row.value as VideoEncodeProfile;
+    else if (row.key === VIDEO_CPU_USED_KEY) out.cpuUsed = Number(row.value);
   }
   return out;
 }
