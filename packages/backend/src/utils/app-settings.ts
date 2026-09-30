@@ -1,8 +1,18 @@
 import { parseLocalHostAllowlist } from './url-validator.js';
 import type { PrismaClient } from '../../generated/prisma/index.js';
-import type { VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
+import type { VideoEncodeProfile, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
 import { DEFAULT_AUTO_MAX_PRESET, isPresetKey } from '../voice/streaming/types.js';
 import { isEncoderId, normalizeEncoderRequest } from '../voice/streaming/encoders.js';
+import {
+  DEFAULT_ENCODE_PROFILE,
+  ENCODE_PROFILE_PRESETS,
+  MAX_CPU_USED,
+  MIN_CPU_USED,
+  applyEncodeProfile,
+  inferEncodeProfile,
+  isEncodeProfile,
+  isNamedEncodeProfile,
+} from '../voice/streaming/encode-profiles.js';
 
 export const MAX_VIDEO_DURATION_KEY = 'max_video_duration';
 export const MAX_PLAYLIST_IMPORT_KEY = 'max_playlist_import';
@@ -36,6 +46,8 @@ export const VIDEO_AUTO_MAX_PRESET_KEY = 'video_auto_max_preset';
 export const VIDEO_DEFAULT_ENCODER_KEY = 'video_default_encoder';
 export const VIDEO_PREFER_HARDWARE_KEY = 'video_prefer_hardware';
 export const VIDEO_MAX_BITRATE_KEY = 'video_max_bitrate_kbps';
+export const VIDEO_ENCODE_PROFILE_KEY = 'video_encode_profile';
+export const VIDEO_CPU_USED_KEY = 'video_cpu_used';
 
 export const VIDEO_STREAMING_SETTING_KEYS = [
   VIDEO_NO_VIEWER_TIMEOUT_KEY,
@@ -43,6 +55,8 @@ export const VIDEO_STREAMING_SETTING_KEYS = [
   VIDEO_DEFAULT_ENCODER_KEY,
   VIDEO_PREFER_HARDWARE_KEY,
   VIDEO_MAX_BITRATE_KEY,
+  VIDEO_ENCODE_PROFILE_KEY,
+  VIDEO_CPU_USED_KEY,
 ] as const;
 
 /** Longest accepted no-viewer timeout (24 h). */
@@ -70,16 +84,35 @@ function parseBool(raw: string | undefined): boolean | null {
 /**
  * Environment defaults, used when no admin value is stored:
  * VIDEO_NO_VIEWER_TIMEOUT_SECONDS, VIDEO_AUTO_MAX_PRESET, VIDEO_ENCODER,
- * VIDEO_PREFER_HARDWARE, VIDEO_MAX_BITRATE_KBPS.
+ * VIDEO_PREFER_HARDWARE, VIDEO_MAX_BITRATE_KBPS, VIDEO_ENCODE_PROFILE, VIDEO_CPU_USED.
+ * When encode knobs are unset, Balanced profile values apply.
  */
 export function videoStreamingDefaults(env: NodeJS.ProcessEnv = process.env): VideoStreamSettings {
+  const balanced = ENCODE_PROFILE_PRESETS[DEFAULT_ENCODE_PROFILE];
   const autoMax = env.VIDEO_AUTO_MAX_PRESET;
+  const profileRaw = env.VIDEO_ENCODE_PROFILE;
+  const namedFromEnv = isNamedEncodeProfile(profileRaw) ? profileRaw : null;
+  const fromNamed = namedFromEnv ? applyEncodeProfile(namedFromEnv) : null;
+  const cpuUsed =
+    parseBoundedInt(env.VIDEO_CPU_USED, MAX_CPU_USED) ?? fromNamed?.cpuUsed ?? balanced.cpuUsed;
+  const maxBitrateKbps =
+    parseBoundedInt(env.VIDEO_MAX_BITRATE_KBPS, MAX_BITRATE_CLAMP_KBPS)
+    ?? fromNamed?.maxBitrateKbps
+    ?? balanced.maxBitrateKbps;
+  const autoMaxPreset: VideoStreamPresetKey = isPresetKey(autoMax)
+    ? autoMax
+    : (fromNamed?.autoMaxPreset ?? (isPresetKey(DEFAULT_AUTO_MAX_PRESET) ? DEFAULT_AUTO_MAX_PRESET : balanced.autoMaxPreset));
+  const encodeProfile: VideoEncodeProfile = isEncodeProfile(profileRaw)
+    ? profileRaw
+    : inferEncodeProfile({ autoMaxPreset, maxBitrateKbps, cpuUsed });
   return {
     noViewerTimeoutSec: parseBoundedInt(env.VIDEO_NO_VIEWER_TIMEOUT_SECONDS, MAX_NO_VIEWER_TIMEOUT_SEC) ?? 300,
-    autoMaxPreset: isPresetKey(autoMax) ? autoMax : DEFAULT_AUTO_MAX_PRESET,
+    autoMaxPreset,
     defaultEncoder: normalizeEncoderRequest(env.VIDEO_ENCODER, 'auto'),
     preferHardware: parseBool(env.VIDEO_PREFER_HARDWARE) ?? false,
-    maxBitrateKbps: parseBoundedInt(env.VIDEO_MAX_BITRATE_KBPS, MAX_BITRATE_CLAMP_KBPS) ?? 0,
+    maxBitrateKbps,
+    encodeProfile,
+    cpuUsed: Math.max(MIN_CPU_USED, cpuUsed),
   };
 }
 
@@ -89,13 +122,27 @@ export function parseVideoStreamingSettings(
   defaults: VideoStreamSettings = videoStreamingDefaults(),
 ): VideoStreamSettings {
   const autoMax = stored.get(VIDEO_AUTO_MAX_PRESET_KEY);
+  const autoMaxPreset = isPresetKey(autoMax) ? (autoMax as VideoStreamPresetKey) : defaults.autoMaxPreset;
+  const maxBitrateKbps =
+    parseBoundedInt(stored.get(VIDEO_MAX_BITRATE_KEY), MAX_BITRATE_CLAMP_KBPS) ?? defaults.maxBitrateKbps;
+  const cpuUsed =
+    parseBoundedInt(stored.get(VIDEO_CPU_USED_KEY), MAX_CPU_USED) ?? defaults.cpuUsed;
+  const inferred = inferEncodeProfile({ autoMaxPreset, maxBitrateKbps, cpuUsed });
+  const storedProfile = stored.get(VIDEO_ENCODE_PROFILE_KEY);
+  let encodeProfile: VideoEncodeProfile = inferred;
+  if (storedProfile === 'custom') encodeProfile = 'custom';
+  else if (isNamedEncodeProfile(storedProfile)) {
+    encodeProfile = inferred === storedProfile ? storedProfile : inferred;
+  }
   return {
     noViewerTimeoutSec:
       parseBoundedInt(stored.get(VIDEO_NO_VIEWER_TIMEOUT_KEY), MAX_NO_VIEWER_TIMEOUT_SEC) ?? defaults.noViewerTimeoutSec,
-    autoMaxPreset: isPresetKey(autoMax) ? (autoMax as VideoStreamPresetKey) : defaults.autoMaxPreset,
+    autoMaxPreset,
     defaultEncoder: normalizeEncoderRequest(stored.get(VIDEO_DEFAULT_ENCODER_KEY), defaults.defaultEncoder),
     preferHardware: parseBool(stored.get(VIDEO_PREFER_HARDWARE_KEY)) ?? defaults.preferHardware,
-    maxBitrateKbps: parseBoundedInt(stored.get(VIDEO_MAX_BITRATE_KEY), MAX_BITRATE_CLAMP_KBPS) ?? defaults.maxBitrateKbps,
+    maxBitrateKbps,
+    encodeProfile,
+    cpuUsed,
   };
 }
 
@@ -112,17 +159,24 @@ export function parseServerOverrides(raw: unknown): Partial<VideoStreamSettings>
   }
   if (!obj || typeof obj !== 'object') return {};
   const out: Partial<VideoStreamSettings> = {};
-  for (const field of ['noViewerTimeoutSec', 'autoMaxPreset', 'defaultEncoder', 'preferHardware', 'maxBitrateKbps'] as const) {
+  for (const field of [
+    'noViewerTimeoutSec', 'autoMaxPreset', 'defaultEncoder', 'preferHardware',
+    'maxBitrateKbps', 'encodeProfile', 'cpuUsed',
+  ] as const) {
     const value = (obj as Record<string, unknown>)[field];
     if (value === undefined) continue;
     const check = parseVideoStreamingUpdate({ [field]: value });
     if (!check.ok) continue;
-    // Store normalized types (numbers/bools), not raw input strings like "60".
-    const raw = check.rows[0].value;
-    (out as Record<string, unknown>)[field] =
-      field === 'noViewerTimeoutSec' || field === 'maxBitrateKbps' ? Number(raw)
-        : field === 'preferHardware' ? raw === 'true'
-          : raw;
+    for (const row of check.rows) {
+      if (row.key === VIDEO_NO_VIEWER_TIMEOUT_KEY) out.noViewerTimeoutSec = Number(row.value);
+      else if (row.key === VIDEO_AUTO_MAX_PRESET_KEY) out.autoMaxPreset = row.value as VideoStreamPresetKey;
+      else if (row.key === VIDEO_DEFAULT_ENCODER_KEY) {
+        out.defaultEncoder = row.value as VideoStreamSettings['defaultEncoder'];
+      } else if (row.key === VIDEO_PREFER_HARDWARE_KEY) out.preferHardware = row.value === 'true';
+      else if (row.key === VIDEO_MAX_BITRATE_KEY) out.maxBitrateKbps = Number(row.value);
+      else if (row.key === VIDEO_ENCODE_PROFILE_KEY) out.encodeProfile = row.value as VideoEncodeProfile;
+      else if (row.key === VIDEO_CPU_USED_KEY) out.cpuUsed = Number(row.value);
+    }
   }
   return out;
 }
@@ -160,6 +214,22 @@ export function parseVideoStreamingUpdate(body: Record<string, unknown> | null |
   const b = body ?? {};
   const rows: Array<{ key: string; value: string }> = [];
 
+  // Named encode profile expands to Auto max + bitrate + cpu-used.
+  if (b.encodeProfile !== undefined) {
+    if (!isEncodeProfile(b.encodeProfile)) {
+      return { ok: false, error: 'encodeProfile must be performance, balanced, quality or custom' };
+    }
+    if (isNamedEncodeProfile(b.encodeProfile)) {
+      const applied = applyEncodeProfile(b.encodeProfile);
+      rows.push({ key: VIDEO_ENCODE_PROFILE_KEY, value: applied.encodeProfile });
+      rows.push({ key: VIDEO_AUTO_MAX_PRESET_KEY, value: applied.autoMaxPreset });
+      rows.push({ key: VIDEO_MAX_BITRATE_KEY, value: String(applied.maxBitrateKbps) });
+      rows.push({ key: VIDEO_CPU_USED_KEY, value: String(applied.cpuUsed) });
+    } else {
+      rows.push({ key: VIDEO_ENCODE_PROFILE_KEY, value: 'custom' });
+    }
+  }
+
   if (b.noViewerTimeoutSec !== undefined) {
     const n = parseBoundedInt(b.noViewerTimeoutSec, MAX_NO_VIEWER_TIMEOUT_SEC);
     if (n == null) return { ok: false, error: `noViewerTimeoutSec must be 0–${MAX_NO_VIEWER_TIMEOUT_SEC} seconds (0 = off)` };
@@ -168,6 +238,7 @@ export function parseVideoStreamingUpdate(body: Record<string, unknown> | null |
   if (b.autoMaxPreset !== undefined) {
     if (!isPresetKey(b.autoMaxPreset)) return { ok: false, error: 'autoMaxPreset must be 480p, 720p, 1080p, 1440p or 2160p' };
     rows.push({ key: VIDEO_AUTO_MAX_PRESET_KEY, value: b.autoMaxPreset });
+    if (b.encodeProfile === undefined) rows.push({ key: VIDEO_ENCODE_PROFILE_KEY, value: 'custom' });
   }
   if (b.defaultEncoder !== undefined) {
     if (b.defaultEncoder !== 'auto' && !isEncoderId(b.defaultEncoder)) {
@@ -183,10 +254,20 @@ export function parseVideoStreamingUpdate(body: Record<string, unknown> | null |
     const n = parseBoundedInt(b.maxBitrateKbps, MAX_BITRATE_CLAMP_KBPS);
     if (n == null) return { ok: false, error: `maxBitrateKbps must be 0–${MAX_BITRATE_CLAMP_KBPS} (0 = no clamp)` };
     rows.push({ key: VIDEO_MAX_BITRATE_KEY, value: String(n) });
+    if (b.encodeProfile === undefined) rows.push({ key: VIDEO_ENCODE_PROFILE_KEY, value: 'custom' });
+  }
+  if (b.cpuUsed !== undefined) {
+    const n = parseBoundedInt(b.cpuUsed, MAX_CPU_USED);
+    if (n == null) return { ok: false, error: `cpuUsed must be ${MIN_CPU_USED}–${MAX_CPU_USED}` };
+    rows.push({ key: VIDEO_CPU_USED_KEY, value: String(n) });
+    if (b.encodeProfile === undefined) rows.push({ key: VIDEO_ENCODE_PROFILE_KEY, value: 'custom' });
   }
 
   if (rows.length === 0) return { ok: false, error: 'No video streaming settings supplied' };
-  return { ok: true, rows };
+  // Last write wins per key when profile expand + field overlap.
+  const byKey = new Map<string, string>();
+  for (const row of rows) byKey.set(row.key, row.value);
+  return { ok: true, rows: [...byKey.entries()].map(([key, value]) => ({ key, value })) };
 }
 
 // --- IPTV sources on the local network ---------------------------------------

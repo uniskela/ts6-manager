@@ -347,6 +347,9 @@ export interface VideoStreamStatus {
   lastStop: MediaStopInfo | null;
 }
 
+/** Simple encode cost/quality preset; `custom` when Advanced knobs diverge. */
+export type VideoEncodeProfile = 'performance' | 'balanced' | 'quality' | 'custom';
+
 /** Admin defaults for new video streams (per-stream requests may override). */
 export interface VideoStreamSettings {
   /** Stop a stream nobody watches after this many seconds; 0 = off. */
@@ -358,6 +361,10 @@ export interface VideoStreamSettings {
   preferHardware: boolean;
   /** Clamp for any stream bitrate in kbps; 0 = no clamp. */
   maxBitrateKbps: number;
+  /** Performance / Balanced / Quality — or custom when Advanced differs. */
+  encodeProfile: VideoEncodeProfile;
+  /** libvpx `-cpu-used` (higher = faster). Hardware encoders ignore this. */
+  cpuUsed: number;
 }
 
 export interface VideoEncoderCapability {
