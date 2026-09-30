@@ -290,18 +290,20 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /:id/play-url — Play a YouTube/direct URL (single video or playlist)
+// POST /:id/play-url — Play a YouTube/direct URL (single video or playlist).
+// Body `{ enqueue: true }` appends without interrupting current playback (Requests tab Enqueue).
 musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const id = parseInt(req.params.id as string);
     const { url } = req.body;
+    const enqueueOnly = Boolean(req.body?.enqueue);
     if (!url) throw new AppError(400, 'url is required');
 
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
     const replaceSessionIds = parseReplaceSessionIds(req.body);
-    bot.assertMusicCanStart(replaceSessionIds);
+    if (!enqueueOnly) bot.assertMusicCanStart(replaceSessionIds);
     if (bot.status !== 'connected' && bot.status !== 'playing' && bot.status !== 'paused') {
       throw new AppError(400, 'Bot is not connected');
     }
@@ -398,12 +400,15 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       sourceUrl: firstUrl,
     };
     bot.queue.add(firstItem);
-    bot.queue.playAt(bot.queue.length - 1);
-    await runMediaAudited(req, bot, 'media.music.start', () => bot.play(firstItem, { replaceSessionIds }), replaceSessionIds);
+    if (!enqueueOnly) {
+      bot.queue.playAt(bot.queue.length - 1);
+      await runMediaAudited(req, bot, 'media.music.start', () => bot.play(firstItem, { replaceSessionIds }), replaceSessionIds);
+    }
     await saveHistory(firstUrl, firstItem.title);
 
     // Queue remaining playlist tracks in the background.
-    // If the first track ends before later downloads finish, resume when the next item lands.
+    // If the first track ends before later downloads finish, resume when the next item lands
+    // (unless this was an enqueue-only request — then never auto-start).
     // Apple Music: resolve each remaining track via YouTube search, then download.
     const rest = urlsToPlay.slice(1);
     const pendingTotal = rest.length + appleMusicPending.length;
@@ -431,7 +436,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
           await saveHistory(itemUrl, queueItem.title);
 
           // First track may have finished while we were downloading — resume from this item.
-          if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
+          if (!enqueueOnly && stillLive.status === 'connected' && !stillLive.nowPlaying) {
             stillLive.queue.playAt(stillLive.queue.length - 1);
             await stillLive.play(queueItem).catch((err) => {
               console.error('[music-bots.routes] Failed to resume playlist playback:', err);

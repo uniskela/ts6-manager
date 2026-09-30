@@ -19,6 +19,11 @@ function MusicBotsRedirect() {
   return <Navigate to={`/media-bots${search}`} replace />;
 }
 
+/** System Music Request History moved into Media Bots → Requests. */
+function MusicRequestsRedirect() {
+  return <Navigate to="/media-bots?tab=requests" replace />;
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -55,7 +60,6 @@ const BotEditor = lazy(() => import('@/pages/BotEditor'));
 const MusicBots = lazy(() => import('@/pages/MusicBots'));
 const BotHub = lazy(() => import('@/pages/BotHub'));
 const Iptv = lazy(() => import('@/pages/Iptv'));
-const MusicRequests = lazy(() => import('@/pages/MusicRequests'));
 const Settings = lazy(() => import('@/pages/Settings'));
 const NotFound = lazy(() => import('@/pages/NotFound'));
 const WidgetPage = lazy(() => import('@/pages/WidgetPage'));
@@ -92,7 +96,7 @@ export function App() {
               <Route path="/activity-journal" element={<AdminRoute><ActivityJournal /></AdminRoute>} />
 
               <Route path="/instance" element={<AdminRoute><Instance /></AdminRoute>} />
-              <Route path="/music-requests" element={<AdminRoute><MusicRequests /></AdminRoute>} />
+              <Route path="/music-requests" element={<AdminRoute><MusicRequestsRedirect /></AdminRoute>} />
               <Route path="/bots" element={<AdminRoute><BotList /></AdminRoute>} />
               <Route path="/bots/:botId" element={<AdminRoute><BotEditor /></AdminRoute>} />
               <Route path="/bot-hub" element={<AdminRoute><BotHub /></AdminRoute>} />

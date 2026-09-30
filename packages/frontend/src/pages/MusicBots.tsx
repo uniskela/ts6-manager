@@ -46,6 +46,7 @@ import {
 import { VideoStreamTab } from '@/components/video/VideoStreamTab';
 import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
 import { MediaPlaySplitButton } from '@/components/media/MediaPlaySplitButton';
+import { RequestsTab } from '@/components/media/RequestsTab';
 import type { MediaPlayAction } from '@/lib/media-bot-play';
 import { toast } from 'sonner';
 import { formatBytes } from '@/lib/utils';
@@ -65,7 +66,7 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { formatNumber } from '@/lib/formatting';
 
 /** Tabs addressable as `/media-bots?tab=…` (the Bot hub links to them). */
-const MUSIC_TABS = ['bots', 'queue', 'video', 'library', 'playlists', 'commands', 'radio'];
+const MUSIC_TABS = ['bots', 'queue', 'video', 'library', 'playlists', 'commands', 'radio', 'requests'];
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
 
@@ -3547,7 +3548,7 @@ export default function MusicBots() {
       <PageHeader
         title="Media Bots"
         icon={Music}
-        description="Manage voice bots, playback, queues, media, and radio."
+        description="Manage voice bots, playback, queues, media, radio, and !play requests."
         badge={<Badge variant="secondary">{formatNumber(botCount)} configured</Badge>}
         metadata={<RefreshStatus isRefreshing={botQuery.isFetching} idleLabel="Live bot status active" refreshingLabel="Refreshing bot status…" />}
       />
@@ -3569,6 +3570,7 @@ export default function MusicBots() {
           <TabsTrigger value="playlists"><ListMusic className="h-3.5 w-3.5 mr-1.5" /> Playlists</TabsTrigger>
           <TabsTrigger value="commands"><MessageSquare className="h-3.5 w-3.5 mr-1.5" /> Commands</TabsTrigger>
           <TabsTrigger value="radio"><Radio className="h-3.5 w-3.5 mr-1.5" /> Radio</TabsTrigger>
+          <TabsTrigger value="requests"><Clock className="h-3.5 w-3.5 mr-1.5" /> Requests</TabsTrigger>
         </TabsList>
 
         <TabsContent value="bots"><BotsTab /></TabsContent>
@@ -3578,6 +3580,7 @@ export default function MusicBots() {
         <TabsContent value="playlists"><PlaylistsTab /></TabsContent>
         <TabsContent value="commands"><CommandsTab /></TabsContent>
         <TabsContent value="radio"><RadioTab /></TabsContent>
+        <TabsContent value="requests"><RequestsTab /></TabsContent>
       </Tabs>
     </div>
   );
