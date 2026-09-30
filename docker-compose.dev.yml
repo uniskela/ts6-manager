@@ -42,7 +42,7 @@ services:
       # Must match the backend mount — pre-downloaded videos are read by ffmpeg here.
       - music-data:/data/music
     # ports:
-    #   - "${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
+    #   - "${WEBRTC_BIND_IP:-127.0.0.1}:${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
     networks:
       - ts6-network
 

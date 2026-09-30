@@ -15,12 +15,15 @@ import (
 // forward the ephemeral ICE ports Pion opens, so host/LAN browsers fail ICE.
 //
 // Env:
-//   WEBRTC_UDP_PORT   — if >0, listen on 0.0.0.0:port and mux all ICE UDP there
-//   WEBRTC_NAT1TO1_IP  — comma-separated host/LAN/Tailscale IPs to advertise as
+//   WEBRTC_UDP_PORT   — if >0, listen on 0.0.0.0:port (IPv4) and mux all ICE UDP there
+//   WEBRTC_NAT1TO1_IP  — comma-separated IPv4 host/LAN/Tailscale IPs to advertise as
 //                       host candidates (replaces container-private addresses)
 func (s *Sidecar) startICEMedia() error {
 	port := envIntOrDefault("WEBRTC_UDP_PORT", 0)
-	ips := parseICEAdvertiseIPs(os.Getenv("WEBRTC_NAT1TO1_IP"))
+	ips, err := parseICEAdvertiseIPs(os.Getenv("WEBRTC_NAT1TO1_IP"))
+	if err != nil {
+		return err
+	}
 	s.iceAdvertiseIPs = ips
 
 	if port <= 0 {
@@ -33,6 +36,7 @@ func (s *Sidecar) startICEMedia() error {
 		return fmt.Errorf("WEBRTC_UDP_PORT out of range: %d", port)
 	}
 
+	// IPv4-only mux: advertised rewrite IPs must also be IPv4 (enforced above).
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero, Port: port})
 	if err != nil {
 		return fmt.Errorf("bind WebRTC UDP mux :%d: %w", port, err)
@@ -77,10 +81,10 @@ func (s *Sidecar) stopICEMedia() {
 	}
 }
 
-func parseICEAdvertiseIPs(raw string) []string {
+func parseICEAdvertiseIPs(raw string) ([]string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return nil
+		return nil, nil
 	}
 	parts := strings.Split(raw, ",")
 	out := make([]string, 0, len(parts))
@@ -89,11 +93,14 @@ func parseICEAdvertiseIPs(raw string) []string {
 		if p == "" {
 			continue
 		}
-		if ip := net.ParseIP(p); ip == nil {
-			log.Printf("[ICE] Ignoring invalid WEBRTC_NAT1TO1_IP entry %q", p)
-			continue
+		ip := net.ParseIP(p)
+		if ip == nil {
+			return nil, fmt.Errorf("invalid WEBRTC_NAT1TO1_IP entry %q", p)
 		}
-		out = append(out, p)
+		if ip.To4() == nil {
+			return nil, fmt.Errorf("WEBRTC_NAT1TO1_IP entry %q is IPv6; only IPv4 is supported (UDP mux binds udp4)", p)
+		}
+		out = append(out, ip.To4().String())
 	}
-	return out
+	return out, nil
 }

@@ -19,9 +19,10 @@
 # Manager connection seed does not opt into metrics yet — enable in Settings →
 # Connections (metricsEnabled / port 9187) when testing the manager scrape path.
 # Browser video preview (WebRTC): sidecar publishes UDP WEBRTC_UDP_PORT (default
-# 10000) and rewrites ICE host candidates to WEBRTC_NAT1TO1_IP (default 127.0.0.1
-# for a browser on the same host). For a remote browser (LAN/Tailscale), set
-# WEBRTC_NAT1TO1_IP to an IP that browser can reach.
+# 10000) bound to WEBRTC_BIND_IP (default 127.0.0.1) and rewrites ICE host
+# candidates to WEBRTC_NAT1TO1_IP (default 127.0.0.1 for a browser on the same
+# host). For a remote browser (LAN/Tailscale), set both WEBRTC_BIND_IP and
+# WEBRTC_NAT1TO1_IP to an IPv4 address that browser can reach.
 # Manager-only (no TeamSpeak): use docker-compose.local.yml instead.
 #
 # Tear down:
@@ -139,7 +140,7 @@ services:
     volumes:
       - pr-test-music-data:/data/music
     ports:
-      - "${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
+      - "${WEBRTC_BIND_IP:-127.0.0.1}:${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
     networks:
       - ts6-pr-test
 

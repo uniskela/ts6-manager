@@ -24,8 +24,8 @@ services:
       - MUSIC_DIR=/data/music
       - SIDECAR_URL=http://127.0.0.1:9800
       - SIDECAR_PORT=9800
-      # Optional browser WebRTC preview — set WEBRTC_NAT1TO1_IP to a reachable host IP
-      # and uncomment the UDP mapping below (see docs/video-streaming.md).
+      # Optional browser WebRTC preview — set WEBRTC_NAT1TO1_IP / WEBRTC_BIND_IP to a
+      # reachable host IPv4 and uncomment the UDP mapping below (see docs/video-streaming.md).
       # - WEBRTC_UDP_PORT=${WEBRTC_UDP_PORT:-10000}
       # - WEBRTC_NAT1TO1_IP=${WEBRTC_NAT1TO1_IP}
     volumes:
@@ -37,7 +37,7 @@ services:
     ports:
       # Sidecar HTTP (:9800) and backend (:3001) are intentionally not published
       - "${HOST_PORT:-3000}:80"
-      # - "${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
+      # - "${WEBRTC_BIND_IP:-127.0.0.1}:${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
 
 volumes:
   backend-data:

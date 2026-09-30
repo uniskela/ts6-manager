@@ -3,18 +3,32 @@ package main
 import (
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/pion/webrtc/v4"
 )
 
 func TestParseICEAdvertiseIPs(t *testing.T) {
-	got := parseICEAdvertiseIPs(" 127.0.0.1, 198.51.100.10 ,not-an-ip, ")
+	got, err := parseICEAdvertiseIPs(" 127.0.0.1, 198.51.100.10 , ")
+	if err != nil {
+		t.Fatalf("parseICEAdvertiseIPs: %v", err)
+	}
 	if len(got) != 2 || got[0] != "127.0.0.1" || got[1] != "198.51.100.10" {
 		t.Fatalf("parseICEAdvertiseIPs = %#v", got)
 	}
-	if parseICEAdvertiseIPs("") != nil {
-		t.Fatalf("empty should be nil")
+	got, err = parseICEAdvertiseIPs("")
+	if err != nil || got != nil {
+		t.Fatalf("empty should be nil,nil; got %#v %v", got, err)
+	}
+}
+
+func TestParseICEAdvertiseIPsRejectsIPv6AndInvalid(t *testing.T) {
+	if _, err := parseICEAdvertiseIPs("2001:db8::1"); err == nil || !strings.Contains(err.Error(), "IPv6") {
+		t.Fatalf("expected IPv6 error, got %v", err)
+	}
+	if _, err := parseICEAdvertiseIPs("not-an-ip"); err == nil || !strings.Contains(err.Error(), "invalid") {
+		t.Fatalf("expected invalid error, got %v", err)
 	}
 }
 
@@ -42,6 +56,15 @@ func TestStartICEMediaMuxAndRewrite(t *testing.T) {
 	se := webrtc.SettingEngine{}
 	if err := s.applyICESettings(&se); err != nil {
 		t.Fatalf("applyICESettings: %v", err)
+	}
+}
+
+func TestStartICEMediaRejectsIPv6Advertise(t *testing.T) {
+	t.Setenv("WEBRTC_UDP_PORT", "10000")
+	t.Setenv("WEBRTC_NAT1TO1_IP", "2001:db8::1")
+	s := NewSidecar()
+	if err := s.startICEMedia(); err == nil || !strings.Contains(err.Error(), "IPv6") {
+		t.Fatalf("expected IPv6 reject, got %v", err)
 	}
 }
 

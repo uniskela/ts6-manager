@@ -339,8 +339,9 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WEBRTC_UDP_PORT` | unset | Shared ICE UDP mux port for browser WebRTC preview (publish this UDP port from Docker) |
-| `WEBRTC_NAT1TO1_IP` | unset | Host/LAN/Tailscale IP(s) advertised as ICE host candidates |
+| `WEBRTC_UDP_PORT` | unset | Shared IPv4 ICE UDP mux port for browser WebRTC preview (publish this UDP port from Docker) |
+| `WEBRTC_NAT1TO1_IP` | unset | Host/LAN/Tailscale **IPv4** IP(s) advertised as ICE host candidates |
+| `WEBRTC_BIND_IP` | `127.0.0.1` (compose) | Host bind address for the published WebRTC UDP mapping |
 | `VIDEO_QUEUE_SIZE` | `1024` | Size of the video RTP queue |
 | `AUDIO_QUEUE_SIZE` | `2048` | Size of the audio RTP queue |
 | `SYNC_PLAYOUT_BUFFER_MS` | `50` | Small playout buffer used by the adaptive pacing logic |
