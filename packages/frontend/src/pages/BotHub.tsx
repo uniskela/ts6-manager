@@ -114,7 +114,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
           )}
           {tone === 'music' && (
             <Button size="sm" variant="ghost" disabled={stopping} onClick={() => stopMusic.mutate(bot.botId)}>
-              <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Stop music
+              <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Stop media
             </Button>
           )}
         </div>

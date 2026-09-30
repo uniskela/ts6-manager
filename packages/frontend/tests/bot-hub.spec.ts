@@ -59,7 +59,7 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   await expect(page.getByText(/auto-stop in \d+:\d{2}/)).toBeVisible();
   await expect(page.getByText(/Last stream: Stopped after 5 minutes with no viewers · 8 min ago/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Stop stream' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Stop music' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop media' })).toBeVisible();
 
   if (process.env.BOT_HUB_SCREENSHOT) await page.screenshot({ path: process.env.BOT_HUB_SCREENSHOT, fullPage: true });
 

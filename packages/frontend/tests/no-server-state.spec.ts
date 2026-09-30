@@ -56,7 +56,7 @@ test('automation pages block creation until a connection exists', async ({ page,
 
   await request.post('/__test/dashboard?scenario=normal');
   await page.goto('/media-bots');
-  await expect(page.getByRole('heading', { name: 'No music bots yet' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'No media bots yet' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'New Bot' })).toBeEnabled();
 });
 
