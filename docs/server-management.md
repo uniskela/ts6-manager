@@ -27,6 +27,8 @@ Administrators can:
 
 Human and bot counts exclude ServerQuery sessions by default. Administrators can persistently enable **Show Query clients** when diagnostics require them.
 
+![Channel tree with connected clients](channels.png)
+
 ## Clients, permissions, and moderation
 
 Management tools include:
@@ -40,7 +42,13 @@ Management tools include:
 - complaints; and
 - offline messages.
 
+![Sortable client list with status badges](clients.png)
+
+![Server group members](server-groups.png)
+
 Permission edits remain a single-entity workflow. Drafts are isolated by connection, virtual server, permission layer, and entity, and navigation warns before discarding them. **Set only** includes assigned permissions and staged changes. Labels can use the readable Simple mode or raw Technical names.
+
+![Permission editor for a server group](permissions-editor.png)
 
 Compare is read-only: select two to four entities from one permission layer, then use **Set on any**, **Differences only**, or search to inspect raw values, unset states, Skip, and Negate flags. Compare never writes permissions.
 
@@ -68,6 +76,8 @@ The UI includes:
 - file create/delete actions bound to the connection, virtual server, channel, and path captured when the dialog opened — switching servers cannot redirect a pending confirmation;
 - **Server Logs 2.0** (admin-only): bounded TeamSpeak `logview` pages with Previous/Older cursor paging, Refresh back to the newest page, connection / virtual-server / instance scope labels, page-local search and level filters, and source timestamps with a single page-level note that TeamSpeak does not report timezone (no per-row “timezone unknown”); and
 - instance-level settings.
+
+![Server Logs with level badges and paging](server-logs.png)
 
 Log filters never silently fetch the entire history. Instance logfile mode is labeled separately from the selected virtual server so instance-wide rows are not attributed to that VS. Log fetches wait until the selected virtual server is confirmed (same context gate as Clients / Channels). Failed refreshes keep the last successful page but label updates as interrupted — never as “up to date.” If TeamSpeak returns logfile I/O error 2052, the UI shows **TeamSpeak log file unavailable** with a single manual Retry (see [troubleshooting](troubleshooting.md#server-logs-teamspeak-log-file-unavailable-error-2052)).
 
