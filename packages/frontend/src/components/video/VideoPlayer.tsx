@@ -6,6 +6,12 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { Volume2, VolumeX } from 'lucide-react';
 import { musicBotsApi } from '@/api/music.api';
+import {
+  PREVIEW_ICE_TIMEOUT_MS,
+  isBrowserOnLoopback,
+  offerAdvertisesLoopbackOnly,
+  previewIceErrorMessage,
+} from '@/lib/preview-webrtc';
 
 interface VideoPlayerProps {
   botId: number;
@@ -15,19 +21,28 @@ interface VideoPlayerProps {
 export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const iceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Starts muted so autoplay isn't blocked; unmute to check whether audio
   // issues are server-side (present here too) or specific to the TS client.
   const [muted, setMuted] = useState(true);
 
+  const clearIceTimer = useCallback(() => {
+    if (iceTimerRef.current != null) {
+      clearTimeout(iceTimerRef.current);
+      iceTimerRef.current = null;
+    }
+  }, []);
+
   const cleanup = useCallback(() => {
+    clearIceTimer();
     if (pcRef.current) {
       pcRef.current.close();
       pcRef.current = null;
     }
     setConnected(false);
-  }, []);
+  }, [clearIceTimer]);
 
   const connect = useCallback(async () => {
     cleanup();
@@ -36,6 +51,18 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
     try {
       // Get SDP offer from backend (which gets it from sidecar)
       const { sdp: offerSdp } = await musicBotsApi.webrtcOffer(botId);
+
+      // Same-host Docker defaults advertise 127.0.0.1. A reverse-proxied /
+      // remote WebUI cannot use those candidates — fail fast with guidance
+      // instead of hanging on “Connecting to stream…” (#202 follow-up).
+      if (
+        typeof window !== 'undefined' &&
+        !isBrowserOnLoopback(window.location.hostname) &&
+        offerAdvertisesLoopbackOnly(offerSdp)
+      ) {
+        setError(previewIceErrorMessage('loopback-mismatch'));
+        return;
+      }
 
       const pc = new RTCPeerConnection({
         iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -60,6 +87,15 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
         }
       };
 
+      const failIce = (kind: 'failed' | 'timeout') => {
+        if (pcRef.current !== pc) return;
+        clearIceTimer();
+        setConnected(false);
+        setError(previewIceErrorMessage(kind));
+        pc.close();
+        if (pcRef.current === pc) pcRef.current = null;
+      };
+
       pc.ontrack = (ev) => {
         if (videoRef.current && ev.streams[0]) {
           videoRef.current.srcObject = ev.streams[0];
@@ -69,13 +105,11 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
       pc.oniceconnectionstatechange = () => {
         const state = pc.iceConnectionState;
         if (state === 'connected' || state === 'completed') {
+          clearIceTimer();
           setConnected(true);
           setError(null);
         } else if (state === 'failed') {
-          setConnected(false);
-          setError(
-            'Preview connection failed (ICE). Check reverse-proxy WebSocket headers and that UDP/STUN can reach the host running the media sidecar.',
-          );
+          failIce('failed');
         } else if (state === 'disconnected' || state === 'closed') {
           setConnected(false);
         }
@@ -104,11 +138,23 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
       for (const candidate of pendingIce) {
         await sendIce(candidate);
       }
+
+      // Browsers often stay in ICE "checking" forever when candidates are
+      // unreachable (e.g. NAT1TO1=127.0.0.1 for a remote client) and never
+      // transition to "failed" — surface a timeout instead of hanging.
+      clearIceTimer();
+      iceTimerRef.current = setTimeout(() => {
+        if (pcRef.current !== pc) return;
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          return;
+        }
+        failIce('timeout');
+      }, PREVIEW_ICE_TIMEOUT_MS);
     } catch (err: any) {
       setError(err.message || 'Failed to connect');
       cleanup();
     }
-  }, [botId, cleanup]);
+  }, [botId, cleanup, clearIceTimer]);
 
   useEffect(() => {
     if (streaming) {
