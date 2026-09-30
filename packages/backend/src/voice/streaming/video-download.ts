@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
-import { validateUrl, parseLocalHostAllowlist, resolveRedirectsSafely } from '../../utils/url-validator.js';
+import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
@@ -138,7 +138,7 @@ export async function downloadVideoForStream(
   url: string,
   maxHeight: number = 720,
   maxDurationSec: number = 900,
-  options: { localHosts?: string[]; fetchImpl?: typeof fetch } = {},
+  options: { localHosts?: string[] } = {},
 ): Promise<DownloadedStreamVideo> {
   rejectYtDlpOptionUrl(url);
 
@@ -159,14 +159,9 @@ export async function downloadVideoForStream(
   }
 
   if (!isYtDlpStreamHost(url)) {
-    // The sidecar's ffmpeg would follow redirects unchecked: resolve them
-    // here, validating each hop, and hand it the final URL.
-    const finalUrl = await resolveRedirectsSafely(url, {
-      allowedProtocols: ['http:', 'https:'],
-      localAllowlist,
-      fetchImpl: options.fetchImpl,
-    });
-    return { path: finalUrl, durationSec: null };
+    // Only this URL is checked: the sidecar's ffmpeg follows redirects and
+    // HLS segment URLs itself (see docs/video-streaming.md).
+    return { path: url, durationSec: null };
   }
 
   const musicRoot = ensureMusicDir();

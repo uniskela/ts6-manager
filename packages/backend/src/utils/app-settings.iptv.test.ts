@@ -28,8 +28,7 @@ describe('allowed local IPTV hosts setting', () => {
 
   it('lets an allow-listed LAN channel through to the stream and nothing else', async () => {
     const lan = 'http://192.168.1.20:34400/stream/42.ts';
-    const fetchImpl = (async () => new Response(null, { status: 200 })) as unknown as typeof fetch;
-    assert.deepEqual(await downloadVideoForStream(lan, 720, 900, { localHosts: ['192.168.1.20'], fetchImpl }), { path: lan, durationSec: null });
+    assert.deepEqual(await downloadVideoForStream(lan, 720, 900, { localHosts: ['192.168.1.20'] }), { path: lan, durationSec: null });
     await assert.rejects(downloadVideoForStream(lan, 720, 900), /Video source blocked/);
     await assert.rejects(downloadVideoForStream('http://192.168.1.99/x.ts', 720, 900, { localHosts: ['192.168.1.20'] }), /Video source blocked/);
     await assert.rejects(downloadVideoForStream('http://127.0.0.1/x.ts', 720, 900, { localHosts: ['192.168.1.20'] }), /Video source blocked/);
