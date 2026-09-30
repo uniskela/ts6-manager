@@ -68,6 +68,17 @@ describe('TeamSpeak anti-flood hold (error 524)', () => {
     assert.equal(sent.length, 2);
   });
 
+  it('still sends the notice if the timer fires a moment before the hold deadline', () => {
+    const { bot, sent } = connectedBot();
+    (bot as any).client.emit('ts3error', { id: '524', msg: 'client is flooding' });
+    bot.noteIgnoredCommand();
+    // Timers and Date.now() are separate clocks: end the hold "early".
+    (bot as any)._floodHoldTimer && clearTimeout((bot as any)._floodHoldTimer);
+    (bot as any).endFloodHold();
+    assert.equal(sent.length, 1);
+    assert.equal(bot.floodHoldActive, false);
+  });
+
   it('stays quiet after the hold when nothing was ignored', () => {
     const { bot, sent } = connectedBot();
     (bot as any).client.emit('ts3error', { id: '524', msg: 'client is flooding' });

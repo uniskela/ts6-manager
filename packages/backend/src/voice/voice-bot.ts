@@ -363,6 +363,9 @@ export class VoiceBot extends EventEmitter {
 
   private endFloodHold(): void {
     this._floodHoldTimer = null;
+    // Timers and Date.now() are separate clocks; end the hold explicitly so
+    // the notice below is never swallowed by the hold it announces.
+    this._floodHoldUntil = 0;
     const ignored = this._floodIgnoredCommands;
     this._floodIgnoredCommands = 0;
     if (ignored > 0) {

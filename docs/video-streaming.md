@@ -119,7 +119,8 @@ Admins can allow those hosts under **IPTV → Local network sources**. Enter one
 - The allowance covers IPTV only: playlist refreshes, channels started from the IPTV page, and `!tv <name>`. With `!tv`, users pick a channel name from your playlist, never a URL.
 - Links typed in chat (`!stream`, `!play`), the video URL box and flow HTTP nodes stay blocked from private addresses.
 - Loopback (`127.0.0.1`), link-local and cloud metadata addresses can never be allowed. Inside a container, loopback is the container itself, so use the host's LAN address instead.
-- Each playlist redirect is checked again, so a redirect cannot leave the allowed hosts.
+- Each redirect of a playlist or stream URL is checked again, so a redirect cannot leave the allowed hosts. This applies to every video URL: the backend follows redirects itself and hands the sidecar the final address.
+- Segment URLs listed inside an HLS playlist are fetched by the sidecar directly. For strict isolation, restrict the sidecar container's network access as well.
 - The list is empty by default, and changing it is recorded in the audit log.
 
 ## Architecture

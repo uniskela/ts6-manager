@@ -194,3 +194,42 @@ export async function validateUrl(
 
   return { valid: true };
 }
+
+export interface ResolveRedirectsOptions extends ValidateUrlOptions {
+  maxRedirects?: number;
+  timeoutMs?: number;
+  /** Injected in tests. */
+  fetchImpl?: typeof fetch;
+}
+
+/**
+ * Follow a remote media URL's HTTP redirects here, checking every hop with
+ * validateUrl, and return the final URL. ffmpeg follows redirects on its own,
+ * so without this an allowed URL could send the sidecar to an address the
+ * guard blocks. The body is not read: only the status and Location matter.
+ */
+export async function resolveRedirectsSafely(url: string, options: ResolveRedirectsOptions = {}): Promise<string> {
+  const { maxRedirects = 5, timeoutMs = 10_000, fetchImpl = fetch, ...validate } = options;
+  let current = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const check = await validateUrl(current, validate);
+    if (!check.valid) {
+      throw new Error(hop === 0 ? `Video source blocked: ${check.error}` : `Video source redirect blocked: ${check.error}`);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let res: Response;
+    try {
+      res = await fetchImpl(current, { method: 'GET', redirect: 'manual', signal: controller.signal });
+    } catch (err: any) {
+      throw new Error(`Could not reach the video source: ${err?.name === 'AbortError' ? 'timed out' : err?.message ?? err}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    try { await res.body?.cancel(); } catch { /* already closed */ }
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+    if (!location) return current;
+    current = new URL(location, current).href;
+  }
+  throw new Error(`Video source redirected more than ${maxRedirects} times`);
+}

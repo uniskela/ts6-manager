@@ -128,8 +128,12 @@ test('Ban sends selected duration and reason, maps permanent to zero, and closes
   // focusing the confirm button, or Enter can land on the Select and reopen it.
   await expect(page.getByRole('listbox')).toHaveCount(0);
   const confirmBan = dialog.getByRole('button', { name: 'Ban client' });
-  await confirmBan.focus();
-  await expect(confirmBan).toBeFocused();
+  // Radix can hand focus back to the Select trigger a frame or two after the
+  // listbox unmounts, so re-focus until focus stays on the confirm button.
+  await expect(async () => {
+    await confirmBan.focus();
+    await expect(confirmBan).toBeFocused({ timeout: 250 });
+  }).toPass({ timeout: 5_000 });
   await page.keyboard.press('Enter');
   await expect.poll(async () => (await actionRequests(request)).length).toBe(1);
   writes = await actionRequests(request);
