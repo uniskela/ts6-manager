@@ -39,6 +39,33 @@ Set `FRONTEND_URL` to the public frontend origin when it differs from the defaul
 
 The application uses authenticated WebSockets. Ensure the reverse proxy supports WebSocket upgrade requests to the backend through the frontend/nginx path used by your deployment.
 
+A minimal outer NGINX location that only sets `X-Forwarded-For` is not enough. Prefer something like:
+
+~~~nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;  # frontend / all-in-one published port
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 86400;
+}
+~~~
+
+Route the public domain to the **frontend** (or all-in-one nginx), not to the internal sidecar port.
+
+## Browser video preview (WebRTC)
+
+In-browser preview signaling uses ordinary HTTPS API calls through the reverse proxy. The media path is WebRTC over UDP to the host running the media sidecar (via STUN), not through NGINX.
+
+If the preview stays on “Connecting to stream…” and then reports an ICE failure:
+
+- confirm WebSocket/upgrade headers above so the rest of the live UI stays healthy;
+- confirm the browser can reach the Docker/host network for ephemeral UDP (same LAN usually works; a remote public reverse proxy alone does not forward WebRTC media);
+- see [Troubleshooting](troubleshooting.md) for reverse-proxy and streaming checks.
+
 ## TLS
 
 Terminate HTTPS at the reverse proxy unless you have a different deliberate architecture. Keep TeamSpeak Query and sidecar management endpoints restricted to trusted/internal networks.
