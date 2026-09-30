@@ -128,25 +128,26 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       await musicBotsApi.webrtcAnswer(botId, answer.sdp!);
-      answerReady = true;
-      for (const candidate of pendingIce) {
-        await sendIce(candidate);
-      }
 
+      // Arm the ICE timeout as soon as the answer is accepted so a slow
+      // pendingIce sendIce() flush cannot stretch past the deadline.
       // Stale connect() after cleanup/remount must not clear a newer timer.
       if (pcRef.current !== pc) return;
-
-      // Browsers often stay in ICE "checking" forever when candidates are
-      // unreachable (e.g. NAT1TO1=127.0.0.1 for a remote client) and never
-      // transition to "failed" — surface a timeout instead of hanging.
       clearIceTimer();
       iceTimerRef.current = setTimeout(() => {
         if (pcRef.current !== pc) return;
         if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
           return;
         }
+        // Browsers often stay in ICE "checking" forever when candidates are
+        // unreachable (e.g. NAT1TO1=127.0.0.1 for a remote client).
         failIce('timeout');
       }, PREVIEW_ICE_TIMEOUT_MS);
+
+      answerReady = true;
+      for (const candidate of pendingIce) {
+        await sendIce(candidate);
+      }
     } catch (err: any) {
       setError(err.message || 'Failed to connect');
       cleanup();
