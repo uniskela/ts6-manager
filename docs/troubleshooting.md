@@ -129,11 +129,15 @@ Check:
 
 Signaling for the WebUI preview goes through the HTTP API. Media uses WebRTC/UDP to the sidecar host. A reverse proxy that only forwards HTTP does not carry that UDP path.
 
+The preview pane should stop hanging after ~15s with an ICE timeout (and call out loopback-only offers when that was the failure mode).
+
 Check:
 
 - the stream actually started (TeamSpeak viewers / stream status), not only the preview pane;
-- ICE failure text in the preview pane (after #202) — if ICE fails, confirm LAN/UDP reachability to the host running the sidecar;
-- for Docker: `WEBRTC_UDP_PORT` is set and published (pr-test defaults to UDP `10000` on `127.0.0.1`), and `WEBRTC_NAT1TO1_IP` / `WEBRTC_BIND_IP` are an IPv4 address the browser can reach (not a container `172.x` address);
+- ICE failure / timeout text in the preview pane;
+- **candidate reachability:** `WEBRTC_NAT1TO1_IP` is an IPv4 the browser can dial (not a container `172.x`; not `127.0.0.1` unless the browser is on the Docker host);
+- **Docker host binding:** `WEBRTC_UDP_PORT` is published via `WEBRTC_BIND_IP` on the host (`${WEBRTC_BIND_IP}:${WEBRTC_UDP_PORT}:…/udp`). Bind can differ from NAT1To1 when a firewall/NAT forwards the public UDP port to the host;
+- for public-Internet browsers: advertise the public IPv4 in `WEBRTC_NAT1TO1_IP`, forward UDP to the Docker host, and keep the host bind accordingly;
 - WebSocket upgrade headers on the outer reverse proxy so live UI updates still work;
 - Twitch live URLs use yt-dlp URL resolve (not a temp download) — see #203 if Twitch sources fail before the preview can attach.
 
