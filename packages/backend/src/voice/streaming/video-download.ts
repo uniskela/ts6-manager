@@ -12,6 +12,9 @@ const STREAM_TEMP_NAME = /^\.stream-\d+\.mp4$/;
 /** Plain filenames under MUSIC_DIR (no separators / traversal). */
 const SAFE_LOCAL_BASENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$/;
 
+/** Shared message when a MUSIC_DIR path does not exist (also matched by callers). */
+export const LOCAL_VIDEO_NOT_FOUND = 'Local video file not found';
+
 function rejectYtDlpOptionUrl(url: string): void {
   if (url.trim().startsWith('-')) {
     throw new Error("Invalid URL: must not start with '-'");
@@ -66,7 +69,7 @@ export function resolvePathUnderMusicDir(filePath: string): string {
   // Reconstruct exclusively from trusted root + allowlisted basename.
   const safePath = path.join(musicRoot, base);
   if (!fs.existsSync(safePath)) {
-    throw new Error('Local video file not found');
+    throw new Error(LOCAL_VIDEO_NOT_FOUND);
   }
 
   // Symlink escape: realpath must still land under MUSIC_DIR; return join(root, base)
@@ -116,6 +119,35 @@ function isTwitchStreamHost(url: string): boolean {
   return classifyStreamHost(url) === 'twitch';
 }
 
+export interface DownloadedStreamVideo {
+  path: string;
+  /** Set for freshly downloaded temps — used to auto-stop when the clip ends. */
+  durationSec: number | null;
+  /**
+   * When known from the extractor (Twitch), whether the source is live.
+   * Used as a probe fallback for fixed quality presets that skip ffprobe.
+   */
+  live?: boolean;
+}
+
+/**
+ * Parse yt-dlp `--dump-single-json` output for a Twitch page into a playable
+ * ffmpeg source. Exported for unit tests (no yt-dlp / network).
+ */
+export function parseTwitchResolve(data: Record<string, unknown>): DownloadedStreamVideo {
+  const streamUrl = typeof data.url === 'string' ? data.url.trim() : '';
+  if (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://')) {
+    throw new Error('yt-dlp did not return a playable Twitch stream URL');
+  }
+
+  const isLive = data.is_live === true || data.live_status === 'is_live';
+  const rawDuration = typeof data.duration === 'number' ? data.duration : NaN;
+  const durationSec =
+    !isLive && Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : null;
+
+  return { path: streamUrl, durationSec, live: isLive };
+}
+
 /**
  * Resolve a Twitch (live or VOD) page URL to a direct media URL for ffmpeg.
  * Live Twitch cannot be downloaded to a fixed `.stream-*.mp4` the way YouTube
@@ -125,6 +157,7 @@ function isTwitchStreamHost(url: string): boolean {
 async function resolveTwitchStreamUrl(
   url: string,
   maxHeight: number,
+  maxDurationSec: number,
 ): Promise<DownloadedStreamVideo> {
   // Prefer a single muxed stream so ffmpeg gets one `-i` URL (Twitch often
   // exposes HLS playlists that already include audio).
@@ -177,21 +210,24 @@ async function resolveTwitchStreamUrl(
     throw new Error('Failed to parse yt-dlp Twitch metadata');
   }
 
-  const streamUrl = typeof data.url === 'string' ? data.url.trim() : '';
-  if (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://')) {
-    throw new Error('yt-dlp did not return a playable Twitch stream URL');
+  const resolved = parseTwitchResolve(data);
+  // Keep the same duration ceiling YouTube downloads used to enforce for Twitch VODs.
+  if (
+    !resolved.live &&
+    maxDurationSec > 0 &&
+    resolved.durationSec != null &&
+    resolved.durationSec > maxDurationSec
+  ) {
+    throw new Error(
+      `Twitch VOD is longer than the ${maxDurationSec}s limit (${Math.round(resolved.durationSec)}s)`,
+    );
   }
 
-  const isLive = data.is_live === true || data.live_status === 'is_live';
-  const rawDuration = typeof data.duration === 'number' ? data.duration : NaN;
-  const durationSec =
-    !isLive && Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : null;
-
   console.log(
-    `[VideoDownload] Resolved Twitch ${isLive ? 'live' : 'VOD'} URL for ffmpeg` +
-      (durationSec != null ? ` (${durationSec}s)` : ''),
+    `[VideoDownload] Resolved Twitch ${resolved.live ? 'live' : 'VOD'} URL for ffmpeg` +
+      (resolved.durationSec != null ? ` (${resolved.durationSec}s)` : ''),
   );
-  return { path: streamUrl, durationSec };
+  return resolved;
 }
 
 /** Probe a local media file's duration in seconds, or null if unknown. */
@@ -212,12 +248,6 @@ function probeVideoDurationSec(filePath: string): Promise<number | null> {
     });
     proc.on('error', () => resolve(null));
   });
-}
-
-export interface DownloadedStreamVideo {
-  path: string;
-  /** Set for freshly downloaded temps — used to auto-stop when the clip ends. */
-  durationSec: number | null;
 }
 
 /**
@@ -252,7 +282,7 @@ export async function downloadVideoForStream(
   }
 
   if (isTwitchStreamHost(url)) {
-    return resolveTwitchStreamUrl(url, maxHeight);
+    return resolveTwitchStreamUrl(url, maxHeight, maxDurationSec);
   }
 
   if (!isYoutubeStreamHost(url)) {
@@ -311,7 +341,7 @@ export async function downloadVideoForStream(
     );
     return { path: canonicalTemp, durationSec };
   } catch (err: any) {
-    if (err?.message === 'Local video file not found') {
+    if (err?.message === LOCAL_VIDEO_NOT_FOUND) {
       throw new Error(
         'yt-dlp finished but the stream temp file was missing — the source may be live or unsupported for download',
       );

@@ -21,6 +21,10 @@ describe('source mode', () => {
     // No probe (fixed presets): keep pre-1.9 VOD behaviour.
     assert.equal(resolveSourceMode(undefined, false, null), 'vod');
   });
+  it('extractor live hint (Twitch) maps fixed-preset remote to live', () => {
+    // Same shape applyVideoSource builds when resolved.live === true.
+    assert.equal(resolveSourceMode('auto', false, { durationSec: null }), 'live');
+  });
 });
 
 describe('encoder exit classification', () => {

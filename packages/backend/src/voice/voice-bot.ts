@@ -423,9 +423,9 @@ export class VoiceBot extends EventEmitter {
   private async resolveStreamSource(
     source: string,
     maxHeight: number,
-  ): Promise<{ path: string; loop: boolean }> {
+  ): Promise<{ path: string; loop: boolean; live?: boolean; durationSec: number | null }> {
     const maxDur = this.config.maxVideoDurationSec ?? 900;
-    const { path: filePath, durationSec } = await downloadVideoForStream(source, maxHeight, maxDur);
+    const { path: filePath, durationSec, live } = await downloadVideoForStream(source, maxHeight, maxDur);
     const isDownloadedTemp = filePath.includes('.stream-') && filePath.endsWith('.mp4');
 
     this.clearVideoEndTimer();
@@ -443,8 +443,17 @@ export class VoiceBot extends EventEmitter {
         );
       }
       this.scheduleVideoEndStop(stopAfter);
+      return { path: filePath, loop: false, live, durationSec };
     }
-    return { path: filePath, loop: !isDownloadedTemp };
+
+    // Resolved remote VOD (e.g. Twitch) with a known duration: stop when it ends.
+    if (live === false && durationSec != null && durationSec > 0) {
+      this._videoDurationSec = durationSec;
+      this.scheduleVideoEndStop(durationSec);
+      return { path: filePath, loop: false, live, durationSec };
+    }
+
+    return { path: filePath, loop: true, live, durationSec };
   }
 
   /** Update the TS3 nickname to show what's playing. Max 30 chars. */
@@ -1493,9 +1502,15 @@ export class VoiceBot extends EventEmitter {
     const resolved = await this.resolveStreamSource(source, maxHeight);
     const isLocal = !/^https?:\/\//i.test(resolved.path);
     // Only Auto probes; the same probe tells live (no duration) from VOD.
+    // Fixed presets skip the probe — use extractor live/VOD hints (Twitch) so
+    // live streams are not mislabeled as VOD (#203 / Claude review on #204).
     const probe = requested === 'auto' ? await probeSource(resolved.path) : null;
     const quality = resolveQuality(requested, limit, probe?.resolution ?? null);
-    const mode = resolveSourceMode(this._videoSourceModeRequest, isLocal, probe);
+    const hint =
+      resolved.live === undefined
+        ? null
+        : { durationSec: resolved.live ? null : resolved.durationSec ?? 0 };
+    const mode = resolveSourceMode(this._videoSourceModeRequest, isLocal, probe ?? hint);
     if (quality.note) {
       console.log(`[VoiceBot ${this.config.id}] Auto quality → ${quality.actual}: ${quality.note}`);
     }
