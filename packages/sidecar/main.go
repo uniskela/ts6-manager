@@ -1028,6 +1028,8 @@ type SourceRequest struct {
 	// AllowedHosts are the LAN hosts an admin allowed for this source (IPTV
 	// only); ffmpeg may reach no other private address.
 	AllowedHosts []string
+	// CpuUsed overrides VIDEO_CPU_USED / VIDEO_VP9_CPU_USED when > 0.
+	CpuUsed int
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -1171,7 +1173,7 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 	} else if spec.Hardware {
 		args = append(args, "-vf", uploadFilter(spec))
 	}
-	args = append(args, encoderArgs(spec, vBitrate, lowPower)...)
+	args = append(args, encoderArgs(spec, vBitrate, lowPower, req.CpuUsed)...)
 	args = append(args,
 		"-payload_type", "96",
 		"-ssrc", "11111111",
@@ -1563,6 +1565,8 @@ func main() {
 			Mode string `json:"mode"`
 			// AllowedHosts are admin-approved LAN hosts (IPTV sources only).
 			AllowedHosts []string `json:"allowedHosts"`
+			// CpuUsed overrides VIDEO_CPU_USED for software VP8/VP9 when > 0.
+			CpuUsed int `json:"cpuUsed"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -1603,6 +1607,7 @@ func main() {
 			Encoder:      encoderID,
 			Mode:         req.Mode,
 			AllowedHosts: req.AllowedHosts,
+			CpuUsed:      req.CpuUsed,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)

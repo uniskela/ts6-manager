@@ -116,14 +116,24 @@ func uploadFilter(spec EncoderSpec) string {
 }
 
 // encoderArgs are the codec-specific ffmpeg output options (not the filter
-// chain, not the RTP destination).
-func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool) []string {
+// chain, not the RTP destination). cpuUsed > 0 overrides VIDEO_CPU_USED /
+// VIDEO_VP9_CPU_USED for software VP8/VP9; hardware encoders ignore it.
+func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) []string {
 	gop := strconv.Itoa(envIntOrDefault("VIDEO_GOP", 15))
 	rate := []string{
 		"-b:v", vBitrate,
 		"-maxrate", vBitrate,
 		"-bufsize", videoBufsize(vBitrate),
 		"-g", gop,
+	}
+
+	vp8CPU := envOrDefault("VIDEO_CPU_USED", "4")
+	if cpuUsed > 0 {
+		vp8CPU = strconv.Itoa(cpuUsed)
+	}
+	vp9CPU := envOrDefault("VIDEO_VP9_CPU_USED", "8")
+	if cpuUsed > 0 {
+		vp9CPU = strconv.Itoa(cpuUsed)
 	}
 
 	var args []string
@@ -134,7 +144,7 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool) []string {
 			"-c:v", "libvpx",
 			// Lower = better quality/bit; 6 was for single-core encode. With -threads/-row-mt
 			// there is headroom to trade some speed for quality (override via VIDEO_CPU_USED).
-			"-cpu-used", envOrDefault("VIDEO_CPU_USED", "4"),
+			"-cpu-used", vp8CPU,
 			"-deadline", "realtime",
 			// libvpx does not auto-scale across cores without these.
 			"-threads", strconv.Itoa(envIntOrDefault("VIDEO_ENCODE_THREADS", runtime.NumCPU())),
@@ -148,7 +158,7 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool) []string {
 		args = []string{
 			"-pix_fmt", "yuv420p",
 			"-c:v", "libvpx-vp9",
-			"-cpu-used", envOrDefault("VIDEO_VP9_CPU_USED", "8"),
+			"-cpu-used", vp9CPU,
 			"-deadline", "realtime",
 			"-threads", strconv.Itoa(envIntOrDefault("VIDEO_ENCODE_THREADS", runtime.NumCPU())),
 			"-row-mt", "1",
@@ -243,7 +253,7 @@ func encoderProbeArgs(spec EncoderSpec, lowPower bool) []string {
 		"-frames:v", "3",
 		"-vf", uploadFilter(spec),
 	)
-	args = append(args, encoderArgs(spec, "500k", lowPower)...)
+	args = append(args, encoderArgs(spec, "500k", lowPower, 0)...)
 	args = append(args, "-f", "null", "-")
 	return args
 }

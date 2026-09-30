@@ -1544,6 +1544,7 @@ export class VoiceBot extends EventEmitter {
       encoder: this._videoEncoder.selected,
       mode,
       allowedHosts: this._videoLocalHosts,
+      cpuUsed: this._videoSettings.cpuUsed,
     });
 
     this._videoSourceMode = mode;
