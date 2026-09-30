@@ -41,6 +41,25 @@ Live overview of your selected server, organized into Server Status, Traffic, an
 
 ![Dashboard](docs/dashboard.png)
 
+### Channels and Clients
+Browse the channel tree with connected clients, mute/away status, and password indicators, then review the sortable client list with search and per-client actions.
+
+![Channel Tree](docs/channels.png)
+
+![Clients](docs/clients.png)
+
+### Server Groups and Permissions
+Manage group membership and edit permissions with readable Simple labels or raw Technical names.
+
+![Server Groups](docs/server-groups.png)
+
+![Permission Editor](docs/permissions-editor.png)
+
+### Server Logs
+Bounded, paged `logview` output with level badges and page-local search and level filters.
+
+![Server Logs](docs/server-logs.png)
+
 ### Music Bots
 Run multiple music bots per server. Each bot has its own queue, volume control, and playback state. Supports radio streams, YouTube, and a local music library. Users in the bot's channel can control it via text commands (`!radio`, `!play`, `!vol`, etc.).
 
@@ -60,6 +79,11 @@ Visual node-based editor for building automated server workflows. Readable ortho
 Get started quickly with pre-built flow templates. Covers common use cases like temporary channel creation, AFK movers, idle kickers, online counters, and group protection. One click to import, then customize to your needs.
 
 ![Flow Templates](docs/flow-templates.png)
+
+### Try it without TeamSpeak
+The Demo TeamSpeak Server connection provides synthetic channels, clients, groups, permissions, bans, and logs so you can explore the UI without a real server. The Channels, Clients, Groups, Permission Editor, and Logs screenshots above were captured from it. See [Configuration](docs/configuration.md#demo-server-for-ui-testing).
+
+![Demo connection](docs/demo-connection.png)
 
 ### Permissions Compare
 Compare two to four entities from the same permission layer in a read-only table. Simple or technical labels and Set on any / Differences only filters make raw values, unset states, Skip, and Negate flags easier to review.

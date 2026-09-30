@@ -49,6 +49,8 @@ The connection setup wizard can create a **Demo TeamSpeak Server** without a rea
 
 Demo mode does not resolve a TeamSpeak hostname, open a WebQuery or SSH connection, or send commands to a real server. It is intended for UI/UX evaluation, screenshots, and learning the interface. Mutating actions are simulated and the fixture state is not a substitute for a real TeamSpeak server.
 
+![Demo connection listed under Settings → Connections](demo-connection.png)
+
 Delete the demo connection from **Settings → Connections** when it is no longer needed.
 
 ## SSH Query
