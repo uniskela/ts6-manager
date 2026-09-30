@@ -114,7 +114,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
           )}
           {tone === 'music' && (
             <Button size="sm" variant="ghost" disabled={stopping} onClick={() => stopMusic.mutate(bot.botId)}>
-              <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Stop music
+              <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Stop media
             </Button>
           )}
         </div>
@@ -168,7 +168,7 @@ export default function BotHub() {
         ) : query.isError ? (
           <EmptyState icon={AlertTriangle} title="Could not load bot media" description={apiErrorMessage(query.error, 'Try again in a moment.')} />
         ) : bots.length === 0 ? (
-          <EmptyState icon={Music} title="No music bots yet" description="Create a music bot to play music, radio, video or IPTV into a channel.">
+          <EmptyState icon={Music} title="No media bots yet" description="Create a media bot to play music, radio, video or IPTV into a channel.">
             <Button asChild size="sm"><Link to="/media-bots">Go to Media Bots</Link></Button>
           </EmptyState>
         ) : (
