@@ -10,6 +10,8 @@ The Bots view shows live connection/playback status, current media, progress, vo
 
 **Automation → Bot Hub** shows what every bot is doing right now: the track or stream, its channel, video quality and encoder, viewer count, uptime, the no-viewer auto-stop countdown, and the last stop reason. It links to Bot Flows, Media Bots, video streaming and IPTV. The page polls in-memory bot state only; it never probes the media sidecar or TeamSpeak Query.
 
+![Bot Hub showing one playing bot and one idle bot](bot-hub.png)
+
 A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time).
 
 ## Sources

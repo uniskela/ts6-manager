@@ -130,6 +130,38 @@ const docsPlaybackState = {
   isStreaming: false,
 };
 
+const docsNow = Date.parse('2026-09-21T12:00:00.000Z');
+const docsBotMedia = [
+  {
+    botId: 7,
+    botName: 'Aurora Radio',
+    serverConfigId: 1,
+    serverName: 'Demo Voice Lab',
+    status: 'playing',
+    channelId: 5,
+    channelName: 'Music Lounge',
+    session: { id: 'demo-session-1', kind: 'music', state: 'active', botId: 7, botName: 'Aurora Radio', startedAt: docsNow - 620_000, label: 'Neon Skyline' },
+    music: { title: 'Neon Skyline', artist: 'Demo Ensemble', live: false, position: 96, duration: 248 },
+    video: null,
+    lastMusicStop: null,
+    lastVideoStop: null,
+  },
+  {
+    botId: 8,
+    botName: 'Lounge Bot',
+    serverConfigId: 1,
+    serverName: 'Demo Voice Lab',
+    status: 'idle',
+    channelId: 6,
+    channelName: 'Quiet Room',
+    session: null,
+    music: null,
+    video: null,
+    lastMusicStop: { reason: 'channel_empty', at: docsNow - 14 * 60_000, detail: null },
+    lastVideoStop: null,
+  },
+];
+
 const docsIptvChannels = [
   { id: 501, playlistId: 41, name: 'Community News', url: 'https://media.example.test/live/community-news.m3u8', logo: null, groupTitle: 'Community', tvgId: 'demo-news', position: 1 },
   { id: 502, playlistId: 41, name: 'Local Events', url: 'https://media.example.test/live/local-events.m3u8', logo: null, groupTitle: 'Community', tvgId: 'demo-events', position: 2 },
@@ -479,6 +511,7 @@ const server = createServer(async (req, res) => {
         ? (docsScenario
             ? { total: docsIptvChannels.length, page: 1, pageSize: 24, channels: docsIptvChannels }
             : { total: 1234, page: 1, pageSize: 24, channels: [] })
+      : url.pathname === '/api/music-bots/media' && allowTestAuth && docsScenario ? docsBotMedia
       : url.pathname === '/api/music-bots' && allowTestAuth ? (docsScenario ? docsMusicBots : [])
       : url.pathname === '/api/music-bots/7/state' && allowTestAuth && docsScenario ? docsPlaybackState
       : url.pathname === '/api/bots' && allowTestAuth ? bots
