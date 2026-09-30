@@ -41,6 +41,9 @@ import {
   lastStopLabel,
   qualityLabel,
 } from '@/lib/video-streaming';
+import { apiErrorMessage } from '@/lib/api-error';
+import { toastMediaStarted } from '@/lib/media-start-toast';
+import { toast } from 'sonner';
 
 /** Current time: every second while live (countdown, uptime), every 30s otherwise ("8 min ago"). */
 function useNow(live: boolean): number {
@@ -93,17 +96,23 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
 
   const handleStart = () => {
     if (!sourceUrl.trim()) return;
-    startStream.mutate({
-      botId,
-      source: sourceUrl.trim(),
-      preset,
-      encoder: encoder === 'default' ? undefined : encoder,
-      noViewerTimeoutSec: noViewerTimeout === 'default' ? undefined : Number(noViewerTimeout),
-      sourceMode,
-      framerate: Number(framerate),
-      bitrate: bitrate.trim() || undefined,
-      volume: streamVolume,
-    });
+    startStream.mutate(
+      {
+        botId,
+        source: sourceUrl.trim(),
+        preset,
+        encoder: encoder === 'default' ? undefined : encoder,
+        noViewerTimeoutSec: noViewerTimeout === 'default' ? undefined : Number(noViewerTimeout),
+        sourceMode,
+        framerate: Number(framerate),
+        bitrate: bitrate.trim() || undefined,
+        volume: streamVolume,
+      },
+      {
+        onSuccess: () => toastMediaStarted('Video stream started'),
+        onError: (err) => toast.error(apiErrorMessage(err, 'Failed to start stream')),
+      },
+    );
   };
 
   const handleStop = () => {

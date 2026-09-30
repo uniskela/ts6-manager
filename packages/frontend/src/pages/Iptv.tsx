@@ -25,6 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tv, Plus, Trash2, RefreshCw, Play, Square, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle, Upload, Link2, FileUp } from 'lucide-react';
 import { toast } from 'sonner';
+import { toastMediaStarted } from '@/lib/media-start-toast';
 import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage } from '@ts6/common';
 import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
@@ -115,11 +116,11 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   const doStream = (channel: IptvChannelInfo) => {
-    if (!botId) { toast.error('Select a running music bot to stream through'); return; }
+    if (!botId) { toast.error('Select a running media bot to stream through'); return; }
     stream.mutate(
       { botId: parseInt(botId), channelId: channel.id, preset },
       {
-        onSuccess: () => toast.success(`Streaming: ${channel.name}`),
+        onSuccess: () => toastMediaStarted(`Streaming: ${channel.name}`),
         onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to start stream'),
       },
     );
