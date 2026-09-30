@@ -1,13 +1,13 @@
 /**
- * Admin defaults for new video streams (no-viewer stop, Auto limit, encoder,
- * hardware preference, bitrate clamp) plus an on-demand encoder capability check.
- * Lives beside the stream controls so these settings stay in the media surface.
+ * Admin defaults for new video streams: Performance/Balanced/Quality profiles,
+ * with Advanced knobs (Auto limit, encoder, bitrate, cpu-used, no-viewer stop)
+ * collapsed by default. Encoder capability check stays below.
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, Loader2, RefreshCw, X } from 'lucide-react';
+import { Check, ChevronDown, Loader2, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { VideoEncoderRequest, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
+import type { VideoEncodeProfile, VideoEncoderRequest, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -22,14 +22,17 @@ import {
   useVideoStreamingSettings,
 } from '@/hooks/use-video-streaming';
 import { apiErrorMessage } from '@/lib/api-error';
+import { ENCODE_PROFILE_PRESETS, applyEncodeProfile, type NamedEncodeProfile } from '@/lib/encode-profiles';
 import {
   AUTO_LIMIT_OPTIONS,
   ENCODER_LABELS,
   ENCODER_OPTIONS,
   formatTimeout,
 } from '@/lib/video-streaming';
+import { cn } from '@/lib/utils';
 
 const TIMEOUT_PRESETS = ['0', '60', '300', '600', '1800'];
+const NAMED_PROFILES = Object.keys(ENCODE_PROFILE_PRESETS) as NamedEncodeProfile[];
 
 const FIELD_LABELS: Record<keyof VideoStreamSettings, string> = {
   noViewerTimeoutSec: 'no-viewer stop',
@@ -37,6 +40,8 @@ const FIELD_LABELS: Record<keyof VideoStreamSettings, string> = {
   defaultEncoder: 'encoder',
   preferHardware: 'hardware preference',
   maxBitrateKbps: 'bitrate limit',
+  encodeProfile: 'encode profile',
+  cpuUsed: 'encode speed',
 };
 
 interface VideoStreamDefaultsCardProps {
@@ -57,6 +62,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
   const encoders = useVideoEncoderCapabilities();
   const [draft, setDraft] = useState<VideoStreamSettings | null>(null);
   const [customTimeout, setCustomTimeout] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const draftRef = useRef<VideoStreamSettings | null>(null);
   const prevSettingsRef = useRef<VideoStreamSettings | null>(null);
 
@@ -64,7 +70,6 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
     draftRef.current = draft;
   }, [draft]);
 
-  // Switching scope edits a different record: start from its saved values.
   useEffect(() => {
     draftRef.current = null;
     prevSettingsRef.current = null;
@@ -90,6 +95,13 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
   const set = <K extends keyof VideoStreamSettings>(key: K, value: VideoStreamSettings[K]) =>
     setDraft((d) => (d ? { ...d, [key]: value } : d));
 
+  const setAdvanced = <K extends keyof VideoStreamSettings>(key: K, value: VideoStreamSettings[K]) =>
+    setDraft((d) => (d ? { ...d, [key]: value, encodeProfile: 'custom' as VideoEncodeProfile } : d));
+
+  const selectProfile = (profile: NamedEncodeProfile) => {
+    setDraft((d) => (d ? { ...d, ...applyEncodeProfile(profile) } : d));
+  };
+
   const save = () => {
     update.mutate(draft, {
       onSuccess: () => toast.success(serverScope
@@ -102,6 +114,8 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
   const checkEncoders = (refresh: boolean) => {
     encoders.check(refresh).catch(() => { /* surfaced via isError */ });
   };
+
+  const profileValue: VideoEncodeProfile = draft.encodeProfile ?? 'custom';
 
   return (
     <Card>
@@ -131,94 +145,142 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
             )}
           </div>
         )}
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="no-viewer-timeout">Stop when nobody watches</Label>
-            <Select
-              value={customTimeout ? 'custom' : String(draft.noViewerTimeoutSec)}
-              onValueChange={(v) => {
-                if (v === 'custom') {
-                  setCustomTimeout(true);
-                } else {
-                  setCustomTimeout(false);
-                  set('noViewerTimeoutSec', Number(v));
-                }
-              }}
-            >
-              <SelectTrigger id="no-viewer-timeout"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {TIMEOUT_PRESETS.map((v) => (
-                  <SelectItem key={v} value={v}>{formatTimeout(Number(v))}</SelectItem>
-                ))}
-                <SelectItem value="custom">Custom…</SelectItem>
-              </SelectContent>
-            </Select>
-            {customTimeout && (
-              <Input
-                type="number"
-                min={0}
-                max={86400}
-                aria-label="Custom no-viewer timeout in seconds"
-                value={draft.noViewerTimeoutSec}
-                onChange={(e) => set('noViewerTimeoutSec', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
-              />
-            )}
-            <p className="text-xs text-muted-foreground">
-              Separate from the channel-empty stop: frees the encoder when no TeamSpeak client has the stream open.
-            </p>
-          </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="auto-limit">Auto quality limit</Label>
-            <Select
-              value={draft.autoMaxPreset}
-              onValueChange={(v) => set('autoMaxPreset', v as VideoStreamPresetKey)}
-            >
-              <SelectTrigger id="auto-limit"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {AUTO_LIMIT_OPTIONS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              Auto matches the source resolution up to this preset and never upscales.
-            </p>
+        <div className="space-y-2">
+          <Label>Encode profile</Label>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {NAMED_PROFILES.map((id) => {
+              const p = ENCODE_PROFILE_PRESETS[id];
+              const active = profileValue === id;
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => selectProfile(id)}
+                  className={cn(
+                    'rounded-md border px-3 py-2 text-left text-sm transition-colors',
+                    active ? 'border-primary bg-primary/5' : 'hover:border-primary/40',
+                  )}
+                >
+                  <span className="font-medium">{p.label}</span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{p.hint}</span>
+                </button>
+              );
+            })}
           </div>
+          {profileValue === 'custom' && (
+            <p className="text-xs text-muted-foreground">Custom — Advanced settings differ from the named profiles.</p>
+          )}
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="default-encoder">Default encoder</Label>
-            <Select
-              value={draft.defaultEncoder}
-              onValueChange={(v) => set('defaultEncoder', v as VideoEncoderRequest)}
-            >
-              <SelectTrigger id="default-encoder"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {ENCODER_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-2 pt-1">
-              <Switch
-                id="prefer-hardware"
-                checked={draft.preferHardware}
-                onCheckedChange={(v) => set('preferHardware', v)}
-              />
-              <Label htmlFor="prefer-hardware" className="text-sm font-normal">
-                Auto prefers hardware (VAAPI) when a test encode succeeds
-              </Label>
-            </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="max-bitrate">Bitrate limit (kbps)</Label>
+        <div className="space-y-2">
+          <Label htmlFor="no-viewer-timeout">Stop when nobody watches</Label>
+          <Select
+            value={customTimeout ? 'custom' : String(draft.noViewerTimeoutSec)}
+            onValueChange={(v) => {
+              if (v === 'custom') {
+                setCustomTimeout(true);
+              } else {
+                setCustomTimeout(false);
+                set('noViewerTimeoutSec', Number(v));
+              }
+            }}
+          >
+            <SelectTrigger id="no-viewer-timeout"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {TIMEOUT_PRESETS.map((v) => (
+                <SelectItem key={v} value={v}>{formatTimeout(Number(v))}</SelectItem>
+              ))}
+              <SelectItem value="custom">Custom…</SelectItem>
+            </SelectContent>
+          </Select>
+          {customTimeout && (
             <Input
-              id="max-bitrate"
               type="number"
               min={0}
-              max={100000}
-              value={draft.maxBitrateKbps}
-              onChange={(e) => set('maxBitrateKbps', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+              max={86400}
+              aria-label="Custom no-viewer timeout in seconds"
+              value={draft.noViewerTimeoutSec}
+              onChange={(e) => set('noViewerTimeoutSec', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
             />
-            <p className="text-xs text-muted-foreground">0 = no limit. Clamps every preset and custom bitrate; streams never exceed TeamSpeak's 9500 kbps ceiling.</p>
-          </div>
+          )}
+        </div>
+
+        <div className="rounded-md border">
+          <button
+            type="button"
+            className="flex w-full items-center justify-between px-3 py-2 text-sm font-medium"
+            onClick={() => setAdvancedOpen((o) => !o)}
+            aria-expanded={advancedOpen}
+          >
+            Advanced quality settings
+            <ChevronDown className={cn('h-4 w-4 transition-transform', advancedOpen && 'rotate-180')} />
+          </button>
+          {advancedOpen && (
+            <div className="grid gap-4 border-t px-3 py-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="auto-limit">Auto quality limit</Label>
+                <Select
+                  value={draft.autoMaxPreset}
+                  onValueChange={(v) => setAdvanced('autoMaxPreset', v as VideoStreamPresetKey)}
+                >
+                  <SelectTrigger id="auto-limit"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {AUTO_LIMIT_OPTIONS.map((p) => <SelectItem key={p} value={p}>{p}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="max-bitrate">Bitrate limit (kbps)</Label>
+                <Input
+                  id="max-bitrate"
+                  type="number"
+                  min={0}
+                  max={100000}
+                  value={draft.maxBitrateKbps}
+                  onChange={(e) => setAdvanced('maxBitrateKbps', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+                />
+                <p className="text-xs text-muted-foreground">0 = no limit.</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="cpu-used">Encode speed (cpu-used)</Label>
+                <Input
+                  id="cpu-used"
+                  type="number"
+                  min={0}
+                  max={8}
+                  value={draft.cpuUsed}
+                  onChange={(e) => setAdvanced('cpuUsed', Math.min(8, Math.max(0, Math.floor(Number(e.target.value) || 0))))}
+                />
+                <p className="text-xs text-muted-foreground">Higher is faster / softer (software VP8/VP9). Hardware ignores this.</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="default-encoder">Default encoder</Label>
+                <Select
+                  value={draft.defaultEncoder}
+                  onValueChange={(v) => set('defaultEncoder', v as VideoEncoderRequest)}
+                >
+                  <SelectTrigger id="default-encoder"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {ENCODER_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="flex items-center gap-2 pt-1">
+                  <Switch
+                    id="prefer-hardware"
+                    checked={draft.preferHardware}
+                    onCheckedChange={(v) => set('preferHardware', v)}
+                  />
+                  <Label htmlFor="prefer-hardware" className="text-sm font-normal">
+                    Auto prefers hardware (VAAPI) when a test encode succeeds
+                  </Label>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-2">

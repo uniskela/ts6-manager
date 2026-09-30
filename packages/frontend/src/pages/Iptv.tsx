@@ -140,7 +140,7 @@ function ChannelBrowser({ playlist, bots }: { playlist: IptvPlaylistSummary; bot
         )}
         {eligibleBots.length === 0 && (
           <p className="text-[11px] text-amber-500 flex items-center gap-1">
-            <AlertCircle className="h-3.5 w-3.5" /> Start a Music Bot on this server to stream.
+            <AlertCircle className="h-3.5 w-3.5" /> Start a Media Bot on this server to stream.
           </p>
         )}
       </div>
@@ -471,7 +471,7 @@ export default function Iptv() {
       <PageHeader
         title="IPTV"
         icon={Tv}
-        description="Stream live IPTV channels into TeamSpeak via a Music Bot's video sidecar."
+        description="Stream live IPTV channels into TeamSpeak via a Media Bot's video sidecar."
         actions={(
           <>
           <Select value={selectedConfigId ? String(selectedConfigId) : ''} onValueChange={(v) => { setServer(parseInt(v)); setSelectedPlaylistId(null); }}>

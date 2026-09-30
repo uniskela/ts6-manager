@@ -27,7 +27,7 @@ test('high-traffic pages expose the shared title, description, metadata, and act
     { path: '/channels', title: 'Channels', description: /channels · 2 users online/, action: 'Create Channel' },
     { path: '/clients', title: 'Clients', description: '2 online' },
     { path: '/servers', title: 'Virtual Servers', description: /2 servers/ },
-    { path: '/music-bots', title: 'Music Bots', description: /playback/i },
+    { path: '/media-bots', title: 'Media Bots', description: /playback/i },
     { path: '/iptv', title: 'IPTV', description: /Stream live IPTV channels/ , action: 'Add Playlist' },
   ] as const;
 
@@ -143,7 +143,7 @@ test('targeted pages remain document-contained at narrow and desktop widths', as
   await signIn(page, request);
   for (const [width, height] of [[390, 844], [430, 932], [768, 1024], [844, 390], [1440, 900]]) {
     await page.setViewportSize({ width, height });
-    for (const path of ['/dashboard', '/channels', '/clients', '/servers', '/music-bots', '/iptv']) {
+    for (const path of ['/dashboard', '/channels', '/clients', '/servers', '/media-bots', '/iptv']) {
       await page.goto(path);
       await expect(page.getByTestId('page-header')).toBeVisible({ timeout: 15_000 });
       await expectNoHorizontalOverflow(page);

@@ -13,7 +13,9 @@ The streaming path can accept supported YouTube, Twitch, direct media URLs, and 
 
 Pick **Auto** or a fixed preset: 480p, 720p, 1080p, 1440p or 2160p.
 
-- **Auto** probes the source with `ffprobe` and uses the largest preset the source fits without upscaling, up to the **Auto limit** (default 1080p). A 720p channel stays 720p even when the limit is 2160p. If the probe fails, Auto uses 720p (or the limit, if lower) and says so.
+Streaming defaults also offer **Performance / Balanced / Quality** profiles (default Balanced): they set Auto limit, bitrate clamp, and software encode speed (`cpu-used`). Open **Advanced quality settings** for manual Auto limit, bitrate, encode speed, and encoder knobs.
+
+- **Auto** probes the source with `ffprobe` and uses the largest preset the source fits without upscaling, up to the **Auto limit** (default 1080p under Balanced). A 720p channel stays 720p even when the limit is 2160p. If the probe fails, Auto uses 720p (or the limit, if lower) and says so.
 - **Fixed presets** skip the probe. Prefer them for IPTV services that allow only one connection, since the probe is a second one.
 - The stream panel shows *requested → actual*, e.g. `Auto → 1080p (source 1920×1080)`.
 - Leave the bitrate empty to use the preset's bitrate. Admins can set a **bitrate limit** that clamps every stream.

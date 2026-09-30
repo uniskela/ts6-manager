@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout/AppLayout';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -11,6 +11,12 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   const isAdmin = useAuthStore((s) => s.isAdmin());
   if (!isAdmin) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
+}
+
+/** Preserve query string when renaming /music-bots → /media-bots. */
+function MusicBotsRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={`/media-bots${search}`} replace />;
 }
 
 const queryClient = new QueryClient({
@@ -90,7 +96,8 @@ export function App() {
               <Route path="/bots" element={<AdminRoute><BotList /></AdminRoute>} />
               <Route path="/bots/:botId" element={<AdminRoute><BotEditor /></AdminRoute>} />
               <Route path="/bot-hub" element={<AdminRoute><BotHub /></AdminRoute>} />
-              <Route path="/music-bots" element={<AdminRoute><MusicBots /></AdminRoute>} />
+              <Route path="/media-bots" element={<AdminRoute><MusicBots /></AdminRoute>} />
+              <Route path="/music-bots" element={<MusicBotsRedirect />} />
               <Route path="/iptv" element={<AdminRoute><Iptv /></AdminRoute>} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<NotFound />} />

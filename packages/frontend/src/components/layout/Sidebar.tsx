@@ -91,7 +91,7 @@ const navSections: NavSection[] = [
     items: [
       { to: '/bot-hub', icon: LayoutGrid, label: 'Bot Hub', adminOnly: true },
       { to: '/bots', icon: Bot, label: 'Bot Flows', adminOnly: true },
-      { to: '/music-bots', icon: Music, label: 'Music Bots', adminOnly: true },
+      { to: '/media-bots', icon: Music, label: 'Media Bots', adminOnly: true },
       { to: '/iptv', icon: Tv, label: 'IPTV', adminOnly: true },
     ],
   },

@@ -1,7 +1,7 @@
 /**
  * Bot hub — one place for what every bot is doing: active media sessions
  * (music or video, never both on a bot; one video stream at a time) plus the
- * entry points to Bot Flows, Music Bots, video streaming and IPTV.
+ * entry points to Bot Flows, Media Bots, video streaming and IPTV.
  */
 
 import { useEffect, useState } from 'react';
@@ -24,8 +24,8 @@ import { cn } from '@/lib/utils';
 
 const SECTIONS = [
   { to: '/bots', icon: Bot, title: 'Bot Flows', text: 'Event-driven automations and chat commands.' },
-  { to: '/music-bots', icon: Music, title: 'Music Bots', text: 'Bots, queues, library, playlists and radio.' },
-  { to: '/music-bots?tab=video', icon: Video, title: 'Video streaming', text: 'Stream a URL or file into a channel; quality and encoder defaults.' },
+  { to: '/media-bots', icon: Music, title: 'Media Bots', text: 'Bots, queues, library, playlists and radio.' },
+  { to: '/media-bots?tab=video', icon: Video, title: 'Video streaming', text: 'Stream a URL or file into a channel; quality and encoder defaults.' },
   { to: '/iptv', icon: Tv, title: 'IPTV', text: 'Playlists and live channels streamed through a bot.' },
 ] as const;
 
@@ -52,7 +52,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
   const badge = TONE_BADGE[tone];
   const facts = hubFacts(bot, now);
   const lastStop = tone === 'idle' || tone === 'offline' ? hubLastStop(bot, now) : null;
-  const openHref = tone === 'live' ? `/music-bots?tab=video&bot=${bot.botId}` : '/music-bots';
+  const openHref = tone === 'live' ? `/media-bots?tab=video&bot=${bot.botId}` : '/media-bots';
   const stopping = stopMusic.isPending || stopVideo.isPending;
   const error = stopMusic.error ?? stopVideo.error;
 
@@ -169,7 +169,7 @@ export default function BotHub() {
           <EmptyState icon={AlertTriangle} title="Could not load bot media" description={apiErrorMessage(query.error, 'Try again in a moment.')} />
         ) : bots.length === 0 ? (
           <EmptyState icon={Music} title="No music bots yet" description="Create a music bot to play music, radio, video or IPTV into a channel.">
-            <Button asChild size="sm"><Link to="/music-bots">Go to Music Bots</Link></Button>
+            <Button asChild size="sm"><Link to="/media-bots">Go to Media Bots</Link></Button>
           </EmptyState>
         ) : (
           <>

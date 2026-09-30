@@ -25,10 +25,12 @@ These seed the **Streaming defaults** shown to admins on the Video Stream tab. A
 | Variable | Default | Purpose |
 |---|---|---|
 | `VIDEO_NO_VIEWER_TIMEOUT_SECONDS` | `300` | Stop a video stream no TeamSpeak client has open for this long; `0` disables. Separate from the channel-empty stop (`BOT_AUTO_STOP_EMPTY_SECONDS`) |
-| `VIDEO_AUTO_MAX_PRESET` | `1080p` | Highest preset **Auto** quality may pick (`720p`–`2160p`) |
+| `VIDEO_AUTO_MAX_PRESET` | `1080p` | Highest preset **Auto** quality may pick (`720p`–`2160p`); Balanced profile default |
 | `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi` |
 | `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first VAAPI encoder that passes the sidecar test encode |
-| `VIDEO_MAX_BITRATE_KBPS` | `0` | Clamp every stream bitrate (kbps); `0` = no clamp |
+| `VIDEO_MAX_BITRATE_KBPS` | `4500` | Clamp every stream bitrate (kbps); `0` = no clamp. Balanced profile default is `4500` |
+| `VIDEO_ENCODE_PROFILE` | `balanced` | `performance`, `balanced`, `quality`, or `custom` — expands into Auto max, bitrate clamp, and encode speed |
+| `VIDEO_CPU_USED` | `4` | Default libvpx `-cpu-used` when no admin profile/cpuUsed is stored (higher = faster) |
 
 ## Frontend development
 

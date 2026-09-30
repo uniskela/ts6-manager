@@ -1,14 +1,14 @@
-# Music bots
+# Media bots
 
-TS6 Manager can run multiple TeamSpeak music bots per server. Each bot has independent playback, queue, and volume state.
+TS6 Manager can run multiple TeamSpeak media bots per server. Each bot has independent playback, queue, and volume state.
 
-The Bots view shows live connection/playback status, current media, progress, volume, queue context, and normal playback controls without exposing provider credentials.
+The Bots view shows live connection/playback status, current media, progress, volume, queue context, and normal playback controls without exposing provider credentials. Create a bot with a single **Name** (used as both the admin label and the TeamSpeak nickname). The UI route is `/media-bots` (`/music-bots` redirects there).
 
-![Populated Music Bots view](musicbots.png)
+![Populated Media Bots view](musicbots.png)
 
 ## Bot Hub
 
-**Automation → Bot Hub** shows what every bot is doing right now: the track or stream, its channel, video quality and encoder, viewer count, uptime, the no-viewer auto-stop countdown, and the last stop reason. It links to Bot Flows, Music Bots, video streaming and IPTV. The page polls in-memory bot state only; it never probes the media sidecar or TeamSpeak Query.
+**Automation → Bot Hub** shows what every bot is doing right now: the track or stream, its channel, video quality and encoder, viewer count, uptime, the no-viewer auto-stop countdown, and the last stop reason. It links to Bot Flows, Media Bots, video streaming and IPTV. The page polls in-memory bot state only; it never probes the media sidecar or TeamSpeak Query.
 
 A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time).
 

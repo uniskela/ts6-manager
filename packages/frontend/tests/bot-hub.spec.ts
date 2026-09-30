@@ -46,7 +46,7 @@ function media(now: number) {
 
 test('Bot Hub shows each bot\'s active media session and links to its sections', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
-  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
+  await page.route('**/api/media-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
   await signIn(page, request);
 
   await page.goto('/bot-hub');
@@ -66,12 +66,12 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   await page.getByRole('link', { name: /Video streaming/ }).click();
   // VideoTab auto-selects the first running bot and may append `&bot=` after landing.
   await expect(page).toHaveURL((url) => (
-    url.pathname === '/music-bots' && url.searchParams.get('tab') === 'video'
+    url.pathname === '/media-bots' && url.searchParams.get('tab') === 'video'
   ));
   await expect(page.getByRole('tab', { name: 'Video' })).toHaveAttribute('aria-selected', 'true');
 
   // A bot link selects that bot, and the selector keeps the URL in sync.
-  await page.goto('/music-bots?tab=video&bot=7');
+  await page.goto('/media-bots?tab=video&bot=7');
   const botSelect = page.getByText('Select Bot:').locator('..').getByRole('combobox');
   await expect(botSelect).toContainText('Aurora Radio');
 });
