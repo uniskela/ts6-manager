@@ -47,7 +47,7 @@ Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) an
 - **Auto** quality up to 2160p, plus VAAPI encode with software fallback of the same codec.
 - Live versus on-demand source mode, with encode-health warnings when encoding stays below realtime.
 - No-viewer auto-stop (default 5 minutes; the browser preview does not count as a viewer).
-- **IPTV → Local network sources** is an administrator allowlist for LAN IPTV proxies (Threadfin, xTeVe, TVHeadend, and similar). It applies only to playlist refresh, IPTV-page starts, and `!tv`. The sidecar checks every ffmpeg hop against that list.
+- **IPTV → Local network sources** is an administrator allowlist for LAN IPTV proxies (Threadfin, xTeVe, TVHeadend, and similar). It applies only to playlist refresh, IPTV-page starts, and `!tv`. When the egress proxy is enabled, the sidecar checks every ffmpeg hop against that list.
 - Stream start reports a TeamSpeak refusal immediately, holds chat on antiflood error 524, and the sidecar keeps early ICE candidates until the viewer answers.
 - [#204](https://github.com/uniskela/ts6-manager/pull/204) fixes Twitch live URL resolution and browser-preview ICE, with reverse-proxy notes.
 
