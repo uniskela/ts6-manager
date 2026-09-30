@@ -25,7 +25,7 @@ WebSocket connections require application authentication and are scoped to the s
 
 ## Outbound requests
 
-HTTP automation actions and FFmpeg/media URL paths include SSRF protections. Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
+HTTP automation actions and FFmpeg/media URL paths include SSRF protections. An administrator can allow specific LAN IPTV hosts under **IPTV → Local network sources**; that list is IPTV-only ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
 
 Do not design deployments or automations around bypassing these checks.
 
