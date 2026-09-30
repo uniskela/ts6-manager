@@ -46,7 +46,7 @@ export function resolveSourceMode(
 }
 
 const SOURCE_FAILURE =
-  /server returned|connection (refused|reset|timed out)|timed out|failed to resolve|name or service|no such file|invalid data found|end of file|http error|404|403|401|400|i\/o error|matches no streams|stream map|empty segment/i;
+  /server returned|connection (refused|reset|timed out)|timed out|failed to resolve|name or service|no such file|invalid data found|end of file|http error|\b(?:400\s+Bad Request|401\s+Unauthorized|403\s+Forbidden|404\s+Not Found)\b|i\/o error|matches no streams|stream map|empty segment/i;
 
 /**
  * Turn ffmpeg/sidecar stderr into a short operator-facing line (no pointer

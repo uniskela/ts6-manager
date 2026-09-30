@@ -62,6 +62,15 @@ describe('encoder exit classification', () => {
     const c = classifyEncoderExit({ mode: 'file', loop: true, exitError: 'Error initializing output stream 0:0' });
     assert.equal(c.reason, 'encoder_failure');
   });
+  it('bare bitrate/resolution numbers are not treated as HTTP failures', () => {
+    const c = classifyEncoderExit({
+      mode: 'file',
+      loop: true,
+      exitError: 'Encoder buffer 400 kbps at 1080x720',
+    });
+    assert.equal(c.reason, 'encoder_failure');
+    assert.match(c.detail, /^Encoder stopped:/);
+  });
 });
 
 describe('wording', () => {
