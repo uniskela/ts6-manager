@@ -21,6 +21,13 @@ function rejectYtDlpOptionUrl(url: string): void {
   }
 }
 
+/** ENOENT → missing binary; anything else → generic start failure. */
+function ytDlpSpawnFailureMessage(err: NodeJS.ErrnoException): string {
+  return err.code === 'ENOENT'
+    ? `yt-dlp not found: ${err.message}`
+    : `yt-dlp failed to start: ${err.message}`;
+}
+
 function ensureMusicDir(): string {
   const musicRoot = path.resolve(MUSIC_DIR);
   if (!fs.existsSync(musicRoot)) {
@@ -191,9 +198,9 @@ async function resolveTwitchStreamUrl(
       clearTimeout(timer);
       resolve({ stdout: out, stderr: err, code: exitCode });
     });
-    proc.on('error', (spawnErr) => {
+    proc.on('error', (spawnErr: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      reject(new Error(`yt-dlp not found: ${spawnErr.message}`));
+      reject(new Error(ytDlpSpawnFailureMessage(spawnErr)));
     });
   });
 
@@ -330,9 +337,9 @@ export async function downloadVideoForStream(
       }
       resolve();
     });
-    proc.on('error', (err) => {
+    proc.on('error', (err: NodeJS.ErrnoException) => {
       clearTimeout(timer);
-      reject(new Error(`yt-dlp not found: ${err.message}`));
+      reject(new Error(ytDlpSpawnFailureMessage(err)));
     });
   });
 
