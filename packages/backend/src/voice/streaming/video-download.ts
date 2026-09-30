@@ -159,8 +159,8 @@ export async function downloadVideoForStream(
   }
 
   if (!isYtDlpStreamHost(url)) {
-    // Only this URL is checked: the sidecar's ffmpeg follows redirects and
-    // HLS segment URLs itself (see docs/video-streaming.md).
+    // Redirects and HLS segment URLs are checked by the sidecar's egress
+    // proxy, with the same localHosts allowance (see docs/video-streaming.md).
     return { path: url, durationSec: null };
   }
 

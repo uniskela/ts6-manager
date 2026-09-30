@@ -122,6 +122,8 @@ Use at least one live HLS channel and, if available, one CMAF channel whose segm
 | 9.6 | Send a burst of chat commands quickly (for example `!stream` / `!stopstream` repeatedly) until the server reports flooding | The bot goes quiet, then says once *Commands came in too fast…*. Commands work normally afterwards |
 | 9.7 | Start a bot against a full server, then with a wrong server password | The bot stops at once with the server's reason. No retry loop in the log |
 | 9.8 | Watch a stream from a client on the same LAN | Picture within about a second of joining (early connection candidates are no longer dropped) |
+| 9.9 | Stream a public HLS channel and an https on-demand URL, both with a fixed preset and with *Auto* | Both play. *Auto* reports the source resolution. The sidecar log shows no `[Egress] Blocked connection` |
+| 9.10 | Stream an http URL on a public host that redirects to a LAN address (for example a small redirect rule on a test web server) | The stream fails to start. The sidecar log shows `[Egress] Blocked connection` naming the LAN host |
 
 ## Sign-off
 

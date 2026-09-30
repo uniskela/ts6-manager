@@ -25,6 +25,8 @@ export interface SidecarSourceOptions {
   loop?: boolean;
   encoder?: VideoEncoderId;
   mode?: VideoSourceMode;
+  /** Admin-approved LAN hosts (IPTV only); the sidecar blocks every other private address. */
+  allowedHosts?: string[];
 }
 
 /** Encode health from GET /stats (sidecar 1.9+; absent on older sidecars). */
@@ -100,6 +102,15 @@ export class SidecarClient {
   }
 
   /**
+   * ffprobe JSON for a remote source, fetched by the sidecar through the same
+   * egress checks as streaming it. Null when the probe fails.
+   */
+  async probe(source: string, allowedHosts: string[], timeoutMs: number): Promise<string | null> {
+    const res = await this.call('POST', '/probe', { source, allowedHosts }, timeoutMs, true);
+    return typeof res === 'string' && res ? res : null;
+  }
+
+  /**
    * Encoder capabilities. The sidecar caches its test encodes; the first call
    * (or `refresh`) runs them, so only call this on demand.
    */
@@ -120,7 +131,7 @@ export class SidecarClient {
     return this.call('GET', '/health');
   }
 
-  private async call(method: string, endpoint: string, body?: any, timeoutMs?: number): Promise<any> {
+  private async call(method: string, endpoint: string, body?: any, timeoutMs?: number, raw = false): Promise<any> {
     const headers: Record<string, string> = {};
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (this.secret) headers['Authorization'] = `Bearer ${this.secret}`;
@@ -136,6 +147,7 @@ export class SidecarClient {
       throw new Error(`Sidecar ${endpoint}: ${res.status} ${text}`);
     }
     const text = await res.text();
+    if (raw) return text;
     if (!text) return {};
     try {
       return JSON.parse(text);

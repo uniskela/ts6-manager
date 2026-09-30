@@ -120,7 +120,7 @@ Admins can allow those hosts under **IPTV → Local network sources**. Enter one
 - Links typed in chat (`!stream`, `!play`), the video URL box and flow HTTP nodes stay blocked from private addresses.
 - Loopback (`127.0.0.1`), link-local and cloud metadata addresses can never be allowed. Inside a container, loopback is the container itself, so use the host's LAN address instead.
 - Each redirect of a playlist URL is checked again, so a playlist refresh cannot be redirected away from the allowed hosts.
-- For streams, only the channel or video URL itself is checked. The sidecar's ffmpeg follows HTTP redirects and fetches the segment URLs listed inside an HLS playlist on its own. For strict isolation, restrict the sidecar container's network access.
+- Streams get the same rules at every step. The sidecar sends each connection its ffmpeg makes (redirects, HLS playlists and segments, https) through a local checking proxy, which refuses private addresses not on this list and always refuses loopback, link-local and metadata addresses. The *Auto* quality probe of a URL runs in the sidecar through the same checks. A refused connection appears in the sidecar log as `[Egress] Blocked connection` with the host name only.
 - The list is empty by default, and changing it is recorded in the audit log.
 
 ## Architecture

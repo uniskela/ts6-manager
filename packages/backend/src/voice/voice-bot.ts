@@ -36,7 +36,7 @@ import {
   normalizeEncoderRequest,
   selectEncoder,
 } from './streaming/encoders.js';
-import { probeSource } from './streaming/source-probe.js';
+import { probeSource, type SourceProbe } from './streaming/source-probe.js';
 import {
   belowRealtimeWarning,
   channelEmptyStopDetail,
@@ -1532,6 +1532,7 @@ export class VoiceBot extends EventEmitter {
       loop,
       encoder: this._videoEncoder.selected,
       mode,
+      allowedHosts: this._videoLocalHosts,
     });
 
     this._videoSourceMode = mode;
@@ -1546,6 +1547,26 @@ export class VoiceBot extends EventEmitter {
   }
 
   /**
+   * Local files are probed here. Remote sources are probed by the sidecar,
+   * through the egress checks that also cover redirects and HLS segments.
+   */
+  private async probeStreamSource(path: string, isLocal: boolean): Promise<SourceProbe | null> {
+    if (isLocal) return probeSource(path);
+    const sidecar = this.sidecarHttp;
+    if (!sidecar) return null;
+    const allowedHosts = this._videoLocalHosts;
+    return probeSource(path, async (_args, timeoutMs) => {
+      try {
+        return await sidecar.probe(path, allowedHosts, timeoutMs + 2_000);
+      } catch (err: any) {
+        // The error can quote the source URL, which may carry credentials.
+        console.warn(`[VoiceBot ${this.config.id}] Source probe failed (${err?.name ?? 'error'})`);
+        return null;
+      }
+    });
+  }
+
+  /**
    * Resolve (download/validate) a source, pick its quality — Auto probes the
    * source resolution, fixed presets never probe — and hand it to the sidecar.
    */
@@ -1555,7 +1576,7 @@ export class VoiceBot extends EventEmitter {
     const resolved = await this.resolveStreamSource(source, maxHeight);
     const isLocal = !/^https?:\/\//i.test(resolved.path);
     // Only Auto probes; the same probe tells live (no duration) from VOD.
-    const probe = requested === 'auto' ? await probeSource(resolved.path) : null;
+    const probe = requested === 'auto' ? await this.probeStreamSource(resolved.path, isLocal) : null;
     const quality = resolveQuality(requested, limit, probe?.resolution ?? null);
     const mode = resolveSourceMode(this._videoSourceModeRequest, isLocal, probe);
     if (quality.note) {

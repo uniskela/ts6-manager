@@ -55,6 +55,8 @@ The values below are code defaults. Compose files may override them.
 | `SYNC_MAX_DELAY_MS` | `500` | Sync delay clamp |
 | `AUDIO_DELAY_MS` | `0` | Optional manual audio delay |
 | `SIDECAR_DEBUG_LOGS` | `0` | Verbose sidecar logs when set to `1` |
+| `SIDECAR_EGRESS_PROXY` | on | `off` lets ffmpeg connect to remote sources directly, without checking redirects and HLS segment hosts. Not recommended; the backend still checks the first URL. The checking proxy ignores `http_proxy`/`HTTPS_PROXY`, so a sidecar that can only reach the internet through an outbound proxy needs `off` |
+| `FFPROBE_PATH` | `ffprobe` | ffprobe binary for the *Auto* quality probe of URL sources |
 | `VIDEO_RTP_READ_BUFFER` | `4194304` | Requested video UDP read buffer |
 | `AUDIO_RTP_READ_BUFFER` | `1048576` | Requested audio UDP read buffer |
 | `VIDEO_WIDTH` | `1280` | Default output width |
