@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyStreamHost, parseTwitchResolve } from './video-download.js';
 import { resolveSourceMode } from './lifecycle.js';
+import { validateUrl } from '../../utils/url-validator.js';
 
 describe('classifyStreamHost', () => {
   it('detects YouTube hosts', () => {
@@ -59,6 +60,22 @@ describe('parseTwitchResolve', () => {
       () => parseTwitchResolve({ url: 'file:///tmp/x' }),
       /playable Twitch stream URL/,
     );
+  });
+});
+
+describe('Twitch resolved media URL SSRF gate', () => {
+  // resolveTwitchStreamUrl re-validates parseTwitchResolve().path with the same
+  // validateUrl options (no LAN allowlist) before returning to ffmpeg.
+  it('blocks private and metadata addresses that yt-dlp could return', async () => {
+    const blocked = [
+      'http://127.0.0.1/live.m3u8',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://192.168.1.10/stream.m3u8',
+    ];
+    for (const url of blocked) {
+      const check = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
+      assert.equal(check.valid, false, url);
+    }
   });
 });
 

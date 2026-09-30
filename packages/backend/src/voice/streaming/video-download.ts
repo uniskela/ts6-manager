@@ -218,6 +218,15 @@ async function resolveTwitchStreamUrl(
   }
 
   const resolved = parseTwitchResolve(data);
+  // Page URL was validated in downloadVideoForStream; the extractor media URL
+  // is a second hop. Re-check it (no LAN allowlist — Twitch CDNs are public)
+  // so SIDECAR_EGRESS_PROXY=off cannot fetch private/metadata addresses.
+  const mediaCheck = await validateUrl(resolved.path, {
+    allowedProtocols: ['http:', 'https:'],
+  });
+  if (!mediaCheck.valid) {
+    throw new Error(`Twitch media URL blocked: ${mediaCheck.error}`);
+  }
   // Keep the same duration ceiling YouTube downloads used to enforce for Twitch VODs.
   if (
     !resolved.live &&
