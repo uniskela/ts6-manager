@@ -40,6 +40,10 @@ services:
       - MUSIC_DIR=/data/music
       - VIDEO_QUEUE_SIZE=8192
       - AUDIO_QUEUE_SIZE=16384
+      # Optional: browser WebRTC preview through Docker. Uncomment ports + set
+      # WEBRTC_NAT1TO1_IP to a host/LAN/Tailscale IP the browser can reach.
+      # - WEBRTC_UDP_PORT=${WEBRTC_UDP_PORT:-10000}
+      # - WEBRTC_NAT1TO1_IP=${WEBRTC_NAT1TO1_IP}
     volumes:
       # Must match the backend mount — backend pre-downloads videos here and
       # ffmpeg in this container reads them back by the same path.
@@ -47,7 +51,10 @@ services:
     # Optional: VAAPI hardware video encoding (Intel/AMD GPU). See docs/video-streaming.md.
     # devices:
     #   - /dev/dri:/dev/dri
-    # Port 9800 is intentionally NOT published — backend reaches sidecar on the internal network only
+    # Port 9800 (sidecar HTTP) is intentionally NOT published — backend reaches
+    # sidecar on the internal network only. WebRTC media uses a separate UDP mux:
+    # ports:
+    #   - "${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
     networks:
       - ts6-network
 

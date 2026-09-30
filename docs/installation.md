@@ -42,7 +42,7 @@ docker compose up -d
 5. Create the initial administrator.
 6. Add a TeamSpeak connection under **Settings → Connections**.
 
-The backend is exposed on port 3001 by the stock compose file. The media sidecar remains on the internal Docker network and is not published to the host.
+The backend is exposed on port 3001 by the stock compose file. The media sidecar HTTP API remains on the internal Docker network and is not published to the host. Browser WebRTC preview needs a published UDP mux (`WEBRTC_UDP_PORT`) and advertise IP (`WEBRTC_NAT1TO1_IP`) — see [Video streaming](video-streaming.md) and the commented mappings in `docker-compose.yml`. `docker-compose.pr-test.yml` enables UDP `10000` by default.
 
 ## All-in-one
 
@@ -54,7 +54,7 @@ docker compose -f docker-compose.all-in-one.yml up -d
 
 Open `http://localhost:3000` unless you changed `HOST_PORT`.
 
-Only nginx is published. Backend and sidecar services remain internal to the container.
+Only nginx is published by default. Backend and sidecar HTTP remain internal to the container. Optional WebRTC UDP publish is documented in `docker-compose.all-in-one.yml`.
 
 ## Build from source
 

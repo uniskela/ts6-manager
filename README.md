@@ -227,6 +227,7 @@ docker compose up -d
 
 > `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` are **required** in production. The backend refuses to start without them when `NODE_ENV=production`.
 > The sidecar HTTP API is authenticated with `SIDECAR_SECRET` and is not published to the host by default.
+> Browser WebRTC preview needs a published UDP mux (`WEBRTC_UDP_PORT`, often `10000`) and `WEBRTC_NAT1TO1_IP` — see `docker-compose.pr-test.yml` and [Video streaming](docs/video-streaming.md).
 
 ### Connection credentials and upgrades
 
@@ -338,6 +339,8 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `WEBRTC_UDP_PORT` | unset | Shared ICE UDP mux port for browser WebRTC preview (publish this UDP port from Docker) |
+| `WEBRTC_NAT1TO1_IP` | unset | Host/LAN/Tailscale IP(s) advertised as ICE host candidates |
 | `VIDEO_QUEUE_SIZE` | `1024` | Size of the video RTP queue |
 | `AUDIO_QUEUE_SIZE` | `2048` | Size of the audio RTP queue |
 | `SYNC_PLAYOUT_BUFFER_MS` | `50` | Small playout buffer used by the adaptive pacing logic |
