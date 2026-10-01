@@ -21,6 +21,19 @@ export const musicBotRoutes: Router = Router();
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
+/**
+ * TeamSpeak refuses a nickname outside 3-30 characters at connect (error 1541),
+ * so a bot saved with one could never start. Returns the trimmed nickname.
+ */
+function validNickname(nickname: unknown): string | undefined {
+  if (nickname == null) return undefined;
+  const trimmed = String(nickname).trim();
+  if (trimmed.length < 3 || trimmed.length > 30) {
+    throw new AppError(400, 'Bot nickname must be 3-30 characters (TeamSpeak limit)');
+  }
+  return trimmed;
+}
+
 /** Cancels stale background playlist expansions when a newer play-url starts for the same bot. */
 const playlistExpandGeneration = new Map<number, number>();
 
@@ -124,6 +137,7 @@ musicBotRoutes.post('/', async (req: Request, res: Response, next) => {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const { name, serverConfigId, nickname, serverPassword, defaultChannel, channelPassword, commandChannelIds, virtualServerId, voicePort, volume, autoStart } = req.body;
     if (!name || !serverConfigId) throw new AppError(400, 'name and serverConfigId are required');
+    const checkedNickname = validNickname(nickname);
 
     const parsedCommandChannels = Array.isArray(commandChannelIds)
       ? commandChannelIds.map(String)
@@ -134,7 +148,7 @@ musicBotRoutes.post('/', async (req: Request, res: Response, next) => {
     const result = await manager.createBot({
       name,
       serverConfigId: parseInt(serverConfigId),
-      nickname,
+      nickname: checkedNickname,
       serverPassword,
       defaultChannel,
       channelPassword,
@@ -155,7 +169,8 @@ musicBotRoutes.put('/:id', async (req: Request, res: Response, next) => {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const id = parseInt(req.params.id as string);
-    const { name, nickname, serverPassword, defaultChannel, channelPassword, commandChannelIds, virtualServerId, voicePort, volume, autoStart } = req.body;
+    const { name, serverPassword, defaultChannel, channelPassword, commandChannelIds, virtualServerId, voicePort, volume, autoStart } = req.body;
+    const nickname = validNickname(req.body.nickname);
 
     const commandChannelData =
       commandChannelIds !== undefined

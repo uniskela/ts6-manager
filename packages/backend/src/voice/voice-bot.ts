@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import type { Readable } from 'stream';
-import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, CONNECTION_REFUSED_ERRORS } from './tslib/index.js';
+import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, isConnectionRefusal } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
@@ -249,12 +249,12 @@ export class VoiceBot extends EventEmitter {
       const id = parseInt(params.id || '0');
       const msg = params.msg || 'unknown error';
       this._lastError = `TS3 error ${id}: ${msg}`;
-      // The server refused the connection (full, wrong password, banned):
-      // reconnecting cannot help.
       if (id === FLOOD_ERROR_ID) {
         this.startFloodHold();
       }
-      if (CONNECTION_REFUSED_ERRORS.has(id)) {
+      // The server refused the connection (full, wrong password, banned, or
+      // a clientinit it will not accept): reconnecting cannot help.
+      if (isConnectionRefusal(id, this.client.isHandshaking())) {
         this._status = 'error';
         this.emit('statusChange', this._status);
         this.emit('fatalError', this._lastError);

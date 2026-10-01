@@ -923,7 +923,10 @@ function BotsTab() {
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Name</Label>
-              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My Media Bot" />
+              <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My Media Bot" maxLength={30} />
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Also the bot's TeamSpeak nickname: 3-30 characters.
+              </p>
             </div>
             {!editBot && (
               <div>
@@ -988,7 +991,7 @@ function BotsTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowCreate(false); setEditBot(null); }}>Cancel</Button>
-            <Button onClick={editBot ? handleUpdate : handleCreate} disabled={!form.name || (!editBot && !form.serverConfigId) || createBot.isPending || updateBot.isPending}>
+            <Button onClick={editBot ? handleUpdate : handleCreate} disabled={form.name.trim().length < 3 || (!editBot && !form.serverConfigId) || createBot.isPending || updateBot.isPending}>
               {editBot ? 'Save' : 'Create'}
             </Button>
           </DialogFooter>
