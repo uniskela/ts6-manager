@@ -7,7 +7,6 @@ import { Label } from '@/components/ui/label';
 import { Loader2, AlertCircle } from 'lucide-react';
 import axios from 'axios';
 import { BrandMark } from '@/components/shared/BrandMark';
-import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function SetupPage() {
   const navigate = useNavigate();
@@ -145,10 +144,6 @@ export default function SetupPage() {
             </form>
           </CardContent>
         </Card>
-
-        <p className="text-center text-[10px] text-muted-foreground/50 mt-6 font-mono-data">
-          {APP_VERSION_LABEL}
-        </p>
       </div>
     </div>
   );
