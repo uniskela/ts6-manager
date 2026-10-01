@@ -23,9 +23,11 @@ function rejectYtDlpOptionUrl(url: string): void {
 
 /**
  * yt-dlp format selection for a YouTube video stream, preferring formats no
- * taller than `maxHeight`. The final bare `b` is a deliberate last resort so a
- * stream still starts when no format matches the limit (for example formats
- * without height metadata); the sidecar scales the picture to the preset.
+ * taller than `maxHeight`. The unrestricted `bv*+ba` and `b` at the end are
+ * a deliberate last resort so a stream still starts when no format matches
+ * the limit (for example formats without height metadata): `bv*+ba` covers
+ * separate video and audio formats, which a bare `b` never merges, and `b`
+ * covers a single combined format. The sidecar scales the picture to the preset.
  *
  * SDR is preferred because HDR sources come out washed out once encoded for
  * TeamSpeak. Among formats of equal resolution and frame rate, VP9 is sorted
@@ -40,7 +42,7 @@ export const YOUTUBE_VIDEO_FORMAT_SORT = 'res,fps,vcodec:vp9';
 export function youtubeVideoFormatArgs(maxHeight: number): string[] {
   const filter =
     `bv*[height<=${maxHeight}][dynamic_range=SDR]+ba` +
-    `/bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/b`;
+    `/bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/bv*+ba/b`;
   return ['-f', filter, '-S', YOUTUBE_VIDEO_FORMAT_SORT];
 }
 
