@@ -13,6 +13,7 @@ import { sweepStreamTempFiles } from './streaming/video-download.js';
 import { loadMaxVideoDuration, loadVideoStreamingSettings } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
+import { parseAutoStopEmptySeconds } from './streaming/lifecycle.js';
 
 const PROGRESS_INTERVAL_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -52,8 +53,7 @@ export class VoiceBotManager extends EventEmitter {
   async start(): Promise<void> {
     sweepStreamTempFiles();
     const maxVideoDurationSec = await loadMaxVideoDuration(this.prisma);
-    const autoStopEmptySeconds = parseInt(process.env.BOT_AUTO_STOP_EMPTY_SECONDS ?? '300', 10);
-    const parsedAutoStop = Number.isFinite(autoStopEmptySeconds) ? autoStopEmptySeconds : 300;
+    const parsedAutoStop = parseAutoStopEmptySeconds(process.env.BOT_AUTO_STOP_EMPTY_SECONDS);
 
     const dbBots = await this.prisma.musicBot.findMany({
       include: { serverConfig: true },
@@ -292,7 +292,7 @@ export class VoiceBotManager extends EventEmitter {
       sidecarPort: 9800,
       streamPreset: '720p',
       maxVideoDurationSec: await loadMaxVideoDuration(this.prisma),
-      autoStopEmptySeconds: parseInt(process.env.BOT_AUTO_STOP_EMPTY_SECONDS ?? '300', 10) || 300,
+      autoStopEmptySeconds: parseAutoStopEmptySeconds(process.env.BOT_AUTO_STOP_EMPTY_SECONDS),
     };
 
     const bot = this.createBotInstance(config);

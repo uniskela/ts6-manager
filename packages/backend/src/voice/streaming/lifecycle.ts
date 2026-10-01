@@ -27,6 +27,31 @@ export function channelEmptyStopDetail(graceSec: number): string {
   return `Stopped after the channel was empty for ${describeDuration(graceSec)}`;
 }
 
+/**
+ * `BOT_AUTO_STOP_EMPTY_SECONDS`: the channel-empty grace period. Unset or
+ * invalid means 300; `0` (or less) disables the stop and must stay `0`.
+ */
+export function parseAutoStopEmptySeconds(raw: string | undefined): number {
+  const parsed = parseInt(raw ?? '300', 10);
+  return Number.isFinite(parsed) ? parsed : 300;
+}
+
+/**
+ * Whether the channel-empty auto-stop should count the bot's channel as empty.
+ * A video stream someone is watching is never "empty": the tracked channel
+ * peer count can miss clients (#215), and the no-viewer timer already covers
+ * streams nobody watches.
+ */
+export function isChannelEmptyForAutoStop(
+  channelPeerCount: number,
+  videoStreaming: boolean,
+  videoViewerCount: number,
+): boolean {
+  if (channelPeerCount > 0) return false;
+  if (videoStreaming && videoViewerCount > 0) return false;
+  return true;
+}
+
 
 /**
  * Decide the source mode. Local files are always `file`; an explicit request

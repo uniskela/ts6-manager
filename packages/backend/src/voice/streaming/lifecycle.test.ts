@@ -4,6 +4,8 @@ import {
   belowRealtimeWarning,
   classifyEncoderExit,
   describeDuration,
+  isChannelEmptyForAutoStop,
+  parseAutoStopEmptySeconds,
   resolveSourceMode,
 } from './lifecycle.js';
 
@@ -88,5 +90,36 @@ describe('wording', () => {
       'Encoding below realtime (0.62x for 40 s, 12 packets dropped) at 1080p with VP8 (software) from a live source. '
         + 'The host cannot keep up — try a lower preset or a hardware encoder.',
     );
+  });
+});
+
+describe('channel-empty auto-stop (#215)', () => {
+  it('a watched video stream is never treated as an empty channel', () => {
+    // Tracked peers can miss a viewer; viewers alone keep the stream alive.
+    assert.equal(isChannelEmptyForAutoStop(0, true, 1), false);
+    assert.equal(isChannelEmptyForAutoStop(0, true, 3), false);
+  });
+  it('an unwatched stream in an empty channel still counts as empty', () => {
+    assert.equal(isChannelEmptyForAutoStop(0, true, 0), true);
+  });
+  it('audio playback ignores the video viewer count', () => {
+    assert.equal(isChannelEmptyForAutoStop(0, false, 2), true);
+    assert.equal(isChannelEmptyForAutoStop(1, false, 0), false);
+  });
+  it('any tracked channel peer means not empty', () => {
+    assert.equal(isChannelEmptyForAutoStop(2, true, 0), false);
+  });
+});
+
+describe('BOT_AUTO_STOP_EMPTY_SECONDS parsing', () => {
+  it('defaults to 300 when unset or invalid', () => {
+    assert.equal(parseAutoStopEmptySeconds(undefined), 300);
+    assert.equal(parseAutoStopEmptySeconds('abc'), 300);
+  });
+  it('keeps 0 so the stop can be disabled', () => {
+    assert.equal(parseAutoStopEmptySeconds('0'), 0);
+  });
+  it('uses an explicit value', () => {
+    assert.equal(parseAutoStopEmptySeconds('600'), 600);
   });
 });
