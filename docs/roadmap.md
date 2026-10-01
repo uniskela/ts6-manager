@@ -40,7 +40,9 @@ v1.6 adds:
 
 ### Media session and streaming — v1.9.0
 
-Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) and [#199](https://github.com/uniskela/ts6-manager/pull/199). Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198) is the pending release vehicle.
+Published as [v1.9.0](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.0) (Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198)). [v1.9.1](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.1) is the published ICE timeout and loopback NAT follow-up ([#202](https://github.com/uniskela/ts6-manager/issues/202)).
+
+Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) and [#199](https://github.com/uniskela/ts6-manager/pull/199).
 
 - **Bot Hub** (Automation → Bot Hub) shows each bot's current track or stream, channel, video quality and encoder, viewer count, uptime, no-viewer auto-stop countdown, and last stop reason. It reads in-memory bot state only.
 - One active media session: a bot plays music or video, never both, and only one video stream runs at a time across bots.
@@ -50,8 +52,11 @@ Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) an
 - **IPTV → Local network sources** is an administrator allowlist for LAN IPTV proxies (Threadfin, xTeVe, TVHeadend, and similar). It applies only to playlist refresh, IPTV-page starts, and `!tv`. When the egress proxy is enabled, the sidecar checks every ffmpeg hop against that list.
 - Stream start reports a TeamSpeak refusal immediately, holds chat on antiflood error 524, and the sidecar keeps early ICE candidates until the viewer answers.
 - [#204](https://github.com/uniskela/ts6-manager/pull/204) fixes Twitch live URL resolution and browser-preview ICE, with reverse-proxy notes.
+- [#209](https://github.com/uniskela/ts6-manager/pull/209) renames the UI to Media Bots at `/media-bots` (`/music-bots` redirects) and adds encode profiles **Performance / Balanced / Quality**. Profile detail is in [Video streaming — Quality](video-streaming.md#quality).
+- [#211](https://github.com/uniskela/ts6-manager/pull/211) adds **Media Bots → Requests** (`/media-bots?tab=requests`) for `!play` history. See [Media bots — Requests](music-bots.md#requests).
+- WebRTC UDP mux ([#208](https://github.com/uniskela/ts6-manager/pull/208)) and the v1.9.1 ICE follow-up are already covered in [Video streaming](video-streaming.md), [Environment variables](environment-variables.md), [Reverse proxy](reverse-proxy.md), and [Troubleshooting](troubleshooting.md).
 
-Operator detail: [Music bots — Bot Hub](music-bots.md#bot-hub) and [Video streaming](video-streaming.md).
+Operator detail: [Media bots — Bot Hub](music-bots.md#bot-hub) and [Video streaming](video-streaming.md).
 
 ## Follow-up direction
 
@@ -72,7 +77,7 @@ Shipped on `main`:
 
 Appearance 1.8 ([#101](https://github.com/uniskela/ts6-manager/issues/101)) — backgrounds/motion and custom CSS with `?safe-ui=1` recovery — is shipped (#122 / #128).
 
-Acceptance evidence: [`docs/plans/91-slice-6-acceptance.md`](plans/91-slice-6-acceptance.md). Hold Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120) until release-note curation matches shipped behavior.
+v1.8.0 published in Release Please [#120](https://github.com/uniskela/ts6-manager/pull/120).
 
 Metrics and diagnostics remain backend-mediated, access-controlled, and scoped to configured TeamSpeak servers. This is not a bundled monitoring stack or long-term time-series platform.
 

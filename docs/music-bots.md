@@ -14,6 +14,10 @@ The Bots view shows live connection/playback status, current media, progress, vo
 
 A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time).
 
+## Requests
+
+**Media Bots → Requests** (`/media-bots?tab=requests`) shows `!play` history for the selected server. **Play** starts that request immediately. **Enqueue** adds it to the queue without interrupting current playback. When several bots are running, pick the target bot. `/music-requests` redirects here. System → Music Request History is no longer a separate page.
+
 ## Sources
 
 Music bots support:
@@ -28,7 +32,7 @@ Local/downloaded tracks are decoded incrementally at media speed to keep memory 
 
 ## Playback controls
 
-The web UI supports queue management, pause/resume, skip, previous, shuffle, repeat, seek, and volume.
+The web UI supports queue management, pause/resume, skip, previous, shuffle, repeat, seek, and volume. Running bots use a Play split-button (Playlist / Song / Video / Radio / IPTV) that remembers the last-used action.
 
 Bots can reconnect automatically with exponential backoff and overlap protection.
 
