@@ -2,6 +2,24 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.9.3](https://github.com/uniskela/ts6-manager/compare/v1.9.2...v1.9.3) (2026-10-01)
+
+
+### Bug Fixes
+
+* **frontend:** hide app version on login and setup ([#234](https://github.com/uniskela/ts6-manager/issues/234)) ([9344180](https://github.com/uniskela/ts6-manager/commit/9344180ccf044240215cc0de0f03886eb0f92f3d))
+* **media:** accurate key-fetch errors, first stop toast, single playback command ([#247](https://github.com/uniskela/ts6-manager/issues/247)) ([ea5eb34](https://github.com/uniskela/ts6-manager/commit/ea5eb34c5087ff12c0d8b0807a6785dd1b2c6883))
+* **sidecar:** keep video RTP packets under the MTU ([#230](https://github.com/uniskela/ts6-manager/issues/230)) ([e4bd82f](https://github.com/uniskela/ts6-manager/commit/e4bd82f09647dd119b4334c5bc7937dc5cbf8d36))
+* **sidecar:** say when TeamSpeak viewers cannot reach the offered address ([#246](https://github.com/uniskela/ts6-manager/issues/246)) ([7737c20](https://github.com/uniskela/ts6-manager/commit/7737c20b4e9295d1040c04581ae022d8b74b0203))
+* **streaming:** let the web UI preview play H.264 streams ([#240](https://github.com/uniskela/ts6-manager/issues/240)) ([719f86d](https://github.com/uniskela/ts6-manager/commit/719f86deb9bd4fe8e3128863186ad17bc9a2b950))
+* **streaming:** say when a YouTube video is over the duration limit ([#235](https://github.com/uniskela/ts6-manager/issues/235)) ([cfda184](https://github.com/uniskela/ts6-manager/commit/cfda184ce9c74a88116d040b12a71ec130b0db51))
+* **streaming:** start chat !stream at Auto quality for YouTube and Twitch links ([#241](https://github.com/uniskela/ts6-manager/issues/241)) ([bbd8ad5](https://github.com/uniskela/ts6-manager/commit/bbd8ad5ab09a219f83286418172fe04dd4ec84fd))
+* **ui:** move IPTV local hosts into header dialog ([#242](https://github.com/uniskela/ts6-manager/issues/242)) ([379de02](https://github.com/uniskela/ts6-manager/commit/379de02e77c860f296a7aa661aa31fe2938a1a65))
+* **voice:** clear stale Live mode before YouTube sources are ready ([#239](https://github.com/uniskela/ts6-manager/issues/239)) ([540ebd7](https://github.com/uniskela/ts6-manager/commit/540ebd7ecd8b17603b3f4769138fc30caa4a6698))
+* **voice:** fail fast when TeamSpeak refuses a bot's clientinit ([#245](https://github.com/uniskela/ts6-manager/issues/245)) ([d2e3b95](https://github.com/uniskela/ts6-manager/commit/d2e3b95c639247c463483260d2f665404b5c2c81))
+* **voice:** give a new bot an identity the server accepts ([#236](https://github.com/uniskela/ts6-manager/issues/236)) ([2d9909d](https://github.com/uniskela/ts6-manager/commit/2d9909d45aa275c036e534d25664360836c41e16))
+* **voice:** read every client of a connect-time enter-view ([#232](https://github.com/uniskela/ts6-manager/issues/232)) ([0bc9f14](https://github.com/uniskela/ts6-manager/commit/0bc9f141276638e655de1c8fd3ee4b1e123fca6a))
+
 ## [1.9.2](https://github.com/uniskela/ts6-manager/compare/v1.9.1...v1.9.2) (2026-10-01)
 
 
