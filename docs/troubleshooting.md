@@ -160,6 +160,8 @@ The preview needs your browser to produce ICE candidates. Some VPNs, privacy ext
 
 Setting names move between browser versions; if one isn't where the table says, the Trickle ICE test above is still the reliable check.
 
+3. **Still no candidates?** Try a brand-new browser profile (in Chrome: profile icon → **Add**). A damaged profile can block WebRTC even in a private window with every extension disabled and no policies set. A fresh profile fixed exactly this case in [#202](https://github.com/uniskela/ts6-manager/issues/202); thanks to [@D3nnis3n](https://github.com/D3nnis3n) for tracking it down.
+
 ### Collect details for a bug report
 
 - **Signaling uses HTTP(S) POST.** Look for `POST …/stream/webrtc/offer`, `/answer` and `/ice` in DevTools → Network. The WS/Socket tab will be empty for the preview; that's expected.
