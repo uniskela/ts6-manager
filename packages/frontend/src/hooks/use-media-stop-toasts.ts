@@ -15,7 +15,12 @@ export function useMediaStopToasts(enabled: boolean): void {
   const seenRef = useRef<Set<MediaStopToastKey> | null>(null);
 
   useEffect(() => {
-    if (!enabled || !query.data) return;
+    if (!enabled) {
+      // Signed out: the next session seeds afresh instead of diffing against this one.
+      seenRef.current = null;
+      return;
+    }
+    if (!query.data) return;
     seenRef.current = applyMediaStopToastDelta(query.data, seenRef.current);
   }, [enabled, query.data]);
 }
