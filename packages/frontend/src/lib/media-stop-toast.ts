@@ -100,19 +100,20 @@ export function toastMediaStopped(opts: {
 
 /**
  * Diff bot-media snapshots and toast newly appeared stop events.
- * Returns the updated set of keys already toasted (seed on first poll).
+ * `seen` is null until the first snapshot, which only seeds: stops already
+ * there are history, not news. Returns the keys seen so far.
  */
 export function applyMediaStopToastDelta(
   bots: BotMediaOverview[],
-  seen: Set<MediaStopToastKey>,
+  seen: Set<MediaStopToastKey> | null,
   opts?: { now?: number; toast?: typeof toastMediaStopped },
-): Set<MediaStopToastKey> {
+): Set<MediaStopToastKey> | null {
   // Runs on every signed-in page: a reply that is not a list must not throw
   // out of the layout and blank the app.
   if (!Array.isArray(bots)) return seen;
-  const next = new Set(seen);
+  const next = new Set(seen ?? []);
   const emit = opts?.toast ?? toastMediaStopped;
-  const seeding = seen.size === 0;
+  const seeding = seen === null;
   for (const bot of bots) {
     for (const item of collectToastableStops(bot)) {
       if (next.has(item.key)) continue;

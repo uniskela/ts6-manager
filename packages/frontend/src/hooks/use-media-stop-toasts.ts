@@ -12,7 +12,7 @@ import {
 
 export function useMediaStopToasts(enabled: boolean): void {
   const query = useBotMedia();
-  const seenRef = useRef<Set<MediaStopToastKey>>(new Set());
+  const seenRef = useRef<Set<MediaStopToastKey> | null>(null);
 
   useEffect(() => {
     if (!enabled || !query.data) return;

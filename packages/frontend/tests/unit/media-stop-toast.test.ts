@@ -14,18 +14,6 @@ const base: BotMediaOverview = {
 };
 
 describe('media stop toasts', () => {
-  // The hook runs on every signed-in page, so a body that is not a list (an
-  // error page, a proxy reply, an older backend) must not take the app down.
-  it('ignores a bot-media reply that is not a list', () => {
-    const seen = new Set(['1:video:source_unreachable:1000'] as const);
-    const toasts: unknown[] = [];
-    for (const reply of [{ error: 'nope' }, null, undefined, 'html']) {
-      const next = applyMediaStopToastDelta(reply as unknown as BotMediaOverview[], seen, { toast: (t) => toasts.push(t) });
-      assert.deepEqual([...next], [...seen]);
-    }
-    assert.equal(toasts.length, 0);
-  });
-
   it('collects unreachable video stops and skips manual ones', () => {
     const bot: BotMediaOverview = {
       ...base,
@@ -49,7 +37,7 @@ describe('media stop toasts', () => {
         ...base,
         lastVideoStop: { reason: 'no_viewers', at: 500, detail: 'Stopped after 5 minutes with no viewers' },
       }],
-      new Set(),
+      null,
       { toast: (o) => toasted.push(`${o.botName}:${o.kind}`) },
     );
     assert.equal(toasted.length, 0);
@@ -69,5 +57,31 @@ describe('media stop toasts', () => {
     );
     assert.deepEqual(toasted, ['Aurora:video:source_unreachable']);
     assert.equal(second.size, 2);
+  });
+
+  it('a first snapshot with no stops still seeds, so the next failure toasts', () => {
+    const toasted: string[] = [];
+    const toast = (o: { botName: string; kind: string }) => toasted.push(`${o.botName}:${o.kind}`);
+    const first = applyMediaStopToastDelta([base], null, { toast });
+    assert.equal(first?.size, 0);
+    applyMediaStopToastDelta(
+      [{ ...base, lastVideoStop: { reason: 'source_unreachable', at: 900, detail: 'Source returned HTTP 502' } }],
+      first,
+      { toast },
+    );
+    assert.deepEqual(toasted, ['Aurora:video']);
+  });
+
+  // The hook runs on every signed-in page, so a body that is not a list (an
+  // error page, a proxy reply, an older backend) must not take the app down.
+  it('ignores a bot-media reply that is not a list', () => {
+    const toasted: unknown[] = [];
+    const seeded = new Set(['1:video:source_unreachable:1000'] as const);
+    for (const seen of [null, seeded]) {
+      for (const reply of [{ error: 'nope' }, null, undefined, 'html']) {
+        assert.equal(applyMediaStopToastDelta(reply as unknown as BotMediaOverview[], seen, { toast: (t) => toasted.push(t) }), seen);
+      }
+    }
+    assert.equal(toasted.length, 0);
   });
 });
