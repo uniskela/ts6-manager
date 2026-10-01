@@ -4,7 +4,7 @@
  * URL box stay blocked from private addresses regardless.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Network } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -53,14 +53,29 @@ export function IptvLocalHostsDialog({
   const query = useIptvNetworkSettings(true);
   const update = useUpdateIptvNetworkSettings();
   const saved = query.data?.allowedLocalHosts ?? [];
-  const [draft, setDraft] = useState('');
+  /** null = not loaded for this open cycle (avoids refetch clobbering dirty edits). */
+  const [draft, setDraft] = useState<string | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    if (open && query.data) setDraft(query.data.allowedLocalHosts.join('\n'));
-  }, [open, query.data]);
+    if (!open) {
+      setDraft(null);
+      return;
+    }
+    // Capture the control that opened the dialog (header button or empty-state hint).
+    if (document.activeElement instanceof HTMLElement) {
+      returnFocusRef.current = document.activeElement;
+    }
+  }, [open]);
 
-  const hosts = parseHostLines(draft);
-  const dirty = hosts.join('\n') !== saved.join('\n');
+  useEffect(() => {
+    if (!open || !query.data || draft !== null) return;
+    setDraft(query.data.allowedLocalHosts.join('\n'));
+  }, [open, query.data, draft]);
+
+  const draftText = draft ?? '';
+  const hosts = parseHostLines(draftText);
+  const dirty = draft !== null && hosts.join('\n') !== saved.join('\n');
 
   const save = () => {
     update.mutate(hosts, {
@@ -76,7 +91,13 @@ export function IptvLocalHostsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
+      <DialogContent
+        className="max-w-md"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          returnFocusRef.current?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Network className="h-4 w-4" aria-hidden="true" /> Local network sources
@@ -94,9 +115,9 @@ export function IptvLocalHostsDialog({
             rows={5}
             spellCheck={false}
             placeholder={'192.168.1.20\n192.168.1.0/24\nthreadfin.lan'}
-            value={draft}
+            value={draftText}
             onChange={(e) => setDraft(e.target.value)}
-            disabled={!query.data}
+            disabled={draft === null || !query.data}
           />
           <p className="text-xs text-muted-foreground">
             One per line: an IP, a range or a hostname. Links typed in chat or the video URL box stay blocked;
@@ -110,7 +131,7 @@ export function IptvLocalHostsDialog({
               Reset
             </Button>
           )}
-          <Button type="button" onClick={save} disabled={!query.data || !dirty || update.isPending}>
+          <Button type="button" onClick={save} disabled={draft === null || !query.data || !dirty || update.isPending}>
             {update.isPending ? 'Saving…' : 'Save hosts'}
           </Button>
         </DialogFooter>
