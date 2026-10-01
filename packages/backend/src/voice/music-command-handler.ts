@@ -33,6 +33,7 @@ import {
 } from './music-command-channels.js';
 import { MediaSessionConflictError } from './media-session.js';
 import { parseStreamStartOptions } from './streaming/start-options.js';
+import { classifyStreamHost } from './streaming/video-download.js';
 
 interface BotChannelConfig {
   serverConfigId: number;
@@ -2423,13 +2424,22 @@ export class MusicCommandHandler {
 
   private async handleStream(bot: VoiceBot, userClid: number, args: string): Promise<void> {
     if (!args) {
-      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: auto, 480p, 720p, 1080p, 1440p, 2160p');
+      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: auto (default for YouTube and Twitch), 480p, 720p, 1080p, 1440p, 2160p');
       return;
     }
 
     const parts = args.split(/\s+/);
     const url = parts[0];
-    const preset = parts[1] || undefined;
+    // No preset means Auto for YouTube and Twitch links: the largest preset the
+    // source fills, up to the Auto quality limit, as the web UI starts a
+    // stream. Left undefined, the start falls back to the bot's stored preset,
+    // which no UI can change from 720p, so a 4K video came out at 720p whatever
+    // Streaming defaults said.
+    // Any other URL keeps that fixed fallback, as !tv does: it is passed
+    // straight to FFmpeg and may be an IPTV link, and Auto probes it first,
+    // which is a second connection some IPTV services do not allow. (A YouTube
+    // download is probed on disk.) Typing `auto` still asks for Auto.
+    const preset = parts[1] || (classifyStreamHost(url) === 'other' ? undefined : 'auto');
 
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       this.reply(bot, userClid, 'Please provide a valid URL.');

@@ -412,7 +412,7 @@ When a music bot is connected to a configured command channel, users there can c
 - **`!vol [0-100]` / `!volume [0-100]`** - Show or set volume
 - **`!np` / `!nowplaying`** - Show the current track
 - **`!radio [id]`** - List or play radio stations
-- **`!stream <url>`** - Start a video stream
+- **`!stream <url> [preset]`** - Start a video stream (YouTube and Twitch links at Auto quality by default; or `auto`, `480p` … `2160p`)
 - **`!stopstream`** - Stop the active video stream
 - **`!viewers`** - List stream viewers
 - **`!channels [search]`** - List/search IPTV channels
