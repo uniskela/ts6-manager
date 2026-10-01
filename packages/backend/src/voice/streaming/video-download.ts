@@ -21,6 +21,31 @@ function rejectYtDlpOptionUrl(url: string): void {
   }
 }
 
+/**
+ * yt-dlp format selection for a YouTube video stream, preferring formats no
+ * taller than `maxHeight`. The unrestricted `bv*+ba` and `b` at the end are
+ * a deliberate last resort so a stream still starts when no format matches
+ * the limit (for example formats without height metadata): `bv*+ba` covers
+ * separate video and audio formats, which a bare `b` never merges, and `b`
+ * covers a single combined format. The sidecar scales the picture to the preset.
+ *
+ * SDR is preferred because HDR sources come out washed out once encoded for
+ * TeamSpeak. Among formats of equal resolution and frame rate, VP9 is sorted
+ * ahead of AV1: yt-dlp ranks AV1 first, and AV1 decodes far slower, so a
+ * high-resolution AV1 source can fall below real time (stutter). Resolution
+ * and frame rate still sort first, so this never lowers quality; AV1 is still
+ * used where it is the only format at the best resolution. Based on testing
+ * by @KorppuJauho in his fork.
+ */
+export const YOUTUBE_VIDEO_FORMAT_SORT = 'res,fps,vcodec:vp9';
+
+export function youtubeVideoFormatArgs(maxHeight: number): string[] {
+  const filter =
+    `bv*[height<=${maxHeight}][dynamic_range=SDR]+ba` +
+    `/bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/bv*+ba/b`;
+  return ['-f', filter, '-S', YOUTUBE_VIDEO_FORMAT_SORT];
+}
+
 /** ENOENT → missing binary; anything else → generic start failure. */
 function ytDlpSpawnFailureMessage(err: NodeJS.ErrnoException): string {
   return err.code === 'ENOENT'
@@ -312,7 +337,6 @@ export async function downloadVideoForStream(
   }
 
   const musicRoot = ensureMusicDir();
-  const formatFilter = `bv*[height<=${maxHeight}]+ba/b[height<=${maxHeight}]/b`;
   // Name is fully server-controlled; join to trusted root only.
   const tempName = `.stream-${Date.now()}.mp4`;
   const tempPath = path.join(musicRoot, tempName);
@@ -320,7 +344,7 @@ export async function downloadVideoForStream(
   await new Promise<void>((resolve, reject) => {
     const args = [
       ...getCookieArgs(),
-      '-f', formatFilter,
+      ...youtubeVideoFormatArgs(maxHeight),
       '--merge-output-format', 'mp4',
       '--no-playlist',
       '--no-progress',
