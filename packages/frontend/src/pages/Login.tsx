@@ -9,7 +9,6 @@ import { useLogin } from '@/hooks/use-auth';
 import { useAuthStore } from '@/stores/auth.store';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { BrandMark } from '@/components/shared/BrandMark';
-import { APP_VERSION_LABEL } from '@/lib/app-version';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -134,10 +133,6 @@ export default function Login() {
             </form>
           </CardContent>
         </Card>
-
-        <p className="text-center text-[10px] text-muted-foreground/50 mt-6 font-mono-data">
-          {APP_VERSION_LABEL}
-        </p>
       </div>
     </div>
   );
