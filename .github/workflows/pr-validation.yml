@@ -80,7 +80,12 @@ jobs:
       - name: Install Chromium for PWA tests
         run: pnpm --filter @ts6/frontend exec playwright install --with-deps chromium
 
+      # Step cap is tighter than the job (15m) so a hung Playwright/Chromium run
+      # fails fast instead of cancelling after the whole TypeScript job times out.
       - name: Test production PWA
+        timeout-minutes: 8
+        env:
+          CI: true
         run: pnpm --filter @ts6/frontend test
 
       - name: Run backend tests

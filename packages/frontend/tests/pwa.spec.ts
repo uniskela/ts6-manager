@@ -56,7 +56,9 @@ async function renderedColours(locator: Locator) {
 async function controlled(page: Page) {
   await page.goto('/login');
   await expect(page.getByLabel('Username')).toBeVisible();
-  await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+  // Explicit timeout: Playwright's waitForFunction defaults to 0 (no timeout)
+  // outside some runners, and a missing SW controller hung CI for ~14 minutes.
+  await page.waitForFunction(() => !!navigator.serviceWorker.controller, undefined, { timeout: 15_000 });
   await expect(page.getByRole('button', { name: 'Reload all tabs' })).toHaveCount(0);
 }
 
