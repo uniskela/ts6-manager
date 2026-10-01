@@ -1,7 +1,7 @@
 /**
  * Video Stream Tab — embedded in the MusicBots page.
- * Controls video streaming: source input, quality (Auto or a preset), encoder,
- * no-viewer auto-stop, start/stop, live WebRTC preview, and viewer management.
+ * Controls video streaming: live preview, source / quality / encoder,
+ * start/stop, and viewer management.
  */
 
 import { useEffect, useState } from 'react';
@@ -135,24 +135,121 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
 
   return (
     <div className="space-y-4">
+      {/* Preview + compact diagnostics */}
+      {isBotConnected && (
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(200px,260px)] lg:items-start">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between gap-2">
+                <CardTitle className="text-base">Live Preview</CardTitle>
+                {isStreaming && (
+                  <Badge variant="destructive" className="gap-1">
+                    <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+                    LIVE
+                  </Badge>
+                )}
+              </div>
+            </CardHeader>
+            <CardContent>
+              <VideoPlayer botId={botId} streaming={isStreaming} />
+              {isStreaming && streamStatus && (
+                <div className="mt-3 space-y-2">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
+                    <div>
+                      <dt className="text-muted-foreground">Quality</dt>
+                      <dd className="font-medium">
+                        {qualityLabel(streamStatus.quality, streamStatus.preset)}
+                        {!!streamStatus.quality?.sourceWidth && !!streamStatus.quality.sourceHeight && (
+                          <span className="font-normal text-muted-foreground">
+                            {' '}(source {streamStatus.quality.sourceWidth}×{streamStatus.quality.sourceHeight})
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Encoder</dt>
+                      <dd className="font-medium">{encoderLabel(streamStatus.encoder)}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">FPS · Bitrate</dt>
+                      <dd className="font-medium">{streamStatus.framerate} · {streamStatus.bitrate}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Source · Encode</dt>
+                      <dd className={streamStatus.health?.belowRealtime ? 'font-medium text-warning' : 'font-medium'}>
+                        {streamStatus.sourceMode ? SOURCE_MODE_LABELS[streamStatus.sourceMode] : '—'} · {healthLabel(streamStatus.health)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Viewers</dt>
+                      <dd className="font-medium">{streamStatus.viewerCount}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Uptime</dt>
+                      <dd className="font-medium">
+                        {streamStatus.startedAt ? formatClock(now - streamStatus.startedAt) : '—'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">No-viewer stop</dt>
+                      <dd className={stopAt ? 'font-medium text-warning' : 'font-medium'}>
+                        {stopAt
+                          ? `Auto-stop in ${formatClock(stopAt - now)}`
+                          : streamStatus.noViewer?.timeoutSec
+                            ? `After ${formatTimeout(streamStatus.noViewer.timeoutSec)} idle`
+                            : 'Off'}
+                      </dd>
+                    </div>
+                  </dl>
+                  {streamStatus.health?.warning && (
+                    <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span>{streamStatus.health.warning}</span>
+                    </p>
+                  )}
+                  {streamStatus.encoder?.fallbackReason && (
+                    <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                      <span>Hardware encoder fell back to software: {streamStatus.encoder.fallbackReason}</span>
+                    </p>
+                  )}
+                  {[streamStatus.encoder?.note, streamStatus.quality?.note].filter(Boolean).map((note) => (
+                    <p key={note} className="text-xs text-muted-foreground">{note}</p>
+                  ))}
+                  {streamStatus.source && (
+                    <p className="truncate text-xs text-muted-foreground">
+                      Source: <strong>{streamStatus.source}</strong>
+                    </p>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <RuntimeMediaDiagnostics
+            className="lg:sticky lg:top-4"
+            focus={['sidecar', 'ffmpeg', 'ffprobe', 'yt-dlp']}
+            showPrerequisite
+            compact
+          />
+        </div>
+      )}
+
+      {!isBotConnected && (
+        <RuntimeMediaDiagnostics
+          className="max-w-md"
+          focus={['sidecar', 'ffmpeg', 'ffprobe', 'yt-dlp']}
+          showPrerequisite
+          compact
+        />
+      )}
+
       {/* Stream Controls */}
       <Card>
         <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">Video Stream</CardTitle>
-            {isStreaming && (
-              <Badge variant="destructive" className="gap-1">
-                <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-                LIVE
-              </Badge>
-            )}
-          </div>
+          <CardTitle className="text-base">Stream</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <RuntimeMediaDiagnostics
-            focus={['sidecar', 'ffmpeg', 'ffprobe', 'yt-dlp']}
-            showPrerequisite
-          />
           {!isBotConnected && (
             <p className="text-sm text-muted-foreground">
               Bot must be connected to start video streaming.
@@ -187,31 +284,52 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
               </div>
 
               {!isStreaming && (
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label>Quality</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {QUALITY_OPTIONS.map((p) => (
-                        <Button
-                          key={p.value}
-                          variant={preset === p.value ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setPreset(p.value)}
-                          title={p.hint}
-                        >
-                          {p.label}
-                        </Button>
-                      ))}
+                <div className="grid gap-6 sm:grid-cols-2">
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label>Quality</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {QUALITY_OPTIONS.map((p) => (
+                          <Button
+                            key={p.value}
+                            variant={preset === p.value ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setPreset(p.value)}
+                            title={p.hint}
+                          >
+                            {p.label}
+                          </Button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {preset === 'auto'
+                          ? `Matches the source resolution up to ${defaults?.autoMaxPreset ?? '1080p'} and never upscales (probes the source first).`
+                          : `${selectedQuality?.hint ?? ''} — fixed presets skip the source probe.`}
+                        {(preset === '1440p' || preset === '2160p') && ' High presets need a fast CPU or a hardware encoder.'}
+                      </p>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      {preset === 'auto'
-                        ? `Matches the source resolution up to ${defaults?.autoMaxPreset ?? '1080p'} and never upscales (probes the source first).`
-                        : `${selectedQuality?.hint ?? ''} — fixed presets skip the source probe.`}
-                      {(preset === '1440p' || preset === '2160p') && ' High presets need a fast CPU or a hardware encoder.'}
-                    </p>
+
+                    <div className="space-y-2">
+                      <Label>Source type</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {SOURCE_MODE_OPTIONS.map((o) => (
+                          <Button
+                            key={o.value}
+                            variant={sourceMode === o.value ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setSourceMode(o.value)}
+                          >
+                            {o.label}
+                          </Button>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Live sources never loop or &quot;end&quot;; Detect uses the Auto-quality probe (fixed presets treat URLs as on demand). Local files are always files.
+                      </p>
+                    </div>
                   </div>
 
-                  <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="stream-encoder">Encoder</Label>
                       <Select value={encoder} onValueChange={(v) => setEncoder(v as typeof encoder)}>
@@ -227,6 +345,7 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
                         Hardware encoders fall back to software (same codec) if the GPU cannot run them.
                       </p>
                     </div>
+
                     <div className="space-y-2">
                       <Label htmlFor="stream-no-viewer">Stop when nobody watches</Label>
                       <Select value={noViewerTimeout} onValueChange={setNoViewerTimeout}>
@@ -245,74 +364,57 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
                         This stream only; the saved default is unchanged.
                       </p>
                     </div>
-                  </div>
 
-                  <div className="space-y-2">
-                    <Label>Source type</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {SOURCE_MODE_OPTIONS.map((o) => (
-                        <Button
-                          key={o.value}
-                          variant={sourceMode === o.value ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setSourceMode(o.value)}
-                        >
-                          {o.label}
-                        </Button>
-                      ))}
+                    <div className="space-y-2">
+                      <Label>Frame Rate (FPS)</Label>
+                      <div className="flex gap-2">
+                        {FPS_OPTIONS.map((fps) => (
+                          <Button
+                            key={fps.value}
+                            variant={framerate === fps.value ? 'default' : 'outline'}
+                            size="sm"
+                            onClick={() => setFramerate(fps.value)}
+                          >
+                            {fps.label}
+                          </Button>
+                        ))}
+                      </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                      Live sources never loop or &quot;end&quot;; Detect uses the Auto-quality probe (fixed presets treat URLs as on demand). Local files are always files.
-                    </p>
-                  </div>
 
-                  <div className="space-y-2">
-                    <Label>Frame Rate (FPS)</Label>
-                    <div className="flex gap-2">
-                      {FPS_OPTIONS.map((fps) => (
-                        <Button
-                          key={fps.value}
-                          variant={framerate === fps.value ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => setFramerate(fps.value)}
-                        >
-                          {fps.label}
-                        </Button>
-                      ))}
+                    <div className="space-y-2">
+                      <Label>Video Bitrate</Label>
+                      <Input
+                        value={bitrate}
+                        onChange={(e) => setBitrate(e.target.value)}
+                        placeholder="Preset default"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Leave empty for the preset&apos;s bitrate, or e.g. 2500k, 6000k.
+                        {defaults && defaults.maxBitrateKbps > 0 && ` Limited to ${defaults.maxBitrateKbps}k.`}
+                      </p>
                     </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Video Bitrate</Label>
-                    <Input
-                      value={bitrate}
-                      onChange={(e) => setBitrate(e.target.value)}
-                      placeholder="Preset default"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Leave empty for the preset's bitrate, or e.g. 2500k, 6000k.
-                      {defaults && defaults.maxBitrateKbps > 0 && ` Limited to ${defaults.maxBitrateKbps}k.`}
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Stream Volume ({streamVolume}%)</Label>
-                    <Slider
-                      value={[streamVolume]}
-                      min={0}
-                      max={100}
-                      step={1}
-                      onValueChange={([val]) => {
-                        setStreamVolume(val);
-                        if (isStreaming) {
-                          setStreamVolumeMut.mutate({ botId, volume: val });
-                        }
-                      }}
-                    />
+
+                    <div className="space-y-2">
+                      <Label>Stream Volume ({streamVolume}%)</Label>
+                      <Slider
+                        value={[streamVolume]}
+                        min={0}
+                        max={100}
+                        step={1}
+                        onValueChange={([val]) => {
+                          setStreamVolume(val);
+                          if (isStreaming) {
+                            setStreamVolumeMut.mutate({ botId, volume: val });
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
 
               {isStreaming && (
-                <div className="space-y-2">
+                <div className="space-y-2 max-w-md">
                   <Label>Stream Volume ({streamVolume}%)</Label>
                   <Slider
                     value={[streamVolume]}
@@ -367,89 +469,6 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
           )}
         </CardContent>
       </Card>
-
-      {/* Live Preview */}
-      {isBotConnected && (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Live Preview</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <VideoPlayer botId={botId} streaming={isStreaming} />
-            {isStreaming && streamStatus && (
-              <div className="mt-3 space-y-2">
-                <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
-                  <div>
-                    <dt className="text-muted-foreground">Quality</dt>
-                    <dd className="font-medium">
-                      {qualityLabel(streamStatus.quality, streamStatus.preset)}
-                      {!!streamStatus.quality?.sourceWidth && !!streamStatus.quality.sourceHeight && (
-                        <span className="font-normal text-muted-foreground">
-                          {' '}(source {streamStatus.quality.sourceWidth}×{streamStatus.quality.sourceHeight})
-                        </span>
-                      )}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Encoder</dt>
-                    <dd className="font-medium">{encoderLabel(streamStatus.encoder)}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">FPS · Bitrate</dt>
-                    <dd className="font-medium">{streamStatus.framerate} · {streamStatus.bitrate}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Source · Encode</dt>
-                    <dd className={streamStatus.health?.belowRealtime ? 'font-medium text-warning' : 'font-medium'}>
-                      {streamStatus.sourceMode ? SOURCE_MODE_LABELS[streamStatus.sourceMode] : '—'} · {healthLabel(streamStatus.health)}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Viewers</dt>
-                    <dd className="font-medium">{streamStatus.viewerCount}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">Uptime</dt>
-                    <dd className="font-medium">
-                      {streamStatus.startedAt ? formatClock(now - streamStatus.startedAt) : '—'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">No-viewer stop</dt>
-                    <dd className={stopAt ? 'font-medium text-warning' : 'font-medium'}>
-                      {stopAt
-                        ? `Auto-stop in ${formatClock(stopAt - now)}`
-                        : streamStatus.noViewer?.timeoutSec
-                          ? `After ${formatTimeout(streamStatus.noViewer.timeoutSec)} idle`
-                          : 'Off'}
-                    </dd>
-                  </div>
-                </dl>
-                {streamStatus.health?.warning && (
-                  <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>{streamStatus.health.warning}</span>
-                  </p>
-                )}
-                {streamStatus.encoder?.fallbackReason && (
-                  <p role="status" className="flex items-start gap-1.5 text-xs text-warning">
-                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                    <span>Hardware encoder fell back to software: {streamStatus.encoder.fallbackReason}</span>
-                  </p>
-                )}
-                {[streamStatus.encoder?.note, streamStatus.quality?.note].filter(Boolean).map((note) => (
-                  <p key={note} className="text-xs text-muted-foreground">{note}</p>
-                ))}
-                {streamStatus.source && (
-                  <p className="truncate text-xs text-muted-foreground">
-                    Source: <strong>{streamStatus.source}</strong>
-                  </p>
-                )}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Viewers */}
       {isStreaming && streamStatus && (
