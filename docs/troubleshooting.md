@@ -168,6 +168,30 @@ Setting names move between browser versions; if one isn't where the table says, 
 - **Browser side:** open `chrome://webrtc-internals` in a new tab *before* starting the preview, then click **Create dump** after it fails. Check that the offer has your `WEBRTC_NAT1TO1_IP` on `WEBRTC_UDP_PORT` as a `typ host` candidate, and that the browser logged its own `icecandidate` events.
 - **Server side:** set `SIDECAR_DEBUG_LOGS=1` and `PION_LOG_WARN=ice`, restart, and make one preview attempt without clicking **Retry**. During it, run `sudo tcpdump -ni any udp port 10000` (or your `WEBRTC_UDP_PORT`) on the Docker host. STUN packets from the browser's public IP should arrive and get replies.
 
+## TeamSpeak client stuck on "Connecting..."
+
+The stream runs and the web UI preview plays it, but the stream window in the TeamSpeak client shows **Connecting...** and never starts. The sidecar log shows the viewer's peer at `ICE: checking` until the client gives up after about 20 seconds and asks again (`Reconnect from clid=…`), followed by:
+
+```text
+[Peer 1] TeamSpeak viewer never connected: none of the offered addresses worked for it (127.0.0.1:10000 host, 203.0.113.9:36203 srflx)
+```
+
+The TeamSpeak client has to reach one of the addresses listed there:
+
+- **`127.0.0.1`:** the TeamSpeak client does not connect to a loopback address, even when it runs on the Docker host. A browser on that host does, which is why the preview works. `docker-compose.pr-test.yml` advertises only `127.0.0.1` by default, and the sidecar warns about this at startup.
+- **A container address (`172.x`):** the sidecar has no `WEBRTC_UDP_PORT`/`WEBRTC_NAT1TO1_IP`, and the client is outside the Docker network (Docker Desktop, WSL, or another machine).
+- **Only your public IP (`srflx`):** a client on the same LAN needs the router to loop traffic back to its own public IP (hairpin NAT), which many routers don't do.
+
+Advertise an address the TeamSpeak client can reach and publish the UDP port there. On the Docker host itself and on the same LAN, that's the host's LAN IPv4; over Tailscale, its Tailscale IPv4. Keep `127.0.0.1` in the list for a browser on the host:
+
+```bash
+# .env (docker-compose.pr-test.yml); replace 192.168.1.20 with the Docker host's LAN IPv4
+WEBRTC_BIND_IP=0.0.0.0
+WEBRTC_NAT1TO1_IP=127.0.0.1,192.168.1.20
+```
+
+`WEBRTC_BIND_IP=0.0.0.0` publishes the port on every host interface. To publish it only on the LAN address, set `WEBRTC_BIND_IP` to that address and use the address in place of `127.0.0.1` too. Recreate the sidecar afterwards (`docker compose -f docker-compose.pr-test.yml up -d sidecar`), then start watching again.
+
 ## Appearance custom CSS made the UI unusable
 
 Custom CSS is browser-local. Open:

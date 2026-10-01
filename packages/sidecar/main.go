@@ -364,8 +364,15 @@ type Peer struct {
 	AudioSSRC  uint32
 	Active     bool
 	Started    bool
-	mu         sync.Mutex
-	stopSR     chan struct{}
+	// checking and connected record how far ICE got, so a viewer that
+	// answered but never connected can be told apart from one that played
+	// and then left. Guarded by mu.
+	checking  bool
+	connected bool
+	// offerSDP is the offer sent to the viewer, logged if it never connects.
+	offerSDP string
+	mu       sync.Mutex
+	stopSR   chan struct{}
 	// pendingICE holds candidates that arrived before the viewer's answer;
 	// SetAnswer flushes them. Guarded by mu.
 	pendingICE []webrtc.ICECandidateInit
@@ -804,10 +811,15 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
 		log.Printf("[Peer %s] ICE: %s", id, state.String())
 		switch state {
+		case webrtc.ICEConnectionStateChecking:
+			peer.mu.Lock()
+			peer.checking = true
+			peer.mu.Unlock()
 		case webrtc.ICEConnectionStateConnected:
 			peer.mu.Lock()
 			peer.Active = true
 			peer.Started = false
+			peer.connected = true
 			peer.mu.Unlock()
 			// Resolve SSRCs NOW — they are only valid after negotiation
 			for _, sender := range pc.GetSenders() {
@@ -827,7 +839,21 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 			peer.mu.Lock()
 			peer.Active = false
 			peer.Started = false
+			neverConnected := peer.checking && !peer.connected && state != webrtc.ICEConnectionStateDisconnected
+			if neverConnected {
+				peer.checking = false // Failed is followed by Closed; report once
+			}
+			offerSDP := peer.offerSDP
 			peer.mu.Unlock()
+			// A TeamSpeak viewer that cannot reach any offered address shows
+			// "Connecting..." and asks to reconnect, which closes this peer.
+			// The browser preview reports its own ICE timeout.
+			if neverConnected && !browser {
+				log.Printf("[Peer %s] TeamSpeak viewer never connected: none of the offered addresses worked for it (%s)", id, offeredAddresses(offerSDP))
+				if advertisesOnlyLoopback(s.iceAdvertiseIPs) {
+					log.Printf("[Peer %s] %s", id, teamSpeakReachHint)
+				}
+			}
 		}
 	})
 
@@ -841,6 +867,9 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 
 	gatherComplete := webrtc.GatheringCompletePromise(pc)
 	<-gatherComplete
+	peer.mu.Lock()
+	peer.offerSDP = pc.LocalDescription().SDP
+	peer.mu.Unlock()
 
 	s.peersLock.Lock()
 	if old, exists := s.peers[id]; exists {

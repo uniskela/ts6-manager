@@ -138,6 +138,7 @@ In the standard split-stack compose file:
 - port 9800 is **not** published to the host;
 - browser WebRTC media uses a separate UDP path (not the HTTP sidecar port);
 - set `WEBRTC_UDP_PORT` plus an IPv4 `WEBRTC_NAT1TO1_IP` (address advertised to the browser) and publish that UDP port with `WEBRTC_BIND_IP` (Docker host bind) when the browser is outside the Docker network — `docker-compose.pr-test.yml` enables UDP `10000` on `127.0.0.1` with advertise IP `127.0.0.1` for **same-host** browsers; for LAN/Tailscale clients advertise that reachable IPv4; for public-NAT clients advertise the public IPv4 and forward UDP to the host (bind may stay on a local host address);
+- TeamSpeak viewers are offered the same addresses. The TeamSpeak client does not connect to `127.0.0.1`, even on the Docker host, so to watch a stream in TeamSpeak add the host's LAN or Tailscale IPv4 to `WEBRTC_NAT1TO1_IP` (comma-separated, for example `127.0.0.1,192.168.1.20`) and publish the UDP port on it (see [Troubleshooting](troubleshooting.md#teamspeak-client-stuck-on-connecting));
 - backend-to-sidecar mutating requests use `SIDECAR_SECRET`; and
 - the backend and sidecar share the media volume.
 
