@@ -41,6 +41,7 @@ import {
   belowRealtimeWarning,
   channelEmptyStopDetail,
   classifyEncoderExit,
+  isChannelEmptyForAutoStop,
   noViewersStopDetail,
   resolveSourceMode,
 } from './streaming/lifecycle.js';
@@ -418,7 +419,11 @@ export class VoiceBot extends EventEmitter {
         this.stopAutoStopTimer();
         return;
       }
-      if (this.client.getChannelUserCount() > 0) {
+      if (!isChannelEmptyForAutoStop(
+        this.client.getChannelUserCount(),
+        this._videoStreaming,
+        this._viewers.size,
+      )) {
         this.autoStopEmptySince = null;
         return;
       }
@@ -428,7 +433,10 @@ export class VoiceBot extends EventEmitter {
         return;
       }
       if ((now - this.autoStopEmptySince) / 1000 >= graceSec) {
-        console.log(`[VoiceBot ${this.config.id}] Auto-stop: channel empty for ${graceSec}s`);
+        console.log(
+          `[VoiceBot ${this.config.id}] Auto-stop: channel empty for ${graceSec}s ` +
+          `(cid=${this.client.getCurrentChannelId()}, tracked peers=${this.client.getChannelUserCount()})`,
+        );
         this.stopAutoStopTimer();
         if (this._videoStreaming) {
           this.stopVideoStream('channel_empty', channelEmptyStopDetail(graceSec))
