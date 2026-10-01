@@ -791,7 +791,7 @@ function BotsTab() {
       nickname: form.name.trim() || 'MediaBot',
       serverPassword: form.serverPassword || undefined,
       defaultChannel: form.defaultChannel || undefined,
-      commandChannelIds: parseCommandChannelsInput(form.commandChannelsText),
+      // Empty = same-channel voice cmds + SSH roaming helper (no create-time pin).
       virtualServerId: form.virtualServerId,
       channelPassword: form.channelPassword || undefined,
       voicePort: form.voicePort,
@@ -950,17 +950,20 @@ function BotsTab() {
               <Label className="text-xs">Default Channel</Label>
               <Input value={form.defaultChannel} onChange={(e) => setForm({ ...form, defaultChannel: e.target.value })} placeholder="Channel name or ID (playback channel)" />
             </div>
-            <div>
-              <Label className="text-xs">Command channels (optional)</Label>
-              <Input
-                value={form.commandChannelsText}
-                onChange={(e) => setForm({ ...form, commandChannelsText: e.target.value })}
-                placeholder="e.g. 12, 45 — channel IDs where !commands work"
-              />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Bot stays in the default channel for audio but listens and replies in these channels too. Requires ServerQuery SSH on the server config.
-              </p>
-            </div>
+            {editBot && (
+              <div>
+                <Label className="text-xs">Command channels (optional)</Label>
+                <Input
+                  value={form.commandChannelsText}
+                  onChange={(e) => setForm({ ...form, commandChannelsText: e.target.value })}
+                  placeholder="e.g. 12, 45 — channel IDs where !commands work"
+                />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Leave empty to use same-channel voice commands plus the SSH roaming helper.
+                  Pin IDs only if you need fixed command rooms. Requires ServerQuery SSH.
+                </p>
+              </div>
+            )}
             <div>
               <Label className="text-xs">Virtual server ID</Label>
               <Input
