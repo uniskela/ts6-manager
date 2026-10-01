@@ -20,6 +20,16 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const RECONNECT_GRACE_PERIOD_MS = 5000;
 
+/**
+ * Security level of the identity a new bot gets until the level-23 one is
+ * ready. A TeamSpeak server refuses anything below its required level (8 by
+ * default) with "error id=519 could not validate client identity", which the
+ * client only sees as a 15 s connection timeout: a bot started right after it
+ * was created failed once and came up on the reconnect. Level 8 takes a few
+ * milliseconds to generate, so the placeholder can afford it.
+ */
+export const PLACEHOLDER_IDENTITY_LEVEL = 8;
+
 export class VoiceBotManager extends EventEmitter {
   private bots = new Map<number, VoiceBot>();
   private botServerConfigIds = new Map<number, number>();
@@ -251,10 +261,10 @@ export class VoiceBotManager extends EventEmitter {
     const serverConfig = await this.prisma.tsServerConfig.findUnique({ where: { id: data.serverConfigId } });
     if (!serverConfig) throw new Error('Server config not found');
 
-    // Fast placeholder identity (security level 0 = keypair only, no SHA1 grind).
-    // Level-23 upgrade runs in the background so create can return 201 before the
-    // cold ~5–30s keygen that was causing proxy/client 499 on first create.
-    const quickIdentity = generateIdentity(0);
+    // Fast placeholder identity. Level-23 upgrade runs in the background so create
+    // can return 201 before the cold ~5–30s keygen that was causing proxy/client
+    // 499 on first create.
+    const quickIdentity = generateIdentity(PLACEHOLDER_IDENTITY_LEVEL);
     const quickIdentityData = encrypt(JSON.stringify(quickIdentity, (_key, value) =>
       typeof value === 'bigint' ? value.toString() : value
     ));

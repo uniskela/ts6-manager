@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { VoiceBotManager } from './voice-bot-manager.js';
+import { identitySecurityLevel } from './tslib/identity.js';
+import { PLACEHOLDER_IDENTITY_LEVEL, VoiceBotManager } from './voice-bot-manager.js';
 
 test('createBot returns after DB insert without awaiting level-23 keygen', async () => {
   let upgradeScheduledFor: number | null = null;
@@ -55,6 +56,15 @@ test('createBot returns after DB insert without awaiting level-23 keygen', async
   assert.deepEqual(result, { id: 42 });
   assert.equal(upgradeScheduledFor, 42);
   assert.ok(elapsed < 2000, `createBot should return quickly, took ${elapsed}ms`);
+
+  // A default TeamSpeak server refuses an identity below level 8 (error 519),
+  // so the placeholder must already reach it for an immediate Start to connect.
+  const placeholder = (manager as any).bots.get(42).config.identity;
+  assert.equal(PLACEHOLDER_IDENTITY_LEVEL, 8);
+  assert.ok(
+    identitySecurityLevel(placeholder) >= PLACEHOLDER_IDENTITY_LEVEL,
+    `placeholder identity is level ${identitySecurityLevel(placeholder)}`,
+  );
 
   upgradeResolve();
   await upgradeGate;

@@ -253,6 +253,11 @@ function improveSecurity(identity: IdentityData, toLevel: number): void {
   }
 }
 
+/** The security level an identity has reached: leading zero bits of sha1(public key + offset). */
+export function identitySecurityLevel(identity: IdentityData): number {
+  return getSecurityLevel(Buffer.from(identity.publicKeyString, "ascii"), identity.keyOffset);
+}
+
 function getSecurityLevel(pubKeyBytes: Buffer, offset: bigint): number {
   const offsetStr = offset.toString();
   const hashInput = Buffer.concat([
