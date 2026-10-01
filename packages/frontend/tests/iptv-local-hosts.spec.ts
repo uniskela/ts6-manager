@@ -11,7 +11,7 @@ async function signIn(page: Page, request: APIRequestContext) {
   await expect(page).toHaveURL('/dashboard');
 }
 
-test('admins can allow LAN IPTV hosts from the IPTV page', async ({ page, request }) => {
+test('admins can allow LAN IPTV hosts from the IPTV header', async ({ page, request }) => {
   let stored: string[] = [];
   const puts: unknown[] = [];
   await page.route('**/api/settings/iptv-network', async (route) => {
@@ -25,7 +25,12 @@ test('admins can allow LAN IPTV hosts from the IPTV page', async ({ page, reques
 
   await signIn(page, request);
   await page.goto('/iptv');
-  await expect(page.getByText('Local network sources')).toBeVisible();
+
+  // Editor is not always on the page
+  await expect(page.getByLabel('Allowed local IPTV hosts')).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Local hosts' }).click();
+  await expect(page.getByRole('heading', { name: 'Local network sources' })).toBeVisible();
 
   const hosts = page.getByLabel('Allowed local IPTV hosts');
   await expect(page.getByRole('button', { name: 'Save hosts' })).toBeDisabled();
@@ -37,4 +42,27 @@ test('admins can allow LAN IPTV hosts from the IPTV page', async ({ page, reques
   await expect(page.getByText('Local IPTV hosts saved')).toBeVisible();
   await expect(hosts).toHaveValue('192.168.1.20\nthreadfin.lan');
   await expect(page.getByRole('button', { name: 'Save hosts' })).toBeDisabled();
+});
+
+test('empty state hint opens the local hosts dialog', async ({ page, request }) => {
+  await page.route('**/api/settings/iptv-network', async (route) => {
+    await route.fulfill({ json: { allowedLocalHosts: [] } });
+  });
+  await page.route('**/api/iptv/playlists*', async (route) => {
+    if (route.request().method() === 'GET') {
+      await route.fulfill({ json: [] });
+      return;
+    }
+    await route.continue();
+  });
+
+  await signIn(page, request);
+  await page.goto('/iptv');
+
+  await page.getByRole('button', {
+    name: 'Using Threadfin, xTeVe or TVHeadend? Allow its host first.',
+  }).click();
+
+  await expect(page.getByRole('heading', { name: 'Local network sources' })).toBeVisible();
+  await expect(page.getByLabel('Allowed local IPTV hosts')).toBeVisible();
 });
