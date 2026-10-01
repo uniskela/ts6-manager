@@ -1114,6 +1114,11 @@ func hwVerifyWindow() time.Duration {
 	return time.Duration(envIntOrDefault("VAAPI_VERIFY_MS", 1500)) * time.Millisecond
 }
 
+// rtpPacketSize caps the video RTP packets FFmpeg sends. A packet must still
+// fit one 1500-byte Ethernet frame after the sidecar has added SRTP's auth tag
+// and the IP and UDP headers; 1200 is the size WebRTC senders use.
+const rtpPacketSize = 1200
+
 // buildFFmpegArgs assembles the full ffmpeg command line for req and spec.
 func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower bool) []string {
 	w := req.Width
@@ -1178,6 +1183,10 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 		"-payload_type", "96",
 		"-ssrc", "11111111",
 		"-f", "rtp",
+		// FFmpeg's default is 1472 bytes. SRTP adds its auth tag on top, which
+		// puts the packet over a 1500-byte MTU: it is fragmented, and one lost
+		// fragment loses the packet. 1200 leaves room for SRTP and tunnels.
+		"-pkt_size", fmt.Sprintf("%d", rtpPacketSize),
 		fmt.Sprintf("rtp://127.0.0.1:%d", s.videoPort),
 	)
 
