@@ -189,6 +189,66 @@ describe('video encode health (#72)', () => {
   });
 });
 
+describe('video source mode lifecycle', () => {
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+  });
+  afterEach(() => {
+    mock.timers.reset();
+  });
+
+  it('clears sourceMode on stop so a later stream cannot inherit Live', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    b._videoSourceMode = 'live';
+
+    const stop = bot.stopVideoStream('source_unreachable', 'Source returned 400 Bad Request');
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await stop;
+
+    assert.equal(b._videoSourceMode, null);
+    // Same gap as a YouTube start after IPTV: stream flagged active before setSource.
+    b._videoStreaming = true;
+    assert.equal(bot.videoStreamStatus.sourceMode, null);
+  });
+
+  it('clears sourceMode at the start of applyVideoSource before the download finishes', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    b._videoSourceMode = 'live';
+    b._videoSourceModeRequest = 'auto';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8',
+      hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoSettings = { autoMaxPreset: '1080p', maxBitrateKbps: 0, cpuUsed: 4 };
+
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    b.resolveStreamSource = async () => {
+      await gate;
+      return { path: '/data/music/.stream-1.mp4', loop: false, live: undefined, durationSec: 10 };
+    };
+    b.probeStreamSource = async () => ({ resolution: { width: 1920, height: 1080 }, durationSec: 10 });
+    b.sendSourceToSidecar = async (_path: string, _loop: boolean, _quality: unknown, mode: string) => {
+      b._videoSourceMode = mode;
+      b._videoPreset = '1080p';
+      b._videoQuality = { requested: 'auto', actual: '1080p', width: 1920, height: 1080, note: null };
+    };
+
+    const apply = b.applyVideoSource('https://www.youtube.com/watch?v=c3hZgGQGLTY', 'auto');
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.equal(bot.videoStreamStatus.sourceMode, null, 'must not show Live while preparing the source');
+
+    release();
+    await apply;
+    assert.equal(bot.videoStreamStatus.sourceMode, 'file');
+  });
+});
+
 describe('video source probe', () => {
   it('probes remote sources through the sidecar with the source allowlist', async () => {
     const bot = makeBot();

@@ -1591,6 +1591,11 @@ export class VoiceBot extends EventEmitter {
    * source resolution, fixed presets never probe — and hand it to the sidecar.
    */
   private async applyVideoSource(source: string, requested: VideoQualityRequest): Promise<void> {
+    // Drop any previous mode (e.g. IPTV Live) before download/probe so status
+    // cannot advertise Live while a YouTube VOD is still preparing.
+    this._videoSourceMode = null;
+    this._videoHealth = null;
+
     const limit = this._videoSettings.autoMaxPreset;
     const maxHeight = STREAM_PRESETS[requested === 'auto' ? limit : requested].height;
     const resolved = await this.resolveStreamSource(source, maxHeight);
@@ -1697,6 +1702,8 @@ export class VoiceBot extends EventEmitter {
         if (this._videoStreaming) {
           this._videoStreaming = false;
           this._activeStreamId = null;
+          this._videoSourceMode = null;
+          this._videoHealth = null;
           this._viewers.clear();
           this.clearNoViewerTimer();
           this.stopHealthMonitor();
@@ -1744,12 +1751,36 @@ export class VoiceBot extends EventEmitter {
       note: selection.note,
     };
 
-    // Setup stream signaling on the TS3 client
+    // Setup stream signaling on the TS3 client (register listeners only —
+    // advertise with setupstream after the source is ready).
     this.signaling = new StreamSignaling(this.client);
     this.setupSignalingListeners();
     if (!this._streamNotificationsRegistered) {
       this.signaling.registerStreamNotifications();
       this._streamNotificationsRegistered = true;
+    }
+
+    // Resolve/download and start ffmpeg BEFORE advertising the TS stream so
+    // viewers never join while yt-dlp is still running, and so a prior Live
+    // mode cannot leak into status during prepare.
+    this._videoSource = source;
+    try {
+      await this.applyVideoSource(source, requestedQuality);
+    } catch (err) {
+      this._videoSource = null;
+      this._videoLocalHosts = [];
+      this._videoSourceMode = null;
+      this._videoHealth = null;
+      this._videoQuality = null;
+      this._videoEncoder = null;
+      this.releaseSignaling();
+      this.cleanupVideoTempFile();
+      if (this.sidecarProc) {
+        await this.sidecarProc.stop();
+        this.sidecarProc = null;
+      }
+      this.sidecarHttp = null;
+      throw err;
     }
 
     // Wait for the server to announce the stream, or to refuse it.
@@ -1793,10 +1824,17 @@ export class VoiceBot extends EventEmitter {
     try {
       stream = await streamPromise;
     } catch (err) {
-      // The server never confirmed: undo the signaling and a local sidecar,
-      // so a retry does not stack listeners on top of this attempt's.
+      // The server never confirmed: undo the signaling, prepared source, and a
+      // local sidecar so a retry does not stack listeners on this attempt.
       this.releaseSignaling();
       this._videoEncoder = null;
+      this._videoSource = null;
+      this._videoSourceMode = null;
+      this._videoHealth = null;
+      this._videoQuality = null;
+      this.clearVideoEndTimer();
+      this.cleanupVideoTempFile();
+      try { await this.sidecarHttp?.stopSource(); } catch { /* ignore */ }
       if (this.sidecarProc) {
         await this.sidecarProc.stop();
         this.sidecarProc = null;
@@ -1806,31 +1844,7 @@ export class VoiceBot extends EventEmitter {
     }
     this._activeStreamId = stream.id;
     this._videoStreaming = true;
-    this._videoSource = source;
     this._videoStartedAt = Date.now();
-
-    try {
-      await this.applyVideoSource(source, requestedQuality);
-    } catch (err) {
-      if (this.signaling && this._activeStreamId) {
-        this.signaling.sendStreamStop(this._activeStreamId);
-      }
-      this._activeStreamId = null;
-      this._videoSource = null;
-      this._videoLocalHosts = [];
-      this._videoStreaming = false;
-      this._videoStartedAt = null;
-      this._videoQuality = null;
-      this._videoEncoder = null;
-      this.clearNoViewerTimer();
-      this.releaseSignaling();
-      if (this.sidecarProc) {
-        await this.sidecarProc.stop();
-        this.sidecarProc = null;
-      }
-      this.sidecarHttp = null;
-      throw err;
-    }
 
     console.log(
       `[VoiceBot ${this.config.id}] Video stream started: ${stream.id} ` +
@@ -1899,6 +1913,8 @@ export class VoiceBot extends EventEmitter {
       this._activeStreamId = null;
       this._videoSource = null;
       this._videoLocalHosts = [];
+      this._videoSourceMode = null;
+      this._videoHealth = null;
       this._videoStreaming = false;
       this._videoStartedAt = null;
       this._videoSessionId = null;
