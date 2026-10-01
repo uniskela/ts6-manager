@@ -145,12 +145,24 @@ Check:
 
 The preview needs your browser to produce ICE candidates. Some VPNs, privacy extensions ("WebRTC leak protection") and managed browser policies block this, and then the preview times out even when the server is set up correctly.
 
-1. In the same browser, open the [Trickle ICE test](https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/) and click **Gather candidates**. You should see `host` and `srflx` rows. If you see none, WebRTC is blocked in the browser, not by ts6-manager.
-2. Check `chrome://policy` for `WebRtc*` entries, and disable VPN or privacy extensions. Retry in a private window with extensions off, or in another browser.
+1. In the same browser, open the [Trickle ICE test](https://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/) and click **Gather candidates**. You should see `host` and `srflx` rows. Read the result like this:
+   - **No rows at all** (not even `host`): host candidates don't depend on STUN, so the browser is most likely restricting WebRTC. Check any ICE errors the page reports, then work through the table below.
+   - **`host` rows but no `srflx`:** the browser works, but it couldn't reach the STUN server. Check the page's ICE errors and whether your network blocks outbound UDP.
+2. Disable VPN or privacy extensions and retry in a private window with extensions off, or in another browser. Then check the browser's own setting:
+
+| Browser | Where to look |
+|---|---|
+| Chrome | No user setting. Check `chrome://policy` for `WebRtc*` policies and `chrome://extensions` for VPN or privacy add-ons. |
+| Edge | `edge://policy` for `WebRtc*` policies (for example `WebRtcLocalhostIpHandling`, `WebRtcIPHandlingUrl`), plus `edge://extensions`. |
+| Brave | `brave://settings/privacy` → *WebRTC IP handling policy*. "Disable non-proxied UDP" stops the preview. |
+| Firefox | `about:config`: `media.peerconnection.enabled` must be `true` and `media.peerconnection.ice.proxy_only` must be `false`. Also check `about:policies`. |
+| Safari | Rarely the cause. If needed, check the Develop menu's WebRTC options, and turn off iCloud Private Relay or a VPN to test. |
+
+Setting names move between browser versions; if one isn't where the table says, the Trickle ICE test above is still the reliable check.
 
 ### Collect details for a bug report
 
-- **Signaling is plain HTTPS.** Look for `POST …/stream/webrtc/offer`, `/answer` and `/ice` in DevTools → Network. The WS/Socket tab will be empty for the preview; that's expected.
+- **Signaling uses HTTP(S) POST.** Look for `POST …/stream/webrtc/offer`, `/answer` and `/ice` in DevTools → Network. The WS/Socket tab will be empty for the preview; that's expected.
 - **Browser side:** open `chrome://webrtc-internals` in a new tab *before* starting the preview, then click **Create dump** after it fails. Check that the offer has your `WEBRTC_NAT1TO1_IP` on `WEBRTC_UDP_PORT` as a `typ host` candidate, and that the browser logged its own `icecandidate` events.
 - **Server side:** set `SIDECAR_DEBUG_LOGS=1` and `PION_LOG_WARN=ice`, restart, and make one preview attempt without clicking **Retry**. During it, run `sudo tcpdump -ni any udp port 10000` (or your `WEBRTC_UDP_PORT`) on the Docker host. STUN packets from the browser's public IP should arrive and get replies.
 
