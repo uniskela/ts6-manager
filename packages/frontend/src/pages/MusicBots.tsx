@@ -732,6 +732,11 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
 const MIN_BOT_NICKNAME_LENGTH = 3;
 const MAX_BOT_NICKNAME_LENGTH = 30;
 
+function isBotNicknameLengthOk(name: string): boolean {
+  const length = name.trim().length;
+  return length >= MIN_BOT_NICKNAME_LENGTH && length <= MAX_BOT_NICKNAME_LENGTH;
+}
+
 function BotsTab() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useMusicBots();
@@ -770,6 +775,8 @@ function BotsTab() {
     volume: 50,
     autoStart: false,
   });
+  // A saved bot can predate the limit, so its name may already be too long.
+  const nameLengthError = form.name !== '' && !isBotNicknameLengthOk(form.name);
 
   const parseCommandChannelsInput = (text: string): string[] =>
     text
@@ -927,9 +934,10 @@ function BotsTab() {
           <div className="space-y-3">
             <div>
               <Label className="text-xs">Name</Label>
-              <Input type="text" aria-label="Bot name and TeamSpeak nickname" aria-required="true" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My Media Bot" maxLength={MAX_BOT_NICKNAME_LENGTH} />
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Also the bot's TeamSpeak nickname: {MIN_BOT_NICKNAME_LENGTH}-{MAX_BOT_NICKNAME_LENGTH} characters.
+              <Input type="text" aria-label="Bot name and TeamSpeak nickname" aria-required="true" aria-invalid={nameLengthError} aria-describedby="bot-nickname-hint" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="My Media Bot" maxLength={MAX_BOT_NICKNAME_LENGTH} />
+              <p id="bot-nickname-hint" className={`text-[10px] mt-1 ${nameLengthError ? 'text-destructive' : 'text-muted-foreground'}`}>
+                Also the bot's TeamSpeak nickname: {MIN_BOT_NICKNAME_LENGTH}-{MAX_BOT_NICKNAME_LENGTH} characters
+                {nameLengthError && ` (now ${form.name.trim().length})`}.
               </p>
             </div>
             {!editBot && (
@@ -995,7 +1003,7 @@ function BotsTab() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowCreate(false); setEditBot(null); }}>Cancel</Button>
-            <Button onClick={editBot ? handleUpdate : handleCreate} disabled={form.name.trim().length < MIN_BOT_NICKNAME_LENGTH || (!editBot && !form.serverConfigId) || createBot.isPending || updateBot.isPending}>
+            <Button onClick={editBot ? handleUpdate : handleCreate} disabled={!isBotNicknameLengthOk(form.name) || (!editBot && !form.serverConfigId) || createBot.isPending || updateBot.isPending}>
               {editBot ? 'Save' : 'Create'}
             </Button>
           </DialogFooter>
