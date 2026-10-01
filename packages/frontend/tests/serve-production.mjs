@@ -511,7 +511,7 @@ const server = createServer(async (req, res) => {
         ? (docsScenario
             ? { total: docsIptvChannels.length, page: 1, pageSize: 24, channels: docsIptvChannels }
             : { total: 1234, page: 1, pageSize: 24, channels: [] })
-      : url.pathname === '/api/music-bots/media' && allowTestAuth && docsScenario ? docsBotMedia
+      : url.pathname === '/api/music-bots/media' && allowTestAuth ? (docsScenario ? docsBotMedia : [])
       : url.pathname === '/api/music-bots' && allowTestAuth ? (docsScenario ? docsMusicBots : [])
       : url.pathname === '/api/music-bots/7/state' && allowTestAuth && docsScenario ? docsPlaybackState
       : url.pathname === '/api/bots' && allowTestAuth ? bots

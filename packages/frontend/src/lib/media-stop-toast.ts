@@ -107,6 +107,9 @@ export function applyMediaStopToastDelta(
   seen: Set<MediaStopToastKey>,
   opts?: { now?: number; toast?: typeof toastMediaStopped },
 ): Set<MediaStopToastKey> {
+  // Runs on every signed-in page: a reply that is not a list must not throw
+  // out of the layout and blank the app.
+  if (!Array.isArray(bots)) return seen;
   const next = new Set(seen);
   const emit = opts?.toast ?? toastMediaStopped;
   const seeding = seen.size === 0;

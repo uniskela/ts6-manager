@@ -14,6 +14,18 @@ const base: BotMediaOverview = {
 };
 
 describe('media stop toasts', () => {
+  // The hook runs on every signed-in page, so a body that is not a list (an
+  // error page, a proxy reply, an older backend) must not take the app down.
+  it('ignores a bot-media reply that is not a list', () => {
+    const seen = new Set(['1:video:source_unreachable:1000'] as const);
+    const toasts: unknown[] = [];
+    for (const reply of [{ error: 'nope' }, null, undefined, 'html']) {
+      const next = applyMediaStopToastDelta(reply as unknown as BotMediaOverview[], seen, { toast: (t) => toasts.push(t) });
+      assert.deepEqual([...next], [...seen]);
+    }
+    assert.equal(toasts.length, 0);
+  });
+
   it('collects unreachable video stops and skips manual ones', () => {
     const bot: BotMediaOverview = {
       ...base,
