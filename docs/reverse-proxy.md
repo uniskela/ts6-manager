@@ -66,6 +66,7 @@ If the preview stays on “Connecting to stream…” and then reports an ICE fa
 - remember NGINX does **not** carry WebRTC media — only signaling;
 - set `WEBRTC_NAT1TO1_IP` to an IPv4 the **browser** can dial (LAN or Tailscale for local clients; public IPv4 when the browser is on the Internet), and publish `WEBRTC_UDP_PORT` with `WEBRTC_BIND_IP` on the Docker host (bind may differ from the advertised address when a firewall/NAT forwards UDP);
 - **avoid** advertising `127.0.0.1` unless the browser is on the Docker host itself;
+- if the server side looks right, [check the browser side](troubleshooting.md#check-the-browser-side-first) — VPNs, privacy extensions and browser policies can stop the browser from producing ICE candidates at all;
 - see [Troubleshooting](troubleshooting.md) for reverse-proxy and streaming checks.
 
 ## TLS
