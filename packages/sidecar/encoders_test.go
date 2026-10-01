@@ -172,3 +172,20 @@ func TestSummarizeFFmpegErrorRedactsURLs(t *testing.T) {
 		t.Fatalf("unexpected summary: %q", got)
 	}
 }
+
+// FFmpeg's default RTP packet is 1472 bytes; with SRTP added it no longer fits
+// a 1500-byte MTU and is fragmented on the way to the viewer.
+func TestVideoRTPPacketsFitTheMTU(t *testing.T) {
+	s := NewSidecar()
+	for _, key := range []string{"vp8", "vp9", "h264_vaapi"} {
+		spec, ok := lookupEncoder(key)
+		if !ok {
+			t.Fatalf("no %s encoder", key)
+		}
+		args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "/data/music/clip.mp4"}, spec, false), " ")
+		const want = "-f rtp -pkt_size 1200 rtp://127.0.0.1:"
+		if !strings.Contains(args, want) {
+			t.Errorf("%s: video output must cap the packet size (%q): %s", key, want, args)
+		}
+	}
+}
