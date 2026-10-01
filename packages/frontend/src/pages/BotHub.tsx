@@ -7,17 +7,22 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Bot, LayoutGrid, Music, Radio, Square, Tv, Video,
+  AlertTriangle, Bot, LayoutGrid, Music, Pause, Play, Radio, SkipForward, Square, Tv, Video,
 } from 'lucide-react';
 import type { BotMediaOverview } from '@ts6/common';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RefreshStatus } from '@/components/shared/RefreshStatus';
+import { VideoPlayer } from '@/components/video/VideoPlayer';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
-import { useBotMedia, useStopPlayback, useStopVideoStream } from '@/hooks/use-music-bots';
+import { Slider } from '@/components/ui/slider';
+import {
+  useBotMedia, usePausePlayback, useResumePlayback, useSkipTrack, useSetVolume,
+  useStopPlayback, useStopVideoStream, useMusicBotState,
+} from '@/hooks/use-music-bots';
 import { hubFacts, hubHeadline, hubLastStop, hubTone, type HubTone } from '@/lib/bot-hub';
 import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
@@ -48,13 +53,28 @@ function useNow(): number {
 function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
   const stopMusic = useStopPlayback();
   const stopVideo = useStopVideoStream();
+  const pausePlayback = usePausePlayback();
+  const resumePlayback = useResumePlayback();
+  const skipTrack = useSkipTrack();
+  const setVolume = useSetVolume();
+  const { data: musicState } = useMusicBotState(
+    bot.session?.kind === 'music' ? bot.botId : null,
+  );
+  const [draggingVolume, setDraggingVolume] = useState<number | null>(null);
+
   const tone = hubTone(bot);
   const badge = TONE_BADGE[tone];
   const facts = hubFacts(bot, now);
   const lastStop = tone === 'idle' || tone === 'offline' ? hubLastStop(bot, now) : null;
-  const openHref = tone === 'live' ? `/media-bots?tab=video&bot=${bot.botId}` : '/media-bots';
+  const openHref = tone === 'live'
+    ? `/media-bots?tab=video&bot=${bot.botId}`
+    : tone === 'music'
+      ? (bot.music?.live ? `/media-bots?tab=radio&bot=${bot.botId}` : `/media-bots?bot=${bot.botId}`)
+      : '/media-bots';
   const stopping = stopMusic.isPending || stopVideo.isPending;
   const error = stopMusic.error ?? stopVideo.error;
+  const isPaused = bot.status === 'paused' || musicState?.status === 'paused';
+  const volume = draggingVolume ?? musicState?.volume ?? 50;
 
   return (
     <Card className={cn(tone === 'offline' && 'opacity-70')}>
@@ -99,6 +119,66 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
             <span className="line-clamp-2">Hardware encoder fell back to software: {bot.video.encoder.fallbackReason}</span>
           </p>
         )}
+
+        {tone === 'live' && (
+          <VideoPlayer
+            botId={bot.botId}
+            streaming={bot.session?.state === 'active'}
+            idleDetail={bot.session?.state === 'starting' ? 'Starting stream…' : null}
+            className="max-w-none w-full"
+          />
+        )}
+
+        {tone === 'music' && (
+          <div className="space-y-2 rounded-md border bg-muted/30 p-2">
+            <div className="flex items-center justify-center gap-1">
+              {isPaused ? (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label={`Resume ${bot.botName}`}
+                  onClick={() => resumePlayback.mutate(bot.botId)}
+                >
+                  <Play className="h-4 w-4 ml-0.5" />
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label={`Pause ${bot.botName}`}
+                  onClick={() => pausePlayback.mutate(bot.botId)}
+                >
+                  <Pause className="h-4 w-4" />
+                </Button>
+              )}
+              {!bot.music?.live && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label={`Skip track on ${bot.botName}`}
+                  onClick={() => skipTrack.mutate(bot.botId)}
+                >
+                  <SkipForward className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+            <Slider
+              value={[volume]}
+              max={100}
+              step={1}
+              aria-label={`Volume for ${bot.botName}`}
+              onValueChange={([val]) => setDraggingVolume(val)}
+              onValueCommit={([val]) => {
+                setVolume.mutate({ botId: bot.botId, volume: val });
+                setDraggingVolume(null);
+              }}
+            />
+          </div>
+        )}
+
         {lastStop && <p className="text-xs text-muted-foreground">{lastStop}</p>}
         {error && <p className="text-xs text-destructive">{apiErrorMessage(error, 'Could not stop')}</p>}
 

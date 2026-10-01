@@ -15,9 +15,12 @@ import {
 interface VideoPlayerProps {
   botId: number;
   streaming: boolean;
+  /** Shown when idle instead of the default “No active video stream”. */
+  idleDetail?: string | null;
+  className?: string;
 }
 
-export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
+export function VideoPlayer({ botId, streaming, idleDetail, className }: VideoPlayerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const iceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -169,14 +172,17 @@ export function VideoPlayer({ botId, streaming }: VideoPlayerProps) {
 
   if (!streaming) {
     return (
-      <div className="flex items-center justify-center bg-black/50 rounded-lg aspect-video max-w-xl">
+      <div className={`flex flex-col items-center justify-center gap-1 bg-black/50 rounded-lg aspect-video max-w-xl px-4 text-center ${className ?? ''}`}>
         <p className="text-muted-foreground text-sm">No active video stream</p>
+        {idleDetail && (
+          <p className="text-xs text-destructive/90 line-clamp-3">{idleDetail}</p>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="relative rounded-lg overflow-hidden bg-black aspect-video max-w-xl">
+    <div className={`relative rounded-lg overflow-hidden bg-black aspect-video max-w-xl ${className ?? ''}`}>
       <video
         ref={videoRef}
         autoPlay

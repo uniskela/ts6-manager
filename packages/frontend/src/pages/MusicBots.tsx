@@ -12,6 +12,7 @@ import {
   useEnqueue, useLoadPlaylist, useRemoveFromQueue, useClearQueue,
   useSetShuffle, useSetRepeat,
   usePlayFromQueue, useMoveQueueItem,
+  useBotMedia,
 } from '@/hooks/use-music-bots';
 import { useSongs, useUploadSong, useDeleteSong, useYouTubeSearch, useYouTubeDownload, useYouTubeInfo, useYouTubeDownloadBatch, useYouTubeRegister, useScanLibrary, useYouTubeImportPlaylist, useYouTubeImportStatus } from '@/hooks/use-music-library';
 import { useRadioStations, useRadioPresets, useCreateRadioStation, useDeleteRadioStation, useResetRadioStationIds, usePlayRadio } from '@/hooks/use-radio-stations';
@@ -50,6 +51,7 @@ import { RequestsTab } from '@/components/media/RequestsTab';
 import type { MediaPlayAction } from '@/lib/media-bot-play';
 import { toast } from 'sonner';
 import { toastMediaStarted } from '@/lib/media-start-toast';
+import { hubLastStop } from '@/lib/bot-hub';
 import { formatBytes } from '@/lib/utils';
 import type { MusicBotSummary, PlaybackState, SongInfo, PlaylistSummary, PlaylistDetail, PlaylistMode, YouTubeSearchResult, RadioStationInfo, RadioPreset, ChatCommandInfo, ChatCommandPreset } from '@ts6/common';
 import {
@@ -250,11 +252,12 @@ const statusColors: Record<string, string> = {
 
 // ─── Bot Player Card ─────────────────────────────────────────────────────────
 
-function BotPlayerCard({ bot, onEdit, onDelete, onPlayAction }: {
+function BotPlayerCard({ bot, onEdit, onDelete, onPlayAction, lastStopLine }: {
   bot: MusicBotSummary;
   onEdit: () => void;
   onDelete: () => void;
   onPlayAction: (action: MediaPlayAction) => void;
+  lastStopLine?: string | null;
 }) {
   const navigate = useNavigate();
   const startBot = useStartMusicBot();
@@ -443,6 +446,10 @@ function BotPlayerCard({ bot, onEdit, onDelete, onPlayAction }: {
             <Volume2 className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
             <span className="text-[10px] text-muted-foreground w-7 text-right">{draggingVolume ?? state?.volume ?? bot.volume}%</span>
           </div>
+        )}
+
+        {!state?.nowPlaying && lastStopLine && (
+          <p className="text-xs text-muted-foreground">{lastStopLine}</p>
         )}
 
         {/* Queue preview */}
@@ -724,6 +731,7 @@ function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueue, onLo
 function BotsTab() {
   const queryClient = useQueryClient();
   const { data, isLoading } = useMusicBots();
+  const { data: mediaOverview } = useBotMedia();
   const { data: servers } = useServers();
   const { selectedConfigId } = useServerStore();
   const createBot = useCreateMusicBot();
@@ -733,6 +741,10 @@ function BotsTab() {
   const playUrl = usePlayUrl();
   const enqueueSong = useEnqueue();
   const loadPlaylist = useLoadPlaylist();
+  const now = Date.now();
+  const lastStopByBot = new Map(
+    (mediaOverview ?? []).map((m) => [m.botId, hubLastStop(m, now)]),
+  );
 
   const [showCreate, setShowCreate] = useState(false);
   const [editBot, setEditBot] = useState<MusicBotSummary | null>(null);
@@ -875,6 +887,7 @@ function BotsTab() {
             <BotPlayerCard
               key={bot.id}
               bot={bot}
+              lastStopLine={lastStopByBot.get(bot.id) ?? null}
               onEdit={() => {
                 setForm({
                   name: bot.name,

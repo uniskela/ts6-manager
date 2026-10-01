@@ -57,6 +57,15 @@ describe('encoder exit classification', () => {
     assert.equal(empty.reason, 'source_unreachable');
     assert.equal(empty.detail, 'Playlist has no playable streams (variants failed or empty)');
   });
+  it('FairPlay / skd:// DRM failure is a clear source error', () => {
+    const drm = classifyEncoderExit({
+      mode: 'live',
+      loop: false,
+      exitError: "Error when loading first segment 'https://cdn.example/seg.ts': Unable to open key file skd://item.service.provider",
+    });
+    assert.equal(drm.reason, 'source_unreachable');
+    assert.equal(drm.detail, 'This channel uses DRM encryption and cannot be played here');
+  });
   it('a live source ending is never "reached its end"', () => {
     assert.equal(classifyEncoderExit({ mode: 'live', loop: false, exitError: null }).reason, 'source_unreachable');
   });

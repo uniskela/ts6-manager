@@ -5,7 +5,7 @@ import {
   useDeleteIptvPlaylist, useRefreshIptvPlaylist,
   useIptvGroups, useIptvChannels, useIptvStream, useIptvStop,
 } from '@/hooks/use-iptv';
-import { useMusicBots } from '@/hooks/use-music-bots';
+import { useMusicBots, useBotMedia } from '@/hooks/use-music-bots';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -26,6 +26,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Tv, Plus, Trash2, RefreshCw, Play, Square, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle, Upload, Link2, FileUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { toastMediaStarted } from '@/lib/media-start-toast';
+import { hubLastStop } from '@/lib/bot-hub';
 import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage } from '@ts6/common';
 import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
@@ -62,6 +63,7 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
   const [group, setGroup] = useState('');
   const [page, setPage] = useState(1);
   const pageSize = 24;
+  const { data: mediaOverview } = useBotMedia();
 
   useEffect(() => {
     const t = setTimeout(() => { setDebounced(search); setPage(1); }, 300);
@@ -114,6 +116,10 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
   const channels: IptvChannelInfo[] = data?.channels ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const selectedMedia = (mediaOverview ?? []).find((m) => m.botId === Number(botId));
+  const lastStopLine = selectedMedia && !selectedMedia.session
+    ? hubLastStop(selectedMedia, Date.now())
+    : null;
 
   const doStream = (channel: IptvChannelInfo) => {
     if (!botId) { toast.error('Select a running media bot to stream through'); return; }
@@ -170,6 +176,9 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
           </p>
         )}
       </div>
+      {lastStopLine && (
+        <p className="text-xs text-muted-foreground px-0.5">{lastStopLine}</p>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-2">

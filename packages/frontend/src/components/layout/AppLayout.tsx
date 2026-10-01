@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth.store';
 import { useUiStore } from '@/stores/ui.store';
 import { useResolvedBackgroundMotion } from '@/hooks/use-resolved-background-motion';
 import { useCustomCssInjection } from '@/hooks/use-custom-css-injection';
+import { useMediaStopToasts } from '@/hooks/use-media-stop-toasts';
 import { authApi } from '@/api/auth.api';
 import { Toaster } from 'sonner';
 
@@ -18,6 +19,7 @@ export function AppLayout() {
   const backgroundIntensity = useUiStore((s) => s.backgroundIntensity);
   const resolvedMotion = useResolvedBackgroundMotion(backgroundMotion);
   useCustomCssInjection(isAuthenticated);
+  useMediaStopToasts(isAuthenticated);
 
   const { data: me } = useQuery({
     queryKey: ['me'],
