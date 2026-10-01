@@ -1982,6 +1982,8 @@ export class VoiceBot extends EventEmitter {
   /** Get WebRTC offer for WebUI preview player */
   async getWebRtcOffer(): Promise<{ sdp: string } | null> {
     if (!this._videoStreaming || !this.sidecarHttp) return null;
+    // #202: close any stale same-id peer before creating a fresh offer (retry/remount reuses webui-preview).
+    await this.sidecarHttp.closePeer('webui-preview').catch(() => {});
     return this.sidecarHttp.createPeer('webui-preview', this._videoEncoder?.codec);
   }
 
