@@ -81,8 +81,12 @@ export function humanizeSourceError(raw: string): string {
   const err = raw.trim();
   if (!err) return 'Source became unreachable';
   // FairPlay / Widevine / PlayReady — ffmpeg cannot decrypt skd:// keys.
-  if (/skd:\/\/|unable to open key file|fairplay|widevine|playready/i.test(err)) {
+  if (/skd:\/\/|fairplay|widevine|playready/i.test(err)) {
     return 'This channel uses DRM encryption and cannot be played here';
+  }
+  // Plain HLS AES-128 uses key URIs too: a key that will not load is not DRM.
+  if (/unable to open key file/i.test(err)) {
+    return 'Could not fetch the stream decryption key — the key URL may be expired or blocked';
   }
   if (/matches no streams|stream map|empty segment/i.test(err)) {
     return 'Playlist has no playable streams (variants failed or empty)';

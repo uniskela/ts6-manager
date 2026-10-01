@@ -66,6 +66,15 @@ describe('encoder exit classification', () => {
     assert.equal(drm.reason, 'source_unreachable');
     assert.equal(drm.detail, 'This channel uses DRM encryption and cannot be played here');
   });
+  it('an AES-128 key that cannot be fetched is not called DRM', () => {
+    const key = classifyEncoderExit({
+      mode: 'live',
+      loop: false,
+      exitError: "Error when loading first segment 'https://cdn.example/seg.ts': Unable to open key file https://cdn.example/key.bin",
+    });
+    assert.equal(key.reason, 'source_unreachable');
+    assert.equal(key.detail, 'Could not fetch the stream decryption key — the key URL may be expired or blocked');
+  });
   it('a live source ending is never "reached its end"', () => {
     assert.equal(classifyEncoderExit({ mode: 'live', loop: false, exitError: null }).reason, 'source_unreachable');
   });

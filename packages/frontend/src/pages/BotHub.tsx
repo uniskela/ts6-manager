@@ -72,6 +72,8 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
       ? (bot.music?.live ? `/media-bots?tab=radio&bot=${bot.botId}` : `/media-bots?bot=${bot.botId}`)
       : '/media-bots';
   const stopping = stopMusic.isPending || stopVideo.isPending;
+  // One playback command at a time: repeat clicks would send duplicate skips.
+  const playbackPending = pausePlayback.isPending || resumePlayback.isPending || skipTrack.isPending;
   const error = stopMusic.error ?? stopVideo.error;
   const isPaused = bot.status === 'paused' || musicState?.status === 'paused';
   const volume = draggingVolume ?? musicState?.volume ?? 50;
@@ -138,6 +140,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
                   size="icon"
                   className="h-8 w-8"
                   aria-label={`Resume ${bot.botName}`}
+                  disabled={playbackPending}
                   onClick={() => resumePlayback.mutate(bot.botId)}
                 >
                   <Play className="h-4 w-4 ml-0.5" />
@@ -148,6 +151,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
                   size="icon"
                   className="h-8 w-8"
                   aria-label={`Pause ${bot.botName}`}
+                  disabled={playbackPending}
                   onClick={() => pausePlayback.mutate(bot.botId)}
                 >
                   <Pause className="h-4 w-4" />
@@ -159,6 +163,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
                   size="icon"
                   className="h-8 w-8"
                   aria-label={`Skip track on ${bot.botName}`}
+                  disabled={playbackPending}
                   onClick={() => skipTrack.mutate(bot.botId)}
                 >
                   <SkipForward className="h-4 w-4" />
