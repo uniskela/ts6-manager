@@ -79,6 +79,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
+      # Intentionally no GHA BuildKit cache. Cached apt-get layers can keep
+      # packages like libexpat1 on an older security update (e.g. deb12u3 while
+      # deb12u4 is on the mirror), so Trivy fails on a "stale" image and deleting
+      # caches only helps until the next run re-exports the same layer.
       - name: Build final image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -89,8 +93,7 @@ jobs:
           tags: ts6-security-${{ matrix.component }}:${{ github.sha }}
           build-args: |
             GIT_SHA=${{ github.sha }}
-          cache-from: type=gha,scope=security-${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=security-${{ matrix.component }}
+          pull: true
 
       - name: Validate pruned Node runtime
         if: matrix.component == 'backend' || matrix.component == 'all-in-one'
