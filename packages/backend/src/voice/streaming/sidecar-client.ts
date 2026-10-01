@@ -80,9 +80,17 @@ export class SidecarClient {
     throw new Error('Sidecar health check timeout');
   }
 
-  /** `codec` must match the encoder's codec family so the viewer negotiates what ffmpeg sends. */
-  async createPeer(id: string, codec?: VideoCodec): Promise<{ sdp: string }> {
-    return this.call('POST', '/peer/create', codec ? { id, codec } : { id });
+  /**
+   * `codec` must match the encoder's codec family so the viewer negotiates what ffmpeg sends.
+   * `browser` marks a browser viewer (the web UI preview): its offer also carries the
+   * codec variants a browser accepts, which a TeamSpeak viewer must not be offered.
+   */
+  async createPeer(id: string, codec?: VideoCodec, opts: { browser?: boolean } = {}): Promise<{ sdp: string }> {
+    return this.call('POST', '/peer/create', {
+      id,
+      ...(codec ? { codec } : {}),
+      ...(opts.browser ? { browser: true } : {}),
+    });
   }
 
   async setAnswer(id: string, sdp: string): Promise<void> {

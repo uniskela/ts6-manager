@@ -26,6 +26,39 @@ const (
 // Main/High offers are rejected.
 const h264ConstrainedHighFmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c1f"
 
+// Browsers do not list Constrained High, so a browser answers an offer of
+// h264ConstrainedHighFmtp alone with no video codec at all. These are the
+// H.264 variants offered to a browser on top of it.
+const (
+	// Plain High: what Chromium takes (it lists 42001f, 42e01f, 4d001f, f4001f
+	// and 64001f). A Constrained High stream is a valid High stream.
+	h264HighFmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=64001f"
+	// Constrained Baseline: the only H.264 Firefox takes. The stream is still
+	// High, so this label is not what is sent; Firefox decodes it all the same
+	// (checked with Firefox and Edge on Windows). It is offered last, so a
+	// browser that knows High never picks it.
+	h264ConstrainedBaselineFmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f"
+)
+
+// browserVideoFallbacks are the extra video codecs offered to a browser viewer
+// (the web UI preview) after codec's own capability. TeamSpeak viewers never
+// get them: their offer stays exactly what the client is known to render.
+func browserVideoFallbacks(codec string) []webrtc.RTPCodecParameters {
+	if codec != codecH264 {
+		return nil
+	}
+	return []webrtc.RTPCodecParameters{
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: h264HighFmtp},
+			PayloadType:        97,
+		},
+		{
+			RTPCodecCapability: webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000, SDPFmtpLine: h264ConstrainedBaselineFmtp},
+			PayloadType:        98,
+		},
+	}
+}
+
 // EncoderSpec describes one selectable video encoder.
 type EncoderSpec struct {
 	ID       string `json:"id"`
