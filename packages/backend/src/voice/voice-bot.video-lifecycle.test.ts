@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { VoiceBot } from './voice-bot.js';
+import { StreamSignaling } from './streaming/stream-signaling.js';
 
 function makeBot(): VoiceBot {
   return new VoiceBot({
@@ -310,6 +311,53 @@ describe('video source mode lifecycle', () => {
     assert.equal(b._videoSourceMode, null);
     assert.equal(b._videoTempFile, null);
     assert.ok(b._videoStartAbortError);
+  });
+
+  it('stopstreams a late TeamSpeak confirmation after an aborted start', () => {
+    const bot = makeBot();
+    const b = bot as any;
+    const sent: string[] = [];
+    b.client.sendCommand = (cmd: string) => sent.push(cmd);
+    b.client.getClientId = () => 42;
+    const signaling = new StreamSignaling(b.client);
+    b.signaling = signaling;
+
+    b.holdSignalingForLateStop(signaling);
+    assert.equal(b.signaling, null, 'bot must detach so a retry can create fresh signaling');
+
+    // Other bots' stream announcements must be ignored.
+    signaling.emit('streamStarted', {
+      id: 'other-bot',
+      clid: 99,
+      name: 'Other',
+      type: 3,
+      access: 1,
+      mode: 1,
+      bitrate: 0,
+      viewerLimit: 0,
+      audio: true,
+      startedAt: Date.now(),
+    });
+    assert.equal(sent.length, 0);
+
+    signaling.emit('streamStarted', {
+      id: 'late-stream-1',
+      clid: 42,
+      name: 'Bot Stream',
+      type: 3,
+      access: 1,
+      mode: 1,
+      bitrate: 4608,
+      viewerLimit: 0,
+      audio: true,
+      startedAt: Date.now(),
+    });
+
+    assert.ok(
+      sent.some((c) => c.startsWith('stopstream') && c.includes('late-stream-1')),
+      'late confirmation must be stopstreamed',
+    );
+    assert.equal(bot.videoStreaming, false);
   });
 });
 

@@ -1875,11 +1875,19 @@ export class VoiceBot extends EventEmitter {
         throw this._videoStartAbortError;
       }
     } catch (err) {
-      // The server never confirmed, or prepare was aborted: undo the signaling,
-      // prepared source, and a local sidecar so a retry does not stack state.
+      // The server never confirmed, or prepare was aborted: undo the prepared
+      // source. If setupstream was already sent, keep signaling briefly so a
+      // late notifystreamstarted can still be stopstream'd (orphan otherwise).
       this._videoStartReject = null;
+      const holdForLateConfirm =
+        !!this._videoStartAbortError
+        || (err instanceof Error && /did not answer the stream request/i.test(err.message));
       this._videoStartAbortError = null;
-      this.releaseSignaling();
+      if (holdForLateConfirm && signaling) {
+        this.holdSignalingForLateStop(signaling);
+      } else {
+        this.releaseSignaling();
+      }
       this._videoEncoder = null;
       this._videoSource = null;
       this._videoSourceMode = null;
@@ -1898,6 +1906,7 @@ export class VoiceBot extends EventEmitter {
     this._activeStreamId = stream.id;
     this._videoStreaming = true;
     this._videoStartedAt = Date.now();
+    this._videoStartAbortError = null;
     // End-stop was deferred while preparing; arm it now that the stream is live.
     if (!this._videoLoop && this._videoDurationSec != null) {
       this.scheduleVideoEndStop(this._videoDurationSec);
@@ -2084,6 +2093,36 @@ export class VoiceBot extends EventEmitter {
   private releaseSignaling(): void {
     this.signaling?.dispose();
     this.signaling = null;
+  }
+
+  /**
+   * After setupstream was sent but the start failed (sidecar abort, timeout),
+   * TeamSpeak may still confirm the stream. Dispose would drop the client
+   * listener, leaving an orphan TS stream with no `_activeStreamId`. Keep the
+   * signaling alive briefly and stopstream any late confirmation for this bot.
+   */
+  private holdSignalingForLateStop(signaling: StreamSignaling, waitMs = 15_000): void {
+    if (this.signaling === signaling) {
+      this.signaling = null;
+    }
+    const botClid = this.client.getClientId();
+    const finish = () => {
+      clearTimeout(timer);
+      signaling.removeListener('streamStarted', onStarted);
+      signaling.dispose();
+    };
+    const onStarted = (stream: ActiveStream) => {
+      if (botClid != null && stream.clid !== botClid) return;
+      try {
+        signaling.sendStreamStop(stream.id);
+        console.log(
+          `[VoiceBot ${this.config.id}] Stopped late-confirmed stream ${stream.id} after aborted start`,
+        );
+      } catch { /* ignore */ }
+      finish();
+    };
+    const timer = setTimeout(finish, waitMs);
+    signaling.on('streamStarted', onStarted);
   }
 
   private setupSignalingListeners(): void {
