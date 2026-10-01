@@ -313,6 +313,50 @@ describe('video source mode lifecycle', () => {
     assert.ok(b._videoStartAbortError);
   });
 
+  it('aborts a preparing start when stop is requested before streaming begins', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b._videoStarting = true;
+    b._videoStreaming = false;
+    b._videoSource = 'https://example.com/live.m3u8';
+    b._videoSourceMode = 'live';
+    let rejected: Error | null = null;
+    b._videoStartReject = (err: Error) => { rejected = err; };
+
+    await bot.stopVideoStream('manual', 'Stopped from the web UI');
+
+    assert.match(rejected?.message ?? '', /Stopped from the web UI/);
+    assert.ok(b._videoStartAbortError);
+    assert.equal(b._videoSource, null);
+    assert.equal(b._videoSourceMode, null);
+    assert.equal(bot.videoStreaming, false);
+  });
+
+  it('keeps a pre-prepare abort marker so source resolution is skipped', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b._videoStarting = true;
+    b._videoStreaming = false;
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8',
+      hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoSettings = { autoMaxPreset: '1080p', maxBitrateKbps: 0, cpuUsed: 4 };
+    b._videoStartAbortError = new Error('Media sidecar exited (code 1)');
+    let resolved = false;
+    mock.method(VoiceBot.prototype as any, 'resolveStreamSource', async () => {
+      resolved = true;
+      return { path: '/tmp/x.mp4', loop: false, live: false, durationSec: 10 };
+    });
+
+    // Same gate startVideoStreamClaimed uses before applyVideoSource.
+    await assert.rejects(async () => {
+      if (b._videoStartAbortError) throw b._videoStartAbortError;
+      await b.applyVideoSource('https://example.com/a.mp4', '720p');
+    }, /sidecar exited/);
+    assert.equal(resolved, false, 'must not resolve/download after an abort was already set');
+  });
+
   it('stopstreams a late TeamSpeak confirmation after an aborted start', () => {
     const bot = makeBot();
     const b = bot as any;

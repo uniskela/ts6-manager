@@ -1654,7 +1654,8 @@ export class VoiceBot extends EventEmitter {
     }
     // Arm the end-stop clock only once the stream is active. During startup,
     // apply runs before setupstream; a short VOD must not fire while
-    // `_videoStreaming` is still false (stop would no-op and the timer is lost).
+    // `_videoStreaming` is still false (stop would only abort prepare, and the
+    // end timer would be lost).
     if (!resolved.loop && this._videoDurationSec != null && this._videoStreaming) {
       this.scheduleVideoEndStop(this._videoDurationSec);
     }
@@ -1676,6 +1677,7 @@ export class VoiceBot extends EventEmitter {
     // Claim the session synchronously so concurrent starts (double clicks,
     // chat commands, other admins) see it before the first await.
     this._videoStarting = true;
+    this._videoStartAbortError = null;
     this._videoSessionId = newMediaSessionId();
     try {
       if (music) {
@@ -1806,9 +1808,11 @@ export class VoiceBot extends EventEmitter {
     // Resolve/download and start ffmpeg BEFORE advertising the TS stream so
     // viewers never join while yt-dlp is still running, and so a prior Live
     // mode cannot leak into status during prepare.
+    // Do not clear `_videoStartAbortError` here — a sidecar exit during
+    // waitHealthy/getEncoders may already have set it.
     this._videoSource = source;
-    this._videoStartAbortError = null;
     try {
+      if (this._videoStartAbortError) throw this._videoStartAbortError;
       await this.applyVideoSource(source, requestedQuality);
       if (this._videoStartAbortError) throw this._videoStartAbortError;
     } catch (err) {
@@ -1947,7 +1951,15 @@ export class VoiceBot extends EventEmitter {
   }
 
   private async stopVideoStreamOnce(reason: MediaStopReason, detail: string | null): Promise<void> {
-    if (!this._videoStreaming || this._videoStopping) return;
+    if (this._videoStopping) return;
+    // Prepare-phase: apply/download runs while `_videoStreaming` is still false.
+    // A UI/IPTV stop must cancel that start so setupstream cannot activate later.
+    if (!this._videoStreaming) {
+      if (this._videoStarting) {
+        this.abortPendingVideoStart(new Error(detail ?? `Video stream stopped (${reason})`));
+      }
+      return;
+    }
     this._videoStopping = true;
 
     try {
