@@ -177,11 +177,11 @@ test('buffered enter-view clientlist seed populates channelMembers for idle chec
     sent.push(cmd);
   };
   feed(client, 'notifycliententerview clid=9 ctid=34 client_type=0');
-  // Peer enter-views before aclid are dropped with pendingEnterViews — only self is buffered.
+  // Peer enter-views before aclid are buffered with ours and counted once home is known.
   feed(client, 'notifycliententerview clid=3 ctid=34 client_type=0');
   (client as any).handleInitServer({ aclid: '9' });
   assert.equal(client.getCurrentChannelId(), 34);
-  assert.equal(client.getChannelUserCount(), 0, 'peers not in buffer — need clientlist');
+  assert.equal(client.getChannelUserCount(), 1, 'buffered peer is counted without clientlist');
   assert.ok(sent.some((c) => c === 'clientlist' || c.startsWith('clientlist')));
   feed(
     client,
@@ -249,4 +249,51 @@ test('a permission error on one command does not end the connection', () => {
   (client as any).disconnect = () => { disconnected++; };
   feed(client, 'error id=2568 msg=insufficient\\sclient\\spermissions');
   assert.equal(disconnected, 0);
+});
+
+// What a TeamSpeak 6 server (beta13) sends a client that connects into a
+// channel someone is already in: one message, the occupant first, our own
+// entry after it, and the shared cfid/ctid/reasonid in the first entry only.
+test('connect-time enter-view lists several clients; own entry is not the first', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 12;
+  (client as any).currentChannelId = 0;
+  (client as any).sendCommand = () => {};
+  feed(
+    client,
+    'notifycliententerview cfid=0 ctid=1 reasonid=2 clid=3 client_type=0 client_nickname=Viewer' +
+      '|clid=12 client_type=0 client_nickname=Bot',
+  );
+  assert.equal(client.getCurrentChannelId(), 1);
+  assert.deepEqual(client.getChannelMemberClids(), [3]);
+  assert.equal(client.getChannelUserCount(), 1);
+});
+
+test('multi-client enter-view counts every occupant of the home channel, query clients apart', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 9;
+  (client as any).currentChannelId = 20;
+  feed(
+    client,
+    'notifycliententerview cfid=0 ctid=20 reasonid=2 clid=3 client_type=0' +
+      '|clid=4 client_type=0|clid=5 client_type=1',
+  );
+  assert.deepEqual(client.getChannelMemberClids().sort(), [3, 4]);
+  // A later entry that names its own channel is not put in ours.
+  feed(client, 'notifycliententerview cfid=0 ctid=20 reasonid=2 clid=6 client_type=0|clid=7 ctid=99 client_type=0');
+  assert.deepEqual(client.getChannelMemberClids().sort(), [3, 4, 6]);
+});
+
+test('enter-view buffered before aclid seeds home and peers once the client id is known', () => {
+  const client = new Ts3Client();
+  (client as any).clientId = 0;
+  (client as any).currentChannelId = 0;
+  (client as any).sendCommand = () => {};
+  (client as any).sendOutgoing = () => {};
+  feed(client, 'notifycliententerview cfid=0 ctid=7 reasonid=2 clid=3 client_type=0|clid=12 client_type=0');
+  assert.equal(client.getCurrentChannelId(), 0);
+  (client as any).handleInitServer({ aclid: '12' });
+  clearInterval((client as any).pingTimer);
+  assert.equal(client.getCurrentChannelId(), 7);
+  assert.deepEqual(client.getChannelMemberClids(), [3]);
 });

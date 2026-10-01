@@ -78,6 +78,13 @@ interface ResendPacket {
   lastSend: number;
 }
 
+/** One client of a notifycliententerview: who, in which channel, and whether it is a query client. */
+interface EnterViewEntry {
+  clid: number;
+  cid: number;
+  isQuery: boolean;
+}
+
 export interface Ts3ClientOptions {
   host: string;
   port: number;
@@ -134,7 +141,7 @@ export class Ts3Client extends EventEmitter {
   private channelMembers = new Set<number>();
   private queryMembers = new Set<number>();
   /** Own enter-view can arrive before initserver sets clientId — apply once aclid is known. */
-  private pendingEnterViews: Array<{ clid: number; cid: number }> = [];
+  private pendingEnterViews: EnterViewEntry[] = [];
 
   constructor() {
     super();
@@ -837,30 +844,16 @@ export class Ts3Client extends EventEmitter {
         this.handleChannelListFinished();
         break;
       case "notifycliententerview": {
-        const clid = parseInt(parsed.params.clid || "0");
-        const cid = parseInt(parsed.params.ctid || parsed.params.cid || "0");
-        // Initial join (and some reconnect paths) never send notifyclientmoved for us —
-        // learn home channel from our own enter-view only while still unknown.
-        // Never overwrite a known home (optimistic moveToChannel / prior discover) —
-        // stale enter-view can race and clear peers mid-summon.
-        if (clid && cid > 0 && !this.clientId) {
-          this.pendingEnterViews.push({ clid, cid });
+        // One message can carry several clients ("a | b | c"); at connect the
+        // server lists everyone already in view this way, and our own entry is
+        // rarely the first. The fields the clients share (cfid, ctid, reasonid)
+        // are sent in the first entry only, so later entries inherit them.
+        const entries = this.parseEnterViewEntries(parsed);
+        if (!this.clientId) {
+          this.pendingEnterViews.push(...entries);
           break;
         }
-        if (clid && clid === this.clientId && cid > 0) {
-          if (this.currentChannelId <= 0) {
-            this.currentChannelId = cid;
-            this.channelMembers.clear();
-            this.queryMembers.clear();
-            this.emit("debug", `Home channel from enter-view: cid=${cid}`);
-            this.sendCommand(buildCommand("clientlist", {}));
-          }
-          break;
-        }
-        if (clid && clid !== this.clientId && cid === this.currentChannelId) {
-          if (String(parsed.params.client_type) === "1") this.queryMembers.add(clid);
-          else this.channelMembers.add(clid);
-        }
+        this.applyEnterViewEntries(entries);
         break;
       }
       case "notifyclientleftview": {
@@ -1068,18 +1061,13 @@ export class Ts3Client extends EventEmitter {
 
     // Apply enter-view that raced ahead of aclid, then discover home if still unknown.
     // Match the live enter-view path: once home is known, request clientlist so peers
-    // that arrived before aclid (and were only buffered, not seeded) enter channelMembers.
+    // that arrived before aclid enter channelMembers even where the buffered entries
+    // did not cover them.
     let learnedHomeFromBufferedEnterView = false;
     if (this.clientId > 0 && this.pendingEnterViews.length > 0) {
-      for (const ev of this.pendingEnterViews) {
-        if (ev.clid === this.clientId && ev.cid > 0 && this.currentChannelId <= 0) {
-          this.currentChannelId = ev.cid;
-          this.channelMembers.clear();
-          this.queryMembers.clear();
-          this.emit("debug", `Home channel from buffered enter-view: cid=${ev.cid}`);
-          learnedHomeFromBufferedEnterView = true;
-        }
-      }
+      const hadHome = this.currentChannelId > 0;
+      this.applyEnterViewEntries(this.pendingEnterViews, { requestClientList: false });
+      learnedHomeFromBufferedEnterView = !hadHome && this.currentChannelId > 0;
       this.pendingEnterViews = [];
     }
 
@@ -1101,6 +1089,50 @@ export class Ts3Client extends EventEmitter {
     }, 1000);
 
     this.emit("connected");
+  }
+
+  /** The clients of one notifycliententerview, with the shared channel fields inherited. */
+  private parseEnterViewEntries(parsed: ParsedCommand): EnterViewEntry[] {
+    const first = parsed.params;
+    const out: EnterViewEntry[] = [];
+    for (const entry of parsed.groups ?? [first]) {
+      const clid = parseInt(entry.clid || "0");
+      const cid = parseInt(entry.ctid || entry.cid || first.ctid || first.cid || "0");
+      if (!clid || cid <= 0) continue;
+      out.push({ clid, cid, isQuery: String(entry.client_type) === "1" });
+    }
+    return out;
+  }
+
+  /**
+   * Learn the home channel from our own entry, then track the others that are
+   * in it. Our own entry is looked for first: it can follow the peers it
+   * shares a message with, and they can only be counted once home is known.
+   *
+   * Initial join (and some reconnect paths) never send notifyclientmoved for
+   * us, so home is learned here, but only while still unknown. A known home
+   * (optimistic moveToChannel / prior discover) is never overwritten: a stale
+   * enter-view can race and clear peers mid-summon.
+   */
+  private applyEnterViewEntries(
+    entries: EnterViewEntry[],
+    opts: { requestClientList?: boolean } = {},
+  ): void {
+    const own = entries.find((e) => e.clid === this.clientId);
+    if (own && this.currentChannelId <= 0) {
+      this.currentChannelId = own.cid;
+      this.channelMembers.clear();
+      this.queryMembers.clear();
+      this.emit("debug", `Home channel from enter-view: cid=${own.cid}`);
+      if (opts.requestClientList !== false) {
+        this.sendCommand(buildCommand("clientlist", {}));
+      }
+    }
+    for (const e of entries) {
+      if (e.clid === this.clientId || e.cid !== this.currentChannelId) continue;
+      if (e.isQuery) this.queryMembers.add(e.clid);
+      else this.channelMembers.add(e.clid);
+    }
   }
 
   private handleChannelList(parsed: ParsedCommand): void {
