@@ -2,6 +2,15 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.9.2](https://github.com/uniskela/ts6-manager/compare/v1.9.1...v1.9.2) (2026-10-01)
+
+
+### Bug Fixes
+
+* close stale webui-preview peer before offer ([#202](https://github.com/uniskela/ts6-manager/issues/202)) ([#222](https://github.com/uniskela/ts6-manager/issues/222)) ([e6da0a0](https://github.com/uniskela/ts6-manager/commit/e6da0a0301cf6478a373b1a61f9c62ca83d8f786))
+* keep watched video streams alive on channel-empty auto-stop ([#215](https://github.com/uniskela/ts6-manager/issues/215)) ([#225](https://github.com/uniskela/ts6-manager/issues/225)) ([6f0bc1f](https://github.com/uniskela/ts6-manager/commit/6f0bc1f12c7bfc8a251ae630b677f6a91afaddcd))
+* prefer SDR VP9 over AV1 for YouTube video streams ([#226](https://github.com/uniskela/ts6-manager/issues/226)) ([8f4afe8](https://github.com/uniskela/ts6-manager/commit/8f4afe8a910d8c57cca2b39f522411bb9dfd47b7))
+
 ## [1.9.1](https://github.com/uniskela/ts6-manager/compare/v1.9.0...v1.9.1) (2026-09-30)
 
 
