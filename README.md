@@ -513,6 +513,14 @@ updater is provided. Extractor tests use structured fixtures; a public-video
 smoke test is deliberately not a release gate because availability, rate limits
 and regional restrictions are outside our control.
 
+## Contributors
+
+TS6 Manager is maintained by [@uniskela](https://github.com/uniskela) and builds on [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) by [@clusterzx](https://github.com/clusterzx). Thanks to everyone who has reported issues, tested fixes, or contributed code and ideas from their own forks:
+
+[@Albirew](https://github.com/Albirew), [@BalconyJH](https://github.com/BalconyJH), [@BehaveDude](https://github.com/BehaveDude), [@bro-network](https://github.com/bro-network), [@bufanda](https://github.com/bufanda), [@clusterzx](https://github.com/clusterzx), [@coom](https://github.com/coom), [@crtnbr](https://github.com/crtnbr), [@D3nnis3n](https://github.com/D3nnis3n), [@dbillai](https://github.com/dbillai), [@DomeNinchen](https://github.com/DomeNinchen), [@GingerFury6](https://github.com/GingerFury6), [@joaobosconff](https://github.com/joaobosconff), [@KorppuJauho](https://github.com/KorppuJauho), [@kytos22](https://github.com/kytos22), [@LemDog](https://github.com/LemDog), [@LennBoedd](https://github.com/LennBoedd), [@LgnRorooo](https://github.com/LgnRorooo), [@liqinghan2000](https://github.com/liqinghan2000), [@Lordeisenhelm](https://github.com/Lordeisenhelm), [@meauxh](https://github.com/meauxh), [@mqh9007](https://github.com/mqh9007), [@pimushkin](https://github.com/pimushkin), [@prankroker](https://github.com/prankroker), [@s3bul](https://github.com/s3bul), [@simardwtf](https://github.com/simardwtf), [@Slipi089](https://github.com/Slipi089), [@StEnDi78](https://github.com/StEnDi78), [@TheMaxik](https://github.com/TheMaxik), [@UIP88](https://github.com/UIP88), [@uniplayer1](https://github.com/uniplayer1), [@ValiOff8](https://github.com/ValiOff8), [@vinookie](https://github.com/vinookie), [@Vman1194](https://github.com/Vman1194)
+
+[CREDITS.md](CREDITS.md) records what each person contributed, with links to the issues, pull requests and forks involved.
+
 ## License
 
 MIT
