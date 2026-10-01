@@ -202,6 +202,12 @@ export class VoiceBot extends EventEmitter {
   private _videoStartReject: ((err: Error) => void) | null = null;
   /** Sticky error when prepare/setupstream is aborted (sidecar exit, etc.). */
   private _videoStartAbortError: Error | null = null;
+  /**
+   * Dispose callback for a StreamSignaling retained after an aborted start so a
+   * late notifystreamstarted can still be stopstream'd. Cleared when the hold
+   * finishes (timer, late stop, or a new start tears it down).
+   */
+  private _heldSignalingDispose: (() => void) | null = null;
   private _musicSessionId: string | null = null;
   private _musicStartedAt: number | null = null;
   private _lastMusicStop: MediaStopInfo | null = null;
@@ -1786,7 +1792,10 @@ export class VoiceBot extends EventEmitter {
     };
 
     // Setup stream signaling on the TS3 client (register listeners only —
-    // advertise with setupstream after the source is ready).
+    // advertise with setupstream after the source is ready). Drop any retained
+    // late-stop listener first so a retry cannot share notifystreamstarted with
+    // a prior hold that would stopstream the new attempt.
+    this.disposeHeldSignaling();
     this.signaling = new StreamSignaling(this.client);
     this.setupSignalingListeners();
     if (!this._streamNotificationsRegistered) {
@@ -2095,24 +2104,49 @@ export class VoiceBot extends EventEmitter {
     this.signaling = null;
   }
 
+  /** Tear down a retained late-stop hold, if any. */
+  private disposeHeldSignaling(): void {
+    const dispose = this._heldSignalingDispose;
+    if (!dispose) return;
+    this._heldSignalingDispose = null;
+    dispose();
+  }
+
   /**
    * After setupstream was sent but the start failed (sidecar abort, timeout),
    * TeamSpeak may still confirm the stream. Dispose would drop the client
    * listener, leaving an orphan TS stream with no `_activeStreamId`. Keep the
    * signaling alive briefly and stopstream any late confirmation for this bot.
+   *
+   * A retry must call {@link disposeHeldSignaling} before attaching a new
+   * StreamSignaling; otherwise both instances receive the same
+   * notifystreamstarted and the retained one stopstreams the retry.
    */
   private holdSignalingForLateStop(signaling: StreamSignaling, waitMs = 15_000): void {
+    this.disposeHeldSignaling();
     if (this.signaling === signaling) {
       this.signaling = null;
     }
     const botClid = this.client.getClientId();
+    let finished = false;
     const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (this._heldSignalingDispose === disposeHold) {
+        this._heldSignalingDispose = null;
+      }
       clearTimeout(timer);
       signaling.removeListener('streamStarted', onStarted);
       signaling.dispose();
     };
+    const disposeHold = () => finish();
     const onStarted = (stream: ActiveStream) => {
       if (botClid != null && stream.clid !== botClid) return;
+      // Replacement start already owns signaling — do not stopstream its confirm.
+      if (this.signaling != null && this.signaling !== signaling) {
+        finish();
+        return;
+      }
       try {
         signaling.sendStreamStop(stream.id);
         console.log(
@@ -2122,6 +2156,7 @@ export class VoiceBot extends EventEmitter {
       finish();
     };
     const timer = setTimeout(finish, waitMs);
+    this._heldSignalingDispose = disposeHold;
     signaling.on('streamStarted', onStarted);
   }
 

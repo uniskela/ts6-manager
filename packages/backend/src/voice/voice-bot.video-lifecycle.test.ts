@@ -359,6 +359,92 @@ describe('video source mode lifecycle', () => {
     );
     assert.equal(bot.videoStreaming, false);
   });
+
+  it('disposes a retained late-stop hold before a retry attaches new signaling', () => {
+    const bot = makeBot();
+    const b = bot as any;
+    const sent: string[] = [];
+    b.client.sendCommand = (cmd: string) => sent.push(cmd);
+    b.client.getClientId = () => 42;
+
+    const held = new StreamSignaling(b.client);
+    let heldStarted = 0;
+    held.on('streamStarted', () => { heldStarted++; });
+    b.signaling = held;
+    b.holdSignalingForLateStop(held);
+    assert.equal(b._heldSignalingDispose != null, true);
+
+    // Same path as startVideoStreamClaimed before creating replacement signaling.
+    b.disposeHeldSignaling();
+    assert.equal(b._heldSignalingDispose, null);
+
+    const retry = new StreamSignaling(b.client);
+    b.signaling = retry;
+    let retryStarted = 0;
+    retry.on('streamStarted', () => { retryStarted++; });
+
+    // A notifystreamstarted must only reach the retry instance.
+    b.client.emit('command', {
+      name: 'notifystreamstarted',
+      params: {
+        id: 'retry-stream',
+        clid: '42',
+        name: 'Bot Stream',
+        type: '3',
+        access: '1',
+        mode: '1',
+        bitrate: '4608',
+        viewer_limit: '0',
+        audio: '1',
+      },
+    });
+
+    assert.equal(heldStarted, 0, 'disposed hold must not see the retry confirmation');
+    assert.equal(retryStarted, 1);
+    assert.equal(
+      sent.filter((c) => c.startsWith('stopstream')).length,
+      0,
+      'disposed hold must not stopstream the retry confirmation',
+    );
+    retry.dispose();
+  });
+
+  it('does not stopstream when a replacement signaling already owns the bot', () => {
+    const bot = makeBot();
+    const b = bot as any;
+    const sent: string[] = [];
+    b.client.sendCommand = (cmd: string) => sent.push(cmd);
+    b.client.getClientId = () => 42;
+
+    const held = new StreamSignaling(b.client);
+    b.signaling = held;
+    b.holdSignalingForLateStop(held);
+
+    // Simulate a retry that forgot disposeHeldSignaling (belt-and-suspenders path).
+    const retry = new StreamSignaling(b.client);
+    b.signaling = retry;
+
+    held.emit('streamStarted', {
+      id: 'shared-confirm',
+      clid: 42,
+      name: 'Bot Stream',
+      type: 3,
+      access: 1,
+      mode: 1,
+      bitrate: 4608,
+      viewerLimit: 0,
+      audio: true,
+      startedAt: Date.now(),
+    });
+
+    assert.equal(
+      sent.filter((c) => c.startsWith('stopstream')).length,
+      0,
+      'held listener must not stopstream when replacement signaling is active',
+    );
+    assert.equal(b._heldSignalingDispose, null, 'held listener should finish itself');
+    retry.dispose();
+  });
 });
 
 describe('video source probe', () => {
