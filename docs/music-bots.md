@@ -2,7 +2,7 @@
 
 TS6 Manager can run multiple TeamSpeak media bots per server. Each bot has independent playback, queue, and volume state.
 
-The Bots view shows live connection/playback status, current media, progress, volume, queue context, and normal playback controls without exposing provider credentials. Create a bot with a single **Name** (used as both the admin label and the TeamSpeak nickname). TeamSpeak nicknames must be 3–30 characters; the web UI and API reject names outside that range before the bot connects. The UI route is `/media-bots` (`/music-bots` redirects there).
+The Bots view shows live connection/playback status, current media, progress, volume, queue context, and normal playback controls without exposing provider credentials. Create a bot with a single **Name** (used as both the admin label and the TeamSpeak nickname). TeamSpeak nicknames must be 3–30 characters; the web UI rejects names outside that range, and the API rejects out-of-range `nickname` values before the bot connects. If `nickname` is omitted, the API uses `MediaBot`. The UI route is `/media-bots` (`/music-bots` redirects there).
 
 ![Populated Media Bots view](musicbots.png)
 
