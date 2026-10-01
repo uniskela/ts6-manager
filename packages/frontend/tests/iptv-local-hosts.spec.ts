@@ -29,7 +29,7 @@ test('admins can allow LAN IPTV hosts from the IPTV header', async ({ page, requ
   // Editor is not always on the page
   await expect(page.getByLabel('Allowed local IPTV hosts')).toHaveCount(0);
 
-  await page.getByRole('button', { name: 'Local hosts' }).click();
+  await page.getByRole('button', { name: /Local hosts/ }).click();
   await expect(page.getByRole('heading', { name: 'Local network sources' })).toBeVisible();
 
   const hosts = page.getByLabel('Allowed local IPTV hosts');
