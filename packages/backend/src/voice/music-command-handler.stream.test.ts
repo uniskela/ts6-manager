@@ -32,6 +32,21 @@ test('!stream without a preset asks for Auto quality', async () => {
   assert.match(f.replies.at(-1)!, /Video stream started/);
 });
 
+test('!stream without a preset asks for Auto quality on Twitch too', async () => {
+  const f = fixture();
+  await f.stream('https://www.twitch.tv/somechannel');
+  assert.equal(f.starts[0].options.preset, 'auto');
+});
+
+// Auto probes a direct URL before playback, a second connection that IPTV
+// services limited to one connection refuse; !tv avoids it the same way.
+test('!stream without a preset does not probe a direct URL', async () => {
+  const f = fixture();
+  await f.stream('http://iptv.example.com/live/42.ts');
+  assert.equal(f.starts.length, 1);
+  assert.equal(f.starts[0].options.preset, undefined);
+});
+
 test('!stream keeps a preset that was typed', async () => {
   const f = fixture();
   await f.stream('https://example.com/clip.mp4 1080p');

@@ -59,7 +59,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!vol [0-100]` / `!volume [0-100]`** — Show or set volume
 - **`!np` / `!nowplaying`** — Show the current track
 - **`!radio [id]`** — List or play radio stations
-- **`!stream <url> [preset]`** — Start a video stream. Without a preset the quality is Auto (up to the Auto quality limit); `480p`, `720p`, `1080p`, `1440p` or `2160p` fixes it
+- **`!stream <url> [preset]`** — Start a video stream. Without a preset, a YouTube or Twitch link starts at Auto quality (up to the Auto quality limit) and any other URL at 720p, because Auto opens the source once more to measure it; `auto`, `480p`, `720p`, `1080p`, `1440p` or `2160p` sets it
 - **`!stopstream`** — Stop the active video stream
 - **`!viewers`** — List stream viewers
 - **`!channels [search]`** — List/search IPTV channels

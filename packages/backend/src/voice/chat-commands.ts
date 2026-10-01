@@ -68,7 +68,7 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'np', usage: '!np', blurb: 'Now playing' },
   { name: 'nowplaying', usage: '!nowplaying', blurb: 'Alias for !np' },
   { name: 'radio', usage: '!radio [id]', blurb: 'List or play radio stations' },
-  { name: 'stream', usage: '!stream <url> [preset]', blurb: 'Start video stream (auto quality, or 480p–2160p)' },
+  { name: 'stream', usage: '!stream <url> [preset]', blurb: 'Start video stream (preset: auto, 480p–2160p)' },
   { name: 'stopstream', usage: '!stopstream', blurb: 'Stop video stream' },
   { name: 'viewers', usage: '!viewers', blurb: 'List stream viewers' },
   { name: 'channels', usage: '!channels [search]', blurb: 'List IPTV channels' },
