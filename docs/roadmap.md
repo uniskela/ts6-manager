@@ -40,7 +40,7 @@ v1.6 adds:
 
 ### Media session and streaming — v1.9.0
 
-Published as [v1.9.0](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.0) (Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198)). [v1.9.1](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.1) is the published ICE timeout and loopback NAT follow-up ([#202](https://github.com/uniskela/ts6-manager/issues/202)). Open Release Please [#223](https://github.com/uniskela/ts6-manager/pull/223) proposes **1.9.2** with the watched-viewer channel-empty fix ([#215](https://github.com/uniskela/ts6-manager/issues/215) / [#225](https://github.com/uniskela/ts6-manager/pull/225)).
+Published as [v1.9.0](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.0) (Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198)). [v1.9.1](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.1) is the published ICE timeout and loopback NAT follow-up ([#202](https://github.com/uniskela/ts6-manager/issues/202)). [v1.9.2](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.2) keeps watched video streams running through the channel-empty auto-stop ([#215](https://github.com/uniskela/ts6-manager/issues/215)), fixes preview retries reusing a stale connection ([#202](https://github.com/uniskela/ts6-manager/issues/202)), and prefers VP9 over AV1 for YouTube streams ([#226](https://github.com/uniskela/ts6-manager/pull/226)).
 
 Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) and [#199](https://github.com/uniskela/ts6-manager/pull/199).
 
