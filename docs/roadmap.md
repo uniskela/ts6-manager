@@ -40,7 +40,7 @@ v1.6 adds:
 
 ### Media session and streaming — v1.9.0
 
-Published as [v1.9.0](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.0) (Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198)). [v1.9.1](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.1) is the published ICE timeout and loopback NAT follow-up ([#202](https://github.com/uniskela/ts6-manager/issues/202)).
+Published as [v1.9.0](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.0) (Release Please [#198](https://github.com/uniskela/ts6-manager/pull/198)). [v1.9.1](https://github.com/uniskela/ts6-manager/releases/tag/v1.9.1) is the published ICE timeout and loopback NAT follow-up ([#202](https://github.com/uniskela/ts6-manager/issues/202)). Open Release Please [#223](https://github.com/uniskela/ts6-manager/pull/223) proposes **1.9.2** with the watched-viewer channel-empty fix ([#215](https://github.com/uniskela/ts6-manager/issues/215) / [#225](https://github.com/uniskela/ts6-manager/pull/225)).
 
 Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) and [#199](https://github.com/uniskela/ts6-manager/pull/199).
 

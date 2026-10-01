@@ -95,7 +95,7 @@ The stop reason says what happened, for example *Replaced by music* or *Replaced
 A stream stops on its own when:
 
 - **nobody watches it** — no TeamSpeak client has had it open for the no-viewer timeout (default 5 minutes; Off, 1, 5, 10, 30 minutes or custom). While it counts down, the stream panel shows **Auto-stop in m:ss**. The browser preview does not count as a viewer. Each stream can override the timeout without changing the saved default;
-- **the bot's channel is empty** for `BOT_AUTO_STOP_EMPTY_SECONDS` (separate setting);
+- **the bot's channel is empty** for `BOT_AUTO_STOP_EMPTY_SECONDS` (separate setting; default 300 seconds; `0` disables, including bots created in the UI). A video stream with at least one TeamSpeak viewer is not treated as empty for this timer; the no-viewer timeout still applies when nobody watches;
 - **a downloaded clip ends**.
 
 After a stream stops, the tab shows the last reason, for example *Last stream: Stopped after 5 minutes with no viewers · 8 min ago*.
