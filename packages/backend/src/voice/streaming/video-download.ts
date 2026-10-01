@@ -3,6 +3,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
 import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
+import { describeDuration } from './lifecycle.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
@@ -292,6 +293,25 @@ function probeVideoDurationSec(filePath: string): Promise<number | null> {
 }
 
 /**
+ * The reason yt-dlp downloaded nothing, when --match-filter rejected the
+ * video. yt-dlp still exits 0 then: it prints
+ * "<title> does not pass filter (duration <= 900), skipping .." and writes no
+ * file, which used to surface as a missing temp file. A source without a
+ * duration (a live stream) fails the same filter. Null when the output says
+ * nothing of the kind.
+ */
+export function durationFilterSkipMessage(ytDlpStdout: string, maxDurationSec: number): string | null {
+  if (!/does not pass filter \(duration [<>]=/.test(ytDlpStdout)) return null;
+  if (maxDurationSec > 0) {
+    return (
+      `Video is longer than the ${describeDuration(maxDurationSec)} limit, or is a live broadcast (not supported). ` +
+      'Raise "Max video duration" under Settings → YouTube (0 = unlimited).'
+    );
+  }
+  return 'Video has no known length (a live stream?), so it cannot be downloaded for streaming.';
+}
+
+/**
  * Prepare a video source for the sidecar.
  *
  * - YouTube: download via yt-dlp to a temp file under MUSIC_DIR (avoids
@@ -356,7 +376,9 @@ export async function downloadVideoForStream(
 
     const proc = spawn('yt-dlp', args, { shell: false });
     let stderr = '';
+    let stdout = '';
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     const timer = setTimeout(() => {
       proc.kill('SIGKILL');
       reject(new Error('Video download timed out after 10 minutes'));
@@ -366,6 +388,11 @@ export async function downloadVideoForStream(
       clearTimeout(timer);
       if (code !== 0) {
         reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(0, 280)}`));
+        return;
+      }
+      const skipped = durationFilterSkipMessage(stdout, maxDurationSec);
+      if (skipped) {
+        reject(new Error(skipped));
         return;
       }
       resolve();

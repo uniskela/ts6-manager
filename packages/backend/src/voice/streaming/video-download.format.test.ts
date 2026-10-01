@@ -1,6 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { YOUTUBE_VIDEO_FORMAT_SORT, youtubeVideoFormatArgs } from './video-download.js';
+import {
+  YOUTUBE_VIDEO_FORMAT_SORT,
+  durationFilterSkipMessage,
+  youtubeVideoFormatArgs,
+} from './video-download.js';
 
 describe('youtubeVideoFormatArgs', () => {
   it('caps every preferred format at the requested height', () => {
@@ -31,5 +35,35 @@ describe('youtubeVideoFormatArgs', () => {
     const args = youtubeVideoFormatArgs(2160);
     assert.deepEqual(args.slice(2), ['-S', YOUTUBE_VIDEO_FORMAT_SORT]);
     assert.deepEqual(YOUTUBE_VIDEO_FORMAT_SORT.split(','), ['res', 'fps', 'vcodec:vp9']);
+  });
+});
+
+describe('durationFilterSkipMessage', () => {
+  // What yt-dlp 2026.08.19 prints, with exit code 0, for a 45-minute video
+  // against the default 900 s limit.
+  const skipped =
+    '[youtube] YyZq_lEJZ2U: Downloading webpage\n' +
+    '[download] Audio Sync Test (60fps) - 45min for Longer Tests does not pass filter (duration <= 900), skipping ..\n';
+
+  it('names the limit and where to change it when the duration filter skipped the video', () => {
+    const msg = durationFilterSkipMessage(skipped, 900);
+    assert.equal(
+      msg,
+      'Video is longer than the 15 minutes limit, or is a live broadcast (not supported). ' +
+        'Raise "Max video duration" under Settings → YouTube (0 = unlimited).',
+    );
+  });
+
+  it('blames the missing length when there is no limit (a live stream)', () => {
+    const live = '[download] Some stream does not pass filter (duration >= 0), skipping ..\n';
+    const msg = durationFilterSkipMessage(live, 0);
+    assert.ok(msg);
+    assert.match(msg, /no known length/);
+  });
+
+  it('says nothing for a normal download or another filter', () => {
+    assert.equal(durationFilterSkipMessage('[download] Destination: /data/music/.stream-1.mp4\n', 900), null);
+    assert.equal(durationFilterSkipMessage('[download] X does not pass filter (!is_live), skipping ..\n', 900), null);
+    assert.equal(durationFilterSkipMessage('', 900), null);
   });
 });
