@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { IptvLocalHostsCard } from '@/components/iptv/IptvLocalHostsCard';
+import { IptvLocalHostsDialog, IptvLocalHostsTrigger } from '@/components/iptv/IptvLocalHostsDialog';
 import { useAuthStore } from '@/stores/auth.store';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
@@ -483,6 +483,7 @@ export default function Iptv() {
   const refreshPlaylist = useRefreshIptvPlaylist();
 
   const [addOpen, setAddOpen] = useState(false);
+  const [hostsOpen, setHostsOpen] = useState(false);
   const [replaceTarget, setReplaceTarget] = useState<IptvPlaylistSummary | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<IptvPlaylistSummary | null>(null);
   const [deleteError, setDeleteError] = useState('');
@@ -516,15 +517,16 @@ export default function Iptv() {
         description="Stream live IPTV channels into TeamSpeak via a Media Bot's video sidecar."
         actions={(
           <>
-          <Select value={selectedConfigId ? String(selectedConfigId) : ''} onValueChange={(v) => { setServer(parseInt(v)); setSelectedPlaylistId(null); }}>
-            <SelectTrigger aria-label="IPTV server" className="h-10 min-w-0 flex-1 sm:h-9 sm:w-48 sm:flex-none"><SelectValue placeholder="Select server" /></SelectTrigger>
-            <SelectContent>
-              {serverList.map((s: any) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-          <Button onClick={() => setAddOpen(true)} disabled={!selectedConfigId}>
-            <Plus className="h-4 w-4 mr-1.5" /> Add Playlist
-          </Button>
+            <Select value={selectedConfigId ? String(selectedConfigId) : ''} onValueChange={(v) => { setServer(parseInt(v)); setSelectedPlaylistId(null); }}>
+              <SelectTrigger aria-label="IPTV server" className="h-10 min-w-0 flex-1 sm:h-9 sm:w-48 sm:flex-none"><SelectValue placeholder="Select server" /></SelectTrigger>
+              <SelectContent>
+                {serverList.map((s: any) => <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {isAdmin && <IptvLocalHostsTrigger onClick={() => setHostsOpen(true)} />}
+            <Button onClick={() => setAddOpen(true)} disabled={!selectedConfigId}>
+              <Plus className="h-4 w-4 mr-1.5" /> Add Playlist
+            </Button>
           </>
         )}
         metadata={<RefreshStatus isRefreshing={isFetching} idleLabel="Playlist data up to date" refreshingLabel="Refreshing playlists…" />}
@@ -540,7 +542,20 @@ export default function Iptv() {
           title="No IPTV playlists"
           description="Add an M3U/M3U8 playlist URL or upload a playlist file to browse channels and stream them into a TeamSpeak channel."
         >
-          <Button onClick={() => setAddOpen(true)} disabled={!selectedConfigId}><Plus className="h-4 w-4 mr-1.5" /> Add Playlist</Button>
+          <div className="flex flex-col items-center gap-3">
+            <Button onClick={() => setAddOpen(true)} disabled={!selectedConfigId}>
+              <Plus className="h-4 w-4 mr-1.5" /> Add Playlist
+            </Button>
+            {isAdmin && (
+              <button
+                type="button"
+                className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+                onClick={() => setHostsOpen(true)}
+              >
+                Using Threadfin, xTeVe or TVHeadend? Allow its host first.
+              </button>
+            )}
+          </div>
         </EmptyState>
       ) : (
         <>
@@ -637,7 +652,7 @@ export default function Iptv() {
         </>
       )}
 
-      {isAdmin && <IptvLocalHostsCard />}
+      {isAdmin && <IptvLocalHostsDialog open={hostsOpen} onOpenChange={setHostsOpen} />}
 
       <AddPlaylistDialog open={addOpen} onClose={() => setAddOpen(false)} serverConfigId={selectedConfigId} />
       <ReplaceFileDialog
