@@ -231,6 +231,7 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
             focus={['sidecar', 'ffmpeg', 'ffprobe', 'yt-dlp']}
             showPrerequisite
             compact
+            stageColumns={2}
           />
         </div>
       )}
@@ -241,6 +242,7 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
           focus={['sidecar', 'ffmpeg', 'ffprobe', 'yt-dlp']}
           showPrerequisite
           compact
+          stageColumns={2}
         />
       )}
 
