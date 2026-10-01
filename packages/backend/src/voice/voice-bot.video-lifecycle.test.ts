@@ -195,6 +195,7 @@ describe('video source mode lifecycle', () => {
   });
   afterEach(() => {
     mock.timers.reset();
+    mock.restoreAll();
   });
 
   it('clears sourceMode on stop so a later stream cannot inherit Live', async () => {
@@ -246,6 +247,69 @@ describe('video source mode lifecycle', () => {
     release();
     await apply;
     assert.equal(bot.videoStreamStatus.sourceMode, 'file');
+  });
+
+  it('defers the VOD end timer until the stream is active (startup prepare gap)', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    // Prepare-phase: streaming not yet true (after apply, before setupstream ack).
+    b._videoStreaming = false;
+    b._videoStarting = true;
+    b._videoSourceModeRequest = 'auto';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8',
+      hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoSettings = { autoMaxPreset: '1080p', maxBitrateKbps: 0, cpuUsed: 4 };
+    mock.method(VoiceBot.prototype as any, 'resolveStreamSource', async function (this: any) {
+      this._videoDurationSec = 5;
+      return {
+        path: '/data/music/.stream-1.mp4', loop: false, live: undefined, durationSec: 5,
+      };
+    });
+    mock.method(VoiceBot.prototype as any, 'probeStreamSource', async () => null);
+    mock.method(VoiceBot.prototype as any, 'sendSourceToSidecar', async function (this: any) {
+      this._videoSourceMode = 'file';
+      this._videoLoop = false;
+      this._videoPreset = '720p';
+    });
+
+    await b.applyVideoSource('https://www.youtube.com/watch?v=c3hZgGQGLTY', '720p');
+    assert.equal(b._videoDurationSec, 5);
+    assert.equal(b._videoEndTimer, null, 'must not arm end-stop before TeamSpeak confirms the stream');
+
+    b._videoStreaming = true;
+    b.scheduleVideoEndStop(b._videoDurationSec);
+    assert.notEqual(b._videoEndTimer, null);
+
+    mock.timers.tick(7_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.videoStreamStatus.lastStop?.reason, 'source_ended');
+  });
+
+  it('aborts a preparing start when the local sidecar exits before streaming', () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b._videoStarting = true;
+    b._videoStreaming = false;
+    b._videoTempFile = '/data/music/.stream-1.mp4';
+    b._videoSource = 'https://www.youtube.com/watch?v=c3hZgGQGLTY';
+    b._videoSourceMode = 'file';
+    let rejected: Error | null = null;
+    b._videoStartReject = (err: Error) => { rejected = err; };
+    b.cleanupVideoTempFile = () => { b._videoTempFile = null; };
+
+    b.abortPendingVideoStart(new Error('Media sidecar exited (code 1)'));
+
+    assert.match(rejected?.message ?? '', /sidecar exited/);
+    assert.equal(b._videoSource, null);
+    assert.equal(b._videoSourceMode, null);
+    assert.equal(b._videoTempFile, null);
+    assert.ok(b._videoStartAbortError);
   });
 });
 
