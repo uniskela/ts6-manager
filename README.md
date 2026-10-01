@@ -8,7 +8,7 @@
 > Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`).
 > Community issue/PR credits: [`CREDITS.md`](CREDITS.md) (including [fork contributions](CREDITS.md#fork-contributions)).
 
-Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets — all from your browser.
+Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets - all from your browser.
 
 Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSpeak builds). Telnet is not used or supported.
 
@@ -256,7 +256,7 @@ docker compose up -d
 
 > `JWT_SECRET`, `ENCRYPTION_KEY`, and `SIDECAR_SECRET` are **required** in production. The backend refuses to start without them when `NODE_ENV=production`.
 > The sidecar HTTP API is authenticated with `SIDECAR_SECRET` and is not published to the host by default.
-> Browser WebRTC preview needs a published UDP mux (`WEBRTC_UDP_PORT`, often `10000`) and `WEBRTC_NAT1TO1_IP` — see `docker-compose.pr-test.yml` and [Video streaming](docs/video-streaming.md).
+> Browser WebRTC preview needs a published UDP mux (`WEBRTC_UDP_PORT`, often `10000`) and `WEBRTC_NAT1TO1_IP` - see `docker-compose.pr-test.yml` and [Video streaming](docs/video-streaming.md).
 
 ### Connection credentials and upgrades
 
@@ -282,7 +282,7 @@ Open `http://localhost:3000` (override with `HOST_PORT`). Only port 80 is publis
 
 ### Building from Source
 
-**Full local stack with TeamSpeak 6 (beta13)** — preferred happy path:
+**Full local stack with TeamSpeak 6 (beta13)** - preferred happy path:
 
 ```bash
 git clone https://github.com/uniskela/ts6-manager.git
@@ -301,7 +301,7 @@ Then open `http://localhost:3000/setup`, create the first admin, and log in. The
 
 Use [`docker-compose.coolify.yml`](docker-compose.coolify.yml) as a starting point. Key differences from the standard compose:
 
-- No `ports` section — the reverse proxy handles routing
+- No `ports` section - the reverse proxy handles routing
 - Set the domain on the **frontend** service in Coolify (port 80)
 - If your TS server runs in a separate Docker network, add it as an external network on the backend service:
 
@@ -344,23 +344,23 @@ npx prisma db push
 npx prisma db seed
 ```
 
-**Docker Compose upgrades:** every backend start runs [`docker-commands/apply-schema.sh`](docker-commands/apply-schema.sh). If the persistent `backend-data` volume already has a database (including installs from older images with no version marker), the script logs an upgrade, runs `prisma db push` to bring the schema current, seeds if needed, and records `packages/backend/prisma/SCHEMA_VERSION` under `data/.schema-version`. No manual migrate step is required for `docker compose up` after pulling a new image — bump `SCHEMA_VERSION` whenever the Prisma schema changes so upgrade logs stay accurate.
+**Docker Compose upgrades:** every backend start runs [`docker-commands/apply-schema.sh`](docker-commands/apply-schema.sh). If the persistent `backend-data` volume already has a database (including installs from older images with no version marker), the script logs an upgrade, runs `prisma db push` to bring the schema current, seeds if needed, and records `packages/backend/prisma/SCHEMA_VERSION` under `data/.schema-version`. No manual migrate step is required for `docker compose up` after pulling a new image - bump `SCHEMA_VERSION` whenever the Prisma schema changes so upgrade logs stay accurate.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JWT_SECRET` | — | **Required.** Secret for JWT signing. Must be set in production. |
-| `ENCRYPTION_KEY` | — | **Required in production.** Dedicated AES-256-GCM key for stored credentials. Generate it once and keep the same value across restarts/upgrades; dev may fall back to `JWT_SECRET`. |
+| `JWT_SECRET` | - | **Required.** Secret for JWT signing. Must be set in production. |
+| `ENCRYPTION_KEY` | - | **Required in production.** Dedicated AES-256-GCM key for stored credentials. Generate it once and keep the same value across restarts/upgrades; dev may fall back to `JWT_SECRET`. |
 | `PORT` | `3001` | Backend port |
 | `DATABASE_URL` | `file:./data/ts6webui.db` | SQLite database path |
 | `JWT_ACCESS_EXPIRY` | `15m` | Access token lifetime |
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | CORS origin |
 | `MUSIC_DIR` | `/data/music` | Directory for downloaded music files |
-| `SIDECAR_URL` | — | Optional. Full URL of the WebRTC sidecar service (e.g. `http://ts6-sidecar:9800`). Set in Docker when sidecar runs as a separate container. |
-| `SIDECAR_SECRET` | — | **Required when `SIDECAR_URL` is set in production.** Shared bearer token for sidecar mutating APIs. |
-| `YT_COOKIE_FILE` | — | Optional. Path to a Netscape-format cookies.txt file for yt-dlp. Can also be managed via **Settings → YouTube** in the UI. |
+| `SIDECAR_URL` | - | Optional. Full URL of the WebRTC sidecar service (e.g. `http://ts6-sidecar:9800`). Set in Docker when sidecar runs as a separate container. |
+| `SIDECAR_SECRET` | - | **Required when `SIDECAR_URL` is set in production.** Shared bearer token for sidecar mutating APIs. |
+| `YT_COOKIE_FILE` | - | Optional. Path to a Netscape-format cookies.txt file for yt-dlp. Can also be managed via **Settings → YouTube** in the UI. |
 
 ## Environment Variables: Sidecar / Video Streaming
 
@@ -393,31 +393,31 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 
 When a music bot is connected to a configured command channel, users there can control it via chat. These are the built-in commands; custom commands (and recommended presets like `!rules` / `!links`) can also be configured under Music Bots → Commands.
 
-- **`!help`** — Show built-in and custom commands
-- **`!here [id]`** / **`!come [id]`** — Summon an idle music bot to your channel (or target a bot by ID)
-- **`!commands`** — List enabled custom chat commands
-- **`!play <url>`** — Play YouTube, Spotify, or Apple Music media
-- **`!play`** — Resume paused playback
-- **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue using one-based positions
-- **`!add <url>`** — Alias for `!queue <url>`
-- **`!playlist [name-or-id]` / `!pl <name-or-id>`** — List or append a saved playlist; an idle connected bot resumes queue order
-- **`!repeat [off|track|queue]`** — Show or set repeat mode
-- **`!seek <seconds|+seconds|-seconds>`** — Seek within a local/downloaded track
-- **`!remove <text>`** — Remove one unambiguous upcoming title/artist match
-- **`!shuffle [on|off]`** — Toggle or set shuffle
-- **`!stop`** — Stop playback
-- **`!pause`** — Toggle pause/resume
-- **`!skip` / `!next`** — Next track in queue
-- **`!prev`** — Previous track
-- **`!vol [0-100]` / `!volume [0-100]`** — Show or set volume
-- **`!np` / `!nowplaying`** — Show the current track
-- **`!radio [id]`** — List or play radio stations
-- **`!stream <url>`** — Start a video stream
-- **`!stopstream`** — Stop the active video stream
-- **`!viewers`** — List stream viewers
-- **`!channels [search]`** — List/search IPTV channels
-- **`!tv <name>` / `!iptv <name>`** — Stream an IPTV channel
-- **`!lyrics [artist - title]`** — Show lyrics for the current track or search
+- **`!help`** - Show built-in and custom commands
+- **`!here [id]`** / **`!come [id]`** - Summon an idle music bot to your channel (or target a bot by ID)
+- **`!commands`** - List enabled custom chat commands
+- **`!play <url>`** - Play YouTube, Spotify, or Apple Music media
+- **`!play`** - Resume paused playback
+- **`!queue [show|clear|remove <n>|play <n>|<url>]`** - Show or manage the queue using one-based positions
+- **`!add <url>`** - Alias for `!queue <url>`
+- **`!playlist [name-or-id]` / `!pl <name-or-id>`** - List or append a saved playlist; an idle connected bot resumes queue order
+- **`!repeat [off|track|queue]`** - Show or set repeat mode
+- **`!seek <seconds|+seconds|-seconds>`** - Seek within a local/downloaded track
+- **`!remove <text>`** - Remove one unambiguous upcoming title/artist match
+- **`!shuffle [on|off]`** - Toggle or set shuffle
+- **`!stop`** - Stop playback
+- **`!pause`** - Toggle pause/resume
+- **`!skip` / `!next`** - Next track in queue
+- **`!prev`** - Previous track
+- **`!vol [0-100]` / `!volume [0-100]`** - Show or set volume
+- **`!np` / `!nowplaying`** - Show the current track
+- **`!radio [id]`** - List or play radio stations
+- **`!stream <url>`** - Start a video stream
+- **`!stopstream`** - Stop the active video stream
+- **`!viewers`** - List stream viewers
+- **`!channels [search]`** - List/search IPTV channels
+- **`!tv <name>` / `!iptv <name>`** - Stream an IPTV channel
+- **`!lyrics [artist - title]`** - Show lyrics for the current track or search
 
 ## Requirements
 
@@ -515,11 +515,79 @@ and regional restrictions are outside our control.
 
 ## Contributors
 
-TS6 Manager is maintained by [@uniskela](https://github.com/uniskela) and builds on [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) by [@clusterzx](https://github.com/clusterzx). Thanks to everyone who has reported issues, tested fixes, or contributed code and ideas from their own forks:
+TS6 Manager is maintained by [@uniskela](https://github.com/uniskela) and builds on [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) by [@clusterzx](https://github.com/clusterzx).
 
-[@Albirew](https://github.com/Albirew), [@BalconyJH](https://github.com/BalconyJH), [@BehaveDude](https://github.com/BehaveDude), [@bro-network](https://github.com/bro-network), [@bufanda](https://github.com/bufanda), [@clusterzx](https://github.com/clusterzx), [@coom](https://github.com/coom), [@crtnbr](https://github.com/crtnbr), [@D3nnis3n](https://github.com/D3nnis3n), [@dbillai](https://github.com/dbillai), [@DomeNinchen](https://github.com/DomeNinchen), [@GingerFury6](https://github.com/GingerFury6), [@joaobosconff](https://github.com/joaobosconff), [@KorppuJauho](https://github.com/KorppuJauho), [@kytos22](https://github.com/kytos22), [@LemDog](https://github.com/LemDog), [@LennBoedd](https://github.com/LennBoedd), [@LgnRorooo](https://github.com/LgnRorooo), [@liqinghan2000](https://github.com/liqinghan2000), [@Lordeisenhelm](https://github.com/Lordeisenhelm), [@meauxh](https://github.com/meauxh), [@mqh9007](https://github.com/mqh9007), [@pimushkin](https://github.com/pimushkin), [@prankroker](https://github.com/prankroker), [@s3bul](https://github.com/s3bul), [@simardwtf](https://github.com/simardwtf), [@Slipi089](https://github.com/Slipi089), [@StEnDi78](https://github.com/StEnDi78), [@TheMaxik](https://github.com/TheMaxik), [@UIP88](https://github.com/UIP88), [@uniplayer1](https://github.com/uniplayer1), [@ValiOff8](https://github.com/ValiOff8), [@vinookie](https://github.com/vinookie), [@Vman1194](https://github.com/Vman1194)
+Thanks go to these people ([emoji key](https://allcontributors.org/en/reference/emoji-key/)):
+
+<!--
+  Contributor avatar table: All Contributors emoji types
+  (https://allcontributors.org/en/reference/emoji-key/).
+  Layout approach inspired by Soju06/codex-lb README
+  (https://github.com/Soju06/codex-lb) - not a copy of that list.
+  Detailed provenance stays in CREDITS.md.
+-->
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/uniskela"><img src="https://avatars.githubusercontent.com/u/104075208?v=4&s=100" width="100px;" alt="Uniskela"/><br /><sub><b>Uniskela</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=uniskela" title="Code">💻</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=uniskela" title="Documentation">📖</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=uniskela" title="Maintenance">🚧</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=uniskela" title="Infrastructure">🚇</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/clusterzx"><img src="https://avatars.githubusercontent.com/u/32274973?v=4&s=100" width="100px;" alt="clusterzx"/><br /><sub><b>clusterzx</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=clusterzx" title="Code">💻</a> <a href="#ideas-clusterzx" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Albirew"><img src="https://avatars.githubusercontent.com/u/2805161?v=4&s=100" width="100px;" alt="Albirew"/><br /><sub><b>Albirew</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3AAlbirew" title="Bug reports">🐛</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=Albirew" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/BalconyJH"><img src="https://avatars.githubusercontent.com/u/73932916?v=4&s=100" width="100px;" alt="BalconyJH"/><br /><sub><b>BalconyJH</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3ABalconyJH" title="Bug reports">🐛</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=BalconyJH" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/BehaveDude"><img src="https://avatars.githubusercontent.com/u/255583987?v=4&s=100" width="100px;" alt="BehaveDude"/><br /><sub><b>BehaveDude</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3ABehaveDude" title="Bug reports">🐛</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=BehaveDude" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/bro-network"><img src="https://avatars.githubusercontent.com/u/174516032?v=4&s=100" width="100px;" alt="bro-network"/><br /><sub><b>bro-network</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=bro-network" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/bufanda"><img src="https://avatars.githubusercontent.com/u/30717829?v=4&s=100" width="100px;" alt="bufanda"/><br /><sub><b>bufanda</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Abufanda" title="Bug reports">🐛</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/coom"><img src="https://avatars.githubusercontent.com/u/10179617?v=4&s=100" width="100px;" alt="coom"/><br /><sub><b>coom</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=coom" title="Code">💻</a> <a href="#ideas-coom" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/crtnbr"><img src="https://avatars.githubusercontent.com/u/45666738?v=4&s=100" width="100px;" alt="crtnbr"/><br /><sub><b>crtnbr</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Acrtnbr" title="Bug reports">🐛</a> <a href="#ideas-crtnbr" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/D3nnis3n"><img src="https://avatars.githubusercontent.com/u/25908592?v=4&s=100" width="100px;" alt="Dennis Scholz"/><br /><sub><b>Dennis Scholz</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3AD3nnis3n" title="Bug reports">🐛</a> <a href="#ideas-D3nnis3n" title="Ideas, Planning, & Feedback">🤔</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=D3nnis3n" title="Tests">⚠️</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/dbillai"><img src="https://avatars.githubusercontent.com/u/158840331?v=4&s=100" width="100px;" alt="dbillai"/><br /><sub><b>dbillai</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Adbillai" title="Bug reports">🐛</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=dbillai" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/DomeNinchen"><img src="https://avatars.githubusercontent.com/u/217283391?v=4&s=100" width="100px;" alt="DomeNinchen"/><br /><sub><b>DomeNinchen</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=DomeNinchen" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/GingerFury6"><img src="https://avatars.githubusercontent.com/u/168943721?v=4&s=100" width="100px;" alt="Philipp"/><br /><sub><b>Philipp</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=GingerFury6" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/joaobosconff"><img src="https://avatars.githubusercontent.com/u/31070155?v=4&s=100" width="100px;" alt="João Bosco"/><br /><sub><b>João Bosco</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=joaobosconff" title="Code">💻</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/KorppuJauho"><img src="https://avatars.githubusercontent.com/u/130571566?v=4&s=100" width="100px;" alt="KorppuJauho"/><br /><sub><b>KorppuJauho</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=KorppuJauho" title="Code">💻</a> <a href="https://github.com/uniskela/ts6-manager/issues?q=author%3AKorppuJauho" title="Bug reports">🐛</a> <a href="#ideas-KorppuJauho" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kytos22"><img src="https://avatars.githubusercontent.com/u/13838233?v=4&s=100" width="100px;" alt="Marcos Vidal Martinez"/><br /><sub><b>Marcos Vidal Martinez</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=kytos22" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/LemDog"><img src="https://avatars.githubusercontent.com/u/19418647?v=4&s=100" width="100px;" alt="Maxwell D."/><br /><sub><b>Maxwell D.</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=LemDog" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/LennBoedd"><img src="https://avatars.githubusercontent.com/u/87300236?v=4&s=100" width="100px;" alt="Lennart B."/><br /><sub><b>Lennart B.</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3ALennBoedd" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/LgnRorooo"><img src="https://avatars.githubusercontent.com/u/115776545?v=4&s=100" width="100px;" alt="Rodrigo De Almeida Pina"/><br /><sub><b>Rodrigo De Almeida Pina</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=LgnRorooo" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/liqinghan2000"><img src="https://avatars.githubusercontent.com/u/104827187?v=4&s=100" width="100px;" alt="liqinghan2000"/><br /><sub><b>liqinghan2000</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Aliqinghan2000" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Lordeisenhelm"><img src="https://avatars.githubusercontent.com/u/134092155?v=4&s=100" width="100px;" alt="Lord"/><br /><sub><b>Lord</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3ALordeisenhelm" title="Bug reports">🐛</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/meauxh"><img src="https://avatars.githubusercontent.com/u/127511054?v=4&s=100" width="100px;" alt="meauxh"/><br /><sub><b>meauxh</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Ameauxh" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/mqh9007"><img src="https://avatars.githubusercontent.com/u/45141834?v=4&s=100" width="100px;" alt="mqh9007"/><br /><sub><b>mqh9007</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=mqh9007" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/pimushkin"><img src="https://avatars.githubusercontent.com/u/30329479?v=4&s=100" width="100px;" alt="pimushkin"/><br /><sub><b>pimushkin</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Apimushkin" title="Bug reports">🐛</a> <a href="#ideas-pimushkin" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/prankroker"><img src="https://avatars.githubusercontent.com/u/76559527?v=4&s=100" width="100px;" alt="Danylo"/><br /><sub><b>Danylo</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=prankroker" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/s3bul"><img src="https://avatars.githubusercontent.com/u/6891296?v=4&s=100" width="100px;" alt="Sebastian K"/><br /><sub><b>Sebastian K</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3As3bul" title="Bug reports">🐛</a> <a href="https://github.com/uniskela/ts6-manager/commits?author=s3bul" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/simardwtf"><img src="https://avatars.githubusercontent.com/u/67881020?v=4&s=100" width="100px;" alt="Julien Simard"/><br /><sub><b>Julien Simard</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=simardwtf" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Slipi089"><img src="https://avatars.githubusercontent.com/u/59597268?v=4&s=100" width="100px;" alt="Martin"/><br /><sub><b>Martin</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3ASlipi089" title="Bug reports">🐛</a></td>
+    </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/StEnDi78"><img src="https://avatars.githubusercontent.com/u/202441998?v=4&s=100" width="100px;" alt="StEnDi78"/><br /><sub><b>StEnDi78</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3AStEnDi78" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/TheMaxik"><img src="https://avatars.githubusercontent.com/u/9915167?v=4&s=100" width="100px;" alt="TheMaxik"/><br /><sub><b>TheMaxik</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3ATheMaxik" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/UIP88"><img src="https://avatars.githubusercontent.com/u/127998909?v=4&s=100" width="100px;" alt="UIP88"/><br /><sub><b>UIP88</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3AUIP88" title="Bug reports">🐛</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/uniplayer1"><img src="https://avatars.githubusercontent.com/u/83558178?v=4&s=100" width="100px;" alt="uniplayer1"/><br /><sub><b>uniplayer1</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=uniplayer1" title="Code">💻</a> <a href="#ideas-uniplayer1" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ValiOff8"><img src="https://avatars.githubusercontent.com/u/241494336?v=4&s=100" width="100px;" alt="Vali"/><br /><sub><b>Vali</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/commits?author=ValiOff8" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/vinookie"><img src="https://avatars.githubusercontent.com/u/110264086?v=4&s=100" width="100px;" alt="vinookie"/><br /><sub><b>vinookie</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3Avinookie" title="Bug reports">🐛</a> <a href="#ideas-vinookie" title="Ideas, Planning, & Feedback">🤔</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/Vman1194"><img src="https://avatars.githubusercontent.com/u/270235106?v=4&s=100" width="100px;" alt="Vman1194"/><br /><sub><b>Vman1194</b></sub></a><br /><a href="https://github.com/uniskela/ts6-manager/issues?q=author%3AVman1194" title="Bug reports">🐛</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification. Contributions of any kind welcome.
 
 [CREDITS.md](CREDITS.md) records what each person contributed, with links to the issues, pull requests and forks involved.
+
 
 ## License
 
