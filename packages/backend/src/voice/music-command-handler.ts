@@ -2423,13 +2423,19 @@ export class MusicCommandHandler {
 
   private async handleStream(bot: VoiceBot, userClid: number, args: string): Promise<void> {
     if (!args) {
-      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: auto, 480p, 720p, 1080p, 1440p, 2160p');
+      this.reply(bot, userClid, 'Usage: !stream <url> [preset]  — Presets: auto (default), 480p, 720p, 1080p, 1440p, 2160p');
       return;
     }
 
     const parts = args.split(/\s+/);
     const url = parts[0];
-    const preset = parts[1] || undefined;
+    // No preset means Auto: the largest preset the source fills, up to the Auto
+    // quality limit, as the web UI starts a stream. Left undefined, the start
+    // falls back to the bot's stored preset, which no UI can change from 720p,
+    // so a 4K source came out at 720p whatever Streaming defaults said.
+    // (!tv keeps that fixed fallback on purpose: Auto probes the source, and
+    // the probe is a second connection some IPTV services do not allow.)
+    const preset = parts[1] || 'auto';
 
     if (!url.startsWith('http://') && !url.startsWith('https://')) {
       this.reply(bot, userClid, 'Please provide a valid URL.');
