@@ -79,3 +79,41 @@ func TestStartICEMediaDisabledByDefault(t *testing.T) {
 		t.Fatalf("expected mux disabled, got port=%d", s.iceUDPPort)
 	}
 }
+
+// The TeamSpeak client does not connect to a loopback host candidate even on
+// the Docker host itself, so a loopback-only advertise list is worth a warning.
+func TestAdvertisesOnlyLoopback(t *testing.T) {
+	cases := []struct {
+		ips  []string
+		want bool
+	}{
+		{nil, false},
+		{[]string{"127.0.0.1"}, true},
+		{[]string{"127.0.0.1", "127.0.1.1"}, true},
+		{[]string{"127.0.0.1", "192.168.0.7"}, false},
+		{[]string{"192.168.0.7"}, false},
+	}
+	for _, c := range cases {
+		if got := advertisesOnlyLoopback(c.ips); got != c.want {
+			t.Errorf("advertisesOnlyLoopback(%v) = %v, want %v", c.ips, got, c.want)
+		}
+	}
+}
+
+func TestOfferedAddresses(t *testing.T) {
+	sdp := "v=0\r\n" +
+		"m=video 9 UDP/TLS/RTP/SAVPF 96\r\n" +
+		"a=candidate:2878742611 1 udp 2130706431 127.0.0.1 10000 typ host ufrag x generation 0\r\n" +
+		"a=candidate:2878742611 2 udp 2130706431 127.0.0.1 10000 typ host ufrag x generation 0\r\n" +
+		"a=candidate:1574576696 1 udp 1694498815 203.0.113.9 36203 typ srflx raddr 0.0.0.0 rport 36203 ufrag x generation 0\r\n" +
+		"m=audio 9 UDP/TLS/RTP/SAVPF 111\r\n" +
+		"a=candidate:2878742611 1 udp 2130706431 127.0.0.1 10000 typ host ufrag x generation 0\r\n"
+	got := offeredAddresses(sdp)
+	want := "127.0.0.1:10000 host, 203.0.113.9:36203 srflx"
+	if got != want {
+		t.Fatalf("offeredAddresses = %q, want %q", got, want)
+	}
+	if got := offeredAddresses("v=0\r\n"); got != "none" {
+		t.Fatalf("offeredAddresses(no candidates) = %q, want none", got)
+	}
+}

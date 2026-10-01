@@ -51,7 +51,57 @@ func (s *Sidecar) startICEMedia() error {
 	} else {
 		log.Printf("[ICE] Advertising host candidates as %s", strings.Join(ips, ", "))
 	}
+	if advertisesOnlyLoopback(ips) {
+		log.Printf("[ICE] Only loopback is advertised: a browser on this host can open the web UI preview, but the TeamSpeak client cannot connect to loopback, even on this host. %s", teamSpeakReachHint)
+	}
 	return nil
+}
+
+// teamSpeakReachHint says how to give TeamSpeak viewers an address they can use.
+const teamSpeakReachHint = "To watch in TeamSpeak, add this host's LAN or Tailscale IPv4 to WEBRTC_NAT1TO1_IP (comma-separated) and publish WEBRTC_UDP_PORT on it (WEBRTC_BIND_IP)."
+
+// advertisesOnlyLoopback reports whether every advertised host address is
+// loopback. Chromium connects to a loopback host candidate, but the TeamSpeak
+// client does not, even when it runs on the Docker host: it never connects and
+// asks to reconnect after about 20 seconds.
+func advertisesOnlyLoopback(ips []string) bool {
+	if len(ips) == 0 {
+		return false
+	}
+	for _, raw := range ips {
+		ip := net.ParseIP(raw)
+		if ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
+}
+
+// offeredAddresses lists the distinct "ip:port type" candidates in an SDP, for
+// a log line that shows what a viewer was asked to reach.
+func offeredAddresses(sdp string) string {
+	var out []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(sdp, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "a=candidate:") {
+			continue
+		}
+		// foundation component transport priority address port "typ" type ...
+		f := strings.Fields(line)
+		if len(f) < 8 || f[6] != "typ" {
+			continue
+		}
+		addr := net.JoinHostPort(f[4], f[5]) + " " + f[7]
+		if !seen[addr] {
+			seen[addr] = true
+			out = append(out, addr)
+		}
+	}
+	if len(out) == 0 {
+		return "none"
+	}
+	return strings.Join(out, ", ")
 }
 
 func (s *Sidecar) applyICESettings(se *webrtc.SettingEngine) error {

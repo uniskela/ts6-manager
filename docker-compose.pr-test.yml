@@ -23,6 +23,9 @@
 # candidates to WEBRTC_NAT1TO1_IP (default 127.0.0.1 for a browser on the same
 # host). For a remote browser (LAN/Tailscale), set both WEBRTC_BIND_IP and
 # WEBRTC_NAT1TO1_IP to an IPv4 address that browser can reach.
+# Watching in the TeamSpeak client: the TeamSpeak client does not connect to
+# 127.0.0.1, even on this host. Set WEBRTC_BIND_IP=0.0.0.0 and
+# WEBRTC_NAT1TO1_IP=127.0.0.1,<Docker host LAN IPv4> (see docs/troubleshooting.md).
 # Manager-only (no TeamSpeak): use docker-compose.local.yml instead.
 #
 # Tear down:
