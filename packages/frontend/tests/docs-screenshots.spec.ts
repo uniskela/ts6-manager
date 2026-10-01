@@ -26,7 +26,7 @@ async function signIn(page: Page, request: APIRequestContext) {
         permissionLabelMode: 'simple',
         showQueryClients: false,
       },
-      version: 4,
+      version: 7,
     }));
   });
   await page.goto('/login');
@@ -67,6 +67,12 @@ test.describe('maintained documentation screenshots', () => {
     await expect(page.getByText('Neon Skyline')).toBeVisible();
     await expect(page.getByText('Queue (3)')).toBeVisible();
     await capture(page, 'musicbots.png');
+
+    await page.goto('/bot-hub');
+    await expect(page.getByRole('heading', { name: 'Bot Hub' })).toBeVisible();
+    await expect(page.getByText('Neon Skyline', { exact: false }).first()).toBeVisible();
+    await expect(page.getByText('Lounge Bot')).toBeVisible();
+    await capture(page, 'bot-hub.png');
 
     await page.goto('/iptv');
     await expect(page.getByRole('heading', { name: 'IPTV' })).toBeVisible();

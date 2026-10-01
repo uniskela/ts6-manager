@@ -60,6 +60,11 @@ Bounded, paged `logview` output with level badges and page-local search and leve
 
 ![Server Logs](docs/server-logs.png)
 
+### Bot Hub
+One place for what every bot is doing right now: the current track or stream, channel, video quality, viewers, and last stop reason, with shortcuts to Bot Flows, Media Bots, video streaming and IPTV.
+
+![Bot Hub](docs/bot-hub.png)
+
 ### Music Bots
 Run multiple music bots per server. Each bot has its own queue, volume control, and playback state. Supports radio streams, YouTube, and a local music library. Users in the bot's channel can control it via text commands (`!radio`, `!play`, `!vol`, etc.).
 

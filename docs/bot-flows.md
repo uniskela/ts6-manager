@@ -192,7 +192,9 @@ Music bots are a separate subsystem built on the TeamSpeak voice stack. They can
 - the **Music Bots** web UI
 - in-channel text commands (`!play`, `!skip`, `!vol`, etc.)
 
-See the Music Bots section in the main README for queue, YouTube, radio, and local-library behavior.
+See the Music Bots section in the main README for queue, YouTube, radio, and local-library behavior. **Automation → Bot Hub** gives a live overview of every bot and links to Bot Flows, Media Bots, video streaming and IPTV (see [Music bots — Bot Hub](music-bots.md#bot-hub)).
+
+![Bot Hub](bot-hub.png)
 
 ## Safe temporary-channel ownership (v1.6.0)
 
