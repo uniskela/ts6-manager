@@ -242,6 +242,33 @@ test('connection refusals (full, wrong password, banned) disconnect at once', ()
   }
 });
 
+// A TeamSpeak 6 server (beta13) answers a clientinit it will not accept with an
+// error and never sends initserver: 1541 for a nickname outside 3-30 characters,
+// 519 for an identity below the required security level.
+test('an error answering clientinit ends the connect attempt', () => {
+  for (const [id, msg] of [['1541', 'invalid\\sparameter\\ssize'], ['519', 'could\\snot\\svalidate\\sclient\\sidentity']]) {
+    const client = new Ts3Client();
+    (client as any).state = 'handshake';
+    const errors: string[] = [];
+    let disconnected = 0;
+    client.on('error', (err: Error) => errors.push(err.message));
+    (client as any).disconnect = () => { disconnected++; };
+    feed(client, `error id=${id} msg=${msg}`);
+    assert.equal(disconnected, 1, `error ${id} during the handshake must end the attempt`);
+    assert.match(errors[0] ?? '', new RegExp(`TS3 error ${id}`));
+  }
+});
+
+test('error id=0 during the handshake is not a refusal', () => {
+  const client = new Ts3Client();
+  (client as any).state = 'handshake';
+  let disconnected = 0;
+  client.on('error', () => {});
+  (client as any).disconnect = () => { disconnected++; };
+  feed(client, 'error id=0 msg=ok');
+  assert.equal(disconnected, 0);
+});
+
 test('a permission error on one command does not end the connection', () => {
   const client = new Ts3Client();
   let disconnected = 0;

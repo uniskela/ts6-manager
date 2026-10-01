@@ -53,6 +53,18 @@ export const enum PacketType {
  */
 export const CONNECTION_REFUSED_ERRORS: ReadonlySet<number> = new Set([1027, 1028, 1796, 3329]);
 
+/**
+ * Whether a server error ends the connection attempt. Besides the refusals
+ * above, any error answering the handshake does: the server then never sends
+ * initserver, so waiting only runs into the 15 s connect timeout, and a retry
+ * sends the same clientinit. Seen on TeamSpeak 6 (beta13): 1541 for a
+ * nickname outside 3-30 characters, 519 for an identity below the required
+ * security level.
+ */
+export function isConnectionRefusal(errId: number, handshaking: boolean): boolean {
+  return CONNECTION_REFUSED_ERRORS.has(errId) || (handshaking && errId !== 0);
+}
+
 const FLAG_FRAGMENTED = 0x10;
 const FLAG_NEWPROTOCOL = 0x20;
 const FLAG_COMPRESSED = 0x40;
@@ -149,6 +161,11 @@ export class Ts3Client extends EventEmitter {
 
   getState(): ClientState {
     return this.state;
+  }
+
+  /** True between connect() and initserver. */
+  isHandshaking(): boolean {
+    return this.state === "init" || this.state === "handshake";
   }
 
   getClientId(): number {
@@ -910,7 +927,7 @@ export class Ts3Client extends EventEmitter {
         this.emit("ts3error", parsed.params);
         // Connection refusals: reject connect promise and disconnect immediately
         const errId = parseInt(parsed.params.id || "0");
-        if (CONNECTION_REFUSED_ERRORS.has(errId)) {
+        if (isConnectionRefusal(errId, this.isHandshaking())) {
           const errMsg = parsed.params.msg || "unknown error";
           this.emit("error", new Error(`TS3 error ${errId}: ${errMsg}`));
           this.disconnect();

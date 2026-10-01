@@ -21,6 +21,16 @@ describe('connection refusals', () => {
     });
   }
 
+  it('treats an error answering clientinit (1541 nickname size) as fatal', () => {
+    const bot = makeBot();
+    const fatal: string[] = [];
+    bot.on('fatalError', (m: string) => fatal.push(m));
+    (bot as any).client.state = 'handshake';
+    (bot as any).client.emit('ts3error', { id: '1541', msg: 'invalid parameter size' });
+    assert.deepEqual(fatal, ['TS3 error 1541: invalid parameter size']);
+    assert.equal(bot.status, 'error');
+  });
+
   it('does not treat a command permission error as a refusal', () => {
     const bot = makeBot();
     let fatal = 0;
