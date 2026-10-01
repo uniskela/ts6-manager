@@ -53,8 +53,10 @@ Issue reports and operator follow-up on `uniskela/ts6-manager` that shaped shipp
 | [Issue #184](https://github.com/uniskela/ts6-manager/issues/184) / [PR #187](https://github.com/uniskela/ts6-manager/pull/187) | [@D3nnis3n](https://github.com/D3nnis3n) | Ship pinned Deno for yt-dlp YouTube EJS / `n` challenge solving; confirmed Deno + playback path |
 | [Issue #185](https://github.com/uniskela/ts6-manager/issues/185) / [PR #190](https://github.com/uniskela/ts6-manager/pull/190) | [@D3nnis3n](https://github.com/D3nnis3n) | Clearer native-metrics provenance when scrape fails; Docker ↔ native TeamSpeak metrics reachability guidance; confirmed **WebQuery + native metrics** after bridge bind + `host.docker.internal` |
 | [Issue #150](https://github.com/uniskela/ts6-manager/issues/150) / [PR #192](https://github.com/uniskela/ts6-manager/pull/192) | [@KorppuJauho](https://github.com/KorppuJauho) | Streaming reshape: no-viewer auto-stop, Auto quality (through 2160p / no upscale), VAAPI encoder registry with Constrained High H.264; production notes informed the Uniskela rewrite |
+| [Issue #202](https://github.com/uniskela/ts6-manager/issues/202) / [PR #222](https://github.com/uniskela/ts6-manager/pull/222) / [PR #224](https://github.com/uniskela/ts6-manager/pull/224) | [@D3nnis3n](https://github.com/D3nnis3n) | Browser preview ICE: stale `webui-preview` peer reuse fix; browser-side troubleshooting (Trickle ICE test, per-browser settings, fresh-profile tip) from his webrtc-internals dump and testing |
+| [Issue #215](https://github.com/uniskela/ts6-manager/issues/215) / [PR #225](https://github.com/uniskela/ts6-manager/pull/225) | [@D3nnis3n](https://github.com/D3nnis3n), [@KorppuJauho](https://github.com/KorppuJauho) | Watched video streams no longer stopped by the channel-empty auto-stop; `BOT_AUTO_STOP_EMPTY_SECONDS=0` honoured for UI-created bots. Reported by D3nnis3n, root cause traced by KorppuJauho |
 
-Shipped with **v1.8.5** (#184 / #185) and **v1.9.0** (#150 / #192).
+Shipped with **v1.8.5** (#184 / #185), **v1.9.0** (#150 / #192) and **v1.9.2** (#202 / #215).
 
 ### Community forks
 
