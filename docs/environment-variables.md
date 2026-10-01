@@ -12,6 +12,7 @@
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh-token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | Allowed frontend/CORS origin |
 | `MUSIC_DIR` | `/data/music` | Downloaded/local music directory |
+| `BOT_AUTO_STOP_EMPTY_SECONDS` | `300` | Stop music or video when the bot's channel stays empty this long; `0` disables (including bots created in the UI). A video stream with at least one TeamSpeak viewer is exempt; the no-viewer timeout still applies |
 | `SIDECAR_URL` | — | Optional media-sidecar URL, normally `http://ts6-sidecar:9800` in split Docker |
 | `SIDECAR_SECRET` | — | Shared bearer secret; required with `SIDECAR_URL` in production |
 | `SIDECAR_BINARY_PATH` | — | Optional sidecar binary path for non-standard deployments |
