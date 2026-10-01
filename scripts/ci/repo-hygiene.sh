@@ -80,9 +80,22 @@ export JWT_SECRET=dummy
 export ENCRYPTION_KEY=dummy
 export SIDECAR_SECRET=dummy
 
+# Override files are not complete projects: they only make sense layered on a
+# base file, so that is how they are validated.
+declare -A compose_bases=(
+  [docker-compose.nvidia.yml]=docker-compose.yml
+)
+
 for compose in "${compose_files[@]}"; do
-  echo "  validating $compose"
-  if ! docker compose -f "$compose" config --quiet; then
+  compose_args=(-f "$compose")
+  base="${compose_bases[$compose]:-}"
+  if [[ -n "$base" ]]; then
+    compose_args=(-f "$base" -f "$compose")
+    echo "  validating $compose (layered on $base)"
+  else
+    echo "  validating $compose"
+  fi
+  if ! docker compose "${compose_args[@]}" config --quiet; then
     echo "docker compose config failed: $compose" >&2
     fail=1
   fi
