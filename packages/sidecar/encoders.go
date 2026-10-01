@@ -26,22 +26,34 @@ const (
 // Main/High offers are rejected.
 const h264ConstrainedHighFmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c1f"
 
+// GPU backends a hardware encoder can run on. VAAPI (Intel, AMD) opens a DRM
+// render node and takes frames uploaded to it; NVENC (NVIDIA) opens the GPU
+// through the driver's own libraries and takes frames from system memory.
+const (
+	backendVAAPI = "vaapi"
+	backendNVENC = "nvenc"
+)
+
 // EncoderSpec describes one selectable video encoder.
 type EncoderSpec struct {
 	ID       string `json:"id"`
 	Codec    string `json:"codec"`
 	FFmpeg   string `json:"ffmpeg"`
 	Hardware bool   `json:"hardware"`
+	// Backend is the GPU backend of a hardware encoder; empty for software.
+	Backend string `json:"backend,omitempty"`
 }
 
-// encoderOrder is the registry in display order. Hardware entries use VAAPI.
+// encoderOrder is the registry in display order. NVIDIA has no VP8 or VP9
+// encoder, so H.264 is its only entry.
 var encoderOrder = []EncoderSpec{
 	{ID: "vp8", Codec: codecVP8, FFmpeg: "libvpx"},
 	{ID: "vp9", Codec: codecVP9, FFmpeg: "libvpx-vp9"},
 	{ID: "h264", Codec: codecH264, FFmpeg: "libx264"},
-	{ID: "vp8_vaapi", Codec: codecVP8, FFmpeg: "vp8_vaapi", Hardware: true},
-	{ID: "vp9_vaapi", Codec: codecVP9, FFmpeg: "vp9_vaapi", Hardware: true},
-	{ID: "h264_vaapi", Codec: codecH264, FFmpeg: "h264_vaapi", Hardware: true},
+	{ID: "vp8_vaapi", Codec: codecVP8, FFmpeg: "vp8_vaapi", Hardware: true, Backend: backendVAAPI},
+	{ID: "vp9_vaapi", Codec: codecVP9, FFmpeg: "vp9_vaapi", Hardware: true, Backend: backendVAAPI},
+	{ID: "h264_vaapi", Codec: codecH264, FFmpeg: "h264_vaapi", Hardware: true, Backend: backendVAAPI},
+	{ID: "h264_nvenc", Codec: codecH264, FFmpeg: "h264_nvenc", Hardware: true, Backend: backendNVENC},
 }
 
 func lookupEncoder(id string) (EncoderSpec, bool) {
@@ -93,24 +105,42 @@ func hwDecodeEnabled() bool {
 	return os.Getenv("VIDEO_HW_DECODE") == "1"
 }
 
-// hwInitArgs are global ffmpeg options that open the VAAPI device for
-// filters (hwupload) and, when VIDEO_HW_DECODE=1, input decoding. Decode
-// falls back to software inside ffmpeg for codecs the GPU cannot decode.
+// hwInitArgs are global ffmpeg options a hardware encoder needs before the
+// input: for VAAPI, the device that filters (hwupload) run on. When
+// VIDEO_HW_DECODE=1 they also turn on input decoding on the same GPU (VAAPI,
+// or CUDA for NVENC). Decode falls back to software inside ffmpeg for codecs
+// the GPU cannot decode.
 func hwInitArgs(spec EncoderSpec, withDecode bool) []string {
-	if !spec.Hardware {
-		return nil
+	switch spec.Backend {
+	case backendVAAPI:
+		args := []string{"-init_hw_device", "vaapi=va:" + getVaapiDevice(), "-filter_hw_device", "va"}
+		if withDecode && hwDecodeEnabled() {
+			args = append(args, "-hwaccel", "vaapi", "-hwaccel_device", "va")
+		}
+		return args
+	case backendNVENC:
+		// NVENC needs no device: it opens the GPU through the NVIDIA driver.
+		// Without -hwaccel_output_format the decoded frames come back to
+		// system memory, which is where the filter chain and NVENC want them.
+		if withDecode && hwDecodeEnabled() {
+			return []string{"-hwaccel", "cuda"}
+		}
 	}
-	args := []string{"-init_hw_device", "vaapi=va:" + getVaapiDevice(), "-filter_hw_device", "va"}
-	if withDecode && hwDecodeEnabled() {
-		args = append(args, "-hwaccel", "vaapi", "-hwaccel_device", "va")
-	}
-	return args
+	return nil
 }
 
-// uploadFilter is appended to the software filter chain for hardware encoders.
+// uploadFilter ends the software filter chain with the frame format the
+// encoder takes.
 func uploadFilter(spec EncoderSpec) string {
-	if spec.Hardware {
+	switch spec.Backend {
+	case backendVAAPI:
 		return "format=nv12,hwupload"
+	case backendNVENC:
+		// NVENC uploads system-memory frames itself, so there is no hwupload.
+		// The 4:2:0 format is not optional: handed anything else, h264_nvenc
+		// switches to High 4:4:4 Predictive and ignores -profile:v, a profile
+		// the TeamSpeak client cannot decode.
+		return "format=nv12"
 	}
 	return "format=yuv420p"
 }
@@ -186,8 +216,22 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 		args = []string{"-c:v", "vp9_vaapi", "-bf", "0"}
 	case "h264_vaapi":
 		args = []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-bf", "0"}
+	case "h264_nvenc":
+		args = []string{
+			"-c:v", "h264_nvenc",
+			// Constrained High, as for the other H.264 encoders.
+			"-profile:v", "high",
+			// p4 with the low-latency tune is NVENC's balanced real-time
+			// setting; zerolatency drops the frame of reordering delay it
+			// would otherwise keep.
+			"-preset", envOrDefault("VIDEO_NVENC_PRESET", "p4"),
+			"-tune", "ll",
+			"-rc", "cbr",
+			"-zerolatency", "1",
+			"-bf", "0",
+		}
 	}
-	if spec.Hardware && lowPower {
+	if spec.Backend == backendVAAPI && lowPower {
 		args = append(args, "-low_power", "1")
 	}
 	if !spec.Hardware && (spec.Codec == codecVP8 || spec.Codec == codecVP9) {
@@ -260,12 +304,12 @@ func encoderProbeArgs(spec EncoderSpec, lowPower bool) []string {
 
 func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) EncoderProbeResult {
 	res := EncoderProbeResult{EncoderSpec: spec}
-	if spec.Hardware && !devicePresent {
+	if spec.Backend == backendVAAPI && !devicePresent {
 		res.Error = "VAAPI device not present"
 		return res
 	}
 	attempts := []bool{false}
-	if spec.Hardware {
+	if spec.Backend == backendVAAPI {
 		// Intel's free iHD driver only exposes low-power (VDEnc) entrypoints.
 		attempts = []bool{os.Getenv("VAAPI_LOW_POWER") == "1", os.Getenv("VAAPI_LOW_POWER") != "1"}
 	}

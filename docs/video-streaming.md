@@ -32,8 +32,9 @@ Streaming defaults also offer **Performance / Balanced / Quality** profiles (def
 | VP9 (software) | VP9 | `libvpx-vp9` realtime |
 | H.264 (software) | H.264 | `libx264`, offered as **Constrained High** — the only H.264 profile the TeamSpeak client renders |
 | VP8 / VP9 / H.264 (VAAPI) | same | GPU encode through VAAPI; H.264 uses Constrained High as well |
+| H.264 (NVENC) | H.264 | GPU encode on NVIDIA; Constrained High. NVIDIA has no VP8 or VP9 encoder |
 
-**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first VAAPI encoder (H.264, then VP9, then VP8) that passed the sidecar's test encode.
+**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
 
 If a hardware encoder cannot open the device or exits during startup, the sidecar restarts with the software encoder **of the same codec** (so connected viewers keep working) and the stream panel shows the fallback and its reason. Use **Check encoders** under *Streaming defaults* to run the test encodes on demand; routine status polling never runs them.
 
@@ -51,7 +52,20 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
 3. Open *Streaming defaults* → **Check encoders** and confirm the VAAPI rows pass. Set `VAAPI_DEVICE` if your render node is not `/dev/dri/renderD128`.
 4. Optionally set `VIDEO_HW_DECODE=1` to decode on the GPU too.
 
-NVENC is not supported yet.
+### Enabling NVENC (NVIDIA GPUs)
+
+1. Install the NVIDIA driver and the NVIDIA Container Toolkit on the host (`nvidia-container-toolkit`, then `nvidia-ctk runtime configure --runtime=docker`).
+2. Start the stack with the NVIDIA override, which reserves the GPU for the sidecar and sets `NVIDIA_DRIVER_CAPABILITIES=compute,video,utility` (`video` is what loads the encoder):
+
+   ```bash
+   docker compose -f docker-compose.yml -f docker-compose.nvidia.yml up -d
+   ```
+
+   The image needs nothing extra: its FFmpeg already includes `h264_nvenc`.
+3. Open *Streaming defaults* → **Check encoders** and confirm the **H.264 (NVENC)** row passes. Select it, or leave the encoder on Auto with *Auto prefers hardware* on.
+4. Optionally set `VIDEO_HW_DECODE=1` on the sidecar to decode on the GPU too (`-hwaccel cuda`).
+
+NVENC encodes H.264 only. The preset is `p4` with the low-latency tune; `VIDEO_NVENC_PRESET` changes the preset.
 
 ## Source type and stream health
 

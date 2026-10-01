@@ -37,6 +37,14 @@ describe('video streaming labels', () => {
       'H.264 (VAAPI) → H.264 (software)',
     );
     assert.equal(
+      encoderLabel({ ...base, requested: 'h264_nvenc', selected: 'h264_nvenc', active: 'h264' }),
+      'H.264 (NVENC) → H.264 (software)',
+    );
+    assert.equal(
+      encoderLabel({ ...base, hardware: true, fallbackReason: null, requested: 'h264_nvenc', selected: 'h264_nvenc', active: 'h264_nvenc' }),
+      'H.264 (NVENC)',
+    );
+    assert.equal(
       encoderLabel({ ...base, codec: 'vp8', requested: 'auto', selected: 'vp8', active: 'vp8' }),
       'Auto → VP8 (software)',
     );

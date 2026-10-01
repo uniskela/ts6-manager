@@ -34,6 +34,7 @@ export const ENCODER_LABELS: Record<VideoEncoderId, string> = {
   vp8_vaapi: 'VP8 (VAAPI)',
   vp9_vaapi: 'VP9 (VAAPI)',
   h264_vaapi: 'H.264 (VAAPI)',
+  h264_nvenc: 'H.264 (NVENC)',
 };
 
 export const ENCODER_OPTIONS: ReadonlyArray<{ value: VideoEncoderRequest; label: string }> = [
