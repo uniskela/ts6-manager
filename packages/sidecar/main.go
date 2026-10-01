@@ -940,13 +940,13 @@ func (s *Sidecar) SetAnswer(id, sdp string) error {
 	if peer.PC.RemoteDescription() != nil {
 		if peer.PC.RemoteDescription().Type == webrtc.SDPTypeAnswer &&
 			peer.PC.SignalingState() == webrtc.SignalingStateStable {
-			debugf("[API] Ignoring duplicate answer for peer: %s", id)
+			log.Printf("[API] Ignoring duplicate answer for peer: %s", id)
 			return nil
 		}
 	}
 
 	if peer.PC.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
-		debugf("[API] Ignoring answer in signaling state %s for peer: %s", peer.PC.SignalingState(), id)
+		log.Printf("[API] Ignoring answer in signaling state %s for peer: %s", peer.PC.SignalingState(), id)
 		return nil
 	}
 
