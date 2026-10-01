@@ -3,12 +3,19 @@ import assert from 'node:assert/strict';
 import { YOUTUBE_VIDEO_FORMAT_SORT, youtubeVideoFormatArgs } from './video-download.js';
 
 describe('youtubeVideoFormatArgs', () => {
-  it('caps every format at the requested height', () => {
+  it('caps every preferred format at the requested height', () => {
     const [flag, filter] = youtubeVideoFormatArgs(1080);
     assert.equal(flag, '-f');
-    for (const choice of filter.split('/').slice(0, 3)) {
+    for (const choice of filter.split('/').slice(0, -1)) {
       assert.match(choice, /\[height<=1080\]/);
     }
+  });
+
+  it('keeps a bare last-resort fallback so a stream still starts', () => {
+    // Intentional: without it, a video whose formats all miss the height
+    // filter fails to start instead of being scaled down by the sidecar.
+    const [, filter] = youtubeVideoFormatArgs(1080);
+    assert.equal(filter.split('/').at(-1), 'b');
   });
 
   it('prefers SDR but falls back when no SDR format exists', () => {

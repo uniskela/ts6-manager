@@ -22,7 +22,10 @@ function rejectYtDlpOptionUrl(url: string): void {
 }
 
 /**
- * yt-dlp format selection for a YouTube video stream up to `maxHeight`.
+ * yt-dlp format selection for a YouTube video stream, preferring formats no
+ * taller than `maxHeight`. The final bare `b` is a deliberate last resort so a
+ * stream still starts when no format matches the limit (for example formats
+ * without height metadata); the sidecar scales the picture to the preset.
  *
  * SDR is preferred because HDR sources come out washed out once encoded for
  * TeamSpeak. Among formats of equal resolution and frame rate, VP9 is sorted
