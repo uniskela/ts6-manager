@@ -1992,7 +1992,7 @@ export class VoiceBot extends EventEmitter {
     if (!this._videoStreaming || !this.sidecarHttp) return null;
     // #202: close any stale same-id peer before creating a fresh offer (retry/remount reuses webui-preview).
     await this.sidecarHttp.closePeer('webui-preview').catch(() => {});
-    return this.sidecarHttp.createPeer('webui-preview', this._videoEncoder?.codec);
+    return this.sidecarHttp.createPeer('webui-preview', this._videoEncoder?.codec, { browser: true });
   }
 
   /** Set WebRTC answer from WebUI preview player */
