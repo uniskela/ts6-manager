@@ -28,6 +28,11 @@ export interface RuntimeMediaDiagnosticsProps {
   /** When false, only manual refresh runs (no page-entry probe). */
   autoEntry?: boolean;
   compact?: boolean;
+  /**
+   * Compact stage grid column count. Use 2 in narrow side columns (~200–260px)
+   * so labels do not overflow when `sm:grid-cols-4` would otherwise apply.
+   */
+  stageColumns?: 2 | 4;
   /** Show action-local prerequisite line for failed focus stages. */
   showPrerequisite?: boolean;
 }
@@ -37,6 +42,7 @@ export function RuntimeMediaDiagnostics({
   focus,
   autoEntry = true,
   compact = true,
+  stageColumns = 4,
   showPrerequisite = false,
 }: RuntimeMediaDiagnosticsProps) {
   const {
@@ -101,7 +107,9 @@ export function RuntimeMediaDiagnostics({
         <ol
           className={cn(
             'grid gap-1.5 text-[11px]',
-            compact ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-1',
+            !compact && 'grid-cols-1',
+            compact && stageColumns === 2 && 'grid-cols-2',
+            compact && stageColumns === 4 && 'grid-cols-2 sm:grid-cols-4',
           )}
           aria-label="Runtime media diagnostic stages"
         >
