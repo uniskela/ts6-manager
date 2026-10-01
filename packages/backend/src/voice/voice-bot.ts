@@ -198,6 +198,16 @@ export class VoiceBot extends EventEmitter {
   private _videoHealthTimer: ReturnType<typeof setInterval> | null = null;
   private _videoHealthPolling = false;
   private _videoStarting = false;
+  /** Set while startVideoStreamClaimed awaits TeamSpeak; used to abort that wait. */
+  private _videoStartReject: ((err: Error) => void) | null = null;
+  /** Sticky error when prepare/setupstream is aborted (sidecar exit, etc.). */
+  private _videoStartAbortError: Error | null = null;
+  /**
+   * Dispose callback for a StreamSignaling retained after an aborted start so a
+   * late notifystreamstarted can still be stopstream'd. Cleared when the hold
+   * finishes (timer, late stop, or a new start tears it down).
+   */
+  private _heldSignalingDispose: (() => void) | null = null;
   private _musicSessionId: string | null = null;
   private _musicStartedAt: number | null = null;
   private _lastMusicStop: MediaStopInfo | null = null;
@@ -466,6 +476,27 @@ export class VoiceBot extends EventEmitter {
     if (!this._videoEndTimer) return;
     clearTimeout(this._videoEndTimer);
     this._videoEndTimer = null;
+  }
+
+  /**
+   * Abort a start that has prepared ffmpeg/signaling but is not yet
+   * `_videoStreaming` (sidecar died, or an end-stop fired during prepare).
+   */
+  private abortPendingVideoStart(err: Error): void {
+    if (!this._videoStarting || this._videoStreaming) return;
+    if (this._videoStartAbortError) return;
+    this._videoStartAbortError = err;
+    this.clearVideoEndTimer();
+    this._videoDurationSec = null;
+    this._videoSource = null;
+    this._videoLocalHosts = [];
+    this._videoSourceMode = null;
+    this._videoHealth = null;
+    this._videoQuality = null;
+    this.cleanupVideoTempFile();
+    const reject = this._videoStartReject;
+    this._videoStartReject = null;
+    reject?.(err);
   }
 
   /**
@@ -1591,6 +1622,11 @@ export class VoiceBot extends EventEmitter {
    * source resolution, fixed presets never probe — and hand it to the sidecar.
    */
   private async applyVideoSource(source: string, requested: VideoQualityRequest): Promise<void> {
+    // Drop any previous mode (e.g. IPTV Live) before download/probe so status
+    // cannot advertise Live while a YouTube VOD is still preparing.
+    this._videoSourceMode = null;
+    this._videoHealth = null;
+
     const limit = this._videoSettings.autoMaxPreset;
     const maxHeight = STREAM_PRESETS[requested === 'auto' ? limit : requested].height;
     const resolved = await this.resolveStreamSource(source, maxHeight);
@@ -1616,8 +1652,11 @@ export class VoiceBot extends EventEmitter {
     if (!isDownloadedTemp) {
       this.cleanupVideoTempFile();
     }
-    // Start the end-stop clock only after the sidecar accepted the source.
-    if (!resolved.loop && this._videoDurationSec != null) {
+    // Arm the end-stop clock only once the stream is active. During startup,
+    // apply runs before setupstream; a short VOD must not fire while
+    // `_videoStreaming` is still false (stop would only abort prepare, and the
+    // end timer would be lost).
+    if (!resolved.loop && this._videoDurationSec != null && this._videoStreaming) {
       this.scheduleVideoEndStop(this._videoDurationSec);
     }
   }
@@ -1638,6 +1677,7 @@ export class VoiceBot extends EventEmitter {
     // Claim the session synchronously so concurrent starts (double clicks,
     // chat commands, other admins) see it before the first await.
     this._videoStarting = true;
+    this._videoStartAbortError = null;
     this._videoSessionId = newMediaSessionId();
     try {
       if (music) {
@@ -1693,21 +1733,30 @@ export class VoiceBot extends EventEmitter {
       this.sidecarProc = new SidecarProcess(sidecarConfig);
       this.sidecarProc.on('exited', (code: number | null) => {
         console.log(`[VoiceBot ${this.config.id}] Sidecar exited (code=${code})`);
-        this.cleanupVideoTempFile();
+        const detail = `Media sidecar exited (code ${code ?? 'unknown'})`;
         if (this._videoStreaming) {
+          this.cleanupVideoTempFile();
           this._videoStreaming = false;
           this._activeStreamId = null;
+          this._videoSourceMode = null;
+          this._videoHealth = null;
           this._viewers.clear();
           this.clearNoViewerTimer();
           this.stopHealthMonitor();
           this._videoSessionId = null;
           this.releaseSignaling();
-          this.recordVideoStop('sidecar_failure', `Media sidecar exited (code ${code ?? 'unknown'})`);
+          this.recordVideoStop('sidecar_failure', detail);
           if (this._status !== 'playing') {
             this.stopAutoStopTimer();
           }
           this.emit('videoStreamStopped', this._lastVideoStop);
           this.emit('statusChange', this._status);
+        } else if (this._videoStarting) {
+          // Prepared source / pending setupstream — do not let TS confirmation
+          // activate a stream whose sidecar is already gone.
+          this.abortPendingVideoStart(new Error(detail));
+        } else {
+          this.cleanupVideoTempFile();
         }
       });
       try {
@@ -1744,7 +1793,11 @@ export class VoiceBot extends EventEmitter {
       note: selection.note,
     };
 
-    // Setup stream signaling on the TS3 client
+    // Setup stream signaling on the TS3 client (register listeners only —
+    // advertise with setupstream after the source is ready). Drop any retained
+    // late-stop listener first so a retry cannot share notifystreamstarted with
+    // a prior hold that would stopstream the new attempt.
+    this.disposeHeldSignaling();
     this.signaling = new StreamSignaling(this.client);
     this.setupSignalingListeners();
     if (!this._streamNotificationsRegistered) {
@@ -1752,28 +1805,65 @@ export class VoiceBot extends EventEmitter {
       this._streamNotificationsRegistered = true;
     }
 
+    // Resolve/download and start ffmpeg BEFORE advertising the TS stream so
+    // viewers never join while yt-dlp is still running, and so a prior Live
+    // mode cannot leak into status during prepare.
+    // Do not clear `_videoStartAbortError` here — a sidecar exit during
+    // waitHealthy/getEncoders may already have set it.
+    this._videoSource = source;
+    try {
+      if (this._videoStartAbortError) throw this._videoStartAbortError;
+      await this.applyVideoSource(source, requestedQuality);
+      if (this._videoStartAbortError) throw this._videoStartAbortError;
+    } catch (err) {
+      this._videoStartReject = null;
+      this._videoStartAbortError = null;
+      this._videoSource = null;
+      this._videoLocalHosts = [];
+      this._videoSourceMode = null;
+      this._videoHealth = null;
+      this._videoQuality = null;
+      this._videoEncoder = null;
+      this.clearVideoEndTimer();
+      this.releaseSignaling();
+      this.cleanupVideoTempFile();
+      if (this.sidecarProc) {
+        await this.sidecarProc.stop();
+        this.sidecarProc = null;
+      }
+      this.sidecarHttp = null;
+      throw err;
+    }
+
     // Wait for the server to announce the stream, or to refuse it.
     const signaling = this.signaling;
     const streamPromise = new Promise<ActiveStream>((resolve, reject) => {
       const timeout = setTimeout(() => {
+        this._videoStartReject = null;
         console.warn(`[VoiceBot ${this.config.id}] No reply to setupstream within 10s`);
         reject(new Error('TeamSpeak did not answer the stream request within 10 seconds'));
       }, 10000);
+      const fail = (err: Error) => {
+        clearTimeout(timeout);
+        signaling.removeListener('streamStarted', handler);
+        signaling.removeListener('setupRefused', refused);
+        this._videoStartReject = null;
+        reject(err);
+      };
       const handler = (stream: ActiveStream) => {
         if (stream.clid === this.client.getClientId()) {
           clearTimeout(timeout);
           signaling.removeListener('streamStarted', handler);
           signaling.removeListener('setupRefused', refused);
+          this._videoStartReject = null;
           resolve(stream);
         }
       };
       const refused = ({ id, msg }: { id: number; msg: string }) => {
-        clearTimeout(timeout);
-        signaling.removeListener('streamStarted', handler);
-        signaling.removeListener('setupRefused', refused);
         console.warn(`[VoiceBot ${this.config.id}] setupstream refused by the server: ${msg} (error ${id})`);
-        reject(new Error(`TeamSpeak refused the stream: ${msg} (error ${id})`));
+        fail(new Error(`TeamSpeak refused the stream: ${msg} (error ${id})`));
       };
+      this._videoStartReject = fail;
       signaling.on('streamStarted', handler);
       signaling.on('setupRefused', refused);
     });
@@ -1791,12 +1881,34 @@ export class VoiceBot extends EventEmitter {
 
     let stream: ActiveStream;
     try {
+      if (this._videoStartAbortError) throw this._videoStartAbortError;
       stream = await streamPromise;
+      if (this._videoStartAbortError) {
+        try { signaling.sendStreamStop(stream.id); } catch { /* ignore */ }
+        throw this._videoStartAbortError;
+      }
     } catch (err) {
-      // The server never confirmed: undo the signaling and a local sidecar,
-      // so a retry does not stack listeners on top of this attempt's.
-      this.releaseSignaling();
+      // The server never confirmed, or prepare was aborted: undo the prepared
+      // source. If setupstream was already sent, keep signaling briefly so a
+      // late notifystreamstarted can still be stopstream'd (orphan otherwise).
+      this._videoStartReject = null;
+      const holdForLateConfirm =
+        !!this._videoStartAbortError
+        || (err instanceof Error && /did not answer the stream request/i.test(err.message));
+      this._videoStartAbortError = null;
+      if (holdForLateConfirm && signaling) {
+        this.holdSignalingForLateStop(signaling);
+      } else {
+        this.releaseSignaling();
+      }
       this._videoEncoder = null;
+      this._videoSource = null;
+      this._videoSourceMode = null;
+      this._videoHealth = null;
+      this._videoQuality = null;
+      this.clearVideoEndTimer();
+      this.cleanupVideoTempFile();
+      try { await this.sidecarHttp?.stopSource(); } catch { /* ignore */ }
       if (this.sidecarProc) {
         await this.sidecarProc.stop();
         this.sidecarProc = null;
@@ -1806,30 +1918,11 @@ export class VoiceBot extends EventEmitter {
     }
     this._activeStreamId = stream.id;
     this._videoStreaming = true;
-    this._videoSource = source;
     this._videoStartedAt = Date.now();
-
-    try {
-      await this.applyVideoSource(source, requestedQuality);
-    } catch (err) {
-      if (this.signaling && this._activeStreamId) {
-        this.signaling.sendStreamStop(this._activeStreamId);
-      }
-      this._activeStreamId = null;
-      this._videoSource = null;
-      this._videoLocalHosts = [];
-      this._videoStreaming = false;
-      this._videoStartedAt = null;
-      this._videoQuality = null;
-      this._videoEncoder = null;
-      this.clearNoViewerTimer();
-      this.releaseSignaling();
-      if (this.sidecarProc) {
-        await this.sidecarProc.stop();
-        this.sidecarProc = null;
-      }
-      this.sidecarHttp = null;
-      throw err;
+    this._videoStartAbortError = null;
+    // End-stop was deferred while preparing; arm it now that the stream is live.
+    if (!this._videoLoop && this._videoDurationSec != null) {
+      this.scheduleVideoEndStop(this._videoDurationSec);
     }
 
     console.log(
@@ -1858,7 +1951,15 @@ export class VoiceBot extends EventEmitter {
   }
 
   private async stopVideoStreamOnce(reason: MediaStopReason, detail: string | null): Promise<void> {
-    if (!this._videoStreaming || this._videoStopping) return;
+    if (this._videoStopping) return;
+    // Prepare-phase: apply/download runs while `_videoStreaming` is still false.
+    // A UI/IPTV stop must cancel that start so setupstream cannot activate later.
+    if (!this._videoStreaming) {
+      if (this._videoStarting) {
+        this.abortPendingVideoStart(new Error(detail ?? `Video stream stopped (${reason})`));
+      }
+      return;
+    }
     this._videoStopping = true;
 
     try {
@@ -1899,6 +2000,8 @@ export class VoiceBot extends EventEmitter {
       this._activeStreamId = null;
       this._videoSource = null;
       this._videoLocalHosts = [];
+      this._videoSourceMode = null;
+      this._videoHealth = null;
       this._videoStreaming = false;
       this._videoStartedAt = null;
       this._videoSessionId = null;
@@ -2011,6 +2114,62 @@ export class VoiceBot extends EventEmitter {
   private releaseSignaling(): void {
     this.signaling?.dispose();
     this.signaling = null;
+  }
+
+  /** Tear down a retained late-stop hold, if any. */
+  private disposeHeldSignaling(): void {
+    const dispose = this._heldSignalingDispose;
+    if (!dispose) return;
+    this._heldSignalingDispose = null;
+    dispose();
+  }
+
+  /**
+   * After setupstream was sent but the start failed (sidecar abort, timeout),
+   * TeamSpeak may still confirm the stream. Dispose would drop the client
+   * listener, leaving an orphan TS stream with no `_activeStreamId`. Keep the
+   * signaling alive briefly and stopstream any late confirmation for this bot.
+   *
+   * A retry must call {@link disposeHeldSignaling} before attaching a new
+   * StreamSignaling; otherwise both instances receive the same
+   * notifystreamstarted and the retained one stopstreams the retry.
+   */
+  private holdSignalingForLateStop(signaling: StreamSignaling, waitMs = 15_000): void {
+    this.disposeHeldSignaling();
+    if (this.signaling === signaling) {
+      this.signaling = null;
+    }
+    const botClid = this.client.getClientId();
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      if (this._heldSignalingDispose === disposeHold) {
+        this._heldSignalingDispose = null;
+      }
+      clearTimeout(timer);
+      signaling.removeListener('streamStarted', onStarted);
+      signaling.dispose();
+    };
+    const disposeHold = () => finish();
+    const onStarted = (stream: ActiveStream) => {
+      if (botClid != null && stream.clid !== botClid) return;
+      // Replacement start already owns signaling — do not stopstream its confirm.
+      if (this.signaling != null && this.signaling !== signaling) {
+        finish();
+        return;
+      }
+      try {
+        signaling.sendStreamStop(stream.id);
+        console.log(
+          `[VoiceBot ${this.config.id}] Stopped late-confirmed stream ${stream.id} after aborted start`,
+        );
+      } catch { /* ignore */ }
+      finish();
+    };
+    const timer = setTimeout(finish, waitMs);
+    this._heldSignalingDispose = disposeHold;
+    signaling.on('streamStarted', onStarted);
   }
 
   private setupSignalingListeners(): void {

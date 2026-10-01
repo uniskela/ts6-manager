@@ -151,7 +151,11 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
               </div>
             </CardHeader>
             <CardContent>
-              <VideoPlayer botId={botId} streaming={isStreaming} />
+              <VideoPlayer
+                botId={botId}
+                streaming={isStreaming}
+                idleDetail={!isStreaming && lastStop ? `Last stream: ${lastStop}` : null}
+              />
               {isStreaming && streamStatus && (
                 <div className="mt-3 space-y-2">
                   <dl className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs sm:grid-cols-3">
@@ -457,7 +461,16 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
               )}
 
               {!isStreaming && lastStop && (
-                <p className="text-xs text-muted-foreground">Last stream: {lastStop}</p>
+                <p className={`text-xs ${
+                  streamStatus?.lastStop?.reason === 'source_unreachable'
+                    || streamStatus?.lastStop?.reason === 'encoder_failure'
+                    || streamStatus?.lastStop?.reason === 'sidecar_failure'
+                    ? 'text-destructive'
+                    : 'text-muted-foreground'
+                }`}
+                >
+                  Last stream: {lastStop}
+                </p>
               )}
 
               {(startStream.isError || stopStream.isError || setSource.isError) && (

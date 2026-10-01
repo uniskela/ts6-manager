@@ -71,7 +71,7 @@ export function resolveSourceMode(
 }
 
 const SOURCE_FAILURE =
-  /server returned|connection (refused|reset|timed out)|timed out|failed to resolve|name or service|no such file|invalid data found|end of file|http error|\b(?:400\s+Bad Request|401\s+Unauthorized|403\s+Forbidden|404\s+Not Found)\b|i\/o error|matches no streams|stream map|empty segment/i;
+  /server returned|connection (refused|reset|timed out)|timed out|failed to resolve|name or service|no such file|invalid data found|end of file|http error|\b(?:400\s+Bad Request|401\s+Unauthorized|403\s+Forbidden|404\s+Not Found)\b|i\/o error|matches no streams|stream map|empty segment|skd:\/\/|unable to open key file|fairplay|widevine|playready/i;
 
 /**
  * Turn ffmpeg/sidecar stderr into a short operator-facing line (no pointer
@@ -80,6 +80,10 @@ const SOURCE_FAILURE =
 export function humanizeSourceError(raw: string): string {
   const err = raw.trim();
   if (!err) return 'Source became unreachable';
+  // FairPlay / Widevine / PlayReady — ffmpeg cannot decrypt skd:// keys.
+  if (/skd:\/\/|unable to open key file|fairplay|widevine|playready/i.test(err)) {
+    return 'This channel uses DRM encryption and cannot be played here';
+  }
   if (/matches no streams|stream map|empty segment/i.test(err)) {
     return 'Playlist has no playable streams (variants failed or empty)';
   }

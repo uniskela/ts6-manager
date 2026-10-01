@@ -97,6 +97,15 @@ describe('setupstream reply', () => {
   function streamingReadyBot() {
     process.env.SIDECAR_URL = 'http://sidecar.test:9800';
     mock.method(SidecarClient.prototype, 'waitHealthy', async () => {});
+    mock.method(SidecarClient.prototype, 'getEncoders', async () => ({
+      available: ['vp8'], preferred: 'vp8', hardwareAvailable: false,
+    }));
+    mock.method(SidecarClient.prototype, 'stopSource', async () => {});
+    // Source is prepared before setupstream; these tests only cover the TS reply.
+    mock.method(VoiceBot.prototype as any, 'applyVideoSource', async function (this: any) {
+      this._videoSourceMode = 'vod';
+      this._videoPreset = '720p';
+    });
     const bot = makeBot();
     const b = bot as any;
     b._status = 'connected';
