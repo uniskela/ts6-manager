@@ -39,7 +39,7 @@ async function readUiState(page: Page) {
     await page.goto('/settings?tab=appearance');
     await page.getByRole('button', { name: 'Dark base theme' }).click();
   }
-  await page.waitForFunction(() => !!localStorage.getItem('ts6-ui'));
+  await page.waitForFunction(() => !!localStorage.getItem('ts6-ui'), undefined, { timeout: 15_000 });
   return page.evaluate(() => JSON.parse(localStorage.getItem('ts6-ui')!).state);
 }
 
