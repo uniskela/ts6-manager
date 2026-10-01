@@ -352,8 +352,11 @@ type createInFlight struct {
 }
 
 type Peer struct {
-	ID         string
-	Codec      string
+	ID    string
+	Codec string
+	// Browser is set for a browser viewer, whose offer carries the codec
+	// fallbacks a TeamSpeak viewer does not get.
+	Browser    bool
 	PC         *webrtc.PeerConnection
 	VideoTrack *webrtc.TrackLocalStaticRTP
 	AudioTrack *webrtc.TrackLocalStaticRTP
@@ -650,6 +653,13 @@ func (s *Sidecar) processAudioRTP() {
 // afterwards. That also makes the slowest STUN server the time a viewer waits
 // to join, which is what stunGatherTimeout bounds.
 func (s *Sidecar) CreatePeer(id string, codec string) (sdp string, err error) {
+	return s.CreatePeerFor(id, codec, false)
+}
+
+// CreatePeerFor is CreatePeer for a given kind of viewer. A browser viewer
+// (the web UI preview) is also offered browserVideoFallbacks, because a
+// browser does not accept every codec variant the TeamSpeak client needs.
+func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp string, err error) {
 	if codec == "" {
 		codec = s.currentCodec()
 	}
@@ -670,7 +680,7 @@ func (s *Sidecar) CreatePeer(id string, codec string) (sdp string, err error) {
 	// Reuse existing peer/offer only when no create is currently in flight.
 	if existing, exists := s.peers[id]; exists {
 		state := existing.PC.ICEConnectionState()
-		if existing.Codec == codec &&
+		if existing.Codec == codec && existing.Browser == browser &&
 			state != webrtc.ICEConnectionStateClosed &&
 			state != webrtc.ICEConnectionStateFailed &&
 			state != webrtc.ICEConnectionStateDisconnected {
@@ -710,6 +720,16 @@ func (s *Sidecar) CreatePeer(id string, codec string) (sdp string, err error) {
 		PayloadType:        96,
 	}, webrtc.RTPCodecTypeVideo); err != nil {
 		return "", err
+	}
+	if browser {
+		// The track keeps videoCapability; when the browser accepts only a
+		// fallback, Pion binds the track to it by codec type and rewrites the
+		// payload type on the way out.
+		for _, fallback := range browserVideoFallbacks(codec) {
+			if err := m.RegisterCodec(fallback, webrtc.RTPCodecTypeVideo); err != nil {
+				return "", err
+			}
+		}
 	}
 	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
 		RTPCodecCapability: webrtc.RTPCodecCapability{
@@ -773,6 +793,7 @@ func (s *Sidecar) CreatePeer(id string, codec string) (sdp string, err error) {
 	peer := &Peer{
 		ID:         id,
 		Codec:      codec,
+		Browser:    browser,
 		PC:         pc,
 		VideoTrack: videoTrack,
 		AudioTrack: audioTrack,
@@ -1485,18 +1506,20 @@ func main() {
 		var req struct {
 			ID    string `json:"id"`
 			Codec string `json:"codec"`
+			// Browser marks a browser viewer (the web UI preview).
+			Browser bool `json:"browser"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		debugf("[API] Peer create requested: %s (codec=%s)", req.ID, req.Codec)
+		debugf("[API] Peer create requested: %s (codec=%s browser=%v)", req.ID, req.Codec, req.Browser)
 		if req.Codec != "" && !validCodec(req.Codec) {
 			http.Error(w, "unsupported codec", 400)
 			return
 		}
 
-		sdp, err := sidecar.CreatePeer(req.ID, req.Codec)
+		sdp, err := sidecar.CreatePeerFor(req.ID, req.Codec, req.Browser)
 		if err != nil {
 			log.Printf("[API] CreatePeer error: %v", err)
 			http.Error(w, err.Error(), 500)
