@@ -197,9 +197,10 @@ test('queue rows cannot be dragged again until a move is saved', async ({ page, 
   expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
 });
 
-test('until source tabs arrive, the console links to the media controls for this bot', async ({ page, request }) => {
+test('the Link tab is available on the console', async ({ page, request }) => {
   await mockBot(page);
   await signIn(page, request);
   await page.goto('/bot-hub/1');
-  await expect(page.getByRole('link', { name: 'Open Media Bots' })).toHaveAttribute('href', '/media-bots?bot=1');
+  await expect(page.getByRole('tab', { name: 'Link' })).toBeVisible();
+  await expect(page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')).toBeVisible();
 });

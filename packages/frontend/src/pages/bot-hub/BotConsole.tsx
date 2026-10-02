@@ -16,11 +16,14 @@ import { useBotMedia, useMusicBotState, useStopPlayback, useStopVideoStream } fr
 import { apiErrorMessage } from '@/lib/api-error';
 import { hubTone } from '@/lib/bot-hub';
 import { useEffect, useState } from 'react';
+import { LinkSource } from './LinkSource';
 import { SourcePicker, type ConsoleSourceTab } from './SourcePicker';
 import { UpNextQueue } from './UpNextQueue';
 
-/** Source tabs, appended by the 1.10.0 tab PRs (Music, Link, Radio, IPTV). */
-export const CONSOLE_TABS: ConsoleSourceTab[] = [];
+/** Source tabs in order Music · Link · Radio · IPTV (other tabs land in later PRs). */
+export const CONSOLE_TABS: ConsoleSourceTab[] = [
+  { id: 'link', label: 'Link', render: (ctx) => <LinkSource {...ctx} /> },
+];
 
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
