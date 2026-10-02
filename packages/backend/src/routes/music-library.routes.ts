@@ -254,6 +254,52 @@ musicLibraryRoutes.get('/songs', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
+/** Positive whole number from a query param, or a default when omitted/empty. */
+function parsePositivePageInt(raw: unknown, fallback: number): number {
+  if (raw === undefined || raw === null || raw === '') return fallback;
+  const n = typeof raw === 'number' ? raw : Number(String(raw));
+  if (!Number.isInteger(n) || n < 1) {
+    throw new AppError(400, 'page and pageSize must be positive whole numbers');
+  }
+  return n;
+}
+
+// GET /songs/search — Paged title/artist search (before any /songs/:id route)
+// SQLite: Prisma `contains` maps to LIKE, which is case-insensitive for ASCII.
+musicLibraryRoutes.get('/songs/search', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const configId = parseInt(req.params.configId as string);
+    const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+    const page = parsePositivePageInt(req.query.page, 1);
+    const pageSize = Math.min(100, parsePositivePageInt(req.query.pageSize, 50));
+
+    const where = {
+      serverConfigId: configId,
+      ...(search
+        ? {
+            OR: [
+              { title: { contains: search } },
+              { artist: { contains: search } },
+            ],
+          }
+        : {}),
+    };
+
+    const [total, songs] = await Promise.all([
+      prisma.song.count({ where }),
+      prisma.song.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+
+    res.json({ total, page, pageSize, songs });
+  } catch (err) { next(err); }
+});
+
 // POST /scan — Import audio files already present under MUSIC_DIR
 musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
   try {

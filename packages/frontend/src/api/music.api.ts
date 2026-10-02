@@ -73,6 +73,24 @@ export const musicLibraryApi = {
   downloadStatus: (configId: number, jobId: string, signal: AbortSignal) =>
     api.get(`/servers/${configId}/music-library/youtube/download-jobs/${jobId}`, { signal }).then(r => r.data),
   songs: (configId: number) => api.get(`/servers/${configId}/music-library/songs`).then((r) => r.data),
+  searchSongs: (
+    configId: number,
+    params: { search?: string; page?: number; pageSize?: number } = {},
+  ) =>
+    api
+      .get(`/servers/${configId}/music-library/songs/search`, {
+        params: {
+          search: params.search ?? '',
+          page: params.page ?? 1,
+          pageSize: params.pageSize ?? 50,
+        },
+      })
+      .then((r) => r.data as {
+        total: number;
+        page: number;
+        pageSize: number;
+        songs: import('@ts6/common').SongInfo[];
+      }),
   scan: (configId: number) =>
     api.post(`/servers/${configId}/music-library/scan`).then((r) => r.data),
   upload: (configId: number, formData: FormData) =>
