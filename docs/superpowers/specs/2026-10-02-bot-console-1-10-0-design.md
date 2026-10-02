@@ -39,7 +39,7 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | Refactors in 1.10.0 | R1 shared URL pipeline, R2 split `MusicBots.tsx`, R3 split chat handler (R3 runs last and may slip to 1.10.x) |
 | Cut line | Must-have for 1.10.0: console, its tabs, the restructure, shared playlists, auto-stop notices, R1, R2. May slip to 1.10.x: IPTV favourites + recent, IPTV country/language, R3 |
 | Command permissions | Not in 1.10.0. Planned for 1.11.0 in #254, with the listener remote (#253), which depends on them |
-| NVENC | #238 stays a separate contributor PR, reviewed on its own |
+| NVENC | #238 stays a separate contributor PR. Merge it before PR 5 (both touch `VideoStreamSettings` and the Streaming defaults card); the smoke checklist covers NVENC |
 
 ## 1. Structure and navigation
 
@@ -237,6 +237,7 @@ Must-have PRs ship in 1.10.0. "Can slip" PRs ship in 1.10.0 if ready, otherwise 
 | # | PR | Depends on | 1.10.0 |
 |---|----|-----------|--------|
 | 0 | Merge release PR #252 (1.9.4) first, if shipping it separately | — | — |
+| 0b | Merge #238 (H.264 NVENC, contributor PR) | — | must, before PR 5 |
 | 1 | `refactor:` split MusicBots.tsx (R2) | — | must |
 | 2 | `refactor:` shared URL pipeline (R1) | — | must |
 | 3 | `feat:` edit radio stations (`PUT` route + Edit in Media Library → Radio stations) | — | must |

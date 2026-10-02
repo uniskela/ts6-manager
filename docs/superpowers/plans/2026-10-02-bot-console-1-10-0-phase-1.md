@@ -186,5 +186,6 @@
 
 ## Handoff notes
 
+- **Merge #238 (NVENC) before Task 5.** Both edit `VideoStreamSettings` in `packages/common/src/types/music.ts` and `VideoStreamDefaultsCard.tsx`. #238 merges cleanly into `main` as of 2026-10-02 (sidecar `go vet` and `go test` pass on the merged tree). Task 5 must keep #238's encoder fields and labels when it adds `announceAutoStops`.
 - Every task can start from `main` now; merge order does not matter, except that Task 3's UI path depends on whether Task 1 merged first (both locations are named above).
 - Report back with the PR link; phase 2 starts after Task 1 and Task 6 merge.
