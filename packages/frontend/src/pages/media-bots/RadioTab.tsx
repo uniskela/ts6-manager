@@ -117,7 +117,11 @@ export function RadioTab() {
       updateStation.mutate({
         configId: editingStation.serverConfigId,
         id: editingStation.id,
-        data: { name: addForm.name, url: addForm.url, genre: addForm.genre },
+        data: {
+          name: addForm.name,
+          ...(addForm.url !== editingStation.url ? { url: addForm.url } : {}),
+          genre: addForm.genre,
+        },
       }, {
         onSuccess: () => { toast.success('Station updated'); setShowAdd(false); setEditingStation(null); setAddForm({ name: '', url: '', genre: '' }); },
         onError: (error) => toast.error(apiErrorMessage(error, 'Failed to update station')),

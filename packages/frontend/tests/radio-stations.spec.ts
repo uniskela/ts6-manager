@@ -11,8 +11,8 @@ async function signIn(page: Page, request: APIRequestContext) {
   await expect(page).toHaveURL('/dashboard');
 }
 
-async function radioFixture(page: Page, saveGate?: Promise<void>) {
-  let station = { id: 7, serverConfigId: 1, name: 'Original station', url: 'https://example.com/live', genre: 'Rock', imageUrl: null };
+async function radioFixture(page: Page, saveGate?: Promise<void>, savedUrl = 'https://example.com/live') {
+  let station = { id: 7, serverConfigId: 1, name: 'Original station', url: savedUrl, genre: 'Rock', imageUrl: null };
   const updates: unknown[] = [];
   await page.route('**/api/servers/1/radio-stations', (route) => route.fulfill({ json: [station] }));
   await page.route('**/api/servers/1/radio-stations/7', async (route) => {
@@ -20,6 +20,10 @@ async function radioFixture(page: Page, saveGate?: Promise<void>) {
     const data = route.request().postDataJSON();
     updates.push(data);
     await saveGate;
+    if (data.url === 'https://unresolvable-station.invalid/live') {
+      await route.fulfill({ status: 400, json: { error: 'Invalid URL: Hostname "unresolvable-station.invalid" could not be resolved' } });
+      return;
+    }
     if (data.url === 'http://192.168.1.10/live') {
       await route.fulfill({ status: 400, json: { error: 'Invalid URL: Private/reserved IP addresses are blocked' } });
       return;
@@ -80,6 +84,28 @@ test('a rejected station edit keeps the form and saved station unchanged', async
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(dialog.getByLabel('Stream URL')).toHaveValue('https://example.com/live');
 });
+
+for (const field of ['name', 'genre'] as const) {
+  test(`${field}-only edits omit an unchanged URL whose hostname no longer resolves`, async ({ page, request }) => {
+    const savedUrl = 'https://unresolvable-station.invalid/live';
+    const updates = await radioFixture(page, undefined, savedUrl);
+    await signIn(page, request);
+    await page.goto('/media-bots?tab=radio&server=1');
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Edit station' });
+    await expect(dialog.getByLabel('Stream URL')).toHaveValue(savedUrl);
+    await dialog.getByLabel(field === 'name' ? 'Name' : 'Mood or genre', { exact: true }).fill(field === 'name' ? 'Renamed station' : 'Focus');
+    await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    await expect.poll(() => updates.length).toBe(1);
+    expect(updates).toEqual([field === 'name'
+      ? { name: 'Renamed station', genre: 'Rock' }
+      : { name: 'Original station', genre: 'Focus' }]);
+    await expect(dialog).not.toBeVisible();
+    await expect(page.getByText('Station updated', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expect(dialog.getByLabel('Stream URL')).toHaveValue(savedUrl);
+  });
+}
 
 test('a pending save keeps the station form open until it completes', async ({ page, request }) => {
   let releaseSave!: () => void;
