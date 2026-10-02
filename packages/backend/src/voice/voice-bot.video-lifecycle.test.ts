@@ -317,6 +317,33 @@ describe('video no-viewer auto-stop', () => {
     assert.equal(bot.status, 'playing', 'the replacement remains active');
   });
 
+  for (const change of ['moves to another channel', 'disconnects'] as const) {
+    it(`sends no channel-empty notice when the bot ${change} while settings load`, async () => {
+      const bot = makeBot();
+      const b = bot as any;
+      let releaseSettings!: () => void;
+      const ready = new Promise<void>((resolve) => { releaseSettings = resolve; });
+      let channelId = 5;
+      b._status = 'playing';
+      b.client.getCurrentChannelId = () => channelId;
+      b.config.loadVideoSettings = async () => {
+        await ready;
+        return { ...b._videoSettings, announceAutoStops: true };
+      };
+      b.client.sendCommand = () => {};
+      b.client.sendVoiceStop = () => {};
+      const messages: string[] = [];
+      b.sendChannelMessage = (message: string) => messages.push(message);
+
+      const stop = b.handleChannelEmptyAutoStop(300);
+      if (change === 'moves to another channel') channelId = 9;
+      else b._status = 'stopped';
+      releaseSettings();
+      await stop;
+      assert.deepEqual(messages, [], 'the old channel\'s notice is not posted elsewhere');
+    });
+  }
+
   for (const media of ['music', 'radio'] as const) {
     it(`sends nothing for a channel-empty ${media} stop when announcements are off`, async () => {
       assert.deepEqual(await runChannelEmptyStop(media, false), []);

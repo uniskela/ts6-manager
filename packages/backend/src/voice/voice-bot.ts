@@ -489,11 +489,14 @@ export class VoiceBot extends EventEmitter {
     }
 
     const media: AutoStopMedia = this._isStreaming ? 'radio' : 'music';
+    const channelId = this.client.getCurrentChannelId();
     // Stop before loading notice settings so a replacement started during
     // that await cannot be cleared by this expired timer.
     this.clearPlayback('channel_empty', detail);
     const settings = await this.loadVideoSettings();
-    if (settings.announceAutoStops) {
+    // The notice belongs to the emptied channel: skip it if the bot moved or left meanwhile.
+    const left = this._status === 'stopped' || this._status === 'error';
+    if (settings.announceAutoStops && !left && this.client.getCurrentChannelId() === channelId) {
       this.sendChannelMessage(autoStopNotice(media, 'channel_empty', graceSec));
     }
   }

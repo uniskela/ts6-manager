@@ -218,7 +218,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
               Announce auto-stops in chat
             </Label>
             <p className="text-xs text-muted-foreground">
-              Posts one line in the bot&apos;s channel when it stops by itself, and warns 1 minute before stopping a stream nobody is watching.
+              Posts one line in the bot&apos;s channel when it stops by itself. When the no-viewer stop is longer than 1 minute, it also warns 1 minute before stopping a stream nobody is watching.
             </p>
           </div>
         </div>
