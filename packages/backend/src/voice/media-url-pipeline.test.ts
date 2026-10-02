@@ -176,6 +176,34 @@ test('first track ended before the next was ready resumes playback', async () =>
   assert.equal(calls.enqueue.length, 0);
 });
 
+test('a cancelled run makes no further downloads', async () => {
+  let cancelled = false;
+  let downloads = 0;
+  const { target, calls } = fakeTarget({ isCancelled: () => cancelled });
+  const urls = [
+    'https://www.youtube.com/watch?v=00000000001',
+    'https://www.youtube.com/watch?v=00000000002',
+    'https://www.youtube.com/watch?v=00000000003',
+  ];
+
+  await runMediaUrlPipeline(
+    fakeDeps({
+      expandYouTube: async () => ({ urls }),
+      downloadTrack: async (url) => {
+        downloads++;
+        cancelled = true;
+        return item(url, downloads);
+      },
+    }),
+    target,
+    { url: 'https://www.youtube.com/playlist?list=cancelled', enqueueOnly: false },
+  );
+  await flushBackground();
+
+  assert.equal(downloads, 1);
+  assert.equal(calls.enqueue.length, 0);
+});
+
 test('pipeline preserves exact resolution error messages', async () => {
   const { target } = fakeTarget();
 

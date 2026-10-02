@@ -36,6 +36,7 @@ export interface MediaUrlTarget {
   play(item: QueueItem, opts: { replaceSessionIds?: string[] }): Promise<void>;
   enqueue(item: QueueItem): void;
   isIdle(): boolean;
+  isCancelled?(): boolean;
 }
 
 export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
@@ -156,24 +157,29 @@ export async function runMediaUrlPipeline(
         opts.onBackgroundError?.(asError(error), label);
       };
 
-      const queueUrl = async (url: string): Promise<void> => {
+      const queueUrl = async (url: string): Promise<boolean> => {
+        if (target.isCancelled?.()) return false;
         const downloaded = await deps.downloadTrack(url);
+        if (target.isCancelled?.()) return false;
         if (!req.enqueueOnly && target.isIdle()) {
           await target.play(downloaded, {});
         } else {
           target.enqueue(downloaded);
         }
+        return true;
       };
 
       for (const url of rest) {
+        if (target.isCancelled?.()) return;
         try {
-          await queueUrl(url);
+          if (!await queueUrl(url)) return;
         } catch (error) {
           report(error, url);
         }
       }
 
       for (const track of appleMusicPending) {
+        if (target.isCancelled?.()) return;
         const label = `${track.artist} - ${track.title}`;
         try {
           const url = await deps.appleTrackToYouTube(track);
@@ -181,7 +187,7 @@ export async function runMediaUrlPipeline(
             report(new Error(`No YouTube match for Apple Music track: ${label}`), label);
             continue;
           }
-          await queueUrl(url);
+          if (!await queueUrl(url)) return;
         } catch (error) {
           report(error, label);
         }

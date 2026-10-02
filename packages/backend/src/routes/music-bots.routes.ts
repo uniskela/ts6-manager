@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, type RequestHandler } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
@@ -8,7 +8,7 @@ import { playerWidgetToken } from './widget-public.routes.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
-import { defaultMediaUrlDeps, runMediaUrlPipeline } from '../voice/media-url-pipeline.js';
+import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
 import type { BotMediaOverview } from '@ts6/common';
 
@@ -347,7 +347,8 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
 
 // POST /:id/play-url — Play a YouTube/direct URL (single video or playlist).
 // Body `{ enqueue: true }` appends without interrupting current playback (Requests tab Enqueue).
-musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) => {
+export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUrlDeps()): RequestHandler {
+  return async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const id = parseInt(req.params.id as string);
@@ -397,7 +398,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
     let pipelineResult: Awaited<ReturnType<typeof runMediaUrlPipeline>>;
     try {
       pipelineResult = await runMediaUrlPipeline(
-        defaultMediaUrlDeps(),
+        deps,
         {
           play: async (item: QueueItem, opts) => {
             const isFirst = firstCall;
@@ -434,6 +435,7 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
             const live = manager.getBot(id);
             return Boolean(live && live.status === 'connected' && !live.nowPlaying);
           },
+          isCancelled: () => playlistExpandGeneration.get(id) !== generation,
         },
         { url, enqueueOnly },
         {
@@ -444,7 +446,14 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
         },
       );
     } catch (err: any) {
-      throw new AppError(502, err?.message ?? String(err));
+      if (err instanceof AppError || typeof err?.statusCode === 'number') throw err;
+      const message = err?.message ?? String(err);
+      const isResolutionError =
+        message === 'Could not resolve any tracks from that Apple Music URL'
+        || message.startsWith('No YouTube match for Apple Music track:')
+        || message === 'Could not resolve any videos from that playlist URL'
+        || message === 'Could not resolve that YouTube URL';
+      throw new AppError(isResolutionError ? 502 : 500, isResolutionError ? message : `Failed to play URL: ${message}`);
     }
 
     res.json({
@@ -455,7 +464,10 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       queueItem: { id: pipelineResult.first.id, title: pipelineResult.first.title },
     });
   } catch (err) { next(err); }
-});
+  };
+}
+
+musicBotRoutes.post('/:id/play-url', createPlayUrlHandler());
 
 // POST /:id/play-radio — Play a radio station (streaming)
 musicBotRoutes.post('/:id/play-radio', async (req: Request, res: Response, next) => {

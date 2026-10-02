@@ -2007,6 +2007,7 @@ export class MusicCommandHandler {
           const live = this.voiceBotManager.getBot(botId);
           return Boolean(live && live.status === 'connected' && !live.nowPlaying);
         },
+        isCancelled: () => chatPlaylistGeneration.get(botId) !== generation,
       },
       { url: rawUrl, enqueueOnly: false },
       {
