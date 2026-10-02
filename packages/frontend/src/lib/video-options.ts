@@ -9,7 +9,8 @@ import type {
 } from '@ts6/common';
 
 export interface VideoStartOptions {
-  quality: VideoQualityRequest;
+  /** "default" uses the bot's own quality setting; "auto" overrides it. */
+  quality: VideoQualityRequest | 'default';
   encoder: VideoEncoderRequest | 'default';
   /** "default", "0" (off) or a number of seconds. */
   noViewerTimeout: string;
@@ -17,14 +18,14 @@ export interface VideoStartOptions {
 }
 
 export const DEFAULT_VIDEO_START_OPTIONS: VideoStartOptions = {
-  quality: 'auto', encoder: 'default', noViewerTimeout: 'default', sourceMode: 'auto',
+  quality: 'default', encoder: 'default', noViewerTimeout: 'default', sourceMode: 'auto',
 };
 
 export function videoStartRequest(
   options: VideoStartOptions,
 ): Pick<StartVideoStreamRequest, 'preset' | 'encoder' | 'noViewerTimeoutSec' | 'sourceMode'> {
   return {
-    preset: options.quality,
+    preset: options.quality === 'default' ? undefined : options.quality,
     encoder: options.encoder === 'default' ? undefined : options.encoder,
     noViewerTimeoutSec: options.noViewerTimeout === 'default' ? undefined : Number(options.noViewerTimeout),
     sourceMode: options.sourceMode,

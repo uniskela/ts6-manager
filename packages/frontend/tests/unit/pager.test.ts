@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, describe, it } from 'node:test';
-import { pageCount, pageRangeLabel, pageSlice, rememberedPageSize, rememberPageSize } from '../../src/lib/pager';
+import { clampPage, pageCount, pageRangeLabel, pageSlice, rememberedPageSize, rememberPageSize } from '../../src/lib/pager';
 
 const items = Array.from({ length: 148 }, (_, i) => i + 1);
 
@@ -20,6 +20,12 @@ describe('pager', () => {
     assert.equal(pageCount(148, 50), 3);
     assert.equal(pageCount(150, 50), 3);
     assert.equal(pageCount(0, 25), 1);
+  });
+
+  it('keeps the page valid after the page size changes', () => {
+    assert.equal(clampPage(3, 148, 100), 2);
+    assert.equal(clampPage(2, 148, 25), 2);
+    assert.equal(clampPage(4, 0, 50), 1);
   });
 
   it('labels the visible range', () => {

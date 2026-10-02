@@ -1,6 +1,6 @@
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { PAGE_SIZES, pageCount, pageRangeLabel, rememberPageSize, type PageSize } from '@/lib/pager';
+import { PAGE_SIZES, clampPage, pageCount, pageRangeLabel, rememberPageSize, type PageSize } from '@/lib/pager';
 
 interface PagerProps {
   /** Remembers the chosen page size for this list (for example "console-songs"). */
@@ -51,6 +51,8 @@ export function Pager({ listKey, total, page, pageSize, noun, onPageChange, onPa
           onChange={(e) => {
             const size = Number(e.target.value) as PageSize;
             rememberPageSize(listKey, size);
+            const nextPage = clampPage(page, total, size);
+            if (nextPage !== page) onPageChange(nextPage);
             onPageSizeChange(size);
           }}
         >

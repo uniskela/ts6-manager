@@ -39,7 +39,8 @@ export default function BotConsole() {
   const bot = (media.data ?? []).find((b) => b.botId === botId);
   const tone = bot ? hubTone(bot) : 'offline';
   const online = !!bot && tone !== 'offline';
-  const { data: state } = useMusicBotState(online ? botId : null) as { data: PlaybackState | undefined };
+  const stateQuery = useMusicBotState(online ? botId : null);
+  const state = stateQuery.data as PlaybackState | undefined;
   const stopMusic = useStopPlayback();
   const stopVideo = useStopVideoStream();
 
@@ -91,7 +92,10 @@ export default function BotConsole() {
                     <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> {bot.music?.live ? 'Stop radio' : 'Stop'}
                   </Button>
                 )}
-                {online && <UpNextQueue botId={bot.botId} state={state} keptFor={keptFor} />}
+                {online && (
+                  <UpNextQueue botId={bot.botId} state={state} keptFor={keptFor}
+                    loadError={stateQuery.isError ? stateQuery.error : null} />
+                )}
               </>
             )}
           />

@@ -17,6 +17,7 @@ export function VideoOptions({ value, onChange }: { value: VideoStartOptions; on
         <Label htmlFor="vo-quality">Quality</Label>
         <select id="vo-quality" className={field} value={value.quality}
           onChange={(e) => onChange({ ...value, quality: e.target.value as VideoStartOptions['quality'] })}>
+          <option value="default">Default</option>
           {QUALITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       </div>

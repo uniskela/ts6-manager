@@ -1,8 +1,10 @@
 import { useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { Power } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { useStartMusicBot } from '@/hooks/use-music-bots';
+import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 
 export interface ConsoleSourceContext {
@@ -39,11 +41,17 @@ export function SourcePicker({ tabs, ctx, initialTab }: {
             <Button size="sm" disabled={startBot.isPending} onClick={() => startBot.mutate(ctx.botId)}>
               <Power className="mr-1.5 h-4 w-4" aria-hidden="true" /> Start bot
             </Button>
+            {startBot.isError && (
+              <p role="alert" className="text-destructive">{apiErrorMessage(startBot.error, 'Failed to start bot')}</p>
+            )}
           </div>
         ) : tabs.length === 0 || !current ? (
-          <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-            Sources arrive in the next 1.10.0 updates.
-          </p>
+          <div className="space-y-3 rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+            <p>Sources arrive in the next 1.10.0 updates. Until then, start media from Media Bots.</p>
+            <Button asChild size="sm" variant="outline">
+              <Link to={`/media-bots?bot=${ctx.botId}`}>Open Media Bots</Link>
+            </Button>
+          </div>
         ) : (
           <>
             <div role="tablist" aria-label="Source" className="flex gap-1 overflow-x-auto rounded-lg bg-muted/40 p-1">

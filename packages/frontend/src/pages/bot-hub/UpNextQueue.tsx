@@ -13,22 +13,25 @@ import { Button } from '@/components/ui/button';
 import {
   useClearQueue, useMoveQueueItem, usePlayFromQueue, useRemoveFromQueue, useSetRepeat, useSetShuffle,
 } from '@/hooks/use-music-bots';
+import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { absoluteIndex, moveUpNext, rowKeys, upNext } from './console-queue';
 
 const NEXT_REPEAT: Record<RepeatMode, RepeatMode> = { off: 'track', track: 'queue', queue: 'off' };
 const REPEAT_LABEL: Record<RepeatMode, string> = { off: 'Repeat: off', track: 'Repeat: track', queue: 'Repeat: queue' };
 
-function Row({ rowKey, item, onPlay, onRemove, disabled }: {
-  rowKey: string; item: QueueItemInfo; onPlay(): void; onRemove(): void; disabled: boolean;
+function Row({ rowKey, item, onPlay, onRemove, disabled, dragDisabled }: {
+  rowKey: string; item: QueueItemInfo; onPlay(): void; onRemove(): void; disabled: boolean; dragDisabled: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: rowKey });
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
+    id: rowKey, disabled: dragDisabled,
+  });
   return (
     <li ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition }}
       className={cn('flex items-center gap-2 rounded-md border bg-card p-1.5', isDragging && 'opacity-60')}>
-      <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners}
+      <button ref={setActivatorNodeRef} type="button" {...attributes} {...listeners} disabled={dragDisabled}
         aria-label={`Drag to reorder ${item.title}`}
-        className="flex h-10 w-8 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground">
+        className="flex h-10 w-8 shrink-0 cursor-grab touch-none items-center justify-center text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50">
         <GripVertical className="h-4 w-4" aria-hidden="true" />
       </button>
       <div className="min-w-0 flex-1">
@@ -51,9 +54,11 @@ function Row({ rowKey, item, onPlay, onRemove, disabled }: {
  * The bot's queue after the playing track. Positions in this list are
  * converted to absolute queue indexes for every API call.
  */
-export function UpNextQueue({ botId, state, keptFor }: {
+export function UpNextQueue({ botId, state, keptFor, loadError }: {
   botId: number;
   state: PlaybackState | undefined;
+  /** The last state request failed; shown instead of an empty queue when there is no state yet. */
+  loadError: unknown;
   /** Set while radio or a video plays: the queue waits and can be resumed. */
   keptFor: 'radio' | 'video' | null;
 }) {
@@ -84,7 +89,8 @@ export function UpNextQueue({ botId, state, keptFor }: {
   );
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
-    if (!over || active.id === over.id) return;
+    // One move at a time: a second drop would send indexes from the unsaved order.
+    if (move.isPending || !over || active.id === over.id) return;
     const from = keys.indexOf(String(active.id));
     const to = keys.indexOf(String(over.id));
     if (from < 0 || to < 0) return;
@@ -93,6 +99,21 @@ export function UpNextQueue({ botId, state, keptFor }: {
   };
 
   const repeat = state?.repeat ?? 'off';
+
+  if (!state) {
+    return (
+      <section aria-labelledby="up-next" className="space-y-2 border-t pt-3">
+        <h2 id="up-next" className="text-sm font-semibold">Up next</h2>
+        {loadError ? (
+          <p role="alert" className="text-sm text-destructive">
+            Could not load the queue. {apiErrorMessage(loadError, 'Try again in a moment.')}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">Loading the queue…</p>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section aria-labelledby="up-next" className="space-y-2 border-t pt-3">
@@ -130,7 +151,7 @@ export function UpNextQueue({ botId, state, keptFor }: {
           <SortableContext items={keys} strategy={verticalListSortingStrategy}>
             <ol aria-label="Up next" className="max-h-[28rem] space-y-1.5 overflow-y-auto">
               {items.map((item, i) => (
-                <Row key={keys[i]} rowKey={keys[i]} item={item} disabled={busy}
+                <Row key={keys[i]} rowKey={keys[i]} item={item} disabled={busy} dragDisabled={move.isPending}
                   onPlay={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, i) })}
                   onRemove={() => remove.mutate({ botId, index: absoluteIndex(currentIndex, i) })} />
               ))}

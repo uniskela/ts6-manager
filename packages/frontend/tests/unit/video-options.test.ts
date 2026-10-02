@@ -5,7 +5,7 @@ import { DEFAULT_VIDEO_START_OPTIONS, videoStartRequest } from '../../src/lib/vi
 describe('console video options', () => {
   it('defaults leave every choice to the server streaming defaults', () => {
     assert.deepEqual(videoStartRequest(DEFAULT_VIDEO_START_OPTIONS), {
-      preset: 'auto', encoder: undefined, noViewerTimeoutSec: undefined, sourceMode: 'auto',
+      preset: undefined, encoder: undefined, noViewerTimeoutSec: undefined, sourceMode: 'auto',
     });
   });
 
@@ -14,6 +14,10 @@ describe('console video options', () => {
       videoStartRequest({ quality: '1080p', encoder: 'h264_vaapi', noViewerTimeout: '600', sourceMode: 'live' }),
       { preset: '1080p', encoder: 'h264_vaapi', noViewerTimeoutSec: 600, sourceMode: 'live' },
     );
+  });
+
+  it('sends an explicit Auto quality, which overrides the bot setting', () => {
+    assert.equal(videoStartRequest({ ...DEFAULT_VIDEO_START_OPTIONS, quality: 'auto' }).preset, 'auto');
   });
 
   it('sends 0 when the no-viewer stop is turned off', () => {

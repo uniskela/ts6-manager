@@ -13,6 +13,11 @@ export function pageCount(total: number, pageSize: number): number {
   return Math.max(1, Math.ceil(total / pageSize));
 }
 
+/** The same page, or the last one if a bigger page size leaves it empty. */
+export function clampPage(page: number, total: number, pageSize: number): number {
+  return Math.min(page, pageCount(total, pageSize));
+}
+
 /** "1–50 of 148 channels", or "0 songs" for an empty list. */
 export function pageRangeLabel(total: number, page: number, pageSize: number, noun: string): string {
   if (total === 0) return `0 ${noun}`;

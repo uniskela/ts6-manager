@@ -148,3 +148,58 @@ test('the console fits a phone screen', async ({ page, request }) => {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(overflow).toBeLessThanOrEqual(0);
 });
+
+test('a failed Start bot says why', async ({ page, request }) => {
+  await mockBot(page);
+  await page.route('**/api/music-bots/3/start', (r) => r.fulfill({ status: 500, json: { error: 'Server is unreachable' } }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/3');
+  await page.getByRole('button', { name: 'Start bot' }).click();
+  await expect(page.getByRole('alert')).toContainText('Server is unreachable');
+});
+
+test('a failed queue load shows an error instead of an empty queue', async ({ page, request }) => {
+  await mockBot(page);
+  await page.route('**/api/music-bots/1/state', (r) => r.fulfill({ status: 500, json: { error: 'State unavailable' } }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await expect(page.getByText('Could not load the queue')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText('Queue is empty')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Shuffle' })).toHaveCount(0);
+});
+
+test('queue rows cannot be dragged again until a move is saved', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1400 });
+  const calls = await mockBot(page);
+  let release: () => void = () => {};
+  const saved = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(/\/api\/music-bots\/1\/queue\/move$/, async (r) => {
+    calls.push({ method: r.request().method(), url: r.request().url(), body: r.request().postDataJSON() });
+    await saved;
+    await r.fulfill({ json: { success: true } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await expect(page.getByRole('list', { name: 'Up next' }).getByRole('listitem')).toHaveCount(3);
+
+  const live = page.locator('[id^="DndLiveRegion"]');
+  await page.getByRole('button', { name: 'Drag to reorder Third Song' }).focus();
+  await page.keyboard.press('Space');
+  await expect(live).toContainText('over droppable area t3#0');
+  await page.keyboard.press('ArrowDown');
+  await expect(live).toContainText('over droppable area t4#0');
+  await page.keyboard.press('Space');
+  await expect.poll(() => calls.filter((c) => c.method === 'PUT').length).toBe(1);
+
+  await expect(page.getByRole('button', { name: 'Drag to reorder Fifth Song' })).toBeDisabled();
+  release();
+  await expect(page.getByRole('button', { name: 'Drag to reorder Fifth Song' })).toBeEnabled();
+  expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
+});
+
+test('until source tabs arrive, the console links to the media controls for this bot', async ({ page, request }) => {
+  await mockBot(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await expect(page.getByRole('link', { name: 'Open Media Bots' })).toHaveAttribute('href', '/media-bots?bot=1');
+});
