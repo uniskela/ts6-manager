@@ -663,6 +663,77 @@ describe('video source probe', () => {
     assert.equal(b._appliedVideoVolume, 10);
   });
 
+  function sourceChangeBot() {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    const sent: string[] = [];
+    b._appliedVideoVolume = 50;
+    b._videoSource = 'http://example.com/old.ts';
+    b._videoSourceMode = 'live';
+    b._videoPreset = '720p';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoQuality = {
+      requested: '720p', actual: '720p', width: 1280, height: 720, sourceWidth: null, sourceHeight: null, note: null,
+    };
+    b.resolveStreamSource = async (src: string) => ({ path: src, loop: false, durationSec: null });
+    b.sidecarHttp.setSource = async (path: string, opts: { volume?: number }) => {
+      sent.push(`${path}@${opts.volume}`);
+      return { requested: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, state: 'running' };
+    };
+    return { bot, b, sent };
+  }
+
+  it('runs overlapping source changes one at a time and holds volume restarts until the last', async () => {
+    const { bot, b, sent } = sourceChangeBot();
+    const log: string[] = [];
+    const gates = new Map<string, () => void>();
+    b.applyVideoSource = async (src: string) => {
+      const vol = b._videoStreamVolume;
+      log.push(`start:${src}`);
+      await new Promise<void>((r) => gates.set(src, r));
+      log.push(`end:${src}`);
+      b._appliedVideoVolume = vol;
+    };
+    const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+
+    const first = bot.setVideoSource('a');
+    const second = bot.setVideoSource('b');
+    await settle();
+    assert.deepEqual(log, ['start:a'], 'the second change waits for the first');
+
+    gates.get('a')!();
+    await first;
+    await settle();
+    assert.deepEqual(log, ['start:a', 'end:a', 'start:b']);
+    // b is still preparing: a level set now must not restart the encoder yet.
+    await bot.applyVolume(30);
+    assert.deepEqual(sent, [], 'no restart while a source change is pending');
+
+    gates.get('b')!();
+    await second;
+    await b._volumePushTail;
+    assert.deepEqual(log, ['start:a', 'end:a', 'start:b', 'end:b']);
+    assert.deepEqual(sent, ['b@30'], 'the level set mid-change reaches the final source');
+  });
+
+  it('a failed source change restores the playing source and still applies a pending level', async () => {
+    const { bot, b, sent } = sourceChangeBot();
+    b.applyVideoSource = async () => {
+      b._videoSourceMode = null; // as the real applyVideoSource does before resolving
+      await bot.applyVolume(10);
+      throw new Error('source unreachable');
+    };
+
+    await assert.rejects(() => bot.setVideoSource('http://example.com/broken.ts', undefined, 'live'), /source unreachable/);
+    await b._volumePushTail;
+
+    assert.equal(b._videoSource, 'http://example.com/old.ts');
+    assert.equal(b._videoSourceMode, 'live');
+    assert.deepEqual(sent, ['http://example.com/old.ts@10'], 'the level reaches the source still playing');
+  });
+
   it('treats a failed sidecar probe as unknown without logging the URL', async () => {
     const bot = makeBot();
     const b = bot as any;
