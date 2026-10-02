@@ -132,6 +132,48 @@ describe('video no-viewer auto-stop', () => {
     assert.equal(bot.videoStreamStatus.lastStop?.detail, 'Stopped from the web UI');
     assert.equal(sidecarCalls.filter((c) => c === 'stopSource').length, 1);
   });
+
+  it('a volume restart in flight cannot restart ffmpeg after the stream stops', async () => {
+    const bot = makeBot();
+    const { b, sidecarCalls } = fakeStreaming(bot, 0);
+    b._appliedVideoVolume = 50;
+    b._videoSource = 'http://example.com/live.ts';
+    b._videoSourceMode = 'live';
+    b._videoPreset = '720p';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoQuality = {
+      requested: '720p', actual: '720p', width: 1280, height: 720, sourceWidth: null, sourceHeight: null, note: null,
+    };
+    let resolveSource!: () => void;
+    const sourceReady = new Promise<void>((r) => { resolveSource = r; });
+    b.resolveStreamSource = async () => {
+      await sourceReady;
+      return { path: 'http://example.com/live.ts', loop: false, durationSec: null };
+    };
+    b.sidecarHttp.setSource = async () => {
+      sidecarCalls.push('setSource');
+      return { requested: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, state: 'running' };
+    };
+
+    // The restart is waiting on source resolution when the stop begins.
+    const push = bot.applyVolume(20);
+    await Promise.resolve();
+    const stop = bot.stopVideoStream('manual', 'Stopped from the web UI');
+    // A change during the stop only updates the saved level.
+    await bot.applyVolume(10);
+    resolveSource();
+    await push;
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    mock.timers.tick(1_000);
+    await stop;
+
+    assert.equal(sidecarCalls.includes('setSource'), false, `no /source after stop: ${sidecarCalls.join(',')}`);
+    assert.equal(sidecarCalls.filter((c) => c === 'stopSource').length, 1);
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.currentConfig.volume, 10);
+  });
 });
 
 describe('video encode health (#72)', () => {

@@ -35,11 +35,14 @@ function validNickname(nickname: unknown): string | undefined {
   return trimmed;
 }
 
-/** Parse a 0–100 volume. 0 is a real level (mute), not a missing value. */
+/**
+ * Parse a 0–100 volume. 0 is a real level (mute), not a missing value. Only a
+ * number or a whole numeric string counts: parseInt would read "20abc" as 20.
+ */
 function parseVolume(raw: unknown): number {
-  const vol = parseInt(String(raw), 10);
+  const vol = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN;
   if (!Number.isFinite(vol)) throw new AppError(400, 'volume must be a number from 0 to 100');
-  return Math.max(0, Math.min(100, vol));
+  return Math.max(0, Math.min(100, Math.round(vol)));
 }
 
 /**
@@ -51,7 +54,11 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
   try {
     if (bot) await bot.applyVolume(vol);
   } finally {
-    await prisma.musicBot.update({ where: { id }, data: { volume: vol } });
+    // A newer request may have changed the level while this one waited on the
+    // restart; saving now would put the older level back in the database.
+    if (!bot || bot.currentConfig.volume === vol) {
+      await prisma.musicBot.update({ where: { id }, data: { volume: vol } });
+    }
   }
 }
 

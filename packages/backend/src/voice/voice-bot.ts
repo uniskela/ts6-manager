@@ -1190,8 +1190,13 @@ export class VoiceBot extends EventEmitter {
     });
   }
 
+  /** True while a volume change may restart the running encode. */
+  private canPushVideoVolume(): boolean {
+    return this._videoStreaming && !this._videoStopping && !!this.sidecarHttp && !!this._videoSource;
+  }
+
   private scheduleVideoVolumePush(): Promise<void> {
-    if (!this._videoStreaming || !this.sidecarHttp || !this._videoSource) {
+    if (!this.canPushVideoVolume()) {
       return Promise.resolve();
     }
     this._volumePushWanted = this._videoStreamVolume;
@@ -1211,7 +1216,7 @@ export class VoiceBot extends EventEmitter {
       while (this._volumePushWanted != null) {
         const vol = this._volumePushWanted;
         this._volumePushWanted = null;
-        if (!this._videoStreaming || !this.sidecarHttp || !this._videoSource) return;
+        if (!this.canPushVideoVolume()) return;
         if (this._appliedVideoVolume === vol) continue;
         await this.pushVideoStreamVolume();
       }
@@ -1247,6 +1252,9 @@ export class VoiceBot extends EventEmitter {
       sourcePath = resolved.path;
       loop = resolved.loop;
     }
+    // Source resolution can take a while; a stop that began meanwhile owns the
+    // sidecar now, and a /source here would restart ffmpeg after it stopped.
+    if (!this.canPushVideoVolume()) return;
     const mode: VideoSourceMode = /^https?:\/\//i.test(sourcePath) ? (this._videoSourceMode ?? 'vod') : 'file';
     await this.sendSourceToSidecar(sourcePath, loop && mode === 'file', quality, mode);
     // setSource restarts ffmpeg from the beginning for volume changes, so
@@ -2086,6 +2094,10 @@ export class VoiceBot extends EventEmitter {
       this.clearNoViewerTimer();
       this.stopHealthMonitor();
       this._videoDurationSec = null;
+      // Let a volume restart already talking to the sidecar finish before
+      // stopSource, so it cannot start ffmpeg again after the stop.
+      this._volumePushWanted = null;
+      if (this._volumePushActive) await this._volumePushTail;
 
       // Remove all viewers from TS6 stream first
       if (this.signaling && this._activeStreamId) {

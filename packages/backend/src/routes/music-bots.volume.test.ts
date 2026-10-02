@@ -78,6 +78,39 @@ describe('bot volume routes', () => {
     assert.deepEqual(f.saved, []);
   });
 
+  for (const volume of ['20abc', '20,30', '', ' ', true, [20]]) {
+    it(`refuses the partly numeric volume ${JSON.stringify(volume)} with 400`, async () => {
+      const f = fixture();
+      const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume });
+      assert.equal(res.status, 400);
+      assert.deepEqual(f.applied, []);
+      assert.deepEqual(f.saved, []);
+    });
+  }
+
+  it('accepts a numeric string and rounds a fractional level', async () => {
+    const f = fixture();
+    assert.equal((await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: ' 25 ' })).body.volume, 25);
+    assert.equal((await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 33.6 })).body.volume, 34);
+    assert.equal((await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 150 })).body.volume, 100);
+    assert.deepEqual(f.saved, [25, 34, 100]);
+  });
+
+  it('a slower, superseded request does not overwrite the newer saved level', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    // 20 waits on a stream restart; 30 lands while it is still in flight.
+    const f = fixture(async (v) => { if (v === 20) await gate; });
+    const slow = send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 20 });
+    while (!f.applied.includes(20)) await new Promise((r) => setImmediate(r));
+    const fast = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 30 });
+    assert.equal(fast.status, 200);
+    release();
+    assert.equal((await slow).status, 200);
+    assert.equal(f.bot.currentConfig.volume, 30);
+    assert.deepEqual(f.saved, [30], 'the stale 20 must not be written after 30');
+  });
+
   it('saves the new level even when the stream restart fails', async () => {
     const f = fixture(async () => { throw new Error('sidecar down'); });
     const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 20 });
