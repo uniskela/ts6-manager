@@ -78,22 +78,29 @@ export interface ConsoleSourceContext {
   botOnline: boolean;
   searchParams: URLSearchParams; // for deep links (Task 10)
 }
-export function SourcePicker(props: { tabs: ConsoleSourceTab[]; ctx: ConsoleSourceContext }): JSX.Element;
+export function SourcePicker(props: { tabs: ConsoleSourceTab[]; ctx: ConsoleSourceContext; initialTab?: ConsoleSourceTab['id'] }): JSX.Element;
+// BotConsole opens the IPTV tab when `?iptv=` is present.
 // BotConsole keeps a `CONSOLE_TABS: ConsoleSourceTab[]` array; Tasks 8–10 each append one entry.
 
 // components/shared/Pager.tsx + lib/pager.ts
 export function pageSlice<T>(items: T[], page: number, pageSize: number): T[];
 export function pageCount(total: number, pageSize: number): number;
-export function rememberedPageSize(listKey: string, fallback?: 25 | 50 | 100): 25 | 50 | 100; // localStorage, try/catch
-export function Pager(props: { listKey: string; total: number; page: number; pageSize: number;
-  onPageChange(p: number): void; onPageSizeChange(s: 25 | 50 | 100): void; noun: string }): JSX.Element;
+export type PageSize = 25 | 50 | 100;
+export function pageRangeLabel(total: number, page: number, pageSize: number, noun: string): string;
+export function rememberedPageSize(listKey: string, fallback?: PageSize): PageSize; // localStorage, try/catch
+export function rememberPageSize(listKey: string, size: PageSize): void;
+export function Pager(props: { listKey: string; total: number; page: number; pageSize: PageSize;
+  noun: string; onPageChange(p: number): void; onPageSizeChange(s: PageSize): void }): JSX.Element;
 // Renders "1–50 of 148 {noun}", page buttons, Per page 25/50/100; "‹ Page 2 of 3 ›" under 640 px.
 
-// components/video/VideoOptions.tsx
-export interface VideoStartOptions { quality: VideoQualityRequest; encoder: VideoEncoderRequest;
-  noViewerTimeoutSec: number; sourceMode: VideoSourceModeRequest; }
-export function VideoOptions(props: { serverConfigId: number; value: VideoStartOptions;
-  onChange(v: VideoStartOptions): void }): JSX.Element; // starts from the server's streaming defaults
+// lib/video-options.ts + components/video/VideoOptions.tsx  (as built in PR #275)
+export interface VideoStartOptions { quality: VideoQualityRequest; encoder: VideoEncoderRequest | 'default';
+  noViewerTimeout: string /* 'default' | '0' | seconds */; sourceMode: VideoSourceModeRequest; }
+export const DEFAULT_VIDEO_START_OPTIONS: VideoStartOptions;
+export function videoStartRequest(o: VideoStartOptions):
+  Pick<StartVideoStreamRequest, 'preset' | 'encoder' | 'noViewerTimeoutSec' | 'sourceMode'>; // spread into stream/start
+export function VideoOptions(props: { value: VideoStartOptions; onChange(v: VideoStartOptions): void }): JSX.Element;
+// "default" choices leave quality/encoder/timeout to the server's streaming defaults.
 ```
 
 - [ ] **Step 1: Failing unit tests** (`console-queue.test.ts`): `upNext` returns items after `currentIndex` (and the whole queue when `currentIndex` is -1); `absoluteIndex(2, 0) === 3`; `moveUpNext` moves an item down and up and leaves other items in order (Review Focus 1). `pager.test.ts`: `pageSlice` first/middle/last page, `pageCount(148, 50) === 3`, `rememberedPageSize` falls back to 50 when storage throws.
