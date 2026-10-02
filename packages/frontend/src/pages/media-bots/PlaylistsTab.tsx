@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMusicBots } from '@/hooks/use-music-bots';
 import {
@@ -148,6 +148,22 @@ export function PlaylistsTab() {
     setAddBatchProgress(null);
     setAddImportJobId(null);
   };
+
+  // Playlists belong to a server: switching servers closes the old server's
+  // playlist and anything open for it.
+  const shownConfigId = useRef(selectedConfigId);
+  useEffect(() => {
+    if (shownConfigId.current === selectedConfigId) return;
+    shownConfigId.current = selectedConfigId;
+    setSelectedId(null);
+    setShowEdit(false);
+    setShowAddSong(false);
+    setDeleteId(null);
+    setSongFilter('');
+    setAddTab('songs');
+    setImportQueueBotId('');
+    resetAddUrlState();
+  }, [selectedConfigId]);
 
   const handleCreate = () => {
     createPlaylist.mutate(
