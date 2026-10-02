@@ -140,3 +140,58 @@ describe('chat playlist scope', () => {
     assert.equal(bot.queue.length, 3);
   });
 });
+
+describe('playlist creation scope', () => {
+  async function create(body: Record<string, unknown>) {
+    let saved: Record<string, unknown> | null = null;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { id: 1, role: 'admin', username: 'tester' };
+      next();
+    });
+    app.locals.prisma = {
+      playlist: {
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          saved = data;
+          return { id: 9, ...data };
+        },
+      },
+    };
+    app.use('/playlists', playlistRoutes);
+    app.use(errorHandler);
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const { port } = server.address() as { port: number };
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/playlists`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, saved: saved as Record<string, unknown> | null };
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it('saves the server a playlist was created on', async () => {
+    const { status, saved } = await create({ name: 'Lounge', serverConfigId: 2 });
+    assert.equal(status, 201);
+    assert.equal(saved?.serverConfigId, 2);
+  });
+
+  it('keeps a playlist created without a server shared', async () => {
+    const { status, saved } = await create({ name: 'Lounge' });
+    assert.equal(status, 201);
+    assert.equal(saved?.serverConfigId, null);
+  });
+
+  it('rejects a server that is not a positive whole number', async () => {
+    for (const serverConfigId of ['abc', 0, -1, 1.5]) {
+      const { status, saved } = await create({ name: 'Lounge', serverConfigId });
+      assert.equal(status, 400, `serverConfigId ${JSON.stringify(serverConfigId)}`);
+      assert.equal(saved, null);
+    }
+  });
+});

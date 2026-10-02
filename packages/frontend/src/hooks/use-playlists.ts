@@ -19,7 +19,7 @@ export function usePlaylist(id: number | null) {
 export function useCreatePlaylist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream' }) =>
+    mutationFn: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream'; serverConfigId?: number }) =>
       playlistsApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlists'] }),
   });

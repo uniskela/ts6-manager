@@ -167,7 +167,7 @@ export function PlaylistsTab() {
 
   const handleCreate = () => {
     createPlaylist.mutate(
-      { name: newName, mode: newMode },
+      { name: newName, mode: newMode, serverConfigId: selectedConfigId ?? undefined },
       {
         onSuccess: () => {
           toast.success('Playlist created');

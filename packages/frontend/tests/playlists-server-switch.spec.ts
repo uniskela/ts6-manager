@@ -41,3 +41,24 @@ test('switching servers clears the previous server\'s selected playlist', async 
   await expect(page.getByText('Neon Skyline')).toHaveCount(0);
   await expect(page.getByText('Select a playlist to view its songs')).toBeVisible();
 });
+
+test('a new playlist is created on the selected server', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await mockPlaylists(page);
+  let created: unknown = null;
+  await page.route(/\/api\/playlists$/, (r) => {
+    if (r.request().method() !== 'POST') return r.fallback();
+    created = r.request().postDataJSON();
+    return r.fulfill({ status: 201, json: { id: 30, name: 'Night Drive', mode: 'local' } });
+  });
+  await signIn(page, request);
+  await page.goto('/media-bots?tab=playlists');
+  await page.getByRole('combobox', { name: 'Select server connection' }).click();
+  await page.getByRole('option', { name: /Secondary connection/ }).click();
+  await expect(page.getByText('Backup Mix')).toBeVisible();
+
+  await page.getByRole('button', { name: 'New Playlist' }).click();
+  await page.getByRole('dialog').getByRole('textbox').first().fill('Night Drive');
+  await page.getByRole('dialog').getByRole('button', { name: /^Create/ }).click();
+  await expect.poll(() => created).toMatchObject({ name: 'Night Drive', serverConfigId: 2 });
+});

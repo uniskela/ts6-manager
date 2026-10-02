@@ -109,15 +109,21 @@ playlistRoutes.get('/:id', async (req: Request, res: Response, next) => {
 playlistRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const { name, musicBotId, mode } = req.body;
+    const { name, musicBotId, mode, serverConfigId } = req.body;
     if (!name) throw new AppError(400, 'name is required');
     const playlistMode = normalizePlaylistMode(mode, 'local');
+    // Playlists belong to the server they were created on; without one they stay
+    // shared like legacy playlists.
+    if (serverConfigId != null && !(Number.isInteger(serverConfigId) && serverConfigId > 0)) {
+      throw new AppError(400, 'serverConfigId must be a positive whole number');
+    }
 
     const playlist = await prisma.playlist.create({
       data: {
         name,
         mode: playlistMode,
         musicBotId: musicBotId ? parseInt(musicBotId) : null,
+        serverConfigId: serverConfigId ?? null,
       },
     });
 
