@@ -12,7 +12,9 @@ Give every media bot one console where you choose what it plays and manage its q
 After 1.10.0:
 
 - **Bot Hub** is the only list of bots. Each bot opens its **console**.
-- **Media Library** (the page that was "Media Bots") holds media only: library, playlists, radio stations, commands, requests, streaming defaults.
+- **Media Library** (the page that was "Media Bots") holds media only: library, playlists, radio stations, requests, streaming defaults.
+- **Bot Flows** holds everything that reacts to chat: flows and custom chat commands.
+- Media (songs, playlists, radio stations, IPTV, favourites) is shared by every bot on the same TeamSpeak server. Nothing is per bot.
 - **IPTV** keeps playlist sources and Local hosts.
 
 ## Why
@@ -30,12 +32,21 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | Long lists | Search box plus "Show more", not page numbers |
 | IPTV navigation | Group browser across playlists, playlist filter, favourites + recent, country/language filters (pulls part of the "IPTV library expansion" #164 had deferred into 1.10.0) |
 | Radio navigation | Mood chips from the existing `genre` field, plus an Edit station action |
+| Media scope | Shared by all bots on a server, never per bot. Playlists drop their per-bot filter |
+| Custom chat commands | Move to Bot Flows → Chat commands, with a read-only list of built-in commands and name clash warnings |
 | Refactors in 1.10.0 | R1 shared URL pipeline, R2 split `MusicBots.tsx`, R3 split chat handler (R3 may slip to 1.10.x) |
 | NVENC | #238 stays a separate contributor PR, reviewed on its own |
 
 ## 1. Structure and navigation
 
 **Sidebar, Automation group:** Bot Hub · Bot Flows · Media Library · IPTV.
+
+### Shared media (not per bot)
+
+Songs, radio stations, IPTV playlists, custom chat commands and the new IPTV favourites/recent are already stored per server. Playlists are the exception, and 1.10.0 aligns them:
+
+- `GET /playlists` returns playlists from every server today. It gains a `serverConfigId` filter, and the console and Media Library always pass the selected server.
+- A playlist can carry an optional `musicBotId`, and chat `!playlist` only lists that bot's playlists plus untied ones. 1.10.0 ignores `musicBotId` for listing and playing: every bot sees every playlist on its server. The column stays (no migration) and the UI stops offering a bot link. Visible change: `!playlist` may list more playlists than before.
 
 **Bot Hub (`/bot-hub`)**
 
@@ -51,8 +62,16 @@ Today, changing what one bot plays means picking that bot again on each page: th
 
 **Media Library (`/media-bots`)**
 
-- Tabs: Library · Playlists · Radio stations · Commands · Requests · Streaming defaults (8 tabs become 6).
-- Removed: Bots, Queue, and the Video tab's stream controls. Their jobs move to the Bot Hub and the console.
+- Tabs: Library · Playlists · Radio stations · Requests · Streaming defaults (8 tabs become 5).
+- Removed: Bots, Queue, and the Video tab's stream controls (their jobs move to the Bot Hub and the console), and Commands (moves to Bot Flows).
+
+**Bot Flows (`/bots`)**
+
+- Two tabs: **Flows · Chat commands**.
+- Chat commands holds the custom text replies (`!rules` → message) unchanged: add, edit, enable/disable, presets.
+- It also shows a **read-only list of built-in commands** (`!play`, `!tv`, `!stream` and the rest) so the whole command set is visible in one place.
+- **Name clash warnings** appear when a custom reply, a flow's command trigger or a built-in command share a name, on both the Chat commands tab and the flow editor's command trigger.
+- Who answers does not change: custom replies are answered by media bots in their command channels, flows by the flow engine. The tab says so.
 
 **IPTV page**
 
@@ -68,6 +87,7 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | `/media-bots?tab=queue` (no bot) | `/bot-hub` |
 | `/media-bots?tab=video&bot=N` | `/bot-hub/N` |
 | `/media-bots?tab=video` (no bot) | `/media-bots?tab=streaming` |
+| `/media-bots?tab=commands` | `/bots?tab=commands` |
 | `/music-bots` | `/media-bots` (unchanged) |
 
 **Unchanged:** Bot Flows, chat commands, every backend media start/stop endpoint, and the single media session rule.
@@ -160,6 +180,8 @@ All new routes are admin only and scoped to one server, like the existing IPTV a
 4. `GET/PUT/DELETE /api/iptv/favourites`: list, add, remove favourites by stable key.
 5. `GET /api/iptv/recent`: the last 20 streamed channels; recorded inside the existing IPTV stream start paths (route and `!tv`).
 6. `PUT /radio-stations/:id`: edit name, URL and genre, with the same `validateUrl` check as adding a station.
+7. `GET /playlists`: optional `serverConfigId` filter; chat `!playlist` stops filtering by `musicBotId`.
+8. Chat command clash check: a read-only list of built-in command names exposed to the frontend (shared constant in `@ts6/common`, no new route).
 
 ### Data model changes (SQLite, Prisma migrations)
 
@@ -204,7 +226,9 @@ All new routes are admin only and scoped to one server, like the existing IPTV a
 | 7 | `feat:` console IPTV tab: group browser, cross-playlist search, playlist filter | after 4 | — |
 | 7b | `feat:` IPTV country and language (migration, parser, filters) | after 7 | — |
 | 7c | `feat:` IPTV favourites and recent (migration, routes, views) | after 7 | — |
-| 8 | `feat:` Bot Hub becomes the bot list; Media Library 6 tabs; IPTV "Stream on…"; redirects | after 5–7c | — |
+| 5c | `feat:` playlists shared by all bots on a server (list filter, chat `!playlist`) | now | — |
+| 8 | `feat:` Bot Hub becomes the bot list; Media Library 5 tabs; IPTV "Stream on…"; redirects | after 5–7c | — |
+| 8b | `feat:` chat commands move to Bot Flows, built-in list, clash warnings | after 1 | — |
 | 9 | `docs:` / `test:` docs, Playwright, 1.10.0 smoke checklist | after 8 | none |
 | 10 | `refactor:` split chat handler (R3) | now, in parallel | none |
 
@@ -214,15 +238,18 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 
 **Unit (frontend):** source-to-request mapping for each tab (Music views, Link as music vs video, filename vs URL, Radio, IPTV, video options); the redirect table.
 
-**Unit (backend):** R1 characterization tests (web and chat); `/songs` paging stays backward compatible; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; R3 keeps existing chat command tests green.
+**Unit (backend):** R1 characterization tests (web and chat); `/songs` paging stays backward compatible; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; `GET /playlists` filters by server and chat `!playlist` lists every playlist on the server regardless of `musicBotId`; R3 keeps existing chat command tests green.
 
-**Playwright (docs mode):** new `bot-console.spec.ts` covering open from hub, start each media type, the replace prompt then replace, stop, drag-and-drop reorder (mouse and keyboard), remove, and phone width. Update `bot-hub.spec.ts`, `sidebar.spec.ts`, `docs-screenshots.spec.ts`; re-check `iptv-local-hosts.spec.ts`.
+**Unit (frontend), commands:** clash detection across custom replies, flow command triggers and built-in names.
+
+**Playwright (docs mode):** new `bot-console.spec.ts` covering open from hub, start each media type, the replace prompt then replace, stop, drag-and-drop reorder (mouse and keyboard), remove, and phone width. Update `bot-hub.spec.ts`, `sidebar.spec.ts`, `docs-screenshots.spec.ts`, `bot-flow.spec.ts` (Chat commands tab); re-check `iptv-local-hosts.spec.ts`.
 
 **Before every push:** `pnpm typecheck`, backend and frontend unit tests, the Playwright suite, and `go test` when a PR touches the sidecar. Node 20 and pnpm 9 per AGENTS.md.
 
 ## 6. Docs
 
-- `docs/music-bots.md`: Bot Hub and console, Media Library tabs.
+- `docs/music-bots.md`: Bot Hub and console, Media Library tabs, shared playlists.
+- `docs/bot-flows.md`: Chat commands tab, built-in list, clash warnings.
 - `docs/video-streaming.md` and the IPTV section: starting from the console; filename sources via the Link tab.
 - `docs/roadmap.md`: 1.10.0 entry.
 - New `docs/plans/164-1-10-0-rc-smoke.md`, run in the homelab before the release PR merges (VAAPI on the AMD GPU; NVENC if #238 lands).
@@ -234,7 +261,9 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 - [ ] Up next reorders by drag and drop with mouse, touch and keyboard.
 - [ ] IPTV: browse by group across playlists, filter by playlist, country and language, star favourites, and see recent channels. Favourites survive a playlist refresh.
 - [ ] Radio: filter stations by mood; edit an existing station's mood.
-- [ ] Bot Hub is the only bot list; Media Library has 6 tabs; every old link in the redirect table lands correctly.
+- [ ] Bot Hub is the only bot list; Media Library has 5 tabs; Bot Flows has Flows · Chat commands; every old link in the redirect table lands correctly.
+- [ ] Every bot on a server sees the same songs, playlists, radio stations and IPTV channels, in the console and in chat.
+- [ ] A clashing command name shows a warning on the Chat commands tab and in the flow editor.
 - [ ] The console is usable at phone width.
 - [ ] R1 and R2 land with no behaviour change (characterization tests and existing tests green).
 - [ ] Docs and the 1.10.0 smoke checklist cover the console.
