@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { playlistsApi } from '../api/music.api';
 
-export function usePlaylists(musicBotId?: number) {
+export function usePlaylists(serverConfigId?: number) {
   return useQuery({
-    queryKey: ['playlists', musicBotId],
-    queryFn: () => playlistsApi.list(musicBotId),
+    queryKey: ['playlists', serverConfigId],
+    queryFn: () => playlistsApi.list(serverConfigId),
   });
 }
 

@@ -76,7 +76,7 @@ import { ImportQueueOptions } from './ImportQueueOptions';
 export function PlaylistsTab() {
   const qc = useQueryClient();
   const { selectedConfigId } = useServerStore();
-  const { data, isLoading } = usePlaylists();
+  const { data, isLoading } = usePlaylists(selectedConfigId ?? undefined);
   const createPlaylist = useCreatePlaylist();
   const updatePlaylist = useUpdatePlaylist();
   const deletePlaylist = useDeletePlaylist();

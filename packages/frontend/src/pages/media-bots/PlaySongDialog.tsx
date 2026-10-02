@@ -53,7 +53,7 @@ export function PlaySongDialog({ botId, onClose, onPlaySong, onPlayUrl, onEnqueu
   const [serverId, setServerId] = useState<number | null>(selectedConfigId);
   const configId = serverId || selectedConfigId;
   const { data: songs } = useSongs(configId);
-  const { data: playlists } = usePlaylists();
+  const { data: playlists } = usePlaylists(configId ?? undefined);
   const { data: history = [] } = useQuery({
     queryKey: ['music-requests', configId],
     queryFn: () => musicRequestsApi.list(configId!),

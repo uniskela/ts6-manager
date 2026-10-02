@@ -51,9 +51,9 @@ function mapPlaylistSummary(p: {
 playlistRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const musicBotId = req.query.musicBotId ? parseInt(String(req.query.musicBotId)) : undefined;
+    const serverConfigId = req.query.serverConfigId ? parseInt(String(req.query.serverConfigId)) : undefined;
     const playlists = await prisma.playlist.findMany({
-      where: musicBotId ? { musicBotId } : undefined,
+      where: serverConfigId ? { OR: [{ serverConfigId }, { serverConfigId: null }] } : undefined,
       include: { _count: { select: { songs: true } } },
       orderBy: { createdAt: 'desc' },
     });
