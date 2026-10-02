@@ -29,7 +29,9 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | Media Library URL | Stays `/media-bots`; only the label and page title change |
 | Video file tab | Dropped. Link tab also accepts a filename already in the music folder (today's Video tab behaviour) |
 | Queue reorder | Drag and drop with `@dnd-kit/sortable` (mouse, touch, keyboard) |
-| Long lists | Search box plus "Show more", not page numbers |
+| Long lists | Page numbers with a Per page picker (25 / 50 / 100), remembered per list in the browser. Up next is not paged |
+| Radio in Now playing | Station name and ICY title, no progress or skip; the queue is kept and can be resumed |
+| Auto-stop notices | Every auto-stop posts one line in channel chat; video also warns 1 minute before a no-viewer stop. On by default, switch in Streaming defaults |
 | IPTV navigation | Group browser across playlists, playlist filter, favourites + recent, country/language filters (pulls part of the "IPTV library expansion" #164 had deferred into 1.10.0) |
 | Radio navigation | Mood chips from the existing `genre` field, plus an Edit station action |
 | Media scope | Shared by all bots on a server, never per bot. Playlists drop their per-bot filter |
@@ -106,7 +108,7 @@ Songs, radio stations, IPTV playlists, custom chat commands and the new IPTV fav
 
 ### Tabs
 
-- **Music:** sub-views Songs · Playlists · Recent requests. Search box, "Show more". Songs: Play / Queue. Playlists: Play (replaces the queue) / Queue (appends). Recent requests: the latest `!play` history (the API returns the newest 100).
+- **Music:** sub-views Songs · Playlists · Recent requests. Search box, pager. Songs: Play / Queue. Playlists: Play (replaces the queue) / Queue (appends). Recent requests: the latest `!play` history (the API returns the newest 100).
 - **Link:** YouTube, Twitch, direct URL, or a filename already in the music folder. A clear choice: **Play as music** (`play-url`) or **Stream as video** (`stream/start`). Video options show only for "Stream as video".
 - **Radio:** search plus mood chips (All, then each distinct `genre` with a count), Play. Adding and editing stations stays in Media Library → Radio stations, which gains **Edit station**.
 - **IPTV:** see "IPTV navigation" below. Video options shown.
@@ -116,7 +118,7 @@ Songs, radio stations, IPTV playlists, custom chat commands and the new IPTV fav
 Playlists often hold hundreds or thousands of channels, so the IPTV tab is a browser, not a flat list.
 
 - **Views:** Favourites · Recent · Browse groups. Opens on Favourites when there are any, else Browse groups.
-- **Browse groups:** every distinct `group-title` across this server's playlists, with channel counts, filterable; "Show all groups" past the first 30. Opening a group lists its channels (logo, name, playlist) with "Show more", and "← All groups" to go back.
+- **Browse groups:** every distinct `group-title` across this server's playlists, with channel counts, filterable and paged. Opening a group lists its channels (logo, name, playlist) with the pager, and "← All groups" to go back.
 - **Search:** searches all channels, or only the open group.
 - **Filters:** Playlist (All, or one), Country and Language. Country and Language only appear once at least one channel on the server has those values.
 - **Each channel row:** Stream, and a star to add or remove it from favourites.
@@ -141,6 +143,17 @@ Existing endpoints only: `play`, `queue`, `queue/playlist`, `play-url`, `play-ra
 
 When a video replaces music, the backend keeps the queue (`clearPlayback` does not touch it). Up next stays visible and is marked paused until music starts again.
 
+### Now playing by media type
+
+| Type | Shows | Controls |
+|---|---|---|
+| Music (library, playlist, link) | Title, artist, progress, queue position | Pause, skip, stop, volume, Up next |
+| Radio | Station name, the station's ICY "on air" title when it sends one, "plays until stopped" | Stop, volume. Up next collapses to "Up next (n) is kept while the radio plays" with **Play queue** |
+| Video / IPTV | Preview, quality, encoder, source, encode health, viewers, auto-stop countdown | Stop, volume |
+| Idle | "Nothing is playing" and the last stop reason | — |
+
+Radio plays until stopped (`playStream` does not touch the queue). Like music, it stops by itself when the bot's channel is empty for `BOT_AUTO_STOP_EMPTY_SECONDS` (default 300).
+
 ### Video options
 
 Start from the server's streaming defaults. Changes apply to that one start only and never save over the defaults.
@@ -160,15 +173,17 @@ One column: now playing, up next, then sources. The tab row scrolls sideways. Vi
 
 ### Lists and paging
 
+All long lists use one shared pager: "1–50 of 148", page buttons, and a **Per page** picker (25 / 50 / 100). The per-page choice is remembered for each list in the browser (`localStorage`, wrapped so a blocked store just falls back to 50). On phones the pager collapses to "‹ Page 2 of 3 ›". It reuses the pagination pieces from `DataTable.tsx` rather than a second implementation.
+
 | List | Change |
 |---|---|
 | Songs | `GET /songs` gains optional `search`, `page`, `pageSize` (returns `{ total, page, pageSize, songs }` only when `page` is given). Without them it returns the full list as today, so the Library tab is unaffected |
-| Playlists | Filtered in the browser; "Show more" after 25 |
-| Recent requests | Existing endpoint (newest 100); "Show more" in the browser |
-| Radio stations | Filtered in the browser by search and mood |
-| IPTV groups | New groups endpoint with counts; "Show all groups" past 30 |
+| Playlists | Filtered and paged in the browser |
+| Recent requests | Existing endpoint (newest 100); paged in the browser |
+| Radio stations | Filtered by search and mood, paged in the browser |
+| IPTV groups | New groups endpoint with counts; paged like the other lists |
 | IPTV channels | New cross-playlist search, paged like the per-playlist endpoint |
-| Up next | Whole queue shown; scrolls inside the panel |
+| Up next | Not paged: the whole queue scrolls inside the panel, so drag and drop works across it |
 
 ### Backend changes (complete list)
 
@@ -181,7 +196,8 @@ All new routes are admin only and scoped to one server, like the existing IPTV a
 5. `GET /api/iptv/recent`: the last 20 streamed channels; recorded inside the existing IPTV stream start paths (route and `!tv`).
 6. `PUT /radio-stations/:id`: edit name, URL and genre, with the same `validateUrl` check as adding a station.
 7. `GET /playlists`: optional `serverConfigId` filter; chat `!playlist` stops filtering by `musicBotId`.
-8. Chat command clash check: a read-only list of built-in command names exposed to the frontend (shared constant in `@ts6/common`, no new route).
+8. **Auto-stop notices** (`voice-bot.ts`): when a channel-empty or no-viewer auto-stop fires, the bot posts one line in its channel chat ("Stopped radio: the channel was empty for 5 minutes." / "Stopped the stream: nobody watched for 5 minutes."). For video, `refreshNoViewerTimer` also schedules a warning 60 s before the stop ("Nobody is watching. The stream stops in 1 minute."); it is cancelled if a viewer joins. Skipped when the no-viewer timeout is 60 s or less. All notices go through `sendChannelMessage`, so the existing 524 flood hold applies. Controlled by a per-server **Announce auto-stops in chat** switch (default on) stored with the streaming defaults in `AppSetting`; no migration.
+9. Chat command clash check: a read-only list of built-in command names exposed to the frontend (shared constant in `@ts6/common`, no new route).
 
 ### Data model changes (SQLite, Prisma migrations)
 
@@ -227,6 +243,7 @@ All new routes are admin only and scoped to one server, like the existing IPTV a
 | 7b | `feat:` IPTV country and language (migration, parser, filters) | after 7 | — |
 | 7c | `feat:` IPTV favourites and recent (migration, routes, views) | after 7 | — |
 | 5c | `feat:` playlists shared by all bots on a server (list filter, chat `!playlist`) | now | — |
+| 5d | `feat:` announce auto-stops in chat, 1-minute video warning, Streaming defaults switch | now | — |
 | 8 | `feat:` Bot Hub becomes the bot list; Media Library 5 tabs; IPTV "Stream on…"; redirects | after 5–7c | — |
 | 8b | `feat:` chat commands move to Bot Flows, built-in list, clash warnings | after 1 | — |
 | 9 | `docs:` / `test:` docs, Playwright, 1.10.0 smoke checklist | after 8 | none |
@@ -238,7 +255,7 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 
 **Unit (frontend):** source-to-request mapping for each tab (Music views, Link as music vs video, filename vs URL, Radio, IPTV, video options); the redirect table.
 
-**Unit (backend):** R1 characterization tests (web and chat); `/songs` paging stays backward compatible; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; `GET /playlists` filters by server and chat `!playlist` lists every playlist on the server regardless of `musicBotId`; R3 keeps existing chat command tests green.
+**Unit (backend):** R1 characterization tests (web and chat); `/songs` paging stays backward compatible; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; auto-stop notices fire once per stop, the video warning fires 60 s early and is cancelled when a viewer joins, nothing is sent when the switch is off, and notices respect the flood hold; `GET /playlists` filters by server and chat `!playlist` lists every playlist on the server regardless of `musicBotId`; R3 keeps existing chat command tests green.
 
 **Unit (frontend), commands:** clash detection across custom replies, flow command triggers and built-in names.
 
@@ -251,6 +268,7 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 - `docs/music-bots.md`: Bot Hub and console, Media Library tabs, shared playlists.
 - `docs/bot-flows.md`: Chat commands tab, built-in list, clash warnings.
 - `docs/video-streaming.md` and the IPTV section: starting from the console; filename sources via the Link tab.
+- `docs/video-streaming.md` and `docs/music-bots.md`: auto-stop chat notices, the 1-minute video warning and the switch that turns them off.
 - `docs/roadmap.md`: 1.10.0 entry.
 - New `docs/plans/164-1-10-0-rc-smoke.md`, run in the homelab before the release PR merges (VAAPI on the AMD GPU; NVENC if #238 lands).
 
@@ -260,7 +278,9 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 - [ ] Now playing and Up next match the bot's real state after a start, stop, replacement or auto-stop, without a reload.
 - [ ] Up next reorders by drag and drop with mouse, touch and keyboard.
 - [ ] IPTV: browse by group across playlists, filter by playlist, country and language, star favourites, and see recent channels. Favourites survive a playlist refresh.
-- [ ] Radio: filter stations by mood; edit an existing station's mood.
+- [ ] Radio: filter stations by mood; edit an existing station's mood; Now playing shows the station (no progress or skip) and offers Play queue.
+- [ ] Long lists page with 25 / 50 / 100 per page, remembered per list.
+- [ ] Auto-stops are announced in channel chat, with a 1-minute warning before a no-viewer video stop, unless the switch is off.
 - [ ] Bot Hub is the only bot list; Media Library has 5 tabs; Bot Flows has Flows · Chat commands; every old link in the redirect table lands correctly.
 - [ ] Every bot on a server sees the same songs, playlists, radio stations and IPTV channels, in the console and in chat.
 - [ ] A clashing command name shows a warning on the Chat commands tab and in the flow editor.
