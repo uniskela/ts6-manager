@@ -371,11 +371,11 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 | `WEBRTC_UDP_PORT` | unset | Shared IPv4 ICE UDP mux port for browser WebRTC preview (publish this UDP port from Docker) |
 | `WEBRTC_NAT1TO1_IP` | unset | Host/LAN/Tailscale **IPv4** IP(s) advertised as ICE host candidates |
 | `WEBRTC_BIND_IP` | `127.0.0.1` (compose) | Host bind address for the published WebRTC UDP mapping |
-| `VIDEO_QUEUE_SIZE` | `1024` | Size of the video RTP queue |
+| `VIDEO_QUEUE_SIZE` | `4096` | Size of the video RTP queue (packets) |
 | `AUDIO_QUEUE_SIZE` | `2048` | Size of the audio RTP queue |
-| `SYNC_PLAYOUT_BUFFER_MS` | `50` | Small playout buffer used by the adaptive pacing logic |
+| `SYNC_PLAYOUT_BUFFER_MS` | `50` | Playout buffer added to both tracks on top of the later track's latency |
 | `SYNC_VIDEO_BIAS_MS` | `0` | Optional extra holdback for video to fine-tune sync |
-| `SYNC_MAX_DELAY_MS` | `500` | Maximum pacing delay / latency sample used by the sync clamp |
+| `SYNC_MAX_DELAY_MS` | `1000` | The most one track is held back to meet the other, and how long the first track waits for the other to start |
 | `AUDIO_DELAY_MS` | `0` | Optional manual audio delay; normally leave at `0` with adaptive pacing |
 | `SIDECAR_DEBUG_LOGS` | `0` | Set to `1` to enable verbose high-frequency runtime logs |
 | `VIDEO_RTP_READ_BUFFER` | `4194304` | Requested UDP socket read buffer for video RTP |

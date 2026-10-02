@@ -73,21 +73,22 @@ func TestHealthWarnsWhenSustained(t *testing.T) {
 func TestAudioTimestampDiscontinuityDoesNotStall(t *testing.T) {
 	s := NewSidecar()
 	now := time.Unix(1_000, 0)
-	first := s.computeTrackDelay("audio", 0, now)
-	if first > s.syncBuffer {
+	// Both tracks have started, so audio is not being held for video.
+	s.recordFrame("video", 0, now)
+	held := func(ts uint32, at time.Time) time.Duration {
+		return s.sendTime("audio", s.recordFrame("audio", ts, at), at, at).Sub(at)
+	}
+	if first := held(0, now); first > s.syncBuffer {
 		t.Fatalf("first packet delay = %s, want <= sync buffer %s", first, s.syncBuffer)
 	}
-	steady := s.computeTrackDelay("audio", 960, now.Add(20*time.Millisecond))
-	if steady > 100*time.Millisecond {
+	if steady := held(960, now.Add(20*time.Millisecond)); steady > 100*time.Millisecond {
 		t.Fatalf("steady 20ms step stalled: %s", steady)
 	}
 	// 30s of RTP time in one step. Without a rebase this waits at maxTrackDelay.
-	jumped := s.computeTrackDelay("audio", 960+30*48000, now.Add(40*time.Millisecond))
-	if jumped > 150*time.Millisecond {
+	if jumped := held(960+30*48000, now.Add(40*time.Millisecond)); jumped > 150*time.Millisecond {
 		t.Fatalf("forward discontinuity stalled playout: %s", jumped)
 	}
-	back := s.computeTrackDelay("audio", 960, now.Add(60*time.Millisecond))
-	if back > 150*time.Millisecond {
+	if back := held(960, now.Add(60*time.Millisecond)); back > 150*time.Millisecond {
 		t.Fatalf("backward discontinuity stalled playout: %s", back)
 	}
 }

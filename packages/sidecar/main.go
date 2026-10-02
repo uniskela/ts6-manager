@@ -259,69 +259,157 @@ func (s *Sidecar) resetPeerStreamState() {
 	}
 }
 
-func (s *Sidecar) computeTrackDelay(kind string, ts uint32, now time.Time) time.Duration {
+// trackTimingsLocked returns kind's timing, the other track's, and kind's RTP
+// clock rate. current is nil for an unknown kind. Callers hold timingMu.
+func (s *Sidecar) trackTimingsLocked(kind string) (current, other *TrackTiming, clockRate uint32) {
+	switch kind {
+	case "video":
+		return &s.videoTiming, &s.audioTiming, 90000
+	case "audio":
+		return &s.audioTiming, &s.videoTiming, 48000
+	}
+	return nil, nil, 0
+}
+
+// playoutOffsetLocked is how far behind the shared clock kind's track is
+// sent: the later of the two tracks' latencies, plus the playout buffer.
+// Both tracks are sent at the same offset, which is what lines them up.
+//
+// Until the other track has started, assume it is as late as allowed. The
+// two encoders do not start together — video's first frame trails the
+// audio by the decoder's frame-threading delay, and a hardware encoder adds
+// its start-up on top — so sending the first track alone would put it out
+// of step, and then stall it when the other appears and the offset jumps.
+// The wait is bounded: a source with no audio stops holding its video once
+// maxTrackDelay has passed. Callers hold timingMu.
+func (s *Sidecar) playoutOffsetLocked(kind string, current, other *TrackTiming, at time.Time) time.Duration {
+	target := current.latency
+	switch {
+	case other.initialized:
+		target = maxDuration(target, other.latency)
+	case at.Sub(s.streamBaseWall) < s.maxTrackDelay:
+		target = s.maxTrackDelay
+	}
+	offset := target + s.syncBuffer
+	if kind == "video" {
+		offset += s.videoBias
+	}
+	return offset
+}
+
+// recordFrame records the arrival of a packet from FFmpeg and returns its
+// place on the shared clock: when its media time left FFmpeg, had it been
+// delayed no more than the earliest packet was.
+//
+// Latency is measured here, at arrival, never in the forwarding loop. A loop
+// that measures after its own sleep counts that sleep as latency and sleeps
+// longer next time, so the hold climbs to its cap whatever the real skew is:
+// measured with this image's FFmpeg, the previous pacer settled at
+// SYNC_MAX_DELAY_MS plus the playout buffer on every stream.
+//
+// Both tracks are assumed to start at media time zero, so the earliest first
+// packet marks when media time zero left FFmpeg. Packets of one frame share a
+// timestamp and are measured once.
+func (s *Sidecar) recordFrame(kind string, ts uint32, arrived time.Time) time.Time {
 	s.timingMu.Lock()
 	defer s.timingMu.Unlock()
 
+	current, _, clockRate := s.trackTimingsLocked(kind)
+	if current == nil {
+		return arrived
+	}
+	if current.initialized && ts == current.lastTS {
+		return current.lastClock
+	}
+
 	if !s.streamBaseSet {
 		s.streamBaseSet = true
-		s.streamBaseWall = now
+		s.streamBaseWall = arrived
+	}
+	// A discontinuous RTP clock (IPTV PCR/PTS breaks) is re-based onto the wall
+	// clock, or the track would be held at maxTrackDelay. The track keeps the
+	// latency measured so far: a break in the source's timestamps says nothing
+	// about how far this track trails the other one.
+	measured := current.latency
+	if s.noteTimestamp(current, ts, arrived, clockRate) {
+		current.baseRTP += uint32(uint64(measured) * uint64(clockRate) / uint64(time.Second))
+		current.latency = measured
 	}
 
-	var current *TrackTiming
-	var other *TrackTiming
-	var clockRate uint32
+	clock := s.streamBaseWall.Add(rtpElapsed(ts, current.baseRTP, clockRate))
 
-	switch kind {
-	case "video":
-		current = &s.videoTiming
-		other = &s.audioTiming
-		clockRate = 90000
-	case "audio":
-		current = &s.audioTiming
-		other = &s.videoTiming
-		clockRate = 48000
-	default:
-		return 0
-	}
-
-	// A discontinuous RTP clock (IPTV PCR/PTS breaks) must not stall this track
-	// at maxTrackDelay, or poison the other track through the shared latency.
-	s.noteTimestamp(current, ts, now, clockRate)
-
-	mediaElapsed := rtpElapsed(ts, current.baseRTP, clockRate)
-	expectedWall := s.streamBaseWall.Add(mediaElapsed)
-
-	observedLatency := now.Sub(expectedWall)
+	// Clamped so that one bad timestamp cannot poison the average.
+	observedLatency := arrived.Sub(clock)
 	if observedLatency < 0 {
 		observedLatency = 0
 	}
-	// A single bad RTP timestamp can otherwise poison the EMA and stall pacing.
 	if observedLatency > s.maxTrackDelay {
 		observedLatency = s.maxTrackDelay
 	}
-
 	current.latency = smoothDuration(current.latency, observedLatency)
 
-	targetLatency := current.latency
-	if other.initialized {
-		targetLatency = maxDuration(targetLatency, other.latency)
-	}
+	current.lastTS = ts
+	current.lastClock = clock
+	return clock
+}
 
-	targetWall := expectedWall.Add(targetLatency).Add(s.syncBuffer)
-	if kind == "video" {
-		targetWall = targetWall.Add(s.videoBias)
-	}
+// sendTime is when a packet recorded at clock, which arrived at arrived,
+// should be forwarded, given what is known about both tracks at now. It is
+// asked again while the packet waits, because the answer drops when the
+// other track starts. No packet is held longer than maxTrackDelay.
+func (s *Sidecar) sendTime(kind string, clock, arrived, now time.Time) time.Time {
+	s.timingMu.Lock()
+	defer s.timingMu.Unlock()
 
-	delay := targetWall.Sub(now)
-	if delay < 0 {
-		return 0
+	current, other, _ := s.trackTimingsLocked(kind)
+	if current == nil {
+		return arrived
 	}
-	if delay > s.maxTrackDelay {
-		delay = s.maxTrackDelay
+	sendAt := clock.Add(s.playoutOffsetLocked(kind, current, other, now))
+	if latest := arrived.Add(s.maxTrackDelay); sendAt.After(latest) {
+		sendAt = latest
 	}
+	return sendAt
+}
 
-	return delay
+// pacingPoll bounds each sleep of a waiting packet, so a packet held for a
+// track that has not started yet is released soon after it starts.
+const pacingPoll = 10 * time.Millisecond
+
+// waitToSend blocks until q is due.
+func (s *Sidecar) waitToSend(kind string, q queuedPacket) {
+	for {
+		d := time.Until(s.sendTime(kind, q.clock, q.arrived, time.Now()))
+		if d <= 0 {
+			return
+		}
+		time.Sleep(min(d, pacingPoll))
+	}
+}
+
+// senderReportRTPTime is the RTP timestamp of kind's track that is being sent
+// at now, read off the clock both tracks are paced against. Sender Reports
+// pair it with now for both tracks, so a receiver that lines the tracks up by
+// their reports lines them up by media time.
+//
+// The last timestamp read from FFmpeg would not do. Video leaves FFmpeg later
+// than audio — the decoder's frame threading alone is about half a second on
+// a many-core host — and pairing both tracks' latest timestamps with one wall
+// time reports that delay as the intended sync, which a receiver would then
+// reproduce. ok is false until the track has started.
+func (s *Sidecar) senderReportRTPTime(kind string, now time.Time) (ts uint32, ok bool) {
+	s.timingMu.Lock()
+	defer s.timingMu.Unlock()
+
+	current, other, clockRate := s.trackTimingsLocked(kind)
+	if current == nil || !s.streamBaseSet || !current.initialized {
+		return 0, false
+	}
+	media := now.Sub(s.streamBaseWall) - s.playoutOffsetLocked(kind, current, other, now)
+	// Signed on purpose: before the first packet is due the media time is
+	// negative, and uint32 arithmetic wraps it to the right timestamp.
+	ticks := int64(media) * int64(clockRate) / int64(time.Second)
+	return current.baseRTP + uint32(ticks), true
 }
 
 func cloneRTPPacket(src *rtp.Packet) *rtp.Packet {
@@ -343,6 +431,19 @@ type TrackTiming struct {
 	baseRTP     uint32
 	lastRTP     uint32
 	latency     time.Duration
+
+	// The frame most recently recorded, so its remaining packets share its
+	// place on the clock.
+	lastTS    uint32
+	lastClock time.Time
+}
+
+// queuedPacket is an RTP packet from FFmpeg with its arrival time and its
+// place on the shared clock, as recordFrame measured them.
+type queuedPacket struct {
+	pkt     *rtp.Packet
+	arrived time.Time
+	clock   time.Time
 }
 
 // maxContinuousRTPStep is the largest RTP timestamp step treated as normal
@@ -455,16 +556,14 @@ type Sidecar struct {
 	rtpVideoDrops uint64
 	rtpAudioDrops uint64
 
-	// Atomic timestamps for RTCP Sender Report generation
-	lastVideoRTPTs  uint64 // atomic: latest video RTP timestamp seen
-	lastAudioRTPTs  uint64 // atomic: latest audio RTP timestamp seen
+	// Atomic counters for RTCP Sender Reports
 	videoPktCount   uint64 // atomic
 	videOctetCount  uint64 // atomic
 	audioPktCount   uint64 // atomic
 	audioOctetCount uint64 // atomic
 
-	videoQueue chan *rtp.Packet
-	audioQueue chan *rtp.Packet
+	videoQueue chan queuedPacket
+	audioQueue chan queuedPacket
 
 	// Stream pacing / A/V alignment state
 	timingMu       sync.Mutex
@@ -474,7 +573,9 @@ type Sidecar struct {
 	audioTiming    TrackTiming
 	syncBuffer     time.Duration
 	videoBias      time.Duration
-	maxTrackDelay  time.Duration
+	// The most one track is held back to meet the other, and the longest the
+	// first track waits for the other to start.
+	maxTrackDelay time.Duration
 }
 
 func NewSidecar() *Sidecar {
@@ -483,9 +584,11 @@ func NewSidecar() *Sidecar {
 		creating:      make(map[string]*createInFlight),
 		syncBuffer:    time.Duration(envIntOrDefault("SYNC_PLAYOUT_BUFFER_MS", 50)) * time.Millisecond,
 		videoBias:     time.Duration(envIntOrDefault("SYNC_VIDEO_BIAS_MS", 0)) * time.Millisecond,
-		maxTrackDelay: time.Duration(envIntOrDefault("SYNC_MAX_DELAY_MS", 500)) * time.Millisecond,
-		videoQueue:    make(chan *rtp.Packet, envIntOrDefault("VIDEO_QUEUE_SIZE", 1024)),
-		audioQueue:    make(chan *rtp.Packet, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
+		maxTrackDelay: time.Duration(envIntOrDefault("SYNC_MAX_DELAY_MS", 1000)) * time.Millisecond,
+		// Room for maxTrackDelay of a 4K stream: at 20 Mbit/s and 1200-byte
+		// packets that is some 2000 packets a second.
+		videoQueue: make(chan queuedPacket, envIntOrDefault("VIDEO_QUEUE_SIZE", 4096)),
+		audioQueue: make(chan queuedPacket, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
 	}
 	s.streamCodec.Store(codecVP8)
 	return s
@@ -533,6 +636,7 @@ func (s *Sidecar) readVideoRTP() {
 
 	for s.running {
 		n, err := s.videoConn.Read(buf)
+		arrived := time.Now()
 		if err != nil {
 			if s.running {
 				log.Printf("[RTP] Video read error: %v", err)
@@ -544,8 +648,6 @@ func (s *Sidecar) readVideoRTP() {
 			continue
 		}
 
-		// Track RTP stats used by optional debug / legacy reporting paths
-		atomic.StoreUint64(&s.lastVideoRTPTs, uint64(pkt.Timestamp))
 		atomic.AddUint64(&s.videoPktCount, 1)
 		atomic.AddUint64(&s.videOctetCount, uint64(len(pkt.Payload)))
 
@@ -559,8 +661,9 @@ func (s *Sidecar) readVideoRTP() {
 			continue
 		}
 
+		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("video", cloned.Timestamp, arrived)}
 		select {
-		case s.videoQueue <- cloned:
+		case s.videoQueue <- q:
 		default:
 			atomic.AddUint64(&s.rtpVideoDrops, 1)
 			if count%120 == 0 {
@@ -577,6 +680,7 @@ func (s *Sidecar) readAudioRTP() {
 
 	for s.running {
 		n, err := s.audioConn.Read(buf)
+		arrived := time.Now()
 		if err != nil {
 			if s.running {
 				log.Printf("[RTP] Audio read error: %v", err)
@@ -588,8 +692,6 @@ func (s *Sidecar) readAudioRTP() {
 			continue
 		}
 
-		// Track latest timestamp for RTCP Sender Reports
-		atomic.StoreUint64(&s.lastAudioRTPTs, uint64(pkt.Timestamp))
 		atomic.AddUint64(&s.audioPktCount, 1)
 		atomic.AddUint64(&s.audioOctetCount, uint64(len(pkt.Payload)))
 
@@ -603,8 +705,9 @@ func (s *Sidecar) readAudioRTP() {
 			continue
 		}
 
+		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("audio", cloned.Timestamp, arrived)}
 		select {
-		case s.audioQueue <- cloned:
+		case s.audioQueue <- q:
 		default:
 			atomic.AddUint64(&s.rtpAudioDrops, 1)
 			if count%200 == 0 {
@@ -614,21 +717,13 @@ func (s *Sidecar) readAudioRTP() {
 	}
 }
 
+// processVideoRTP and processAudioRTP forward each packet once sendTime says
+// it is due, which holds the earlier track back to meet the later one.
 func (s *Sidecar) processVideoRTP() {
-	var lastTS uint32
-	haveTS := false
-
-	for pkt := range s.videoQueue {
+	for q := range s.videoQueue {
+		s.waitToSend("video", q)
+		pkt := q.pkt
 		codec := s.currentCodec()
-		if !haveTS || pkt.Timestamp != lastTS {
-			now := time.Now()
-			extraDelay := s.computeTrackDelay("video", pkt.Timestamp, now)
-			if extraDelay > 0 {
-				time.Sleep(extraDelay)
-			}
-			lastTS = pkt.Timestamp
-			haveTS = true
-		}
 
 		s.peersLock.RLock()
 		for _, peer := range s.peers {
@@ -655,20 +750,9 @@ func (s *Sidecar) processVideoRTP() {
 }
 
 func (s *Sidecar) processAudioRTP() {
-	var lastTS uint32
-	haveTS := false
-
-	for pkt := range s.audioQueue {
-		if !haveTS || pkt.Timestamp != lastTS {
-			now := time.Now()
-			extraDelay := s.computeTrackDelay("audio", pkt.Timestamp, now)
-			if extraDelay > 0 {
-				time.Sleep(extraDelay)
-			}
-			lastTS = pkt.Timestamp
-			haveTS = true
-		}
-
+	for q := range s.audioQueue {
+		s.waitToSend("audio", q)
+		pkt := q.pkt
 		s.peersLock.RLock()
 		for _, peer := range s.peers {
 			peer.mu.Lock()
@@ -938,21 +1022,21 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 			now := time.Now()
 			ntpNow := toNTPTime(now)
 
-			videoTs := uint32(atomic.LoadUint64(&s.lastVideoRTPTs))
-			audioTs := uint32(atomic.LoadUint64(&s.lastAudioRTPTs))
+			videoTs, videoOK := s.senderReportRTPTime("video", now)
+			audioTs, audioOK := s.senderReportRTPTime("audio", now)
 			vidPkts := uint32(atomic.LoadUint64(&s.videoPktCount))
 			vidOctets := uint32(atomic.LoadUint64(&s.videOctetCount))
 			audPkts := uint32(atomic.LoadUint64(&s.audioPktCount))
 			audOctets := uint32(atomic.LoadUint64(&s.audioOctetCount))
 
-			if videoTs == 0 && audioTs == 0 {
+			if !videoOK && !audioOK {
 				continue
 			}
 
 			srCount++
 
 			// Send video SR + SDES
-			if peer.VideoSSRC != 0 {
+			if peer.VideoSSRC != 0 && videoOK {
 				err := peer.PC.WriteRTCP([]rtcp.Packet{
 					&rtcp.SenderReport{
 						SSRC:        peer.VideoSSRC,
@@ -974,12 +1058,12 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 				if srCount <= 5 || srCount%30 == 0 {
 					log.Printf("[SR] Peer %s video SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, peer.VideoSSRC, videoTs, err)
 				}
-			} else if srCount <= 5 {
+			} else if peer.VideoSSRC == 0 && srCount <= 5 {
 				log.Printf("[SR] Peer %s video SSRC still 0 — skipping SR", peer.ID)
 			}
 
 			// Send audio SR + SDES with SAME NTP time and SAME CNAME
-			if peer.AudioSSRC != 0 {
+			if peer.AudioSSRC != 0 && audioOK {
 				err := peer.PC.WriteRTCP([]rtcp.Packet{
 					&rtcp.SenderReport{
 						SSRC:        peer.AudioSSRC,
@@ -1001,7 +1085,7 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 				if srCount <= 5 || srCount%30 == 0 {
 					log.Printf("[SR] Peer %s audio SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, peer.AudioSSRC, audioTs, err)
 				}
-			} else if srCount <= 5 {
+			} else if peer.AudioSSRC == 0 && srCount <= 5 {
 				log.Printf("[SR] Peer %s audio SSRC still 0 — skipping SR", peer.ID)
 			}
 		}
