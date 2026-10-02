@@ -25,6 +25,7 @@ import { generateIdentity } from '../src/voice/tslib/identity.js';
 import { buildCommand, type ParsedCommand } from '../src/voice/tslib/commands.js';
 
 const MAX_AVATAR_BYTES = 200 * 1024;
+const FT_TIMEOUT_MS = 15_000;
 
 function generatedPng(size = 128): Buffer {
   const crcTable = Array.from({ length: 256 }, (_, n) => {
@@ -98,6 +99,24 @@ async function waitFor(match: (cmd: ParsedCommand) => boolean, ms = 10_000): Pro
 
 const isError = (code: string) => (cmd: ParsedCommand) => cmd.name === 'error' && cmd.params.return_code === code;
 
+/**
+ * Size of this client's stored avatar, or null if the server has none. The
+ * server names it `avatar_` + the unique ID's bytes as letters a-p (one per nibble).
+ */
+async function storedAvatarSize(): Promise<number | null> {
+  client.sendCommand(buildCommand('clientgetuidfromclid', { clid: String(client.getClientId()), return_code: 'avatar-uid' }));
+  const uidReply = await waitFor((cmd) => cmd.name === 'notifyclientuidfromclid' || (isError('avatar-uid')(cmd) && cmd.params.id !== '0'));
+  const uid = uidReply?.name === 'notifyclientuidfromclid' ? uidReply.params.cluid : null;
+  if (!uid) throw new Error(`Could not read this client's unique ID: ${JSON.stringify(uidReply?.params ?? 'no reply')}`);
+
+  const name = '/avatar_' + [...Buffer.from(uid, 'base64')]
+    .map((b) => String.fromCharCode(97 + (b >> 4), 97 + (b & 15)))
+    .join('');
+  client.sendCommand(buildCommand('ftgetfileinfo', { cid: '0', cpw: '', name, return_code: 'avatar-info' }));
+  const info = await waitFor((cmd) => cmd.name === 'notifyfileinfo' || (isError('avatar-info')(cmd) && cmd.params.id !== '0'));
+  return info?.name === 'notifyfileinfo' ? Number(info.params.size) : null;
+}
+
 async function main(): Promise<void> {
   const avatar = loadAvatar();
   const md5 = crypto.createHash('md5').update(avatar).digest('hex');
@@ -123,15 +142,31 @@ async function main(): Promise<void> {
   }
 
   const port = Number(start.params.port) || Number(process.env.TS_FT_PORT || 30033);
+  const expectedBytes = Buffer.byteLength(start.params.ftkey) + avatar.length;
   await new Promise<void>((resolve, reject) => {
     const socket = net.connect(port, host!, () => {
       socket.write(start.params.ftkey);
       socket.end(avatar);
     });
-    socket.on('close', () => resolve());
+    // Node sockets have no default timeout: give up if the transfer stalls.
+    socket.setTimeout(FT_TIMEOUT_MS, () => socket.destroy(new Error(`File transfer stalled for ${FT_TIMEOUT_MS / 1000} s`)));
     socket.on('error', reject);
+    socket.on('close', (hadError) => {
+      if (hadError) return; // 'error' already rejected
+      if (socket.bytesWritten < expectedBytes) {
+        reject(new Error(`File transfer closed after ${socket.bytesWritten} of ${expectedBytes} bytes`));
+      } else {
+        resolve();
+      }
+    });
   });
-  console.log(`Uploaded ${avatar.length} bytes over file-transfer port ${port}.`);
+
+  // A closed socket is not proof of success: ask the server for the stored file.
+  const stored = await storedAvatarSize();
+  if (stored !== avatar.length) {
+    throw new Error(`Upload did not complete: the server has ${stored ?? 'no'} avatar bytes, expected ${avatar.length}`);
+  }
+  console.log(`Uploaded ${avatar.length} bytes over file-transfer port ${port} (server confirmed).`);
 
   client.sendCommand(buildCommand('clientupdate', { client_flag_avatar: md5, return_code: 'avatar-flag' }));
   const flag = await waitFor(isError('avatar-flag'));
