@@ -54,11 +54,11 @@ The values below are code defaults. Compose files may override them.
 | `WEBRTC_NAT1TO1_IP` | unset | Comma-separated **IPv4** addresses advertised as ICE **host** candidates (replaces container-private addresses). This is what the **browser** must be able to reach. IPv6 is rejected — the mux binds `udp4` only. Pair with `WEBRTC_UDP_PORT` and a published UDP mapping. `docker-compose.pr-test.yml` defaults to `127.0.0.1` for **same-host** browsers only. For LAN/Tailscale clients use that reachable IPv4; for a public-NAT browser use the public IPv4 (and forward UDP to the host). Do not advertise `127.0.0.1` to remote clients. The same addresses are offered to **TeamSpeak viewers**, and the TeamSpeak client does not connect to `127.0.0.1` even on the Docker host: to watch in TeamSpeak, add the host's LAN or Tailscale IPv4 (for example `127.0.0.1,192.168.1.20`) and publish the port on it. |
 | `WEBRTC_BIND_IP` | `127.0.0.1` (compose) | Local Docker **host** address for the published UDP mapping (compose only; not a sidecar env). Distinct from `WEBRTC_NAT1TO1_IP`: bind can stay on a host/LAN address (or `0.0.0.0` if you accept broader exposure) while NAT1To1 advertises the address clients dial. Defaults to loopback for same-host preview. Example (public NAT): advertise `WEBRTC_NAT1TO1_IP=<public-ipv4>`, bind `WEBRTC_BIND_IP=0.0.0.0` (or the host LAN IP), publish `${WEBRTC_BIND_IP}:${WEBRTC_UDP_PORT}:…/udp`, and forward that UDP port from the public IP to the Docker host. |
 | `MUSIC_DIR` | `/data/music` | Shared media directory |
-| `VIDEO_QUEUE_SIZE` | `1024` | Video RTP queue |
+| `VIDEO_QUEUE_SIZE` | `4096` | Video RTP queue (packets); holds `SYNC_MAX_DELAY_MS` of a 4K stream |
 | `AUDIO_QUEUE_SIZE` | `2048` | Audio RTP queue |
-| `SYNC_PLAYOUT_BUFFER_MS` | `50` | Adaptive pacing buffer |
+| `SYNC_PLAYOUT_BUFFER_MS` | `50` | Playout buffer added to both tracks on top of the later track's latency |
 | `SYNC_VIDEO_BIAS_MS` | `0` | Optional video holdback |
-| `SYNC_MAX_DELAY_MS` | `500` | Sync delay clamp |
+| `SYNC_MAX_DELAY_MS` | `1000` | The most one track is held back to meet the other, and how long the first track waits for the other to start |
 | `AUDIO_DELAY_MS` | `0` | Optional manual audio delay |
 | `SIDECAR_DEBUG_LOGS` | `0` | Verbose sidecar logs when set to `1` |
 | `SIDECAR_EGRESS_PROXY` | on | `off` lets ffmpeg connect to remote sources directly, without checking redirects and HLS segment hosts. Not recommended; the backend still checks the first URL. The checking proxy ignores `http_proxy`/`HTTPS_PROXY`, so a sidecar that can only reach the internet through an outbound proxy needs `off` |
