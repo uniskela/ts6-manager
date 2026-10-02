@@ -616,6 +616,53 @@ describe('video source probe', () => {
     assert.deepEqual(volumes, [20], 'an unchanged level does not restart again');
   });
 
+  it('a volume restart racing a source change never restarts the old source', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    const sent: string[] = [];
+    b._appliedVideoVolume = 50;
+    b._videoSource = 'http://example.com/old.ts';
+    b._videoSourceMode = 'live';
+    b._videoPreset = '720p';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoQuality = {
+      requested: '720p', actual: '720p', width: 1280, height: 720, sourceWidth: null, sourceHeight: null, note: null,
+    };
+    let openSource!: () => void;
+    const sourceReady = new Promise<void>((r) => { openSource = r; });
+    b.resolveStreamSource = async (src: string) => {
+      await sourceReady;
+      return { path: src, loop: false, durationSec: null };
+    };
+    b.sidecarHttp.setSource = async (path: string, opts: { volume?: number }) => {
+      sent.push(`${path}@${opts.volume}`);
+      return { requested: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, state: 'running' };
+    };
+    // The new source goes to the sidecar at the level current when it is sent;
+    // a change after that point must still reach the encoder afterwards.
+    b.applyVideoSource = async (src: string) => {
+      const vol = b._videoStreamVolume;
+      sent.push(`${src}@${vol}`);
+      await bot.applyVolume(10);
+      b._appliedVideoVolume = vol;
+    };
+
+    // A restart for 20 is resolving the old source when the change begins.
+    const push = bot.applyVolume(20);
+    await Promise.resolve();
+    const change = bot.setVideoSource('http://example.com/new.ts');
+    openSource();
+    await push;
+    await change;
+    await b._volumePushTail;
+
+    assert.equal(sent.some((s) => s.startsWith('http://example.com/old.ts')), false, `old source restarted: ${sent.join(',')}`);
+    assert.deepEqual(sent, ['http://example.com/new.ts@20', 'http://example.com/new.ts@10']);
+    assert.equal(b._appliedVideoVolume, 10);
+  });
+
   it('treats a failed sidecar probe as unknown without logging the URL', async () => {
     const bot = makeBot();
     const b = bot as any;

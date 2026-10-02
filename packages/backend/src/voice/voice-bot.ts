@@ -222,6 +222,8 @@ export class VoiceBot extends EventEmitter {
   private _volumePushWanted: number | null = null;
   private _volumePushActive = false;
   private _volumePushTail: Promise<void> = Promise.resolve();
+  /** A source change owns the sidecar; volume restarts wait for it to finish. */
+  private _videoSourceChanging = false;
   private autoStopTimer: ReturnType<typeof setInterval> | null = null;
   private autoStopEmptySince: number | null = null;
 
@@ -1192,7 +1194,8 @@ export class VoiceBot extends EventEmitter {
 
   /** True while a volume change may restart the running encode. */
   private canPushVideoVolume(): boolean {
-    return this._videoStreaming && !this._videoStopping && !!this.sidecarHttp && !!this._videoSource;
+    return this._videoStreaming && !this._videoStopping && !this._videoSourceChanging
+      && !!this.sidecarHttp && !!this._videoSource;
   }
 
   private scheduleVideoVolumePush(): Promise<void> {
@@ -1252,8 +1255,9 @@ export class VoiceBot extends EventEmitter {
       sourcePath = resolved.path;
       loop = resolved.loop;
     }
-    // Source resolution can take a while; a stop that began meanwhile owns the
-    // sidecar now, and a /source here would restart ffmpeg after it stopped.
+    // Source resolution can take a while; a stop or source change that began
+    // meanwhile owns the sidecar now, and a /source here would restart ffmpeg
+    // after the stop, or on the old source.
     if (!this.canPushVideoVolume()) return;
     const mode: VideoSourceMode = /^https?:\/\//i.test(sourcePath) ? (this._videoSourceMode ?? 'vod') : 'file';
     await this.sendSourceToSidecar(sourcePath, loop && mode === 'file', quality, mode);
@@ -2162,15 +2166,29 @@ export class VoiceBot extends EventEmitter {
     if (!this._videoStreaming || !this.sidecarHttp) {
       throw new Error('No active video stream');
     }
-    // A new source is a new kind of input: default back to detection, and it
-    // only gets the LAN allowance its own caller grants.
-    this._videoSourceModeRequest = sourceMode ?? 'auto';
-    this._videoLocalHosts = localHosts;
-    if (volume != null) {
-      this.assignSharedVolume(volume);
+    this._videoSourceChanging = true;
+    try {
+      // A volume restart still resolving the old source would post it after
+      // this change; with the flag set it stops before /source. Let it finish.
+      if (this._volumePushActive) await this._volumePushTail;
+      if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp) {
+        throw new Error('No active video stream');
+      }
+      // A new source is a new kind of input: default back to detection, and it
+      // only gets the LAN allowance its own caller grants.
+      this._videoSourceModeRequest = sourceMode ?? 'auto';
+      this._videoLocalHosts = localHosts;
+      if (volume != null) {
+        this.assignSharedVolume(volume);
+      }
+      this._videoSource = source;
+      await this.applyVideoSource(source, this._videoQuality?.requested ?? this._videoPreset);
+    } finally {
+      this._videoSourceChanging = false;
     }
-    this._videoSource = source;
-    await this.applyVideoSource(source, this._videoQuality?.requested ?? this._videoPreset);
+    // A level set during the change was only saved; apply it to the new
+    // source now. No-op when the new encode already has it.
+    this.reportVolumeFailure(this.scheduleVideoVolumePush());
     console.log(`[VoiceBot ${this.config.id}] Video source changed`);
     this.emit('videoSourceChanged', source);
   }
