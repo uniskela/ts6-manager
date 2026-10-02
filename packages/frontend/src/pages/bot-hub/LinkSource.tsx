@@ -33,26 +33,37 @@ export function LinkSource({ botId }: ConsoleSourceContext) {
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
 
-  const allowMusic = musicPlayAllowed(input);
-  const effectiveMode: LinkPlayMode = mode === 'music' && !allowMusic ? 'video' : mode;
+  const trimmed = input.trim();
+  // Empty input keeps music selectable (default); only a non-URL value disables it.
+  const allowMusic = !trimmed || musicPlayAllowed(input);
+  const effectiveMode: LinkPlayMode = mode === 'music' && trimmed && !musicPlayAllowed(input) ? 'video' : mode;
   const busy = playUrl.isPending || startVideo.isPending;
-  const error = playUrl.error ?? startVideo.error;
-  const canStart = input.trim().length > 0 && !busy;
+  const error = effectiveMode === 'video' ? startVideo.error : playUrl.error;
+  const canStart = trimmed.length > 0 && !busy;
 
   useEffect(() => {
-    if (!allowMusic && mode === 'music') setMode('video');
-  }, [allowMusic, mode]);
+    if (trimmed && !musicPlayAllowed(input) && mode === 'music') setMode('video');
+  }, [input, trimmed, mode]);
+
+  useEffect(() => {
+    if (mode === 'music') startVideo.reset();
+    else playUrl.reset();
+    // Clear the other mode's error when the user switches Play as music / Stream as video.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only on mode change
+  }, [mode]);
 
   const onStart = () => {
     if (!canStart) return;
     const request = buildLinkStartRequest(input, effectiveMode, options);
     if (request.endpoint === 'play-url') {
+      startVideo.reset();
       playUrl.mutate(
         { botId, url: request.body.url },
         { onSuccess: () => toastMediaStarted('Playing URL') },
       );
       return;
     }
+    playUrl.reset();
     startVideo.mutate(
       { botId, ...request.body },
       { onSuccess: () => toastMediaStarted('Video stream started') },
