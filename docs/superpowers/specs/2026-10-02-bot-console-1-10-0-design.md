@@ -37,8 +37,9 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | Media scope | Shared by all bots on a server, never per bot. Playlists drop their per-bot filter |
 | Custom chat commands | Move to Bot Flows → Chat commands, with a read-only list of built-in commands and name clash warnings |
 | Refactors in 1.10.0 | R1 shared URL pipeline, R2 split `MusicBots.tsx`, R3 split chat handler (R3 runs last and may slip to 1.10.x) |
-| Cut line | Must-have for 1.10.0: console, its tabs, the restructure, shared playlists, auto-stop notices, R1, R2. May slip to 1.10.x: IPTV favourites + recent, IPTV country/language, R3 |
+| Cut line | Must-have for 1.10.0: console, its tabs, the restructure, shared playlists, auto-stop notices, R1, R2. May slip to 1.10.x: IPTV favourites + recent, IPTV country/language, bot avatars, R3 |
 | Command permissions | Not in 1.10.0. Planned for 1.11.0 in #254, with the listener remote (#253), which depends on them |
+| Bot avatars | Per-bot avatar plus a default for new bots, set in the console's bot settings. Can slip. TS6 support confirmed in #259 |
 | NVENC | #238 stays a separate contributor PR. Merge it before PR 5 (both touch `VideoStreamSettings` and the Streaming defaults card); the smoke checklist covers NVENC |
 
 ## 1. Structure and navigation
@@ -157,6 +158,18 @@ When a video replaces music, the backend keeps the queue (`clearPlayback` does n
 
 Radio plays until stopped (`playStream` does not touch the queue). Like music, it stops by itself when the bot's channel is empty for `BOT_AUTO_STOP_EMPTY_SECONDS` (default 300).
 
+### Bot avatars
+
+TeamSpeak 6 beta13 shows avatars set the TeamSpeak 3 way for a bot identity without a myTeamSpeak account (tested in #259 with `scripts/bot-avatar-test.ts`, #261): upload the image with `ftinitupload name=/avatar cid=0`, then `clientupdate client_flag_avatar=<md5 of image>`.
+
+- **Bot settings** (console header menu) gain **Avatar**: upload an image, use the default, or none.
+- **Files:** PNG, JPEG or GIF, at most 200 KB, checked by content (magic bytes), not by extension. No server-side resizing.
+- **Default avatar:** a ts6-manager image shipped with the backend. New bots start with **Use default**; existing bots start with **None**, so upgrading changes nothing they show.
+- **Applying it:** on every connect the bot re-sends `client_flag_avatar`, and uploads the file only when the server does not already have it (`ftgetfileinfo`). Choosing **None** sends an empty `client_flag_avatar` and deletes the uploaded file (`ftdeletefile`). `ftgetfileinfo` and `ftdeletefile` are not yet tested on TS6: if either is refused, upload on every connect and leave the old file in place.
+- **Refused upload** (for example error 2568 when the bot's server group may not upload files): the bot stays connected, the settings show "TeamSpeak refused the avatar upload. Allow file uploads for the bot's server group, or choose None.", and the hub card shows no avatar.
+- **Web UI:** Bot Hub cards and the console header show the same image, served from the backend, whether or not TeamSpeak accepted it.
+- Query clients (Bot Flows connections) get no avatar: they are hidden from the channel tree.
+
 ### Video options
 
 Start from the server's streaming defaults. Changes apply to that one start only and never save over the defaults.
@@ -200,11 +213,13 @@ All new routes use the same middleware as the routes they sit beside (`requireSe
 6. `PUT /radio-stations/:id`: edit name, URL and genre, with the same `validateUrl` check as adding a station.
 7. `GET /playlists`: optional `serverConfigId` filter; chat `!playlist` stops filtering by `musicBotId`.
 8. **Auto-stop notices** (`voice-bot.ts`): when a channel-empty or no-viewer auto-stop fires, the bot posts one line in its channel chat ("Stopped radio: the channel was empty for 5 minutes." / "Stopped the stream: nobody watched for 5 minutes."). For video, `refreshNoViewerTimer` also schedules a warning 60 s before the stop ("Nobody is watching. The stream stops in 1 minute."); it is cancelled if a viewer joins. Skipped when the no-viewer timeout is 60 s or less. All notices go through `sendChannelMessage`, so the existing 524 flood hold applies. Controlled by a per-server **Announce auto-stops in chat** switch (default on) stored with the streaming defaults in `AppSetting`; no migration.
-9. Chat command clash check: a read-only list of built-in command names exposed to the frontend (shared constant in `@ts6/common`, no new route).
+9. **Bot avatars:** `PUT /api/music-bots/:id/avatar` (multipart, one file) stores the image and applies it if the bot is connected; `PUT /api/music-bots/:id/avatar/mode` with `{ mode: 'custom' | 'default' | 'none' }`; `GET /api/music-bots/:id/avatar` serves the current image (or 404 for none) with `Cache-Control: private`. Admin only, audited like other bot settings. Images are stored under the backend data directory as `bot-avatars/<botId>.<ext>`, never at a client-supplied path.
+10. Chat command clash check: a read-only list of built-in command names exposed to the frontend (shared constant in `@ts6/common`, no new route).
 
 ### Data model changes (SQLite, Prisma migrations)
 
 - `IptvChannel`: add nullable `tvgCountry` and `tvgLanguage`; the M3U parser stores them.
+- `MusicBot`: add `avatarMode` (`'none' | 'default' | 'custom'`, default `'none'` for existing rows; new bots created from the UI get `'default'`), `avatarFile` (nullable, relative name under `bot-avatars/`) and `avatarMd5` (nullable).
 - New `IptvChannelPick`: `serverConfigId`, `playlistId`, `channelKey`, `name` (for display when the channel has gone), `favourite` (boolean), `lastStreamedAt` (nullable). Unique on `serverConfigId` + `playlistId` + `channelKey`. Cascades when its server or playlist is deleted. One table holds both favourites and recents.
 
 ## 3. Refactors
@@ -254,6 +269,7 @@ Must-have PRs ship in 1.10.0. "Can slip" PRs ship in 1.10.0 if ready, otherwise 
 | 14 | `feat:` Bot Hub becomes the bot list; Media Library 5 tabs; IPTV "Stream on…"; redirects | 8, 9, 10, 13 | must |
 | 15 | `docs:` / `test:` docs, Playwright, upgrade note, 1.10.0 smoke checklist | 14 | must |
 | 16 | `refactor:` split chat handler (R3) | 2, 4, 5, 13 | can slip |
+| 17 | `feat:` bot avatars (per-bot, default for new bots, re-applied on connect) | 7 | can slip |
 
 PRs 1–6 have no dependencies and can run side by side. R3 runs last because PRs 2, 4, 5 and 13 all edit `music-command-handler.ts` or `voice-bot.ts`; splitting that file in parallel would cause constant conflicts.
 
@@ -266,6 +282,8 @@ PR 14 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!`
 **Unit (frontend):** source-to-request mapping for each tab (Music views, Link as music vs video, filename vs URL, Radio, IPTV, video options); the redirect table; the `?iptv=` deep link pre-selects but never starts, and handles a stale key.
 
 **Unit (backend):** R1 characterization tests (web and chat); `/songs/search` paging and `/songs` unchanged; new routes refuse a server the account has no access to; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; auto-stop notices fire once per stop, the video warning fires 60 s early and is cancelled when a viewer joins, nothing is sent when the switch is off, and notices respect the flood hold; `GET /playlists` filters by server and chat `!playlist` lists every playlist on the server regardless of `musicBotId`; R3 keeps existing chat command tests green.
+
+**Unit (backend), avatars:** content-type sniffing rejects a renamed non-image and files over 200 KB; upload, flag and delete commands are sent in order; reconnect re-sends the flag and skips the upload when the server has the file; a 2568 refusal keeps the bot connected and records the message; `None` clears the flag and deletes the file; images are written only under `bot-avatars/`.
 
 **Unit (frontend), commands:** clash detection across custom replies, flow command triggers and built-in names.
 
@@ -280,7 +298,8 @@ PR 14 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!`
 - `docs/video-streaming.md` and the IPTV section: starting from the console; filename sources via the Link tab.
 - `docs/video-streaming.md` and `docs/music-bots.md`: auto-stop chat notices, the 1-minute video warning and the switch that turns them off.
 - `docs/roadmap.md`: 1.10.0 entry.
-- `docs/upgrading.md`: back up the database before upgrading to 1.10.0 (two SQLite migrations: IPTV country/language columns and `IptvChannelPick`).
+- `docs/music-bots.md`: bot avatars, the default avatar, and the server-group file-upload permission they need.
+- `docs/upgrading.md`: back up the database before upgrading to 1.10.0 (SQLite migrations: IPTV country/language columns, `IptvChannelPick` and the `MusicBot` avatar columns).
 - New `docs/plans/164-1-10-0-rc-smoke.md`, run in the homelab before the release PR merges (VAAPI on the AMD GPU; NVENC if #238 lands).
 
 ## Acceptance
@@ -297,5 +316,6 @@ PR 14 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!`
 - [ ] Every bot on a server sees the same songs, playlists, radio stations and IPTV channels, in the console and in chat.
 - [ ] A clashing command name shows a warning on the Chat commands tab and in the flow editor.
 - [ ] The console is usable at phone width.
+- [ ] (can slip) A bot's avatar set in the console shows in the TeamSpeak 6 client after connect and after a reconnect; new bots get the default; a refused upload shows the message and the bot stays connected.
 - [ ] R1 and R2 land with no behaviour change (characterization tests and existing tests green).
 - [ ] Docs, the upgrade backup note and the 1.10.0 smoke checklist cover the release.
