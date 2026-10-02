@@ -4,7 +4,7 @@
  * start/stop, and viewer management.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { VideoEncoderRequest, VideoQualityRequest, VideoSourceModeRequest } from '@ts6/common';
 import { VideoPlayer } from './VideoPlayer';
@@ -79,9 +79,10 @@ export function VideoStreamTab({ botId, botStatus, botVolume, server }: VideoStr
   const [sourceMode, setSourceMode] = useState<VideoSourceModeRequest>('auto');
   const [framerate, setFramerate] = useState('30');
   const [bitrate, setBitrate] = useState('');
-  const [streamVolume, setStreamVolume] = useState(botVolume ?? 100);
-  const botVolumeRef = useRef(botVolume);
-  botVolumeRef.current = botVolume;
+  // Unsaved slider position. Null follows the saved bot volume, so a !vol or
+  // Bot Hub change made after this page opened is not overwritten on Start.
+  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const streamVolume = volumeDraft ?? botVolume ?? 100;
 
   const isAdmin = useAuthStore((state) => state.isAdmin());
   const { data: globalDefaults } = useVideoStreamingSettings();
@@ -98,21 +99,25 @@ export function VideoStreamTab({ botId, botStatus, botVolume, server }: VideoStr
   const isBotConnected = botStatus === 'connected' || botStatus === 'playing' || botStatus === 'paused';
   const now = useNow(isStreaming);
 
-  // Reset when switching bots. Do not follow later prop updates: a drag that
-  // has not been saved yet must not snap back to the previous saved level.
+  // Drop the draft when switching bots or when the saved level changes (this
+  // slider's own save, or !vol elsewhere). The bot list polls, but an
+  // unchanged level does not re-run this, so a drag in progress stays put.
   useEffect(() => {
-    setStreamVolume(botVolumeRef.current ?? 100);
-  }, [botId]);
+    setVolumeDraft(null);
+  }, [botId, botVolume]);
 
   const onVolumeChange = (val: number) => {
-    setStreamVolume(val);
+    setVolumeDraft(val);
   };
 
   const onVolumeCommit = (val: number) => {
-    setStreamVolume(val);
+    setVolumeDraft(val);
     // Commit on release. Sending every drag step restarts ffmpeg and cuts the audio.
     if (isStreaming) {
-      setStreamVolumeMut.mutate({ botId, volume: val });
+      setStreamVolumeMut.mutate(
+        { botId, volume: val },
+        { onError: (err) => toast.error(apiErrorMessage(err, 'Failed to set stream volume')) },
+      );
     }
   };
 
@@ -128,7 +133,8 @@ export function VideoStreamTab({ botId, botStatus, botVolume, server }: VideoStr
         sourceMode,
         framerate: Number(framerate),
         bitrate: bitrate.trim() || undefined,
-        volume: streamVolume,
+        // Only a moved slider overrides; otherwise the bot keeps its saved level.
+        volume: volumeDraft ?? undefined,
       },
       {
         onSuccess: () => toastMediaStarted('Video stream started'),

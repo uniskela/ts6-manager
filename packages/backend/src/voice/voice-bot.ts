@@ -424,10 +424,7 @@ export class VoiceBot extends EventEmitter {
     if (nextVolume != null) {
       // Apply after the other fields so a non-finite volume cannot replace
       // the current level before it is clamped.
-      void this.applyVolume(nextVolume).catch((err) => {
-        console.error(`[VoiceBot ${this.config.id}] Volume apply failed: ${err?.message ?? err}`);
-        this.emit('error', err instanceof Error ? err : new Error(String(err)));
-      });
+      this.reportVolumeFailure(this.applyVolume(nextVolume));
     }
   }
 
@@ -1182,7 +1179,12 @@ export class VoiceBot extends EventEmitter {
   }
 
   setVolume(volume: number): void {
-    void this.applyVolume(volume).catch((err) => {
+    this.reportVolumeFailure(this.applyVolume(volume));
+  }
+
+  /** Fire-and-forget volume work: log a failed stream restart instead of dropping it. */
+  private reportVolumeFailure(work: Promise<void>): void {
+    void work.catch((err) => {
       console.error(`[VoiceBot ${this.config.id}] Volume apply failed: ${err?.message ?? err}`);
       this.emit('error', err instanceof Error ? err : new Error(String(err)));
     });
@@ -2033,6 +2035,10 @@ export class VoiceBot extends EventEmitter {
     this._videoStreaming = true;
     this._videoStartedAt = Date.now();
     this._videoStartAbortError = null;
+    // A !vol or slider change while the stream was starting only updated the
+    // saved level, because no push runs before streaming. Apply it now; this
+    // is a no-op when the encoder already has that level.
+    this.reportVolumeFailure(this.scheduleVideoVolumePush());
     // End-stop was deferred while preparing; arm it now that the stream is live.
     if (!this._videoLoop && this._videoDurationSec != null) {
       this.scheduleVideoEndStop(this._videoDurationSec);

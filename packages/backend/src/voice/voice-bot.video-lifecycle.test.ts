@@ -540,6 +540,40 @@ describe('video source probe', () => {
     await assert.rejects(() => bot.setVideoStreamVolume(Number.NaN), /volume must be a number/);
   });
 
+  it('pushes a level set during stream startup once the stream is live', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    const volumes: number[] = [];
+    // Prepare phase: the sidecar already encodes at 50, TeamSpeak has not confirmed.
+    b._videoStreaming = false;
+    b._appliedVideoVolume = 50;
+    b._videoSource = 'http://example.com/live.ts';
+    b._videoSourceMode = 'live';
+    b._videoPreset = '720p';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoQuality = {
+      requested: '720p', actual: '720p', width: 1280, height: 720, sourceWidth: null, sourceHeight: null, note: null,
+    };
+    b.resolveStreamSource = async () => ({ path: b._videoSource, loop: false, durationSec: null });
+    b.sidecarHttp.setSource = async (_path: string, opts: { volume?: number }) => {
+      volumes.push(opts.volume ?? -1);
+      return { requested: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, state: 'running' };
+    };
+
+    await bot.applyVolume(20);
+    assert.deepEqual(volumes, [], 'no restart before the stream is live');
+    assert.equal(bot.currentConfig.volume, 20);
+
+    // Same call startVideoStreamClaimed makes right after _videoStreaming = true.
+    b._videoStreaming = true;
+    await b.scheduleVideoVolumePush();
+    assert.deepEqual(volumes, [20]);
+    await b.scheduleVideoVolumePush();
+    assert.deepEqual(volumes, [20], 'an unchanged level does not restart again');
+  });
+
   it('treats a failed sidecar probe as unknown without logging the URL', async () => {
     const bot = makeBot();
     const b = bot as any;
