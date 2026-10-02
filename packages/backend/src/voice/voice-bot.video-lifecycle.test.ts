@@ -174,6 +174,63 @@ describe('video no-viewer auto-stop', () => {
     assert.equal(bot.videoStreaming, false);
     assert.equal(bot.currentConfig.volume, 10);
   });
+
+  function changingBot() {
+    const bot = makeBot();
+    const { b, sidecarCalls } = fakeStreaming(bot, 0);
+    const log: string[] = [];
+    const gates = new Map<string, () => void>();
+    b._videoSource = 'http://example.com/old.ts';
+    b.applyVideoSource = async (src: string) => {
+      log.push(`start:${src}`);
+      await new Promise<void>((r) => gates.set(src, r));
+      log.push(`end:${src}`);
+      sidecarCalls.push(`setSource:${src}`);
+      b._appliedVideoVolume = b._videoStreamVolume; // as sendSourceToSidecar records it
+    };
+    const settle = async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); };
+    return { bot, b, sidecarCalls, log, gates, settle };
+  }
+
+  it('a stop waits for the running source change and drops queued ones', async () => {
+    const { bot, sidecarCalls, log, gates, settle } = changingBot();
+    const first = bot.setVideoSource('a');
+    const queued = bot.setVideoSource('b');
+    const queuedResult = queued.then(() => 'ok', (err: Error) => err.message);
+    await settle();
+
+    const stop = bot.stopVideoStream('manual', 'Stopped from the web UI');
+    await settle();
+    assert.equal(sidecarCalls.includes('stopSource'), false, 'stop waits for the change in flight');
+    await assert.rejects(() => bot.setVideoSource('c'), /No active video stream/);
+
+    gates.get('a')!();
+    await first;
+    await settle();
+    mock.timers.tick(1_000);
+    await stop;
+
+    assert.deepEqual(log, ['start:a', 'end:a'], 'the queued change never runs');
+    assert.match(await queuedResult, /No active video stream/);
+    assert.ok(sidecarCalls.indexOf('setSource:a') < sidecarCalls.indexOf('stopSource'), sidecarCalls.join(','));
+    assert.equal(bot.videoStreaming, false);
+  });
+
+  it('a queued source change never reaches a replacement stream', async () => {
+    const { bot, b, log, gates, settle } = changingBot();
+    const first = bot.setVideoSource('a');
+    const queued = bot.setVideoSource('b');
+    const queuedResult = queued.then(() => 'ok', (err: Error) => err.message);
+    await settle();
+    // The sidecar exits and a new stream starts before the queue drains.
+    b._activeStreamId = 'stream-2';
+    gates.get('a')!();
+    await first;
+    await settle();
+
+    assert.deepEqual(log, ['start:a', 'end:a']);
+    assert.match(await queuedResult, /No active video stream/);
+  });
 });
 
 describe('video encode health (#72)', () => {

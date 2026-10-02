@@ -2103,6 +2103,9 @@ export class VoiceBot extends EventEmitter {
       // stopSource, so it cannot start ffmpeg again after the stop.
       this._volumePushWanted = null;
       if (this._volumePushActive) await this._volumePushTail;
+      // Same for a source change: the running one finishes before stopSource;
+      // queued ones see the stop and drop out without touching the sidecar.
+      if (this._videoSourceChangesPending > 0) await this._videoSourceChangeTail;
 
       // Remove all viewers from TS6 stream first
       if (this.signaling && this._activeStreamId) {
@@ -2164,14 +2167,16 @@ export class VoiceBot extends EventEmitter {
     sourceMode?: VideoSourceModeRequest,
     localHosts: string[] = [],
   ): Promise<void> {
-    if (!this._videoStreaming || !this.sidecarHttp) {
+    if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp) {
       throw new Error('No active video stream');
     }
     // Changes run one at a time, so two cannot drive the sidecar at once. The
     // count blocks volume restarts from now until the last queued change ends.
+    // A queued change belongs to this stream and is dropped if it ends.
+    const streamId = this._activeStreamId;
     this._videoSourceChangesPending++;
     const run = this._videoSourceChangeTail
-      .then(() => this.changeVideoSource(source, volume, sourceMode, localHosts))
+      .then(() => this.changeVideoSource(streamId, source, volume, sourceMode, localHosts))
       .finally(() => { this._videoSourceChangesPending--; });
     this._videoSourceChangeTail = run.catch(() => { /* the caller reports it */ });
     try {
@@ -2185,6 +2190,7 @@ export class VoiceBot extends EventEmitter {
   }
 
   private async changeVideoSource(
+    streamId: string | null,
     source: string,
     volume: number | undefined,
     sourceMode: VideoSourceModeRequest | undefined,
@@ -2193,7 +2199,7 @@ export class VoiceBot extends EventEmitter {
     // A volume restart still resolving the old source would post it after
     // this change; with a change pending it stops before /source. Let it finish.
     if (this._volumePushActive) await this._volumePushTail;
-    if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp) {
+    if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp || this._activeStreamId !== streamId) {
       throw new Error('No active video stream');
     }
     const previous = {
