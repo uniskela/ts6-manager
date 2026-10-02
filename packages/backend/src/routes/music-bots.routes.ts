@@ -3,24 +3,16 @@ import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import type { VoiceBot } from '../voice/voice-bot.js';
-import { downloadYouTube, resolveSpotifyToYouTube, expandYouTubeToWatchUrls, isYouTubeHostUrl, parseYouTubeUrl } from '../voice/audio/youtube.js';
-import { isYouTubePlaylistUrl } from '../voice/audio/playlist-import-plan.js';
-import {
-  appleMusicTrackToYouTubeUrl,
-  isAppleMusicShareUrl,
-  resolveAppleMusicTracks,
-  type AppleMusicTrack,
-} from '../voice/audio/apple-music.js';
 import { serializeCommandChannelIds, parseCommandChannelIds } from '../voice/music-command-channels.js';
 import { playerWidgetToken } from './widget-public.routes.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
+import { defaultMediaUrlDeps, runMediaUrlPipeline } from '../voice/media-url-pipeline.js';
+import type { QueueItem } from '../voice/playlist/queue.js';
 import type { BotMediaOverview } from '@ts6/common';
 
 export const musicBotRoutes: Router = Router();
-
-const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
 /**
  * TeamSpeak refuses a nickname outside 3-30 characters at connect (error 1541),
@@ -371,55 +363,6 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       throw new AppError(400, 'Bot is not connected');
     }
 
-    let mediaUrl = url;
-    if ((() => {
-      try {
-        const host = new URL(url).hostname.toLowerCase();
-        return host === 'open.spotify.com' || host === 'spotify.com' || host.endsWith('.spotify.com') || host === 'spotify.link';
-      } catch { return false; }
-    })()) {
-      mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
-    }
-
-    // Expand YouTube / YouTube Music playlists (cap downloads).
-    // Canonicalizes music.youtube.com → www.youtube.com before yt-dlp.
-    const PLAYLIST_CAP = 25;
-    let urlsToPlay: string[] = [mediaUrl];
-    let playlistTitle: string | undefined;
-    /** Apple Music tracks still needing YouTube search (after the first). */
-    let appleMusicPending: AppleMusicTrack[] = [];
-
-    if (isAppleMusicShareUrl(mediaUrl)) {
-      const am = await resolveAppleMusicTracks(mediaUrl);
-      if (!am.tracks.length) {
-        throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
-      }
-      playlistTitle = am.title;
-      const firstYt = await appleMusicTrackToYouTubeUrl(am.tracks[0]);
-      if (!firstYt) {
-        throw new AppError(502, `No YouTube match for Apple Music track: ${am.tracks[0].artist} - ${am.tracks[0].title}`);
-      }
-      urlsToPlay = [firstYt];
-      appleMusicPending = am.tracks.slice(1, PLAYLIST_CAP);
-    } else if (isYouTubeHostUrl(mediaUrl)) {
-      const parsed = parseYouTubeUrl(mediaUrl);
-      if (isYouTubePlaylistUrl(mediaUrl)) {
-        const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
-        if (expanded.urls.length > 0) {
-          urlsToPlay = expanded.urls;
-          playlistTitle = expanded.title;
-        } else {
-          throw new AppError(502, 'Could not resolve any videos from that playlist URL');
-        }
-      } else if (parsed.watchUrl) {
-        urlsToPlay = [parsed.watchUrl];
-      } else if (parsed.canonicalUrl && parsed.videoId) {
-        urlsToPlay = [`https://www.youtube.com/watch?v=${parsed.videoId}`];
-      } else {
-        throw new AppError(502, 'Could not resolve that YouTube URL');
-      }
-    }
-
     const saveHistory = async (sourceUrl: string, title: string) => {
       try {
         const prisma = req.app.locals.prisma;
@@ -447,113 +390,71 @@ musicBotRoutes.post('/:id/play-url', async (req: Request, res: Response, next) =
       }
     };
 
-    // Download + play the first track immediately so the request doesn't time out on playlists.
     const generation = (playlistExpandGeneration.get(id) ?? 0) + 1;
     playlistExpandGeneration.set(id, generation);
 
-    const firstUrl = urlsToPlay[0];
-    const { filePath, info } = await downloadYouTube(firstUrl, MUSIC_DIR);
-    const firstItem = {
-      id: `yt_${info.id}`,
-      title: info.title,
-      artist: info.artist,
-      duration: info.duration,
-      filePath,
-      source: 'youtube' as const,
-      sourceUrl: firstUrl,
-    };
-    bot.queue.add(firstItem);
-    if (!enqueueOnly) {
-      bot.queue.playAt(bot.queue.length - 1);
-      await runMediaAudited(req, bot, 'media.music.start', () => bot.play(firstItem, { replaceSessionIds }), replaceSessionIds);
-    }
-    await saveHistory(firstUrl, firstItem.title);
-
-    // Queue remaining playlist tracks in the background.
-    // If the first track ends before later downloads finish, resume when the next item lands
-    // (unless this was an enqueue-only request — then never auto-start).
-    // Apple Music: resolve each remaining track via YouTube search, then download.
-    const rest = urlsToPlay.slice(1);
-    const pendingTotal = rest.length + appleMusicPending.length;
-    if (pendingTotal > 0) {
-      void (async () => {
-        const enqueueYt = async (itemUrl: string) => {
-          if (playlistExpandGeneration.get(id) !== generation) return false;
-          const live = manager.getBot(id);
-          if (!live || live.status === 'stopped' || live.status === 'error') return false;
-          const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
-          if (playlistExpandGeneration.get(id) !== generation) return false;
-          const stillLive = manager.getBot(id);
-          if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') return false;
-
-          const queueItem = {
-            id: `yt_${dl.info.id}`,
-            title: dl.info.title,
-            artist: dl.info.artist,
-            duration: dl.info.duration,
-            filePath: dl.filePath,
-            source: 'youtube' as const,
-            sourceUrl: itemUrl,
-          };
-          stillLive.queue.add(queueItem);
-          await saveHistory(itemUrl, queueItem.title);
-
-          // First track may have finished while we were downloading — resume from this item.
-          if (!enqueueOnly && stillLive.status === 'connected' && !stillLive.nowPlaying) {
-            stillLive.queue.playAt(stillLive.queue.length - 1);
-            await stillLive.play(queueItem).catch((err) => {
-              console.error('[music-bots.routes] Failed to resume playlist playback:', err);
-            });
-          }
-          return true;
-        };
-
-        for (const itemUrl of rest) {
-          try {
-            const ok = await enqueueYt(itemUrl);
-            if (!ok) break;
-          } catch (err) {
-            console.error('[music-bots.routes] Failed to queue playlist track %s:', itemUrl, err);
-          }
-        }
-
-        for (const track of appleMusicPending) {
-          if (playlistExpandGeneration.get(id) !== generation) break;
-          try {
-            const ytUrl = await appleMusicTrackToYouTubeUrl(track);
-            if (!ytUrl) {
-              console.error(
-                '[music-bots.routes] No YouTube match for Apple Music track: %s - %s',
-                track.artist,
-                track.title,
-              );
-              continue;
+    let firstCall = true;
+    let pipelineResult: Awaited<ReturnType<typeof runMediaUrlPipeline>>;
+    try {
+      pipelineResult = await runMediaUrlPipeline(
+        defaultMediaUrlDeps(),
+        {
+          play: async (item: QueueItem, opts) => {
+            const isFirst = firstCall;
+            firstCall = false;
+            const live = manager.getBot(id);
+            if (!live || playlistExpandGeneration.get(id) !== generation) return;
+            live.queue.add(item);
+            if (isFirst || !enqueueOnly) {
+              live.queue.playAt(live.queue.length - 1);
+              if (isFirst && opts.replaceSessionIds !== undefined) {
+                await runMediaAudited(
+                  req,
+                  live,
+                  'media.music.start',
+                  () => live.play(item, { replaceSessionIds: opts.replaceSessionIds }),
+                  opts.replaceSessionIds,
+                );
+              } else {
+                await live.play(item).catch((err) => {
+                  console.error('[music-bots.routes] Failed to resume playlist playback:', err);
+                });
+              }
             }
-            const ok = await enqueueYt(ytUrl);
-            if (!ok) break;
-          } catch (err) {
-            console.error(
-              '[music-bots.routes] Failed to queue Apple Music track %s - %s:',
-              track.artist,
-              track.title,
-              err,
-            );
-          }
-        }
-      })();
+            if (item.sourceUrl) await saveHistory(item.sourceUrl, item.title);
+          },
+          enqueue: (item: QueueItem) => {
+            if (playlistExpandGeneration.get(id) !== generation) return;
+            const live = manager.getBot(id);
+            if (!live || live.status === 'stopped' || live.status === 'error') return;
+            live.queue.add(item);
+            if (item.sourceUrl) void saveHistory(item.sourceUrl, item.title);
+          },
+          isIdle: () => {
+            const live = manager.getBot(id);
+            return Boolean(live && live.status === 'connected' && !live.nowPlaying);
+          },
+        },
+        { url, enqueueOnly },
+        {
+          replaceSessionIds,
+          onBackgroundError: (err, label) => {
+            console.error('[music-bots.routes] Failed to queue %s:', label, err);
+          },
+        },
+      );
+    } catch (err: any) {
+      throw new AppError(502, err?.message ?? String(err));
     }
 
     res.json({
       success: true,
-      queued: 1 + pendingTotal,
-      playlist: pendingTotal > 0,
-      playlistTitle,
-      queueItem: { id: firstItem.id, title: firstItem.title },
+      queued: 1 + pipelineResult.queuedInBackground,
+      playlist: pipelineResult.queuedInBackground > 0,
+      playlistTitle: pipelineResult.playlistTitle,
+      queueItem: { id: pipelineResult.first.id, title: pipelineResult.first.title },
     });
-  } catch (err: any) {
-    if (err instanceof AppError) return next(err);
-    next(new AppError(500, `Failed to play URL: ${err.message}`));
-  }
+  } catch (err) { next(err); }
 });
 
 // POST /:id/play-radio — Play a radio station (streaming)
