@@ -15,6 +15,7 @@ import { setYtCookieFile, getYtCookieFile } from '../voice/audio/youtube.js';
 import {
   MAX_VIDEO_DURATION_KEY,
   MAX_PLAYLIST_IMPORT_KEY,
+  YOUTUBE_DIRECT_STREAM_KEY,
   parseVideoDuration,
   parseImportCap,
   loadVideoStreamingSettings,
@@ -157,12 +158,13 @@ settingsRoutes.get('/limits', requireAdmin, async (req: Request, res: Response, 
   try {
     const prisma = req.app.locals.prisma;
     const rows = await prisma.appSetting.findMany({
-      where: { key: { in: [MAX_VIDEO_DURATION_KEY, MAX_PLAYLIST_IMPORT_KEY] } },
+      where: { key: { in: [MAX_VIDEO_DURATION_KEY, MAX_PLAYLIST_IMPORT_KEY, YOUTUBE_DIRECT_STREAM_KEY] } },
     });
     const map = new Map(rows.map((r: { key: string; value: string }) => [r.key, r.value]));
     res.json({
       maxVideoDuration: parseVideoDuration(map.get(MAX_VIDEO_DURATION_KEY) as string | undefined),
       maxPlaylistImport: parseImportCap(map.get(MAX_PLAYLIST_IMPORT_KEY) as string | undefined),
+      youtubeDirectStream: map.get(YOUTUBE_DIRECT_STREAM_KEY) === 'true',
     });
   } catch (err) { next(err); }
 });
@@ -171,10 +173,13 @@ settingsRoutes.get('/limits', requireAdmin, async (req: Request, res: Response, 
 settingsRoutes.put('/limits', requireAdmin, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const { maxVideoDuration, maxPlaylistImport } = req.body;
+    const { maxVideoDuration, maxPlaylistImport, youtubeDirectStream } = req.body;
 
-    if (maxVideoDuration == null && maxPlaylistImport == null) {
-      throw new AppError(400, 'Provide maxVideoDuration and/or maxPlaylistImport');
+    if (maxVideoDuration == null && maxPlaylistImport == null && youtubeDirectStream == null) {
+      throw new AppError(400, 'Provide maxVideoDuration, maxPlaylistImport and/or youtubeDirectStream');
+    }
+    if (youtubeDirectStream != null && typeof youtubeDirectStream !== 'boolean') {
+      throw new AppError(400, 'youtubeDirectStream must be true or false');
     }
 
     await recordLocalSuccess(
@@ -202,6 +207,15 @@ settingsRoutes.put('/limits', requireAdmin, async (req: Request, res: Response, 
             where: { key: MAX_PLAYLIST_IMPORT_KEY },
             create: { key: MAX_PLAYLIST_IMPORT_KEY, value: String(val) },
             update: { value: String(val) },
+          });
+        }
+
+        if (youtubeDirectStream != null) {
+          const value = youtubeDirectStream ? 'true' : 'false';
+          await tx.appSetting.upsert({
+            where: { key: YOUTUBE_DIRECT_STREAM_KEY },
+            create: { key: YOUTUBE_DIRECT_STREAM_KEY, value },
+            update: { value },
           });
         }
       },

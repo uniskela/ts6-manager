@@ -34,6 +34,14 @@ export async function loadMaxVideoDuration(prisma: PrismaClient): Promise<number
   return parseVideoDuration(row?.value);
 }
 
+/** YouTube videos are streamed directly instead of downloaded first ('true' / 'false'). */
+export const YOUTUBE_DIRECT_STREAM_KEY = 'youtube_direct_stream';
+
+export async function loadYoutubeDirectStream(prisma: PrismaClient): Promise<boolean> {
+  const row = await prisma.appSetting.findUnique({ where: { key: YOUTUBE_DIRECT_STREAM_KEY } });
+  return row?.value === 'true';
+}
+
 export async function loadMaxPlaylistImport(prisma: PrismaClient): Promise<number> {
   const row = await prisma.appSetting.findUnique({ where: { key: MAX_PLAYLIST_IMPORT_KEY } });
   return parseImportCap(row?.value);

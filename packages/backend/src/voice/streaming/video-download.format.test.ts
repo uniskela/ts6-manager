@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   YOUTUBE_VIDEO_FORMAT_SORT,
   durationFilterSkipMessage,
+  parseYoutubeResolve,
   youtubeVideoFormatArgs,
 } from './video-download.js';
 
@@ -49,8 +50,9 @@ describe('durationFilterSkipMessage', () => {
     const msg = durationFilterSkipMessage(skipped, 900);
     assert.equal(
       msg,
-      'Video is longer than the 15 minutes limit, or is a live broadcast (not supported). ' +
-        'Raise "Max video duration" under Settings → YouTube (0 = unlimited).',
+      'Video is longer than the 15 minutes limit, or is a live broadcast. ' +
+        'Under Settings → YouTube, turn on "Stream YouTube videos directly" (no length limit, live broadcasts work) ' +
+        'or raise "Max video duration" (0 = unlimited).',
     );
   });
 
@@ -59,11 +61,82 @@ describe('durationFilterSkipMessage', () => {
     const msg = durationFilterSkipMessage(live, 0);
     assert.ok(msg);
     assert.match(msg, /no known length/);
+    assert.match(msg, /Stream YouTube videos directly/);
   });
 
   it('says nothing for a normal download or another filter', () => {
     assert.equal(durationFilterSkipMessage('[download] Destination: /data/music/.stream-1.mp4\n', 900), null);
     assert.equal(durationFilterSkipMessage('[download] X does not pass filter (!is_live), skipping ..\n', 900), null);
     assert.equal(durationFilterSkipMessage('', 900), null);
+  });
+});
+
+describe('parseYoutubeResolve', () => {
+  // The shape of yt-dlp --dump-single-json for a format pair: the chosen
+  // video and audio formats are listed under requested_formats.
+  const pair = {
+    duration: 2700,
+    is_live: false,
+    width: 3840,
+    height: 2160,
+    requested_formats: [
+      { format_id: '313', vcodec: 'vp09.00.51.08', acodec: 'none', width: 3840, height: 2160, url: 'https://rr1.example/videoplayback?v' },
+      { format_id: '251', vcodec: 'none', acodec: 'opus', url: 'https://rr1.example/videoplayback?a' },
+    ],
+  };
+
+  it('returns the video and the audio of a format pair as two inputs', () => {
+    assert.deepEqual(parseYoutubeResolve(pair), {
+      path: 'https://rr1.example/videoplayback?v',
+      audioPath: 'https://rr1.example/videoplayback?a',
+      durationSec: 2700,
+      live: false,
+      resolution: { width: 3840, height: 2160 },
+    });
+  });
+
+  it('finds the video whichever order the pair is listed in', () => {
+    const r = parseYoutubeResolve({ ...pair, requested_formats: [...pair.requested_formats].reverse() });
+    assert.equal(r.path, 'https://rr1.example/videoplayback?v');
+    assert.equal(r.audioPath, 'https://rr1.example/videoplayback?a');
+  });
+
+  it('returns a combined live format as one input with no duration', () => {
+    const r = parseYoutubeResolve({
+      is_live: true,
+      duration: 0,
+      width: 1920,
+      height: 1080,
+      url: 'https://manifest.example/hls/index.m3u8',
+    });
+    assert.deepEqual(r, {
+      path: 'https://manifest.example/hls/index.m3u8',
+      durationSec: null,
+      live: true,
+      resolution: { width: 1920, height: 1080 },
+    });
+  });
+
+  it('keeps a live broadcast that comes as two playlists as two inputs', () => {
+    const r = parseYoutubeResolve({ ...pair, is_live: true, duration: undefined });
+    assert.equal(r.live, true);
+    assert.equal(r.durationSec, null);
+    assert.equal(r.audioPath, 'https://rr1.example/videoplayback?a');
+  });
+
+  it('treats live_status as live and leaves the size out when it is unknown', () => {
+    const r = parseYoutubeResolve({ live_status: 'is_live', url: 'https://manifest.example/x.m3u8' });
+    assert.equal(r.live, true);
+    assert.equal(r.resolution, undefined);
+    assert.equal(r.audioPath, undefined);
+  });
+
+  it('refuses a result without an http(s) media URL', () => {
+    assert.throws(() => parseYoutubeResolve({ duration: 10 }), /playable YouTube stream URL/);
+    assert.throws(() => parseYoutubeResolve({ url: 'file:///etc/passwd' }), /playable YouTube stream URL/);
+    assert.throws(
+      () => parseYoutubeResolve({ requested_formats: [{ vcodec: 'vp9', acodec: 'none', url: 'ftp://x/v' }] }),
+      /playable YouTube stream URL/,
+    );
   });
 });

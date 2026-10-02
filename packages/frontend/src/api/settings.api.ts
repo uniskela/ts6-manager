@@ -33,7 +33,7 @@ export const settingsApi = {
 
   getLimits: () => api.get('/settings/limits').then((r) => r.data),
 
-  updateLimits: (data: { maxVideoDuration?: number; maxPlaylistImport?: number }) =>
+  updateLimits: (data: { maxVideoDuration?: number; maxPlaylistImport?: number; youtubeDirectStream?: boolean }) =>
     api.put('/settings/limits', data).then((r) => r.data),
 
   getVideoStreaming: (): Promise<VideoStreamSettings> =>

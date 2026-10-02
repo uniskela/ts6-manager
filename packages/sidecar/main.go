@@ -103,6 +103,18 @@ func validSource(source string) error {
 	return nil
 }
 
+// validAudioSource checks the optional second input: a remote URL carrying
+// the audio of a remote, video-only source. Nothing else comes in two parts.
+func validAudioSource(source, audioSource string) error {
+	if audioSource == "" {
+		return nil
+	}
+	if !isRemoteSource(audioSource) || !isRemoteSource(source) {
+		return fmt.Errorf("audioSource needs an http(s) source and an http(s) audio URL")
+	}
+	return nil
+}
+
 // parseBitrateKbps parses ffmpeg-style bitrate strings ("4500k", "20000K",
 // or a bare number already in kbps) into kbps. Returns 0 if unparseable.
 func parseBitrateKbps(s string) int {
@@ -1181,14 +1193,18 @@ func (s *Sidecar) ClosePeer(id string) {
 
 // SourceRequest is one POST /source call.
 type SourceRequest struct {
-	Source    string
-	Width     int
-	Height    int
-	Framerate int
-	Bitrate   string
-	Volume    int
-	Loop      bool
-	Encoder   string
+	Source string
+	// AudioSource is a second remote input carrying the audio, for a source
+	// that delivers video and audio separately (YouTube above 720p). Empty
+	// means the audio is in Source.
+	AudioSource string
+	Width       int
+	Height      int
+	Framerate   int
+	Bitrate     string
+	Volume      int
+	Loop        bool
+	Encoder     string
 	// Mode is live, vod or file ("" = infer from the source).
 	Mode string
 	// AllowedHosts are the LAN hosts an admin allowed for this source (IPTV
@@ -1307,28 +1323,42 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 
 	source := req.Source
 	mode := ""
+	// The audio is read from input 0 unless it comes as a second input.
+	audioMap := "0:a:0?"
 	if source != "" {
 		mode = resolveSourceMode(req.Mode, source)
-		if isRemoteSource(source) {
-			if s.egress != nil {
-				args = append(args, egressInputArgs(s.egress.URL())...)
+		// Input options apply to the next -i only, so each input gets its own:
+		// the proxy, reconnecting and the read pacing. The audio of a split
+		// source is a second connection, which is checked and reconnected like
+		// the first. The hardware decoder set up by hwInitArgs above stays on
+		// the first input, the video.
+		inputs := []string{source}
+		if req.AudioSource != "" {
+			inputs = append(inputs, req.AudioSource)
+			audioMap = "1:a:0"
+		}
+		for _, input := range inputs {
+			if isRemoteSource(input) {
+				if s.egress != nil {
+					args = append(args, egressInputArgs(s.egress.URL())...)
+				}
+				args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
+			} else if req.Loop && mode == modeFile {
+				args = append(args, "-stream_loop", "-1")
 			}
-			args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
-		} else if req.Loop && mode == modeFile {
-			args = append(args, "-stream_loop", "-1")
-		}
 
-		// Live IPTV often has non-monotonic DTS. Without igndts, ffmpeg drops
-		// those audio frames and the stream cuts in and out.
-		fflags := "+genpts+discardcorrupt"
-		if mode == modeLive {
-			fflags = "+genpts+igndts+discardcorrupt"
+			// Live IPTV often has non-monotonic DTS. Without igndts, ffmpeg drops
+			// those audio frames and the stream cuts in and out.
+			fflags := "+genpts+discardcorrupt"
+			if mode == modeLive {
+				fflags = "+genpts+igndts+discardcorrupt"
+			}
+			args = append(args, "-fflags", fflags)
+			if mode != modeLive || !livePacedBySource() {
+				args = append(args, "-re")
+			}
+			args = append(args, "-i", input)
 		}
-		args = append(args, "-fflags", fflags)
-		if mode != modeLive || !livePacedBySource() {
-			args = append(args, "-re")
-		}
-		args = append(args, "-i", source)
 	} else {
 		args = append(args, "-re", "-f", "lavfi", "-i", fmt.Sprintf("color=c=black:s=%dx%d:r=1", w, h))
 	}
@@ -1367,7 +1397,7 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 		aBitrate := envOrDefault("AUDIO_BITRATE", "128k")
 
 		args = append(args,
-			"-map", "0:a:0?",
+			"-map", audioMap,
 		)
 
 		audioFilters := []string{}
@@ -1445,6 +1475,10 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	defer s.ffmpegLock.Unlock()
 
 	if err := validSource(req.Source); err != nil {
+		log.Printf("[FFmpeg] Rejected source: %v", err)
+		return EncoderSession{}, err
+	}
+	if err := validAudioSource(req.Source, req.AudioSource); err != nil {
 		log.Printf("[FFmpeg] Rejected source: %v", err)
 		return EncoderSession{}, err
 	}
@@ -1742,12 +1776,15 @@ func main() {
 
 	mux.HandleFunc("POST /source", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			Source    string `json:"source"`
-			Width     int    `json:"width"`
-			Height    int    `json:"height"`
-			Framerate int    `json:"framerate"`
-			Bitrate   string `json:"bitrate"`
-			Volume    *int   `json:"volume"`
+			Source string `json:"source"`
+			// AudioSource is a second remote URL with the audio, when source
+			// is video only.
+			AudioSource string `json:"audioSource"`
+			Width       int    `json:"width"`
+			Height      int    `json:"height"`
+			Framerate   int    `json:"framerate"`
+			Bitrate     string `json:"bitrate"`
+			Volume      *int   `json:"volume"`
 			// Loop defaults to true (prior behavior for local backgrounds) when omitted;
 			// the backend sets false for on-demand downloaded clips.
 			Loop *bool `json:"loop"`
@@ -1765,6 +1802,10 @@ func main() {
 			return
 		}
 		if err := validSource(req.Source); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if err := validAudioSource(req.Source, req.AudioSource); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -1790,6 +1831,7 @@ func main() {
 		log.Printf("[API] Setting source (%dx%d @ %dfps vol=%d loop=%v encoder=%s)", req.Width, req.Height, req.Framerate, vol, loop, encoderID)
 		session, err := sidecar.StartFFmpeg(SourceRequest{
 			Source:       req.Source,
+			AudioSource:  req.AudioSource,
 			Width:        req.Width,
 			Height:       req.Height,
 			Framerate:    req.Framerate,

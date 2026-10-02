@@ -1061,11 +1061,13 @@ function LimitsCard() {
   });
   const [maxVideoDuration, setMaxVideoDuration] = useState('');
   const [maxPlaylistImport, setMaxPlaylistImport] = useState('');
+  const [youtubeDirectStream, setYoutubeDirectStream] = useState(false);
 
   useEffect(() => {
     if (limits) {
       setMaxVideoDuration(String(limits.maxVideoDuration ?? 900));
       setMaxPlaylistImport(String(limits.maxPlaylistImport ?? 250));
+      setYoutubeDirectStream(limits.youtubeDirectStream === true);
     }
   }, [limits]);
 
@@ -1073,6 +1075,7 @@ function LimitsCard() {
     mutationFn: () => settingsApi.updateLimits({
       maxVideoDuration: parseInt(maxVideoDuration, 10),
       maxPlaylistImport: parseInt(maxPlaylistImport, 10),
+      youtubeDirectStream,
     }),
     onSuccess: () => {
       toast.success('Limits saved');
@@ -1095,6 +1098,21 @@ function LimitsCard() {
           <p className="text-xs text-muted-foreground">Loading...</p>
         ) : (
           <>
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <Label htmlFor="youtube-direct-stream" className="text-xs">Stream YouTube videos directly</Label>
+                <p className="text-xs text-muted-foreground">
+                  Video streams play straight from YouTube instead of being downloaded first: they start at
+                  once whatever their length, and live broadcasts work. Leave off if streams fail to start
+                  with this on; YouTube refuses direct playback from some networks.
+                </p>
+              </div>
+              <Switch
+                id="youtube-direct-stream"
+                checked={youtubeDirectStream}
+                onCheckedChange={setYoutubeDirectStream}
+              />
+            </div>
             <div>
               <Label className="text-xs">Max video duration (seconds, 0 = unlimited)</Label>
               <Input
@@ -1103,6 +1121,9 @@ function LimitsCard() {
                 value={maxVideoDuration}
                 onChange={(e) => setMaxVideoDuration(e.target.value)}
               />
+              <p className="text-xs text-muted-foreground mt-1">
+                Applies to downloaded videos; not used when YouTube videos are streamed directly.
+              </p>
             </div>
             <div>
               <Label className="text-xs">Max playlist import tracks (1–500)</Label>

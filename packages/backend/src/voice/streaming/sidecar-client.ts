@@ -29,6 +29,8 @@ export interface SidecarSourceOptions {
   allowedHosts?: string[];
   /** libvpx -cpu-used override; omit or 0 keeps sidecar env default. */
   cpuUsed?: number;
+  /** Second remote input carrying the audio, when `source` is video only (YouTube direct). */
+  audioSource?: string;
 }
 
 /** Encode health from GET /stats (sidecar 1.9+; absent on older sidecars). */

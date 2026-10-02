@@ -77,6 +77,12 @@ export interface VoiceBotConfig {
   videoStreamVolume?: number;
   /** Loads admin video-streaming defaults when a stream starts (falls back to env defaults). */
   loadVideoSettings?: () => Promise<VideoStreamSettings>;
+  /**
+   * Whether YouTube videos are streamed directly instead of downloaded first
+   * (Settings → YouTube). Read when a source is resolved, so a change applies
+   * to the next stream.
+   */
+  loadYoutubeDirectStream?: () => Promise<boolean>;
 }
 
 /** Per-stream overrides; anything omitted uses the admin defaults. */
@@ -534,11 +540,23 @@ export class VoiceBot extends EventEmitter {
   private async resolveStreamSource(
     source: string,
     maxHeight: number,
-  ): Promise<{ path: string; loop: boolean; live?: boolean; durationSec: number | null }> {
+  ): Promise<{
+    path: string;
+    /** Second remote input with the audio (YouTube direct, above 720p). */
+    audioPath?: string;
+    loop: boolean;
+    live?: boolean;
+    durationSec: number | null;
+    resolution?: { width: number; height: number };
+  }> {
     const maxDur = this.config.maxVideoDurationSec ?? 900;
-    const { path: filePath, durationSec, live } = await downloadVideoForStream(source, maxHeight, maxDur, {
-      localHosts: this._videoLocalHosts,
-    });
+    const youtubeDirect = await this.youtubeDirectStream();
+    const { path: filePath, audioPath, durationSec, live, resolution } = await downloadVideoForStream(
+      source,
+      maxHeight,
+      maxDur,
+      { localHosts: this._videoLocalHosts, youtubeDirect },
+    );
     const isDownloadedTemp = filePath.includes('.stream-') && filePath.endsWith('.mp4');
 
     // Clear any prior end-stop timer; applyVideoSource schedules a new one only
@@ -565,10 +583,20 @@ export class VoiceBot extends EventEmitter {
     // after the sidecar accepts the source in applyVideoSource.
     if (live === false && durationSec != null && durationSec > 0) {
       this._videoDurationSec = durationSec;
-      return { path: filePath, loop: false, live, durationSec };
+      return { path: filePath, audioPath, loop: false, live, durationSec, resolution };
     }
 
-    return { path: filePath, loop: true, live, durationSec };
+    return { path: filePath, audioPath, loop: true, live, durationSec, resolution };
+  }
+
+  /** A failed read keeps the default: download first. */
+  private async youtubeDirectStream(): Promise<boolean> {
+    if (!this.config.loadYoutubeDirectStream) return false;
+    try {
+      return await this.config.loadYoutubeDirectStream();
+    } catch {
+      return false;
+    }
   }
 
   /** Update the TS3 nickname to show what's playing. Max 30 chars. */
@@ -1241,6 +1269,7 @@ export class VoiceBot extends EventEmitter {
     const quality = this._videoQuality ?? resolveQuality(this._videoPreset, this._videoSettings.autoMaxPreset, null);
     const maxHeight = STREAM_PRESETS[quality.actual].height;
     let sourcePath: string;
+    let audioPath: string | undefined;
     let loop = true;
     if (this._videoTempFile) {
       try {
@@ -1249,11 +1278,13 @@ export class VoiceBot extends EventEmitter {
       } catch {
         const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
         sourcePath = resolved.path;
+        audioPath = resolved.audioPath;
         loop = resolved.loop;
       }
     } else {
       const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
       sourcePath = resolved.path;
+      audioPath = resolved.audioPath;
       loop = resolved.loop;
     }
     // Source resolution can take a while; a stop or source change that began
@@ -1261,7 +1292,7 @@ export class VoiceBot extends EventEmitter {
     // after the stop, or on the old source.
     if (!this.canPushVideoVolume()) return;
     const mode: VideoSourceMode = /^https?:\/\//i.test(sourcePath) ? (this._videoSourceMode ?? 'vod') : 'file';
-    await this.sendSourceToSidecar(sourcePath, loop && mode === 'file', quality, mode);
+    await this.sendSourceToSidecar(sourcePath, loop && mode === 'file', quality, mode, audioPath);
     // setSource restarts ffmpeg from the beginning for volume changes, so
     // refresh the auto-stop timer from now for non-looping on-demand clips.
     if (!loop && this._videoDurationSec != null) {
@@ -1688,6 +1719,7 @@ export class VoiceBot extends EventEmitter {
     loop: boolean,
     quality: VideoStreamQualityInfo,
     mode: VideoSourceMode,
+    audioSource?: string,
   ): Promise<void> {
     if (!this.sidecarHttp || !this._videoEncoder) throw new Error('No active video stream');
     const preset = STREAM_PRESETS[quality.actual];
@@ -1708,6 +1740,7 @@ export class VoiceBot extends EventEmitter {
       mode,
       allowedHosts: this._videoLocalHosts,
       cpuUsed: this._videoSettings.cpuUsed,
+      audioSource,
     });
 
     this._videoSourceMode = mode;
@@ -1761,7 +1794,13 @@ export class VoiceBot extends EventEmitter {
     // Only Auto probes; the same probe tells live (no duration) from VOD.
     // Fixed presets skip the probe — use extractor live/VOD hints (Twitch) so
     // live streams are not mislabeled as VOD (#203 / Claude review on #204).
-    const probe = requested === 'auto' ? await this.probeStreamSource(resolved.path, isLocal) : null;
+    // A source resolved with its picture size (YouTube direct) is not probed:
+    // the extractor already said what the probe would find.
+    const probe = requested !== 'auto'
+      ? null
+      : resolved.resolution
+        ? { resolution: resolved.resolution, durationSec: resolved.live ? null : resolved.durationSec }
+        : await this.probeStreamSource(resolved.path, isLocal);
     const quality = resolveQuality(requested, limit, probe?.resolution ?? null);
     const hint =
       resolved.live === undefined
@@ -1771,7 +1810,7 @@ export class VoiceBot extends EventEmitter {
     if (quality.note) {
       console.log(`[VoiceBot ${this.config.id}] Auto quality → ${quality.actual}: ${quality.note}`);
     }
-    await this.sendSourceToSidecar(resolved.path, resolved.loop && mode === 'file', quality, mode);
+    await this.sendSourceToSidecar(resolved.path, resolved.loop && mode === 'file', quality, mode, resolved.audioPath);
 
     // Pass-through / remote VOD: drop any prior YouTube download temp so a later
     // volume change cannot restart the old file. Keep temp for downloaded clips.
