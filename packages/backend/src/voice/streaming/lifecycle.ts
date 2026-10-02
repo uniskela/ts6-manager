@@ -19,6 +19,34 @@ export function describeDuration(totalSec: number): string {
   return parts.join(' ');
 }
 
+/** Format an auto-stop announcement using whole minutes only when exact. */
+export function formatStopDuration(seconds: number): string {
+  const sec = Math.max(0, Math.round(seconds));
+  if (sec >= 60 && sec % 60 === 0) {
+    const minutes = sec / 60;
+    return `${minutes} minute${minutes === 1 ? '' : 's'}`;
+  }
+  return `${sec} second${sec === 1 ? '' : 's'}`;
+}
+
+export type AutoStopMedia = 'music' | 'radio' | 'video';
+
+export function autoStopNotice(
+  media: AutoStopMedia,
+  reason: 'channel_empty' | 'no_viewers',
+  seconds: number,
+): string {
+  const duration = formatStopDuration(seconds);
+  if (media === 'music') return `Stopped the music: the channel was empty for ${duration}.`;
+  if (media === 'radio') return `Stopped radio: the channel was empty for ${duration}.`;
+  if (reason === 'no_viewers') return `Stopped the stream: nobody watched for ${duration}.`;
+  return `Stopped the stream: the channel was empty for ${duration}.`;
+}
+
+export function noViewerWarningNotice(): string {
+  return 'Nobody is watching. The stream stops in 1 minute.';
+}
+
 export function noViewersStopDetail(timeoutSec: number): string {
   return `Stopped after ${describeDuration(timeoutSec)} with no viewers`;
 }

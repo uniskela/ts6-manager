@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   VIDEO_AUTO_MAX_PRESET_KEY,
+  VIDEO_ANNOUNCE_AUTO_STOPS_KEY,
   VIDEO_CPU_USED_KEY,
   VIDEO_DEFAULT_ENCODER_KEY,
   VIDEO_ENCODE_PROFILE_KEY,
@@ -21,6 +22,7 @@ describe('video streaming settings', () => {
   it('defaults to Balanced profile (1080p, 4500k, cpu-used 4) and 5 min no-viewer stop', () => {
     assert.deepEqual(videoStreamingDefaults({}), {
       noViewerTimeoutSec: 300,
+      announceAutoStops: true,
       autoMaxPreset: '1080p',
       defaultEncoder: 'auto',
       preferHardware: false,
@@ -43,6 +45,7 @@ describe('video streaming settings', () => {
       }),
       {
         noViewerTimeoutSec: 0,
+        announceAutoStops: true,
         autoMaxPreset: '2160p',
         defaultEncoder: 'h264_vaapi',
         preferHardware: true,
@@ -62,6 +65,7 @@ describe('video streaming settings', () => {
     const settings = parseVideoStreamingSettings(
       new Map([
         [VIDEO_NO_VIEWER_TIMEOUT_KEY, '600'],
+        [VIDEO_ANNOUNCE_AUTO_STOPS_KEY, 'false'],
         [VIDEO_AUTO_MAX_PRESET_KEY, '1440p'],
         [VIDEO_DEFAULT_ENCODER_KEY, 'vp9'],
         [VIDEO_PREFER_HARDWARE_KEY, 'true'],
@@ -73,6 +77,7 @@ describe('video streaming settings', () => {
     );
     assert.deepEqual(settings, {
       noViewerTimeoutSec: 600,
+      announceAutoStops: false,
       autoMaxPreset: '1440p',
       defaultEncoder: 'vp9',
       preferHardware: true,
@@ -109,16 +114,18 @@ describe('video streaming settings', () => {
   });
 
   it('validates updates field by field', () => {
-    const ok = parseVideoStreamingUpdate({ noViewerTimeoutSec: 0, autoMaxPreset: '2160p', preferHardware: false });
+    const ok = parseVideoStreamingUpdate({ noViewerTimeoutSec: 0, announceAutoStops: false, autoMaxPreset: '2160p', preferHardware: false });
     assert.ok(ok.ok);
     const map = Object.fromEntries(ok.rows.map((r) => [r.key, r.value]));
     assert.equal(map[VIDEO_NO_VIEWER_TIMEOUT_KEY], '0');
+    assert.equal(map[VIDEO_ANNOUNCE_AUTO_STOPS_KEY], 'false');
     assert.equal(map[VIDEO_AUTO_MAX_PRESET_KEY], '2160p');
     assert.equal(map[VIDEO_PREFER_HARDWARE_KEY], 'false');
     assert.equal(map[VIDEO_ENCODE_PROFILE_KEY], 'custom');
     for (const body of [
       {},
       { noViewerTimeoutSec: 90_000 },
+      { announceAutoStops: 'yes' },
       { autoMaxPreset: '4320p' },
       { defaultEncoder: 'nvenc' },
       { preferHardware: 'yes' },
@@ -154,6 +161,13 @@ describe('per-server video defaults', () => {
     assert.deepEqual(
       parseServerOverrides('{"noViewerTimeoutSec":"60","maxBitrateKbps":"0","preferHardware":true}'),
       { noViewerTimeoutSec: 60, maxBitrateKbps: 0, preferHardware: true, encodeProfile: 'custom' },
+    );
+  });
+
+  it('parses the per-server announcement switch', () => {
+    assert.deepEqual(
+      parseServerOverrides('{"announceAutoStops":false}'),
+      { announceAutoStops: false },
     );
   });
 

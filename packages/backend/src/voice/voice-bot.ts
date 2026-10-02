@@ -39,11 +39,14 @@ import {
 import { probeSource, type SourceProbe } from './streaming/source-probe.js';
 import {
   belowRealtimeWarning,
+  autoStopNotice,
   channelEmptyStopDetail,
   classifyEncoderExit,
   isChannelEmptyForAutoStop,
+  noViewerWarningNotice,
   noViewersStopDetail,
   resolveSourceMode,
+  type AutoStopMedia,
 } from './streaming/lifecycle.js';
 import { videoStreamingDefaults } from '../utils/app-settings.js';
 import { MediaSessionConflictError, newMediaSessionId, safeSourceLabel } from './media-session.js';
@@ -195,6 +198,7 @@ export class VoiceBot extends EventEmitter {
   private _lastVideoStop: MediaStopInfo | null = null;
   private _noViewerTimeoutSec = 0;
   private _noViewerTimer: ReturnType<typeof setTimeout> | null = null;
+  private _noViewerWarnTimer: ReturnType<typeof setTimeout> | null = null;
   private _noViewerStopAt: number | null = null;
   private _videoSessionId: string | null = null;
   private _videoSourceModeRequest: VideoSourceModeRequest = 'auto';
@@ -468,14 +472,33 @@ export class VoiceBot extends EventEmitter {
           `(cid=${this.client.getCurrentChannelId()}, tracked peers=${this.client.getChannelUserCount()})`,
         );
         this.stopAutoStopTimer();
-        if (this._videoStreaming) {
-          this.stopVideoStream('channel_empty', channelEmptyStopDetail(graceSec))
-            .catch((err) => this.emit('error', err));
-        } else {
-          this.clearPlayback('channel_empty', channelEmptyStopDetail(graceSec));
-        }
+        this.handleChannelEmptyAutoStop(graceSec).catch((err) => this.emit('error', err));
       }
     }, 5000);
+  }
+
+  private async handleChannelEmptyAutoStop(graceSec: number): Promise<void> {
+    const detail = channelEmptyStopDetail(graceSec);
+    if (this._videoStreaming) {
+      if (this._videoStopping) return;
+      if (this._videoSettings.announceAutoStops) {
+        this.sendChannelMessage(autoStopNotice('video', 'channel_empty', graceSec));
+      }
+      await this.stopVideoStream('channel_empty', detail);
+      return;
+    }
+
+    const media: AutoStopMedia = this._isStreaming ? 'radio' : 'music';
+    const channelId = this.client.getCurrentChannelId();
+    // Stop before loading notice settings so a replacement started during
+    // that await cannot be cleared by this expired timer.
+    this.clearPlayback('channel_empty', detail);
+    const settings = await this.loadVideoSettings();
+    // The notice belongs to the emptied channel: skip it if the bot moved or left meanwhile.
+    const left = this._status === 'stopped' || this._status === 'error';
+    if (settings.announceAutoStops && !left && this.client.getCurrentChannelId() === channelId) {
+      this.sendChannelMessage(autoStopNotice(media, 'channel_empty', graceSec));
+    }
   }
 
   private stopAutoStopTimer(): void {
@@ -1576,6 +1599,10 @@ export class VoiceBot extends EventEmitter {
       clearTimeout(this._noViewerTimer);
       this._noViewerTimer = null;
     }
+    if (this._noViewerWarnTimer) {
+      clearTimeout(this._noViewerWarnTimer);
+      this._noViewerWarnTimer = null;
+    }
     this._noViewerStopAt = null;
   }
 
@@ -1585,7 +1612,7 @@ export class VoiceBot extends EventEmitter {
    * full channel where nobody opened the stream still frees the encoder.
    */
   private refreshNoViewerTimer(): void {
-    if (!this._videoStreaming || this._noViewerTimeoutSec <= 0 || this._viewers.size > 0) {
+    if (!this._videoStreaming || this._videoStopping || this._noViewerTimeoutSec <= 0 || this._viewers.size > 0) {
       this.clearNoViewerTimer();
       return;
     }
@@ -1593,11 +1620,23 @@ export class VoiceBot extends EventEmitter {
 
     const timeoutSec = this._noViewerTimeoutSec;
     this._noViewerStopAt = Date.now() + timeoutSec * 1000;
+    if (timeoutSec > 60) {
+      this._noViewerWarnTimer = setTimeout(() => {
+        this._noViewerWarnTimer = null;
+        if (!this._videoStreaming || this._viewers.size > 0) return;
+        if (this._videoSettings.announceAutoStops) {
+          this.sendChannelMessage(noViewerWarningNotice());
+        }
+      }, (timeoutSec - 60) * 1000);
+    }
     this._noViewerTimer = setTimeout(() => {
       this._noViewerTimer = null;
       this._noViewerStopAt = null;
       if (!this._videoStreaming || this._viewers.size > 0) return;
       console.log(`[VoiceBot ${this.config.id}] Auto-stop: no stream viewers for ${timeoutSec}s`);
+      if (this._videoSettings.announceAutoStops) {
+        this.sendChannelMessage(autoStopNotice('video', 'no_viewers', timeoutSec));
+      }
       this.stopVideoStream('no_viewers', noViewersStopDetail(timeoutSec))
         .catch((err) => this.emit('error', err));
     }, timeoutSec * 1000);
