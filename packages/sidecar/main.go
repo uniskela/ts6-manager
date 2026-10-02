@@ -1392,7 +1392,8 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	// When the capability cache already probed this encoder, lowPower is known.
 	// Otherwise allow one flip of lowPower before software fallback (matches probeOneEncoder).
 	probe, capsKnown := s.caps.peek().find(spec.ID)
-	triedLowPowerToggle := !spec.Hardware || capsKnown
+	// Only VAAPI has a low-power mode to flip.
+	triedLowPowerToggle := spec.Backend != backendVAAPI || capsKnown
 	if spec.Hardware {
 		if capsKnown {
 			if !probe.Available {
@@ -1404,7 +1405,7 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 			} else {
 				lowPower = probe.LowPower
 			}
-		} else if !vaapiDevicePresent() {
+		} else if spec.Backend == backendVAAPI && !vaapiDevicePresent() {
 			fallbackReason = "VAAPI device not present"
 			spec = softwareEncoderFor(spec.Codec)
 		}

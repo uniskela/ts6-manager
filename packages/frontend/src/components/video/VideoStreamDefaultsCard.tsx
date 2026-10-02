@@ -278,7 +278,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
                     onCheckedChange={(v) => set('preferHardware', v)}
                   />
                   <Label htmlFor="prefer-hardware" className="text-sm font-normal">
-                    Auto prefers hardware (VAAPI) when a test encode succeeds
+                    Auto prefers hardware (VAAPI or NVENC) when a test encode succeeds
                   </Label>
                 </div>
               </div>
@@ -315,7 +315,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
             <div>
               <p className="text-sm font-medium">Encoder capabilities</p>
               <p className="text-xs text-muted-foreground">
-                Runs short test encodes on the media sidecar. Hardware encoders need <code>/dev/dri</code> passed through.
+                Runs short test encodes on the media sidecar. VAAPI encoders need <code>/dev/dri</code> passed through; NVENC needs the NVIDIA container runtime.
               </p>
             </div>
             <Button

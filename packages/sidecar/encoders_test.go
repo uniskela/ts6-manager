@@ -189,3 +189,84 @@ func TestVideoRTPPacketsFitTheMTU(t *testing.T) {
 		}
 	}
 }
+
+// NVENC takes NV12 frames from system memory: no VAAPI device, no hwupload,
+// and no -low_power, which only VAAPI knows.
+func TestBuildFFmpegArgsNvenc(t *testing.T) {
+	t.Setenv("VIDEO_HW_DECODE", "")
+	s := NewSidecar()
+	spec, ok := lookupEncoder("h264_nvenc")
+	if !ok || !spec.Hardware || spec.Backend != backendNVENC || spec.Codec != codecH264 {
+		t.Fatalf("h264_nvenc spec = %+v (found %v)", spec, ok)
+	}
+	args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "/data/music/clip.mp4", Width: 1920, Height: 1080, Bitrate: "4500k"}, spec, true), " ")
+	for _, want := range []string{
+		"-c:v h264_nvenc", "-profile:v high", "-preset p4", "-tune ll", "-rc cbr", "-zerolatency 1", "-bf 0",
+		"-b:v 4500k", "-maxrate 4500k", ",format=nv12 ",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("h264_nvenc args missing %q: %s", want, args)
+		}
+	}
+	for _, not := range []string{"hwupload", "-init_hw_device", "vaapi", "-low_power", "-hwaccel"} {
+		if strings.Contains(args, not) {
+			t.Errorf("h264_nvenc args must not contain %q: %s", not, args)
+		}
+	}
+}
+
+func TestNvencDecodesOnCudaWhenHwDecodeIsOn(t *testing.T) {
+	t.Setenv("VIDEO_HW_DECODE", "1")
+	s := NewSidecar()
+	spec, _ := lookupEncoder("h264_nvenc")
+	args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "/data/music/clip.mp4"}, spec, false), " ")
+	if !strings.Contains(args, "-hwaccel cuda") {
+		t.Fatalf("VIDEO_HW_DECODE=1 must decode on the GPU: %s", args)
+	}
+	if strings.Index(args, "-hwaccel cuda") > strings.Index(args, "-i /data/music/clip.mp4") {
+		t.Errorf("-hwaccel must precede the input: %s", args)
+	}
+	// Frames must come back to system memory for the filter chain and NVENC.
+	if strings.Contains(args, "hwaccel_output_format") {
+		t.Errorf("decoded frames must stay in system memory: %s", args)
+	}
+}
+
+// The VAAPI render node says nothing about NVENC: it is probed whether or not
+// one is present, and once, since it has no low-power mode to retry with.
+func TestProbeRunsNvencWithoutVaapiDevice(t *testing.T) {
+	calls := 0
+	run := func(ctx context.Context, args []string) (string, error) {
+		calls++
+		if strings.Contains(strings.Join(args, " "), "low_power") {
+			t.Errorf("NVENC probe must not use -low_power: %v", args)
+		}
+		return "", nil
+	}
+	spec, _ := lookupEncoder("h264_nvenc")
+	res := probeOneEncoder(spec, false, run)
+	if !res.Available || calls != 1 {
+		t.Fatalf("expected one successful probe, got available=%v calls=%d err=%q", res.Available, calls, res.Error)
+	}
+
+	calls = 0
+	fail := func(ctx context.Context, args []string) (string, error) {
+		calls++
+		return "[h264_nvenc] Cannot load libnvidia-encode.so.1\n", errors.New("exit status 1")
+	}
+	res = probeOneEncoder(spec, true, fail)
+	if res.Available || calls != 1 || !strings.Contains(res.Error, "libnvidia-encode") {
+		t.Fatalf("expected one failed probe with its reason, got %+v after %d calls", res, calls)
+	}
+}
+
+func TestHardwareEncodersNameTheirBackend(t *testing.T) {
+	for _, spec := range encoderOrder {
+		switch {
+		case !spec.Hardware && spec.Backend != "":
+			t.Errorf("software encoder %s has backend %q", spec.ID, spec.Backend)
+		case spec.Hardware && spec.Backend != backendVAAPI && spec.Backend != backendNVENC:
+			t.Errorf("hardware encoder %s has backend %q", spec.ID, spec.Backend)
+		}
+	}
+}

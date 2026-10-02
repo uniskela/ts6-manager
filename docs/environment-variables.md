@@ -27,8 +27,8 @@ These seed the **Streaming defaults** shown to admins on the Video Stream tab. A
 |---|---|---|
 | `VIDEO_NO_VIEWER_TIMEOUT_SECONDS` | `300` | Stop a video stream no TeamSpeak client has open for this long; `0` disables. Separate from the channel-empty stop (`BOT_AUTO_STOP_EMPTY_SECONDS`) |
 | `VIDEO_AUTO_MAX_PRESET` | `1080p` | Highest preset **Auto** quality may pick (`720p`–`2160p`); Balanced profile default |
-| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi` |
-| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first VAAPI encoder that passes the sidecar test encode |
+| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi`, `h264_nvenc` |
+| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first hardware encoder (VAAPI or NVENC) that passes the sidecar test encode |
 | `VIDEO_MAX_BITRATE_KBPS` | `4500` | Clamp every stream bitrate (kbps); `0` = no clamp. Balanced profile default is `4500` |
 | `VIDEO_ENCODE_PROFILE` | `balanced` | `performance`, `balanced`, `quality`, or `custom` — expands into Auto max, bitrate clamp, and encode speed |
 | `VIDEO_CPU_USED` | `4` | Default libvpx `-cpu-used` when no admin profile/cpuUsed is stored (higher = faster) |
@@ -77,9 +77,10 @@ The values below are code defaults. Compose files may override them.
 | `VIDEO_GOP` | `15` | Keyframe interval in frames (new viewers start at a keyframe) |
 | `VIDEO_VP9_CPU_USED` | `8` | libvpx-vp9 realtime speed/quality trade-off |
 | `VIDEO_X264_PRESET` | `veryfast` | libx264 preset for software H.264 |
+| `VIDEO_NVENC_PRESET` | `p4` | NVENC preset for `h264_nvenc` (`p1` fastest … `p7` best quality) |
 | `VAAPI_DEVICE` | `/dev/dri/renderD128` | Render node used by VAAPI encoders |
 | `VAAPI_LOW_POWER` | `0` | Try the low-power (VDEnc) entrypoint first; the capability probe also retries it automatically |
 | `VAAPI_VERIFY_MS` | `1500` | How long a hardware encoder must survive startup before the sidecar trusts it (otherwise it falls back to software) |
-| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`); ffmpeg falls back to software decode for unsupported codecs |
+| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`, or `-hwaccel cuda` with NVENC); ffmpeg falls back to software decode for unsupported codecs |
 
 TeamSpeak beta13 Query environment variables belong on the TeamSpeak server/container, not on TS6 Manager. See [TeamSpeak compatibility](teamspeak-compatibility.md).
