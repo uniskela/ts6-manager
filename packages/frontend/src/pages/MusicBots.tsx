@@ -3365,6 +3365,7 @@ function VideoTab() {
             <VideoStreamTab
               botId={selectedBot.id}
               botStatus={selectedBot.status}
+              botVolume={selectedBot.volume}
               server={{
                 id: selectedBot.serverConfigId,
                 name: selectedBot.serverConfig?.name ?? `Server ${selectedBot.serverConfigId}`,

@@ -409,7 +409,7 @@ When a music bot is connected to a configured command channel, users there can c
 - **`!pause`** - Toggle pause/resume
 - **`!skip` / `!next`** - Next track in queue
 - **`!prev`** - Previous track
-- **`!vol [0-100]` / `!volume [0-100]`** - Show or set volume
+- **`!vol [0-100]` / `!volume [0-100]`** - Show or set volume for music, radio, video, and IPTV
 - **`!np` / `!nowplaying`** - Show the current track
 - **`!radio [id]`** - List or play radio stations
 - **`!stream <url> [preset]`** - Start a video stream (YouTube and Twitch links at Auto quality by default; or `auto`, `480p` … `2160p`)

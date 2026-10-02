@@ -69,6 +69,10 @@ While a stream runs, the backend samples the sidecar's encode stats every 10 sec
 
 If ffmpeg stops on its own, the stream stops instead of showing a frozen picture, with a reason: *source ended*, *source unreachable* (network/HTTP errors, or a live source ending), or *encoder failure*.
 
+### Volume
+
+The bot has one volume. `!vol`, the media-bot slider, the video stream slider, and the Bot Hub preview slider all set it. Music and radio apply it on each PCM frame. Video and IPTV pass it to the sidecar as an ffmpeg `volume` filter, including streams started from the IPTV page or `!tv` with no separate level. Changing it during a video or IPTV stream restarts the encoder once (on slider release, not on every drag step) so the new gain takes effect; the picture and audio drop for that restart.
+
 ### Live pacing (issue #72)
 
 Live inputs are read with `-re` like everything else. Measured on a 4-core host with the sidecar's 720p30 VP8 pipeline against live HLS (MPEG-TS) and CMAF (fMP4 with a `moov` repeated in every segment): `-re` held a steady ~1.01x at 30 fps, while reading without it burst to ~2x at startup (the buffered live-edge segments) before settling. The `Found duplicated MOOV Atom. Skipped it` messages from such CMAF sources were harmless in that test. Sustained ~0.5x therefore points at host encode capacity (or a provider-specific timestamp problem), which the health warning now makes visible. Set `VIDEO_LIVE_PACING=source` on the sidecar to let live sources set their own pace instead.
@@ -147,6 +151,8 @@ The all-in-one image keeps the backend and sidecar on loopback behind nginx. For
 ## Synchronization
 
 The sidecar uses RTCP Sender Reports and adaptive pacing controls for A/V synchronization. Environment variables allow limited tuning of playout buffering, bias, queue sizes, bitrate, and encoder behavior.
+
+Live IPTV timestamps are often discontinuous (PCR breaks, HLS segment edges, non-monotonic DTS). The live ffmpeg command adds `igndts` so those frames are not dropped, and `aresample=async=1000` so Opus stays on a continuous clock. If an RTP timestamp still jumps by more than a second, or steps backwards, the sidecar rebases that track instead of holding playout at the maximum sync delay — a hold that otherwise sounds like the audio cutting out. On-demand files and VOD do not get the live audio filters.
 
 See [Environment variables](environment-variables.md) for the available sidecar settings.
 

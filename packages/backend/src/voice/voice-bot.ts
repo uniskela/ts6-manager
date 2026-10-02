@@ -217,6 +217,14 @@ export class VoiceBot extends EventEmitter {
   private _videoEndTimer: ReturnType<typeof setTimeout> | null = null;
   private _videoDurationSec: number | null = null;
   private _videoStreamVolume: number = 100;
+  /** Volume last handed to the sidecar. Null until a source is accepted. */
+  private _appliedVideoVolume: number | null = null;
+  private _volumePushWanted: number | null = null;
+  private _volumePushActive = false;
+  private _volumePushTail: Promise<void> = Promise.resolve();
+  /** Queued or running source changes. Volume restarts wait until none remain. */
+  private _videoSourceChangesPending = 0;
+  private _videoSourceChangeTail: Promise<void> = Promise.resolve();
   private autoStopTimer: ReturnType<typeof setInterval> | null = null;
   private autoStopEmptySince: number | null = null;
 
@@ -224,7 +232,9 @@ export class VoiceBot extends EventEmitter {
     super();
     this.config = config;
     this._originalNickname = config.nickname;
-    this._videoStreamVolume = config.videoStreamVolume ?? 100;
+    // Video and IPTV share the bot volume. A separate video level used to
+    // stay at 100, so !vol and the music slider never reached those streams.
+    this._videoStreamVolume = config.videoStreamVolume ?? config.volume;
     this.client = new Ts3Client();
     this.pipeline = new AudioPipeline();
     this.queue = new PlayQueue();
@@ -410,10 +420,14 @@ export class VoiceBot extends EventEmitter {
   }
 
   updateConfig(partial: Partial<VoiceBotConfig>): void {
-    Object.assign(this.config, partial);
+    const nextVolume = partial.videoStreamVolume ?? partial.volume;
+    const { volume: _volume, videoStreamVolume: _videoStreamVolume, ...rest } = partial;
+    Object.assign(this.config, rest);
     if (partial.nickname) this._originalNickname = partial.nickname;
-    if (partial.videoStreamVolume != null) {
-      this._videoStreamVolume = Math.max(0, Math.min(100, partial.videoStreamVolume));
+    if (nextVolume != null) {
+      // Apply after the other fields so a non-finite volume cannot replace
+      // the current level before it is clamped.
+      this.reportVolumeFailure(this.applyVolume(nextVolume));
     }
   }
 
@@ -1142,9 +1156,118 @@ export class VoiceBot extends EventEmitter {
     }
   }
 
+  /** Clamp to 0–100. Non-finite input keeps the current volume. */
+  private clampVolume(volume: number): number {
+    if (!Number.isFinite(volume)) return this.config.volume;
+    return Math.max(0, Math.min(100, volume));
+  }
+
+  /** One level for music, radio, video, and IPTV. */
+  private assignSharedVolume(volume: number): number {
+    const vol = this.clampVolume(volume);
+    this.config.volume = vol;
+    this._videoStreamVolume = vol;
+    this.emit('volumeChange', vol);
+    return vol;
+  }
+
+  /**
+   * Set the shared volume. When a video/IPTV stream is running, also restart
+   * the sidecar encoder so the ffmpeg volume filter matches. Restarts are
+   * coalesced: a burst of updates becomes one encode, then the latest value.
+   */
+  async applyVolume(volume: number): Promise<void> {
+    this.assignSharedVolume(volume);
+    await this.scheduleVideoVolumePush();
+  }
+
   setVolume(volume: number): void {
-    this.config.volume = Math.max(0, Math.min(100, volume));
-    this.emit('volumeChange', this.config.volume);
+    this.reportVolumeFailure(this.applyVolume(volume));
+  }
+
+  /** Fire-and-forget volume work: log a failed stream restart instead of dropping it. */
+  private reportVolumeFailure(work: Promise<void>): void {
+    void work.catch((err) => {
+      console.error(`[VoiceBot ${this.config.id}] Volume apply failed: ${err?.message ?? err}`);
+      this.emit('error', err instanceof Error ? err : new Error(String(err)));
+    });
+  }
+
+  /** True while a volume change may restart the running encode. */
+  private canPushVideoVolume(): boolean {
+    return this._videoStreaming && !this._videoStopping && this._videoSourceChangesPending === 0
+      && !!this.sidecarHttp && !!this._videoSource;
+  }
+
+  private scheduleVideoVolumePush(): Promise<void> {
+    if (!this.canPushVideoVolume()) {
+      return Promise.resolve();
+    }
+    this._volumePushWanted = this._videoStreamVolume;
+    if (this._appliedVideoVolume === this._volumePushWanted && !this._volumePushActive) {
+      this._volumePushWanted = null;
+      return Promise.resolve();
+    }
+    const run = this._volumePushTail.then(() => this.flushVideoVolumePush());
+    this._volumePushTail = run.catch(() => { /* the caller of applyVolume reports the error */ });
+    return run;
+  }
+
+  private async flushVideoVolumePush(): Promise<void> {
+    if (this._volumePushActive) return;
+    this._volumePushActive = true;
+    try {
+      while (this._volumePushWanted != null) {
+        const vol = this._volumePushWanted;
+        this._volumePushWanted = null;
+        if (!this.canPushVideoVolume()) return;
+        if (this._appliedVideoVolume === vol) continue;
+        await this.pushVideoStreamVolume();
+      }
+    } finally {
+      this._volumePushActive = false;
+      if (this._volumePushWanted != null) {
+        await this.flushVideoVolumePush();
+      }
+    }
+  }
+
+  /** Restart the running encode so the sidecar picks up `_videoStreamVolume`. */
+  private async pushVideoStreamVolume(): Promise<void> {
+    if (!this._videoStreaming || !this.sidecarHttp || !this._videoSource) {
+      throw new Error('No active video stream');
+    }
+    // Reuse the resolved quality: a volume change must not re-probe the source.
+    const quality = this._videoQuality ?? resolveQuality(this._videoPreset, this._videoSettings.autoMaxPreset, null);
+    const maxHeight = STREAM_PRESETS[quality.actual].height;
+    let sourcePath: string;
+    let loop = true;
+    if (this._videoTempFile) {
+      try {
+        sourcePath = resolvePathUnderMusicDir(this._videoTempFile);
+        loop = false;
+      } catch {
+        const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
+        sourcePath = resolved.path;
+        loop = resolved.loop;
+      }
+    } else {
+      const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
+      sourcePath = resolved.path;
+      loop = resolved.loop;
+    }
+    // Source resolution can take a while; a stop or source change that began
+    // meanwhile owns the sidecar now, and a /source here would restart ffmpeg
+    // after the stop, or on the old source.
+    if (!this.canPushVideoVolume()) return;
+    const mode: VideoSourceMode = /^https?:\/\//i.test(sourcePath) ? (this._videoSourceMode ?? 'vod') : 'file';
+    await this.sendSourceToSidecar(sourcePath, loop && mode === 'file', quality, mode);
+    // setSource restarts ffmpeg from the beginning for volume changes, so
+    // refresh the auto-stop timer from now for non-looping on-demand clips.
+    if (!loop && this._videoDurationSec != null) {
+      this.scheduleVideoEndStop(this._videoDurationSec);
+    }
+    this.emit('videoVolumeChange', this._videoStreamVolume);
   }
 
   skip(options: MusicStartOptions = {}): void {
@@ -1573,12 +1696,13 @@ export class VoiceBot extends EventEmitter {
       : preset.framerate;
     const bitrate = effectiveBitrate(this._videoRequestedBitrate, preset.bitrate, this._videoSettings.maxBitrateKbps);
 
+    const volume = this._videoStreamVolume;
     const session = await this.sidecarHttp.setSource(sourcePath, {
       width: quality.width,
       height: quality.height,
       framerate,
       bitrate,
-      volume: this._videoStreamVolume,
+      volume,
       loop,
       encoder: this._videoEncoder.selected,
       mode,
@@ -1595,6 +1719,9 @@ export class VoiceBot extends EventEmitter {
     this._videoFramerate = framerate;
     this._videoBitrate = bitrate;
     this.applyEncoderSession(session);
+    // Record the level that was actually sent. A change during the await
+    // stays queued and is pushed by the next flush.
+    this._appliedVideoVolume = volume;
   }
 
   /**
@@ -1694,9 +1821,9 @@ export class VoiceBot extends EventEmitter {
   }
 
   private async startVideoStreamClaimed(source: string, options: VideoStreamStartOptions): Promise<void> {
-    if (options.volume != null) {
-      this._videoStreamVolume = Math.max(0, Math.min(100, options.volume));
-    }
+    // An explicit start volume becomes the bot volume. Otherwise IPTV and
+    // video use whatever !vol / the music slider last set.
+    this.assignSharedVolume(options.volume != null ? options.volume : this.config.volume);
 
     const settings = await this.loadVideoSettings();
     this._videoSettings = settings;
@@ -1737,6 +1864,7 @@ export class VoiceBot extends EventEmitter {
         if (this._videoStreaming) {
           this.cleanupVideoTempFile();
           this._videoStreaming = false;
+          this._appliedVideoVolume = null;
           this._activeStreamId = null;
           this._videoSourceMode = null;
           this._videoHealth = null;
@@ -1920,6 +2048,10 @@ export class VoiceBot extends EventEmitter {
     this._videoStreaming = true;
     this._videoStartedAt = Date.now();
     this._videoStartAbortError = null;
+    // A !vol or slider change while the stream was starting only updated the
+    // saved level, because no push runs before streaming. Apply it now; this
+    // is a no-op when the encoder already has that level.
+    this.reportVolumeFailure(this.scheduleVideoVolumePush());
     // End-stop was deferred while preparing; arm it now that the stream is live.
     if (!this._videoLoop && this._videoDurationSec != null) {
       this.scheduleVideoEndStop(this._videoDurationSec);
@@ -1967,6 +2099,13 @@ export class VoiceBot extends EventEmitter {
       this.clearNoViewerTimer();
       this.stopHealthMonitor();
       this._videoDurationSec = null;
+      // Let a volume restart already talking to the sidecar finish before
+      // stopSource, so it cannot start ffmpeg again after the stop.
+      this._volumePushWanted = null;
+      if (this._volumePushActive) await this._volumePushTail;
+      // Same for a source change: the running one finishes before stopSource;
+      // queued ones see the stop and drop out without touching the sidecar.
+      if (this._videoSourceChangesPending > 0) await this._videoSourceChangeTail;
 
       // Remove all viewers from TS6 stream first
       if (this.signaling && this._activeStreamId) {
@@ -2003,6 +2142,7 @@ export class VoiceBot extends EventEmitter {
       this._videoSourceMode = null;
       this._videoHealth = null;
       this._videoStreaming = false;
+      this._appliedVideoVolume = null;
       this._videoStartedAt = null;
       this._videoSessionId = null;
       this.releaseSignaling();
@@ -2027,55 +2167,88 @@ export class VoiceBot extends EventEmitter {
     sourceMode?: VideoSourceModeRequest,
     localHosts: string[] = [],
   ): Promise<void> {
-    if (!this._videoStreaming || !this.sidecarHttp) {
+    if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp) {
       throw new Error('No active video stream');
     }
+    // Changes run one at a time, so two cannot drive the sidecar at once. The
+    // count blocks volume restarts from now until the last queued change ends.
+    // A queued change belongs to this stream and is dropped if it ends.
+    const streamId = this._activeStreamId;
+    this._videoSourceChangesPending++;
+    const run = this._videoSourceChangeTail
+      .then(() => this.changeVideoSource(streamId, source, volume, sourceMode, localHosts))
+      .finally(() => { this._videoSourceChangesPending--; });
+    this._videoSourceChangeTail = run.catch(() => { /* the caller reports it */ });
+    try {
+      await run;
+    } finally {
+      // A level set during the change was only saved; apply it to whichever
+      // source is now playing. No-op when the encode already has it, or while
+      // another change is still queued (that one applies it instead).
+      this.reportVolumeFailure(this.scheduleVideoVolumePush());
+    }
+  }
+
+  private async changeVideoSource(
+    streamId: string | null,
+    source: string,
+    volume: number | undefined,
+    sourceMode: VideoSourceModeRequest | undefined,
+    localHosts: string[],
+  ): Promise<void> {
+    // A volume restart still resolving the old source would post it after
+    // this change; with a change pending it stops before /source. Let it finish.
+    if (this._volumePushActive) await this._volumePushTail;
+    if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp || this._activeStreamId !== streamId) {
+      throw new Error('No active video stream');
+    }
+    const previous = {
+      source: this._videoSource,
+      modeRequest: this._videoSourceModeRequest,
+      localHosts: this._videoLocalHosts,
+      mode: this._videoSourceMode,
+      durationSec: this._videoDurationSec,
+      tempFile: this._videoTempFile,
+    };
     // A new source is a new kind of input: default back to detection, and it
     // only gets the LAN allowance its own caller grants.
     this._videoSourceModeRequest = sourceMode ?? 'auto';
     this._videoLocalHosts = localHosts;
     if (volume != null) {
-      this._videoStreamVolume = Math.max(0, Math.min(100, volume));
+      this.assignSharedVolume(volume);
     }
     this._videoSource = source;
-    await this.applyVideoSource(source, this._videoQuality?.requested ?? this._videoPreset);
+    try {
+      await this.applyVideoSource(source, this._videoQuality?.requested ?? this._videoPreset);
+    } catch (err) {
+      // The sidecar still plays the previous source (or its ffmpeg exit stops
+      // the stream). Point state back at it, so a later volume restart cannot
+      // replay the failed candidate.
+      if (this._videoStreaming && !this._videoStopping) {
+        if (this._videoTempFile !== previous.tempFile) {
+          // A finished candidate download replaced (and removed) the previous
+          // one. Drop the candidate; a restart re-resolves the previous source.
+          this.cleanupVideoTempFile();
+        }
+        this._videoSource = previous.source;
+        this._videoSourceModeRequest = previous.modeRequest;
+        this._videoLocalHosts = previous.localHosts;
+        this._videoSourceMode = previous.mode;
+        this._videoDurationSec = previous.durationSec;
+      }
+      throw err;
+    }
     console.log(`[VoiceBot ${this.config.id}] Video source changed`);
     this.emit('videoSourceChanged', source);
   }
 
   /** Adjust video stream audio volume (0–100) while streaming. */
   async setVideoStreamVolume(volume: number): Promise<void> {
+    if (!Number.isFinite(volume)) throw new Error('volume must be a number');
     if (!this._videoStreaming || !this.sidecarHttp || !this._videoSource) {
       throw new Error('No active video stream');
     }
-    this._videoStreamVolume = Math.max(0, Math.min(100, volume));
-    // Reuse the resolved quality: a volume change must not re-probe the source.
-    const quality = this._videoQuality ?? resolveQuality(this._videoPreset, this._videoSettings.autoMaxPreset, null);
-    const maxHeight = STREAM_PRESETS[quality.actual].height;
-    let sourcePath: string;
-    let loop = true;
-    if (this._videoTempFile) {
-      try {
-        sourcePath = resolvePathUnderMusicDir(this._videoTempFile);
-        loop = false;
-      } catch {
-        const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
-        sourcePath = resolved.path;
-        loop = resolved.loop;
-      }
-    } else {
-      const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
-      sourcePath = resolved.path;
-      loop = resolved.loop;
-    }
-    const mode: VideoSourceMode = /^https?:\/\//i.test(sourcePath) ? (this._videoSourceMode ?? 'vod') : 'file';
-    await this.sendSourceToSidecar(sourcePath, loop && mode === 'file', quality, mode);
-    // setSource restarts ffmpeg from the beginning for volume changes, so
-    // refresh the auto-stop timer from now for non-looping on-demand clips.
-    if (!loop && this._videoDurationSec != null) {
-      this.scheduleVideoEndStop(this._videoDurationSec);
-    }
-    this.emit('videoVolumeChange', this._videoStreamVolume);
+    await this.applyVolume(volume);
   }
 
   /** Kick a viewer from the video stream */

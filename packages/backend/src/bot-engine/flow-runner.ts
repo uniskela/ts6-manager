@@ -751,7 +751,8 @@ export class FlowRunner {
     const volume = parseInt(await ctx.resolveTemplate(data.volume));
     if (!botId) throw new Error('Voice Volume: botId is required');
     const bot = mgr.getBot(botId);
-    if (bot) bot.setVolume(Math.max(0, Math.min(100, volume || 50)));
+    // 0 is mute, not a missing value; only a non-numeric volume falls back to 50.
+    if (bot) bot.setVolume(Number.isFinite(volume) ? Math.max(0, Math.min(100, volume)) : 50);
   }
 
   private async executeVoicePauseResume(data: any, ctx: ExecutionContext): Promise<void> {

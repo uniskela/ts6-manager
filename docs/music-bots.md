@@ -56,7 +56,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!pause`** — Toggle pause/resume
 - **`!skip` / `!next`** — Advance the queue
 - **`!prev`** — Previous track
-- **`!vol [0-100]` / `!volume [0-100]`** — Show or set volume
+- **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV.
 - **`!np` / `!nowplaying`** — Show the current track
 - **`!radio [id]`** — List or play radio stations
 - **`!stream <url> [preset]`** — Start a video stream. Without a preset, a YouTube or Twitch link starts at Auto quality (up to the Auto quality limit) and any other URL at the bot's stored preset (720p by default), because Auto opens the source once more to measure it; `auto`, `480p`, `720p`, `1080p`, `1440p` or `2160p` sets it

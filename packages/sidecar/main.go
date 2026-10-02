@@ -285,10 +285,9 @@ func (s *Sidecar) computeTrackDelay(kind string, ts uint32, now time.Time) time.
 		return 0
 	}
 
-	if !current.initialized {
-		current.initialized = true
-		current.baseRTP = ts
-	}
+	// A discontinuous RTP clock (IPTV PCR/PTS breaks) must not stall this track
+	// at maxTrackDelay, or poison the other track through the shared latency.
+	s.noteTimestamp(current, ts, now, clockRate)
 
 	mediaElapsed := rtpElapsed(ts, current.baseRTP, clockRate)
 	expectedWall := s.streamBaseWall.Add(mediaElapsed)
@@ -342,7 +341,40 @@ func cloneRTPPacket(src *rtp.Packet) *rtp.Packet {
 type TrackTiming struct {
 	initialized bool
 	baseRTP     uint32
+	lastRTP     uint32
 	latency     time.Duration
+}
+
+// maxContinuousRTPStep is the largest RTP timestamp step treated as normal
+// playout. A larger jump, or a step backwards, is a source-clock break
+// (common on live IPTV) rather than a real gap to wait out.
+const maxContinuousRTPStep = time.Second
+
+// noteTimestamp keeps a track's RTP clock aligned with the wall clock.
+// It reports whether this packet was a discontinuity and the base was reset.
+// Caller holds timingMu.
+func (s *Sidecar) noteTimestamp(current *TrackTiming, ts uint32, now time.Time, clockRate uint32) bool {
+	if !current.initialized {
+		current.initialized = true
+		current.baseRTP = ts
+		current.lastRTP = ts
+		return false
+	}
+	// int32 delta handles a uint32 wrap as a small forward step, and a
+	// backwards jump as negative, without treating a 24-hour wrap as a reset.
+	step := time.Duration(int64(int32(ts-current.lastRTP))) * time.Second / time.Duration(clockRate)
+	current.lastRTP = ts
+	if step >= 0 && step <= maxContinuousRTPStep {
+		return false
+	}
+	elapsed := now.Sub(s.streamBaseWall)
+	if elapsed < 0 {
+		elapsed = 0
+	}
+	ticks := uint64(elapsed) * uint64(clockRate) / uint64(time.Second)
+	current.baseRTP = ts - uint32(ticks)
+	current.latency = 0
+	return true
 }
 
 type createInFlight struct {
@@ -1190,8 +1222,9 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 	args = append(args, hwInitArgs(spec, req.Source != "")...)
 
 	source := req.Source
+	mode := ""
 	if source != "" {
-		mode := resolveSourceMode(req.Mode, source)
+		mode = resolveSourceMode(req.Mode, source)
 		if isRemoteSource(source) {
 			if s.egress != nil {
 				args = append(args, egressInputArgs(s.egress.URL())...)
@@ -1201,7 +1234,13 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			args = append(args, "-stream_loop", "-1")
 		}
 
-		args = append(args, "-fflags", "+genpts+discardcorrupt")
+		// Live IPTV often has non-monotonic DTS. Without igndts, ffmpeg drops
+		// those audio frames and the stream cuts in and out.
+		fflags := "+genpts+discardcorrupt"
+		if mode == modeLive {
+			fflags = "+genpts+igndts+discardcorrupt"
+		}
+		args = append(args, "-fflags", fflags)
 		if mode != modeLive || !livePacedBySource() {
 			args = append(args, "-re")
 		}
@@ -1250,6 +1289,13 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 		audioFilters := []string{}
 		if audioDelayMs > 0 {
 			audioFilters = append(audioFilters, fmt.Sprintf("adelay=delays=%d:all=1", audioDelayMs))
+		}
+		// Live sources (IPTV) routinely deliver AAC whose timestamps jump at
+		// segment or PCR boundaries. async resample stretches or pads to keep
+		// a continuous 48 kHz timeline so Opus RTP does not stall playout.
+		// async is samples per second of correction, not a boolean.
+		if mode == modeLive {
+			audioFilters = append(audioFilters, "aresample=async=1000:first_pts=0")
 		}
 		if req.Volume >= 0 && req.Volume <= 100 && req.Volume != 100 {
 			audioFilters = append(audioFilters, fmt.Sprintf("volume=%.2f", float64(req.Volume)/100.0))

@@ -65,11 +65,13 @@ const FPS_OPTIONS = [
 interface VideoStreamTabProps {
   botId: number;
   botStatus: string;
+  /** Saved bot volume. The stream starts here unless the slider is moved. */
+  botVolume?: number;
   /** The bot's server: its effective defaults are shown, and admins can override them. */
   server?: { id: number; name: string } | null;
 }
 
-export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps) {
+export function VideoStreamTab({ botId, botStatus, botVolume, server }: VideoStreamTabProps) {
   const [sourceUrl, setSourceUrl] = useState('');
   const [preset, setPreset] = useState<VideoQualityRequest>('auto');
   const [encoder, setEncoder] = useState<'default' | VideoEncoderRequest>('default');
@@ -77,7 +79,10 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
   const [sourceMode, setSourceMode] = useState<VideoSourceModeRequest>('auto');
   const [framerate, setFramerate] = useState('30');
   const [bitrate, setBitrate] = useState('');
-  const [streamVolume, setStreamVolume] = useState(100);
+  // Unsaved slider position. Null follows the saved bot volume, so a !vol or
+  // Bot Hub change made after this page opened is not overwritten on Start.
+  const [volumeDraft, setVolumeDraft] = useState<number | null>(null);
+  const streamVolume = volumeDraft ?? botVolume ?? 100;
 
   const isAdmin = useAuthStore((state) => state.isAdmin());
   const { data: globalDefaults } = useVideoStreamingSettings();
@@ -94,6 +99,28 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
   const isBotConnected = botStatus === 'connected' || botStatus === 'playing' || botStatus === 'paused';
   const now = useNow(isStreaming);
 
+  // Drop the draft when switching bots or when the saved level changes (this
+  // slider's own save, or !vol elsewhere). The bot list polls, but an
+  // unchanged level does not re-run this, so a drag in progress stays put.
+  useEffect(() => {
+    setVolumeDraft(null);
+  }, [botId, botVolume]);
+
+  const onVolumeChange = (val: number) => {
+    setVolumeDraft(val);
+  };
+
+  const onVolumeCommit = (val: number) => {
+    setVolumeDraft(val);
+    // Commit on release. Sending every drag step restarts ffmpeg and cuts the audio.
+    if (isStreaming) {
+      setStreamVolumeMut.mutate(
+        { botId, volume: val },
+        { onError: (err) => toast.error(apiErrorMessage(err, 'Failed to set stream volume')) },
+      );
+    }
+  };
+
   const handleStart = () => {
     if (!sourceUrl.trim()) return;
     startStream.mutate(
@@ -106,7 +133,8 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
         sourceMode,
         framerate: Number(framerate),
         bitrate: bitrate.trim() || undefined,
-        volume: streamVolume,
+        // Only a moved slider overrides; otherwise the bot keeps its saved level.
+        volume: volumeDraft ?? undefined,
       },
       {
         onSuccess: () => toastMediaStarted('Video stream started'),
@@ -407,12 +435,9 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
                         min={0}
                         max={100}
                         step={1}
-                        onValueChange={([val]) => {
-                          setStreamVolume(val);
-                          if (isStreaming) {
-                            setStreamVolumeMut.mutate({ botId, volume: val });
-                          }
-                        }}
+                        aria-label="Stream volume"
+                        onValueChange={([val]) => onVolumeChange(val)}
+                        onValueCommit={([val]) => onVolumeCommit(val)}
                       />
                     </div>
                   </div>
@@ -427,10 +452,9 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
                     min={0}
                     max={100}
                     step={1}
-                    onValueChange={([val]) => {
-                      setStreamVolume(val);
-                      setStreamVolumeMut.mutate({ botId, volume: val });
-                    }}
+                    aria-label="Stream volume"
+                    onValueChange={([val]) => onVolumeChange(val)}
+                    onValueCommit={([val]) => onVolumeCommit(val)}
                   />
                 </div>
               )}

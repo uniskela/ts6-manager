@@ -57,12 +57,11 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
   const resumePlayback = useResumePlayback();
   const skipTrack = useSkipTrack();
   const setVolume = useSetVolume();
-  const { data: musicState } = useMusicBotState(
-    bot.session?.kind === 'music' ? bot.botId : null,
-  );
   const [draggingVolume, setDraggingVolume] = useState<number | null>(null);
 
   const tone = hubTone(bot);
+  const showVolume = tone === 'music' || tone === 'live';
+  const { data: musicState } = useMusicBotState(showVolume ? bot.botId : null);
   const badge = TONE_BADGE[tone];
   const facts = hubFacts(bot, now);
   const lastStop = tone === 'idle' || tone === 'offline' ? hubLastStop(bot, now) : null;
@@ -123,12 +122,31 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
         )}
 
         {tone === 'live' && (
-          <VideoPlayer
-            botId={bot.botId}
-            streaming={bot.session?.state === 'active'}
-            idleDetail={bot.session?.state === 'starting' ? 'Starting stream…' : null}
-            className="max-w-none w-full"
-          />
+          <div className="space-y-2">
+            <VideoPlayer
+              botId={bot.botId}
+              streaming={bot.session?.state === 'active'}
+              idleDetail={bot.session?.state === 'starting' ? 'Starting stream…' : null}
+              className="max-w-none w-full"
+            />
+            <div className="space-y-1 rounded-md border bg-muted/30 p-2">
+              <div className="flex items-center justify-between text-xs text-muted-foreground">
+                <span>Volume</span>
+                <span>{volume}%</span>
+              </div>
+              <Slider
+                value={[volume]}
+                max={100}
+                step={1}
+                aria-label={`Volume for ${bot.botName}`}
+                onValueChange={([val]) => setDraggingVolume(val)}
+                onValueCommit={([val]) => {
+                  setVolume.mutate({ botId: bot.botId, volume: val });
+                  setDraggingVolume(null);
+                }}
+              />
+            </div>
+          </div>
         )}
 
         {tone === 'music' && (
