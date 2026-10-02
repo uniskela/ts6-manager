@@ -45,6 +45,26 @@ function parseVolume(raw: unknown): number {
   return Math.max(0, Math.min(100, Math.round(vol)));
 }
 
+/** Per-bot chain of volume writes, so they reach the database in request order. */
+const volumeSaveTails = new Map<number, Promise<void>>();
+
+/**
+ * Save a bot volume after any earlier save for the same bot finishes. The
+ * in-memory level is set in request order, but concurrent database writes can
+ * complete in any order; queueing keeps the newest level as the last write.
+ */
+function saveBotVolume(prisma: any, id: number, volume: number): Promise<void> {
+  const prev = volumeSaveTails.get(id) ?? Promise.resolve();
+  const next = prev
+    .catch(() => { /* the earlier request reported its own failure */ })
+    .then(() => prisma.musicBot.update({ where: { id }, data: { volume } }))
+    .then(() => {});
+  volumeSaveTails.set(id, next);
+  const forget = () => { if (volumeSaveTails.get(id) === next) volumeSaveTails.delete(id); };
+  next.then(forget, forget);
+  return next;
+}
+
 /**
  * Apply a volume to a live bot and save it. The in-memory level changes before
  * a running stream restarts, so it is saved even when that restart fails;
@@ -57,7 +77,7 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
     // A newer request may have changed the level while this one waited on the
     // restart; saving now would put the older level back in the database.
     if (!bot || bot.currentConfig.volume === vol) {
-      await prisma.musicBot.update({ where: { id }, data: { volume: vol } });
+      await saveBotVolume(prisma, id, vol);
     }
   }
 }
@@ -906,10 +926,7 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     );
     if (parsed.options.volume != null) {
       const prisma = req.app.locals.prisma;
-      await prisma.musicBot.update({
-        where: { id: bot.currentConfig.id },
-        data: { volume: bot.currentConfig.volume },
-      });
+      await saveBotVolume(prisma, bot.currentConfig.id, bot.currentConfig.volume);
     }
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
@@ -943,7 +960,7 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
       // Same rule as /stream/volume: once the bot took the level, save it.
       if (volume != null && bot.currentConfig.volume === volume) {
         const prisma = req.app.locals.prisma;
-        await prisma.musicBot.update({ where: { id: bot.currentConfig.id }, data: { volume } });
+        await saveBotVolume(prisma, bot.currentConfig.id, volume);
       }
     }
     res.json({ success: true });
@@ -966,7 +983,7 @@ musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, ne
       // setVideoStreamVolume refuses before changing anything when no stream
       // runs; once it has changed the level, save it even if the restart fails.
       if (bot.currentConfig.volume === vol) {
-        await prisma.musicBot.update({ where: { id: bot.currentConfig.id }, data: { volume: vol } });
+        await saveBotVolume(prisma, bot.currentConfig.id, vol);
       }
     }
     res.json({ success: true, volume: vol });

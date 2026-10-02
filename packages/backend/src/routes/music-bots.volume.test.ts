@@ -31,7 +31,10 @@ async function send(app: Express, method: string, path: string, body: unknown) {
   }
 }
 
-function fixture(apply: (v: number) => Promise<void> = async () => {}) {
+function fixture(
+  apply: (v: number) => Promise<void> = async () => {},
+  write: (v: number) => Promise<void> = async () => {},
+) {
   const saved: number[] = [];
   const applied: number[] = [];
   const bot = {
@@ -49,7 +52,8 @@ function fixture(apply: (v: number) => Promise<void> = async () => {}) {
   };
   const app = buildApp({
     prisma: {
-      musicBot: { update: async ({ data }: any) => { saved.push(data.volume); return {}; } },
+      // Records when the write completes, so a slow write lands after a fast one.
+      musicBot: { update: async ({ data }: any) => { await write(data.volume); saved.push(data.volume); return {}; } },
       adminAuditEvent: {
         create: async () => ({ id: 1 }),
         updateMany: async () => ({ count: 1 }),
@@ -109,6 +113,22 @@ describe('bot volume routes', () => {
     assert.equal((await slow).status, 200);
     assert.equal(f.bot.currentConfig.volume, 30);
     assert.deepEqual(f.saved, [30], 'the stale 20 must not be written after 30');
+  });
+
+  it('volume saves for one bot complete in request order', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    let writes = 0;
+    // The database write for 20 is slow; 30 arrives while it is still pending.
+    const f = fixture(async () => {}, async (v) => { writes++; if (v === 20) await gate; });
+    const slow = send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 20 });
+    while (writes === 0) await new Promise((r) => setImmediate(r));
+    const fast = send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 30 });
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    release();
+    assert.equal((await slow).status, 200);
+    assert.equal((await fast).status, 200);
+    assert.deepEqual(f.saved, [20, 30], 'the newer level must be the last write');
   });
 
   it('saves the new level even when the stream restart fails', async () => {
