@@ -152,10 +152,10 @@ export const chatCommandsApi = {
 // === Playlist API ===
 
 export const playlistsApi = {
-  list: (musicBotId?: number) =>
-    api.get('/playlists', { params: musicBotId ? { musicBotId } : undefined }).then((r) => r.data),
+  list: (serverConfigId?: number) =>
+    api.get('/playlists', { params: serverConfigId ? { serverConfigId } : undefined }).then((r) => r.data),
   get: (id: number) => api.get(`/playlists/${id}`).then((r) => r.data),
-  create: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream' }) =>
+  create: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream'; serverConfigId?: number }) =>
     api.post('/playlists', data).then((r) => r.data),
   update: (id: number, data: any) => api.put(`/playlists/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/playlists/${id}`),

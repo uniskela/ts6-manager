@@ -30,6 +30,10 @@ Music bots support:
 
 Local/downloaded tracks are decoded incrementally at media speed to keep memory use bounded on long tracks.
 
+## Playlists
+
+Playlists are shared by every media bot on the same TeamSpeak server.
+
 ## Playback controls
 
 The web UI supports queue management, pause/resume, skip, previous, shuffle, repeat, seek, and volume. Running bots use a Play split-button (Playlist / Song / Video / Radio / IPTV) that remembers the last-used action.

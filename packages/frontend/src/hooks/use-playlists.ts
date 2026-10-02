@@ -1,10 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { playlistsApi } from '../api/music.api';
 
-export function usePlaylists(musicBotId?: number) {
+export function usePlaylists(serverConfigId?: number) {
   return useQuery({
-    queryKey: ['playlists', musicBotId],
-    queryFn: () => playlistsApi.list(musicBotId),
+    queryKey: ['playlists', serverConfigId],
+    queryFn: () => playlistsApi.list(serverConfigId),
   });
 }
 
@@ -19,7 +19,7 @@ export function usePlaylist(id: number | null) {
 export function useCreatePlaylist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream' }) =>
+    mutationFn: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream'; serverConfigId?: number }) =>
       playlistsApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlists'] }),
   });

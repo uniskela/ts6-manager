@@ -2037,7 +2037,7 @@ export class MusicCommandHandler {
   private async handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {
     const serverConfigId = bot.currentConfig.serverConfigId;
     if (!serverConfigId) { this.reply(bot, userClid, 'No server configured.'); return; }
-    const where = { serverConfigId, OR: [{ musicBotId: botId }, { musicBotId: null }] };
+    const where = { OR: [{ serverConfigId }, { serverConfigId: null }] };
     const playlists = await this.prisma.playlist.findMany({
       where, select: { id: true, name: true }, orderBy: { name: 'asc' },
     });

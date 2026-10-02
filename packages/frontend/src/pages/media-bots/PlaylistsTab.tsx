@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useMusicBots } from '@/hooks/use-music-bots';
 import {
@@ -76,7 +76,7 @@ import { ImportQueueOptions } from './ImportQueueOptions';
 export function PlaylistsTab() {
   const qc = useQueryClient();
   const { selectedConfigId } = useServerStore();
-  const { data, isLoading } = usePlaylists();
+  const { data, isLoading } = usePlaylists(selectedConfigId ?? undefined);
   const createPlaylist = useCreatePlaylist();
   const updatePlaylist = useUpdatePlaylist();
   const deletePlaylist = useDeletePlaylist();
@@ -149,9 +149,25 @@ export function PlaylistsTab() {
     setAddImportJobId(null);
   };
 
+  // Playlists belong to a server: switching servers closes the old server's
+  // playlist and anything open for it.
+  const shownConfigId = useRef(selectedConfigId);
+  useEffect(() => {
+    if (shownConfigId.current === selectedConfigId) return;
+    shownConfigId.current = selectedConfigId;
+    setSelectedId(null);
+    setShowEdit(false);
+    setShowAddSong(false);
+    setDeleteId(null);
+    setSongFilter('');
+    setAddTab('songs');
+    setImportQueueBotId('');
+    resetAddUrlState();
+  }, [selectedConfigId]);
+
   const handleCreate = () => {
     createPlaylist.mutate(
-      { name: newName, mode: newMode },
+      { name: newName, mode: newMode, serverConfigId: selectedConfigId ?? undefined },
       {
         onSuccess: () => {
           toast.success('Playlist created');

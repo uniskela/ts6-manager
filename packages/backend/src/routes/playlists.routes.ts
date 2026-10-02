@@ -51,9 +51,13 @@ function mapPlaylistSummary(p: {
 playlistRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const musicBotId = req.query.musicBotId ? parseInt(String(req.query.musicBotId)) : undefined;
+    const raw = req.query.serverConfigId;
+    if (raw !== undefined && !(typeof raw === 'string' && /^[1-9]\d*$/.test(raw))) {
+      throw new AppError(400, 'serverConfigId must be a positive whole number');
+    }
+    const serverConfigId = raw === undefined ? undefined : Number(raw);
     const playlists = await prisma.playlist.findMany({
-      where: musicBotId ? { musicBotId } : undefined,
+      where: serverConfigId ? { OR: [{ serverConfigId }, { serverConfigId: null }] } : undefined,
       include: { _count: { select: { songs: true } } },
       orderBy: { createdAt: 'desc' },
     });
@@ -109,15 +113,24 @@ playlistRoutes.get('/:id', async (req: Request, res: Response, next) => {
 playlistRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const { name, musicBotId, mode } = req.body;
+    const { name, musicBotId, mode, serverConfigId } = req.body;
     if (!name) throw new AppError(400, 'name is required');
     const playlistMode = normalizePlaylistMode(mode, 'local');
+    // Playlists belong to the server they were created on; without one they stay
+    // shared like legacy playlists.
+    if (serverConfigId != null && !(Number.isInteger(serverConfigId) && serverConfigId > 0)) {
+      throw new AppError(400, 'serverConfigId must be a positive whole number');
+    }
+    if (serverConfigId != null && !(await prisma.tsServerConfig.findUnique({ where: { id: serverConfigId }, select: { id: true } }))) {
+      throw new AppError(400, `Server ${serverConfigId} does not exist`);
+    }
 
     const playlist = await prisma.playlist.create({
       data: {
         name,
         mode: playlistMode,
         musicBotId: musicBotId ? parseInt(musicBotId) : null,
+        serverConfigId: serverConfigId ?? null,
       },
     });
 
