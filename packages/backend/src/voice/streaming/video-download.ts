@@ -161,6 +161,13 @@ export interface DownloadedStreamVideo {
    * Used as a probe fallback for fixed quality presets that skip ffprobe.
    */
   live?: boolean;
+  /**
+   * A second remote input carrying the audio, when the source delivers video
+   * and audio separately (YouTube above 720p). `path` is then video only.
+   */
+  audioPath?: string;
+  /** The chosen format's picture size when the extractor reports it, so Auto quality needs no probe. */
+  resolution?: { width: number; height: number };
 }
 
 /**
@@ -182,20 +189,14 @@ export function parseTwitchResolve(data: Record<string, unknown>): DownloadedStr
 }
 
 /**
- * Resolve a Twitch (live or VOD) page URL to a direct media URL for ffmpeg.
- * Live Twitch cannot be downloaded to a fixed `.stream-*.mp4` the way YouTube
- * VODs are — yt-dlp either never finishes or exits without creating the file,
- * which previously surfaced as "Local video file not found" (#203).
+ * Ask yt-dlp for a page's media URLs and metadata without downloading
+ * (`--dump-single-json`). `site` only names the source in error messages.
  */
-async function resolveTwitchStreamUrl(
+async function resolveWithYtDlp(
   url: string,
-  maxHeight: number,
-  maxDurationSec: number,
-): Promise<DownloadedStreamVideo> {
-  // Prefer a single muxed stream so ffmpeg gets one `-i` URL (Twitch often
-  // exposes HLS playlists that already include audio).
-  const formatFilter = `best[height<=${maxHeight}]/best`;
-
+  formatArgs: string[],
+  site: string,
+): Promise<Record<string, unknown>> {
   const { stdout, stderr, code } = await new Promise<{
     stdout: string;
     stderr: string;
@@ -203,7 +204,7 @@ async function resolveTwitchStreamUrl(
   }>((resolve, reject) => {
     const args = [
       ...getCookieArgs(),
-      '-f', formatFilter,
+      ...formatArgs,
       '--dump-single-json',
       '--no-download',
       '--no-playlist',
@@ -218,7 +219,7 @@ async function resolveTwitchStreamUrl(
     proc.stderr.on('data', (chunk: Buffer) => { err += chunk.toString(); });
     const timer = setTimeout(() => {
       proc.kill('SIGKILL');
-      reject(new Error('Twitch URL resolve timed out after 2 minutes'));
+      reject(new Error(`${site} URL resolve timed out after 2 minutes`));
     }, 2 * 60_000);
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
@@ -231,17 +232,34 @@ async function resolveTwitchStreamUrl(
   });
 
   if (code !== 0) {
-    throw new Error(`yt-dlp failed to resolve Twitch URL (code ${code}): ${stderr.slice(0, 280)}`);
+    throw new Error(`yt-dlp failed to resolve ${site} URL (code ${code}): ${stderr.slice(0, 280)}`);
   }
 
-  let data: Record<string, unknown>;
   try {
     const jsonLine =
       stdout.trim().split('\n').find((line) => line.startsWith('{')) || stdout.trim();
-    data = JSON.parse(jsonLine);
+    return JSON.parse(jsonLine);
   } catch {
-    throw new Error('Failed to parse yt-dlp Twitch metadata');
+    throw new Error(`Failed to parse yt-dlp ${site} metadata`);
   }
+}
+
+/**
+ * Resolve a Twitch (live or VOD) page URL to a direct media URL for ffmpeg.
+ * Live Twitch cannot be downloaded to a fixed `.stream-*.mp4` the way YouTube
+ * VODs are — yt-dlp either never finishes or exits without creating the file,
+ * which previously surfaced as "Local video file not found" (#203).
+ */
+async function resolveTwitchStreamUrl(
+  url: string,
+  maxHeight: number,
+  maxDurationSec: number,
+): Promise<DownloadedStreamVideo> {
+  // Prefer a single muxed stream so ffmpeg gets one `-i` URL (Twitch often
+  // exposes HLS playlists that already include audio).
+  const formatFilter = `best[height<=${maxHeight}]/best`;
+
+  const data = await resolveWithYtDlp(url, ['-f', formatFilter], 'Twitch');
 
   const resolved = parseTwitchResolve(data);
   // Page URL was validated in downloadVideoForStream; the extractor media URL
@@ -268,6 +286,84 @@ async function resolveTwitchStreamUrl(
   console.log(
     `[VideoDownload] Resolved Twitch ${resolved.live ? 'live' : 'VOD'} URL for ffmpeg` +
       (resolved.durationSec != null ? ` (${resolved.durationSec}s)` : ''),
+  );
+  return resolved;
+}
+
+function mediaUrl(value: unknown): string {
+  const url = typeof value === 'string' ? value.trim() : '';
+  return url.startsWith('http://') || url.startsWith('https://') ? url : '';
+}
+
+function pictureSize(format: Record<string, unknown>): { width: number; height: number } | undefined {
+  const width = Number(format.width);
+  const height = Number(format.height);
+  return Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0
+    ? { width, height }
+    : undefined;
+}
+
+/**
+ * Parse yt-dlp `--dump-single-json` output for a YouTube page into a source
+ * ffmpeg can read directly. Exported for unit tests (no yt-dlp / network).
+ *
+ * Above 720p YouTube delivers video and audio as separate streams, which
+ * yt-dlp lists under `requested_formats`; those become `path` (video) and
+ * `audioPath`. A live broadcast can come the same way, as two HLS playlists.
+ * A combined format has a single top-level `url`.
+ */
+export function parseYoutubeResolve(data: Record<string, unknown>): DownloadedStreamVideo {
+  const isLive = data.is_live === true || data.live_status === 'is_live';
+  const rawDuration = typeof data.duration === 'number' ? data.duration : NaN;
+  const durationSec =
+    !isLive && Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : null;
+
+  const formats = Array.isArray(data.requested_formats)
+    ? (data.requested_formats as Array<Record<string, unknown>>)
+    : [];
+  const video = formats.find((f) => f.vcodec !== 'none' && mediaUrl(f.url));
+  const audio = formats.find((f) => f !== video && f.acodec !== 'none' && mediaUrl(f.url));
+  if (video && audio) {
+    return {
+      path: mediaUrl(video.url),
+      audioPath: mediaUrl(audio.url),
+      durationSec,
+      live: isLive,
+      resolution: pictureSize(video) ?? pictureSize(data),
+    };
+  }
+
+  const combined = mediaUrl(data.url);
+  if (!combined) {
+    throw new Error('yt-dlp did not return a playable YouTube stream URL');
+  }
+  return { path: combined, durationSec, live: isLive, resolution: pictureSize(data) };
+}
+
+/**
+ * Resolve a YouTube page URL to media URLs ffmpeg reads directly, without
+ * downloading: the video starts at once whatever its length, and a live
+ * broadcast can be streamed at all. Off by default (Settings → YouTube),
+ * because YouTube refuses these URLs from some networks; the download path
+ * exists for that. "Max video duration" is not applied: nothing is stored.
+ */
+async function resolveYoutubeStreamUrl(url: string, maxHeight: number): Promise<DownloadedStreamVideo> {
+  const data = await resolveWithYtDlp(url, youtubeVideoFormatArgs(maxHeight), 'YouTube');
+  const resolved = parseYoutubeResolve(data);
+  // Second hop, as for Twitch: the media URLs are checked again (no LAN
+  // allowlist; YouTube's CDN is public).
+  for (const media of [resolved.path, resolved.audioPath]) {
+    if (!media) continue;
+    const check = await validateUrl(media, { allowedProtocols: ['http:', 'https:'] });
+    if (!check.valid) {
+      throw new Error(`YouTube media URL blocked: ${check.error}`);
+    }
+  }
+  console.log(
+    `[VideoDownload] Resolved YouTube ${resolved.live ? 'live' : 'VOD'} for direct streaming` +
+      (resolved.audioPath ? ' (separate video and audio)' : '') +
+      (resolved.resolution ? `, ${resolved.resolution.width}x${resolved.resolution.height}` : '') +
+      (resolved.durationSec != null ? `, ${Math.round(resolved.durationSec)}s` : ''),
   );
   return resolved;
 }
@@ -304,18 +400,24 @@ export function durationFilterSkipMessage(ytDlpStdout: string, maxDurationSec: n
   if (!/does not pass filter \(duration [<>]=/.test(ytDlpStdout)) return null;
   if (maxDurationSec > 0) {
     return (
-      `Video is longer than the ${describeDuration(maxDurationSec)} limit, or is a live broadcast (not supported). ` +
-      'Raise "Max video duration" under Settings → YouTube (0 = unlimited).'
+      `Video is longer than the ${describeDuration(maxDurationSec)} limit, or is a live broadcast. ` +
+      'Under Settings → YouTube, turn on "Stream YouTube videos directly" (no length limit, live broadcasts work) ' +
+      'or raise "Max video duration" (0 = unlimited).'
     );
   }
-  return 'Video has no known length (a live stream?), so it cannot be downloaded for streaming.';
+  return (
+    'Video has no known length (a live broadcast?), so it cannot be downloaded for streaming. ' +
+    'Turn on "Stream YouTube videos directly" under Settings → YouTube to stream it.'
+  );
 }
 
 /**
  * Prepare a video source for the sidecar.
  *
  * - YouTube: download via yt-dlp to a temp file under MUSIC_DIR (avoids
- *   datacenter-IP 403 on googlevideo URLs), then stream from disk.
+ *   datacenter-IP 403 on googlevideo URLs), then stream from disk. With
+ *   `youtubeDirect`, resolve direct media URLs instead (no temp file, no
+ *   length limit, live broadcasts work).
  * - Twitch: resolve a direct media URL with yt-dlp (live-safe; no temp file).
  * - Other http(s): pass through for ffmpeg.
  * - Bare filenames: resolve under MUSIC_DIR.
@@ -326,7 +428,7 @@ export async function downloadVideoForStream(
   url: string,
   maxHeight: number = 720,
   maxDurationSec: number = 900,
-  options: { localHosts?: string[] } = {},
+  options: { localHosts?: string[]; youtubeDirect?: boolean } = {},
 ): Promise<DownloadedStreamVideo> {
   rejectYtDlpOptionUrl(url);
 
@@ -354,6 +456,10 @@ export async function downloadVideoForStream(
     // Redirects and HLS segment URLs are checked by the sidecar's egress
     // proxy, with the same localHosts allowance (see docs/video-streaming.md).
     return { path: url, durationSec: null };
+  }
+
+  if (options.youtubeDirect) {
+    return resolveYoutubeStreamUrl(url, maxHeight);
   }
 
   const musicRoot = ensureMusicDir();

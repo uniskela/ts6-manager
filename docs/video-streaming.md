@@ -7,6 +7,7 @@ TS6 Manager includes a Go/Pion media sidecar for low-latency video delivery to T
 The streaming path can accept supported YouTube, Twitch, direct media URLs, and IPTV sources.
 
 - **YouTube** is downloaded with yt-dlp to a short-lived file under the music directory (avoids googlevideo 403s from datacenter IPs), then encoded.
+- **YouTube, streamed directly** (optional): with *Settings → YouTube → Stream YouTube videos directly* on, a YouTube video is not downloaded. yt-dlp resolves its media URLs and ffmpeg reads them as it plays, so a stream starts in seconds whatever the video's length, and live broadcasts work. Above 720p, and for some live broadcasts, YouTube delivers video and audio as two streams, which the sidecar reads as two inputs. *Max video duration* is not applied in this mode, since nothing is stored; the no-viewer timeout still ends an unwatched stream. Auto quality takes the picture size from yt-dlp, so there is no probe. It is off by default because YouTube refuses direct playback from some networks (the 403s above); if streams fail to start with it on, turn it off. The media URLs expire after some hours, which ends a stream that runs that long.
 - **Twitch** (live or VOD) is resolved with yt-dlp to a direct media URL and fed to ffmpeg — it is not downloaded to a `.stream-*.mp4` temp file (live Twitch cannot finish that path).
 
 ## Quality
