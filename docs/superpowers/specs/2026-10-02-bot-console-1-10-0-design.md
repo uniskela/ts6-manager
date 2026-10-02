@@ -1,7 +1,7 @@
 # 1.10.0: Bot console, bots vs media split, and media refactors
 
 **Date:** 2026-10-02  
-**Status:** Draft, awaiting review  
+**Status:** Draft, reviewed 2026-10-02, awaiting approval  
 **Tracks:** #164 (1.10.0 planning), #196 (per-bot media console)  
 **Mockup:** private design canvas shared in the planning session (desktop, phone, before/after boards)
 
@@ -36,7 +36,9 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | Radio navigation | Mood chips from the existing `genre` field, plus an Edit station action |
 | Media scope | Shared by all bots on a server, never per bot. Playlists drop their per-bot filter |
 | Custom chat commands | Move to Bot Flows → Chat commands, with a read-only list of built-in commands and name clash warnings |
-| Refactors in 1.10.0 | R1 shared URL pipeline, R2 split `MusicBots.tsx`, R3 split chat handler (R3 may slip to 1.10.x) |
+| Refactors in 1.10.0 | R1 shared URL pipeline, R2 split `MusicBots.tsx`, R3 split chat handler (R3 runs last and may slip to 1.10.x) |
+| Cut line | Must-have for 1.10.0: console, its tabs, the restructure, shared playlists, auto-stop notices, R1, R2. May slip to 1.10.x: IPTV favourites + recent, IPTV country/language, R3 |
+| Command permissions | Not in 1.10.0. Planned for 1.11.0 with the listener remote (#253), which depends on them |
 | NVENC | #238 stays a separate contributor PR, reviewed on its own |
 
 ## 1. Structure and navigation
@@ -78,7 +80,7 @@ Songs, radio stations, IPTV playlists, custom chat commands and the new IPTV fav
 **IPTV page**
 
 - Keeps playlist sources and Local hosts.
-- A channel's Stream action becomes "Stream on…": pick a bot, land on that bot's console with the channel ready to start.
+- A channel's Stream action becomes "Stream on…": pick a bot, then open `/bot-hub/N?iptv=<playlistId>:<channelKey>`. The console opens on the IPTV tab with that channel selected and the video options shown. It **never starts on its own**; the admin presses Stream. An unknown or stale key shows "That channel is no longer in the playlist" and leaves the IPTV tab open.
 
 **Redirects (old links keep working)**
 
@@ -101,7 +103,7 @@ Songs, radio stations, IPTV playlists, custom chat commands and the new IPTV fav
 | Unit | Job |
 |---|---|
 | `BotConsole.tsx` | Route page: loads the bot, handles not found and offline, lays out the panels |
-| `NowPlayingPanel` | Shared now-playing component (full variant). Same component the hub cards use in compact form |
+| `NowPlayingPanel` | Shared now-playing component (full variant). Same component the hub cards use in compact form. The Media Bots → Bots card is not converted: it is removed with that tab |
 | `UpNextQueue` | Queue list: drag to reorder, play now, remove, shuffle, repeat (off / track / queue), clear |
 | `SourcePicker` | Tab shell; one file per tab: `MusicSource`, `LinkSource`, `RadioSource`, `IptvSource` |
 | `VideoOptions` | Quality, encoder, no-viewer timeout, source type. Used by Link (stream as video) and IPTV |
@@ -135,6 +137,7 @@ Existing queries only; no new polling.
 
 - `useBotMedia` (`GET /api/music-bots/media`): session, video quality and encoder, health, viewers, auto-stop, last stop reason.
 - `useMusicBotState(botId)`: track, progress, queue, shuffle, repeat.
+- The console reads the `?iptv=` deep link once on load (see IPTV page).
 - Both already refresh every 1–3 s, so the panel tracks starts, stops, replacements and auto-stops without a reload.
 
 ### Starting and stopping
@@ -177,7 +180,7 @@ All long lists use one shared pager: "1–50 of 148", page buttons, and a **Per 
 
 | List | Change |
 |---|---|
-| Songs | `GET /songs` gains optional `search`, `page`, `pageSize` (returns `{ total, page, pageSize, songs }` only when `page` is given). Without them it returns the full list as today, so the Library tab is unaffected |
+| Songs | New `GET /songs/search?search=&page=&pageSize=` returning `{ total, page, pageSize, songs }`. `GET /songs` is unchanged, so the Library tab is unaffected |
 | Playlists | Filtered and paged in the browser |
 | Recent requests | Existing endpoint (newest 100); paged in the browser |
 | Radio stations | Filtered by search and mood, paged in the browser |
@@ -187,9 +190,9 @@ All long lists use one shared pager: "1–50 of 148", page buttons, and a **Per 
 
 ### Backend changes (complete list)
 
-All new routes are admin only and scoped to one server, like the existing IPTV and radio routes.
+All new routes use the same middleware as the routes they sit beside (`requireServerAccess` plus the existing role checks), so an account only sees servers it has access to. Every query is scoped to one `serverConfigId`.
 
-1. `GET /songs`: optional `search`, `page`, `pageSize` (backward compatible).
+1. `GET /songs/search`: paged song search; `GET /songs` unchanged.
 2. `GET /api/iptv/groups?serverConfigId=&playlistId=&country=&language=`: distinct groups with channel counts.
 3. `GET /api/iptv/channels?serverConfigId=&playlistId=&group=&country=&language=&search=&page=&pageSize=`: cross-playlist channel search.
 4. `GET/PUT/DELETE /api/iptv/favourites`: list, add, remove favourites by stable key.
@@ -225,37 +228,43 @@ All new routes are admin only and scoped to one server, like the existing IPTV a
 
 ### Not in 1.10.0
 
-`voice-bot.ts` and sidecar `main.go` splits; framework upgrades; EPG/XMLTV/Xtream; a video library (upload, list, delete); per-user (rather than per-server) favourites; the listener remote (`!remote` one-time link for non-admins, planned as the 1.11.0 lead feature in #253); multiple mood tags per radio station; dynamic quality changes during a stream; the flow loop node.
+`voice-bot.ts` and sidecar `main.go` splits; framework upgrades; EPG/XMLTV/Xtream; a video library (upload, list, delete); per-user (rather than per-server) favourites; the listener remote (`!remote` one-time link for non-admins, planned as the 1.11.0 lead feature in #253); permissions for built-in chat commands (1.11.0, with #253); vote-skip (1.11.0); warnings, automod, leaderboard, self-assign groups and polls (1.12.0); Twitch/YouTube alerts; multiple mood tags per radio station; dynamic quality changes during a stream; the flow loop node.
 
 ## 4. PR order
 
-| # | PR | Can start | Release effect |
-|---|----|-----------|----------------|
-| 0 | Merge release PR #252 (1.9.4) first, if shipping it separately | now | patch |
-| 1 | `refactor:` split MusicBots.tsx (R2) | now | none |
-| 2 | `refactor:` shared URL pipeline (R1) | now | none |
-| 3 | `refactor:` shared NowPlaying component (hub card + Media Bots card) | after 1 | none |
-| 4 | `feat:` console page, Now playing, Up next with drag and drop, hub "Open console" | after 3 | minor → 1.10.0 |
-| 5 | `feat:` console Music tab (Songs · Playlists · Recent) + Radio tab with mood chips, `/songs` search and paging | after 4 | — |
-| 5b | `feat:` edit radio stations (`PUT` route + Edit in Media Library → Radio stations) | now | — |
-| 6 | `feat:` console Link tab (music or video, music-folder filename) + video options | after 4 | — |
-| 7 | `feat:` console IPTV tab: group browser, cross-playlist search, playlist filter | after 4 | — |
-| 7b | `feat:` IPTV country and language (migration, parser, filters) | after 7 | — |
-| 7c | `feat:` IPTV favourites and recent (migration, routes, views) | after 7 | — |
-| 5c | `feat:` playlists shared by all bots on a server (list filter, chat `!playlist`) | now | — |
-| 5d | `feat:` announce auto-stops in chat, 1-minute video warning, Streaming defaults switch | now | — |
-| 8 | `feat:` Bot Hub becomes the bot list; Media Library 5 tabs; IPTV "Stream on…"; redirects | after 5–7c | — |
-| 8b | `feat:` chat commands move to Bot Flows, built-in list, clash warnings | after 1 | — |
-| 9 | `docs:` / `test:` docs, Playwright, 1.10.0 smoke checklist | after 8 | none |
-| 10 | `refactor:` split chat handler (R3) | now, in parallel | none |
+Must-have PRs ship in 1.10.0. "Can slip" PRs ship in 1.10.0 if ready, otherwise in 1.10.x, and never hold the release.
 
-PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` (which would bump to 2.0.0) is wrong.
+| # | PR | Depends on | 1.10.0 |
+|---|----|-----------|--------|
+| 0 | Merge release PR #252 (1.9.4) first, if shipping it separately | — | — |
+| 1 | `refactor:` split MusicBots.tsx (R2) | — | must |
+| 2 | `refactor:` shared URL pipeline (R1) | — | must |
+| 3 | `feat:` edit radio stations (`PUT` route + Edit in Media Library → Radio stations) | — | must |
+| 4 | `feat:` playlists shared by all bots on a server (list filter, chat `!playlist`) | — | must |
+| 5 | `feat:` announce auto-stops in chat, 1-minute video warning, Streaming defaults switch | — | must |
+| 6 | `refactor:` shared NowPlaying component, used by the Bot Hub cards | — | must |
+| 7 | `feat:` console page, Now playing, Up next with drag and drop, hub "Open console" (opens the 1.10.0 release PR) | 6 | must |
+| 8 | `feat:` console Music tab (Songs · Playlists · Recent) + Radio tab with mood chips, `/songs/search` | 1, 7 | must |
+| 9 | `feat:` console Link tab (music or video, music-folder filename) + video options | 7 | must |
+| 10 | `feat:` console IPTV tab: group browser, cross-playlist search, playlist filter, `?iptv=` deep link | 7 | must |
+| 11 | `feat:` IPTV favourites and recent (migration, routes, views) | 10 | can slip |
+| 12 | `feat:` IPTV country and language (migration, parser, filters) | 10 | can slip |
+| 13 | `feat:` chat commands move to Bot Flows, built-in list, clash warnings | 1 | must |
+| 14 | `feat:` Bot Hub becomes the bot list; Media Library 5 tabs; IPTV "Stream on…"; redirects | 8, 9, 10, 13 | must |
+| 15 | `docs:` / `test:` docs, Playwright, upgrade note, 1.10.0 smoke checklist | 14 | must |
+| 16 | `refactor:` split chat handler (R3) | 2, 4, 5, 13 | can slip |
+
+PRs 1–6 have no dependencies and can run side by side. R3 runs last because PRs 2, 4, 5 and 13 all edit `music-command-handler.ts` or `voice-bot.ts`; splitting that file in parallel would cause constant conflicts.
+
+PR 14 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` (which would bump to 2.0.0) is wrong.
+
+**Keeping `main` releasable.** PR 7 adds the console alongside the existing pages, so `main` works at every step. Avoid merging the release PR between PR 7 and PR 14. If an urgent fix forces a release in that window, it ships as 1.10.0 with the console added and the old pages still present, which is safe.
 
 ## 5. Testing
 
-**Unit (frontend):** source-to-request mapping for each tab (Music views, Link as music vs video, filename vs URL, Radio, IPTV, video options); the redirect table.
+**Unit (frontend):** source-to-request mapping for each tab (Music views, Link as music vs video, filename vs URL, Radio, IPTV, video options); the redirect table; the `?iptv=` deep link pre-selects but never starts, and handles a stale key.
 
-**Unit (backend):** R1 characterization tests (web and chat); `/songs` paging stays backward compatible; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; auto-stop notices fire once per stop, the video warning fires 60 s early and is cancelled when a viewer joins, nothing is sent when the switch is off, and notices respect the flood hold; `GET /playlists` filters by server and chat `!playlist` lists every playlist on the server regardless of `musicBotId`; R3 keeps existing chat command tests green.
+**Unit (backend):** R1 characterization tests (web and chat); `/songs/search` paging and `/songs` unchanged; new routes refuse a server the account has no access to; IPTV groups and cross-playlist search (counts, filters, paging, admin only, scoped to one server); M3U parser stores `tvg-country` and `tvg-language`; favourites and recents survive a playlist refresh via stable keys, show "No longer in this playlist" when a channel disappears, and recent is capped at 20; radio station edit validates the URL like add does; auto-stop notices fire once per stop, the video warning fires 60 s early and is cancelled when a viewer joins, nothing is sent when the switch is off, and notices respect the flood hold; `GET /playlists` filters by server and chat `!playlist` lists every playlist on the server regardless of `musicBotId`; R3 keeps existing chat command tests green.
 
 **Unit (frontend), commands:** clash detection across custom replies, flow command triggers and built-in names.
 
@@ -270,6 +279,7 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 - `docs/video-streaming.md` and the IPTV section: starting from the console; filename sources via the Link tab.
 - `docs/video-streaming.md` and `docs/music-bots.md`: auto-stop chat notices, the 1-minute video warning and the switch that turns them off.
 - `docs/roadmap.md`: 1.10.0 entry.
+- `docs/upgrading.md`: back up the database before upgrading to 1.10.0 (two SQLite migrations: IPTV country/language columns and `IptvChannelPick`).
 - New `docs/plans/164-1-10-0-rc-smoke.md`, run in the homelab before the release PR merges (VAAPI on the AMD GPU; NVENC if #238 lands).
 
 ## Acceptance
@@ -277,7 +287,8 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 - [ ] From one bot's console you can start music, a link (as music or video), radio and IPTV. A second start prompts first, then replaces the current session.
 - [ ] Now playing and Up next match the bot's real state after a start, stop, replacement or auto-stop, without a reload.
 - [ ] Up next reorders by drag and drop with mouse, touch and keyboard.
-- [ ] IPTV: browse by group across playlists, filter by playlist, country and language, star favourites, and see recent channels. Favourites survive a playlist refresh.
+- [ ] IPTV: browse by group across playlists, search, and filter by playlist. "Stream on…" opens the console with the channel selected, without starting it.
+- [ ] IPTV (can slip): star favourites and see recent channels, which survive a playlist refresh; filter by country and language.
 - [ ] Radio: filter stations by mood; edit an existing station's mood; Now playing shows the station (no progress or skip) and offers Play queue.
 - [ ] Long lists page with 25 / 50 / 100 per page, remembered per list.
 - [ ] Auto-stops are announced in channel chat, with a 1-minute warning before a no-viewer video stop, unless the switch is off.
@@ -286,4 +297,4 @@ PR 8 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!` 
 - [ ] A clashing command name shows a warning on the Chat commands tab and in the flow editor.
 - [ ] The console is usable at phone width.
 - [ ] R1 and R2 land with no behaviour change (characterization tests and existing tests green).
-- [ ] Docs and the 1.10.0 smoke checklist cover the console.
+- [ ] Docs, the upgrade backup note and the 1.10.0 smoke checklist cover the release.
