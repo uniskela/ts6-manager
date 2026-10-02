@@ -151,7 +151,7 @@ test('the console fits a phone screen', async ({ page, request }) => {
 
 test('a failed Start bot says why', async ({ page, request }) => {
   await mockBot(page);
-  await page.route('**/api/music-bots/3/start', (r) => r.fulfill({ status: 500, json: { error: 'Server is unreachable' } }));
+  await page.route('**/api/music-bots/3/start', (r) => r.fulfill({ status: 500, json: { error: 'Server is unreachable' }));
   await signIn(page, request);
   await page.goto('/bot-hub/3');
   await page.getByRole('button', { name: 'Start bot' }).click();
@@ -160,7 +160,7 @@ test('a failed Start bot says why', async ({ page, request }) => {
 
 test('a failed queue load shows an error instead of an empty queue', async ({ page, request }) => {
   await mockBot(page);
-  await page.route('**/api/music-bots/1/state', (r) => r.fulfill({ status: 500, json: { error: 'State unavailable' } }));
+  await page.route('**/api/music-bots/1/state', (r) => r.fulfill({ status: 500, json: { error: 'State unavailable' }));
   await signIn(page, request);
   await page.goto('/bot-hub/1');
   await expect(page.getByText('Could not load the queue')).toBeVisible({ timeout: 10_000 });
@@ -197,9 +197,10 @@ test('queue rows cannot be dragged again until a move is saved', async ({ page, 
   expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
 });
 
-test('until source tabs arrive, the console links to the media controls for this bot', async ({ page, request }) => {
+test('the Link tab is available on the console', async ({ page, request }) => {
   await mockBot(page);
   await signIn(page, request);
   await page.goto('/bot-hub/1');
-  await expect(page.getByRole('link', { name: 'Open Media Bots' })).toHaveAttribute('href', '/media-bots?bot=1');
+  await expect(page.getByRole('tab', { name: 'Link' })).toBeVisible();
+  await expect(page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')).toBeVisible();
 });
