@@ -51,7 +51,11 @@ function mapPlaylistSummary(p: {
 playlistRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const serverConfigId = req.query.serverConfigId ? parseInt(String(req.query.serverConfigId)) : undefined;
+    const raw = req.query.serverConfigId;
+    if (raw !== undefined && !(typeof raw === 'string' && /^[1-9]\d*$/.test(raw))) {
+      throw new AppError(400, 'serverConfigId must be a positive whole number');
+    }
+    const serverConfigId = raw === undefined ? undefined : Number(raw);
     const playlists = await prisma.playlist.findMany({
       where: serverConfigId ? { OR: [{ serverConfigId }, { serverConfigId: null }] } : undefined,
       include: { _count: { select: { songs: true } } },

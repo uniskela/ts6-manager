@@ -81,6 +81,15 @@ describe('playlist listing scope', () => {
     assert.equal(f.seenWhere, undefined);
   });
 
+  it('rejects a server parameter that is not a positive whole number', async () => {
+    for (const value of ['abc', '0', '-1', '2oops', '1.5', '']) {
+      const f = routeFixture();
+      const response = await send(f.app, `/playlists?serverConfigId=${value}`);
+      assert.equal(response.status, 400, `serverConfigId=${value}`);
+      assert.equal(f.seenWhere, 'unset', 'no playlists are listed');
+    }
+  });
+
   it('ignores musicBotId without a server parameter', async () => {
     const f = routeFixture();
     const response = await send(f.app, '/playlists?musicBotId=11');
