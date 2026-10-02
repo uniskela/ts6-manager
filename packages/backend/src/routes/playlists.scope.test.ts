@@ -166,6 +166,9 @@ describe('playlist creation scope', () => {
           return { id: 9, ...data };
         },
       },
+      tsServerConfig: {
+        findUnique: async ({ where }: { where: { id: number } }) => ([1, 2].includes(where.id) ? { id: where.id } : null),
+      },
     };
     app.use('/playlists', playlistRoutes);
     app.use(errorHandler);
@@ -194,6 +197,12 @@ describe('playlist creation scope', () => {
     const { status, saved } = await create({ name: 'Lounge' });
     assert.equal(status, 201);
     assert.equal(saved?.serverConfigId, null);
+  });
+
+  it('rejects a server that does not exist', async () => {
+    const { status, saved } = await create({ name: 'Lounge', serverConfigId: 99 });
+    assert.equal(status, 400);
+    assert.equal(saved, null);
   });
 
   it('rejects a server that is not a positive whole number', async () => {

@@ -121,6 +121,9 @@ playlistRoutes.post('/', async (req: Request, res: Response, next) => {
     if (serverConfigId != null && !(Number.isInteger(serverConfigId) && serverConfigId > 0)) {
       throw new AppError(400, 'serverConfigId must be a positive whole number');
     }
+    if (serverConfigId != null && !(await prisma.tsServerConfig.findUnique({ where: { id: serverConfigId }, select: { id: true } }))) {
+      throw new AppError(400, `Server ${serverConfigId} does not exist`);
+    }
 
     const playlist = await prisma.playlist.create({
       data: {
