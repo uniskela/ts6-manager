@@ -3,21 +3,8 @@ import { loadIptvLocalHosts } from '../utils/app-settings.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import type { VoiceBot } from './voice-bot.js';
 import type { QueueItem } from './playlist/queue.js';
-import {
-  downloadYouTube,
-  resolveSpotifyToYouTube,
-  expandYouTubeToWatchUrls,
-  isYouTubeHostUrl,
-  parseYouTubeUrl,
-} from './audio/youtube.js';
-import { isYouTubePlaylistUrl } from './audio/playlist-import-plan.js';
 import { fetchLyrics, cleanTrackTitle, chunkLyrics, lyricsInputFromTrack } from './lyrics.js';
-import {
-  appleMusicTrackToYouTubeUrl,
-  isAppleMusicShareUrl,
-  resolveAppleMusicTracks,
-  type AppleMusicTrack,
-} from './audio/apple-music.js';
+import { defaultMediaUrlDeps, runMediaUrlPipeline } from './media-url-pipeline.js';
 import { BUILTIN_COMMAND_HELP, BUILTIN_CHAT_COMMANDS } from './chat-commands.js';
 import {
   formatCustomCommandsMessage,
@@ -45,9 +32,7 @@ interface BotChannelConfig {
 /** Debounce parking the main SSH helper when humans move between channels. */
 const MAIN_HELPER_PARK_DEBOUNCE_MS = 800;
 
-const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const CMD_PREFIX = '!';
-const PLAYLIST_CAP = 25;
 
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
@@ -1985,159 +1970,68 @@ export class MusicCommandHandler {
     rawUrl: string,
   ): Promise<void> {
     await this.joinChannelForCommand(botId, bot, userClid);
+    const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
+    chatPlaylistGeneration.set(botId, generation);
+    let firstCall = true;
+    let alreadyPlaying = false;
 
-    let mediaUrl = rawUrl;
-    if (isSpotifyShareUrl(mediaUrl)) {
-      mediaUrl = await resolveSpotifyToYouTube(mediaUrl);
-    }
-
-    let urlsToPlay = [mediaUrl];
-    let playlistTitle: string | undefined;
-    let appleMusicPending: AppleMusicTrack[] = [];
-
-    if (isAppleMusicShareUrl(mediaUrl)) {
-      const am = await resolveAppleMusicTracks(mediaUrl);
-      if (!am.tracks.length) {
-        throw new Error('Could not resolve any tracks from that Apple Music URL');
-      }
-      playlistTitle = am.title;
-      const firstYt = await appleMusicTrackToYouTubeUrl(am.tracks[0]);
-      if (!firstYt) {
-        throw new Error(
-          `No YouTube match for Apple Music track: ${am.tracks[0].artist} - ${am.tracks[0].title}`,
-        );
-      }
-      urlsToPlay = [firstYt];
-      appleMusicPending = am.tracks.slice(1, PLAYLIST_CAP);
-    } else if (isYouTubeHostUrl(mediaUrl)) {
-      const parsed = parseYouTubeUrl(mediaUrl);
-      if (isYouTubePlaylistUrl(mediaUrl)) {
-        try {
-          const expanded = await expandYouTubeToWatchUrls(mediaUrl, PLAYLIST_CAP);
-          if (expanded.urls.length > 0) {
-            urlsToPlay = expanded.urls;
-            playlistTitle = expanded.title;
+    const result = await runMediaUrlPipeline(
+      defaultMediaUrlDeps(),
+      {
+        play: async (item, opts) => {
+          const isFirst = firstCall;
+          firstCall = false;
+          const live = this.voiceBotManager.getBot(botId);
+          if (!live || chatPlaylistGeneration.get(botId) !== generation) return;
+          if (isFirst) alreadyPlaying = live.status === 'playing' || live.status === 'paused';
+          live.queue.add(item);
+          this.saveMusicRequest(live, item);
+          if (isFirst && alreadyPlaying) return;
+          live.queue.playAt(live.queue.length - 1);
+          if (isFirst) {
+            await live.play(item, this.chatMusicSwitch(live));
           } else {
-            throw new Error('Could not resolve any videos from that playlist URL');
+            await live.play(item).catch((err) => {
+              console.error('[MusicCmd] Failed to resume playlist playback:', err);
+            });
           }
-        } catch (err) {
-          throw err;
-        }
-      } else if (parsed.watchUrl) {
-        urlsToPlay = [parsed.watchUrl];
-      } else {
-        throw new Error('Could not resolve that YouTube URL');
-      }
-    }
+        },
+        enqueue: (item) => {
+          if (chatPlaylistGeneration.get(botId) !== generation) return;
+          const live = this.voiceBotManager.getBot(botId);
+          if (!live || live.status === 'stopped' || live.status === 'error') return;
+          live.queue.add(item);
+          this.saveMusicRequest(live, item);
+        },
+        isIdle: () => {
+          const live = this.voiceBotManager.getBot(botId);
+          return Boolean(live && live.status === 'connected' && !live.nowPlaying);
+        },
+        isCancelled: () => chatPlaylistGeneration.get(botId) !== generation,
+      },
+      { url: rawUrl, enqueueOnly: false },
+      {
+        onBackgroundError: (err, label) => {
+          console.error('[MusicCmd] Failed to queue %s:', label, err);
+        },
+      },
+    );
 
-    const firstUrl = urlsToPlay[0];
-    const { filePath, info } = await downloadYouTube(firstUrl, MUSIC_DIR);
-
-    const firstItem: QueueItem = {
-      id: `yt_${info.id}`,
-      title: info.title,
-      artist: info.artist,
-      duration: info.duration,
-      filePath,
-      source: 'youtube',
-      sourceUrl: firstUrl,
-    };
-
-    bot.queue.add(firstItem);
-    this.saveMusicRequest(bot, firstItem);
-
-    const alreadyPlaying = bot.status === 'playing' || bot.status === 'paused';
-    if (!alreadyPlaying) {
-      bot.queue.playAt(bot.queue.length - 1);
-      await bot.play(firstItem, this.chatMusicSwitch(bot));
-    }
-
-    const rest = urlsToPlay.slice(1);
-    const pendingTotal = rest.length + appleMusicPending.length;
+    const pendingTotal = result.queuedInBackground;
     const playlistNote =
       pendingTotal > 0
-        ? ` (+${pendingTotal} more from${playlistTitle ? ` "${playlistTitle}"` : ' playlist'})`
+        ? ` (+${pendingTotal} more from${result.playlistTitle ? ` "${result.playlistTitle}"` : ' playlist'})`
         : '';
 
     if (alreadyPlaying) {
       this.reply(
         bot,
         userClid,
-        `Queued: ${info.artist} - ${info.title} (position #${bot.queue.length})${playlistNote}`,
+        `Queued: ${result.first.artist} - ${result.first.title} (position #${bot.queue.length})${playlistNote}`,
       );
     } else {
-      this.reply(bot, userClid, `Now playing: ${info.artist} - ${info.title}${playlistNote}`);
+      this.reply(bot, userClid, `Now playing: ${result.first.artist} - ${result.first.title}${playlistNote}`);
     }
-
-    if (pendingTotal === 0) return;
-
-    const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
-    chatPlaylistGeneration.set(botId, generation);
-
-    void (async () => {
-      const enqueueYt = async (itemUrl: string): Promise<boolean> => {
-        if (chatPlaylistGeneration.get(botId) !== generation) return false;
-        const live = this.voiceBotManager.getBot(botId);
-        if (!live || live.status === 'stopped' || live.status === 'error') return false;
-        const dl = await downloadYouTube(itemUrl, MUSIC_DIR);
-        if (chatPlaylistGeneration.get(botId) !== generation) return false;
-        const stillLive = this.voiceBotManager.getBot(botId);
-        if (!stillLive || stillLive.status === 'stopped' || stillLive.status === 'error') return false;
-
-        const queueItem: QueueItem = {
-          id: `yt_${dl.info.id}`,
-          title: dl.info.title,
-          artist: dl.info.artist,
-          duration: dl.info.duration,
-          filePath: dl.filePath,
-          source: 'youtube',
-          sourceUrl: itemUrl,
-        };
-        stillLive.queue.add(queueItem);
-        this.saveMusicRequest(stillLive, queueItem);
-
-        if (stillLive.status === 'connected' && !stillLive.nowPlaying) {
-          stillLive.queue.playAt(stillLive.queue.length - 1);
-          await stillLive.play(queueItem).catch((err) => {
-            console.error('[MusicCmd] Failed to resume playlist playback:', err);
-          });
-        }
-        return true;
-      };
-
-      for (const itemUrl of rest) {
-        try {
-          const ok = await enqueueYt(itemUrl);
-          if (!ok) break;
-        } catch (err) {
-          console.error('[MusicCmd] Failed to queue playlist track %s:', itemUrl, err);
-        }
-      }
-
-      for (const track of appleMusicPending) {
-        if (chatPlaylistGeneration.get(botId) !== generation) break;
-        try {
-          const ytUrl = await appleMusicTrackToYouTubeUrl(track);
-          if (!ytUrl) {
-            console.error(
-              '[MusicCmd] No YouTube match for Apple Music track: %s - %s',
-              track.artist,
-              track.title,
-            );
-            continue;
-          }
-          const ok = await enqueueYt(ytUrl);
-          if (!ok) break;
-        } catch (err) {
-          console.error(
-            '[MusicCmd] Failed to queue Apple Music track %s - %s:',
-            track.artist,
-            track.title,
-            err,
-          );
-        }
-      }
-    })();
   }
 
   private async handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {
