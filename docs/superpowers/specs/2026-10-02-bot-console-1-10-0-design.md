@@ -38,7 +38,7 @@ Today, changing what one bot plays means picking that bot again on each page: th
 | Custom chat commands | Move to Bot Flows → Chat commands, with a read-only list of built-in commands and name clash warnings |
 | Refactors in 1.10.0 | R1 shared URL pipeline, R2 split `MusicBots.tsx`, R3 split chat handler (R3 runs last and may slip to 1.10.x) |
 | Cut line | Must-have for 1.10.0: console, its tabs, the restructure, shared playlists, auto-stop notices, R1, R2. May slip to 1.10.x: IPTV favourites + recent, IPTV country/language, R3 |
-| Command permissions | Not in 1.10.0. Planned for 1.11.0 with the listener remote (#253), which depends on them |
+| Command permissions | Not in 1.10.0. Planned for 1.11.0 in #254, with the listener remote (#253), which depends on them |
 | NVENC | #238 stays a separate contributor PR, reviewed on its own |
 
 ## 1. Structure and navigation
@@ -228,7 +228,7 @@ All new routes use the same middleware as the routes they sit beside (`requireSe
 
 ### Not in 1.10.0
 
-`voice-bot.ts` and sidecar `main.go` splits; framework upgrades; EPG/XMLTV/Xtream; a video library (upload, list, delete); per-user (rather than per-server) favourites; the listener remote (`!remote` one-time link for non-admins, planned as the 1.11.0 lead feature in #253); permissions for built-in chat commands (1.11.0, with #253); vote-skip (1.11.0); warnings, automod, leaderboard, self-assign groups and polls (1.12.0); Twitch/YouTube alerts; multiple mood tags per radio station; dynamic quality changes during a stream; the flow loop node.
+`voice-bot.ts` and sidecar `main.go` splits; framework upgrades; EPG/XMLTV/Xtream; a video library (upload, list, delete); per-user (rather than per-server) favourites; the listener remote (`!remote` one-time link for non-admins, planned as the 1.11.0 lead feature in #253); permissions for built-in chat commands and vote-skip (1.11.0, #254); warnings, automod, leaderboard, self-assign groups and polls (1.12.0, #255); flow templates for support tickets, reminders and announcements (#256); Twitch/YouTube alerts (#257); multiple mood tags per radio station; dynamic quality changes during a stream; the flow loop node.
 
 ## 4. PR order
 
