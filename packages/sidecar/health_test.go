@@ -70,6 +70,28 @@ func TestHealthWarnsWhenSustained(t *testing.T) {
 	}
 }
 
+func TestAudioTimestampDiscontinuityDoesNotStall(t *testing.T) {
+	s := NewSidecar()
+	now := time.Unix(1_000, 0)
+	first := s.computeTrackDelay("audio", 0, now)
+	if first > s.syncBuffer {
+		t.Fatalf("first packet delay = %s, want <= sync buffer %s", first, s.syncBuffer)
+	}
+	steady := s.computeTrackDelay("audio", 960, now.Add(20*time.Millisecond))
+	if steady > 100*time.Millisecond {
+		t.Fatalf("steady 20ms step stalled: %s", steady)
+	}
+	// 30s of RTP time in one step. Without a rebase this waits at maxTrackDelay.
+	jumped := s.computeTrackDelay("audio", 960+30*48000, now.Add(40*time.Millisecond))
+	if jumped > 150*time.Millisecond {
+		t.Fatalf("forward discontinuity stalled playout: %s", jumped)
+	}
+	back := s.computeTrackDelay("audio", 960, now.Add(60*time.Millisecond))
+	if back > 150*time.Millisecond {
+		t.Fatalf("backward discontinuity stalled playout: %s", back)
+	}
+}
+
 func TestSourceModeDrivesPacingAndLooping(t *testing.T) {
 	s := NewSidecar()
 	spec, _ := lookupEncoder("vp8")
@@ -82,16 +104,29 @@ func TestSourceModeDrivesPacingAndLooping(t *testing.T) {
 		t.Fatalf("local default = %s", got)
 	}
 
-	live := args(SourceRequest{Source: "https://x/opaque", Mode: modeLive, Loop: true})
+	live := args(SourceRequest{Source: "https://x/opaque", Mode: modeLive, Loop: true, Volume: 40})
 	if !strings.Contains(live, "-re -i https://x/opaque") || strings.Contains(live, "stream_loop") {
 		t.Fatalf("live keeps -re by default and never loops: %s", live)
+	}
+	if !strings.Contains(live, "+genpts+igndts+discardcorrupt") {
+		t.Fatalf("live must ignore broken DTS: %s", live)
+	}
+	if !strings.Contains(live, "aresample=async=1000:first_pts=0,volume=0.40") {
+		t.Fatalf("live audio must compensate timestamps then apply volume: %s", live)
 	}
 	t.Setenv("VIDEO_LIVE_PACING", "source")
 	if a := args(SourceRequest{Source: "https://x/opaque", Mode: modeLive}); strings.Contains(a, "-re ") {
 		t.Fatalf("VIDEO_LIVE_PACING=source must drop -re for live: %s", a)
 	}
-	if a := args(SourceRequest{Source: "https://x/clip.mp4", Mode: modeVOD}); !strings.Contains(a, "-re -i") {
-		t.Fatalf("vod must stay paced: %s", a)
+	vod := args(SourceRequest{Source: "https://x/clip.mp4", Mode: modeVOD, Volume: 40})
+	if !strings.Contains(vod, "-re -i") {
+		t.Fatalf("vod must stay paced: %s", vod)
+	}
+	if strings.Contains(vod, "igndts") || strings.Contains(vod, "aresample=async") {
+		t.Fatalf("vod must not take live audio compensation: %s", vod)
+	}
+	if !strings.Contains(vod, "volume=0.40") {
+		t.Fatalf("vod volume filter missing: %s", vod)
 	}
 	if a := args(SourceRequest{Source: "/data/music/bg.mp4", Mode: modeFile, Loop: true}); !strings.Contains(a, "-stream_loop -1") || !strings.Contains(a, "-re -i") {
 		t.Fatalf("looping file: %s", a)

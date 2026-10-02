@@ -157,7 +157,10 @@ export function useSetVolume() {
   return useMutation({
     mutationFn: ({ botId, volume }: { botId: number; volume: number }) =>
       musicBotsApi.volume(botId, volume),
-    onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
+    onSuccess: (_, { botId }) => {
+      qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });
+      qc.invalidateQueries({ queryKey: ['music-bots'] });
+    },
   });
 }
 
@@ -281,7 +284,11 @@ export function useSetStreamVolume() {
   return useMutation({
     mutationFn: ({ botId, volume }: { botId: number; volume: number }) =>
       musicBotsApi.setStreamVolume(botId, volume),
-    onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['video-stream-status', botId] }),
+    onSuccess: (_, { botId }) => {
+      qc.invalidateQueries({ queryKey: ['video-stream-status', botId] });
+      qc.invalidateQueries({ queryKey: ['music-bot-state', botId] });
+      qc.invalidateQueries({ queryKey: ['music-bots'] });
+    },
   });
 }
 

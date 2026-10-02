@@ -508,6 +508,38 @@ describe('video source probe', () => {
     assert.deepEqual(probe, { resolution: { width: 1920, height: 1080 }, durationSec: 12.5 });
   });
 
+  it('shares the bot volume with a running video stream and skips a no-op restart', async () => {
+    const bot = makeBot();
+    assert.equal((bot as any)._videoStreamVolume, 50);
+    const { b } = fakeStreaming(bot, 0);
+    const volumes: number[] = [];
+    b._appliedVideoVolume = 50;
+    b._videoSource = 'http://example.com/live.ts';
+    b._videoSourceMode = 'live';
+    b._videoPreset = '720p';
+    b._videoEncoder = {
+      requested: 'vp8', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null,
+    };
+    b._videoQuality = {
+      requested: '720p', actual: '720p', width: 1280, height: 720, sourceWidth: null, sourceHeight: null, note: null,
+    };
+    b.resolveStreamSource = async () => ({ path: b._videoSource, loop: false, durationSec: null });
+    b.sidecarHttp.setSource = async (_path: string, opts: { volume?: number }) => {
+      volumes.push(opts.volume ?? -1);
+      return { requested: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, state: 'running' };
+    };
+
+    await bot.applyVolume(50);
+    assert.deepEqual(volumes, []);
+    await bot.applyVolume(20);
+    assert.equal(bot.currentConfig.volume, 20);
+    assert.equal((bot as any)._videoStreamVolume, 20);
+    assert.deepEqual(volumes, [20]);
+    assert.equal((bot as any)._appliedVideoVolume, 20);
+
+    await assert.rejects(() => bot.setVideoStreamVolume(Number.NaN), /volume must be a number/);
+  });
+
   it('treats a failed sidecar probe as unknown without logging the URL', async () => {
     const bot = makeBot();
     const b = bot as any;

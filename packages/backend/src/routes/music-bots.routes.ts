@@ -625,7 +625,7 @@ musicBotRoutes.post('/:id/volume', async (req: Request, res: Response, next) => 
     const vol = Math.max(0, Math.min(100, parseInt(volume) || 50));
 
     const bot = manager.getBot(id);
-    if (bot) bot.setVolume(vol);
+    if (bot) await bot.applyVolume(vol);
     await prisma.musicBot.update({ where: { id }, data: { volume: vol } });
 
     res.json({ success: true, volume: vol });
@@ -880,6 +880,13 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
       () => manager.startVideoStream(bot, safeSource, parsed.options),
       parsed.options.replaceSessionIds,
     );
+    if (parsed.options.volume != null) {
+      const prisma = req.app.locals.prisma;
+      await prisma.musicBot.update({
+        where: { id: bot.currentConfig.id },
+        data: { volume: bot.currentConfig.volume },
+      });
+    }
     res.json({ success: true, status: bot.videoStreamStatus });
   } catch (err) { next(err); }
 });
@@ -919,7 +926,10 @@ musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, ne
     const { volume } = req.body;
     if (volume == null) throw new AppError(400, 'volume is required');
     await bot.setVideoStreamVolume(parseInt(volume));
-    res.json({ success: true });
+    const prisma = req.app.locals.prisma;
+    const applied = bot.currentConfig.volume;
+    await prisma.musicBot.update({ where: { id: bot.currentConfig.id }, data: { volume: applied } });
+    res.json({ success: true, volume: applied });
   } catch (err) { next(err); }
 });
 

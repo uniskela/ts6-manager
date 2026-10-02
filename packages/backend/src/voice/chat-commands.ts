@@ -63,7 +63,7 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'skip', usage: '!skip', blurb: 'Skip to next track' },
   { name: 'next', usage: '!next', blurb: 'Alias for !skip' },
   { name: 'prev', usage: '!prev', blurb: 'Previous track' },
-  { name: 'vol', usage: '!vol [0-100]', blurb: 'Show or set volume' },
+  { name: 'vol', usage: '!vol [0-100]', blurb: 'Show or set volume for music, radio, video, and IPTV' },
   { name: 'volume', usage: '!volume [0-100]', blurb: 'Alias for !vol' },
   { name: 'np', usage: '!np', blurb: 'Now playing' },
   { name: 'nowplaying', usage: '!nowplaying', blurb: 'Alias for !np' },

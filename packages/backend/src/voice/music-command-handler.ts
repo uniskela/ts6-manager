@@ -968,7 +968,7 @@ export class MusicCommandHandler {
             break;
           case 'vol':
           case 'volume':
-            this.handleVolume(bot, userClid, args);
+            await this.handleVolume(bot, userClid, args);
             break;
           case 'np':
           case 'nowplaying':
@@ -2369,7 +2369,7 @@ export class MusicCommandHandler {
     }
   }
 
-  private handleVolume(bot: VoiceBot, userClid: number, args: string): void {
+  private async handleVolume(bot: VoiceBot, userClid: number, args: string): Promise<void> {
     if (!args) {
       const vol = bot.currentConfig.volume;
       this.reply(bot, userClid, `Volume: ${vol}%`);
@@ -2382,8 +2382,14 @@ export class MusicCommandHandler {
       return;
     }
 
-    bot.setVolume(vol);
-    this.reply(bot, userClid, `Volume set to ${vol}%.`);
+    try {
+      // One level for music, radio, video, and IPTV. applyVolume pushes it
+      // into a running sidecar stream; music reads config.volume each frame.
+      await bot.applyVolume(vol);
+      this.reply(bot, userClid, `Volume set to ${bot.currentConfig.volume}%.`);
+    } catch (err: any) {
+      this.reply(bot, userClid, `Could not set volume: ${err?.message ?? err}`);
+    }
   }
 
   private handleNowPlaying(bot: VoiceBot, userClid: number): void {

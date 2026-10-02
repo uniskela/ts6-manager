@@ -101,6 +101,26 @@ test('idle playlist append resumes existing queue order instead of jumping past 
   assert.equal(f.played.length, 1);
   assert.equal(f.played[0].title, 'Already queued');
 });
+test('!vol shows the shared volume and applies a new level', async () => {
+  const f = fixture();
+  f.bot.currentConfig.volume = 40;
+  const applied: number[] = [];
+  f.bot.applyVolume = async (v: number) => {
+    applied.push(v);
+    f.bot.currentConfig.volume = v;
+  };
+  await f.command('!vol');
+  assert.match(f.replies.at(-1)!, /Volume: 40%/);
+  await f.command('!volume 15');
+  assert.deepEqual(applied, [15]);
+  assert.match(f.replies.at(-1)!, /Volume set to 15%/);
+  await f.command('!vol 101');
+  assert.match(f.replies.at(-1)!, /Usage/);
+  assert.deepEqual(applied, [15]);
+  f.bot.applyVolume = async () => { throw new Error('stream busy'); };
+  await f.command('!vol 10');
+  assert.match(f.replies.at(-1)!, /Could not set volume: stream busy/);
+});
 test('commands during a TeamSpeak flood hold are set aside, not run or answered', async () => {
   const f = fixture();
   let ignored = 0;

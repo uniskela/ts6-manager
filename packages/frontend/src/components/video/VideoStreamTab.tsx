@@ -4,7 +4,7 @@
  * start/stop, and viewer management.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import type { VideoEncoderRequest, VideoQualityRequest, VideoSourceModeRequest } from '@ts6/common';
 import { VideoPlayer } from './VideoPlayer';
@@ -65,11 +65,13 @@ const FPS_OPTIONS = [
 interface VideoStreamTabProps {
   botId: number;
   botStatus: string;
+  /** Saved bot volume. The stream starts here unless the slider is moved. */
+  botVolume?: number;
   /** The bot's server: its effective defaults are shown, and admins can override them. */
   server?: { id: number; name: string } | null;
 }
 
-export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps) {
+export function VideoStreamTab({ botId, botStatus, botVolume, server }: VideoStreamTabProps) {
   const [sourceUrl, setSourceUrl] = useState('');
   const [preset, setPreset] = useState<VideoQualityRequest>('auto');
   const [encoder, setEncoder] = useState<'default' | VideoEncoderRequest>('default');
@@ -77,7 +79,9 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
   const [sourceMode, setSourceMode] = useState<VideoSourceModeRequest>('auto');
   const [framerate, setFramerate] = useState('30');
   const [bitrate, setBitrate] = useState('');
-  const [streamVolume, setStreamVolume] = useState(100);
+  const [streamVolume, setStreamVolume] = useState(botVolume ?? 100);
+  const botVolumeRef = useRef(botVolume);
+  botVolumeRef.current = botVolume;
 
   const isAdmin = useAuthStore((state) => state.isAdmin());
   const { data: globalDefaults } = useVideoStreamingSettings();
@@ -93,6 +97,24 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
   const isStreaming = streamStatus?.streaming ?? false;
   const isBotConnected = botStatus === 'connected' || botStatus === 'playing' || botStatus === 'paused';
   const now = useNow(isStreaming);
+
+  // Reset when switching bots. Do not follow later prop updates: a drag that
+  // has not been saved yet must not snap back to the previous saved level.
+  useEffect(() => {
+    setStreamVolume(botVolumeRef.current ?? 100);
+  }, [botId]);
+
+  const onVolumeChange = (val: number) => {
+    setStreamVolume(val);
+  };
+
+  const onVolumeCommit = (val: number) => {
+    setStreamVolume(val);
+    // Commit on release. Sending every drag step restarts ffmpeg and cuts the audio.
+    if (isStreaming) {
+      setStreamVolumeMut.mutate({ botId, volume: val });
+    }
+  };
 
   const handleStart = () => {
     if (!sourceUrl.trim()) return;
@@ -407,12 +429,9 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
                         min={0}
                         max={100}
                         step={1}
-                        onValueChange={([val]) => {
-                          setStreamVolume(val);
-                          if (isStreaming) {
-                            setStreamVolumeMut.mutate({ botId, volume: val });
-                          }
-                        }}
+                        aria-label="Stream volume"
+                        onValueChange={([val]) => onVolumeChange(val)}
+                        onValueCommit={([val]) => onVolumeCommit(val)}
                       />
                     </div>
                   </div>
@@ -427,10 +446,9 @@ export function VideoStreamTab({ botId, botStatus, server }: VideoStreamTabProps
                     min={0}
                     max={100}
                     step={1}
-                    onValueChange={([val]) => {
-                      setStreamVolume(val);
-                      setStreamVolumeMut.mutate({ botId, volume: val });
-                    }}
+                    aria-label="Stream volume"
+                    onValueChange={([val]) => onVolumeChange(val)}
+                    onValueCommit={([val]) => onVolumeCommit(val)}
                   />
                 </div>
               )}
