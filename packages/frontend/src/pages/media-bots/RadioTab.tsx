@@ -5,6 +5,7 @@ import {
   useRadioStations,
   useRadioPresets,
   useCreateRadioStation,
+  useUpdateRadioStation,
   useDeleteRadioStation,
   useResetRadioStationIds,
   usePlayRadio,
@@ -38,6 +39,7 @@ import { Separator } from '@/components/ui/separator';
 import { Plus, Trash2, Play, Radio } from 'lucide-react';
 import { toast } from 'sonner';
 import { toastMediaStarted } from '@/lib/media-start-toast';
+import { apiErrorMessage } from '@/lib/api-error';
 import type { MusicBotSummary, RadioStationInfo, RadioPreset } from '@ts6/common';
 
 
@@ -55,6 +57,8 @@ export function RadioTab() {
   const { data: stations, isLoading } = useRadioStations(configId);
   const { data: presets } = useRadioPresets(configId);
   const createStation = useCreateRadioStation();
+  const updateStation = useUpdateRadioStation();
+  const stationPending = createStation.isPending || updateStation.isPending;
   const deleteStation = useDeleteRadioStation();
   const resetStationIds = useResetRadioStationIds();
   const playRadio = usePlayRadio();
@@ -69,6 +73,8 @@ export function RadioTab() {
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
+  const [editingStation, setEditingStation] = useState<RadioStationInfo | null>(null);
+  const stationSaveInFlight = useRef(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
 
   const serverList = Array.isArray(servers) ? servers : [];
@@ -104,13 +110,32 @@ export function RadioTab() {
   }, [runningBotIds, runningBots]);
 
   const handleAddStation = () => {
-    if (!configId || !addForm.name || !addForm.url) return;
+    if (!configId || !addForm.name.trim() || !addForm.url.trim() || stationSaveInFlight.current) return;
+    // Guard dismissal immediately, before the mutation's pending state renders.
+    stationSaveInFlight.current = true;
+    if (editingStation) {
+      updateStation.mutate({
+        configId: editingStation.serverConfigId,
+        id: editingStation.id,
+        data: {
+          name: addForm.name,
+          ...(addForm.url !== editingStation.url ? { url: addForm.url } : {}),
+          genre: addForm.genre,
+        },
+      }, {
+        onSuccess: () => { toast.success('Station updated'); setShowAdd(false); setEditingStation(null); setAddForm({ name: '', url: '', genre: '' }); },
+        onError: (error) => toast.error(apiErrorMessage(error, 'Failed to update station')),
+        onSettled: () => { stationSaveInFlight.current = false; },
+      });
+      return;
+    }
     createStation.mutate({
       configId,
       data: { name: addForm.name, url: addForm.url, genre: addForm.genre || undefined },
     }, {
       onSuccess: () => { toast.success('Station added'); setShowAdd(false); setAddForm({ name: '', url: '', genre: '' }); },
       onError: () => toast.error('Failed to add station'),
+      onSettled: () => { stationSaveInFlight.current = false; },
     });
   };
 
@@ -189,7 +214,11 @@ export function RadioTab() {
         <Button variant="outline" size="sm" onClick={() => setShowPresets(true)}>
           <Radio className="h-4 w-4 mr-1" /> Presets
         </Button>
-        <Button size="sm" onClick={() => setShowAdd(true)}>
+        <Button size="sm" onClick={() => {
+          setEditingStation(null);
+          setAddForm({ name: '', url: '', genre: '' });
+          setShowAdd(true);
+        }}>
           <Plus className="h-4 w-4 mr-1" /> Add Station
         </Button>
       </div>
@@ -219,6 +248,19 @@ export function RadioTab() {
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <Button
+                    variant="outline"
+                    size="sm"
+                    className="min-h-11"
+                    aria-label={`Edit ${station.name}`}
+                    onClick={() => {
+                      setEditingStation(station);
+                      setAddForm({ name: station.name, url: station.url, genre: station.genre || '' });
+                      setShowAdd(true);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
                     variant="default"
                     size="icon"
                     className="h-8 w-8"
@@ -244,31 +286,40 @@ export function RadioTab() {
         </div>
       )}
 
-      {/* Add Station Dialog */}
-      <Dialog open={showAdd} onOpenChange={setShowAdd}>
+      {/* Add / Edit Station Dialog */}
+      <Dialog open={showAdd} onOpenChange={(open) => {
+        if (stationSaveInFlight.current) return;
+        setShowAdd(open);
+        if (!open) {
+          setEditingStation(null);
+          setAddForm({ name: '', url: '', genre: '' });
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Add Radio Station</DialogTitle>
-            <DialogDescription>Add a custom internet radio station by providing its stream URL.</DialogDescription>
+            <DialogTitle>{editingStation ? 'Edit station' : 'Add Radio Station'}</DialogTitle>
+            <DialogDescription>{editingStation ? 'Edit this station’s name, stream URL, and mood or genre.' : 'Add a custom internet radio station by providing its stream URL.'}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Name</Label>
-              <Input value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="Station name" />
+              <Label htmlFor="radio-station-name" className="text-xs">Name</Label>
+              <Input id="radio-station-name" disabled={stationPending} value={addForm.name} onChange={(e) => setAddForm({ ...addForm, name: e.target.value })} placeholder="Station name" />
             </div>
             <div>
-              <Label className="text-xs">Stream URL</Label>
-              <Input value={addForm.url} onChange={(e) => setAddForm({ ...addForm, url: e.target.value })} placeholder="https://stream.example.com/live" />
+              <Label htmlFor="radio-station-url" className="text-xs">Stream URL</Label>
+              <Input id="radio-station-url" disabled={stationPending} value={addForm.url} onChange={(e) => setAddForm({ ...addForm, url: e.target.value })} placeholder="https://stream.example.com/live" />
             </div>
             <div>
-              <Label className="text-xs">Genre (optional)</Label>
-              <Input value={addForm.genre} onChange={(e) => setAddForm({ ...addForm, genre: e.target.value })} placeholder="Pop, Rock, Electronic..." />
+              <Label htmlFor="radio-station-genre" className="text-xs">Mood or genre</Label>
+              <Input id="radio-station-genre" disabled={stationPending} value={addForm.genre} onChange={(e) => setAddForm({ ...addForm, genre: e.target.value })} placeholder="Chill, Focus, Party…" />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowAdd(false)}>Cancel</Button>
-            <Button onClick={handleAddStation} disabled={!addForm.name || !addForm.url || createStation.isPending}>
-              Add Station
+            <Button variant="outline" disabled={stationPending} onClick={() => {
+              if (!stationSaveInFlight.current) setShowAdd(false);
+            }}>Cancel</Button>
+            <Button onClick={handleAddStation} disabled={!addForm.name.trim() || !addForm.url.trim() || stationPending}>
+              {editingStation ? 'Save' : 'Add Station'}
             </Button>
           </DialogFooter>
         </DialogContent>

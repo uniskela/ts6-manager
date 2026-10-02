@@ -71,6 +71,38 @@ radioStationRoutes.post('/', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
+// PUT /:id — Edit radio station
+radioStationRoutes.put('/:id', async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const id = parseInt(req.params.id as string);
+    const configId = parseInt(req.params.configId as string);
+    const where = { id, serverConfigId: configId };
+    const existing = await prisma.radioStation.findFirst({ where });
+    if (!existing) throw new AppError(404, 'Station not found');
+
+    const { name, url, genre } = req.body;
+    const data: { name?: string; url?: string; genre?: string | null } = {};
+    if (name !== undefined) {
+      if (typeof name !== 'string' || !name.trim()) throw new AppError(400, 'name is required');
+      data.name = name.trim();
+    }
+    if (url !== undefined) {
+      if (typeof url !== 'string') throw new AppError(400, 'url must be a string');
+      const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
+      if (!urlCheck.valid) throw new AppError(400, `Invalid URL: ${urlCheck.error}`);
+      data.url = url;
+    }
+    if (genre !== undefined) {
+      if (genre !== null && typeof genre !== 'string') throw new AppError(400, 'genre must be a string or null');
+      data.genre = genre || null;
+    }
+
+    const station = await prisma.radioStation.update({ where, data });
+    res.json(station);
+  } catch (err) { next(err); }
+});
+
 // DELETE /:id — Remove radio station
 radioStationRoutes.delete('/:id', async (req: Request, res: Response, next) => {
   try {
