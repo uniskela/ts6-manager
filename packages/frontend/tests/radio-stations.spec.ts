@@ -40,7 +40,7 @@ for (const width of [1400, 390]) {
     const updates = await radioFixture(page);
     await signIn(page, request);
     await page.goto('/media-bots?tab=radio&server=1');
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit station' });
     await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Original station');
     await expect(dialog.getByLabel('Stream URL')).toHaveValue('https://example.com/live');
@@ -55,7 +55,7 @@ for (const width of [1400, 390]) {
     await expect(page.getByText('Updated station', { exact: true })).toBeVisible();
     expect(updates).toEqual([{ name: 'Updated station', url: 'https://example.com/new-stream', genre: '' }]);
 
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     await expect(dialog.getByLabel('Mood or genre')).toHaveValue('');
     await dialog.getByLabel('Name', { exact: true }).fill('Unsaved name');
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -73,7 +73,7 @@ test('a rejected station edit keeps the form and saved station unchanged', async
   await radioFixture(page);
   await signIn(page, request);
   await page.goto('/media-bots?tab=radio&server=1');
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('button', { name: /^Edit / }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit station' });
   await dialog.getByLabel('Stream URL').fill('http://192.168.1.10/live');
   await dialog.getByRole('button', { name: 'Save', exact: true }).click();
@@ -81,7 +81,7 @@ test('a rejected station edit keeps the form and saved station unchanged', async
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Stream URL')).toHaveValue('http://192.168.1.10/live');
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('button', { name: /^Edit / }).click();
   await expect(dialog.getByLabel('Stream URL')).toHaveValue('https://example.com/live');
 });
 
@@ -91,7 +91,7 @@ for (const field of ['name', 'genre'] as const) {
     const updates = await radioFixture(page, undefined, savedUrl);
     await signIn(page, request);
     await page.goto('/media-bots?tab=radio&server=1');
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit station' });
     await expect(dialog.getByLabel('Stream URL')).toHaveValue(savedUrl);
     await dialog.getByLabel(field === 'name' ? 'Name' : 'Mood or genre', { exact: true }).fill(field === 'name' ? 'Renamed station' : 'Focus');
@@ -102,7 +102,7 @@ for (const field of ['name', 'genre'] as const) {
       : { name: 'Original station', genre: 'Focus' }]);
     await expect(dialog).not.toBeVisible();
     await expect(page.getByText('Station updated', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'Edit', exact: true }).click();
+    await page.getByRole('button', { name: /^Edit / }).click();
     await expect(dialog.getByLabel('Stream URL')).toHaveValue(savedUrl);
   });
 }
@@ -113,7 +113,7 @@ test('a pending save keeps the station form open until it completes', async ({ p
   const updates = await radioFixture(page, saveGate);
   await signIn(page, request);
   await page.goto('/media-bots?tab=radio&server=1');
-  await page.getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByRole('button', { name: /^Edit / }).click();
   const dialog = page.getByRole('dialog', { name: 'Edit station' });
   await dialog.getByLabel('Name', { exact: true }).fill('Saved station');
   try {

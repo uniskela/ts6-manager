@@ -251,6 +251,7 @@ export function RadioTab() {
                     variant="outline"
                     size="sm"
                     className="min-h-11"
+                    aria-label={`Edit ${station.name}`}
                     onClick={() => {
                       setEditingStation(station);
                       setAddForm({ name: station.name, url: station.url, genre: station.genre || '' });
