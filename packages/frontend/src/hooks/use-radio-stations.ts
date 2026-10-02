@@ -26,6 +26,15 @@ export function useCreateRadioStation() {
   });
 }
 
+export function useUpdateRadioStation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ configId, id, data }: { configId: number; id: number; data: { name?: string; url?: string; genre?: string | null } }) =>
+      radioStationsApi.update(configId, id, data),
+    onSuccess: (_, { configId }) => qc.invalidateQueries({ queryKey: ['radio-stations', configId] }),
+  });
+}
+
 export function useDeleteRadioStation() {
   const qc = useQueryClient();
   return useMutation({

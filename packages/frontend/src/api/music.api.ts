@@ -120,6 +120,8 @@ export const radioStationsApi = {
   presets: (configId: number) => api.get(`/servers/${configId}/radio-stations/presets`).then((r) => r.data),
   create: (configId: number, data: { name: string; url: string; genre?: string }) =>
     api.post(`/servers/${configId}/radio-stations`, data).then((r) => r.data),
+  update: (configId: number, id: number, data: { name?: string; url?: string; genre?: string | null }) =>
+    api.put(`/servers/${configId}/radio-stations/${id}`, data).then((r) => r.data),
   delete: (configId: number, id: number) =>
     api.delete(`/servers/${configId}/radio-stations/${id}`).then((r) => r.data),
   resetIds: (configId: number) =>
