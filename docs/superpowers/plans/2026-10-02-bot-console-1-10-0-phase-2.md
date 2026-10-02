@@ -94,19 +94,20 @@ export function Pager(props: { listKey: string; total: number; page: number; pag
 // Renders "1–50 of 148 {noun}", page buttons, Per page 25/50/100; "‹ Page 2 of 3 ›" under 640 px.
 
 // lib/video-options.ts + components/video/VideoOptions.tsx  (as built in PR #275)
-export interface VideoStartOptions { quality: VideoQualityRequest; encoder: VideoEncoderRequest | 'default';
+export interface VideoStartOptions { quality: VideoQualityRequest | 'default'; encoder: VideoEncoderRequest | 'default';
   noViewerTimeout: string /* 'default' | '0' | seconds */; sourceMode: VideoSourceModeRequest; }
 export const DEFAULT_VIDEO_START_OPTIONS: VideoStartOptions;
 export function videoStartRequest(o: VideoStartOptions):
   Pick<StartVideoStreamRequest, 'preset' | 'encoder' | 'noViewerTimeoutSec' | 'sourceMode'>; // spread into stream/start
 export function VideoOptions(props: { value: VideoStartOptions; onChange(v: VideoStartOptions): void }): JSX.Element;
-// "default" choices leave quality/encoder/timeout to the server's streaming defaults.
+// "default" choices (the defaults) leave quality/encoder/timeout to the bot's own settings;
+// an explicit "auto" quality overrides the bot's quality setting.
 ```
 
 - [ ] **Step 1: Failing unit tests** (`console-queue.test.ts`): `upNext` returns items after `currentIndex` (and the whole queue when `currentIndex` is -1); `absoluteIndex(2, 0) === 3`; `moveUpNext` moves an item down and up and leaves other items in order (Review Focus 1). `pager.test.ts`: `pageSlice` first/middle/last page, `pageCount(148, 50) === 3`, `rememberedPageSize` falls back to 50 when storage throws.
 - [ ] **Step 2:** Run them. Expected: FAIL (modules missing).
 - [ ] **Step 3:** Implement the helpers. Run. Expected: PASS.
-- [ ] **Step 4:** Add the route `/bot-hub/:botId` behind `AdminRoute`; `BotConsole` reads the bot from `useBotMedia()` (filter by `botId`) and `useMusicBotState(botId)`. Header: name, server, channel, connection badge. Left: `NowPlaying variant="full"` (music: progress, pause/skip/stop, volume; radio: station + ICY title, Stop, "plays until stopped"; video: as the hub card plus quality/encoder/health/viewers/auto-stop; idle: "Nothing is playing." + last stop) and `UpNextQueue`. Right: `SourcePicker` with `CONSOLE_TABS = []` and the empty state "Sources arrive in the next 1.10.0 updates." while no tab is registered.
+- [ ] **Step 4:** Add the route `/bot-hub/:botId` behind `AdminRoute`; `BotConsole` reads the bot from `useBotMedia()` (filter by `botId`) and `useMusicBotState(botId)`. Header: name, server, channel, connection badge. Left: `NowPlaying variant="full"` (music: progress, pause/skip/stop, volume; radio: station + ICY title, Stop, "plays until stopped"; video: as the hub card plus quality/encoder/health/viewers/auto-stop; idle: "Nothing is playing." + last stop) and `UpNextQueue` (takes `loadError`; shows loading/error instead of an empty queue; drags are disabled while a move saves). Right: `SourcePicker` with `CONSOLE_TABS = []` and the empty state "Sources arrive in the next 1.10.0 updates." plus an "Open Media Bots" link (`/media-bots?bot=<id>`) while no tab is registered.
 - [ ] **Step 5:** `UpNextQueue`: dnd-kit sortable list with a drag handle (`aria-label="Drag to reorder {title}"`), keyboard sensor, play-now and remove buttons per row, Shuffle, Repeat (off/track/queue), Clear. Drop → optimistic `moveUpNext`, then `useMoveQueueItem({ botId, from: absoluteIndex(...), to: absoluteIndex(...) })` (Review Focus 2). While radio or video plays: "Up next (n) is kept while the radio plays." / "…while the video plays." with **Play queue** (`usePlayFromQueue` at the first Up next item).
 - [ ] **Step 6:** Edge cases: unknown bot → "Bot not found" + link to `/bot-hub`; offline bot → source tabs disabled with "Start the bot to play something" (Review Focus 3).
 - [ ] **Step 7:** Bot Hub cards: the footer's "Open" button becomes "Open console" → `/bot-hub/{botId}`.
