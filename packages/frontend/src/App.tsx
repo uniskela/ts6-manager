@@ -57,7 +57,7 @@ const ActivityJournal = lazy(() => import('@/pages/ActivityJournal'));
 const Instance = lazy(() => import('@/pages/Instance'));
 const BotList = lazy(() => import('@/pages/BotList'));
 const BotEditor = lazy(() => import('@/pages/BotEditor'));
-const MusicBots = lazy(() => import('@/pages/MusicBots'));
+const MusicBots = lazy(() => import('@/pages/media-bots/MusicBots'));
 const BotHub = lazy(() => import('@/pages/BotHub'));
 const Iptv = lazy(() => import('@/pages/Iptv'));
 const Settings = lazy(() => import('@/pages/Settings'));

@@ -113,19 +113,12 @@ export function useYouTubeRegister() {
 
 export function useYouTubeImportPlaylist() {
   return useMutation({
+    // Typed from the API so queue options (musicBotId, clearFirst) are never dropped.
     mutationFn: ({
       configId,
-      url,
-      playlistName,
-      playlistId,
-      reimport,
-    }: {
-      configId: number;
-      url: string;
-      playlistName?: string;
-      playlistId?: number;
-      reimport?: boolean;
-    }) => musicLibraryApi.youtubeImportPlaylist(configId, { url, playlistName, playlistId, reimport }),
+      ...data
+    }: { configId: number } & Parameters<typeof musicLibraryApi.youtubeImportPlaylist>[1]) =>
+      musicLibraryApi.youtubeImportPlaylist(configId, data),
   });
 }
 
