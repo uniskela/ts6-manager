@@ -119,7 +119,7 @@ Uploaded sources are stored as application assets on the backend data volume (no
 
 For safety, ts6-manager refuses links to private addresses (`192.168.x.x`, `10.x.x.x` and so on), so a pasted link cannot make the server reach devices on your network. That also blocks an IPTV proxy running at home, such as Threadfin, xTeVe, TVHeadend or a router's IPTV service.
 
-Admins can allow those hosts under **IPTV → Local network sources**. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`threadfin.lan`).
+Admins allow those hosts from the IPTV page header: **Local hosts** (administrators only) opens the allowlist dialog. The button shows a count when the list is not empty, and an empty playlist page hints at the same dialog. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`threadfin.lan`).
 
 - The allowance covers IPTV only: playlist refreshes, channels started from the IPTV page, and `!tv <name>`. With `!tv`, users pick a channel name from your playlist, never a URL.
 - Links typed in chat (`!stream`, `!play`), the video URL box and flow HTTP nodes stay blocked from private addresses.
