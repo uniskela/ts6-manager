@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { QueueItemInfo } from '@ts6/common';
-import { absoluteIndex, moveUpNext, upNext } from '../../src/pages/bot-hub/console-queue';
+import { absoluteIndex, moveUpNext, rowKeys, upNext } from '../../src/pages/bot-hub/console-queue';
 
 const item = (id: string): QueueItemInfo => ({ id, title: `Song ${id}`, source: 'local' });
 const queue = ['a', 'b', 'c', 'd', 'e'].map(item);
@@ -38,5 +38,11 @@ describe('console queue', () => {
     const out = moveUpNext(input, 0, 1);
     assert.deepEqual(input, ['a', 'b']);
     assert.deepEqual(out, ['b', 'a']);
+  });
+
+  it('gives the same song queued twice distinct row keys', () => {
+    const keys = rowKeys([item('7'), item('8'), item('7')]);
+    assert.equal(new Set(keys).size, 3);
+    assert.deepEqual(keys, ['7#0', '8#0', '7#1']);
   });
 });

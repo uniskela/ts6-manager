@@ -22,6 +22,11 @@ const TONE_BADGE: Record<HubTone, { label: string; variant: 'destructive' | 'def
   offline: { label: 'Offline', variant: 'outline' },
 };
 
+function clock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
 export interface NowPlayingProps {
   bot: BotMediaOverview;        // from @ts6/common, as SessionCard uses today
   now: number;                  // ms, from the page's 1 s clock
@@ -30,8 +35,7 @@ export interface NowPlayingProps {
 }
 
 export function NowPlaying(props: NowPlayingProps): JSX.Element {
-  const { bot, now, footer } = props;
-  // props.variant: 'full' is identical to 'compact' until phase 2 extends it.
+  const { bot, now, footer, variant } = props;
   const pausePlayback = usePausePlayback();
   const resumePlayback = useResumePlayback();
   const skipTrack = useSkipTrack();
@@ -52,14 +56,17 @@ export function NowPlaying(props: NowPlayingProps): JSX.Element {
   return (
     <Card className={cn(tone === 'offline' && 'opacity-70')}>
       <CardContent className="space-y-3 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="truncate font-medium">{bot.botName}</p>
-            <p className="truncate text-xs text-muted-foreground">
-              {bot.serverName ?? `Server ${bot.serverConfigId}`}
-              {bot.channelName ? ` · #${bot.channelName}` : ''}
-            </p>
-          </div>
+        <div className={cn('flex items-start gap-3', variant === 'full' ? 'justify-end' : 'justify-between')}>
+          {/* The console's page header already names the bot, server and channel. */}
+          {variant === 'compact' && (
+            <div className="min-w-0">
+              <p className="truncate font-medium">{bot.botName}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                {bot.serverName ?? `Server ${bot.serverConfigId}`}
+                {bot.channelName ? ` · #${bot.channelName}` : ''}
+              </p>
+            </div>
+          )}
           <Badge variant={badge.variant} className="shrink-0 gap-1">
             {tone === 'live' && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />}
             {bot.session?.state === 'starting' ? 'Starting' : badge.label}
@@ -76,6 +83,21 @@ export function NowPlaying(props: NowPlayingProps): JSX.Element {
             {hubHeadline(bot)}
           </p>
         </div>
+
+        {variant === 'full' && tone === 'music' && bot.music && (bot.music.live ? (
+          <p className="text-xs text-muted-foreground">Plays until stopped.</p>
+        ) : bot.music.duration ? (
+          <div className="space-y-1">
+            <div className="h-1.5 rounded-full bg-muted" role="progressbar" aria-label="Track progress"
+              aria-valuemin={0} aria-valuemax={bot.music.duration} aria-valuenow={bot.music.position ?? 0}>
+              <div className="h-1.5 rounded-full bg-primary"
+                style={{ width: `${Math.min(100, ((bot.music.position ?? 0) / bot.music.duration) * 100)}%` }} />
+            </div>
+            <div className="flex justify-between font-mono text-xs text-muted-foreground">
+              <span>{clock(bot.music.position ?? 0)}</span><span>{clock(bot.music.duration)}</span>
+            </div>
+          </div>
+        ) : null)}
 
         {facts.length > 0 && (
           <p className="text-xs text-muted-foreground">{facts.join(' · ')}</p>

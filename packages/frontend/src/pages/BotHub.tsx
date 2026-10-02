@@ -43,11 +43,6 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
   const stopVideo = useStopVideoStream();
 
   const tone = hubTone(bot);
-  const openHref = tone === 'live'
-    ? `/media-bots?tab=video&bot=${bot.botId}`
-    : tone === 'music'
-      ? (bot.music?.live ? `/media-bots?tab=radio&bot=${bot.botId}` : `/media-bots?bot=${bot.botId}`)
-      : '/media-bots';
   const stopping = stopMusic.isPending || stopVideo.isPending;
   const error = stopMusic.error ?? stopVideo.error;
 
@@ -61,7 +56,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
           {error && <p className="text-xs text-destructive">{apiErrorMessage(error, 'Could not stop')}</p>}
           <div className="flex gap-2">
             <Button asChild size="sm" variant="outline">
-              <Link to={openHref}>Open</Link>
+              <Link to={`/bot-hub/${bot.botId}`} aria-label={`Open console for ${bot.botName}`}>Open console</Link>
             </Button>
             {tone === 'live' && bot.session?.state === 'active' && (
               <Button size="sm" variant="ghost" className="text-destructive" disabled={stopping}
