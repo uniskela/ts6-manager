@@ -209,7 +209,7 @@ All new routes are admin only and scoped to one server, like the existing IPTV a
 
 ### Not in 1.10.0
 
-`voice-bot.ts` and sidecar `main.go` splits; framework upgrades; EPG/XMLTV/Xtream; a video library (upload, list, delete); per-user (rather than per-server) favourites; multiple mood tags per radio station; dynamic quality changes during a stream; the flow loop node.
+`voice-bot.ts` and sidecar `main.go` splits; framework upgrades; EPG/XMLTV/Xtream; a video library (upload, list, delete); per-user (rather than per-server) favourites; the listener remote (`!remote` one-time link for non-admins, planned as the 1.11.0 lead feature in #253); multiple mood tags per radio station; dynamic quality changes during a stream; the flow loop node.
 
 ## 4. PR order
 
