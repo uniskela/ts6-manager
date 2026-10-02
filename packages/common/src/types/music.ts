@@ -354,6 +354,8 @@ export type VideoEncodeProfile = 'performance' | 'balanced' | 'quality' | 'custo
 export interface VideoStreamSettings {
   /** Stop a stream nobody watches after this many seconds; 0 = off. */
   noViewerTimeoutSec: number;
+  /** Post channel chat notices when a stream stops by itself. */
+  announceAutoStops: boolean;
   /** Highest preset Auto may select. */
   autoMaxPreset: VideoStreamPresetKey;
   defaultEncoder: VideoEncoderRequest;

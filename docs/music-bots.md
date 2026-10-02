@@ -14,6 +14,8 @@ The Bots view shows live connection/playback status, current media, progress, vo
 
 A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time).
 
+Streaming defaults include **Announce auto-stops in chat**, enabled by default. When a bot stops music or radio because its channel is empty, it posts `Stopped the music: the channel was empty for 5 minutes.` or `Stopped radio: the channel was empty for 5 minutes.` in its channel. The notice follows TeamSpeak's existing flood hold.
+
 ## Requests
 
 **Media Bots → Requests** (`/media-bots?tab=requests`) shows `!play` history for the selected server. **Play** starts that request immediately. **Enqueue** adds it to the queue without interrupting current playback. When several bots are running, pick the target bot. `/music-requests` redirects here. System → Music Request History is no longer a separate page.

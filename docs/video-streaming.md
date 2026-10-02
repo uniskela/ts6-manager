@@ -119,6 +119,8 @@ A stream stops on its own when:
 
 After a stream stops, the tab shows the last reason, for example *Last stream: Stopped after 5 minutes with no viewers · 8 min ago*.
 
+With **Announce auto-stops in chat** enabled in Streaming defaults (the default), the bot posts `Stopped the stream: nobody watched for 5 minutes.` when the no-viewer timer stops a stream, or `Stopped the stream: the channel was empty for 5 minutes.` when the channel-empty timer stops it. A stream with more than one minute before its no-viewer stop also gets `Nobody is watching. The stream stops in 1 minute.` in the bot's channel; the warning is cancelled when a viewer joins. No warning is scheduled for a timeout of 60 seconds or less. The existing TeamSpeak flood hold applies to these messages.
+
 ## IPTV playlists
 
 The IPTV page manages M3U/M3U8 playlist sources for the selected server. Administrators can add a source as either a **remote playlist URL** or an **uploaded playlist file** (`.m3u`, `.m3u8`, or `.txt` with valid M3U content), then refresh, replace (uploads), or delete it; browse or search its parsed channels; filter by group; choose a running music bot and quality preset; then start or stop that channel's stream.

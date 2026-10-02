@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  autoStopNotice,
   belowRealtimeWarning,
   classifyEncoderExit,
   describeDuration,
+  formatStopDuration,
   isChannelEmptyForAutoStop,
+  noViewerWarningNotice,
   parseAutoStopEmptySeconds,
   resolveSourceMode,
 } from './lifecycle.js';
@@ -108,6 +111,29 @@ describe('wording', () => {
       'Encoding below realtime (0.62x for 40 s, 12 packets dropped) at 1080p with VP8 (software) from a live source. '
         + 'The host cannot keep up — try a lower preset or a hardware encoder.',
     );
+  });
+
+  it('formats auto-stop durations as exact minutes or seconds', () => {
+    assert.equal(formatStopDuration(300), '5 minutes');
+    assert.equal(formatStopDuration(60), '1 minute');
+    assert.equal(formatStopDuration(45), '45 seconds');
+    assert.equal(formatStopDuration(90), '90 seconds');
+  });
+
+  it('uses the exact auto-stop announcement copy', () => {
+    assert.equal(
+      autoStopNotice('music', 'channel_empty', 300),
+      'Stopped the music: the channel was empty for 5 minutes.',
+    );
+    assert.equal(
+      autoStopNotice('radio', 'channel_empty', 60),
+      'Stopped radio: the channel was empty for 1 minute.',
+    );
+    assert.equal(
+      autoStopNotice('video', 'no_viewers', 45),
+      'Stopped the stream: nobody watched for 45 seconds.',
+    );
+    assert.equal(noViewerWarningNotice(), 'Nobody is watching. The stream stops in 1 minute.');
   });
 });
 

@@ -36,6 +36,7 @@ const NAMED_PROFILES = Object.keys(ENCODE_PROFILE_PRESETS) as NamedEncodeProfile
 
 const FIELD_LABELS: Record<keyof VideoStreamSettings, string> = {
   noViewerTimeoutSec: 'no-viewer stop',
+  announceAutoStops: 'auto-stop announcements',
   autoMaxPreset: 'Auto limit',
   defaultEncoder: 'encoder',
   preferHardware: 'hardware preference',
@@ -204,6 +205,22 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
               onChange={(e) => set('noViewerTimeoutSec', Math.max(0, Math.floor(Number(e.target.value) || 0)))}
             />
           )}
+        </div>
+
+        <div className="flex items-start gap-2">
+          <Switch
+            id="announce-auto-stops"
+            checked={draft.announceAutoStops}
+            onCheckedChange={(v) => set('announceAutoStops', v)}
+          />
+          <div className="space-y-0.5">
+            <Label htmlFor="announce-auto-stops" className="text-sm font-normal">
+              Announce auto-stops in chat
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Posts one line in the bot&apos;s channel when it stops by itself, and warns 1 minute before stopping a stream nobody is watching.
+            </p>
+          </div>
         </div>
 
         <div className="rounded-md border">

@@ -50,6 +50,7 @@ export async function loadMaxPlaylistImport(prisma: PrismaClient): Promise<numbe
 // === Video streaming defaults (1.9.0) ===
 
 export const VIDEO_NO_VIEWER_TIMEOUT_KEY = 'video_no_viewer_timeout';
+export const VIDEO_ANNOUNCE_AUTO_STOPS_KEY = 'video_announce_auto_stops';
 export const VIDEO_AUTO_MAX_PRESET_KEY = 'video_auto_max_preset';
 export const VIDEO_DEFAULT_ENCODER_KEY = 'video_default_encoder';
 export const VIDEO_PREFER_HARDWARE_KEY = 'video_prefer_hardware';
@@ -59,6 +60,7 @@ export const VIDEO_CPU_USED_KEY = 'video_cpu_used';
 
 export const VIDEO_STREAMING_SETTING_KEYS = [
   VIDEO_NO_VIEWER_TIMEOUT_KEY,
+  VIDEO_ANNOUNCE_AUTO_STOPS_KEY,
   VIDEO_AUTO_MAX_PRESET_KEY,
   VIDEO_DEFAULT_ENCODER_KEY,
   VIDEO_PREFER_HARDWARE_KEY,
@@ -115,6 +117,7 @@ export function videoStreamingDefaults(env: NodeJS.ProcessEnv = process.env): Vi
     : inferEncodeProfile({ autoMaxPreset, maxBitrateKbps, cpuUsed });
   return {
     noViewerTimeoutSec: parseBoundedInt(env.VIDEO_NO_VIEWER_TIMEOUT_SECONDS, MAX_NO_VIEWER_TIMEOUT_SEC) ?? 300,
+    announceAutoStops: true,
     autoMaxPreset,
     defaultEncoder: normalizeEncoderRequest(env.VIDEO_ENCODER, 'auto'),
     preferHardware: parseBool(env.VIDEO_PREFER_HARDWARE) ?? false,
@@ -145,6 +148,7 @@ export function parseVideoStreamingSettings(
   return {
     noViewerTimeoutSec:
       parseBoundedInt(stored.get(VIDEO_NO_VIEWER_TIMEOUT_KEY), MAX_NO_VIEWER_TIMEOUT_SEC) ?? defaults.noViewerTimeoutSec,
+    announceAutoStops: parseBool(stored.get(VIDEO_ANNOUNCE_AUTO_STOPS_KEY)) ?? defaults.announceAutoStops,
     autoMaxPreset,
     defaultEncoder: normalizeEncoderRequest(stored.get(VIDEO_DEFAULT_ENCODER_KEY), defaults.defaultEncoder),
     preferHardware: parseBool(stored.get(VIDEO_PREFER_HARDWARE_KEY)) ?? defaults.preferHardware,
@@ -170,7 +174,7 @@ export function parseServerOverrides(raw: unknown): Partial<VideoStreamSettings>
   // so a complete named profile stays named instead of collapsing to custom.
   const accepted: Record<string, unknown> = {};
   for (const field of [
-    'noViewerTimeoutSec', 'autoMaxPreset', 'defaultEncoder', 'preferHardware',
+    'noViewerTimeoutSec', 'announceAutoStops', 'autoMaxPreset', 'defaultEncoder', 'preferHardware',
     'maxBitrateKbps', 'encodeProfile', 'cpuUsed',
   ] as const) {
     const value = (obj as Record<string, unknown>)[field];
@@ -184,6 +188,7 @@ export function parseServerOverrides(raw: unknown): Partial<VideoStreamSettings>
   const out: Partial<VideoStreamSettings> = {};
   for (const row of check.rows) {
     if (row.key === VIDEO_NO_VIEWER_TIMEOUT_KEY) out.noViewerTimeoutSec = Number(row.value);
+    else if (row.key === VIDEO_ANNOUNCE_AUTO_STOPS_KEY) out.announceAutoStops = row.value === 'true';
     else if (row.key === VIDEO_AUTO_MAX_PRESET_KEY) out.autoMaxPreset = row.value as VideoStreamPresetKey;
     else if (row.key === VIDEO_DEFAULT_ENCODER_KEY) {
       out.defaultEncoder = row.value as VideoStreamSettings['defaultEncoder'];
@@ -248,6 +253,10 @@ export function parseVideoStreamingUpdate(body: Record<string, unknown> | null |
     const n = parseBoundedInt(b.noViewerTimeoutSec, MAX_NO_VIEWER_TIMEOUT_SEC);
     if (n == null) return { ok: false, error: `noViewerTimeoutSec must be 0–${MAX_NO_VIEWER_TIMEOUT_SEC} seconds (0 = off)` };
     rows.push({ key: VIDEO_NO_VIEWER_TIMEOUT_KEY, value: String(n) });
+  }
+  if (b.announceAutoStops !== undefined) {
+    if (typeof b.announceAutoStops !== 'boolean') return { ok: false, error: 'announceAutoStops must be a boolean' };
+    rows.push({ key: VIDEO_ANNOUNCE_AUTO_STOPS_KEY, value: b.announceAutoStops ? 'true' : 'false' });
   }
   if (b.autoMaxPreset !== undefined) {
     if (!isPresetKey(b.autoMaxPreset)) return { ok: false, error: 'autoMaxPreset must be 480p, 720p, 1080p, 1440p or 2160p' };

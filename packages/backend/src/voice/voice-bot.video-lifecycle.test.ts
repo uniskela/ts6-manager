@@ -32,12 +32,15 @@ function fakeStreaming(bot: VoiceBot, timeoutSec: number) {
     sendStreamStop: () => { sidecarCalls.push('stopstream'); },
     dispose: () => { sidecarCalls.push('dispose'); },
   };
+  // Keep existing lifecycle tests isolated from chat transport; notice tests
+  // replace this with a spy and verify the public sendChannelMessage path.
+  b.sendChannelMessage = () => {};
   return { b, sidecarCalls };
 }
 
 describe('video no-viewer auto-stop', () => {
   beforeEach(() => {
-    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1_000_000 });
+    mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1_000_000 });
   });
   afterEach(() => {
     mock.timers.reset();
@@ -116,6 +119,271 @@ describe('video no-viewer auto-stop', () => {
     mock.timers.tick(10 * 60_000);
     assert.equal(bot.videoStreaming, true);
   });
+
+  it('warns 60 s before a no-viewer stop and then posts the stop notice', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 300);
+    const messages: string[] = [];
+    let directSends = 0;
+    b.sendChannelMessage = (message: string) => messages.push(message);
+    b.client.sendCommand = (command: string) => {
+      if (command.startsWith('sendtextmessage')) directSends++;
+    };
+
+    b.refreshNoViewerTimer();
+    mock.timers.tick(239_000);
+    assert.deepEqual(messages, []);
+    mock.timers.tick(1_000);
+    assert.deepEqual(messages, ['Nobody is watching. The stream stops in 1 minute.']);
+
+    mock.timers.tick(60_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(messages, [
+      'Nobody is watching. The stream stops in 1 minute.',
+      'Stopped the stream: nobody watched for 5 minutes.',
+    ]);
+    assert.equal(directSends, 0, 'notices use sendChannelMessage rather than the client directly');
+  });
+
+  it('viewer joining after the warning cancels the stop and sends nothing more', () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 300);
+    const messages: string[] = [];
+    b.sendChannelMessage = (message: string) => messages.push(message);
+
+    b.refreshNoViewerTimer();
+    mock.timers.tick(240_000);
+    assert.deepEqual(messages, ['Nobody is watching. The stream stops in 1 minute.']);
+
+    b._viewers.set(42, { clid: 42, joinedAt: Date.now(), iceState: 'connected' });
+    b.refreshNoViewerTimer();
+    mock.timers.tick(60_000);
+
+    assert.equal(bot.videoStreaming, true);
+    assert.deepEqual(messages, ['Nobody is watching. The stream stops in 1 minute.']);
+  });
+
+  it('does not announce another auto-stop while a no-viewer stop is flushing', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 300);
+    const messages: string[] = [];
+    b.sendChannelMessage = (message: string) => messages.push(message);
+    b.config.autoStopEmptySeconds = 1;
+    b.client.getChannelUserCount = () => 0;
+
+    b.refreshNoViewerTimer();
+    mock.timers.tick(299_000);
+    b.startAutoStopTimer();
+    b.autoStopEmptySince = Date.now() - 5_000;
+    mock.timers.tick(1_000);
+    const stop = b._videoStopPromise;
+    // Keep the original stop in its cleanup while the channel timer fires.
+    await Promise.resolve();
+    mock.timers.tick(4_000);
+    assert.deepEqual(messages, [
+      'Nobody is watching. The stream stops in 1 minute.',
+      'Stopped the stream: nobody watched for 5 minutes.',
+    ]);
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await stop;
+    assert.equal(bot.videoStreaming, false);
+  });
+
+  it('cannot rearm no-viewer notices while a stream is stopping', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 300);
+    let releaseSource!: () => void;
+    b.sidecarHttp.stopSource = () => new Promise<void>((resolve) => { releaseSource = resolve; });
+    const stop = bot.stopVideoStream('manual');
+    try {
+      // Viewer removal can refresh the countdown while sidecar shutdown awaits.
+      b.refreshNoViewerTimer();
+      assert.equal(bot.videoStreamStatus.noViewer.stopAt, null);
+      assert.equal(b._noViewerTimer, null);
+      assert.equal(b._noViewerWarnTimer, null);
+    } finally {
+      releaseSource();
+      await Promise.resolve();
+      await Promise.resolve();
+      mock.timers.tick(1_000);
+      await stop;
+    }
+  });
+
+  for (const timeoutSec of [45, 60]) it(`does not send a warning at a ${timeoutSec}-second timeout`, async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, timeoutSec);
+    const messages: string[] = [];
+    b.sendChannelMessage = (message: string) => messages.push(message);
+
+    b.refreshNoViewerTimer();
+    mock.timers.tick(timeoutSec * 1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(bot.videoStreaming, false);
+    assert.deepEqual(messages, [timeoutSec === 60
+      ? 'Stopped the stream: nobody watched for 1 minute.'
+      : 'Stopped the stream: nobody watched for 45 seconds.']);
+  });
+
+  it('sends nothing when auto-stop announcements are switched off', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 300);
+    const messages: string[] = [];
+    b._videoSettings = { ...b._videoSettings, announceAutoStops: false };
+    b.sendChannelMessage = (message: string) => messages.push(message);
+
+    b.refreshNoViewerTimer();
+    mock.timers.tick(300_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(bot.videoStreaming, false);
+    assert.deepEqual(messages, []);
+  });
+
+  async function runChannelEmptyStop(media: 'music' | 'radio', announceAutoStops = true, floodHold = false): Promise<string[]> {
+    const bot = makeBot();
+    const b = bot as any;
+    const messages: string[] = [];
+    b._status = 'playing';
+    b._isStreaming = media === 'radio';
+    b.config.autoStopEmptySeconds = 1;
+    b.config.loadVideoSettings = async () => ({ ...b._videoSettings, announceAutoStops });
+    b.client.getChannelUserCount = () => 0;
+    b.client.sendVoiceStop = () => {};
+    let directSends = 0;
+    b.client.sendCommand = (command: string) => {
+      if (command.startsWith('sendtextmessage')) directSends++;
+    };
+    b.sendChannelMessage = (message: string) => {
+      messages.push(message);
+      if (floodHold) VoiceBot.prototype.sendChannelMessage.call(bot, message);
+    };
+    if (floodHold) b.client.emit('ts3error', { id: '524', msg: 'client is flooding' });
+    b.startAutoStopTimer();
+
+    mock.timers.tick(5_000);
+    mock.timers.tick(5_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(10_000);
+    assert.equal(bot.status, 'connected');
+    assert.equal(directSends, 0, 'announcements never bypass sendChannelMessage');
+    return messages;
+  }
+
+  it('channel-empty radio stop sends the radio notice once', async () => {
+    assert.deepEqual(await runChannelEmptyStop('radio'), [
+      'Stopped radio: the channel was empty for 1 second.',
+    ]);
+  });
+
+  it('channel-empty music stop sends the music notice once', async () => {
+    assert.deepEqual(await runChannelEmptyStop('music'), [
+      'Stopped the music: the channel was empty for 1 second.',
+    ]);
+  });
+
+  it('a pending settings load cannot clear replacement music', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    let releaseSettings!: () => void;
+    const ready = new Promise<void>((resolve) => { releaseSettings = resolve; });
+    b._status = 'playing';
+    b.config.loadVideoSettings = async () => {
+      await ready;
+      return { ...b._videoSettings, announceAutoStops: false };
+    };
+    b.client.sendCommand = () => {};
+    b.client.sendVoiceStop = () => {};
+    b.sendChannelMessage = () => assert.fail('announcements are switched off');
+
+    const stop = b.handleChannelEmptyAutoStop(300);
+    assert.equal(bot.status, 'connected', 'the expired playback stops immediately');
+    b._status = 'playing'; // New music starts while notice settings are loading.
+    releaseSettings();
+    await stop;
+    assert.equal(bot.status, 'playing', 'the replacement remains active');
+  });
+
+  for (const media of ['music', 'radio'] as const) {
+    it(`sends nothing for a channel-empty ${media} stop when announcements are off`, async () => {
+      assert.deepEqual(await runChannelEmptyStop(media, false), []);
+    });
+
+    it(`channel-empty ${media} notice respects an active 524 flood hold`, async () => {
+      assert.deepEqual(await runChannelEmptyStop(media, true, true), [
+        media === 'radio'
+          ? 'Stopped radio: the channel was empty for 1 second.'
+          : 'Stopped the music: the channel was empty for 1 second.',
+      ]);
+    });
+  }
+
+  it('video warning and stop notice go through sendChannelMessage during a 524 flood hold', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 300);
+    const messages: string[] = [];
+    const sent: string[] = [];
+    b.client.sendCommand = (command: string) => sent.push(command);
+    b.sendChannelMessage = (message: string) => {
+      messages.push(message);
+      VoiceBot.prototype.sendChannelMessage.call(bot, message);
+    };
+    b.refreshNoViewerTimer();
+    mock.timers.tick(239_000);
+    b.client.emit('ts3error', { id: '524', msg: 'client is flooding' });
+    mock.timers.tick(1_000);
+    assert.equal(bot.floodHoldActive, true);
+    assert.deepEqual(messages, ['Nobody is watching. The stream stops in 1 minute.']);
+    assert.deepEqual(sent, []);
+
+    mock.timers.tick(59_000);
+    b.client.emit('ts3error', { id: '524', msg: 'client is flooding' });
+    mock.timers.tick(1_000);
+    await Promise.resolve();
+    await Promise.resolve();
+    mock.timers.tick(1_000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.floodHoldActive, true);
+    assert.deepEqual(messages, [
+      'Nobody is watching. The stream stops in 1 minute.',
+      'Stopped the stream: nobody watched for 5 minutes.',
+    ]);
+    assert.deepEqual(sent, [], 'neither notice bypasses the flood hold');
+  });
+
+  for (const announceAutoStops of [true, false]) {
+    it(`channel-empty video stop honors announcements=${announceAutoStops}`, async () => {
+      const bot = makeBot();
+      const { b } = fakeStreaming(bot, 0);
+      const messages: string[] = [];
+      b._videoSettings = { ...b._videoSettings, announceAutoStops };
+      b.sendChannelMessage = (message: string) => messages.push(message);
+      const stop = b.handleChannelEmptyAutoStop(300);
+      await Promise.resolve();
+      await Promise.resolve();
+      mock.timers.tick(1_000);
+      await stop;
+      assert.equal(bot.videoStreaming, false);
+      assert.deepEqual(messages, announceAutoStops
+        ? ['Stopped the stream: the channel was empty for 5 minutes.']
+        : []);
+    });
+  }
 
   it('records manual stops and ignores a concurrent second stop', async () => {
     const bot = makeBot();
