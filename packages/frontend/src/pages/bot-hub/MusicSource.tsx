@@ -73,7 +73,12 @@ export function MusicSource(ctx: ConsoleSourceContext) {
 
 function SongsView({ ctx, search }: { ctx: ConsoleSourceContext; search: string }) {
   const { page, setPage, pageSize, setPageSize } = useListPaging('console-songs', search);
-  const query = useSongSearch(ctx.serverConfigId, search.trim(), page, pageSize);
+  const [debouncedSearch, setDebouncedSearch] = useState(search.trim());
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search.trim()), 250);
+    return () => clearTimeout(t);
+  }, [search]);
+  const query = useSongSearch(ctx.serverConfigId, debouncedSearch, page, pageSize);
   const play = usePlaySong();
   const enqueue = useEnqueue();
   const songs = (query.data?.songs ?? []) as SongInfo[];

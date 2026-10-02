@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { musicLibraryApi } from '../api/music.api';
 
 export function useSongs(configId: number | null) {
@@ -21,6 +21,7 @@ export function useSongSearch(
     queryKey: ['songs-search', configId, search, page, pageSize],
     queryFn: () => musicLibraryApi.searchSongs(configId!, { search, page, pageSize }),
     enabled: !!configId,
+    placeholderData: keepPreviousData,
   });
 }
 

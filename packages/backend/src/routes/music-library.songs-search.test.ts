@@ -1,15 +1,28 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { after, describe, it } from 'node:test';
 import express, { type Express } from 'express';
-import { musicLibraryRoutes } from './music-library.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
 
-async function send(app: Express, path: string) {
+// music-library.routes creates MUSIC_DIR on import; keep it out of /data in tests.
+const musicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-songs-search-'));
+const previousMusicDir = process.env.MUSIC_DIR;
+process.env.MUSIC_DIR = musicDir;
+const { musicLibraryRoutes } = await import('./music-library.routes.js');
+after(() => {
+  if (previousMusicDir === undefined) delete process.env.MUSIC_DIR;
+  else process.env.MUSIC_DIR = previousMusicDir;
+  fs.rmSync(musicDir, { recursive: true, force: true });
+});
+
+async function send(app: Express, pathName: string) {
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));
   const { port } = server.address() as { port: number };
   try {
-    const response = await fetch(`http://127.0.0.1:${port}${path}`);
+    const response = await fetch(`http://127.0.0.1:${port}${pathName}`);
     const text = await response.text();
     return {
       status: response.status,
@@ -124,7 +137,10 @@ describe('GET /songs/search', () => {
   });
 
   it('rejects a page or pageSize that is not a positive whole number', async () => {
-    for (const qs of ['page=0', 'page=-1', 'page=1.5', 'page=abc', 'pageSize=0', 'pageSize=-2', 'pageSize=2.5', 'pageSize=nope']) {
+    for (const qs of [
+      'page=0', 'page=-1', 'page=1.5', 'page=abc', 'page=1e300',
+      'pageSize=0', 'pageSize=-2', 'pageSize=2.5', 'pageSize=nope', 'pageSize=1e300',
+    ]) {
       const f = routeFixture();
       const response = await send(f.app, `/servers/1/music-library/songs/search?${qs}`);
       assert.equal(response.status, 400, qs);

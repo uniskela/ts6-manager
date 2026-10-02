@@ -258,7 +258,7 @@ musicLibraryRoutes.get('/songs', async (req: Request, res: Response, next) => {
 function parsePositivePageInt(raw: unknown, fallback: number): number {
   if (raw === undefined || raw === null || raw === '') return fallback;
   const n = typeof raw === 'number' ? raw : Number(String(raw));
-  if (!Number.isInteger(n) || n < 1) {
+  if (!Number.isSafeInteger(n) || n < 1) {
     throw new AppError(400, 'page and pageSize must be positive whole numbers');
   }
   return n;
