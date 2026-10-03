@@ -331,9 +331,11 @@ test('Chat commands keeps server scope, custom CRUD, and presets usable', async 
   await seedServerSelection(page);
   await page.goto('/bots?tab=commands');
   await expect(page.getByText('!rules', { exact: true })).toBeVisible();
-  await page.getByRole('combobox').click();
+  const chatCommandsPanel = page.locator('#bot-chat-commands-panel');
+  const serverPicker = chatCommandsPanel.getByRole('combobox');
+  await serverPicker.click();
   await page.getByRole('option', { name: 'Secondary server' }).click();
-  await expect(page.getByRole('combobox')).toContainText('Secondary server');
+  await expect(serverPicker).toContainText('Secondary server');
   await expect.poll(() => mock.requestedConfigIds).toContain(2);
   await page.getByRole('button', { name: 'Presets' }).click();
   await expect(page.getByText('Recommended command presets')).toBeVisible();
@@ -371,7 +373,7 @@ test('clash warnings update for custom replies, built-ins, and flow command trig
   await page.goto('/bots/1');
   await page.locator('.flow-node[data-node-id="trigger"]').click();
   await expect(page.getByText(/clash/i)).toBeVisible();
-  const trigger = page.getByLabel('Command');
+  const trigger = page.getByLabel('Command', { exact: true });
   await trigger.fill('!rules');
   await expect(page.getByText(/custom.*rules|clash.*rules/i)).toBeVisible();
   await trigger.fill('!unique-flow-command');

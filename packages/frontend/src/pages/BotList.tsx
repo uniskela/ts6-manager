@@ -59,7 +59,7 @@ export default function BotList() {
   const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
     event.preventDefault();
-    const nextCommands = event.key === 'ArrowRight' ? !commandsTab : commandsTab;
+    const nextCommands = !commandsTab;
     setSearchParams(nextCommands ? { tab: 'commands' } : {});
   };
   const tabLinks = (
