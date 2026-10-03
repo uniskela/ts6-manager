@@ -162,6 +162,9 @@ model MusicBot {
   voicePort       Int       @default(9987)
   volume          Int       @default(50)
   identityData    String?
+  avatarMode      String    @default("none")
+  avatarFile      String?
+  avatarMd5       String?
   autoStart       Boolean   @default(false)
   streamPreset    String    @default("720p")
   sidecarPort     Int       @default(9800)

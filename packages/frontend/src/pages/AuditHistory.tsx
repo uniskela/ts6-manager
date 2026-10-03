@@ -80,6 +80,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'media.video.stop': 'Stop video stream',
   'media.video.source_change': 'Change stream source',
   'media.session.switch': 'Switch media (replace what was playing)',
+  'music_bot.avatar_update': 'Update bot avatar',
 };
 
 const RESULT_CODE_LABELS: Record<AdminAuditResultCode, string> = {

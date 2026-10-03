@@ -15,9 +15,10 @@ RUN pnpm --filter @ts6/backend exec prisma generate
 RUN pnpm --filter @ts6/backend run build
 
 # Produce a portable backend containing production dependencies only. The backend
-# package explicitly includes dist/, generated/, and prisma/ so gitignored build
-# output is retained in the deployment bundle.
+# package includes assets/ as well as dist/, generated/, and prisma/ so the
+# default bot avatar and gitignored build output stay in the deployment bundle.
 RUN pnpm --filter @ts6/backend --prod deploy /prod/backend && \
+    test -f /prod/backend/assets/default-bot-avatar.png && \
     test -f /prod/backend/dist/index.js && \
     test -f /prod/backend/generated/prisma/index.js && \
     test -f /prod/backend/node_modules/prisma/build/index.js && \

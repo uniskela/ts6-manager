@@ -49,6 +49,7 @@
     "typescript": "^5.4.0"
   },
   "files": [
+    "assets",
     "dist",
     "generated",
     "prisma",

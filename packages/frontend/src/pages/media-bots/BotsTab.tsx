@@ -47,6 +47,7 @@ import type { MusicBotSummary } from '@ts6/common';
 import { formatNumber } from '@/lib/formatting';
 import { BotPlayerCard } from './BotPlayerCard';
 import { PlaySongDialog } from './PlaySongDialog';
+import { BotAvatarSettings } from './BotAvatarSettings';
 
 
 /** Create can succeed server-side while the browser sees timeout / proxy 499. */
@@ -338,6 +339,7 @@ export function BotsTab() {
               <Switch checked={form.autoStart} onCheckedChange={(v) => setForm({ ...form, autoStart: v })} />
               <Label className="text-xs">Auto-start on server startup</Label>
             </div>
+            {editBot && <BotAvatarSettings key={editBot.id} bot={bots.find((bot: MusicBotSummary) => bot.id === editBot.id) ?? editBot} />}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setShowCreate(false); setEditBot(null); }}>Cancel</Button>
@@ -408,4 +410,3 @@ export function BotsTab() {
     </div>
   );
 }
-
