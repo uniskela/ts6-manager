@@ -1,6 +1,6 @@
 import api from './client';
 import { videoStartRequest, type VideoStartOptions } from '@/lib/video-options';
-import type { IptvChannelPickInfo } from '@ts6/common';
+import type { IptvChannelPickInfo, IptvFilterValues } from '@ts6/common';
 
 export interface IptvPickKey {
   serverConfigId: number;
@@ -40,13 +40,15 @@ export const iptvApi = {
   // Channels
   groups: (playlistId: number) => api.get(`/iptv/playlists/${playlistId}/groups`).then((r) => r.data),
   /** Fetch groups for the console's server and optional playlist. */
-  consoleGroups: (serverConfigId: number, playlistId?: number) => api.get('/iptv/groups', {
-    params: { serverConfigId, ...(playlistId ? { playlistId } : {}) },
+  consoleGroups: (serverConfigId: number, playlistId?: number, filters: { country?: string; language?: string } = {}) => api.get('/iptv/groups', {
+    params: { serverConfigId, ...(playlistId ? { playlistId } : {}), ...filters },
   }).then((r) => r.data),
+  filters: (serverConfigId: number) =>
+    api.get<IptvFilterValues>('/iptv/filters', { params: { serverConfigId } }).then((r) => r.data),
   channels: (playlistId: number, params: { search?: string; group?: string; page?: number; pageSize?: number }) =>
     api.get(`/iptv/playlists/${playlistId}/channels`, { params }).then((r) => r.data),
   /** Fetch a server-scoped, paginated console channel search. */
-  consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; channelKey?: string; channelId?: number; page?: number; pageSize?: number }) =>
+  consoleChannels: (params: { serverConfigId: number; country?: string; language?: string; playlistId?: number; group?: string; search?: string; channelKey?: string; channelId?: number; page?: number; pageSize?: number }) =>
     api.get('/iptv/channels', { params }).then((r) => r.data),
 
   favourites: (serverConfigId: number) =>

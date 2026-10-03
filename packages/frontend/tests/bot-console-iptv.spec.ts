@@ -26,6 +26,7 @@ async function mockIptv(page: Page) {
   await page.route('**/api/music-bots/media', (route) => route.fulfill({ json: media }));
   await page.route('**/api/music-bots/1/state', (route) => route.fulfill({ json: { status: 'playing', currentIndex: 0, queue: [], position: 0, duration: 200, volume: 50, shuffle: false, repeat: 'off' } }));
   await page.route('**/api/iptv/playlists**', (route) => route.fulfill({ json: [{ id: 10, name: 'News', serverConfigId: 1 }] }));
+  await page.route('**/api/iptv/filters**', (route) => route.fulfill({ json: { countries: [], languages: [] } }));
   await page.route('**/api/iptv/groups**', (route) => route.fulfill({ json: [{ group: 'News', count: 1 }] }));
   await page.route('**/api/iptv/channels**', (route) => route.fulfill({ json: { total: 1, page: 1, pageSize: 50, channels: [channel] } }));
   await page.route('**/api/iptv/favourites**', (route) => route.fulfill({ json: [] }));
@@ -259,4 +260,189 @@ test('a stale IPTV deep link stays open and explains the missing channel', async
   await page.goto('/bot-hub/1?iptv=10:gone');
   await expect(page.getByText('That channel is no longer in the playlist', { exact: true })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'IPTV' })).toHaveAttribute('aria-selected', 'true');
+});
+
+
+test('country and language selects stay hidden when the server has no metadata', async ({ page, request }) => {
+  await mockIptv(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+  await expect(page.getByRole('button', { name: /News/ })).toBeVisible();
+  await expect(page.getByLabel('Country', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Language', { exact: true })).toHaveCount(0);
+});
+
+for (const [countries, languages, visible, hidden] of [
+  [['US'], [], 'Country', 'Language'],
+  [[], ['en'], 'Language', 'Country'],
+] as const) {
+  test(`only ${visible} appears when the server has only its metadata`, async ({ page, request }) => {
+    await mockIptv(page);
+    await page.route('**/api/iptv/filters**', (route) => route.fulfill({ json: { countries, languages } }));
+    await signIn(page, request);
+    await page.goto('/bot-hub/1');
+    await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+    await expect(page.getByLabel(visible, { exact: true })).toBeVisible();
+    await expect(page.getByLabel(hidden, { exact: true })).toHaveCount(0);
+  });
+}
+
+test('country and language combine with playlist, group and search at phone width', async ({ page, request }) => {
+  await mockIptv(page);
+  const groups: URLSearchParams[] = [];
+  const requests: URLSearchParams[] = [];
+  await page.route('**/api/iptv/filters**', (route) => {
+    expect(new URL(route.request().url()).searchParams.get('serverConfigId')).toBe('1');
+    return route.fulfill({ json: { countries: ['CA', 'US'], languages: ['en', 'fr'] } });
+  });
+  await page.route('**/api/iptv/groups**', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    groups.push(params);
+    return route.fulfill({ json: [{ group: 'News', count: params.get('country') === 'CA' ? 1 : 2 }] });
+  });
+  await page.route('**/api/iptv/channels**', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    requests.push(params);
+    const rows = params.get('country') === 'CA' && params.get('language') === 'fr'
+      ? [{ ...channel, name: 'French News' }]
+      : [channel, { ...channel, id: 8, name: 'French News' }];
+    return route.fulfill({ json: { total: rows.length, page: Number(params.get('page')), pageSize: 50, channels: rows } });
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+  await page.getByLabel('Playlist', { exact: true }).selectOption('10');
+  await page.getByLabel('Country', { exact: true }).selectOption('CA');
+  await page.getByLabel('Language', { exact: true }).selectOption('fr');
+  await expect.poll(() => groups.some((params) => params.get('serverConfigId') === '1'
+    && params.get('playlistId') === '10' && params.get('country') === 'CA' && params.get('language') === 'fr')).toBe(true);
+  await page.getByRole('button', { name: /News/ }).click();
+  await page.getByLabel('Search channels').fill('News');
+  await expect(page.getByText('French News', { exact: true })).toBeVisible();
+  await expect(page.getByText('Morning News', { exact: true })).toHaveCount(0);
+  await expect.poll(() => requests.some((params) => params.get('serverConfigId') === '1'
+    && params.get('playlistId') === '10' && params.get('country') === 'CA' && params.get('language') === 'fr'
+    && params.get('group') === 'News' && params.get('search') === 'News' && params.get('page') === '1')).toBe(true);
+  for (const name of ['Country', 'Language']) {
+    const bounds = await page.getByLabel(name, { exact: true }).boundingBox();
+    expect(bounds?.height).toBeGreaterThanOrEqual(44);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('country and language filter favourites and recent by exact case-insensitive split codes', async ({ page, request }) => {
+  const matches = { ...favourite, channel: { ...channel, tvgCountry: 'us; CA', tvgLanguage: 'EN,fr' }, lastStreamedAt: '2026-10-03T09:00:00.000Z' };
+  const others = [
+    { ...favourite, channelKey: 'other', name: 'Other News', channel: { ...channel, id: 8, channelKey: 'other', name: 'Other News', tvgCountry: 'CAM', tvgLanguage: 'fra' }, lastStreamedAt: matches.lastStreamedAt },
+    { ...favourite, channelKey: 'missing', name: 'Gone News', channel: null, lastStreamedAt: matches.lastStreamedAt },
+  ];
+  await mockPicks(page, [matches, ...others]);
+  await page.route('**/api/iptv/filters**', (route) => route.fulfill({ json: { countries: ['CA', 'CAM', 'US'], languages: ['en', 'fr', 'fra'] } }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+  await expect(page.getByText('Gone News', { exact: true })).toBeVisible();
+  await page.getByLabel('Country', { exact: true }).selectOption('CA');
+  await page.getByLabel('Language', { exact: true }).selectOption('fr');
+  for (const view of ['Favourites', 'Recent']) {
+    await page.getByRole('button', { name: view, exact: true }).click();
+    await expect(page.getByText('Morning News', { exact: true })).toBeVisible();
+    await expect(page.getByText('Other News', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('Gone News', { exact: true })).toHaveCount(0);
+  }
+  await page.getByLabel('Country', { exact: true }).selectOption('');
+  await expect(page.getByText('Other News', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Gone News', { exact: true })).toHaveCount(0);
+  await page.getByLabel('Language', { exact: true }).selectOption('');
+  await expect(page.getByText('Other News', { exact: true })).toBeVisible();
+  await expect(page.getByText('Gone News', { exact: true })).toBeVisible();
+});
+
+test('changing metadata filters resets group and channel pagination', async ({ page, request }) => {
+  await mockIptv(page);
+  await page.route('**/api/iptv/filters**', (route) => route.fulfill({ json: { countries: ['US'], languages: ['en'] } }));
+  await page.route('**/api/iptv/groups**', (route) => route.fulfill({ json: Array.from({ length: 51 }, (_, index) => ({ group: `Group ${String(index).padStart(2, '0')}`, count: 51 })) }));
+  const requests: URLSearchParams[] = [];
+  await page.route('**/api/iptv/channels**', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    requests.push(params);
+    const number = Number(params.get('page'));
+    return route.fulfill({ json: { total: 51, page: number, pageSize: 50, channels: [{ ...channel, name: `Channel page ${number}` }] } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+  await page.getByRole('button', { name: 'Next page', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Group 50', exact: false })).toBeVisible();
+  await page.getByLabel('Country', { exact: true }).selectOption('US');
+  await expect(page.getByRole('button', { name: 'Group 00', exact: false })).toBeVisible();
+  await page.getByRole('button', { name: 'Group 00', exact: false }).click();
+  await page.getByRole('button', { name: 'Next page', exact: true }).click();
+  await expect(page.getByText('Channel page 2', { exact: true })).toBeVisible();
+  await page.getByLabel('Language', { exact: true }).selectOption('en');
+  await expect(page.getByText('Channel page 1', { exact: true })).toBeVisible();
+  await expect.poll(() => requests.at(-1)?.get('page')).toBe('1');
+  expect(requests.at(-1)?.get('country')).toBe('US');
+  expect(requests.at(-1)?.get('language')).toBe('en');
+});
+
+test('switching servers hides old metadata and channels while the new server loads', async ({ page, request }) => {
+  await mockIptv(page);
+  await page.route('**/api/music-bots/media', (route) => route.fulfill({ json: [...media, { ...media[0], botId: 2, botName: 'Second bot', serverConfigId: 2 }] }));
+  await page.route('**/api/music-bots/2/state', (route) => route.fulfill({ json: { status: 'playing', currentIndex: 0, queue: [], position: 0, duration: 200, volume: 50, shuffle: false, repeat: 'off' } }));
+  let release: () => void = () => {};
+  const loaded = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/iptv/filters**', async (route) => {
+    const second = new URL(route.request().url()).searchParams.get('serverConfigId') === '2';
+    if (second) await loaded;
+    await route.fulfill({ json: second ? { countries: [], languages: [] } : { countries: ['CA'], languages: ['fr'] } });
+  });
+  await page.route('**/api/iptv/channels**', async (route) => {
+    const second = new URL(route.request().url()).searchParams.get('serverConfigId') === '2';
+    if (second) await loaded;
+    await route.fulfill({ json: { total: second ? 0 : 1, page: 1, pageSize: 50, channels: second ? [] : [channel] } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+  await page.getByLabel('Country', { exact: true }).selectOption('CA');
+  await page.getByLabel('Search channels').fill('Morning');
+  await expect(page.getByText('Morning News', { exact: true })).toBeVisible();
+  await page.evaluate(() => { window.history.pushState({}, '', '/bot-hub/2'); window.dispatchEvent(new PopStateEvent('popstate')); });
+  await expect(page.getByRole('heading', { name: 'Second bot', exact: true })).toBeVisible();
+  await expect(page.getByLabel('Country', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Language', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Morning News', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Search channels')).toHaveValue('');
+  release();
+  await expect(page.getByRole('button', { name: /News/ })).toBeVisible();
+  await expect(page.getByLabel('Country', { exact: true })).toHaveCount(0);
+});
+
+test('metadata values disappearing after a refresh clear the hidden filters', async ({ page, request }) => {
+  await page.clock.install();
+  await mockIptv(page);
+  let metadata = { countries: ['US'], languages: ['en'] };
+  await page.route('**/api/iptv/filters**', (route) => route.fulfill({ json: metadata }));
+  const groups: URLSearchParams[] = [];
+  await page.route('**/api/iptv/groups**', (route) => {
+    const params = new URL(route.request().url()).searchParams;
+    groups.push(params);
+    return route.fulfill({ json: [{ group: 'News', count: 1 }] });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV', exact: true }).click();
+  await page.getByLabel('Country', { exact: true }).selectOption('US');
+  await page.getByLabel('Language', { exact: true }).selectOption('en');
+  await expect.poll(() => groups.at(-1)?.get('language')).toBe('en');
+  metadata = { countries: [], languages: [] };
+  await page.clock.fastForward(31_000);
+  await page.evaluate(() => { window.dispatchEvent(new Event('offline')); window.dispatchEvent(new Event('online')); });
+  await expect(page.getByLabel('Country', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Language', { exact: true })).toHaveCount(0);
+  await expect.poll(() => groups.at(-1)?.get('country')).toBeNull();
+  await expect.poll(() => groups.at(-1)?.get('language')).toBeNull();
 });

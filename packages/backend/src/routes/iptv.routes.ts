@@ -16,6 +16,8 @@ import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { runMediaAudited } from './media-audit.js';
 import { loadIptvLocalHosts } from '../utils/app-settings.js';
 import { iptvChannelKey, listIptvPicks, recordIptvRecentSafely } from '../iptv/iptv-picks.js';
+import { filteredIptvChannels, filteredIptvGroups, splitIptvCodes } from '../iptv/iptv-filters.js';
+import type { PrismaClient } from '../../generated/prisma/index.js';
 
 export const iptvRoutes: Router = Router();
 
@@ -77,10 +79,14 @@ function positiveQueryInt(req: Request, name: string, required = false): number 
 /** GET /groups: return normalized group counts across one server's playlists. */
 iptvRoutes.get('/groups', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const prisma = req.app.locals.prisma;
+    const prisma: PrismaClient = req.app.locals.prisma;
     const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
     const playlistId = positiveQueryInt(req, 'playlistId');
-    const rows = await prisma.iptvChannel.groupBy({
+    const countries = splitIptvCodes(queryString(req, 'country'));
+    const languages = splitIptvCodes(queryString(req, 'language'));
+    const rows = countries.length || languages.length
+      ? await filteredIptvGroups(prisma, { serverConfigId, playlistId, countries, languages })
+      : await prisma.iptvChannel.groupBy({
       where: {
         playlist: { serverConfigId },
         ...(playlistId !== undefined ? { playlistId } : {}),
@@ -103,7 +109,7 @@ iptvRoutes.get('/groups', async (req: Request, res: Response, next: NextFunction
 /** GET /channels: search and page channels across one server's playlists. */
 iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const prisma = req.app.locals.prisma;
+    const prisma: PrismaClient = req.app.locals.prisma;
     const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
     const playlistId = positiveQueryInt(req, 'playlistId');
     const page = positiveQueryInt(req, 'page') ?? 1;
@@ -113,6 +119,8 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
     const channelKey = queryString(req, 'channelKey');
     // Exact row for deep links; tvg-id and name can repeat within a playlist.
     const channelId = positiveQueryInt(req, 'channelId');
+    const countries = splitIptvCodes(queryString(req, 'country'));
+    const languages = splitIptvCodes(queryString(req, 'language'));
     const where = {
       playlist: { serverConfigId },
       ...(playlistId !== undefined ? { playlistId } : {}),
@@ -121,7 +129,9 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
       ...(channelKey ? { OR: [{ tvgId: channelKey }, { name: channelKey }] } : {}),
       ...(channelId !== undefined ? { id: channelId } : {}),
     };
-    const [total, rows] = await Promise.all([
+    const result = countries.length || languages.length
+      ? await filteredIptvChannels(prisma, { serverConfigId, playlistId, countries, languages, search, group, channelKey, channelId }, page, pageSize)
+      : await Promise.all([
       prisma.iptvChannel.count({ where }),
       prisma.iptvChannel.findMany({
         where,
@@ -130,7 +140,8 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
         skip: (page - 1) * pageSize,
         take: pageSize,
       }),
-    ]);
+    ]).then(([total, rows]) => ({ total, rows }));
+    const { total, rows } = result;
     res.json({
       total,
       page,
@@ -147,9 +158,31 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
         url: channel.url,
         groupTitle: channel.groupTitle ?? null,
         tvgId: channel.tvgId ?? null,
+        tvgCountry: channel.tvgCountry ?? null,
+        tvgLanguage: channel.tvgLanguage ?? null,
         position: channel.position,
       })),
     });
+  } catch (err) { next(err); }
+});
+
+/** GET /filters: populate selects from this server's metadata, before UI filters. */
+iptvRoutes.get('/filters', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma: PrismaClient = req.app.locals.prisma;
+    const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
+    const rows = await prisma.$queryRaw<Array<{ tvgCountry: string | null; tvgLanguage: string | null }>>`
+      SELECT DISTINCT c."tvgCountry", c."tvgLanguage"
+      FROM "IptvChannel" c JOIN "IptvPlaylist" p ON p."id" = c."playlistId"
+      WHERE p."serverConfigId" = ${serverConfigId}
+        AND (c."tvgCountry" IS NOT NULL OR c."tvgLanguage" IS NOT NULL)`;
+    const countries = new Set<string>();
+    const languages = new Set<string>();
+    for (const row of rows) {
+      for (const country of splitIptvCodes(row.tvgCountry)) countries.add(country.toUpperCase());
+      for (const language of splitIptvCodes(row.tvgLanguage)) languages.add(language);
+    }
+    res.json({ countries: [...countries].sort(), languages: [...languages].sort() });
   } catch (err) { next(err); }
 });
 

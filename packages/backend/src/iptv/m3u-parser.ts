@@ -9,7 +9,7 @@
  *   http://provider/live/user/pass/1234.m3u8
  *
  * The attribute block is optional; the display name is whatever follows the
- * last comma on the EXTINF line.
+ * first comma outside the quoted attributes on the EXTINF line.
  */
 
 export interface ParsedChannel {
@@ -18,6 +18,8 @@ export interface ParsedChannel {
   logo?: string;
   groupTitle?: string;
   tvgId?: string;
+  tvgCountry?: string;
+  tvgLanguage?: string;
 }
 
 const ATTR_RE = /([a-zA-Z0-9_-]+)="([^"]*)"/g;
@@ -48,10 +50,15 @@ export function parseM3U(content: string): ParsedChannel[] {
     if (!line) continue;
 
     if (line.startsWith('#EXTINF')) {
-      // Everything after the first comma is the display name.
-      const commaIdx = line.indexOf(',');
+      // Attribute values can contain commas (e.g. tvg-language="en,fr").
+      let quoted = false;
+      let commaIdx = -1;
+      for (let i = 0; i < line.length; i++) {
+        if (line[i] === '"') quoted = !quoted;
+        else if (line[i] === ',' && !quoted) { commaIdx = i; break; }
+      }
       const name = commaIdx >= 0 ? line.slice(commaIdx + 1).trim() : '';
-      const attrs = parseAttributes(line);
+      const attrs = parseAttributes(commaIdx >= 0 ? line.slice(0, commaIdx) : line);
       pending = { name: name || attrs['tvg-name'] || 'Unnamed', attrs };
       continue;
     }
@@ -71,6 +78,8 @@ export function parseM3U(content: string): ParsedChannel[] {
         logo: pending.attrs['tvg-logo'] || undefined,
         groupTitle: pending.attrs['group-title'] || undefined,
         tvgId: pending.attrs['tvg-id'] || undefined,
+        tvgCountry: pending.attrs['tvg-country'] || undefined,
+        tvgLanguage: pending.attrs['tvg-language'] || undefined,
       });
       pending = null;
     }

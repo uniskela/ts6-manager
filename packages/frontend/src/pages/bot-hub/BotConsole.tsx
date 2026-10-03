@@ -33,7 +33,7 @@ export const CONSOLE_TABS: ConsoleSourceTab[] = [
   { id: 'music', label: 'Music', render: (ctx) => <MusicSource {...ctx} /> },
   { id: 'link', label: 'Link', render: (ctx) => <LinkSource {...ctx} /> },
   { id: 'radio', label: 'Radio', render: (ctx) => <RadioSource {...ctx} /> },
-  { id: 'iptv', label: 'IPTV', render: (ctx) => <IptvSource {...ctx} /> },
+  { id: 'iptv', label: 'IPTV', render: (ctx) => <IptvSource key={ctx.serverConfigId} {...ctx} /> },
 ];
 
 /** The bot's TeamSpeak connection, shown next to its name. */

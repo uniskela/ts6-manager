@@ -491,6 +491,7 @@ const server = createServer(async (req, res) => {
       }
       : url.pathname === '/api/widgets' && allowTestAuth ? []
       : url.pathname === '/api/settings/iptv-network' && allowTestAuth && testRole === 'admin' ? { allowedLocalHosts: [] }
+      : url.pathname === '/api/iptv/filters' && allowTestAuth ? { countries: [], languages: [] }
       : ['/api/iptv/favourites', '/api/iptv/recent'].includes(url.pathname) && allowTestAuth ? []
       : url.pathname === '/api/iptv/playlists' && allowTestAuth
         ? (docsScenario || iptvScenario === 'populated' ? [{

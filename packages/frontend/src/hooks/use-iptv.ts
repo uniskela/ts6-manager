@@ -6,7 +6,7 @@ import type { VideoStartOptions } from '@/lib/video-options';
 function invalidateIptvLists(qc: ReturnType<typeof useQueryClient>) {
   return Promise.all([
     'iptv-playlists', 'iptv-channels', 'iptv-groups', 'iptv-console-channels',
-    'iptv-console-groups', 'iptv-favourites', 'iptv-recent',
+    'iptv-console-groups', 'iptv-filters', 'iptv-favourites', 'iptv-recent',
   ].map((key) => qc.invalidateQueries({ queryKey: [key] })));
 }
 
@@ -80,10 +80,18 @@ export function useIptvGroups(playlistId: number | null) {
 }
 
 /** Load the server-scoped group list used by the bot console. */
-export function useConsoleIptvGroups(serverConfigId: number, playlistId?: number) {
+export function useConsoleIptvGroups(serverConfigId: number, playlistId?: number, filters: { country?: string; language?: string } = {}) {
   return useQuery({
-    queryKey: ['iptv-console-groups', serverConfigId, playlistId ?? null],
-    queryFn: () => iptvApi.consoleGroups(serverConfigId, playlistId),
+    queryKey: ['iptv-console-groups', serverConfigId, playlistId ?? null, filters],
+    queryFn: () => iptvApi.consoleGroups(serverConfigId, playlistId, filters),
+  });
+}
+
+/** Available metadata always belongs to exactly one server. */
+export function useIptvFilters(serverConfigId: number) {
+  return useQuery({
+    queryKey: ['iptv-filters', serverConfigId],
+    queryFn: () => iptvApi.filters(serverConfigId),
   });
 }
 
@@ -102,6 +110,8 @@ export function useIptvChannels(
 /** Load the paginated server-scoped channel search for the console. */
 export function useConsoleIptvChannels(params: {
   serverConfigId: number;
+  country?: string;
+  language?: string;
   playlistId?: number;
   group?: string;
   search?: string;
@@ -113,7 +123,10 @@ export function useConsoleIptvChannels(params: {
   return useQuery({
     queryKey: ['iptv-console-channels', params],
     queryFn: () => iptvApi.consoleChannels(params),
-    placeholderData: keepPreviousData,
+    placeholderData: (previous, query) => {
+      const previousParams = query?.queryKey[1] as { serverConfigId?: number } | undefined;
+      return previousParams?.serverConfigId === params.serverConfigId ? previous : undefined;
+    },
   });
 }
 

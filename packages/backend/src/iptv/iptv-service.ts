@@ -172,6 +172,8 @@ export async function replaceUploadedPlaylist(
             logo: c.logo ?? null,
             groupTitle: c.groupTitle?.trim() || null,
             tvgId: c.tvgId ?? null,
+            tvgCountry: c.tvgCountry ?? null,
+            tvgLanguage: c.tvgLanguage ?? null,
             position: ci * 1000 + i,
           })),
         });
@@ -263,6 +265,8 @@ async function replaceChannels(
           logo: c.logo ?? null,
           groupTitle: c.groupTitle?.trim() || null,
           tvgId: c.tvgId ?? null,
+          tvgCountry: c.tvgCountry ?? null,
+          tvgLanguage: c.tvgLanguage ?? null,
           position: ci * 1000 + i,
         })),
       }),
