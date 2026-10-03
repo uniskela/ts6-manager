@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { parseIptvDeepLink } from '../../src/pages/bot-hub/iptv-deep-link';
 
+/** Verify the pure deep-link parser independently of React and routing. */
 describe('IPTV deep links', () => {
   it('splits playlist id and channel key at the first colon only', () => {
     assert.deepEqual(parseIptvDeepLink('42:news:west'), { playlistId: 42, channelKey: 'news:west' });

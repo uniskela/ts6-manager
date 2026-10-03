@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { iptvApi } from '../api/iptv.api';
 import type { VideoStartOptions } from '@/lib/video-options';
 
+/** Load IPTV playlists, optionally scoped to a server. */
 export function useIptvPlaylists(serverConfigId?: number) {
   return useQuery({
     queryKey: ['iptv-playlists', serverConfigId ?? null],
@@ -69,6 +70,7 @@ export function useRefreshIptvPlaylist() {
   });
 }
 
+/** Load legacy per-playlist IPTV groups. */
 export function useIptvGroups(playlistId: number | null) {
   return useQuery({
     queryKey: ['iptv-groups', playlistId],
@@ -97,6 +99,7 @@ export function useIptvChannels(
   });
 }
 
+/** Load the paginated server-scoped channel search for the console. */
 export function useConsoleIptvChannels(params: {
   serverConfigId: number;
   playlistId?: number;
@@ -113,6 +116,7 @@ export function useConsoleIptvChannels(params: {
   });
 }
 
+/** Expose the existing IPTV stream endpoint to console channel rows. */
 export function useIptvStream() {
   return useMutation({
     mutationFn: ({ botId, channelId, preset, options }: {

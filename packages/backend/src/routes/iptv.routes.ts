@@ -33,6 +33,7 @@ const uploadLimiter = rateLimit({
   message: { error: 'Too many IPTV upload requests, please try again later' },
 });
 
+/** Adapt multer errors into the API's normal error middleware. */
 function multerUpload(field: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     playlistUpload.single(field)(req, res, (err: unknown) => {

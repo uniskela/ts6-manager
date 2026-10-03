@@ -31,6 +31,7 @@ export const CONSOLE_TABS: ConsoleSourceTab[] = [
   { id: 'iptv', label: 'IPTV', render: (ctx) => <IptvSource {...ctx} /> },
 ];
 
+/** Keep elapsed playback displays current while the console is open. */
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -40,6 +41,7 @@ function useNow(): number {
   return now;
 }
 
+/** Render one bot's playback state, queue, and source tabs. */
 export default function BotConsole() {
   const botId = Number(useParams().botId);
   const [searchParams] = useSearchParams();
