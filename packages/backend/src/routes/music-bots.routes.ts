@@ -1,4 +1,8 @@
 import { Router, Request, Response, type RequestHandler } from 'express';
+import multer from 'multer';
+import { createHash } from 'node:crypto';
+import { actorFromRequest, runRemoteAudited } from '../audit/index.js';
+import { avatarImageType, saveBotAvatar, readBotAvatar, MAX_AVATAR_BYTES, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
@@ -84,6 +88,80 @@ function invalidatePlaylistExpansion(botId: number): void {
 // All routes require admin role
 musicBotRoutes.use(requireRole('admin'));
 
+const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_AVATAR_BYTES, files: 1, fields: 0 } }).single('file');
+// Avatar audits record saving the selected image/mode. A TS6 refusal does not
+// undo that saved selection; applyAvatar exposes it separately as avatarError.
+const avatarWrites = new Map<number, Promise<unknown>>();
+async function serializeAvatar<T>(id: number, write: () => Promise<T>): Promise<T> {
+  const next = (avatarWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(write);
+  avatarWrites.set(id, next);
+  try { return await next; } finally { if (avatarWrites.get(id) === next) avatarWrites.delete(id); }
+}
+async function avatarBot(req: Request) {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, 'Invalid bot ID');
+  const bot = await req.app.locals.prisma.musicBot.findUnique({ where: { id } });
+  if (!bot) throw new AppError(404, 'Music bot not found');
+  return bot;
+}
+
+musicBotRoutes.get('/:id/avatar', async (req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    const image = await readBotAvatar(await avatarBot(req));
+    if (!image) throw new AppError(404, 'Bot has no avatar');
+    res.type(avatarImageType(image).mime).send(image);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') next(new AppError(404, 'Bot avatar not found'));
+    else next(error);
+  }
+});
+
+musicBotRoutes.put('/:id/avatar', (req, res, next) => {
+  avatarUpload(req, res, (error) => {
+    if (error) return next(new AppError(400, error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE' ? 'Avatar must be at most 200 KB' : 'Upload exactly one PNG, JPEG or GIF image'));
+    next();
+  });
+}, async (req, res, next) => {
+  try {
+    if (!req.file) throw new AppError(400, 'Upload exactly one PNG, JPEG or GIF image');
+    avatarImageType(req.file.buffer);
+    const existing = await avatarBot(req);
+    await serializeAvatar(existing.id, () => runRemoteAudited(req.app.locals.prisma, {
+      actor: actorFromRequest(req.user), action: 'music_bot.avatar_update', connectionId: existing.serverConfigId,
+      target: { type: 'music_bot', id: existing.id },
+    }, async () => {
+      const saved = await saveBotAvatar(existing.id, req.file!.buffer);
+      const data = { ...saved, avatarMode: 'custom' as const };
+      await req.app.locals.prisma.musicBot.update({ where: { id: existing.id, serverConfigId: existing.serverConfigId }, data });
+      await req.app.locals.voiceBotManager.getBot(existing.id)?.applyAvatar(data);
+    }));
+    res.json({ success: true });
+  } catch (error) { next(error); }
+});
+
+musicBotRoutes.put('/:id/avatar/mode', async (req, res, next) => {
+  try {
+    const mode = req.body.mode as BotAvatarMode;
+    if (!['custom', 'default', 'none'].includes(mode)) throw new AppError(400, 'mode must be custom, default or none');
+    const existing = await avatarBot(req);
+    await serializeAvatar(existing.id, async () => {
+      const current = await avatarBot(req);
+      if (mode === 'custom' && !current.avatarFile) throw new AppError(400, 'Upload a custom avatar first');
+      const image = await readBotAvatar({ ...current, avatarMode: mode });
+      const data = { avatarMode: mode, avatarFile: current.avatarFile, avatarMd5: image ? createHash('md5').update(image).digest('hex') : null };
+      await runRemoteAudited(req.app.locals.prisma, {
+        actor: actorFromRequest(req.user), action: 'music_bot.avatar_update', connectionId: current.serverConfigId,
+        target: { type: 'music_bot', id: current.id },
+      }, async () => {
+        await req.app.locals.prisma.musicBot.update({ where: { id: current.id, serverConfigId: current.serverConfigId }, data });
+        await req.app.locals.voiceBotManager.getBot(current.id)?.applyAvatar(data);
+      });
+    });
+    res.json({ success: true });
+  } catch (error) { next(error); }
+});
+
 // GET / — List all music bots
 musicBotRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
@@ -111,6 +189,9 @@ musicBotRoutes.get('/', async (req: Request, res: Response, next) => {
         voicePort: b.voicePort,
         volume: b.volume,
         autoStart: b.autoStart,
+        avatarMode: b.avatarMode ?? 'none',
+        avatarMd5: b.avatarMd5 ?? null,
+        avatarError: manager.getBot(b.id)?.avatarError ?? null,
         status: runtime?.status ?? 'stopped',
         nowPlaying: runtime?.nowPlaying ?? null,
         createdAt: b.createdAt,
@@ -126,13 +207,16 @@ musicBotRoutes.get('/media', async (req: Request, res: Response, next) => {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const dbBots = await prisma.musicBot.findMany({
-      select: { id: true, name: true, serverConfigId: true, serverConfig: { select: { name: true } } },
+      select: { id: true, name: true, serverConfigId: true, avatarMode: true, avatarMd5: true, serverConfig: { select: { name: true } } },
       orderBy: { id: 'asc' },
     });
     const overview: BotMediaOverview[] = dbBots.map((b: any) => {
       const bot = manager.getBot(b.id);
       const base = {
         botName: b.name as string,
+        avatarMode: b.avatarMode ?? 'none',
+        avatarMd5: b.avatarMd5 ?? null,
+        avatarError: bot?.avatarError ?? null,
         serverConfigId: b.serverConfigId as number,
         serverName: (b.serverConfig?.name as string | undefined) ?? null,
       };
@@ -167,6 +251,7 @@ musicBotRoutes.get('/:id', async (req: Request, res: Response, next) => {
       status: bot?.status ?? 'stopped',
       nowPlaying: bot?.nowPlaying ?? null,
       playbackProgress: bot?.playbackProgress ?? null,
+      avatarError: bot?.avatarError ?? null,
     });
   } catch (err) { next(err); }
 });
@@ -197,6 +282,7 @@ musicBotRoutes.post('/', async (req: Request, res: Response, next) => {
       voicePort: voicePort != null ? parseInt(voicePort) : undefined,
       volume: volume != null ? parseInt(volume) : undefined,
       autoStart: autoStart ?? false,
+      avatarMode: 'default',
     });
 
     res.status(201).json(result);

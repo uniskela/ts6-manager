@@ -32,10 +32,11 @@ export interface NowPlayingProps {
   now: number;                  // ms, from the page's 1 s clock
   variant: 'compact' | 'full';  // phase 2's console uses 'full'
   footer?: React.ReactNode;     // the hub passes its Open / Stop buttons here
+  avatar?: React.ReactNode;
 }
 
 export function NowPlaying(props: NowPlayingProps): JSX.Element {
-  const { bot, now, footer, variant } = props;
+  const { bot, now, footer, variant, avatar } = props;
   const pausePlayback = usePausePlayback();
   const resumePlayback = useResumePlayback();
   const skipTrack = useSkipTrack();
@@ -59,12 +60,15 @@ export function NowPlaying(props: NowPlayingProps): JSX.Element {
         <div className={cn('flex items-start gap-3', variant === 'full' ? 'justify-end' : 'justify-between')}>
           {/* The console's page header already names the bot, server and channel. */}
           {variant === 'compact' && (
-            <div className="min-w-0">
-              <p className="truncate font-medium">{bot.botName}</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {bot.serverName ?? `Server ${bot.serverConfigId}`}
-                {bot.channelName ? ` · #${bot.channelName}` : ''}
-              </p>
+            <div className="flex min-w-0 items-center gap-2">
+              {avatar}
+              <div className="min-w-0">
+                <p className="truncate font-medium">{bot.botName}</p>
+                <p className="truncate text-xs text-muted-foreground">
+                  {bot.serverName ?? `Server ${bot.serverConfigId}`}
+                  {bot.channelName ? ` · #${bot.channelName}` : ''}
+                </p>
+              </div>
             </div>
           )}
           <Badge variant={badge.variant} className="shrink-0 gap-1">

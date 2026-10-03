@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import { applyBotAvatar } from './bot-avatar.js';
+import { readBotAvatar, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
 import fs from 'fs';
 import type { Readable } from 'stream';
 import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, isConnectionRefusal } from './tslib/index.js';
@@ -71,6 +73,10 @@ export interface VoiceBotConfig {
   defaultChannel?: string;
   channelPassword?: string;
   volume: number; // 0-100
+  avatarMode?: BotAvatarMode;
+  avatarFile?: string | null;
+  avatarMd5?: string | null;
+  avatarDataDir?: string;
   identity?: IdentityData;
   sidecarBinaryPath?: string;
   sidecarPort?: number;
@@ -129,6 +135,8 @@ export class VoiceBot extends EventEmitter {
   private config: VoiceBotConfig;
   private _status: VoiceBotStatus = 'stopped';
   private _lastError: string = '';
+  private _avatarError: string | null = null;
+  private avatarTail: Promise<void> = Promise.resolve();
   private identity: IdentityData | null = null;
   private playbackTimer: ReturnType<typeof setTimeout> | null = null;
   private _nowPlaying: QueueItem | null = null;
@@ -323,6 +331,36 @@ export class VoiceBot extends EventEmitter {
       position: this.fileBaseSeconds + (this.fileFramesSent * FRAME_MS) / 1000,
       duration: this._nowPlaying.duration ?? 0,
     };
+  }
+
+  get avatarError(): string | null { return this._avatarError; }
+
+  /** Apply the latest saved choice; offline edits are retained for the next connect. */
+  async applyAvatar(partial: Pick<VoiceBotConfig, 'avatarMode' | 'avatarFile' | 'avatarMd5'> = {}): Promise<void> {
+    const choiceChanged = (partial.avatarMode !== undefined && partial.avatarMode !== this.config.avatarMode)
+      || (partial.avatarFile !== undefined && partial.avatarFile !== this.config.avatarFile)
+      || (partial.avatarMd5 !== undefined && partial.avatarMd5 !== this.config.avatarMd5);
+    Object.assign(this.config, partial);
+    if (choiceChanged && this._avatarError) {
+      if (this._lastError === this._avatarError) this._lastError = '';
+      this._avatarError = null;
+      this.emit('avatarChange', { avatarError: null });
+    }
+    const next = this.avatarTail.catch(() => {}).then(async () => {
+      if (!['connected', 'playing', 'paused'].includes(this._status)) return;
+      try {
+        const image = await readBotAvatar(this.config, this.config.avatarDataDir);
+        await applyBotAvatar(this.client, this.config.serverHost, image);
+        if (this._lastError === this._avatarError) this._lastError = '';
+        this._avatarError = null;
+      } catch (error) {
+        this._avatarError = error instanceof Error ? error.message : 'Could not apply bot avatar';
+        this._lastError = this._avatarError;
+      }
+      this.emit('avatarChange', { avatarError: this._avatarError });
+    });
+    this.avatarTail = next;
+    await next;
   }
 
   get lastError(): string {
@@ -721,6 +759,7 @@ export class VoiceBot extends EventEmitter {
     await this.client.connect(opts);
     this._status = 'connected';
     this.emit('statusChange', this._status);
+    await this.applyAvatar();
     this.emit('connected');
   }
 

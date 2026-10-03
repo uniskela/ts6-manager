@@ -46,6 +46,37 @@ export function useDeleteMusicBot() {
   });
 }
 
+export function useUploadBotAvatar() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ botId, file }: { botId: number; file: File }) => musicBotsApi.uploadAvatar(botId, file),
+    onSuccess: async (_, { botId }) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['music-bots'] }),
+        qc.invalidateQueries({ queryKey: ['music-bot', botId] }),
+        qc.invalidateQueries({ queryKey: ['bot-media'] }),
+        qc.invalidateQueries({ queryKey: ['music-bot-avatar', botId] }),
+      ]);
+    },
+  });
+}
+
+export function useSetBotAvatarMode() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ botId, mode }: { botId: number; mode: 'custom' | 'default' | 'none' }) =>
+      musicBotsApi.avatarMode(botId, mode),
+    onSuccess: async (_, { botId }) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['music-bots'] }),
+        qc.invalidateQueries({ queryKey: ['music-bot', botId] }),
+        qc.invalidateQueries({ queryKey: ['bot-media'] }),
+        qc.invalidateQueries({ queryKey: ['music-bot-avatar', botId] }),
+      ]);
+    },
+  });
+}
+
 export function useStartMusicBot() {
   const qc = useQueryClient();
   return useMutation({

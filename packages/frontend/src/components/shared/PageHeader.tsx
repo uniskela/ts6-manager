@@ -5,6 +5,7 @@ import { cn } from '@/lib/utils';
 interface PageHeaderProps {
   title: ReactNode;
   icon?: LucideIcon;
+  leading?: ReactNode;
   description?: ReactNode;
   badge?: ReactNode;
   actions?: ReactNode;
@@ -16,6 +17,7 @@ interface PageHeaderProps {
 export function PageHeader({
   title,
   icon: Icon,
+  leading,
   description,
   badge,
   actions,
@@ -30,6 +32,7 @@ export function PageHeader({
       <div className="min-w-0">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {Icon && <Icon className="h-5 w-5 shrink-0 text-primary" aria-hidden="true" />}
+          {leading}
           <h1 className="min-w-0 break-words text-xl font-semibold [overflow-wrap:anywhere]">{title}</h1>
           {badge}
         </div>

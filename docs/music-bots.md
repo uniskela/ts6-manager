@@ -16,6 +16,18 @@ A bot plays music **or** video, never both, and only one video stream runs at a 
 
 Streaming defaults include **Announce auto-stops in chat**, enabled by default. When a bot stops music or radio because its channel is empty, it posts `Stopped the music: the channel was empty for 5 minutes.` or `Stopped radio: the channel was empty for 5 minutes.` in its channel. The notice follows TeamSpeak's existing flood hold.
 
+## Bot avatars
+
+Open **Media Bots → Bots**, edit a bot, and use its **Avatar** section to upload an image, choose **Use default**, or choose **None**. Uploads accept PNG, JPEG or GIF images up to 200 KB, checked by image content. Images are not resized, so prepare the size and appearance before uploading.
+
+New bots created in the web UI use the bundled TS6 Manager app icon by default. Existing bots start with **None**. The chosen image appears on Bot Hub cards and in the console header, even when TeamSpeak refuses the upload. Bot Flows query clients do not use avatars.
+
+The bot uploads and confirms its selected image whenever it connects or the avatar changes. Its TeamSpeak server group must allow file uploads. If TeamSpeak refuses an upload, the bot stays connected and settings show:
+
+> TeamSpeak refused the avatar upload. Allow file uploads for the bot's server group, or choose None.
+
+Choosing **None** clears the avatar and asks TeamSpeak to delete the uploaded file. If TeamSpeak refuses the deletion, the old file remains on the server without being displayed as the bot's avatar.
+
 ## Requests
 
 **Media Bots → Requests** (`/media-bots?tab=requests`) shows `!play` history for the selected server. **Play** starts that request immediately. **Enqueue** adds it to the queue without interrupting current playback. When several bots are running, pick the target bot. `/music-requests` redirects here. System → Music Request History is no longer a separate page.
