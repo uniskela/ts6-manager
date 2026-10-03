@@ -18,6 +18,7 @@ import {
   musicPlayAllowed,
   type LinkPlayMode,
 } from './link-request';
+import { AddMediaLink } from './AddMediaLink';
 import type { ConsoleSourceContext } from './SourcePicker';
 
 const LINK_LABEL = 'YouTube, Twitch, direct link, or a file already in the music folder';
@@ -71,14 +72,17 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
     <div className="space-y-4">
       <div className="space-y-1.5">
         <Label htmlFor="console-link-input">{LINK_LABEL}</Label>
-        <Input
-          id="console-link-input"
-          className="h-11"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="https://… or filename.mp4"
-          autoComplete="off"
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            id="console-link-input"
+            className="h-11 min-w-0 flex-1 basis-48"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="https://… or filename.mp4"
+            autoComplete="off"
+          />
+          <AddMediaLink to="/media-bots" label="Add files" />
+        </div>
       </div>
 
       <fieldset className="space-y-2">
