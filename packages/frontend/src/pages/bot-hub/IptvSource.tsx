@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
 import { Pager } from '@/components/shared/Pager';
 import { apiErrorMessage } from '@/lib/api-error';
-import { pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
+import { clampPage, pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
 import {
   DEFAULT_VIDEO_START_OPTIONS,
   type VideoStartOptions,
@@ -56,6 +56,8 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     (!playlistId || pick.playlistId === playlistId)
     && (pick.channel?.name ?? pick.name).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
   );
+  // Removing the last pick on a page would otherwise leave an empty page behind.
+  const picksPage = clampPage(page, picks.length, pageSize);
   const stream = useIptvStream();
   const playlists = (Array.isArray(playlistsQuery.data) ? playlistsQuery.data : []) as IptvPlaylistSummary[];
   const deepLinkMode = !!deepLink;
@@ -174,7 +176,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
           {currentView === 'Recent' && recentQuery.isError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(recentQuery.error, 'Could not load recent channels')}</p>}
           {picksQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading channels…</p> : (
             <div className="space-y-2">
-              {pageSlice(picks, page, pageSize).map((pick) => pick.channel ? renderChannel(pick.channel, picksQuery.isFetching) : (
+              {pageSlice(picks, picksPage, pageSize).map((pick) => pick.channel ? renderChannel(pick.channel, picksQuery.isFetching) : (
                 <div key={`${pick.playlistId}:${pick.channelKey}`} className="flex min-w-0 items-center gap-3 rounded-md border p-2.5">
                   <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{pick.name}</p><p className="text-xs text-muted-foreground">No longer in this playlist</p></div>
                   <Button type="button" variant="outline" className="min-h-11 shrink-0" aria-label={`Remove ${pick.name}`}
@@ -184,7 +186,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
               {!picksQuery.isError && picks.length === 0 && <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No channels found.</p>}
             </div>
           )}
-          <Pager listKey="console-iptv-channels" total={picks.length} page={page} pageSize={pageSize} noun="channels"
+          <Pager listKey="console-iptv-channels" total={picks.length} page={picksPage} pageSize={pageSize} noun="channels"
             onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
         </section>
       ) : openChannels ? (
