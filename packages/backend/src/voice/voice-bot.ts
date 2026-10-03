@@ -265,6 +265,8 @@ export class VoiceBot extends EventEmitter {
     });
 
     this.client.on('disconnected', () => {
+      // Cancel the separate avatar transfer socket so a later start() is not queued behind it.
+      this.avatarAbort?.abort();
       this._streamNotificationsRegistered = false;
       this.stopIcyPolling();
       this.stopPlayback();

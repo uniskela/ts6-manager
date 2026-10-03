@@ -48,8 +48,17 @@ function isBotAvatarFile(botId: number, avatarFile: string | null | undefined): 
   return !!avatarFile && new RegExp(`^bot-avatars/${botId}(\\.[0-9a-f]{32})?\\.(png|jpg|gif)$`).test(avatarFile);
 }
 
-/** Best-effort removal of a bot's stored avatar file; ignores paths it did not generate. */
+/**
+ * Best-effort removal of a bot's stored avatar file; ignores paths it did not generate.
+ * A missing file is fine; any other failure is logged (not thrown) because the
+ * database change it follows has already been committed or is being reported.
+ */
 export async function removeBotAvatarFile(botId: number, avatarFile: string | null | undefined, dataDir = botAvatarDataDir()): Promise<void> {
   if (!isBotAvatarFile(botId, avatarFile)) return;
-  await unlink(path.join(dataDir, avatarFile)).catch(() => {});
+  try {
+    await unlink(path.join(dataDir, avatarFile));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    console.warn(`[WARN] Could not remove obsolete avatar ${avatarFile} for bot ${botId}:`, error instanceof Error ? error.message : error);
+  }
 }

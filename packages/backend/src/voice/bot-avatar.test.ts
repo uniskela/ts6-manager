@@ -173,3 +173,20 @@ test('start does not wait for avatar upload, and stop cancels the in-flight tran
   assert.deepEqual(changes, []);
   assert.equal(client.listenerCount('command'), 0);
 });
+
+test('an unexpected disconnect cancels the in-flight avatar transfer', async () => {
+  const dir = await tempDir(); const saved = await saveBotAvatar(7, png, dir);
+  const bot = new VoiceBot({ id: 7, serverConfigId: 1, name: 'Bot', serverHost: '127.0.0.1', serverPort: 9987, nickname: 'Bot', volume: 50, avatarMode: 'custom', avatarFile: saved.avatarFile, avatarDataDir: dir });
+  const client = (bot as any).client;
+  const sent: string[] = [];
+  client.connect = async () => {}; client.getClientId = () => 42;
+  client.sendCommand = (raw: string) => { sent.push(parseCommand(raw).name); }; // TS6 never answers ftinitupload
+  await bot.start();
+  for (let i = 0; i < 100 && sent.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(sent, ['ftinitupload']);
+  const abort = (bot as any).avatarAbort as AbortController;
+  client.emit('disconnected');
+  assert.ok(abort.signal.aborted);
+  await bot.avatarSettled();
+  assert.equal(bot.status, 'stopped'); assert.equal(bot.avatarError, null);
+});
