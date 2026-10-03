@@ -202,10 +202,12 @@ test('queue rows cannot be dragged again until a move is saved', async ({ page, 
   expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
 });
 
-test('the Music and Radio source tabs are available', async ({ page, request }) => {
+test('the console shows the Music, Link and Radio source tabs in order', async ({ page, request }) => {
   await mockBot(page);
   await signIn(page, request);
   await page.goto('/bot-hub/1');
-  await expect(page.getByRole('tab', { name: 'Music' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Radio' })).toBeVisible();
+  const sources = page.getByRole('tablist', { name: 'Source' }).getByRole('tab');
+  await expect(sources).toHaveText(['Music', 'Link', 'Radio']);
+  await page.getByRole('tab', { name: 'Link' }).click();
+  await expect(page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')).toBeVisible();
 });
