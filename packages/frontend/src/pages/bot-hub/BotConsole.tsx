@@ -24,6 +24,7 @@ import { IptvSource } from './IptvSource';
 import { SourcePicker, type ConsoleSourceTab } from './SourcePicker';
 import { UpNextQueue } from './UpNextQueue';
 import { BotSettingsMenu } from './BotSettingsMenu';
+import { BotAvatar } from '@/components/shared/BotAvatar';
 
 /** Source tabs in order Music · Link · Radio · IPTV. */
 export const CONSOLE_TABS: ConsoleSourceTab[] = [
@@ -80,7 +81,7 @@ export default function BotConsole() {
       </nav>
       <PageHeader
         title={bot.botName}
-        icon={Bot}
+        leading={<BotAvatar botId={bot.botId} name={bot.botName} mode={bot.avatarMode} md5={bot.avatarMd5} />}
         description={`${bot.serverName ?? `Server ${bot.serverConfigId}`}${bot.channelName ? ` · #${bot.channelName}` : ''}`}
         actions={(
           <BotSettingsMenu botId={bot.botId} botName={bot.botName} status={bot.status} size="default"

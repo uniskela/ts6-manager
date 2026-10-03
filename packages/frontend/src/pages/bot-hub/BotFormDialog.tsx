@@ -18,6 +18,7 @@ import { Switch } from '@/components/ui/switch';
 import { Slider } from '@/components/ui/slider';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { BotAvatarSettings } from '@/pages/media-bots/BotAvatarSettings';
 
 /** TeamSpeak refuses a nickname outside these lengths (error 1541); the bot name is its nickname. */
 const MIN_BOT_NICKNAME_LENGTH = 3;
@@ -266,6 +267,7 @@ export function BotFormDialog({ open, bot, onClose, defaultServerId }: {
             <Switch checked={form.autoStart} onCheckedChange={(v) => setForm({ ...form, autoStart: v })} />
             <Label className="text-xs">Auto-start on server startup</Label>
           </div>
+          {bot && <BotAvatarSettings key={bot.id} bot={bot} />}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
