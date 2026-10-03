@@ -84,17 +84,25 @@ export function useVideoEncoderCapabilities() {
 }
 
 /**
- * One console start's video options: the server's effective streaming defaults
- * until the admin changes a field, then their own choices for that server.
+ * One console start's video options: the server's effective streaming defaults,
+ * with only the fields the admin changed for that server laid over them.
  */
 export function useVideoStartOptions(
   serverConfigId: number | null | undefined,
   sourceMode: VideoSourceModeRequest = 'auto',
 ): [VideoStartOptions, (next: VideoStartOptions) => void, boolean] {
   const { data, isLoading } = useServerVideoStreamingSettings(serverConfigId);
-  const [chosen, setChosen] = useState<{ serverConfigId: number | null | undefined; options: VideoStartOptions } | null>(null);
-  const own = chosen && chosen.serverConfigId === serverConfigId ? chosen.options : null;
+  const [chosen, setChosen] = useState<{ serverConfigId: number | null | undefined; changed: Partial<VideoStartOptions> } | null>(null);
+  const changed = chosen && chosen.serverConfigId === serverConfigId ? chosen.changed : {};
+  const options: VideoStartOptions = { ...videoStartDefaults(data?.effective, sourceMode), ...changed };
+  const setOptions = (next: VideoStartOptions) => {
+    // Keep only real edits, so an edit made before the defaults load cannot pin the fallbacks.
+    const edits: Partial<VideoStartOptions> = { ...changed };
+    for (const key of Object.keys(next) as (keyof VideoStartOptions)[]) {
+      if (next[key] !== options[key]) Object.assign(edits, { [key]: next[key] });
+    }
+    setChosen({ serverConfigId, changed: edits });
+  };
   // Until the defaults arrive, a start would send Auto and skip the server's encoder.
-  const loading = !own && isLoading;
-  return [own ?? videoStartDefaults(data?.effective, sourceMode), (next) => setChosen({ serverConfigId, options: next }), loading];
+  return [options, setOptions, isLoading];
 }

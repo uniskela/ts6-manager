@@ -55,6 +55,33 @@ test('browse groups, search channels, and stream with live IPTV defaults', async
   await expect(page.getByText('Morning News')).toBeVisible();
 });
 
+test('streaming waits for the server defaults and keeps an early edit on top of them', async ({ page, request }) => {
+  const streams = await mockIptv(page);
+  let release!: () => void;
+  const settingsLoaded = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/settings/video-streaming/servers/1', async (route) => {
+    await settingsLoaded;
+    await route.fulfill({ json: { global: {}, overrides: {}, effective: { defaultEncoder: 'h264_vaapi', noViewerTimeoutSec: 900 } } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV' }).click();
+  await page.getByRole('button', { name: /News/ }).click();
+  const stream = page.getByRole('button', { name: 'Stream Morning News' });
+  await expect(stream).toBeDisabled();
+
+  await page.locator('summary', { hasText: 'Video options' }).click();
+  await page.locator('#vo-quality').selectOption('1080p');
+  await expect(stream).toBeDisabled();
+
+  release();
+  await expect(stream).toBeEnabled();
+  await stream.click();
+  await expect.poll(() => streams[0]).toEqual({
+    botId: 1, channelId: 7, preset: '1080p', encoder: 'h264_vaapi', noViewerTimeoutSec: 900, sourceMode: 'live',
+  });
+});
+
 type PickFixture = {
   serverConfigId: number; playlistId: number; channelKey: string; name: string;
   favourite: boolean; lastStreamedAt: string | null; channel: typeof channel | null;
