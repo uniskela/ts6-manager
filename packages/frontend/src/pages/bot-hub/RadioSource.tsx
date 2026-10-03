@@ -12,6 +12,7 @@ import { usePlayRadio, useRadioStations } from '@/hooks/use-radio-stations';
 import { apiErrorMessage } from '@/lib/api-error';
 import { pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
 import { cn } from '@/lib/utils';
+import { AddMediaLink } from './AddMediaLink';
 import type { ConsoleSourceContext } from './SourcePicker';
 
 export function RadioSource(ctx: ConsoleSourceContext) {
@@ -54,13 +55,16 @@ export function RadioSource(ctx: ConsoleSourceContext) {
 
   return (
     <div className="space-y-3">
-      <Input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search stations…"
-        aria-label="Search stations"
-        className="h-11"
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search stations…"
+          aria-label="Search stations"
+          className="h-11 min-w-0 flex-1 basis-48"
+        />
+        <AddMediaLink to="/media-bots?tab=radio" label="Add station" />
+      </div>
       <div className="flex flex-wrap gap-1.5" role="group" aria-label="Moods">
         <button
           type="button"
