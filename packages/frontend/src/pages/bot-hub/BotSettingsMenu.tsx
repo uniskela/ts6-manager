@@ -42,11 +42,17 @@ export function BotSettingsMenu({ botId, botName, status, onDeleted, size = 'sm'
   const [deleteOpen, setDeleteOpen] = useState(false);
   const running = isBotRunning(status);
 
+  // Close Edit when its settings cannot load, so a later list update cannot open it unasked.
   useEffect(() => {
-    if (!editOpen || !bots.isError || bots.isFetching) return;
-    toast.error(apiErrorMessage(bots.error, 'Could not load the bot settings'));
-    setEditOpen(false);
-  }, [editOpen, bots.isError, bots.isFetching, bots.error]);
+    if (!editOpen || bots.isFetching) return;
+    if (bots.isError) {
+      toast.error(apiErrorMessage(bots.error, 'Could not load the bot settings'));
+      setEditOpen(false);
+    } else if (bots.isSuccess && !summary) {
+      toast.error(`${botName} no longer exists`);
+      setEditOpen(false);
+    }
+  }, [editOpen, bots.isError, bots.isSuccess, bots.isFetching, bots.error, summary, botName]);
 
   return (
     <>

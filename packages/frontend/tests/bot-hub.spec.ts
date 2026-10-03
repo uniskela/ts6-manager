@@ -158,6 +158,26 @@ test('a bot\'s settings menu edits, stops, shows the widget link, and deletes', 
   await expect.poll(() => calls).toContain('DELETE /api/music-bots/3');
 });
 
+test('Edit closes with a message when the bot is gone from the bot list', async ({ page, request }) => {
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
+  await page.route('**/api/music-bots', (route) => route.fulfill({ json: summaries().filter((b) => b.id !== 3) }));
+  await signIn(page, request);
+  await page.goto('/bot-hub');
+
+  await page.getByRole('button', { name: 'Settings for Backup Bot' }).click();
+  await page.getByRole('menuitem', { name: 'Edit bot' }).click();
+  await expect(page.getByText('Backup Bot no longer exists', { exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog', { name: 'Edit Media Bot' })).toHaveCount(0);
+
+  // A later list that includes the bot must not open Edit by itself.
+  await page.unroute('**/api/music-bots');
+  await page.route('**/api/music-bots', (route) => route.fulfill({ json: summaries() }));
+  await page.getByRole('button', { name: 'Settings for Aurora Radio' }).click();
+  await page.getByRole('menuitem', { name: 'Edit bot' }).click();
+  await expect(page.getByRole('dialog', { name: 'Edit Media Bot' })).toHaveCount(1);
+  await expect(page.getByRole('dialog', { name: 'Edit Media Bot' }).getByLabel('Bot name and TeamSpeak nickname')).toHaveValue('Aurora Radio');
+});
+
 test('old Media Bots links land on their 1.10.0 pages', async ({ page, request }) => {
   await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
   await signIn(page, request);
