@@ -9,12 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
 import { usePlayUrl, useStartVideoStream } from '@/hooks/use-music-bots';
+import { useVideoStartOptions } from '@/hooks/use-video-streaming';
 import { apiErrorMessage } from '@/lib/api-error';
 import { toastMediaStarted } from '@/lib/media-start-toast';
-import {
-  DEFAULT_VIDEO_START_OPTIONS,
-  type VideoStartOptions,
-} from '@/lib/video-options';
 import { cn } from '@/lib/utils';
 import {
   buildLinkStartRequest,
@@ -26,10 +23,10 @@ import type { ConsoleSourceContext } from './SourcePicker';
 const LINK_LABEL = 'YouTube, Twitch, direct link, or a file already in the music folder';
 const FOLDER_HINT = 'Music-folder files play from the Music tab.';
 
-export function LinkSource({ botId }: ConsoleSourceContext) {
+export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<LinkPlayMode>('music');
-  const [options, setOptions] = useState<VideoStartOptions>(DEFAULT_VIDEO_START_OPTIONS);
+  const [options, setOptions] = useVideoStartOptions(serverConfigId);
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
 
@@ -84,45 +81,56 @@ export function LinkSource({ botId }: ConsoleSourceContext) {
         />
       </div>
 
-      <div role="radiogroup" aria-label="How to play" className="space-y-1">
+      <fieldset className="space-y-2">
+        <legend className="mb-2 text-sm font-medium">How should the bot play it?</legend>
         <label
           className={cn(
-            'flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm',
+            'flex min-h-11 cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 text-sm transition-colors',
             !allowMusic && 'cursor-not-allowed opacity-60',
-            effectiveMode === 'music' && allowMusic && 'border-primary bg-primary/5',
+            effectiveMode === 'music' && allowMusic ? 'border-primary bg-primary/5' : 'hover:bg-muted/40',
           )}
         >
           <input
             type="radio"
             name="console-link-mode"
-            className="h-4 w-4 shrink-0"
+            className="mt-0.5 h-4 w-4 shrink-0"
             value="music"
             checked={effectiveMode === 'music'}
             disabled={!allowMusic}
+            aria-labelledby="console-link-music-label"
+            aria-describedby="console-link-music-hint"
             onChange={() => setMode('music')}
           />
-          <span className="font-medium">Play as music</span>
+          <span className="min-w-0">
+            <span id="console-link-music-label" className="block font-medium">Play as music</span>
+            <span id="console-link-music-hint" className="block text-xs text-muted-foreground">Audio only, goes in the queue</span>
+          </span>
         </label>
         {!allowMusic && input.trim() && (
           <p className="px-1 text-xs text-muted-foreground">{FOLDER_HINT}</p>
         )}
         <label
           className={cn(
-            'flex min-h-11 cursor-pointer items-center gap-3 rounded-md border px-3 text-sm',
-            effectiveMode === 'video' && 'border-primary bg-primary/5',
+            'flex min-h-11 cursor-pointer items-start gap-3 rounded-md border px-3 py-2.5 text-sm transition-colors',
+            effectiveMode === 'video' ? 'border-primary bg-primary/5' : 'hover:bg-muted/40',
           )}
         >
           <input
             type="radio"
             name="console-link-mode"
-            className="h-4 w-4 shrink-0"
+            className="mt-0.5 h-4 w-4 shrink-0"
             value="video"
             checked={effectiveMode === 'video'}
+            aria-labelledby="console-link-video-label"
+            aria-describedby="console-link-video-hint"
             onChange={() => setMode('video')}
           />
-          <span className="font-medium">Stream as video</span>
+          <span className="min-w-0">
+            <span id="console-link-video-label" className="block font-medium">Stream as video</span>
+            <span id="console-link-video-hint" className="block text-xs text-muted-foreground">Picture and sound in the channel</span>
+          </span>
         </label>
-      </div>
+      </fieldset>
 
       {effectiveMode === 'video' && (
         <VideoOptions value={options} onChange={setOptions} />
@@ -135,7 +143,7 @@ export function LinkSource({ botId }: ConsoleSourceContext) {
       )}
 
       <Button type="button" className="h-11 w-full sm:w-auto" disabled={!canStart} onClick={onStart}>
-        {busy ? 'Starting…' : effectiveMode === 'video' ? 'Stream' : 'Play'}
+        {busy ? 'Starting…' : effectiveMode === 'video' ? 'Stream as video' : 'Play as music'}
       </Button>
     </div>
   );

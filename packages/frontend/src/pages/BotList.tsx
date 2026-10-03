@@ -97,10 +97,7 @@ export default function BotList() {
   if (commandsTab) {
     return (
       <div className="space-y-5">
-        <div className="flex items-center justify-between">
-          <h1 className="text-xl font-semibold">Bot Flows</h1>
-          <Button variant="outline" size="sm" onClick={() => setSearchParams({})}>Back to flows</Button>
-        </div>
+        <h1 className="text-xl font-semibold">Bot Flows</h1>
         {tabLinks}
         <div role="tabpanel" id="bot-chat-commands-panel" aria-labelledby="bot-chat-commands-tab" tabIndex={0}>
           <CommandsTab showClashWarnings />

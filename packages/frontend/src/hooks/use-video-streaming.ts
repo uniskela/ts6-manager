@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { VideoStreamSettings } from '@ts6/common';
+import type { VideoSourceModeRequest, VideoStreamSettings } from '@ts6/common';
 import { settingsApi } from '../api/settings.api';
 import { expensiveDiagnosticQueryOptions } from '../lib/demand-driven-query-policy';
+import { videoStartDefaults, type VideoStartOptions } from '../lib/video-options';
 
 export const VIDEO_STREAMING_SETTINGS_QUERY_KEY = ['video-streaming-settings'] as const;
 export const VIDEO_ENCODER_CAPABILITIES_QUERY_KEY = ['video-encoder-capabilities'] as const;
@@ -79,4 +81,17 @@ export function useVideoEncoderCapabilities() {
     error: query.error,
     check,
   };
+}
+
+/**
+ * One console start's video options: the server's effective streaming defaults
+ * until the admin changes a field, then their own choices.
+ */
+export function useVideoStartOptions(
+  serverConfigId: number | null | undefined,
+  sourceMode: VideoSourceModeRequest = 'auto',
+): [VideoStartOptions, (next: VideoStartOptions) => void] {
+  const { data } = useServerVideoStreamingSettings(serverConfigId);
+  const [chosen, setChosen] = useState<VideoStartOptions | null>(null);
+  return [chosen ?? videoStartDefaults(data?.effective, sourceMode), setChosen];
 }

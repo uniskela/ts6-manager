@@ -30,6 +30,9 @@ async function mockIptv(page: Page) {
   await page.route('**/api/iptv/channels**', (route) => route.fulfill({ json: { total: 1, page: 1, pageSize: 50, channels: [channel] } }));
   await page.route('**/api/iptv/favourites**', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/iptv/recent**', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/settings/video-streaming/servers/1', (route) => route.fulfill({ json: {
+    global: {}, overrides: {}, effective: { defaultEncoder: 'h264_vaapi', noViewerTimeoutSec: 900 },
+  } }));
   await page.route('**/api/iptv/stream', async (route) => { streams.push(route.request().postDataJSON()); await route.fulfill({ json: { success: true } }); });
   return streams;
 }
@@ -43,7 +46,10 @@ test('browse groups, search channels, and stream with live IPTV defaults', async
   await page.getByRole('button', { name: /News/ }).click();
   await expect(page.getByText('Morning News')).toBeVisible();
   await page.getByRole('button', { name: 'Stream Morning News' }).click();
-  await expect.poll(() => streams[0]).toEqual({ botId: 1, channelId: 7, sourceMode: 'live' });
+  // Starts on Auto quality and this server's streaming defaults (env or Streaming defaults).
+  await expect.poll(() => streams[0]).toEqual({
+    botId: 1, channelId: 7, preset: 'auto', encoder: 'h264_vaapi', noViewerTimeoutSec: 900, sourceMode: 'live',
+  });
   await page.getByRole('button', { name: 'All groups' }).click();
   await page.getByLabel('Search channels').fill('Morning');
   await expect(page.getByText('Morning News')).toBeVisible();
@@ -86,6 +92,9 @@ async function mockPicks(page: Page, initial: PickFixture[] = []) {
     expect(new URL(route.request().url()).searchParams.get('serverConfigId')).toBe('1');
     await route.fulfill({ json: picks.filter((pick) => pick.lastStreamedAt) });
   });
+  await page.route('**/api/settings/video-streaming/servers/1', (route) => route.fulfill({ json: {
+    global: {}, overrides: {}, effective: { defaultEncoder: 'h264_vaapi', noViewerTimeoutSec: 900 },
+  } }));
   await page.route('**/api/iptv/stream', async (route) => {
     const pick = picks.find((item) => item.channelKey === 'morning:west');
     if (pick) pick.lastStreamedAt = '2026-10-03T10:00:00.000Z';

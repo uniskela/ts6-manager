@@ -62,6 +62,32 @@ export function hubFacts(bot: BotMediaOverview, now: number): string[] {
   return facts;
 }
 
+/** Labelled video facts for the console's Now playing card. */
+export function videoDetails(bot: BotMediaOverview, now: number): { label: string; value: string }[] {
+  const v = bot.video;
+  if (!v) return [];
+  const details = [
+    { label: 'Quality', value: qualityLabel(v.quality, v.preset) },
+    { label: 'Encoder', value: encoderLabel(v.encoder) },
+  ];
+  if (v.sourceMode) details.push({ label: 'Source', value: SOURCE_MODE_LABELS[v.sourceMode] });
+  if (v.health?.speed != null) details.push({ label: 'Encode health', value: healthLabel(v.health) });
+  details.push({ label: 'Viewers', value: `${v.viewerCount} in channel` });
+  if (v.startedAt) details.push({ label: 'Up for', value: formatClock(now - v.startedAt) });
+  if (v.noViewer.stopAt) {
+    details.push({ label: 'Auto-stop', value: `in ${formatClock(v.noViewer.stopAt - now)}` });
+  } else if (v.noViewer.timeoutSec > 0) {
+    details.push({ label: 'Auto-stop', value: `if no viewers for ${formatTimeout(v.noViewer.timeoutSec)}` });
+  }
+  return details;
+}
+
+/** "Track 2 of 8" from the bot's queue, or null when nothing is queued. */
+export function queuePosition(state: { queue: unknown[]; currentIndex: number } | null | undefined): string | null {
+  if (!state || state.queue.length === 0 || state.currentIndex < 0 || state.currentIndex >= state.queue.length) return null;
+  return `Track ${state.currentIndex + 1} of ${state.queue.length}`;
+}
+
 /** The newest stop across music and video, for idle cards. */
 export function hubLastStop(bot: BotMediaOverview, now: number): string | null {
   const stops = [

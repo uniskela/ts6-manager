@@ -102,7 +102,7 @@ test('New bot creates a media bot on the chosen server', async ({ page, request 
 
   await page.goto('/bot-hub');
   await page.getByRole('button', { name: 'New bot' }).click();
-  const dialog = page.getByRole('dialog', { name: 'New Media Bot' });
+  const dialog = page.getByRole('dialog', { name: 'New bot' });
   await dialog.getByLabel('Bot name and TeamSpeak nickname').fill('Night Shift');
   await dialog.getByRole('combobox', { name: 'Server' }).click();
   await page.getByRole('option').first().click();
@@ -135,7 +135,7 @@ test('a bot\'s settings menu edits, stops, shows the widget link, and deletes', 
   await openMenu();
   await expect(page.getByRole('menuitem')).toHaveText(['Edit bot', 'Stop bot', 'Widget link', 'Delete bot']);
   await page.getByRole('menuitem', { name: 'Edit bot' }).click();
-  const edit = page.getByRole('dialog', { name: 'Edit Media Bot' });
+  const edit = page.getByRole('dialog', { name: 'Edit bot' });
   await expect(edit.getByLabel('Bot name and TeamSpeak nickname')).toHaveValue('Backup Bot');
   await edit.getByRole('button', { name: 'Save' }).click();
   await expect.poll(() => calls).toContain('PUT /api/music-bots/3');
@@ -167,15 +167,15 @@ test('Edit closes with a message when the bot is gone from the bot list', async 
   await page.getByRole('button', { name: 'Settings for Backup Bot' }).click();
   await page.getByRole('menuitem', { name: 'Edit bot' }).click();
   await expect(page.getByText('Backup Bot no longer exists', { exact: true })).toBeVisible();
-  await expect(page.getByRole('dialog', { name: 'Edit Media Bot' })).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Edit bot' })).toHaveCount(0);
 
   // A later list that includes the bot must not open Edit by itself.
   await page.unroute('**/api/music-bots');
   await page.route('**/api/music-bots', (route) => route.fulfill({ json: summaries() }));
   await page.getByRole('button', { name: 'Settings for Aurora Radio' }).click();
   await page.getByRole('menuitem', { name: 'Edit bot' }).click();
-  await expect(page.getByRole('dialog', { name: 'Edit Media Bot' })).toHaveCount(1);
-  await expect(page.getByRole('dialog', { name: 'Edit Media Bot' }).getByLabel('Bot name and TeamSpeak nickname')).toHaveValue('Aurora Radio');
+  await expect(page.getByRole('dialog', { name: 'Edit bot' })).toHaveCount(1);
+  await expect(page.getByRole('dialog', { name: 'Edit bot' }).getByLabel('Bot name and TeamSpeak nickname')).toHaveValue('Aurora Radio');
 });
 
 test('old Media Bots links land on their 1.10.0 pages', async ({ page, request }) => {

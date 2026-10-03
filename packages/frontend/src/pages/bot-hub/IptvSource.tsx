@@ -4,13 +4,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
+import { useVideoStartOptions } from '@/hooks/use-video-streaming';
 import { Pager } from '@/components/shared/Pager';
 import { apiErrorMessage } from '@/lib/api-error';
 import { clampPage, pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
-import {
-  DEFAULT_VIDEO_START_OPTIONS,
-  type VideoStartOptions,
-} from '@/lib/video-options';
 import {
   useConsoleIptvChannels,
   useConsoleIptvGroups,
@@ -24,7 +21,6 @@ import type { IptvChannelPickInfo, IptvConsoleChannel, IptvGroupInfo, IptvPlayli
 import type { ConsoleSourceContext } from './SourcePicker';
 import { parseIptvChannelId, parseIptvDeepLink, type IptvDeepLink } from './iptv-deep-link';
 
-const IPTV_VIDEO_OPTIONS: VideoStartOptions = { ...DEFAULT_VIDEO_START_OPTIONS, sourceMode: 'live' };
 type IptvView = 'Favourites' | 'Recent' | 'Browse groups';
 
 /** Return the stable key used by IPTV deep links. */
@@ -46,7 +42,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [pageSize, setPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-channels'));
   const [groupPage, setGroupPage] = useState(1);
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-groups'));
-  const [options, setOptions] = useState<VideoStartOptions>(IPTV_VIDEO_OPTIONS);
+  const [options, setOptions] = useVideoStartOptions(serverConfigId, 'live');
   const playlistsQuery = useIptvPlaylists(serverConfigId);
   const favouritesQuery = useIptvFavourites(serverConfigId);
   const recentQuery = useIptvRecent(serverConfigId);
