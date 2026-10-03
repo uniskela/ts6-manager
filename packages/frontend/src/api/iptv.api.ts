@@ -46,7 +46,7 @@ export const iptvApi = {
   channels: (playlistId: number, params: { search?: string; group?: string; page?: number; pageSize?: number }) =>
     api.get(`/iptv/playlists/${playlistId}/channels`, { params }).then((r) => r.data),
   /** Fetch a server-scoped, paginated console channel search. */
-  consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; channelKey?: string; page?: number; pageSize?: number }) =>
+  consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; channelKey?: string; channelId?: number; page?: number; pageSize?: number }) =>
     api.get('/iptv/channels', { params }).then((r) => r.data),
 
   favourites: (serverConfigId: number) =>

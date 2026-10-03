@@ -111,12 +111,15 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
     const search = queryString(req, 'search')?.trim() ?? '';
     const group = queryString(req, 'group')?.trim() ?? '';
     const channelKey = queryString(req, 'channelKey');
+    // Exact row for deep links; tvg-id and name can repeat within a playlist.
+    const channelId = positiveQueryInt(req, 'channelId');
     const where = {
       playlist: { serverConfigId },
       ...(playlistId !== undefined ? { playlistId } : {}),
       ...(group ? { groupTitle: group } : {}),
       ...(search ? { name: { contains: search } } : {}),
       ...(channelKey ? { OR: [{ tvgId: channelKey }, { name: channelKey }] } : {}),
+      ...(channelId !== undefined ? { id: channelId } : {}),
     };
     const [total, rows] = await Promise.all([
       prisma.iptvChannel.count({ where }),

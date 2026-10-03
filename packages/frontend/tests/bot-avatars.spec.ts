@@ -54,8 +54,9 @@ test('chosen avatars use authenticated blobs on the Hub and console, even after 
 
 test('edit dialog uploads a custom image and changes to None or Use default', async ({ page, request }) => {
   const calls = await setup(page, request);
-  await page.goto('/media-bots?tab=bots');
-  await page.getByRole('button', { name: 'Edit Avatar Bot' }).click();
+  await page.goto('/bot-hub');
+  await page.getByRole('button', { name: 'Settings for Avatar Bot' }).click();
+  await page.getByRole('menuitem', { name: 'Edit bot' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('heading', { name: 'Avatar', exact: true })).toBeVisible();
   await expect(dialog.getByText(refusal)).toBeVisible();
@@ -74,8 +75,9 @@ test('edit dialog uploads a custom image and changes to None or Use default', as
 test('avatar settings fit a phone screen with 44 px mode controls', async ({ page, request }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await setup(page, request);
-  await page.goto('/media-bots?tab=bots');
-  await page.getByRole('button', { name: 'Edit Avatar Bot' }).click();
+  await page.goto('/bot-hub');
+  await page.getByRole('button', { name: 'Settings for Avatar Bot' }).click();
+  await page.getByRole('menuitem', { name: 'Edit bot' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('button', { name: 'Use default' })).toBeVisible();
   for (const name of ['Use default', 'None']) {

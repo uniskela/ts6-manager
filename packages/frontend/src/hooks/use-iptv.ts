@@ -106,6 +106,7 @@ export function useConsoleIptvChannels(params: {
   group?: string;
   search?: string;
   channelKey?: string;
+  channelId?: number;
   page?: number;
   pageSize?: number;
 }) {

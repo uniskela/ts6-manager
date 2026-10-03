@@ -61,11 +61,11 @@ test.describe('maintained documentation screenshots', () => {
     await expect(page.getByText('Live monitoring active')).toBeVisible();
     await capture(page, 'dashboard.png');
 
-    await page.goto('/media-bots');
-    await expect(page.getByRole('heading', { name: 'Media Bots' })).toBeVisible();
-    await expect(page.getByText('Aurora Radio')).toBeVisible();
-    await expect(page.getByText('Neon Skyline')).toBeVisible();
-    await expect(page.getByText('Queue (3)')).toBeVisible();
+    // The per-bot console replaced the Media Bots → Bots tab in 1.10.0.
+    await page.goto('/bot-hub/7');
+    await expect(page.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
+    await expect(page.getByText('Neon Skyline', { exact: false }).first()).toBeVisible();
+    await expect(page.getByText('Quiet Orbit')).toBeVisible();
     await capture(page, 'musicbots.png');
 
     await page.goto('/bot-hub');

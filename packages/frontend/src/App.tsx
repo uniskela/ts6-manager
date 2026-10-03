@@ -19,7 +19,7 @@ function MusicBotsRedirect() {
   return <Navigate to={`/media-bots${search}`} replace />;
 }
 
-/** System Music Request History moved into Media Bots → Requests. */
+/** System Music Request History moved into Media Library → Requests. */
 function MusicRequestsRedirect() {
   return <Navigate to="/media-bots?tab=requests" replace />;
 }

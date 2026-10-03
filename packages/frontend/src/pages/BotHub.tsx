@@ -1,33 +1,38 @@
 /**
- * Bot hub — one place for what every bot is doing: active media sessions
- * (music or video, never both on a bot; one video stream at a time) plus the
- * entry points to Bot Flows, Media Bots, video streaming and IPTV.
+ * Bot hub — the one list of media bots: what each is playing (music or
+ * video, never both on a bot; one video stream at a time), its console,
+ * and its settings (new, edit, start/stop, widget link, delete).
  */
 
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  AlertTriangle, Bot, LayoutGrid, Music, Square, Tv, Video,
+  AlertTriangle, Bot, LayoutGrid, Library, Music, Plus, Power, Square, Tv, Video,
 } from 'lucide-react';
 import type { BotMediaOverview } from '@ts6/common';
+import { toast } from 'sonner';
 import { NowPlaying } from '@/components/media/NowPlaying';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { RefreshStatus } from '@/components/shared/RefreshStatus';
+import { CONNECTION_SETUP_PATH, ConnectionRequiredNotice, useConnectionAvailability } from '@/components/shared/NoServerSelectedState';
 import { Button } from '@/components/ui/button';
 import {
-  useBotMedia, useStopPlayback, useStopVideoStream,
+  useBotMedia, useStartMusicBot, useStopPlayback, useStopVideoStream,
 } from '@/hooks/use-music-bots';
+import { useServerStore } from '@/stores/server.store';
 import { hubTone } from '@/lib/bot-hub';
 import { apiErrorMessage } from '@/lib/api-error';
 import { BotAvatar } from '@/components/shared/BotAvatar';
+import { BotFormDialog } from './bot-hub/BotFormDialog';
+import { BotSettingsMenu } from './bot-hub/BotSettingsMenu';
 
 const SECTIONS = [
-  { to: '/bots', icon: Bot, title: 'Bot Flows', text: 'Event-driven automations and chat commands.' },
-  { to: '/media-bots', icon: Music, title: 'Media Bots', text: 'Bots, queues, library, playlists, radio, and !play requests.' },
-  { to: '/media-bots?tab=video', icon: Video, title: 'Video streaming', text: 'Stream a URL or file into a channel; quality and encoder defaults.' },
-  { to: '/iptv', icon: Tv, title: 'IPTV', text: 'Playlists and live channels streamed through a bot.' },
+  { to: '/bots', icon: Bot, label: 'Bot Flows' },
+  { to: '/media-bots', icon: Library, label: 'Media Library' },
+  { to: '/media-bots?tab=streaming', icon: Video, label: 'Streaming defaults' },
+  { to: '/iptv', icon: Tv, label: 'IPTV' },
 ] as const;
 
 function useNow(): number {
@@ -39,9 +44,10 @@ function useNow(): number {
   return now;
 }
 
-function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
+function BotCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
   const stopMusic = useStopPlayback();
   const stopVideo = useStopVideoStream();
+  const startBot = useStartMusicBot();
 
   const tone = hubTone(bot);
   const stopping = stopMusic.isPending || stopVideo.isPending;
@@ -56,21 +62,34 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
       footer={
         <>
           {error && <p className="text-xs text-destructive">{apiErrorMessage(error, 'Could not stop')}</p>}
-          <div className="flex gap-2">
-            <Button asChild size="sm" variant="outline">
+          <div className="flex flex-wrap gap-2">
+            <Button asChild size="sm" variant="outline" className="h-9">
               <Link to={`/bot-hub/${bot.botId}`} aria-label={`Open console for ${bot.botName}`}>Open console</Link>
             </Button>
+            {tone === 'offline' && (
+              <Button size="sm" variant="ghost" className="h-9" disabled={startBot.isPending}
+                aria-label={`Start ${bot.botName}`}
+                onClick={() => startBot.mutate(bot.botId, {
+                  onSuccess: () => toast.success('Bot started'),
+                  onError: (err) => toast.error(apiErrorMessage(err, 'Failed to start bot')),
+                })}>
+                <Power className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Start bot
+              </Button>
+            )}
             {tone === 'live' && bot.session?.state === 'active' && (
-              <Button size="sm" variant="ghost" className="text-destructive" disabled={stopping}
+              <Button size="sm" variant="ghost" className="h-9 text-destructive" disabled={stopping}
                 onClick={() => stopVideo.mutate(bot.botId)}>
                 <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Stop stream
               </Button>
             )}
             {tone === 'music' && (
-              <Button size="sm" variant="ghost" disabled={stopping} onClick={() => stopMusic.mutate(bot.botId)}>
+              <Button size="sm" variant="ghost" className="h-9" disabled={stopping} onClick={() => stopMusic.mutate(bot.botId)}>
                 <Square className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Stop media
               </Button>
             )}
+            <div className="ml-auto">
+              <BotSettingsMenu botId={bot.botId} botName={bot.botName} status={bot.status} />
+            </div>
           </div>
         </>
       }
@@ -81,38 +100,45 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
 export default function BotHub() {
   const query = useBotMedia();
   const now = useNow();
+  const { selectedConfigId } = useServerStore();
+  const { isPending: connectionsPending, hasNoConnections } = useConnectionAvailability();
+  const [createOpen, setCreateOpen] = useState(false);
   const bots = query.data ?? [];
   const active = bots.filter((b) => b.session);
   const others = bots.filter((b) => !b.session);
+  const createBlocked = connectionsPending || hasNoConnections;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Bot Hub"
         icon={LayoutGrid}
-        description="What your bots are playing right now, and where to manage them."
+        description="Your media bots: what each is playing, its console, and its settings."
         metadata={<RefreshStatus isRefreshing={query.isFetching} idleLabel="Live media status" refreshingLabel="Refreshing media status…" />}
+        actions={(
+          <Button disabled={createBlocked} onClick={() => setCreateOpen(true)}>
+            <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" /> New bot
+          </Button>
+        )}
       />
 
-      <section aria-labelledby="hub-sections" className="space-y-2">
-        <h2 id="hub-sections" className="sr-only">Sections</h2>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {SECTIONS.map((s) => (
-            <Link key={s.to} to={s.to}
-              className="group rounded-lg border bg-card p-4 transition-colors hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <div className="flex items-center gap-2">
-                <s.icon className="h-4 w-4 text-primary" aria-hidden="true" />
-                <span className="font-medium">{s.title}</span>
-              </div>
-              <p className="mt-1 text-xs text-muted-foreground">{s.text}</p>
+      <nav aria-label="Bot sections" className="flex flex-wrap gap-2">
+        {SECTIONS.map((s) => (
+          <Button key={s.to} asChild size="sm" variant="outline" className="h-10">
+            <Link to={s.to}>
+              <s.icon className="mr-1.5 h-4 w-4 text-primary" aria-hidden="true" /> {s.label}
             </Link>
-          ))}
-        </div>
-      </section>
+          </Button>
+        ))}
+      </nav>
 
-      <section aria-labelledby="hub-now-playing" className="space-y-3">
+      {bots.length > 0 && hasNoConnections && (
+        <ConnectionRequiredNotice>New media bots need a TeamSpeak server connection.</ConnectionRequiredNotice>
+      )}
+
+      <section aria-labelledby="hub-bots" className="space-y-3">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 id="hub-now-playing" className="text-base font-semibold">Now playing</h2>
+          <h2 id="hub-bots" className="text-base font-semibold">Bots</h2>
           <p className="text-xs text-muted-foreground">
             A bot plays music or video, never both. One video stream runs at a time.
           </p>
@@ -122,9 +148,15 @@ export default function BotHub() {
           <PageLoader />
         ) : query.isError ? (
           <EmptyState icon={AlertTriangle} title="Could not load bot media" description={apiErrorMessage(query.error, 'Try again in a moment.')} />
+        ) : bots.length === 0 && hasNoConnections ? (
+          <EmptyState icon={Music} title="Connect a TeamSpeak server first" description="Media bots join a server connection. Add one in Settings → Connections, then create your first bot.">
+            <Button size="sm" asChild><Link to={CONNECTION_SETUP_PATH}>Open connection setup</Link></Button>
+          </EmptyState>
         ) : bots.length === 0 ? (
           <EmptyState icon={Music} title="No media bots yet" description="Create a media bot to play music, radio, video or IPTV into a channel.">
-            <Button asChild size="sm"><Link to="/media-bots">Go to Media Bots</Link></Button>
+            <Button size="sm" disabled={createBlocked} onClick={() => setCreateOpen(true)}>
+              <Plus className="mr-1.5 h-4 w-4" aria-hidden="true" /> Create a bot
+            </Button>
           </EmptyState>
         ) : (
           <>
@@ -132,11 +164,13 @@ export default function BotHub() {
               <p className="text-sm text-muted-foreground">Nothing is playing right now.</p>
             )}
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {[...active, ...others].map((bot) => <SessionCard key={bot.botId} bot={bot} now={now} />)}
+              {[...active, ...others].map((bot) => <BotCard key={bot.botId} bot={bot} now={now} />)}
             </div>
           </>
         )}
       </section>
+
+      <BotFormDialog open={createOpen} bot={null} defaultServerId={selectedConfigId} onClose={() => setCreateOpen(false)} />
     </div>
   );
 }

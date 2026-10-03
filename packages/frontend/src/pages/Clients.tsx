@@ -688,7 +688,7 @@ export default function Clients() {
             <DialogTitle>Play Radio{playClientName ? ` (from ${playClientName})` : ''}</DialogTitle>
           </DialogHeader>
           <p className="text-xs text-muted-foreground">
-            Stream a saved radio station on a running media bot. Add stations under Media Bots → Radio.
+            Stream a saved radio station on a running media bot. Add stations under Media Library → Radio stations.
           </p>
           <div className="space-y-3">
             <div>
