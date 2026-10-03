@@ -28,6 +28,17 @@ export function useFlowCommandTriggers(serverConfigId?: number | null) {
       if (bot.flowData != null) return bot;
       return details[i]?.data ?? bot;
     });
-    return collectFlowCommandNames(resolved);
+
+    // The API may return the serialized flowData form used by legacy records.
+    // Parse it before collecting nodes so malformed values cannot break clash detection.
+    const normalized = resolved.map((bot) => {
+      if (typeof bot.flowData !== 'string') return bot;
+      try {
+        return { ...bot, flowData: JSON.parse(bot.flowData) };
+      } catch {
+        return { ...bot, flowData: null };
+      }
+    });
+    return collectFlowCommandNames(normalized);
   }, [serverBots, details]);
 }

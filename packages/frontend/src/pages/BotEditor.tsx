@@ -866,8 +866,9 @@ export default function BotEditor() {
                   {selectedNodeData.type === 'trigger_command' && (
                   <div className="space-y-2">
                       <div>
-                        <Label className="text-[10px] text-muted-foreground">Command</Label>
+                        <Label htmlFor="flow-trigger-command" className="text-[10px] text-muted-foreground">Command</Label>
                         <Input
+                          id="flow-trigger-command"
                           className="h-7 text-xs mt-1 font-mono-data"
                           placeholder="!help"
                           value={selectedNodeData.config.command || ''}

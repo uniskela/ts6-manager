@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent } from 'react';
+import { useRef, useState, type KeyboardEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useBots, useCreateBot, useToggleBot } from '@/hooks/use-bots';
 import { useServerStore } from '@/stores/server.store';
@@ -37,6 +37,8 @@ export default function BotList() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const flowsTabRef = useRef<HTMLButtonElement>(null);
+  const chatCommandsTabRef = useRef<HTMLButtonElement>(null);
 
   const bots = Array.isArray(data) ? data : [];
   const { isPending: connectionsPending, hasNoConnections } = useConnectionAvailability();
@@ -61,6 +63,7 @@ export default function BotList() {
     event.preventDefault();
     const nextCommands = !commandsTab;
     setSearchParams(nextCommands ? { tab: 'commands' } : {});
+    (nextCommands ? chatCommandsTabRef : flowsTabRef).current?.focus();
   };
   const tabLinks = (
     <div className="flex gap-1 border-b" role="tablist" aria-label="Bot Flows sections">
@@ -68,6 +71,7 @@ export default function BotList() {
         type="button"
         role="tab"
         id="bot-flows-tab"
+        ref={flowsTabRef}
         aria-controls="bot-flows-panel"
         aria-selected={!commandsTab}
         tabIndex={commandsTab ? -1 : 0}
@@ -79,6 +83,7 @@ export default function BotList() {
         type="button"
         role="tab"
         id="bot-chat-commands-tab"
+        ref={chatCommandsTabRef}
         aria-controls="bot-chat-commands-panel"
         aria-selected={commandsTab}
         tabIndex={commandsTab ? 0 : -1}
