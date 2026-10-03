@@ -241,7 +241,7 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
   const playbackPending = pausePlayback.isPending || resumePlayback.isPending || skipTrack.isPending;
   const volume = draggingVolume ?? musicState?.volume ?? 50;
   const lastStop = hubLastStop(bot, now);
-  const stopError = stopMusic.error ?? stopVideo.error;
+  const stopError = tone === 'music' ? stopMusic.error : tone === 'live' ? stopVideo.error : null;
 
   const badge = TONE_BADGE[tone];
   const badgeLabel = bot.session?.state === 'starting' ? 'Starting'

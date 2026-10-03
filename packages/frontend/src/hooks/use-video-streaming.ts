@@ -85,13 +85,14 @@ export function useVideoEncoderCapabilities() {
 
 /**
  * One console start's video options: the server's effective streaming defaults
- * until the admin changes a field, then their own choices.
+ * until the admin changes a field, then their own choices for that server.
  */
 export function useVideoStartOptions(
   serverConfigId: number | null | undefined,
   sourceMode: VideoSourceModeRequest = 'auto',
 ): [VideoStartOptions, (next: VideoStartOptions) => void] {
   const { data } = useServerVideoStreamingSettings(serverConfigId);
-  const [chosen, setChosen] = useState<VideoStartOptions | null>(null);
-  return [chosen ?? videoStartDefaults(data?.effective, sourceMode), setChosen];
+  const [chosen, setChosen] = useState<{ serverConfigId: number | null | undefined; options: VideoStartOptions } | null>(null);
+  const own = chosen && chosen.serverConfigId === serverConfigId ? chosen.options : null;
+  return [own ?? videoStartDefaults(data?.effective, sourceMode), (next) => setChosen({ serverConfigId, options: next })];
 }

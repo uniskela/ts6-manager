@@ -92,7 +92,7 @@ export default function BotConsole() {
       <PageHeader
         title={bot.botName}
         leading={<BotAvatar botId={bot.botId} name={bot.botName} mode={bot.avatarMode} md5={bot.avatarMd5} />}
-        badge={<Badge variant={connection.variant}>{connection.label}</Badge>}
+        badge={<Badge variant={connection.variant} aria-live="polite">{connection.label}</Badge>}
         description={`${bot.serverName ?? `Server ${bot.serverConfigId}`}${bot.channelName ? ` · #${bot.channelName}` : ''}`}
         actions={(
           <BotSettingsMenu botId={bot.botId} botName={bot.botName} status={bot.status} size="default"
