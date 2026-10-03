@@ -19,7 +19,7 @@ import {
 } from '@/hooks/use-iptv';
 import type { IptvConsoleChannel, IptvGroupInfo, IptvPlaylistSummary } from '@ts6/common';
 import type { ConsoleSourceContext } from './SourcePicker';
-import { parseIptvDeepLink, type IptvDeepLink } from './iptv-deep-link';
+import { parseIptvChannelId, parseIptvDeepLink, type IptvDeepLink } from './iptv-deep-link';
 
 const IPTV_VIDEO_OPTIONS: VideoStartOptions = { ...DEFAULT_VIDEO_START_OPTIONS, sourceMode: 'live' };
 
@@ -31,6 +31,8 @@ function channelKey(channel: IptvConsoleChannel): string {
 /** Console IPTV browser, search, and explicit stream controls. */
 export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourceContext) {
   const [deepLink] = useState<IptvDeepLink | null>(() => parseIptvDeepLink(searchParams.get('iptv')));
+  // Older links carry only the key; newer ones also name the exact row.
+  const [deepChannelId] = useState<number | null>(() => (deepLink ? parseIptvChannelId(searchParams.get('iptvChannel')) : null));
   const [playlistId, setPlaylistId] = useState<number | undefined>(deepLink?.playlistId);
   const [group, setGroup] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
@@ -51,7 +53,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     ...(playlistId ? { playlistId } : {}),
     ...(group ? { group } : {}),
     ...(search.trim() ? { search: search.trim() } : {}),
-    ...(deepLinkMode ? { channelKey: deepLink!.channelKey } : {}),
+    ...(deepLinkMode ? (deepChannelId ? { channelId: deepChannelId } : { channelKey: deepLink!.channelKey }) : {}),
     page,
     pageSize: deepLinkMode ? 1 : pageSize,
   };
@@ -66,7 +68,9 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     return pageSlice(needle ? groups.filter((item) => item.group.toLocaleLowerCase().includes(needle)) : groups, groupPage, groupPageSize);
   }, [groupFilter, groupPage, groupPageSize, groups]);
   const channels = ((channelsQuery.data?.channels ?? []) as IptvConsoleChannel[]);
-  const deepChannel = deepLinkMode ? channels.find((channel) => channelKey(channel) === deepLink!.channelKey) : undefined;
+  const deepChannel = deepLinkMode
+    ? channels.find((channel) => (deepChannelId ? channel.id === deepChannelId : channelKey(channel) === deepLink!.channelKey))
+    : undefined;
   const deepLinkFinished = !deepLinkMode || !channelsQuery.isLoading;
 
   useEffect(() => {

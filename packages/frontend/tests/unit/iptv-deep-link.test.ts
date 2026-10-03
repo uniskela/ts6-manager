@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { iptvChannelKey, iptvConsolePath, parseIptvDeepLink } from '../../src/pages/bot-hub/iptv-deep-link';
+import { iptvChannelKey, iptvConsolePath, parseIptvChannelId, parseIptvDeepLink } from '../../src/pages/bot-hub/iptv-deep-link';
 
 /** Verify the pure deep-link parser independently of React and routing. */
 describe('IPTV deep links', () => {
@@ -23,9 +23,17 @@ describe('IPTV "Stream on…" links', () => {
   });
 
   it('builds a console URL whose ?iptv= value round-trips through the parser', () => {
-    const path = iptvConsolePath(7, 3, { tvgId: null, name: 'Sport & News: 24/7' });
+    const path = iptvConsolePath(7, 3, { id: 41, tvgId: null, name: 'Sport & News: 24/7' });
     const url = new URL(path, 'http://localhost');
     assert.equal(url.pathname, '/bot-hub/7');
     assert.deepEqual(parseIptvDeepLink(url.searchParams.get('iptv')), { playlistId: 3, channelKey: 'Sport & News: 24/7' });
+    assert.equal(parseIptvChannelId(url.searchParams.get('iptvChannel')), 41);
+  });
+
+  it('accepts only a positive whole channel id', () => {
+    assert.equal(parseIptvChannelId('12'), 12);
+    for (const value of [null, '', '0', '-3', '1.5', '12a', '99999999999999999999']) {
+      assert.equal(parseIptvChannelId(value), null, value ?? 'null');
+    }
   });
 });

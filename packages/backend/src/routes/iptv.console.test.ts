@@ -20,6 +20,7 @@ const channels: Channel[] = [
 /** Apply the route's Prisma where shape to the in-memory test fixture. */
 function matches(row: Channel, where: any): boolean {
   if (where.OR && !where.OR.some((condition: any) => matches(row, condition))) return false;
+  if (where.id !== undefined && row.id !== where.id) return false;
   if (where.playlistId !== undefined && row.playlistId !== where.playlistId) return false;
   const playlist = playlists.find((p) => p.id === row.playlistId)!;
   if (where.playlist?.serverConfigId !== undefined && playlist.serverConfigId !== where.playlist.serverConfigId) return false;
@@ -87,6 +88,15 @@ describe('console IPTV routes', () => {
     assert.equal(byPlaylist.body.channels[0].name, 'World News');
     const capped = await send(fixture(), '/api/iptv/channels?serverConfigId=1&pageSize=101');
     assert.equal(capped.body.pageSize, 100);
+  });
+
+  it('looks up one exact channel by id, scoped to the server', async () => {
+    const byId = await send(fixture(), '/api/iptv/channels?serverConfigId=1&channelId=2');
+    assert.equal(byId.body.total, 1);
+    assert.equal(byId.body.channels[0].name, 'World News');
+    const otherServer = await send(fixture(), '/api/iptv/channels?serverConfigId=1&channelId=4');
+    assert.equal(otherServer.body.total, 0);
+    assert.equal((await send(fixture(), '/api/iptv/channels?serverConfigId=1&channelId=0')).status, 400);
   });
 
   it('never returns another server data and rejects bad positive integer params', async () => {

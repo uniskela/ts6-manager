@@ -21,8 +21,15 @@ export function iptvChannelKey(channel: { tvgId: string | null; name: string }):
   return channel.tvgId || channel.name;
 }
 
+/** Parse the optional `iptvChannel` row id; tvg-id and name can repeat, the id cannot. */
+export function parseIptvChannelId(value: string | null): number | null {
+  if (!value || !/^[1-9]\d*$/.test(value)) return null;
+  const id = Number(value);
+  return Number.isSafeInteger(id) ? id : null;
+}
+
 /** Console URL that pre-selects an IPTV channel. It never starts the stream. */
-export function iptvConsolePath(botId: number, playlistId: number, channel: { tvgId: string | null; name: string }): string {
-  const params = new URLSearchParams({ iptv: `${playlistId}:${iptvChannelKey(channel)}` });
+export function iptvConsolePath(botId: number, playlistId: number, channel: { id: number; tvgId: string | null; name: string }): string {
+  const params = new URLSearchParams({ iptv: `${playlistId}:${iptvChannelKey(channel)}`, iptvChannel: String(channel.id) });
   return `/bot-hub/${botId}?${params}`;
 }
