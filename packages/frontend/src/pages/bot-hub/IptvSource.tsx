@@ -51,7 +51,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [pageSize, setPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-channels'));
   const [groupPage, setGroupPage] = useState(1);
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-groups'));
-  const [options, setOptions, optionsLoading] = useVideoStartOptions(serverConfigId, 'live');
+  const [options, setOptions, optionsLoading, defaults] = useVideoStartOptions(serverConfigId, 'live');
   const playlistsQuery = useIptvPlaylists(serverConfigId);
   const filtersQuery = useIptvFilters(serverConfigId);
   const countries = filtersQuery.data?.countries ?? [];
@@ -156,7 +156,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     if (!deepChannel) return <p className="text-sm">That channel is no longer in the playlist</p>;
     return (
       <div className="space-y-4">
-        <VideoOptions value={options} onChange={setOptions} />
+        <VideoOptions value={options} onChange={setOptions} defaults={defaults} />
         {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
         {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
         {renderChannel(deepChannel, channelsQuery.isFetching)}
@@ -166,7 +166,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
 
   return (
     <div className="min-w-0 space-y-4">
-      <VideoOptions value={options} onChange={setOptions} />
+      <VideoOptions value={options} onChange={setOptions} defaults={defaults} />
       {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
       {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
       {filtersQuery.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(filtersQuery.error, 'Could not load filters')}</p>}

@@ -5,21 +5,18 @@ import {
 } from '../../src/lib/video-options';
 
 describe('console video options', () => {
-  it('start on Auto quality and the server streaming defaults', () => {
-    assert.deepEqual(videoStartDefaults({ defaultEncoder: 'h264_vaapi', noViewerTimeoutSec: 900 }, 'live'), {
-      quality: 'auto', encoder: 'h264_vaapi', noViewerTimeout: '900', sourceMode: 'live',
+  it('inherits quality, encoder and timeout without overriding source detection', () => {
+    assert.deepEqual(DEFAULT_VIDEO_START_OPTIONS, {
+      quality: '', encoder: '', noViewerTimeout: '', sourceMode: 'auto',
     });
+    assert.deepEqual(videoStartRequest(DEFAULT_VIDEO_START_OPTIONS), { sourceMode: 'auto' });
   });
 
-  it('fall back to Auto and the server timeout before the defaults load', () => {
-    assert.deepEqual(DEFAULT_VIDEO_START_OPTIONS, {
-      quality: 'auto', encoder: 'auto', noViewerTimeout: '', sourceMode: 'auto',
+  it('keeps IPTV live while inheriting the streaming defaults', () => {
+    assert.deepEqual(videoStartDefaults('live'), {
+      quality: '', encoder: '', noViewerTimeout: '', sourceMode: 'live',
     });
-    // A malformed settings response is treated as not loaded.
-    assert.deepEqual(videoStartDefaults({} as never), DEFAULT_VIDEO_START_OPTIONS);
-    assert.deepEqual(videoStartRequest(DEFAULT_VIDEO_START_OPTIONS), {
-      preset: 'auto', encoder: 'auto', noViewerTimeoutSec: undefined, sourceMode: 'auto',
-    });
+    assert.deepEqual(videoStartRequest(videoStartDefaults('live')), { sourceMode: 'live' });
   });
 
   it('passes explicit choices through', () => {
@@ -29,17 +26,36 @@ describe('console video options', () => {
     );
   });
 
+  it('distinguishes explicit Auto from inheriting the defaults', () => {
+    assert.deepEqual(videoStartRequest({ ...DEFAULT_VIDEO_START_OPTIONS, quality: 'auto', encoder: 'auto' }), {
+      preset: 'auto', encoder: 'auto', sourceMode: 'auto',
+    });
+  });
+
+  it('inherits each field independently of explicit overrides', () => {
+    assert.deepEqual(videoStartRequest({ ...DEFAULT_VIDEO_START_OPTIONS, quality: '720p' }), {
+      preset: '720p', sourceMode: 'auto',
+    });
+    assert.deepEqual(videoStartRequest({ ...DEFAULT_VIDEO_START_OPTIONS, encoder: 'vp9' }), {
+      encoder: 'vp9', sourceMode: 'auto',
+    });
+    assert.deepEqual(videoStartRequest({ ...DEFAULT_VIDEO_START_OPTIONS, noViewerTimeout: '900' }), {
+      noViewerTimeoutSec: 900, sourceMode: 'auto',
+    });
+  });
+
   it('sends 0 when the no-viewer stop is turned off', () => {
     assert.equal(videoStartRequest({ ...DEFAULT_VIDEO_START_OPTIONS, noViewerTimeout: '0' }).noViewerTimeoutSec, 0);
   });
 });
 
 describe('console video options summary', () => {
-  it('names every current choice on one line', () => {
-    assert.equal(
-      videoOptionsSummary(videoStartDefaults({ defaultEncoder: 'auto', noViewerTimeoutSec: 300 })),
-      'Auto · Auto encoder · stops after 5 min · Detect',
-    );
+  it('identifies inherited defaults', () => {
+    assert.equal(videoOptionsSummary(videoStartDefaults('live')),
+      'Default quality · Default encoder · default auto-stop · Live');
+  });
+
+  it('names every explicit choice on one line', () => {
     assert.equal(
       videoOptionsSummary({ quality: '1080p', encoder: 'auto', noViewerTimeout: '0', sourceMode: 'live' }),
       '1080p · Auto encoder · no auto-stop · Live',

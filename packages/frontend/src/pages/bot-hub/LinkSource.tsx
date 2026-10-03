@@ -27,7 +27,7 @@ const FOLDER_HINT = 'Music-folder files play from the Music tab.';
 export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<LinkPlayMode>('music');
-  const [options, setOptions, optionsLoading] = useVideoStartOptions(serverConfigId);
+  const [options, setOptions, optionsLoading, defaults] = useVideoStartOptions(serverConfigId);
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
 
@@ -137,7 +137,7 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
       </fieldset>
 
       {effectiveMode === 'video' && (
-        <VideoOptions value={options} onChange={setOptions} />
+        <VideoOptions value={options} onChange={setOptions} defaults={defaults} />
       )}
 
       {error && (
