@@ -1,5 +1,6 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 
+/** Sign the Playwright browser into the deterministic test account. */
 async function signIn(page: Page, request: APIRequestContext) {
   await request.post('/__test/reset');
   await request.post('/__test/docs?on');
@@ -19,6 +20,7 @@ const media = [{
 }];
 const channel = { id: 7, name: 'Morning News', logo: null, group: 'News', playlistId: 10, playlistName: 'News', channelKey: 'morning:west' };
 
+/** Mock the bot console and IPTV API responses used by these scenarios. */
 async function mockIptv(page: Page) {
   const streams: unknown[] = [];
   await page.route('**/api/music-bots/media', (route) => route.fulfill({ json: media }));
@@ -40,7 +42,7 @@ test('browse groups, search channels, and stream with live IPTV defaults', async
   await expect(page.getByText('Morning News')).toBeVisible();
   await page.getByRole('button', { name: 'Stream Morning News' }).click();
   await expect.poll(() => streams[0]).toEqual({ botId: 1, channelId: 7, sourceMode: 'live' });
-  await page.getByRole('button', { name: '← All groups' }).click();
+  await page.getByRole('button', { name: 'All groups' }).click();
   await page.getByLabel('Search channels').fill('Morning');
   await expect(page.getByText('Morning News')).toBeVisible();
 });

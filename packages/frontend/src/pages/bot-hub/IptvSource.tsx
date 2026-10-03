@@ -23,10 +23,12 @@ import { parseIptvDeepLink, type IptvDeepLink } from './iptv-deep-link';
 
 const IPTV_VIDEO_OPTIONS: VideoStartOptions = { ...DEFAULT_VIDEO_START_OPTIONS, sourceMode: 'live' };
 
+/** Return the stable key used by IPTV deep links. */
 function channelKey(channel: IptvConsoleChannel): string {
   return channel.channelKey || channel.name;
 }
 
+/** Console IPTV browser, search, and explicit stream controls. */
 export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourceContext) {
   const [deepLink] = useState<IptvDeepLink | null>(() => parseIptvDeepLink(searchParams.get('iptv')));
   const [playlistId, setPlaylistId] = useState<number | undefined>(deepLink?.playlistId);
@@ -49,8 +51,9 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     ...(playlistId ? { playlistId } : {}),
     ...(group ? { group } : {}),
     ...(search.trim() ? { search: search.trim() } : {}),
+    ...(deepLinkMode ? { channelKey: deepLink!.channelKey } : {}),
     page,
-    pageSize: deepLinkMode ? 100 : pageSize,
+    pageSize: deepLinkMode ? 1 : pageSize,
   };
   const channelsQuery = useConsoleIptvChannels(channelParams);
   const groups = useMemo(() => {
@@ -71,18 +74,21 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     setGroupPage(1);
   }, [playlistId, group, search, groupFilter]);
 
+  /** Change the playlist filter and return to the group browser. */
   const selectPlaylist = (value: string) => {
     setPlaylistId(value ? Number(value) : undefined);
     if (deepLinkMode) return;
     setGroup('');
   };
 
+  /** Stream only after the administrator presses the channel button. */
   const startStream = (channel: IptvConsoleChannel) => {
     stream.mutate({ botId, channelId: channel.id, options });
   };
 
   if (deepLinkMode) {
     if (!deepLinkFinished || channelsQuery.isFetching) return <p className="text-sm text-muted-foreground">Loading channel…</p>;
+    if (channelsQuery.isError) return <p role="alert" className="text-sm text-destructive">{apiErrorMessage(channelsQuery.error, 'Could not load channel')}</p>;
     if (!deepChannel) return <p className="text-sm">That channel is no longer in the playlist</p>;
     return (
       <div className="space-y-4">
@@ -124,7 +130,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
           </div>
           {channelsQuery.isError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(channelsQuery.error, 'Could not load channels')}</p>}
           <div className="space-y-2">
-            {channels.map((channel) => <ChannelRow key={channel.id} channel={channel} onStream={startStream} busy={stream.isPending} />)}
+            {channels.map((channel) => <ChannelRow key={channel.id} channel={channel} onStream={startStream} busy={stream.isPending || channelsQuery.isFetching} />)}
             {!channelsQuery.isFetching && channels.length === 0 && <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No channels found.</p>}
           </div>
           <Pager listKey="console-iptv-channels" total={channelsQuery.data?.total ?? 0} page={channelsQuery.data?.page ?? page} pageSize={pageSize} noun="channels"
@@ -152,6 +158,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   );
 }
 
+/** Render one channel row without allowing stale placeholder results to stream. */
 function ChannelRow({ channel, onStream, busy }: { channel: IptvConsoleChannel; onStream(channel: IptvConsoleChannel): void; busy: boolean }) {
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-md border p-2.5">

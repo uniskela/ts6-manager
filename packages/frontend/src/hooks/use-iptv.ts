@@ -77,6 +77,7 @@ export function useIptvGroups(playlistId: number | null) {
   });
 }
 
+/** Load the server-scoped group list used by the bot console. */
 export function useConsoleIptvGroups(serverConfigId: number, playlistId?: number) {
   return useQuery({
     queryKey: ['iptv-console-groups', serverConfigId, playlistId ?? null],
@@ -101,6 +102,7 @@ export function useConsoleIptvChannels(params: {
   playlistId?: number;
   group?: string;
   search?: string;
+  channelKey?: string;
   page?: number;
   pageSize?: number;
 }) {

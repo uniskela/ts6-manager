@@ -17,7 +17,9 @@ const channels: Channel[] = [
   { id: 4, playlistId: 20, name: 'Secret News', logo: null, groupTitle: 'News', tvgId: 'secret', position: 0, url: 'https://four' },
 ];
 
+/** Apply the route's Prisma where shape to the in-memory test fixture. */
 function matches(row: Channel, where: any): boolean {
+  if (where.OR && !where.OR.some((condition: any) => matches(row, condition))) return false;
   if (where.playlistId !== undefined && row.playlistId !== where.playlistId) return false;
   const playlist = playlists.find((p) => p.id === row.playlistId)!;
   if (where.playlist?.serverConfigId !== undefined && playlist.serverConfigId !== where.playlist.serverConfigId) return false;
@@ -30,11 +32,19 @@ function matches(row: Channel, where: any): boolean {
   return true;
 }
 
+/** Build an isolated Express fixture for each route test. */
 function fixture() {
   const app = express();
   app.use((req, _res, next) => { req.user = { id: 1, role: 'admin', username: 'tester' }; next(); });
   app.locals.prisma = {
     iptvChannel: {
+      groupBy: async ({ where }: any) => {
+        const grouped = new Map<string | null, number>();
+        for (const channel of channels.filter((c) => matches(c, where))) {
+          grouped.set(channel.groupTitle, (grouped.get(channel.groupTitle) ?? 0) + 1);
+        }
+        return [...grouped.entries()].map(([groupTitle, count]) => ({ groupTitle, _count: { _all: count } }));
+      },
       findMany: async ({ where, select, orderBy, skip = 0, take }: any) => {
         const filtered = channels.filter((c) => matches(c, where));
         if (select?.groupTitle && !select?.playlist) return filtered.map((c) => ({ groupTitle: c.groupTitle }));
@@ -49,6 +59,7 @@ function fixture() {
   return app;
 }
 
+/** Send one request to a route fixture. */
 async function send(app: Express, path: string) {
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.once('listening', resolve));

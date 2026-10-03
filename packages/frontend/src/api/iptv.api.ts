@@ -32,15 +32,18 @@ export const iptvApi = {
 
   // Channels
   groups: (playlistId: number) => api.get(`/iptv/playlists/${playlistId}/groups`).then((r) => r.data),
+  /** Fetch groups for the console's server and optional playlist. */
   consoleGroups: (serverConfigId: number, playlistId?: number) => api.get('/iptv/groups', {
     params: { serverConfigId, ...(playlistId ? { playlistId } : {}) },
   }).then((r) => r.data),
   channels: (playlistId: number, params: { search?: string; group?: string; page?: number; pageSize?: number }) =>
     api.get(`/iptv/playlists/${playlistId}/channels`, { params }).then((r) => r.data),
-  consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; page?: number; pageSize?: number }) =>
+  /** Fetch a server-scoped, paginated console channel search. */
+  consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; channelKey?: string; page?: number; pageSize?: number }) =>
     api.get('/iptv/channels', { params }).then((r) => r.data),
 
   // Streaming (via a music bot's video sidecar)
+  /** Start an IPTV channel with optional per-start video settings. */
   stream: (botId: number, channelId: number, options?: string | VideoStartOptions) => {
     const video = typeof options === 'string'
       ? { preset: options }

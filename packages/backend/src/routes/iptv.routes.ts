@@ -48,8 +48,12 @@ function multerUpload(field: string) {
   };
 }
 
+/** Read one query parameter and reject repeated or non-string values. */
 function queryString(req: Request, name: string): string | undefined {
   const value = req.query[name];
+  if (value !== undefined && typeof value !== 'string') {
+    throw new AppError(400, `${name} must be a single value`);
+  }
   return typeof value === 'string' ? value : undefined;
 }
 
@@ -68,24 +72,25 @@ function positiveQueryInt(req: Request, name: string, required = false): number 
   return value;
 }
 
-// GET /groups?serverConfigId=&playlistId= — groups across one server's playlists
+/** GET /groups: return normalized group counts across one server's playlists. */
 iptvRoutes.get('/groups', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const prisma = req.app.locals.prisma;
     const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
     const playlistId = positiveQueryInt(req, 'playlistId');
-    const rows = await prisma.iptvChannel.findMany({
+    const rows = await prisma.iptvChannel.groupBy({
       where: {
         playlist: { serverConfigId },
         ...(playlistId !== undefined ? { playlistId } : {}),
         groupTitle: { not: null },
       },
-      select: { groupTitle: true },
+      by: ['groupTitle'],
+      _count: { _all: true },
     });
     const counts = new Map<string, number>();
     for (const row of rows) {
       const group = typeof row.groupTitle === 'string' ? row.groupTitle.trim() : '';
-      if (group) counts.set(group, (counts.get(group) ?? 0) + 1);
+      if (group) counts.set(group, (counts.get(group) ?? 0) + row._count._all);
     }
     res.json([...counts.entries()]
       .map(([group, count]) => ({ group, count }))
@@ -93,8 +98,7 @@ iptvRoutes.get('/groups', async (req: Request, res: Response, next: NextFunction
   } catch (err) { next(err); }
 });
 
-// GET /channels?serverConfigId=&playlistId=&group=&search=&page=&pageSize=
-// Cross-playlist channel search scoped to one server.
+/** GET /channels: search and page channels across one server's playlists. */
 iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFunction) => {
   try {
     const prisma = req.app.locals.prisma;
@@ -104,11 +108,13 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
     const pageSize = Math.min(100, positiveQueryInt(req, 'pageSize') ?? 50);
     const search = queryString(req, 'search')?.trim() ?? '';
     const group = queryString(req, 'group')?.trim() ?? '';
+    const channelKey = queryString(req, 'channelKey');
     const where = {
       playlist: { serverConfigId },
       ...(playlistId !== undefined ? { playlistId } : {}),
       ...(group ? { groupTitle: group } : {}),
       ...(search ? { name: { contains: search } } : {}),
+      ...(channelKey ? { OR: [{ tvgId: channelKey }, { name: channelKey }] } : {}),
     };
     const [total, rows] = await Promise.all([
       prisma.iptvChannel.count({ where }),
