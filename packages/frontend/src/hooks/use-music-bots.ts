@@ -42,7 +42,10 @@ export function useDeleteMusicBot() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => musicBotsApi.delete(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['music-bots'] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['music-bots'] });
+      void qc.invalidateQueries({ queryKey: ['bot-media'] });
+    },
   });
 }
 
@@ -52,6 +55,7 @@ export function useStartMusicBot() {
     mutationFn: (id: number) => musicBotsApi.start(id),
     onSuccess: () => {
       void qc.refetchQueries({ queryKey: ['music-bots'] });
+      void qc.refetchQueries({ queryKey: ['bot-media'] });
     },
   });
 }
@@ -63,6 +67,7 @@ export function useStopMusicBot() {
     onSuccess: (_, id) => {
       qc.removeQueries({ queryKey: ['music-bot-state', id] });
       void qc.refetchQueries({ queryKey: ['music-bots'] });
+      void qc.refetchQueries({ queryKey: ['bot-media'] });
     },
   });
 }

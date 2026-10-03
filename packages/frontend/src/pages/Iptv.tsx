@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   useIptvPlaylists, useCreateIptvPlaylist, useUploadIptvPlaylist, useReplaceIptvPlaylistFile,
   useDeleteIptvPlaylist, useRefreshIptvPlaylist,
-  useIptvGroups, useIptvChannels, useIptvStream, useIptvStop,
+  useIptvGroups, useIptvChannels,
 } from '@/hooks/use-iptv';
-import { useMusicBots, useBotMedia } from '@/hooks/use-music-bots';
+import { useMusicBots } from '@/hooks/use-music-bots';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -23,25 +23,14 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Tv, Plus, Trash2, RefreshCw, Play, Square, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle, Upload, Link2, FileUp } from 'lucide-react';
+import { Tv, Plus, Trash2, RefreshCw, Play, Search, ChevronLeft, ChevronRight, Loader2, Radio, AlertCircle, Upload, Link2, FileUp } from 'lucide-react';
 import { toast } from 'sonner';
-import { toastMediaStarted } from '@/lib/media-start-toast';
-import { hubLastStop } from '@/lib/bot-hub';
-import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage } from '@ts6/common';
+import type { IptvPlaylistSummary, IptvChannelInfo, IptvChannelPage, MusicBotSummary } from '@ts6/common';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { iptvConsolePath } from '@/pages/bot-hub/iptv-deep-link';
 import { formatLocalDateTime, formatNumber } from '@/lib/formatting';
 import { apiErrorMessage } from '@/lib/api-error';
 import { RuntimeMediaDiagnostics } from '@/components/media/RuntimeMediaDiagnostics';
-
-// Fixed presets are the IPTV default: Auto probes the source first, which is a
-// second connection that single-connection IPTV services may refuse.
-const PRESETS = [
-  { value: 'auto', label: 'Auto (probe)' },
-  { value: '480p', label: '480p' },
-  { value: '720p', label: '720p' },
-  { value: '1080p', label: '1080p' },
-  { value: '1440p', label: '1440p' },
-  { value: '2160p', label: '2160p' },
-];
 
 const ACCEPT_PLAYLIST = '.m3u,.m3u8,.txt,audio/x-mpegurl,application/vnd.apple.mpegurl,text/plain';
 
@@ -53,17 +42,16 @@ function formatFileSize(bytes: number): string {
 
 // ─── Channel browser ─────────────────────────────────────────────────────────
 
-function ChannelBrowser({ playlist, bots, preferredBotId }: {
+function ChannelBrowser({ playlist, bots }: {
   playlist: IptvPlaylistSummary;
-  bots: any[];
-  preferredBotId?: number | null;
+  bots: MusicBotSummary[];
 }) {
+  const navigate = useNavigate();
   const [search, setSearch] = useState('');
   const [debounced, setDebounced] = useState('');
   const [group, setGroup] = useState('');
   const [page, setPage] = useState(1);
   const pageSize = 24;
-  const { data: mediaOverview } = useBotMedia();
 
   useEffect(() => {
     const t = setTimeout(() => { setDebounced(search); setPage(1); }, 300);
@@ -79,58 +67,12 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
     pageSize,
   }) as { data: IptvChannelPage | undefined; isFetching: boolean };
 
-  const stream = useIptvStream();
-  const stop = useIptvStop();
-
-  // Running music bots on this playlist's server can act as the streamer.
-  const eligibleBots = bots.filter(
-    (b) => b.serverConfigId === playlist.serverConfigId && b.status !== 'stopped' && b.status !== 'error',
-  );
-  const eligibleBotIds = eligibleBots.map((b) => b.id).join(',');
-  const [botId, setBotId] = useState<string>('');
-  const appliedPreferredBot = useRef<number | null>(null);
-  const [preset, setPreset] = useState('720p');
-
-  useEffect(() => {
-    if (!preferredBotId) {
-      appliedPreferredBot.current = null;
-    }
-  }, [preferredBotId]);
-
-  useEffect(() => {
-    if (
-      preferredBotId
-      && preferredBotId !== appliedPreferredBot.current
-      && eligibleBots.some((b) => b.id === preferredBotId)
-    ) {
-      setBotId(String(preferredBotId));
-      appliedPreferredBot.current = preferredBotId;
-      return;
-    }
-    setBotId((current) => {
-      if (current && eligibleBots.some((b) => b.id === Number(current))) return current;
-      return eligibleBots[0] ? String(eligibleBots[0].id) : '';
-    });
-  }, [preferredBotId, eligibleBotIds, eligibleBots, playlist.serverConfigId]);
+  // Any bot on this playlist's server can stream it; the console starts a stopped bot.
+  const serverBots = bots.filter((b) => b.serverConfigId === playlist.serverConfigId);
 
   const channels: IptvChannelInfo[] = data?.channels ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const selectedMedia = (mediaOverview ?? []).find((m) => m.botId === Number(botId));
-  const lastStopLine = selectedMedia && !selectedMedia.session
-    ? hubLastStop(selectedMedia, Date.now())
-    : null;
-
-  const doStream = (channel: IptvChannelInfo) => {
-    if (!botId) { toast.error('Select a running media bot to stream through'); return; }
-    stream.mutate(
-      { botId: parseInt(botId), channelId: channel.id, preset },
-      {
-        onSuccess: () => toastMediaStarted(`Streaming: ${channel.name}`),
-        onError: (e: any) => toast.error(e?.response?.data?.error || 'Failed to start stream'),
-      },
-    );
-  };
 
   return (
     <div className="space-y-3">
@@ -138,46 +80,15 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
         focus={['sidecar', 'ffmpeg', 'yt-dlp']}
         showPrerequisite
       />
-      {/* Streamer controls */}
-      <div className="flex flex-wrap items-end gap-2 rounded-md border p-2.5">
-        <div className="space-y-1">
-          <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Stream through bot</Label>
-          <Select value={botId} onValueChange={setBotId}>
-            <SelectTrigger className="h-10 w-full min-w-44 text-xs sm:h-8 sm:w-48"><SelectValue placeholder={eligibleBots.length ? 'Select bot' : 'No running bots'} /></SelectTrigger>
-            <SelectContent>
-              {eligibleBots.map((b) => (
-                <SelectItem key={b.id} value={String(b.id)}>{b.name} ({b.status})</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-[10px] uppercase tracking-wide text-muted-foreground">Quality</Label>
-          <Select value={preset} onValueChange={setPreset}>
-            <SelectTrigger className="h-10 w-28 text-xs sm:h-8"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {PRESETS.map((p) => <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        {botId && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-8 text-xs"
-            onClick={() => stop.mutate(parseInt(botId), { onSuccess: () => toast.success('Stream stopped') })}
-          >
-            <Square className="h-3.5 w-3.5 mr-1" /> Stop
-          </Button>
-        )}
-        {eligibleBots.length === 0 && (
-          <p className="text-[11px] text-amber-500 flex items-center gap-1">
-            <AlertCircle className="h-3.5 w-3.5" /> Start a Media Bot on this server to stream.
-          </p>
-        )}
-      </div>
-      {lastStopLine && (
-        <p className="text-xs text-muted-foreground px-0.5">{lastStopLine}</p>
+      {serverBots.length === 0 ? (
+        <p className="text-[11px] text-amber-500 flex items-center gap-1">
+          <AlertCircle className="h-3.5 w-3.5" />
+          <span>Create a media bot on this server in the <Link to="/bot-hub" className="underline underline-offset-2">Bot Hub</Link> to stream.</span>
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground px-0.5">
+          Stream on… opens that bot&apos;s console with the channel selected. Press Stream there to start.
+        </p>
       )}
 
       {/* Filters */}
@@ -221,16 +132,28 @@ function ChannelBrowser({ playlist, bots, preferredBotId }: {
                 <p className="text-xs font-medium truncate">{c.name}</p>
                 {c.groupTitle && <p className="text-[10px] text-muted-foreground truncate">{c.groupTitle}</p>}
               </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="h-7 w-7 shrink-0"
-                onClick={() => doStream(c)}
-                disabled={stream.isPending || !botId}
-                aria-label={`Stream ${c.name}`}
-              >
-                <Play className="h-3.5 w-3.5" />
-              </Button>
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-9 shrink-0 px-2 text-xs"
+                    disabled={serverBots.length === 0}
+                    aria-label={`Stream ${c.name} on…`}
+                  >
+                    <Play className="h-3.5 w-3.5 mr-1" aria-hidden="true" /> Stream on…
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">Open in a bot&apos;s console</DropdownMenuLabel>
+                  {serverBots.map((b) => (
+                    <DropdownMenuItem key={b.id} onSelect={() => navigate(iptvConsolePath(b.id, playlist.id, c))}>
+                      {b.name}
+                      <span className="ml-2 text-[10px] capitalize text-muted-foreground">{b.status}</span>
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           ))}
         </div>
@@ -459,7 +382,6 @@ function ReplaceFileDialog({
 
 export default function Iptv() {
   const [searchParams] = useSearchParams();
-  const linkedBot = Number(searchParams.get('bot')) || null;
   const linkedServer = Number(searchParams.get('server')) || null;
   const { data: servers } = useServers();
   const serverList = Array.isArray(servers) ? servers : [];
@@ -477,7 +399,7 @@ export default function Iptv() {
 
   const { data: playlists, isLoading, error, refetch, isFetching } = useIptvPlaylists(selectedConfigId ?? undefined);
   const { data: bots } = useMusicBots();
-  const botList = Array.isArray(bots) ? bots : [];
+  const botList: MusicBotSummary[] = Array.isArray(bots) ? bots : [];
 
   const deletePlaylist = useDeleteIptvPlaylist();
   const refreshPlaylist = useRefreshIptvPlaylist();
@@ -645,7 +567,7 @@ export default function Iptv() {
                 <CardTitle className="text-sm flex items-center gap-2"><Radio className="h-4 w-4" /> {selectedPlaylist.name} — Channels</CardTitle>
               </CardHeader>
               <CardContent>
-                <ChannelBrowser playlist={selectedPlaylist} bots={botList} preferredBotId={linkedBot} />
+                <ChannelBrowser playlist={selectedPlaylist} bots={botList} />
               </CardContent>
             </Card>
           )}

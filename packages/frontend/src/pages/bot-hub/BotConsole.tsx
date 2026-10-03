@@ -4,10 +4,11 @@
  * the global "Replace what is playing?" prompt.
  */
 
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Bot, Square } from 'lucide-react';
 import type { PlaybackState } from '@ts6/common';
 import { NowPlaying } from '@/components/media/NowPlaying';
+import { StreamViewers } from '@/components/video/StreamViewers';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PageHeader } from '@/components/shared/PageHeader';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -22,6 +23,7 @@ import { RadioSource } from './RadioSource';
 import { IptvSource } from './IptvSource';
 import { SourcePicker, type ConsoleSourceTab } from './SourcePicker';
 import { UpNextQueue } from './UpNextQueue';
+import { BotSettingsMenu } from './BotSettingsMenu';
 
 /** Source tabs in order Music · Link · Radio · IPTV. */
 export const CONSOLE_TABS: ConsoleSourceTab[] = [
@@ -44,6 +46,7 @@ function useNow(): number {
 /** Render one bot's playback state, queue, and source tabs. */
 export default function BotConsole() {
   const botId = Number(useParams().botId);
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const media = useBotMedia();
   const now = useNow();
@@ -79,6 +82,10 @@ export default function BotConsole() {
         title={bot.botName}
         icon={Bot}
         description={`${bot.serverName ?? `Server ${bot.serverConfigId}`}${bot.channelName ? ` · #${bot.channelName}` : ''}`}
+        actions={(
+          <BotSettingsMenu botId={bot.botId} botName={bot.botName} status={bot.status} size="default"
+            onDeleted={() => navigate('/bot-hub', { replace: true })} />
+        )}
       />
 
       <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
@@ -110,6 +117,7 @@ export default function BotConsole() {
               </>
             )}
           />
+          {tone === 'live' && <StreamViewers botId={bot.botId} now={now} />}
         </section>
 
         <SourcePicker

@@ -15,3 +15,14 @@ export function parseIptvDeepLink(value: string | null): IptvDeepLink | null {
   if (!Number.isSafeInteger(playlistId) || playlistId <= 0) return null;
   return { playlistId, channelKey };
 }
+
+/** Stable channel key the console matches on: `tvg-id` when present, else the name. */
+export function iptvChannelKey(channel: { tvgId: string | null; name: string }): string {
+  return channel.tvgId || channel.name;
+}
+
+/** Console URL that pre-selects an IPTV channel. It never starts the stream. */
+export function iptvConsolePath(botId: number, playlistId: number, channel: { tvgId: string | null; name: string }): string {
+  const params = new URLSearchParams({ iptv: `${playlistId}:${iptvChannelKey(channel)}` });
+  return `/bot-hub/${botId}?${params}`;
+}
