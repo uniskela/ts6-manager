@@ -1,5 +1,12 @@
 import api from './client';
 import { videoStartRequest, type VideoStartOptions } from '@/lib/video-options';
+import type { IptvChannelPickInfo } from '@ts6/common';
+
+export interface IptvPickKey {
+  serverConfigId: number;
+  playlistId: number;
+  channelKey: string;
+}
 
 export const iptvApi = {
   // Playlists
@@ -41,6 +48,14 @@ export const iptvApi = {
   /** Fetch a server-scoped, paginated console channel search. */
   consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; channelKey?: string; page?: number; pageSize?: number }) =>
     api.get('/iptv/channels', { params }).then((r) => r.data),
+
+  favourites: (serverConfigId: number) =>
+    api.get<IptvChannelPickInfo[]>('/iptv/favourites', { params: { serverConfigId } }).then((r) => r.data),
+  addFavourite: (pick: IptvPickKey) => api.put('/iptv/favourites', pick).then((r) => r.data),
+  removeFavourite: (pick: IptvPickKey & { removeRecent?: boolean }) =>
+    api.delete('/iptv/favourites', { data: pick }).then((r) => r.data),
+  recent: (serverConfigId: number) =>
+    api.get<IptvChannelPickInfo[]>('/iptv/recent', { params: { serverConfigId } }).then((r) => r.data),
 
   // Streaming (via a music bot's video sidecar)
   /** Start an IPTV channel with optional per-start video settings. */

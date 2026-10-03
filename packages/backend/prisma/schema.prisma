@@ -76,6 +76,7 @@ model TsServerConfig {
   musicRequests MusicRequest[]
   playlists     Playlist[]
   iptvPlaylists IptvPlaylist[]
+  iptvChannelPicks IptvChannelPick[]
 }
 
 model BotFlow {
@@ -245,6 +246,21 @@ model IptvPlaylist {
   updatedAt          DateTime       @updatedAt
 
   channels IptvChannel[]
+  channelPicks IptvChannelPick[]
+}
+
+model IptvChannelPick {
+  serverConfigId Int
+  playlistId Int
+  channelKey String
+  name String
+  favourite Boolean @default(false)
+  lastStreamedAt DateTime?
+  serverConfig TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
+  playlist IptvPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+
+  @@id([serverConfigId, playlistId, channelKey])
+  @@index([serverConfigId, lastStreamedAt])
 }
 
 model IptvChannel {

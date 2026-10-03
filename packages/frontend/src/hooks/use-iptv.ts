@@ -1,6 +1,14 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
-import { iptvApi } from '../api/iptv.api';
+import { iptvApi, type IptvPickKey } from '../api/iptv.api';
 import type { VideoStartOptions } from '@/lib/video-options';
+
+/** A playlist mutation can change both saved picks and their current channel matches. */
+function invalidateIptvLists(qc: ReturnType<typeof useQueryClient>) {
+  return Promise.all([
+    'iptv-playlists', 'iptv-channels', 'iptv-groups', 'iptv-console-channels',
+    'iptv-console-groups', 'iptv-favourites', 'iptv-recent',
+  ].map((key) => qc.invalidateQueries({ queryKey: [key] })));
+}
 
 /** Load IPTV playlists, optionally scoped to a server. */
 export function useIptvPlaylists(serverConfigId?: number) {
@@ -15,7 +23,7 @@ export function useCreateIptvPlaylist() {
   return useMutation({
     mutationFn: (data: { name: string; url: string; serverConfigId: number; autoRefreshMinutes?: number }) =>
       iptvApi.createPlaylist(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['iptv-playlists'] }),
+    onSuccess: () => invalidateIptvLists(qc),
   });
 }
 
@@ -24,7 +32,7 @@ export function useUploadIptvPlaylist() {
   return useMutation({
     mutationFn: (data: { name: string; serverConfigId: number; file: File }) =>
       iptvApi.uploadPlaylist(data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['iptv-playlists'] }),
+    onSuccess: () => invalidateIptvLists(qc),
   });
 }
 
@@ -33,11 +41,7 @@ export function useReplaceIptvPlaylistFile() {
   return useMutation({
     mutationFn: ({ id, file }: { id: number; file: File }) =>
       iptvApi.replacePlaylistFile(id, file),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['iptv-playlists'] });
-      qc.invalidateQueries({ queryKey: ['iptv-channels'] });
-      qc.invalidateQueries({ queryKey: ['iptv-groups'] });
-    },
+    onSuccess: () => invalidateIptvLists(qc),
   });
 }
 
@@ -46,7 +50,7 @@ export function useUpdateIptvPlaylist() {
   return useMutation({
     mutationFn: ({ id, data }: { id: number; data: { name?: string; url?: string; autoRefreshMinutes?: number } }) =>
       iptvApi.updatePlaylist(id, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['iptv-playlists'] }),
+    onSuccess: () => invalidateIptvLists(qc),
   });
 }
 
@@ -54,7 +58,7 @@ export function useDeleteIptvPlaylist() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => iptvApi.deletePlaylist(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['iptv-playlists'] }),
+    onSuccess: () => invalidateIptvLists(qc),
   });
 }
 
@@ -62,11 +66,7 @@ export function useRefreshIptvPlaylist() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => iptvApi.refreshPlaylist(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['iptv-playlists'] });
-      qc.invalidateQueries({ queryKey: ['iptv-channels'] });
-      qc.invalidateQueries({ queryKey: ['iptv-groups'] });
-    },
+    onSuccess: () => invalidateIptvLists(qc),
   });
 }
 
@@ -118,10 +118,40 @@ export function useConsoleIptvChannels(params: {
 
 /** Expose the existing IPTV stream endpoint to console channel rows. */
 export function useIptvStream() {
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ botId, channelId, preset, options }: {
       botId: number; channelId: number; preset?: string; options?: VideoStartOptions;
     }) => iptvApi.stream(botId, channelId, options ?? preset),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['iptv-recent'] }),
+  });
+}
+
+/** Saved picks are server-scoped and refetch after mutations rather than polling. */
+export function useIptvFavourites(serverConfigId: number) {
+  return useQuery({
+    queryKey: ['iptv-favourites', serverConfigId],
+    queryFn: () => iptvApi.favourites(serverConfigId),
+  });
+}
+
+export function useIptvRecent(serverConfigId: number) {
+  return useQuery({
+    queryKey: ['iptv-recent', serverConfigId],
+    queryFn: () => iptvApi.recent(serverConfigId),
+  });
+}
+
+/** Removing a disappeared pick also clears its recent entry. */
+export function useSetIptvFavourite() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ favourite, ...pick }: IptvPickKey & { favourite: boolean; removeRecent?: boolean }) =>
+      favourite ? iptvApi.addFavourite(pick) : iptvApi.removeFavourite(pick),
+    onSuccess: (_data, pick) => Promise.all([
+      qc.invalidateQueries({ queryKey: ['iptv-favourites', pick.serverConfigId] }),
+      qc.invalidateQueries({ queryKey: ['iptv-recent', pick.serverConfigId] }),
+    ]),
   });
 }
 

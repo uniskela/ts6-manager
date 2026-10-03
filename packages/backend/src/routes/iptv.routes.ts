@@ -15,6 +15,7 @@ import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { runMediaAudited } from './media-audit.js';
 import { loadIptvLocalHosts } from '../utils/app-settings.js';
+import { iptvChannelKey, listIptvPicks, recordIptvRecent } from '../iptv/iptv-picks.js';
 
 export const iptvRoutes: Router = Router();
 
@@ -138,7 +139,7 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
         group: channel.groupTitle ?? '',
         playlistId: channel.playlistId,
         playlistName: channel.playlist?.name ?? '',
-        channelKey: channel.tvgId || channel.name,
+        channelKey: iptvChannelKey(channel),
         // Keep the source fields available to existing IPTV consumers.
         url: channel.url,
         groupTitle: channel.groupTitle ?? null,
@@ -146,6 +147,68 @@ iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFuncti
         position: channel.position,
       })),
     });
+  } catch (err) { next(err); }
+});
+
+/** Pick mutations accept only full, positive IDs and an exact stable key. */
+function pickIdentity(req: Request) {
+  const { serverConfigId, playlistId, channelKey } = req.body ?? {};
+  for (const [name, value] of [['serverConfigId', serverConfigId], ['playlistId', playlistId]] as const) {
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) {
+      throw new AppError(400, `${name} must be a positive whole number`);
+    }
+  }
+  if (typeof channelKey !== 'string' || !channelKey.trim()) throw new AppError(400, 'channelKey is required');
+  return { serverConfigId: serverConfigId as number, playlistId: playlistId as number, channelKey };
+}
+
+iptvRoutes.get('/favourites', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await listIptvPicks(req.app.locals.prisma, positiveQueryInt(req, 'serverConfigId', true)!, 'favourites'));
+  } catch (err) { next(err); }
+});
+
+iptvRoutes.get('/recent', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    res.json(await listIptvPicks(req.app.locals.prisma, positiveQueryInt(req, 'serverConfigId', true)!, 'recent'));
+  } catch (err) { next(err); }
+});
+
+iptvRoutes.put('/favourites', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const key = pickIdentity(req);
+    const candidates = await prisma.iptvChannel.findMany({
+      where: { playlistId: key.playlistId, playlist: { serverConfigId: key.serverConfigId }, OR: [{ tvgId: key.channelKey }, { name: key.channelKey }] },
+      orderBy: [{ position: 'asc' }, { id: 'asc' }],
+    });
+    const channel = candidates.find((c: { tvgId: string | null; name: string }) => iptvChannelKey(c) === key.channelKey);
+    if (!channel) throw new AppError(404, 'Channel not found');
+    await prisma.iptvChannelPick.upsert({
+      where: { serverConfigId_playlistId_channelKey: key },
+      create: { ...key, name: channel.name, favourite: true }, update: { name: channel.name, favourite: true },
+    });
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
+iptvRoutes.delete('/favourites', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const key = pickIdentity(req);
+    if (req.body.removeRecent !== undefined && typeof req.body.removeRecent !== 'boolean') throw new AppError(400, 'removeRecent must be a boolean');
+    const playlist = await prisma.iptvPlaylist.findFirst({ where: { id: key.playlistId, serverConfigId: key.serverConfigId }, select: { id: true } });
+    if (!playlist) throw new AppError(404, 'Playlist not found');
+    await prisma.$transaction(async (tx: import('../../generated/prisma/index.js').Prisma.TransactionClient) => {
+      if (req.body.removeRecent === true) {
+        // A missing-channel Remove clears its saved row from both views.
+        await tx.iptvChannelPick.deleteMany({ where: key });
+      } else {
+        await tx.iptvChannelPick.updateMany({ where: key, data: { favourite: false } });
+        await tx.iptvChannelPick.deleteMany({ where: { ...key, favourite: false, lastStreamedAt: null } });
+      }
+    });
+    res.json({ success: true });
   } catch (err) { next(err); }
 });
 
@@ -375,11 +438,12 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
     });
     if (!parsed.ok) throw new AppError(400, parsed.error);
 
-    const channel = await prisma.iptvChannel.findUnique({ where: { id: parseInt(channelId) } });
+    const channel = await prisma.iptvChannel.findUnique({ where: { id: parseInt(channelId) }, include: { playlist: { select: { serverConfigId: true } } } });
     if (!channel) throw new AppError(404, 'Channel not found');
 
     const bot = manager.getBot(parseInt(botId));
     if (!bot) throw new AppError(404, 'Music bot not found or not running');
+    if (channel.playlist.serverConfigId !== bot.currentConfig.serverConfigId) throw new AppError(404, 'Channel not found');
 
     // Channels come from admin-configured playlists, so they may use the
     // admin-approved LAN hosts (set server-side, never from the request body).
@@ -397,6 +461,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
       );
     }
 
+    await recordIptvRecent(prisma, bot.currentConfig.serverConfigId, channel);
     res.json({ success: true, channel: { id: channel.id, name: channel.name } });
   } catch (err) { next(err); }
 });

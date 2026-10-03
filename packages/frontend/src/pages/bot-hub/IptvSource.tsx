@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Search, Tv } from 'lucide-react';
+import { ArrowLeft, Search, Star, Tv } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -15,13 +15,17 @@ import {
   useConsoleIptvChannels,
   useConsoleIptvGroups,
   useIptvPlaylists,
+  useIptvFavourites,
+  useIptvRecent,
+  useSetIptvFavourite,
   useIptvStream,
 } from '@/hooks/use-iptv';
-import type { IptvConsoleChannel, IptvGroupInfo, IptvPlaylistSummary } from '@ts6/common';
+import type { IptvChannelPickInfo, IptvConsoleChannel, IptvGroupInfo, IptvPlaylistSummary } from '@ts6/common';
 import type { ConsoleSourceContext } from './SourcePicker';
 import { parseIptvDeepLink, type IptvDeepLink } from './iptv-deep-link';
 
 const IPTV_VIDEO_OPTIONS: VideoStartOptions = { ...DEFAULT_VIDEO_START_OPTIONS, sourceMode: 'live' };
+type IptvView = 'Favourites' | 'Recent' | 'Browse groups';
 
 /** Return the stable key used by IPTV deep links. */
 function channelKey(channel: IptvConsoleChannel): string {
@@ -33,6 +37,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [deepLink] = useState<IptvDeepLink | null>(() => parseIptvDeepLink(searchParams.get('iptv')));
   const [playlistId, setPlaylistId] = useState<number | undefined>(deepLink?.playlistId);
   const [group, setGroup] = useState('');
+  const [view, setView] = useState<IptvView | null>(null);
   const [groupFilter, setGroupFilter] = useState('');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -41,6 +46,16 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-groups'));
   const [options, setOptions] = useState<VideoStartOptions>(IPTV_VIDEO_OPTIONS);
   const playlistsQuery = useIptvPlaylists(serverConfigId);
+  const favouritesQuery = useIptvFavourites(serverConfigId);
+  const recentQuery = useIptvRecent(serverConfigId);
+  const setFavourite = useSetIptvFavourite();
+  const favourites = favouritesQuery.data ?? [];
+  const currentView = view ?? 'Browse groups';
+  const picksQuery = currentView === 'Recent' ? recentQuery : favouritesQuery;
+  const picks = (picksQuery.data ?? []).filter((pick) =>
+    (!playlistId || pick.playlistId === playlistId)
+    && (pick.channel?.name ?? pick.name).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
   const stream = useIptvStream();
   const playlists = (Array.isArray(playlistsQuery.data) ? playlistsQuery.data : []) as IptvPlaylistSummary[];
   const deepLinkMode = !!deepLink;
@@ -72,7 +87,14 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   useEffect(() => {
     setPage(1);
     setGroupPage(1);
-  }, [playlistId, group, search, groupFilter]);
+  }, [playlistId, group, search, groupFilter, view]);
+
+  useEffect(() => {
+    if (favouritesQuery.isSuccess || favouritesQuery.isError) {
+      // An explicit selection made while the request loads always wins.
+      setView((selected) => selected ?? (favourites.length ? 'Favourites' : 'Browse groups'));
+    }
+  }, [favouritesQuery.isSuccess, favouritesQuery.isError, favourites.length]);
 
   /** Change the playlist filter and return to the group browser. */
   const selectPlaylist = (value: string) => {
@@ -86,6 +108,22 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     stream.mutate({ botId, channelId: channel.id, options });
   };
 
+  const isFavourite = (channel: IptvConsoleChannel) => favourites.some((pick) =>
+    pick.playlistId === channel.playlistId && pick.channelKey === channelKey(channel),
+  );
+  const toggleFavourite = (channel: IptvConsoleChannel) => {
+    setFavourite.mutate({ serverConfigId, playlistId: channel.playlistId, channelKey: channelKey(channel), favourite: !isFavourite(channel) });
+  };
+  const removeMissingPick = (pick: IptvChannelPickInfo) => {
+    setFavourite.mutate({ serverConfigId, playlistId: pick.playlistId, channelKey: pick.channelKey, favourite: false, removeRecent: true });
+  };
+  const renderChannel = (channel: IptvConsoleChannel, fetching: boolean) => (
+    <ChannelRow key={`${channel.playlistId}:${channelKey(channel)}`} channel={channel} onStream={startStream}
+      busy={stream.isPending || fetching} favourite={isFavourite(channel)} onToggleFavourite={toggleFavourite}
+      favouriteBusy={setFavourite.isPending || favouritesQuery.isFetching || favouritesQuery.isError} />
+  );
+  const favouriteError = setFavourite.error ?? favouritesQuery.error;
+
   if (deepLinkMode) {
     if (!deepLinkFinished || channelsQuery.isFetching) return <p className="text-sm text-muted-foreground">Loading channel…</p>;
     if (channelsQuery.isError) return <p role="alert" className="text-sm text-destructive">{apiErrorMessage(channelsQuery.error, 'Could not load channel')}</p>;
@@ -94,7 +132,8 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
       <div className="space-y-4">
         <VideoOptions value={options} onChange={setOptions} />
         {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
-        <ChannelRow channel={deepChannel} onStream={startStream} busy={stream.isPending} />
+        {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
+        {renderChannel(deepChannel, channelsQuery.isFetching)}
       </div>
     );
   }
@@ -103,6 +142,13 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     <div className="min-w-0 space-y-4">
       <VideoOptions value={options} onChange={setOptions} />
       {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
+      {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
+      <div role="group" aria-label="IPTV views" className="flex flex-wrap gap-1.5">
+        {(['Favourites', 'Recent', 'Browse groups'] as const).map((name) => (
+          <Button key={name} type="button" variant={currentView === name ? 'default' : 'outline'} className="min-h-11"
+            aria-pressed={currentView === name} onClick={() => { setView(name); setPage(1); }}>{name}</Button>
+        ))}
+      </div>
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-1.5">
           <Label htmlFor="console-iptv-playlist">Playlist</Label>
@@ -122,7 +168,26 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
         </div>
       </div>
 
-      {openChannels ? (
+      {currentView !== 'Browse groups' ? (
+        <section aria-labelledby="console-iptv-picks-heading" className="space-y-3">
+          <h3 id="console-iptv-picks-heading" className="text-sm font-semibold">{currentView}</h3>
+          {currentView === 'Recent' && recentQuery.isError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(recentQuery.error, 'Could not load recent channels')}</p>}
+          {picksQuery.isLoading ? <p className="text-sm text-muted-foreground">Loading channels…</p> : (
+            <div className="space-y-2">
+              {pageSlice(picks, page, pageSize).map((pick) => pick.channel ? renderChannel(pick.channel, picksQuery.isFetching) : (
+                <div key={`${pick.playlistId}:${pick.channelKey}`} className="flex min-w-0 items-center gap-3 rounded-md border p-2.5">
+                  <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{pick.name}</p><p className="text-xs text-muted-foreground">No longer in this playlist</p></div>
+                  <Button type="button" variant="outline" className="min-h-11 shrink-0" aria-label={`Remove ${pick.name}`}
+                    disabled={setFavourite.isPending || picksQuery.isFetching} onClick={() => removeMissingPick(pick)}>Remove</Button>
+                </div>
+              ))}
+              {!picksQuery.isError && picks.length === 0 && <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No channels found.</p>}
+            </div>
+          )}
+          <Pager listKey="console-iptv-channels" total={picks.length} page={page} pageSize={pageSize} noun="channels"
+            onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} />
+        </section>
+      ) : openChannels ? (
         <section aria-labelledby="console-iptv-channel-heading" className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 id="console-iptv-channel-heading" className="text-sm font-semibold">{group ? group : 'Search results'}</h3>
@@ -130,7 +195,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
           </div>
           {channelsQuery.isError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(channelsQuery.error, 'Could not load channels')}</p>}
           <div className="space-y-2">
-            {channels.map((channel) => <ChannelRow key={channel.id} channel={channel} onStream={startStream} busy={stream.isPending || channelsQuery.isFetching} />)}
+            {channels.map((channel) => renderChannel(channel, channelsQuery.isFetching))}
             {!channelsQuery.isFetching && channels.length === 0 && <p className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">No channels found.</p>}
           </div>
           <Pager listKey="console-iptv-channels" total={channelsQuery.data?.total ?? 0} page={channelsQuery.data?.page ?? page} pageSize={pageSize} noun="channels"
@@ -159,11 +224,19 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
 }
 
 /** Render one channel row without allowing stale placeholder results to stream. */
-function ChannelRow({ channel, onStream, busy }: { channel: IptvConsoleChannel; onStream(channel: IptvConsoleChannel): void; busy: boolean }) {
+function ChannelRow({ channel, onStream, busy, favourite, onToggleFavourite, favouriteBusy }: {
+  channel: IptvConsoleChannel; onStream(channel: IptvConsoleChannel): void; busy: boolean;
+  favourite: boolean; onToggleFavourite(channel: IptvConsoleChannel): void; favouriteBusy: boolean;
+}) {
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-md border p-2.5">
       {channel.logo ? <img src={channel.logo} alt="" className="h-10 w-10 shrink-0 rounded object-contain" /> : <Tv className="h-10 w-10 shrink-0 rounded bg-muted p-2 text-muted-foreground" aria-hidden="true" />}
       <div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{channel.name}</p><p className="truncate text-xs text-muted-foreground">{channel.playlistName}{channel.group ? ` · ${channel.group}` : ''}</p></div>
+      <Button type="button" variant="ghost" size="icon" className="h-11 w-11 shrink-0" aria-pressed={favourite}
+        aria-label={favourite ? `Remove ${channel.name} from favourites` : `Add ${channel.name} to favourites`}
+        disabled={favouriteBusy} onClick={() => onToggleFavourite(channel)}>
+        <Star className={favourite ? 'h-5 w-5 fill-current text-amber-500' : 'h-5 w-5'} aria-hidden="true" />
+      </Button>
       <Button type="button" className="min-h-11 shrink-0" aria-label={`Stream ${channel.name}`} disabled={busy} onClick={() => onStream(channel)}>Stream</Button>
     </div>
   );
