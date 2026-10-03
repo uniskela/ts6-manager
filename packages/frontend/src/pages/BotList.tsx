@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useRef, useState, type KeyboardEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useBots, useCreateBot, useToggleBot } from '@/hooks/use-bots';
 import { useServerStore } from '@/stores/server.store';
 import { botsApi } from '@/api/bots.api';
@@ -19,9 +19,12 @@ import { TemplateGallery } from '@/components/bots/TemplateGallery';
 import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { timeAgo } from '@/lib/utils';
+import { CommandsTab } from '@/pages/media-bots/CommandsTab';
 
+/** Render Bot Flows and its server-scoped Chat commands tab. */
 export default function BotList() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { selectedConfigId, selectedSid } = useServerStore();
   const { data, isLoading } = useBots();
@@ -34,6 +37,8 @@ export default function BotList() {
   const [deleteId, setDeleteId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
+  const flowsTabRef = useRef<HTMLButtonElement>(null);
+  const chatCommandsTabRef = useRef<HTMLButtonElement>(null);
 
   const bots = Array.isArray(data) ? data : [];
   const { isPending: connectionsPending, hasNoConnections } = useConnectionAvailability();
@@ -52,6 +57,58 @@ export default function BotList() {
     });
   };
 
+  const commandsTab = searchParams.get('tab') === 'commands';
+  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+    event.preventDefault();
+    const nextCommands = !commandsTab;
+    setSearchParams(nextCommands ? { tab: 'commands' } : {});
+    (nextCommands ? chatCommandsTabRef : flowsTabRef).current?.focus();
+  };
+  const tabLinks = (
+    <div className="flex gap-1 border-b" role="tablist" aria-label="Bot Flows sections">
+      <button
+        type="button"
+        role="tab"
+        id="bot-flows-tab"
+        ref={flowsTabRef}
+        aria-controls="bot-flows-panel"
+        aria-selected={!commandsTab}
+        tabIndex={commandsTab ? -1 : 0}
+        onKeyDown={handleTabKeyDown}
+        className={`border-b-2 px-3 py-2 text-sm ${!commandsTab ? 'border-primary font-medium' : 'border-transparent text-muted-foreground'}`}
+        onClick={() => setSearchParams({})}
+      >Flows</button>
+      <button
+        type="button"
+        role="tab"
+        id="bot-chat-commands-tab"
+        ref={chatCommandsTabRef}
+        aria-controls="bot-chat-commands-panel"
+        aria-selected={commandsTab}
+        tabIndex={commandsTab ? 0 : -1}
+        onKeyDown={handleTabKeyDown}
+        className={`border-b-2 px-3 py-2 text-sm ${commandsTab ? 'border-primary font-medium' : 'border-transparent text-muted-foreground'}`}
+        onClick={() => setSearchParams({ tab: 'commands' })}
+      >Chat commands</button>
+    </div>
+  );
+
+  if (commandsTab) {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">Bot Flows</h1>
+          <Button variant="outline" size="sm" onClick={() => setSearchParams({})}>Back to flows</Button>
+        </div>
+        {tabLinks}
+        <div role="tabpanel" id="bot-chat-commands-panel" aria-labelledby="bot-chat-commands-tab" tabIndex={0}>
+          <CommandsTab showClashWarnings />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -61,7 +118,8 @@ export default function BotList() {
           <Button size="sm" disabled={createBlocked} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" /> New Bot</Button>
         </div>
       </div>
-
+      {tabLinks}
+      <div role="tabpanel" id="bot-flows-panel" aria-labelledby="bot-flows-tab" tabIndex={0}>
       {bots.length > 0 && hasNoConnections && (
         <ConnectionRequiredNotice>New bot flows need a TeamSpeak server connection.</ConnectionRequiredNotice>
       )}
@@ -165,6 +223,7 @@ export default function BotList() {
         }}
         destructive
       />
+      </div>
     </div>
   );
 }

@@ -37,11 +37,15 @@ import {
 } from '@/hooks/use-chat-commands';
 import { TS6_CHAT_RESPONSE_EXAMPLE } from '@/lib/ts6-chat-format';
 import { Ts6ChatResponseEditor } from '@/components/Ts6ChatResponseEditor';
+import { BUILTIN_CHAT_COMMANDS } from '@ts6/common';
+import { useFlowCommandTriggers } from '@/hooks/use-flow-command-triggers';
+import { describeCommandClash, findCommandClashes } from '@/lib/command-clashes';
 
 
 // ─── Commands Tab ────────────────────────────────────────────────────────────
 
-export function CommandsTab() {
+/** Render custom chat command CRUD, optionally with Bot Flows clash context. */
+export function CommandsTab({ showClashWarnings = false }: { showClashWarnings?: boolean } = {}) {
   const { selectedConfigId } = useServerStore();
   const { data: servers } = useServers();
   const [serverId, setServerId] = useState<number | null>(selectedConfigId);
@@ -65,6 +69,14 @@ export function CommandsTab() {
   const presetList = (Array.isArray(presets) ? presets : []) as ChatCommandPreset[];
   const existingNames = new Set(commandList.map((c) => c.name));
   const missingPresetCount = presetList.filter((p) => !existingNames.has(p.name)).length;
+  const flowCommandNames = useFlowCommandTriggers(showClashWarnings ? configId : null);
+  const clashes = showClashWarnings
+    ? findCommandClashes({
+        custom: commandList.map((command) => command.name),
+        flows: flowCommandNames,
+        builtins: BUILTIN_CHAT_COMMANDS,
+      })
+    : [];
 
   const resetForm = () => setForm({ name: '', response: '', description: '', enabled: true });
 
@@ -184,6 +196,28 @@ export function CommandsTab() {
 
   return (
     <div className="space-y-4">
+      {showClashWarnings && (
+        <>
+          <p className="text-sm text-muted-foreground">
+            Custom replies are answered by media bots in their command channels; flows run in the flow engine.
+          </p>
+          {clashes.length > 0 && (
+            <div role="alert" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <p className="font-medium text-amber-200">Command name clashes</p>
+              <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+                {clashes.map((clash) => <li key={clash.name}>{describeCommandClash(clash)}</li>)}
+              </ul>
+            </div>
+          )}
+          <div className="rounded-md border p-3">
+            <p className="text-sm font-medium">Built-in commands</p>
+            <p className="mt-1 text-xs text-muted-foreground">These commands are handled by media bots.</p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {BUILTIN_CHAT_COMMANDS.map((name) => <code key={name} className="rounded bg-muted px-1.5 py-0.5 text-xs">!{name}</code>)}
+            </div>
+          </div>
+        </>
+      )}
       <div className="flex items-center gap-2 flex-wrap">
         <Select value={String(configId)} onValueChange={(v) => setServerId(parseInt(v))}>
           <SelectTrigger className="w-48">
@@ -355,10 +389,11 @@ export function CommandsTab() {
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Command name</Label>
+              <Label className="text-xs" htmlFor="chat-command-name">Command name</Label>
               <div className="flex items-center gap-1">
                 <span className="text-sm text-muted-foreground">!</span>
                 <Input
+                  id="chat-command-name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="rules"
@@ -421,10 +456,11 @@ export function CommandsTab() {
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Command name</Label>
+              <Label className="text-xs" htmlFor="chat-command-name">Command name</Label>
               <div className="flex items-center gap-1">
                 <span className="text-sm text-muted-foreground">!</span>
                 <Input
+                  id="chat-command-name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   className="flex-1"
@@ -492,4 +528,3 @@ export function CommandsTab() {
     </div>
   );
 }
-
