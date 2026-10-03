@@ -171,11 +171,11 @@ iptvRoutes.get('/filters', async (req: Request, res: Response, next: NextFunctio
   try {
     const prisma: PrismaClient = req.app.locals.prisma;
     const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
-    const rows = await prisma.iptvChannel.findMany({
-      where: { playlist: { serverConfigId } },
-      select: { tvgCountry: true, tvgLanguage: true },
-      distinct: ['tvgCountry', 'tvgLanguage'],
-    });
+    const rows = await prisma.$queryRaw<Array<{ tvgCountry: string | null; tvgLanguage: string | null }>>`
+      SELECT DISTINCT c."tvgCountry", c."tvgLanguage"
+      FROM "IptvChannel" c JOIN "IptvPlaylist" p ON p."id" = c."playlistId"
+      WHERE p."serverConfigId" = ${serverConfigId}
+        AND (c."tvgCountry" IS NOT NULL OR c."tvgLanguage" IS NOT NULL)`;
     const countries = new Set<string>();
     const languages = new Set<string>();
     for (const row of rows) {

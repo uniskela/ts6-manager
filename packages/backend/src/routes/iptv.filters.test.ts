@@ -14,7 +14,9 @@ import { recordIptvRecent } from '../iptv/iptv-picks.js';
 
 const directory = mkdtempSync(join(tmpdir(), 'iptv-filters-'));
 const databaseUrl = `file:${join(directory, 'test.db')}`;
-const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+const prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: 'event', level: 'query' }] });
+let databaseQueries: string[] = [];
+prisma.$on('query', (event) => { databaseQueries.push(event.query); });
 let serverId: number;
 let otherServerId: number;
 let playlistId: number;
@@ -121,6 +123,16 @@ describe('IPTV country and language filters against SQLite', () => {
     const response = await send(`/filters?${scope()}`);
     assert.equal(response.status, 200);
     assert.deepEqual(response.body, { countries: ['AUS', 'CA', 'GB', 'U S', 'US'], languages: ['en', 'es', 'fr', 'french'] });
+  });
+  it('deduplicates available metadata in SQLite before transferring rows to the route', async () => {
+    await prisma.iptvChannel.createMany({ data: Array.from({ length: 100 }, (_, index) => ({
+      playlistId, name: `Duplicate ${index}`, url: 'https://example.test/duplicate', tvgCountry: 'US', tvgLanguage: 'en',
+    })) });
+    databaseQueries = [];
+    const response = await send(`/filters?${scope()}`);
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { countries: ['AUS', 'CA', 'GB', 'U S', 'US'], languages: ['en', 'es', 'fr', 'french'] });
+    assert.ok(databaseQueries.some((query) => /\bSELECT\s+DISTINCT\b|\bGROUP\s+BY\b/i.test(query)), 'metadata must be deduplicated by the database query');
   });
   it('returns empty available values when the server has no metadata', async () => {
     await prisma.iptvChannel.updateMany({ where: { playlist: { serverConfigId: serverId } }, data: { tvgCountry: null, tvgLanguage: null } });
