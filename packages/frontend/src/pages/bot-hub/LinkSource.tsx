@@ -26,7 +26,7 @@ const FOLDER_HINT = 'Music-folder files play from the Music tab.';
 export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<LinkPlayMode>('music');
-  const [options, setOptions] = useVideoStartOptions(serverConfigId);
+  const [options, setOptions, optionsLoading] = useVideoStartOptions(serverConfigId);
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
 
@@ -36,7 +36,7 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const effectiveMode: LinkPlayMode = mode === 'music' && trimmed && !musicPlayAllowed(input) ? 'video' : mode;
   const busy = playUrl.isPending || startVideo.isPending;
   const error = effectiveMode === 'video' ? startVideo.error : playUrl.error;
-  const canStart = trimmed.length > 0 && !busy;
+  const canStart = trimmed.length > 0 && !busy && !(effectiveMode === 'video' && optionsLoading);
 
   useEffect(() => {
     if (trimmed && !musicPlayAllowed(input) && mode === 'music') setMode('video');

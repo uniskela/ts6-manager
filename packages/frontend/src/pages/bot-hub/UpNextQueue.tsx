@@ -101,8 +101,9 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
   const repeat = state?.repeat ?? 'off';
 
   // Radio and video streams never use the music queue: an empty Up next is
-  // just noise there. A non-empty one stays so it can be resumed.
-  if (keptFor && (state ? items.length === 0 : !loadError)) return null;
+  // just noise there. A non-empty one stays so it can be resumed; a load
+  // error always shows.
+  if (keptFor && !loadError && (!state || items.length === 0)) return null;
 
   if (!state) {
     return (
@@ -140,6 +141,12 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
           </Button>
         </div>
       </div>
+
+      {loadError != null && (
+        <p role="alert" className="text-sm text-destructive">
+          Could not refresh the queue. {apiErrorMessage(loadError, 'Try again in a moment.')}
+        </p>
+      )}
 
       {keptFor && items.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">

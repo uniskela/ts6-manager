@@ -90,9 +90,11 @@ export function useVideoEncoderCapabilities() {
 export function useVideoStartOptions(
   serverConfigId: number | null | undefined,
   sourceMode: VideoSourceModeRequest = 'auto',
-): [VideoStartOptions, (next: VideoStartOptions) => void] {
-  const { data } = useServerVideoStreamingSettings(serverConfigId);
+): [VideoStartOptions, (next: VideoStartOptions) => void, boolean] {
+  const { data, isLoading } = useServerVideoStreamingSettings(serverConfigId);
   const [chosen, setChosen] = useState<{ serverConfigId: number | null | undefined; options: VideoStartOptions } | null>(null);
   const own = chosen && chosen.serverConfigId === serverConfigId ? chosen.options : null;
-  return [own ?? videoStartDefaults(data?.effective, sourceMode), (next) => setChosen({ serverConfigId, options: next })];
+  // Until the defaults arrive, a start would send Auto and skip the server's encoder.
+  const loading = !own && isLoading;
+  return [own ?? videoStartDefaults(data?.effective, sourceMode), (next) => setChosen({ serverConfigId, options: next }), loading];
 }

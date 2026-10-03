@@ -42,7 +42,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [pageSize, setPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-channels'));
   const [groupPage, setGroupPage] = useState(1);
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-groups'));
-  const [options, setOptions] = useVideoStartOptions(serverConfigId, 'live');
+  const [options, setOptions, optionsLoading] = useVideoStartOptions(serverConfigId, 'live');
   const playlistsQuery = useIptvPlaylists(serverConfigId);
   const favouritesQuery = useIptvFavourites(serverConfigId);
   const recentQuery = useIptvRecent(serverConfigId);
@@ -121,7 +121,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   };
   const renderChannel = (channel: IptvConsoleChannel, fetching: boolean) => (
     <ChannelRow key={`${channel.playlistId}:${channelKey(channel)}`} channel={channel} onStream={startStream}
-      busy={stream.isPending || fetching} favourite={isFavourite(channel)} onToggleFavourite={toggleFavourite}
+      busy={stream.isPending || optionsLoading || fetching} favourite={isFavourite(channel)} onToggleFavourite={toggleFavourite}
       favouriteBusy={setFavourite.isPending || favouritesQuery.isFetching || favouritesQuery.isError} />
   );
   const favouriteError = setFavourite.error ?? favouritesQuery.error;
