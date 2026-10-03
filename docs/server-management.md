@@ -25,6 +25,12 @@ Administrators can:
 - move connected clients; and
 - use server and channel groups.
 
+### Hosted channel banners
+
+TS6 channels can show a banner image. Instead of hosting the image elsewhere, an administrator can upload it in the channel's **Edit** dialog under **Hosted banners**. The manager stores the image (PNG, JPEG, GIF or WebP, at most 5 MB, up to 100 banners) in its data volume and fills **Banner image URL** with a public link such as `https://ts6.example.com/api/banners/<id>.png`. Saving the channel sends that link to TeamSpeak. One hosted banner can be used by any number of channels.
+
+TeamSpeak clients download the image themselves, so the link must use an address they can reach. Set it once in the picker (**Public URL**), or with the `PUBLIC_URL` environment variable; the saved setting wins. Include a path prefix if the manager is served under one. The `/api/banners/` route is public and serves only the uploaded images under their random names. Deleting a hosted banner breaks the banner on every channel still using it.
+
 Human and bot counts exclude ServerQuery sessions by default. Administrators can persistently enable **Show Query clients** when diagnostics require them.
 
 ![Channel tree with connected clients](channels.png)

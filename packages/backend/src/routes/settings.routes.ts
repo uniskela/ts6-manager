@@ -26,7 +26,11 @@ import {
   IPTV_LOCAL_HOSTS_KEY,
   loadIptvLocalHosts,
   parseIptvLocalHostsUpdate,
+  PUBLIC_URL_KEY,
+  loadPublicUrl,
+  parsePublicUrl,
 } from '../utils/app-settings.js';
+import type { PublicUrlSettings } from '@ts6/common';
 import { SidecarClient } from '../voice/streaming/sidecar-client.js';
 import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
 import { diagnoseRuntimeMedia } from '../voice/audio/runtime-media-diagnostics.js';
@@ -290,6 +294,49 @@ settingsRoutes.put('/iptv-network', requireAdmin, async (req: Request, res: Resp
       }),
     );
     res.json({ allowedLocalHosts: parsed.value });
+  } catch (err) { next(err); }
+});
+
+async function publicUrlSettings(prisma: any): Promise<PublicUrlSettings> {
+  const row = await prisma.appSetting.findUnique({ where: { key: PUBLIC_URL_KEY } });
+  const saved = parsePublicUrl(row?.value);
+  const { publicUrl: effective, source } = await loadPublicUrl(prisma);
+  return { publicUrl: saved.ok ? saved.value : null, effective, source };
+}
+
+// GET /api/settings/public-url — address TeamSpeak clients use to reach this manager.
+settingsRoutes.get('/public-url', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    res.json(await publicUrlSettings(req.app.locals.prisma));
+  } catch (err) { next(err); }
+});
+
+// PUT /api/settings/public-url — save or clear (empty) the public URL.
+settingsRoutes.put('/public-url', requireAdmin, async (req: Request, res: Response, next) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const parsed = parsePublicUrl(req.body?.publicUrl);
+    if (!parsed.ok) throw new AppError(400, parsed.error);
+    await recordLocalSuccess(
+      prisma,
+      {
+        actor: actorFromRequest(req.user),
+        action: 'settings.public_url_update',
+        target: { type: 'settings', id: 'public-url' },
+      },
+      async (tx) => {
+        if (!parsed.value) {
+          await tx.appSetting.deleteMany({ where: { key: PUBLIC_URL_KEY } });
+          return;
+        }
+        await tx.appSetting.upsert({
+          where: { key: PUBLIC_URL_KEY },
+          create: { key: PUBLIC_URL_KEY, value: parsed.value },
+          update: { value: parsed.value },
+        });
+      },
+    );
+    res.json(await publicUrlSettings(prisma));
   } catch (err) { next(err); }
 });
 

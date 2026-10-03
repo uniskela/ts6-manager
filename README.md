@@ -357,6 +357,7 @@ npx prisma db seed
 | `JWT_ACCESS_EXPIRY` | `15m` | Access token lifetime |
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | CORS origin |
+| `PUBLIC_URL` | - | Optional. Address TeamSpeak clients use to reach the manager; hosted channel banner links start with it. Can also be set in the channel banner picker. |
 | `MUSIC_DIR` | `/data/music` | Directory for downloaded music files |
 | `SIDECAR_URL` | - | Optional. Full URL of the WebRTC sidecar service (e.g. `http://ts6-sidecar:9800`). Set in Docker when sidecar runs as a separate container. |
 | `SIDECAR_SECRET` | - | **Required when `SIDECAR_URL` is set in production.** Shared bearer token for sidecar mutating APIs. |

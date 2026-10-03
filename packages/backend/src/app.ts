@@ -32,6 +32,7 @@ import { chatCommandRoutes } from './routes/chat-commands.routes.js';
 import { musicRequestRoutes } from './routes/music-requests.routes.js';
 import { widgetPublicRoutes } from './routes/widget-public.routes.js';
 import { widgetRoutes } from './routes/widget.routes.js';
+import { channelBannerRoutes, channelBannerPublicRoutes } from './routes/channel-banners.routes.js';
 import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
@@ -89,6 +90,9 @@ export function createApp(): Express {
   // Public widget routes (unauthenticated — embeddable on external sites)
   app.use('/api/widget', widgetPublicRoutes);
 
+  // Public hosted channel banners (unauthenticated — fetched by TeamSpeak clients)
+  app.use('/api/banners', channelBannerPublicRoutes);
+
   // Protected routes
   app.use('/api', authMiddleware);
   app.use('/api/servers', serverRoutes);
@@ -119,6 +123,7 @@ export function createApp(): Express {
   app.use('/api/servers/:configId/chat-commands', serverAccess, chatCommandRoutes);
   app.use('/api/servers/:configId/music-requests', serverAccess, musicRequestRoutes);
   app.use('/api/widgets', widgetRoutes);
+  app.use('/api/channel-banners', channelBannerRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/audit', auditRoutes);
   app.use('/api/activity-journal', activityJournalRoutes);
