@@ -1,4 +1,5 @@
 import api from './client';
+import { videoStartRequest, type VideoStartOptions } from '@/lib/video-options';
 
 export const iptvApi = {
   // Playlists
@@ -31,11 +32,20 @@ export const iptvApi = {
 
   // Channels
   groups: (playlistId: number) => api.get(`/iptv/playlists/${playlistId}/groups`).then((r) => r.data),
+  consoleGroups: (serverConfigId: number, playlistId?: number) => api.get('/iptv/groups', {
+    params: { serverConfigId, ...(playlistId ? { playlistId } : {}) },
+  }).then((r) => r.data),
   channels: (playlistId: number, params: { search?: string; group?: string; page?: number; pageSize?: number }) =>
     api.get(`/iptv/playlists/${playlistId}/channels`, { params }).then((r) => r.data),
+  consoleChannels: (params: { serverConfigId: number; playlistId?: number; group?: string; search?: string; page?: number; pageSize?: number }) =>
+    api.get('/iptv/channels', { params }).then((r) => r.data),
 
   // Streaming (via a music bot's video sidecar)
-  stream: (botId: number, channelId: number, preset?: string) =>
-    api.post('/iptv/stream', { botId, channelId, preset }).then((r) => r.data),
+  stream: (botId: number, channelId: number, options?: string | VideoStartOptions) => {
+    const video = typeof options === 'string'
+      ? { preset: options }
+      : options ? videoStartRequest(options) : {};
+    return api.post('/iptv/stream', { botId, channelId, ...video }).then((r) => r.data);
+  },
   stop: (botId: number) => api.post('/iptv/stop', { botId }).then((r) => r.data),
 };

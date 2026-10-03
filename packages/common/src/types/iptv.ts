@@ -36,6 +36,29 @@ export interface IptvChannelPage {
   channels: IptvChannelInfo[];
 }
 
+export interface IptvGroupInfo {
+  group: string;
+  count: number;
+}
+
+export interface IptvConsoleChannel {
+  id: number;
+  name: string;
+  logo: string | null;
+  group: string;
+  playlistId: number;
+  playlistName: string;
+  channelKey: string;
+  url?: string;
+}
+
+export interface IptvConsoleChannelPage {
+  total: number;
+  page: number;
+  pageSize: number;
+  channels: IptvConsoleChannel[];
+}
+
 export interface CreateIptvPlaylistRequest {
   name: string;
   url: string;

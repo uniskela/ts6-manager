@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { iptvApi } from '../api/iptv.api';
+import type { VideoStartOptions } from '@/lib/video-options';
 
 export function useIptvPlaylists(serverConfigId?: number) {
   return useQuery({
@@ -76,6 +77,13 @@ export function useIptvGroups(playlistId: number | null) {
   });
 }
 
+export function useConsoleIptvGroups(serverConfigId: number, playlistId?: number) {
+  return useQuery({
+    queryKey: ['iptv-console-groups', serverConfigId, playlistId ?? null],
+    queryFn: () => iptvApi.consoleGroups(serverConfigId, playlistId),
+  });
+}
+
 export function useIptvChannels(
   playlistId: number | null,
   params: { search?: string; group?: string; page?: number; pageSize?: number },
@@ -88,10 +96,26 @@ export function useIptvChannels(
   });
 }
 
+export function useConsoleIptvChannels(params: {
+  serverConfigId: number;
+  playlistId?: number;
+  group?: string;
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  return useQuery({
+    queryKey: ['iptv-console-channels', params],
+    queryFn: () => iptvApi.consoleChannels(params),
+    placeholderData: keepPreviousData,
+  });
+}
+
 export function useIptvStream() {
   return useMutation({
-    mutationFn: ({ botId, channelId, preset }: { botId: number; channelId: number; preset?: string }) =>
-      iptvApi.stream(botId, channelId, preset),
+    mutationFn: ({ botId, channelId, preset, options }: {
+      botId: number; channelId: number; preset?: string; options?: VideoStartOptions;
+    }) => iptvApi.stream(botId, channelId, options ?? preset),
   });
 }
 
