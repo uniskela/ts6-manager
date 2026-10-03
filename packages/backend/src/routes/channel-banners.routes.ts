@@ -106,8 +106,9 @@ channelBannerPublicRoutes.get('/:name', publicBannerLimiter, async (req, res, ne
       res.setHeader('Cache-Control', 'no-store');
       throw new AppError(404, 'Banner not found');
     }
-    // Names are random and never reused, so the bytes behind a link never change.
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    // Revalidate every time (Express's ETag makes that a cheap 304) so a
+    // deleted banner stops showing instead of living on in client caches.
+    res.setHeader('Cache-Control', 'public, max-age=0, must-revalidate');
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");

@@ -79,3 +79,13 @@ test('deleting the selected banner clears the field', async ({ page, request }) 
   await expect.poll(() => calls.filter((c) => c.method === 'DELETE').length).toBe(1);
   await expect(dialog.getByPlaceholder('https://… or ts3image://…')).toHaveValue('');
 });
+
+test('changing the public URL updates a selected hosted banner link', async ({ page, request }) => {
+  const { dialog } = await setup(page, request, 'https://old.example.com');
+  await dialog.getByRole('button', { name: 'Use this hosted banner' }).click();
+  await dialog.getByRole('button', { name: 'Change' }).click();
+  await dialog.getByLabel('Public URL').fill('https://new.example.com');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).first().click();
+  await expect(dialog.getByPlaceholder('https://… or ts3image://…')).toHaveValue(`https://new.example.com/api/banners/${existing}`);
+  await expect(dialog.getByRole('button', { name: 'Selected hosted banner' })).toBeVisible();
+});

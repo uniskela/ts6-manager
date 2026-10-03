@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
 import { mkdtemp, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { channelBannerRoutes, channelBannerPublicRoutes } from './channel-banners.routes.js';
@@ -67,7 +68,14 @@ test('upload stores a random server-generated name, audits, and serves it public
     assert.equal(image.status, 200);
     assert.equal(image.headers.get('content-type'), 'image/png');
     assert.equal(image.headers.get('cross-origin-resource-policy'), 'cross-origin');
-    assert.match(image.headers.get('cache-control') ?? '', /immutable/);
+    assert.equal(image.headers.get('cache-control'), 'public, max-age=0, must-revalidate');
+    const etag = image.headers.get('etag');
+    assert.ok(etag);
+    // node:http, not fetch: fetch marks requests with a manual If-None-Match as uncacheable.
+    const revalidated = await new Promise<number | undefined>((resolve, reject) => {
+      http.get(`${f.base}${banner.path}`, { headers: { 'If-None-Match': etag } }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', reject);
+    });
+    assert.equal(revalidated, 304);
     assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
   } finally { await f.close(); }
 });

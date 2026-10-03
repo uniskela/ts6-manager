@@ -15,6 +15,8 @@ import { toast } from 'sonner';
  */
 export function HostedBannerPicker({ value, onSelect }: { value: string; onSelect: (url: string) => void }) {
   const input = useRef<HTMLInputElement>(null);
+  const valueRef = useRef(value);
+  valueRef.current = value;
   const banners = useChannelBanners(true);
   const upload = useUploadChannelBanner();
   const remove = useDeleteChannelBanner();
@@ -29,8 +31,14 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
   const maxMb = data ? Math.round(data.maxBytes / (1024 * 1024)) : 5;
 
   const handleSaveUrl = () => {
+    // Keep a selected hosted banner pointing at the new address; leave other URLs alone.
+    const selected = data?.banners.find((banner) => !!banner.url && banner.url === value);
     savePublicUrl.mutate(urlDraft, {
-      onSuccess: () => { setEditingUrl(null); toast.success('Public URL saved'); },
+      onSuccess: (settings) => {
+        if (selected && settings.effective && valueRef.current === selected.url) onSelect(`${settings.effective}${selected.path}`);
+        setEditingUrl(null);
+        toast.success('Public URL saved');
+      },
     });
   };
 
