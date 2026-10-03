@@ -2,9 +2,19 @@
 
 TS6 Manager includes a Go/Pion media sidecar for low-latency video delivery to TeamSpeak clients and the browser preview.
 
+## Starting from the console
+
+Open **Bot Hub**, then **Open console** on the bot you want to use. If it is offline, press **Start bot** first. The console's **Play something** panel has **Music · Link · Radio · IPTV** source tabs; **Now playing** shows the active session and offers **Stop stream** while video or IPTV is running.
+
+For a video URL, open **Link**, paste the source, choose **Stream as video**, then press **Stream**. **Video options (this start only)** lets you change **Quality**, **Encoder**, **Stop with no viewers after**, and **Source type** for that start. **Default** choices use the server's saved defaults in **Media Library → Streaming defaults**. A URL can also use **Play as music** to play its audio.
+
+To stream a file already under `MUSIC_DIR`, enter its plain filename in **Link**, for example `clip.mp4`, then press **Stream**. Files outside the music folder are rejected. A filename selects **Stream as video** and disables **Play as music**; use the **Music** tab to play a music-folder file as audio.
+
+Opening a console or following an IPTV link only selects a source; press **Stream** to start it.
+
 ## Supported inputs
 
-The streaming path can accept supported YouTube, Twitch, direct media URLs, and IPTV sources.
+The streaming path can accept supported YouTube, Twitch, direct media URLs, local video files, and IPTV sources.
 
 - **YouTube** is downloaded with yt-dlp to a short-lived file under the music directory (avoids googlevideo 403s from datacenter IPs), then encoded.
 - **YouTube, streamed directly** (optional): with *Settings → YouTube → Stream YouTube videos directly* on, a YouTube video is not downloaded. yt-dlp resolves its media URLs and ffmpeg reads them as it plays, so a stream starts in seconds whatever the video's length, and live broadcasts work. Above 720p, and for some live broadcasts, YouTube delivers video and audio as two streams, which the sidecar reads as two inputs. *Max video duration* is not applied in this mode, since nothing is stored; the no-viewer timeout still ends an unwatched stream. Auto quality takes the picture size from yt-dlp, so there is no probe. It is off by default because YouTube refuses direct playback from some networks (the 403s above); if streams fail to start with it on, turn it off. The media URLs expire after some hours, which ends a stream that runs that long.
@@ -86,7 +96,7 @@ If ffmpeg stops on its own, the stream stops instead of showing a frozen picture
 
 ### Volume
 
-The bot has one volume. `!vol`, the media-bot slider, the video stream slider, and the Bot Hub preview slider all set it. Music and radio apply it on each PCM frame. Video and IPTV pass it to the sidecar as an ffmpeg `volume` filter, including streams started from the IPTV page or `!tv` with no separate level. Changing it during a video or IPTV stream restarts the encoder once (on slider release, not on every drag step) so the new gain takes effect; the picture and audio drop for that restart.
+The bot has one volume. `!vol` and the volume sliders in Bot Hub and the console all set it. Music and radio apply it on each PCM frame. Video and IPTV pass it to the sidecar as an ffmpeg `volume` filter, including streams started from the console's IPTV tab or `!tv` with no separate level. Changing it during a video or IPTV stream restarts the encoder once (on slider release, not on every drag step) so the new gain takes effect; the picture and audio drop for that restart.
 
 ### Live pacing (issue #72)
 
@@ -113,17 +123,25 @@ The stop reason says what happened, for example *Replaced by music* or *Replaced
 
 A stream stops on its own when:
 
-- **nobody watches it** — no TeamSpeak client has had it open for the no-viewer timeout (default 5 minutes; Off, 1, 5, 10, 30 minutes or custom). While it counts down, the stream panel shows **Auto-stop in m:ss**. The browser preview does not count as a viewer. Each stream can override the timeout without changing the saved default;
+- **nobody watches it** — no TeamSpeak client has had it open for the no-viewer timeout (default 5 minutes; Off, 1, 5, 10, 30 minutes or custom). While it counts down, **Now playing** shows **auto-stop in m:ss**. The browser preview does not count as a viewer. Each stream can override the timeout without changing the saved default;
 - **the bot's channel is empty** for `BOT_AUTO_STOP_EMPTY_SECONDS` (separate setting; default 300 seconds; `0` disables, including bots created in the UI). A video stream with at least one TeamSpeak viewer is not treated as empty for this timer; the no-viewer timeout still applies when nobody watches;
 - **a downloaded clip ends**.
 
-After a stream stops, the tab shows the last reason, for example *Last stream: Stopped after 5 minutes with no viewers · 8 min ago*.
+After a stream stops, **Now playing** shows the last reason, for example *Last stream: Stopped after 5 minutes with no viewers · 8 min ago*.
 
-With **Announce auto-stops in chat** enabled in Streaming defaults (the default), the bot posts `Stopped the stream: nobody watched for 5 minutes.` when the no-viewer timer stops a stream, or `Stopped the stream: the channel was empty for 5 minutes.` when the channel-empty timer stops it. A stream with more than one minute before its no-viewer stop also gets `Nobody is watching. The stream stops in 1 minute.` in the bot's channel; the warning is cancelled when a viewer joins. No warning is scheduled for a timeout of 60 seconds or less. The existing TeamSpeak flood hold applies to these messages.
+With **Announce auto-stops in chat** enabled in **Media Library → Streaming defaults** (the default), the bot posts `Stopped the stream: nobody watched for 5 minutes.` when the no-viewer timer stops a stream, or `Stopped the stream: the channel was empty for 5 minutes.` when the channel-empty timer stops it. When the configured no-viewer timeout is longer than one minute, the bot also posts `Nobody is watching. The stream stops in 1 minute.` one minute before stopping; the pending warning is cancelled when a viewer joins. No warning is scheduled for a timeout of 60 seconds or less. Turn the switch off and press **Save defaults** to disable both the notices and the warning for the next stream; the timers still stop media. Video and IPTV keep the notice setting saved when they start. The same switch controls channel-empty notices for music and radio. The existing TeamSpeak flood hold applies to these messages.
 
 ## IPTV playlists
 
-The IPTV page manages M3U/M3U8 playlist sources for the selected server. Administrators can add a source as either a **remote playlist URL** or an **uploaded playlist file** (`.m3u`, `.m3u8`, or `.txt` with valid M3U content), then refresh, replace (uploads), or delete it; browse or search its parsed channels; filter by group; choose a running music bot and quality preset; then start or stop that channel's stream.
+The **IPTV** page manages M3U/M3U8 playlist sources for the selected server. Administrators can add a source as either a **Playlist URL** or an **Upload file** (`.m3u`, `.m3u8`, or `.txt` with valid M3U content), then refresh, replace (uploads), or delete it. Browse or search its parsed channels and filter by group. **Stream on…** lets you choose a bot on that server and opens its console with the channel selected. It does not start the stream; start the bot if needed, choose the video options, then press **Stream**. Stop it from **Now playing → Stop stream**.
+
+### Groups, search, favourites and recent channels
+
+The console's **IPTV** tab brings together channels from every playlist on the selected server. Choose **Browse groups** to open a group and see its channels, or use **Search channels** to search by channel name. **Playlist** defaults to **All playlists**; select one to narrow the list. **Filter groups** narrows the group browser, and **All groups** returns from a group's channels. Groups and channel lists offer 25 / 50 / 100 per page, remembered for each list.
+
+Star a channel to add it to **Favourites**. **Recent** shows the last 20 successfully started channels, newest first. Both lists are shared by all bots and administrators on the same server, persist across playlist refreshes when the channel can still be matched, and support playlist and channel-name filtering. The tab opens **Favourites** when there are saved favourites, otherwise **Browse groups**. If a saved channel disappears from its playlist, it shows **No longer in this playlist** with **Remove** instead of a Stream button.
+
+Opening an IPTV link preselects its channel without starting media. If the channel has disappeared, the console shows **That channel is no longer in the playlist**. IPTV starts default to **Live**; quality, encoder and the no-viewer timeout can be changed for that start, and the auto-stop notices above apply to IPTV too.
 
 ### URL vs uploaded source
 
@@ -142,8 +160,8 @@ For safety, ts6-manager refuses links to private addresses (`192.168.x.x`, `10.x
 
 Admins allow those hosts from the IPTV page header: **Local hosts** (administrators only) opens the allowlist dialog. The button shows a count when the list is not empty, and an empty playlist page hints at the same dialog. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`threadfin.lan`).
 
-- The allowance covers IPTV only: playlist refreshes, channels started from the IPTV page, and `!tv <name>`. With `!tv`, users pick a channel name from your playlist, never a URL.
-- Links typed in chat (`!stream`, `!play`), the video URL box and flow HTTP nodes stay blocked from private addresses.
+- The allowance covers IPTV only: playlist refreshes, channels started from the console's **IPTV** tab, and `!tv <name>`. With `!tv`, users pick a channel name from your playlist, never a URL.
+- Links typed in chat (`!stream`, `!play`), the console's **Link** tab and flow HTTP nodes stay blocked from private addresses.
 - Loopback (`127.0.0.1`), link-local and cloud metadata addresses can never be allowed. Inside a container, loopback is the container itself, so use the host's LAN address instead.
 - Each redirect of a playlist URL is checked again, so a playlist refresh cannot be redirected away from the allowed hosts.
 - Streams get the same rules at every step. The sidecar sends each connection its ffmpeg makes (redirects, HLS playlists and segments, https) through a local checking proxy, which refuses private addresses not on this list and always refuses loopback, link-local and metadata addresses. The *Auto* quality probe of a URL runs in the sidecar through the same checks. A refused connection appears in the sidecar log as `[Egress] Blocked connection` with the host name only.
@@ -184,6 +202,6 @@ If a stream does not start, check:
 3. the media volume is mounted at the same path in both containers; and
 4. the source URL is still available to yt-dlp/FFmpeg.
 
-Use the Runtime / media strip beside Video streaming or IPTV controls (Refresh) for a bounded on-demand sidecar and tool probe. Routine music-bot status polling does not call the sidecar health endpoint.
+Use the Runtime / media strip in **Media Library → Streaming defaults** or beside the IPTV channel browser (**Refresh**) for a bounded on-demand sidecar and tool probe. Routine music-bot status polling does not call the sidecar health endpoint.
 
 See [Troubleshooting](troubleshooting.md) for common deployment checks.
