@@ -40,6 +40,9 @@ for (const width of [1400, 390]) {
     const updates = await radioFixture(page);
     await signIn(page, request);
     await page.goto('/media-bots?tab=radio&server=1');
+    // Stations play from a bot's console; this tab only manages them.
+    await expect(page.getByRole('link', { name: 'Bot Hub' })).toHaveAttribute('href', '/bot-hub');
+    await expect(page.getByRole('button', { name: /^Play / })).toHaveCount(0);
     await page.getByRole('button', { name: /^Edit / }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit station' });
     await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Original station');

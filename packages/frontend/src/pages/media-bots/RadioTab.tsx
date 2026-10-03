@@ -1,6 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useMusicBots } from '@/hooks/use-music-bots';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   useRadioStations,
   useRadioPresets,
@@ -8,7 +7,6 @@ import {
   useUpdateRadioStation,
   useDeleteRadioStation,
   useResetRadioStationIds,
-  usePlayRadio,
 } from '@/hooks/use-radio-stations';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
@@ -35,19 +33,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
-import { Plus, Trash2, Play, Radio } from 'lucide-react';
+import { Plus, Trash2, Radio } from 'lucide-react';
 import { toast } from 'sonner';
-import { toastMediaStarted } from '@/lib/media-start-toast';
 import { apiErrorMessage } from '@/lib/api-error';
-import type { MusicBotSummary, RadioStationInfo, RadioPreset } from '@ts6/common';
+import type { RadioStationInfo, RadioPreset } from '@ts6/common';
 
 
 // ─── Radio Tab ───────────────────────────────────────────────────────────────
 
+/** Manage a server's radio stations. Stations play from a bot's console in the Bot Hub. */
 export function RadioTab() {
   const [searchParams] = useSearchParams();
-  const linkedBot = Number(searchParams.get('bot')) || null;
   const linkedServer = Number(searchParams.get('server')) || null;
   const { selectedConfigId, setServer } = useServerStore();
   const { data: servers } = useServers();
@@ -61,15 +57,7 @@ export function RadioTab() {
   const stationPending = createStation.isPending || updateStation.isPending;
   const deleteStation = useDeleteRadioStation();
   const resetStationIds = useResetRadioStationIds();
-  const playRadio = usePlayRadio();
 
-  const { data: bots } = useMusicBots();
-  const runningBots = (Array.isArray(bots) ? bots : []).filter(
-    (b: MusicBotSummary) => b.status !== 'stopped' && b.status !== 'error'
-  );
-
-  const [selectedBotId, setSelectedBotId] = useState<number | null>(linkedBot);
-  const appliedLinkedBot = useRef<number | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
@@ -80,7 +68,6 @@ export function RadioTab() {
   const serverList = Array.isArray(servers) ? servers : [];
   const stationList = (Array.isArray(stations) ? stations : []) as RadioStationInfo[];
   const presetList = (Array.isArray(presets) ? presets : []) as RadioPreset[];
-  const runningBotIds = runningBots.map((b: MusicBotSummary) => b.id).join(',');
 
   useEffect(() => {
     if (linkedServer) {
@@ -88,26 +75,6 @@ export function RadioTab() {
       setServer(linkedServer);
     }
   }, [linkedServer, setServer]);
-
-  // Apply ?bot= once when that bot is running; do not fight later manual selection.
-  useEffect(() => {
-    if (!linkedBot) {
-      appliedLinkedBot.current = null;
-      return;
-    }
-    if (linkedBot === appliedLinkedBot.current) return;
-    if (runningBots.some((b: MusicBotSummary) => b.id === linkedBot)) {
-      setSelectedBotId(linkedBot);
-      appliedLinkedBot.current = linkedBot;
-    }
-  }, [linkedBot, runningBotIds, runningBots]);
-
-  useEffect(() => {
-    setSelectedBotId((current) => {
-      if (current && runningBots.some((b: MusicBotSummary) => b.id === current)) return current;
-      return runningBots[0]?.id ?? null;
-    });
-  }, [runningBotIds, runningBots]);
 
   const handleAddStation = () => {
     if (!configId || !addForm.name.trim() || !addForm.url.trim() || stationSaveInFlight.current) return;
@@ -150,47 +117,19 @@ export function RadioTab() {
     });
   };
 
-  const handlePlay = (stationId: number) => {
-    if (!selectedBotId) {
-      toast.error('Select a running bot first');
-      return;
-    }
-    playRadio.mutate({ botId: selectedBotId, stationId }, {
-      onSuccess: () => toastMediaStarted('Playing radio'),
-      onError: () => toast.error('Failed to play radio'),
-    });
-  };
-
   if (!configId) {
     return <EmptyState icon={Radio} title="Select a server" description="Choose a server to manage radio stations." />;
   }
 
   return (
     <div className="space-y-4">
-      {/* Server + Bot selector */}
+      {/* Server selector + station actions */}
       <div className="flex items-center gap-2 flex-wrap">
         <Select value={String(configId)} onValueChange={(v) => setServerId(parseInt(v))}>
           <SelectTrigger className="w-48"><SelectValue placeholder="Server..." /></SelectTrigger>
           <SelectContent>
             {serverList.map((s: any) => (
               <SelectItem key={s.id} value={String(s.id)}>{s.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <Separator orientation="vertical" className="h-6" />
-
-        <Label className="text-xs text-muted-foreground">Play on:</Label>
-        <Select
-          value={selectedBotId ? String(selectedBotId) : ''}
-          onValueChange={(v) => setSelectedBotId(parseInt(v))}
-        >
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder={runningBots.length === 0 ? 'No running bots' : 'Select bot...'} />
-          </SelectTrigger>
-          <SelectContent>
-            {runningBots.map((b: MusicBotSummary) => (
-              <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -223,15 +162,13 @@ export function RadioTab() {
         </Button>
       </div>
 
-      {runningBots.length === 0 && (
-        <div className="rounded-md bg-amber-500/10 border border-amber-500/20 p-3">
-          <p className="text-xs text-amber-500">Start a media bot first to play radio stations.</p>
-        </div>
-      )}
+      <p className="text-sm text-muted-foreground">
+        Play a station from a bot&apos;s console in the <Link to="/bot-hub" className="text-primary underline-offset-4 hover:underline">Bot Hub</Link>.
+      </p>
 
       {/* Station List */}
       {isLoading ? <PageLoader /> : stationList.length === 0 ? (
-        <EmptyState icon={Radio} title="No radio stations" description="Add stations manually or from presets to start streaming." />
+        <EmptyState icon={Radio} title="No radio stations" description="Add stations manually or from presets, then play them from a bot's console." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {stationList.map((station) => (
@@ -259,16 +196,6 @@ export function RadioTab() {
                     }}
                   >
                     Edit
-                  </Button>
-                  <Button
-                    variant="default"
-                    size="icon"
-                    className="h-8 w-8"
-                    aria-label={`Play ${station.name}`}
-                    onClick={() => handlePlay(station.id)}
-                    disabled={!selectedBotId || playRadio.isPending}
-                  >
-                    <Play className="h-4 w-4 ml-0.5" />
                   </Button>
                   <Button
                     variant="ghost"
