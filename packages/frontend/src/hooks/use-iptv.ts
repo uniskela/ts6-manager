@@ -1,6 +1,8 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { iptvApi } from '../api/iptv.api';
+import type { VideoStartOptions } from '@/lib/video-options';
 
+/** Load IPTV playlists, optionally scoped to a server. */
 export function useIptvPlaylists(serverConfigId?: number) {
   return useQuery({
     queryKey: ['iptv-playlists', serverConfigId ?? null],
@@ -68,11 +70,20 @@ export function useRefreshIptvPlaylist() {
   });
 }
 
+/** Load legacy per-playlist IPTV groups. */
 export function useIptvGroups(playlistId: number | null) {
   return useQuery({
     queryKey: ['iptv-groups', playlistId],
     queryFn: () => iptvApi.groups(playlistId!),
     enabled: !!playlistId,
+  });
+}
+
+/** Load the server-scoped group list used by the bot console. */
+export function useConsoleIptvGroups(serverConfigId: number, playlistId?: number) {
+  return useQuery({
+    queryKey: ['iptv-console-groups', serverConfigId, playlistId ?? null],
+    queryFn: () => iptvApi.consoleGroups(serverConfigId, playlistId),
   });
 }
 
@@ -88,10 +99,29 @@ export function useIptvChannels(
   });
 }
 
+/** Load the paginated server-scoped channel search for the console. */
+export function useConsoleIptvChannels(params: {
+  serverConfigId: number;
+  playlistId?: number;
+  group?: string;
+  search?: string;
+  channelKey?: string;
+  page?: number;
+  pageSize?: number;
+}) {
+  return useQuery({
+    queryKey: ['iptv-console-channels', params],
+    queryFn: () => iptvApi.consoleChannels(params),
+    placeholderData: keepPreviousData,
+  });
+}
+
+/** Expose the existing IPTV stream endpoint to console channel rows. */
 export function useIptvStream() {
   return useMutation({
-    mutationFn: ({ botId, channelId, preset }: { botId: number; channelId: number; preset?: string }) =>
-      iptvApi.stream(botId, channelId, preset),
+    mutationFn: ({ botId, channelId, preset, options }: {
+      botId: number; channelId: number; preset?: string; options?: VideoStartOptions;
+    }) => iptvApi.stream(botId, channelId, options ?? preset),
   });
 }
 

@@ -33,6 +33,7 @@ const uploadLimiter = rateLimit({
   message: { error: 'Too many IPTV upload requests, please try again later' },
 });
 
+/** Adapt multer errors into the API's normal error middleware. */
 function multerUpload(field: string) {
   return (req: Request, res: Response, next: NextFunction) => {
     playlistUpload.single(field)(req, res, (err: unknown) => {
@@ -47,6 +48,106 @@ function multerUpload(field: string) {
     });
   };
 }
+
+/** Read one query parameter and reject repeated or non-string values. */
+function queryString(req: Request, name: string): string | undefined {
+  const value = req.query[name];
+  if (value !== undefined && typeof value !== 'string') {
+    throw new AppError(400, `${name} must be a single value`);
+  }
+  return typeof value === 'string' ? value : undefined;
+}
+
+/** Parse IDs and pagination values without accepting parseInt's partial matches. */
+function positiveQueryInt(req: Request, name: string, required = false): number | undefined {
+  const raw = queryString(req, name);
+  if (raw == null || raw === '') {
+    if (required) throw new AppError(400, `${name} must be a positive whole number`);
+    return undefined;
+  }
+  if (!/^[1-9]\d*$/.test(raw)) throw new AppError(400, `${name} must be a positive whole number`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new AppError(400, `${name} must be a positive whole number`);
+  }
+  return value;
+}
+
+/** GET /groups: return normalized group counts across one server's playlists. */
+iptvRoutes.get('/groups', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
+    const playlistId = positiveQueryInt(req, 'playlistId');
+    const rows = await prisma.iptvChannel.groupBy({
+      where: {
+        playlist: { serverConfigId },
+        ...(playlistId !== undefined ? { playlistId } : {}),
+        groupTitle: { not: null },
+      },
+      by: ['groupTitle'],
+      _count: { _all: true },
+    });
+    const counts = new Map<string, number>();
+    for (const row of rows) {
+      const group = typeof row.groupTitle === 'string' ? row.groupTitle.trim() : '';
+      if (group) counts.set(group, (counts.get(group) ?? 0) + row._count._all);
+    }
+    res.json([...counts.entries()]
+      .map(([group, count]) => ({ group, count }))
+      .sort((a, b) => a.group.localeCompare(b.group)));
+  } catch (err) { next(err); }
+});
+
+/** GET /channels: search and page channels across one server's playlists. */
+iptvRoutes.get('/channels', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const prisma = req.app.locals.prisma;
+    const serverConfigId = positiveQueryInt(req, 'serverConfigId', true)!;
+    const playlistId = positiveQueryInt(req, 'playlistId');
+    const page = positiveQueryInt(req, 'page') ?? 1;
+    const pageSize = Math.min(100, positiveQueryInt(req, 'pageSize') ?? 50);
+    const search = queryString(req, 'search')?.trim() ?? '';
+    const group = queryString(req, 'group')?.trim() ?? '';
+    const channelKey = queryString(req, 'channelKey');
+    const where = {
+      playlist: { serverConfigId },
+      ...(playlistId !== undefined ? { playlistId } : {}),
+      ...(group ? { groupTitle: group } : {}),
+      ...(search ? { name: { contains: search } } : {}),
+      ...(channelKey ? { OR: [{ tvgId: channelKey }, { name: channelKey }] } : {}),
+    };
+    const [total, rows] = await Promise.all([
+      prisma.iptvChannel.count({ where }),
+      prisma.iptvChannel.findMany({
+        where,
+        include: { playlist: { select: { name: true } } },
+        orderBy: [{ playlistId: 'asc' }, { position: 'asc' }, { id: 'asc' }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    res.json({
+      total,
+      page,
+      pageSize,
+      channels: rows.map((channel: any) => ({
+        id: channel.id,
+        name: channel.name,
+        logo: channel.logo ?? null,
+        group: channel.groupTitle ?? '',
+        playlistId: channel.playlistId,
+        playlistName: channel.playlist?.name ?? '',
+        channelKey: channel.tvgId || channel.name,
+        // Keep the source fields available to existing IPTV consumers.
+        url: channel.url,
+        groupTitle: channel.groupTitle ?? null,
+        tvgId: channel.tvgId ?? null,
+        position: channel.position,
+      })),
+    });
+  } catch (err) { next(err); }
+});
 
 // GET /playlists?serverConfigId= — list playlists (optionally for one server)
 iptvRoutes.get('/playlists', async (req: Request, res: Response, next) => {

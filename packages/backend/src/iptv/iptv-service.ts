@@ -170,7 +170,7 @@ export async function replaceUploadedPlaylist(
             name: c.name,
             url: c.url,
             logo: c.logo ?? null,
-            groupTitle: c.groupTitle ?? null,
+            groupTitle: c.groupTitle?.trim() || null,
             tvgId: c.tvgId ?? null,
             position: ci * 1000 + i,
           })),
@@ -246,6 +246,7 @@ export function toPlaylistSummary(p: {
   };
 }
 
+/** Replace a playlist's channels while normalizing empty group titles. */
 async function replaceChannels(
   prisma: PrismaClient,
   playlistId: number,
@@ -260,7 +261,7 @@ async function replaceChannels(
           name: c.name,
           url: c.url,
           logo: c.logo ?? null,
-          groupTitle: c.groupTitle ?? null,
+          groupTitle: c.groupTitle?.trim() || null,
           tvgId: c.tvgId ?? null,
           position: ci * 1000 + i,
         })),
@@ -269,6 +270,7 @@ async function replaceChannels(
   ]);
 }
 
+/** Fetch one remote playlist while enforcing redirect and byte limits. */
 async function fetchPlaylist(url: string, localAllowlist: LocalHostAllowlist): Promise<string> {
   const MAX_REDIRECTS = 5;
   let current = url;
@@ -317,6 +319,7 @@ async function fetchPlaylist(url: string, localAllowlist: LocalHostAllowlist): P
   }
 }
 
+/** Split large channel batches for SQLite inserts. */
 function chunk<T>(arr: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));

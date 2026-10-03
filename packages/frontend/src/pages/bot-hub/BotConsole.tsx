@@ -19,16 +19,19 @@ import { useEffect, useState } from 'react';
 import { LinkSource } from './LinkSource';
 import { MusicSource } from './MusicSource';
 import { RadioSource } from './RadioSource';
+import { IptvSource } from './IptvSource';
 import { SourcePicker, type ConsoleSourceTab } from './SourcePicker';
 import { UpNextQueue } from './UpNextQueue';
 
-/** Source tabs in order Music · Link · Radio · IPTV (IPTV lands in a later PR). */
+/** Source tabs in order Music · Link · Radio · IPTV. */
 export const CONSOLE_TABS: ConsoleSourceTab[] = [
   { id: 'music', label: 'Music', render: (ctx) => <MusicSource {...ctx} /> },
   { id: 'link', label: 'Link', render: (ctx) => <LinkSource {...ctx} /> },
   { id: 'radio', label: 'Radio', render: (ctx) => <RadioSource {...ctx} /> },
+  { id: 'iptv', label: 'IPTV', render: (ctx) => <IptvSource {...ctx} /> },
 ];
 
+/** Keep elapsed playback displays current while the console is open. */
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -38,6 +41,7 @@ function useNow(): number {
   return now;
 }
 
+/** Render one bot's playback state, queue, and source tabs. */
 export default function BotConsole() {
   const botId = Number(useParams().botId);
   const [searchParams] = useSearchParams();
