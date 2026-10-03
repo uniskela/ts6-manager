@@ -40,6 +40,7 @@ export async function listIptvPicks(prisma: PrismaClient, serverConfigId: number
       channel: channel ? {
         id: channel.id, name: channel.name, logo: channel.logo, group: channel.groupTitle ?? '',
         playlistId: channel.playlistId, playlistName: channel.playlist.name, channelKey: iptvChannelKey(channel),
+        tvgCountry: channel.tvgCountry, tvgLanguage: channel.tvgLanguage,
       } : null,
     };
   });

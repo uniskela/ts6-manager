@@ -267,15 +267,17 @@ model IptvChannelPick {
 }
 
 model IptvChannel {
-  id         Int          @id @default(autoincrement())
-  playlistId Int
-  playlist   IptvPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
-  name       String
-  url        String
-  logo       String?
-  groupTitle String?
-  tvgId      String?
-  position   Int          @default(0)
+  id          Int          @id @default(autoincrement())
+  playlistId  Int
+  playlist    IptvPlaylist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  name        String
+  url         String
+  logo        String?
+  groupTitle  String?
+  tvgId       String?
+  tvgCountry  String?
+  tvgLanguage String?
+  position    Int          @default(0)
 
   @@index([playlistId])
   @@index([playlistId, name])

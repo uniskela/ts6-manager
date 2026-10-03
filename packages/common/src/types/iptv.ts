@@ -26,6 +26,8 @@ export interface IptvChannelInfo {
   logo: string | null;
   groupTitle: string | null;
   tvgId: string | null;
+  tvgCountry?: string | null;
+  tvgLanguage?: string | null;
   position: number;
 }
 
@@ -41,6 +43,11 @@ export interface IptvGroupInfo {
   count: number;
 }
 
+export interface IptvFilterValues {
+  countries: string[];
+  languages: string[];
+}
+
 export interface IptvConsoleChannel {
   id: number;
   name: string;
@@ -50,6 +57,8 @@ export interface IptvConsoleChannel {
   playlistName: string;
   channelKey: string;
   url?: string;
+  tvgCountry?: string | null;
+  tvgLanguage?: string | null;
 }
 
 export interface IptvConsoleChannelPage {

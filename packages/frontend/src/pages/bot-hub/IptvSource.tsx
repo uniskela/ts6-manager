@@ -15,6 +15,7 @@ import {
   useConsoleIptvChannels,
   useConsoleIptvGroups,
   useIptvPlaylists,
+  useIptvFilters,
   useIptvFavourites,
   useIptvRecent,
   useSetIptvFavourite,
@@ -32,6 +33,11 @@ function channelKey(channel: IptvConsoleChannel): string {
   return channel.channelKey || channel.name;
 }
 
+/** Metadata uses exact codes, including playlists with several countries or languages. */
+function matchesMetadata(value: string | null | undefined, selected: string): boolean {
+  return !selected || (value ?? '').split(/[;,]/).some((code) => code.trim().toLowerCase() === selected.toLowerCase());
+}
+
 /** Console IPTV browser, search, and explicit stream controls. */
 export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourceContext) {
   const [deepLink] = useState<IptvDeepLink | null>(() => parseIptvDeepLink(searchParams.get('iptv')));
@@ -39,6 +45,8 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [deepChannelId] = useState<number | null>(() => (deepLink ? parseIptvChannelId(searchParams.get('iptvChannel')) : null));
   const [playlistId, setPlaylistId] = useState<number | undefined>(deepLink?.playlistId);
   const [group, setGroup] = useState('');
+  const [country, setCountry] = useState('');
+  const [language, setLanguage] = useState('');
   const [view, setView] = useState<IptvView | null>(null);
   const [groupFilter, setGroupFilter] = useState('');
   const [search, setSearch] = useState('');
@@ -48,6 +56,10 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const [groupPageSize, setGroupPageSize] = useState<PageSize>(() => rememberedPageSize('console-iptv-groups'));
   const [options, setOptions] = useState<VideoStartOptions>(IPTV_VIDEO_OPTIONS);
   const playlistsQuery = useIptvPlaylists(serverConfigId);
+  const filtersQuery = useIptvFilters(serverConfigId);
+  const countries = filtersQuery.data?.countries ?? [];
+  const languages = filtersQuery.data?.languages ?? [];
+  const metadataFilters = { ...(country ? { country } : {}), ...(language ? { language } : {}) };
   const favouritesQuery = useIptvFavourites(serverConfigId);
   const recentQuery = useIptvRecent(serverConfigId);
   const setFavourite = useSetIptvFavourite();
@@ -56,6 +68,8 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const picksQuery = currentView === 'Recent' ? recentQuery : favouritesQuery;
   const picks = (picksQuery.data ?? []).filter((pick) =>
     (!playlistId || pick.playlistId === playlistId)
+    && matchesMetadata(pick.channel?.tvgCountry, country)
+    && matchesMetadata(pick.channel?.tvgLanguage, language)
     && (pick.channel?.name ?? pick.name).toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
   );
   // Removing the last pick on a page would otherwise leave an empty page behind.
@@ -64,9 +78,10 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const playlists = (Array.isArray(playlistsQuery.data) ? playlistsQuery.data : []) as IptvPlaylistSummary[];
   const deepLinkMode = !!deepLink;
   const openChannels = !!group || !!search.trim() || deepLinkMode;
-  const groupsQuery = useConsoleIptvGroups(serverConfigId, playlistId);
+  const groupsQuery = useConsoleIptvGroups(serverConfigId, playlistId, metadataFilters);
   const channelParams = {
     serverConfigId,
+    ...metadataFilters,
     ...(playlistId ? { playlistId } : {}),
     ...(group ? { group } : {}),
     ...(search.trim() ? { search: search.trim() } : {}),
@@ -93,7 +108,15 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   useEffect(() => {
     setPage(1);
     setGroupPage(1);
-  }, [playlistId, group, search, groupFilter, view]);
+  }, [playlistId, group, search, groupFilter, view, country, language]);
+
+  useEffect(() => {
+    const values = filtersQuery.data;
+    if (!values) return;
+    // A refreshed playlist can remove the last value behind a selected filter.
+    if (country && !values.countries.includes(country)) setCountry('');
+    if (language && !values.languages.includes(language)) setLanguage('');
+  }, [filtersQuery.data, country, language]);
 
   useEffect(() => {
     if (favouritesQuery.isSuccess || favouritesQuery.isError) {
@@ -149,6 +172,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
       <VideoOptions value={options} onChange={setOptions} />
       {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
       {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
+      {filtersQuery.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(filtersQuery.error, 'Could not load filters')}</p>}
       <div role="group" aria-label="IPTV views" className="flex flex-wrap gap-1.5">
         {(['Favourites', 'Recent', 'Browse groups'] as const).map((name) => (
           <Button key={name} type="button" variant={currentView === name ? 'default' : 'outline'} className="min-h-11"
@@ -164,6 +188,26 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
             {playlists.map((playlist) => <option key={playlist.id} value={playlist.id}>{playlist.name}</option>)}
           </select>
         </div>
+        {countries.length > 0 && (
+          <div className="space-y-1.5">
+            <Label htmlFor="console-iptv-country">Country</Label>
+            <select id="console-iptv-country" className="h-11 w-full rounded-md border bg-background px-3 text-sm" value={country}
+              onChange={(event) => setCountry(event.target.value)}>
+              <option value="">All countries</option>
+              {countries.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </div>
+        )}
+        {languages.length > 0 && (
+          <div className="space-y-1.5">
+            <Label htmlFor="console-iptv-language">Language</Label>
+            <select id="console-iptv-language" className="h-11 w-full rounded-md border bg-background px-3 text-sm" value={language}
+              onChange={(event) => setLanguage(event.target.value)}>
+              <option value="">All languages</option>
+              {languages.map((value) => <option key={value} value={value}>{value}</option>)}
+            </select>
+          </div>
+        )}
         <div className="space-y-1.5">
           <Label htmlFor="console-iptv-search">Search channels</Label>
           <div className="relative">
