@@ -59,6 +59,16 @@ export interface IptvConsoleChannelPage {
   channels: IptvConsoleChannel[];
 }
 
+export interface IptvChannelPickInfo {
+  serverConfigId: number;
+  playlistId: number;
+  channelKey: string;
+  name: string;
+  favourite: boolean;
+  lastStreamedAt: string | null;
+  channel: IptvConsoleChannel | null;
+}
+
 export interface CreateIptvPlaylistRequest {
   name: string;
   url: string;

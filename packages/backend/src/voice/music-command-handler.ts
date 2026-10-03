@@ -1,5 +1,6 @@
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import { loadIptvLocalHosts } from '../utils/app-settings.js';
+import { recordIptvRecentSafely } from '../iptv/iptv-picks.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import type { VoiceBot } from './voice-bot.js';
 import type { QueueItem } from './playlist/queue.js';
@@ -2463,6 +2464,7 @@ export class MusicCommandHandler {
 
     if (bot.videoStreaming) {
       await bot.setVideoSource(channel.url, undefined, 'live', await loadIptvLocalHosts(this.prisma));
+      await recordIptvRecentSafely(this.prisma, serverConfigId, channel);
       this.reply(bot, userClid, `Now streaming: ${channel.name}`);
       return;
     }
@@ -2475,6 +2477,7 @@ export class MusicCommandHandler {
         localHosts: await loadIptvLocalHosts(this.prisma),
         ...this.chatVideoSwitch(bot),
       });
+      await recordIptvRecentSafely(this.prisma, serverConfigId, channel);
       this.reply(bot, userClid, `Video stream started: ${channel.name}`);
     } catch (err: any) {
       this.reply(bot, userClid, `Failed to start stream: ${this.streamStartError(err)}`);
