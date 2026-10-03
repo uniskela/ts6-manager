@@ -72,7 +72,7 @@ test('Play as music sends play-url with the URL', async ({ page, request }) => {
   await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
     .fill('https://youtu.be/dQw4w9WgXcQ');
   await page.getByRole('radio', { name: 'Play as music' }).check();
-  await page.getByRole('button', { name: 'Play' }).click();
+  await page.getByRole('button', { name: 'Play as music' }).click();
 
   await expect.poll(() => calls.find((c) => c.url.includes('/play-url'))?.body).toEqual({
     url: 'https://youtu.be/dQw4w9WgXcQ',
@@ -90,11 +90,13 @@ test('Stream as video sends stream/start with the source and chosen options', as
   await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
     .fill('https://youtu.be/dQw4w9WgXcQ');
   await page.getByRole('radio', { name: 'Stream as video' }).check();
+  await expect(page.locator('summary', { hasText: 'Video options' })).toContainText('Auto · Auto encoder');
+  await page.locator('summary', { hasText: 'Video options' }).click();
   await page.locator('#vo-quality').selectOption('1080p');
   await page.locator('#vo-encoder').selectOption('h264_vaapi');
   await page.locator('#vo-noviewer').selectOption('600');
   await page.locator('#vo-source').selectOption('live');
-  await page.getByRole('button', { name: 'Stream' }).click();
+  await page.getByRole('button', { name: 'Stream as video' }).click();
 
   await expect.poll(() => calls.find((c) => c.url.includes('/stream/start'))?.body).toEqual({
     source: 'https://youtu.be/dQw4w9WgXcQ',
@@ -117,7 +119,7 @@ test('a 409 media_session_conflict opens Replace what is playing?', async ({ pag
   await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
     .fill('https://youtu.be/dQw4w9WgXcQ');
   await page.getByRole('radio', { name: 'Stream as video' }).check();
-  await page.getByRole('button', { name: 'Stream' }).click();
+  await page.getByRole('button', { name: 'Stream as video' }).click();
 
   await expect(page.getByRole('heading', { name: 'Replace what is playing?' })).toBeVisible();
   await expect(page.getByText('Music “Neon Skyline” on Aurora Radio')).toBeVisible();

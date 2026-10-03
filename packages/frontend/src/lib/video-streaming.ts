@@ -42,9 +42,8 @@ export const ENCODER_OPTIONS: ReadonlyArray<{ value: VideoEncoderRequest; label:
   ...(Object.keys(ENCODER_LABELS) as VideoEncoderId[]).map((id) => ({ value: id, label: ENCODER_LABELS[id] })),
 ];
 
-/** Per-stream no-viewer timeout choices; `default` uses the admin setting. */
+/** Per-stream no-viewer timeout choices, in seconds. */
 export const NO_VIEWER_TIMEOUT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
-  { value: 'default', label: 'Default' },
   { value: '0', label: 'Off' },
   { value: '60', label: '1 min' },
   { value: '300', label: '5 min' },

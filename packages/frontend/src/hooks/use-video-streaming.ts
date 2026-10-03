@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import type { VideoStreamSettings } from '@ts6/common';
+import type { VideoSourceModeRequest, VideoStreamSettings } from '@ts6/common';
 import { settingsApi } from '../api/settings.api';
 import { expensiveDiagnosticQueryOptions } from '../lib/demand-driven-query-policy';
+import { videoStartDefaults, type VideoStartOptions } from '../lib/video-options';
 
 export const VIDEO_STREAMING_SETTINGS_QUERY_KEY = ['video-streaming-settings'] as const;
 export const VIDEO_ENCODER_CAPABILITIES_QUERY_KEY = ['video-encoder-capabilities'] as const;
@@ -79,4 +81,28 @@ export function useVideoEncoderCapabilities() {
     error: query.error,
     check,
   };
+}
+
+/**
+ * One console start's video options: the server's effective streaming defaults,
+ * with only the fields the admin changed for that server laid over them.
+ */
+export function useVideoStartOptions(
+  serverConfigId: number | null | undefined,
+  sourceMode: VideoSourceModeRequest = 'auto',
+): [VideoStartOptions, (next: VideoStartOptions) => void, boolean] {
+  const { data, isLoading } = useServerVideoStreamingSettings(serverConfigId);
+  const [chosen, setChosen] = useState<{ serverConfigId: number | null | undefined; changed: Partial<VideoStartOptions> } | null>(null);
+  const changed = chosen && chosen.serverConfigId === serverConfigId ? chosen.changed : {};
+  const options: VideoStartOptions = { ...videoStartDefaults(data?.effective, sourceMode), ...changed };
+  const setOptions = (next: VideoStartOptions) => {
+    // Keep only real edits, so an edit made before the defaults load cannot pin the fallbacks.
+    const edits: Partial<VideoStartOptions> = { ...changed };
+    for (const key of Object.keys(next) as (keyof VideoStartOptions)[]) {
+      if (next[key] !== options[key]) Object.assign(edits, { [key]: next[key] });
+    }
+    setChosen({ serverConfigId, changed: edits });
+  };
+  // Until the defaults arrive, a start would send Auto and skip the server's encoder.
+  return [options, setOptions, isLoading];
 }

@@ -100,9 +100,14 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
 
   const repeat = state?.repeat ?? 'off';
 
+  // Radio and video streams never use the music queue: an empty Up next is
+  // just noise there. A non-empty one stays so it can be resumed; a load
+  // error always shows.
+  if (keptFor && !loadError && (!state || items.length === 0)) return null;
+
   if (!state) {
     return (
-      <section aria-labelledby="up-next" className="space-y-2 border-t pt-3">
+      <section aria-labelledby="up-next" className="space-y-3 border-t pt-4">
         <h2 id="up-next" className="text-sm font-semibold">Up next</h2>
         {loadError ? (
           <p role="alert" className="text-sm text-destructive">
@@ -116,10 +121,13 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
   }
 
   return (
-    <section aria-labelledby="up-next" className="space-y-2 border-t pt-3">
+    <section aria-labelledby="up-next" className="space-y-3 border-t pt-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 id="up-next" className="text-sm font-semibold">Up next ({items.length})</h2>
-        <div className="flex gap-1">
+        <div className="flex items-baseline gap-2">
+          <h2 id="up-next" className="text-sm font-semibold">Up next ({items.length})</h2>
+          {items.length > 1 && <span className="text-xs text-muted-foreground">Drag to reorder</span>}
+        </div>
+        <div className="flex flex-wrap gap-1">
           <Button variant={state?.shuffle ? 'default' : 'outline'} size="sm" className="h-9"
             aria-pressed={!!state?.shuffle} onClick={() => setShuffle.mutate({ botId, enabled: !state?.shuffle })}>
             <Shuffle className="mr-1 h-3.5 w-3.5" aria-hidden="true" /> Shuffle
@@ -133,6 +141,12 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
           </Button>
         </div>
       </div>
+
+      {loadError != null && (
+        <p role="alert" className="text-sm text-destructive">
+          Could not refresh the queue. {apiErrorMessage(loadError, 'Try again in a moment.')}
+        </p>
+      )}
 
       {keptFor && items.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">

@@ -129,6 +129,24 @@ test('a queue refresh during a drag does not change what the drop moves', async 
   await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body).toEqual({ from: 2, to: 3 });
 });
 
+test('radio and video streams hide an empty Up next but keep a queued one', async ({ page, request }) => {
+  await mockBot(page);
+  const radio = (now: number) => media(now).map((b) => (b.botId === 1
+    ? { ...b, music: { title: 'Lo-fi FM', artist: null, live: true, position: 30, duration: null } }
+    : b));
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: radio(Date.now()) }));
+  currentState = { ...state, queue: [], currentIndex: -1 };
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await expect(page.getByRole('button', { name: 'Stop radio' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Up next' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Shuffle' })).toHaveCount(0);
+
+  currentState = state;
+  await expect(page.getByText('is kept while the radio plays')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole('button', { name: 'Play queue' })).toBeVisible();
+});
+
 test('an unknown bot shows Bot not found with a way back', async ({ page, request }) => {
   await mockBot(page);
   await signIn(page, request);

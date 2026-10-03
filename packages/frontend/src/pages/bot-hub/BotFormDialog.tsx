@@ -197,7 +197,7 @@ export function BotFormDialog({ open, bot, onClose, defaultServerId }: {
   return (
     <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent>
-        <DialogHeader><DialogTitle>{bot ? 'Edit Media Bot' : 'New Media Bot'}</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle>{bot ? 'Edit bot' : 'New bot'}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <div>
             <Label className="text-xs">Name</Label>

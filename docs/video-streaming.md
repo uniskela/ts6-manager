@@ -6,7 +6,7 @@ TS6 Manager includes a Go/Pion media sidecar for low-latency video delivery to T
 
 Open **Bot Hub**, then **Open console** on the bot you want to use. If it is offline, press **Start bot** first. The console's **Play something** panel has **Music · Link · Radio · IPTV** source tabs; **Now playing** shows the active session and offers **Stop stream** while video or IPTV is running.
 
-For a video URL, open **Link**, paste the source, choose **Stream as video**, then press **Stream**. **Video options (this start only)** lets you change **Quality**, **Encoder**, **Stop with no viewers after**, and **Source type** for that start. **Default** choices use the server's saved defaults in **Media Library → Streaming defaults**. A URL can also use **Play as music** to play its audio.
+For a video URL, open **Link**, paste the source, choose **Stream as video**, then press **Stream as video**. The folded **Video options** row shows what the stream will use; open it to change **Quality**, **Encoder**, **Stop with no viewers after**, and **Source type** for that start only. The options start on **Auto** quality and this server's streaming defaults: the encoder and no-viewer stop come from **Media Library → Streaming defaults**, or from `VIDEO_ENCODER` and `VIDEO_NO_VIEWER_TIMEOUT_SECONDS` when nothing is saved there. A URL can also use **Play as music** to play its audio.
 
 To stream a file already under `MUSIC_DIR`, enter its plain filename in **Link**, for example `clip.mp4`, then press **Stream**. Files outside the music folder are rejected. A filename selects **Stream as video** and disables **Play as music**; use the **Music** tab to play a music-folder file as audio.
 
