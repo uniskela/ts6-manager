@@ -8,12 +8,28 @@ Preserve:
 
 - the persistent backend database volume;
 - uploaded IPTV playlist source files under that volume (`data/iptv/`);
+- bot avatar images under that volume (`data/bot-avatars/`);
 - the current `ENCRYPTION_KEY`;
 - `JWT_SECRET` and `SIDECAR_SECRET`;
 - any media/library volume you want to retain; and
 - any yt-dlp cookie file you mounted externally.
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
+
+### Upgrading to 1.10.0
+
+**Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists and bot avatars. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.
+
+The SQLite schema changes merged for 1.10.0 are:
+
+- **`IptvChannelPick`**: stores per-server favourites and recent channels using `serverConfigId`, `playlistId` and a stable `channelKey`, plus `name`, `favourite` and `lastStreamedAt`. Picks cascade when their server or playlist is deleted.
+- **`MusicBot` avatar columns**: `avatarMode`, `avatarFile` and `avatarMd5`. Existing bots default to `none`; new bots created from the UI use the default avatar. The SQL migration reference is `packages/backend/prisma/migrations/20261003000000_bot_avatars/migration.sql`.
+
+IPTV country/language columns (`tvgCountry`, `tvgLanguage`) have not merged and are not part of this upgrade. Container startup still reconciles the schema with `prisma db push` as described below; operators do not need to run the reference SQL separately.
+
+After upgrading, open **Bot Hub → Open console** for playback. **Media Library** remains at `/media-bots` with five tabs, and custom replies move to **Bot Flows → Chat commands**. Existing music, playlists and saved credentials remain in the database. Playlists are now shared across all bots on their server, so `!playlist` can list more playlists than before. Old page links redirect to their new locations.
+
+Before merging the release PR, run the [1.10.0 smoke checklist](plans/164-1-10-0-rc-smoke.md) against the release candidate, including the AMD/VAAPI homelab checks.
 
 ## Pull and recreate
 

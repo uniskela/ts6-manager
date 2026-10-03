@@ -2,23 +2,60 @@
 
 TS6 Manager can run multiple TeamSpeak media bots per server. Each bot has independent playback, queue, and volume state.
 
-The Bots view shows live connection/playback status, current media, progress, volume, queue context, and normal playback controls without exposing provider credentials. Create a bot with a single **Name** (used as both the admin label and the TeamSpeak nickname). TeamSpeak nicknames must be 3–30 characters; the web UI rejects names outside that range, and the API rejects out-of-range `nickname` values before the bot connects. If `nickname` is omitted, the API uses `MediaBot`. The UI route is `/media-bots` (`/music-bots` redirects there).
-
-![Populated Media Bots view](musicbots.png)
-
 ## Bot Hub
 
-**Automation → Bot Hub** shows what every bot is doing right now: the track or stream, its channel, video quality and encoder, viewer count, uptime, the no-viewer auto-stop countdown, and the last stop reason. It links to Bot Flows, Media Bots, video streaming and IPTV. The page polls in-memory bot state only; it never probes the media sidecar or TeamSpeak Query.
+**Automation → Bot Hub** (`/bot-hub`) is the list of media bots. Each card shows live connection/playback status, current media, channel, progress, volume, and, for video, quality, encoder, viewers, uptime, the no-viewer auto-stop countdown and last stop reason. Live status reads in-memory bot state; it does not probe the media sidecar or TeamSpeak Query.
+
+Use **New bot** to create a bot with a single **Name**, used as both the admin label and TeamSpeak nickname. Names must be 3–30 characters; the web UI and API reject out-of-range nicknames before connecting. If the API request omits `nickname`, it uses `MediaBot`. Each card's settings menu provides **Edit bot**, **Start bot** or **Stop bot**, **Widget link**, and **Delete bot**. The same menu is available as **Bot settings** in the console header. Bots can reconnect automatically with exponential backoff and overlap protection.
 
 ![Bot Hub showing one playing bot and one idle bot](bot-hub.png)
 
 A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time).
 
-Streaming defaults include **Announce auto-stops in chat**, enabled by default. When a bot stops music or radio because its channel is empty, it posts `Stopped the music: the channel was empty for 5 minutes.` or `Stopped radio: the channel was empty for 5 minutes.` in its channel. The notice follows TeamSpeak's existing flood hold.
+## Bot console
+
+Choose **Open console** on a Bot Hub card to open `/bot-hub/:botId`. **Now playing** shows that bot's current media and playback controls. **Up next** holds its music queue; use the drag handles to reorder with a mouse, touch or keyboard, play a queued item now, remove an item, or **Clear** the queue. With a keyboard, focus a drag handle, press Space to pick up, use the arrow keys to move, then press Space to drop or Escape to cancel.
+
+![Bot console with Now playing, Up next and source tabs](musicbots.png)
+
+Under **Play something**, choose a source:
+
+- **Music** — Choose **Songs**, **Playlists**, or **Recent requests**; search songs by title or artist. The play button starts an item; the queue button adds it without interrupting playback.
+- **Link** — Paste a supported URL and choose **Play as music** or **Stream as video**. For video, a filename can refer to a file already in the music folder; local music files play from **Music**. See [Video streaming](video-streaming.md).
+- **Radio** — Search stations or filter by mood, then play a station. Moods come from each station's **Mood or genre** in **Media Library → Radio stations**.
+- **IPTV** — Browse groups or search across playlists, filter by **Playlist**, and use **Favourites** or **Recent**. See [IPTV playlists](video-streaming.md#iptv-playlists).
+
+If the bot is offline, the console offers **Start bot** before showing its sources. When a start conflicts with an active media session, **Replace what is playing?** lists what will stop. Choose **Keep playing** to cancel or **Stop and switch** to replace it.
+
+Radio and video keep the music queue. **Play queue** resumes the upcoming songs, with the replacement prompt when needed. Radio shows the station and live status rather than track progress or skip controls. Music controls include pause/resume, skip and volume; **Up next** also provides **Shuffle** and repeat modes.
+
+## Media Library
+
+**Automation → Media Library** (`/media-bots`) manages media shared by every bot on a server. Select the server, then choose one of its five tabs:
+
+| Tab | Purpose |
+|-----|---------|
+| **Library** | Manage local/downloaded songs and media imports. |
+| **Playlists** | Create and edit saved playlists. |
+| **Radio stations** | Add stations or edit their name, stream URL and mood or genre. |
+| **Requests** | Review `!play` history and replay or enqueue a request. |
+| **Streaming defaults** | Set defaults for future streams and auto-stop chat notices. |
+
+Use a bot's console to choose sources and control playback. Changes to video options in the console apply to that one stream; **Streaming defaults** stay as they are. The console's source lists offer 25, 50 or 100 items per page and remember the chosen size for each list.
+
+Old links still work: `/music-bots` redirects to `/media-bots`; the old **Bots** tab goes to Bot Hub, and **Queue** with a bot ID goes to its console. **Video** with a bot ID goes to the console, otherwise to **Streaming defaults**. **Commands** goes to **Bot Flows → Chat commands**.
+
+## Auto-stop chat notices
+
+**Media Library → Streaming defaults → Announce auto-stops in chat** is enabled by default. When a bot stops music or radio because its channel is empty, it posts a line such as `Stopped the music: the channel was empty for 5 minutes.` or `Stopped radio: the channel was empty for 5 minutes.` Video auto-stops also explain an empty channel or lack of viewers, for example `Stopped the stream: nobody watched for 5 minutes.` The duration follows the configured timeout.
+
+When the video no-viewer timeout is longer than 60 seconds, the bot warns one minute before stopping: `Nobody is watching. The stream stops in 1 minute.` A viewer joining cancels the warning timer and stop countdown. Timeouts of 60 seconds or less skip the warning. All notices use the existing TeamSpeak flood hold.
+
+Turn **Announce auto-stops in chat** off and choose **Save defaults** to suppress both the warning and stop notices. Automatic stopping remains enabled. Video and IPTV use the notice setting saved when the stream starts; music and radio use the current setting when they auto-stop.
 
 ## Bot avatars
 
-Open **Media Bots → Bots**, edit a bot, and use its **Avatar** section to upload an image, choose **Use default**, or choose **None**. Uploads accept PNG, JPEG or GIF images up to 200 KB, checked by image content. Images are not resized, so prepare the size and appearance before uploading.
+Open a bot's settings menu in Bot Hub or **Bot settings** in its console, choose **Edit bot**, and use **Avatar → Upload**, **Use default**, or **None**. Uploads accept PNG, JPEG or GIF images up to 200 KB, checked by image content. Images are not resized, so prepare the size and appearance before uploading.
 
 New bots created in the web UI use the bundled TS6 Manager app icon by default. Existing bots start with **None**. The chosen image appears on Bot Hub cards and in the console header, even when TeamSpeak refuses the upload. Bot Flows query clients do not use avatars.
 
@@ -30,7 +67,7 @@ Choosing **None** clears the avatar and asks TeamSpeak to delete the uploaded fi
 
 ## Requests
 
-**Media Bots → Requests** (`/media-bots?tab=requests`) shows `!play` history for the selected server. **Play** starts that request immediately. **Enqueue** adds it to the queue without interrupting current playback. When several bots are running, pick the target bot. `/music-requests` redirects here. System → Music Request History is no longer a separate page.
+**Media Library → Requests** (`/media-bots?tab=requests`) shows `!play` history for the selected server. **Play** starts that request immediately. **Enqueue** adds it to the queue without interrupting current playback. When several bots are running, pick the target bot. `/music-requests` redirects here. System → Music Request History is no longer a separate page.
 
 ## Sources
 
@@ -46,13 +83,7 @@ Local/downloaded tracks are decoded incrementally at media speed to keep memory 
 
 ## Playlists
 
-Playlists are shared by every media bot on the same TeamSpeak server.
-
-## Playback controls
-
-The web UI supports queue management, pause/resume, skip, previous, shuffle, repeat, seek, and volume. Running bots use a Play split-button (Playlist / Song / Video / Radio / IPTV) that remembers the last-used action.
-
-Bots can reconnect automatically with exponential backoff and overlap protection.
+Playlists are shared by every media bot on the same TeamSpeak server. Create and edit them in **Media Library → Playlists**, then start or enqueue them from any bot's **Music → Playlists** view. Chat `!playlist` and `!pl` use the same server-wide list, including playlists created for another bot.
 
 ## Channel text commands
 
@@ -84,11 +115,11 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!tv <name>` / `!iptv <name>`** — Stream an IPTV channel
 - **`!lyrics [artist - title]`** — Show/search lyrics
 
-Custom chat commands can also be configured.
+Custom chat commands are configured in **Bot Flows → Chat commands**, alongside the built-in list and clash warnings. See [Bot Flows](bot-flows.md).
 
 ### Custom command presets
 
-Music Bots → **Commands** can seed recommended server-scoped canned replies shared by every music bot on that connection:
+**Bot Flows → Chat commands** can seed recommended server-scoped canned replies shared by every music bot on that connection:
 
 | Command | Purpose |
 |---------|---------|
@@ -118,6 +149,6 @@ Production containers do not self-update yt-dlp.
 
 The tool is installed at image build time and validated alongside FFmpeg, Node, and Deno. Deno (pinned in `.deno-version`) is the only yt-dlp JavaScript runtime configured for YouTube challenge solving (`--js-runtimes deno`). Image Node remains 20 for the Nest backend and is not an EJS fallback. To update the bundled extractor or Deno, pull a newer TS6 Manager image and recreate the container, or rebuild from a fresh image build.
 
-Administrators can confirm the currently bundled yt-dlp (and related media tools) with the demand-driven Runtime / media check on Settings → YouTube or Music Bots → Library. That check is not part of live bot status polling.
+Administrators can confirm the currently bundled yt-dlp (and related media tools) with the demand-driven Runtime / media check on Settings → YouTube or Media Library → Library. That check is not part of live bot status polling.
 
 A public-video smoke test is intentionally not a release gate because media availability, rate limits, and regional restrictions are external to the project.

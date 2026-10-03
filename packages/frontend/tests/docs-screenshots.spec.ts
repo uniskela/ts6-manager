@@ -49,7 +49,7 @@ async function capture(page: Page, filename: string) {
 test.describe('maintained documentation screenshots', () => {
   test.skip(!updateScreenshots, 'Run pnpm --filter @ts6/frontend docs:screenshots to update documentation assets.');
 
-  test('renders the shipped 1.7 UI from deterministic production fixtures', async ({ page, request }) => {
+  test('renders the 1.10.0 console UI from deterministic production fixtures', async ({ page, request }) => {
     test.setTimeout(120_000);
     await page.setViewportSize({ width: 1600, height: 1000 });
     await page.clock.install({ time: new Date('2026-09-21T12:00:00.000Z') });
@@ -66,12 +66,16 @@ test.describe('maintained documentation screenshots', () => {
     await expect(page.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
     await expect(page.getByText('Neon Skyline', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('Quiet Orbit')).toBeVisible();
+    for (const name of ['Music', 'Link', 'Radio', 'IPTV']) {
+      await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
+    }
     await capture(page, 'musicbots.png');
 
     await page.goto('/bot-hub');
     await expect(page.getByRole('heading', { name: 'Bot Hub' })).toBeVisible();
     await expect(page.getByText('Neon Skyline', { exact: false }).first()).toBeVisible();
     await expect(page.getByText('Lounge Bot')).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open console' }).first()).toBeVisible();
     await capture(page, 'bot-hub.png');
 
     await page.goto('/iptv');

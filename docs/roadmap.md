@@ -58,6 +58,23 @@ Shipped on `main` in [#192](https://github.com/uniskela/ts6-manager/pull/192) an
 
 Operator detail: [Media bots — Bot Hub](music-bots.md#bot-hub) and [Video streaming](video-streaming.md).
 
+### Bot console and shared media — v1.10.0
+
+Merged on `main` for the upcoming 1.10.0 release; tracked in [#164](https://github.com/uniskela/ts6-manager/issues/164) and [#196](https://github.com/uniskela/ts6-manager/issues/196).
+
+- **Bot Hub** is the bot list, with **Open console** for each bot. The console combines **Now playing**, **Up next** with mouse, touch and keyboard queue reordering, and **Music · Link · Radio · IPTV** sources.
+- **Media Library** keeps **Library · Playlists · Radio stations · Requests · Streaming defaults**. Playlists are shared by all bots on a server; radio stations can be edited and filtered by mood in the console.
+- **Bot Flows → Chat commands** holds custom replies, a read-only built-in command list and name clash warnings. Old media URLs redirect to their new destinations.
+- IPTV adds groups, cross-playlist search, a playlist filter, **Favourites** and **Recent** shared by server. **Stream on…** selects a channel in a bot's console without starting it.
+- Auto-stops post channel-chat notices, with a one-minute warning before a no-viewer video stop. **Announce auto-stops in chat** controls both.
+- Bot avatars can use a custom image, the default or none, and are re-applied on reconnect. New UI-created bots use the default.
+- Shared URL handling and the media page and chat-handler splits are merged. Streaming adds H.264 NVENC and an optional **Stream YouTube videos directly** switch; AMD homelab validation uses VAAPI.
+- Channel banner images can be uploaded to Manager and used without a public image host ([#287](https://github.com/uniskela/ts6-manager/pull/287)).
+
+IPTV country/language parsing, columns and filters (Task 12) remain a 1.10.x follow-up. Favourites/recent, avatars and the chat-handler split have merged and are included.
+
+Operator detail: [Media bots](music-bots.md), [Bot flows](bot-flows.md), [Video streaming](video-streaming.md), [upgrade backup note](upgrading.md#upgrading-to-1100) and the [release-candidate smoke checklist](plans/164-1-10-0-rc-smoke.md).
+
 ## Follow-up direction
 
 Planned work remains intentionally separated into dedicated changes.

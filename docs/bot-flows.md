@@ -16,6 +16,8 @@ Flows run in the backend **bot engine**, which maintains the relevant TeamSpeak 
 
 ## Editor and templates
 
+Open **Automation → Bot Flows** (`/bots`). The **Flows** tab holds the visual workflows; **Chat commands** holds custom text replies for the selected server.
+
 The editor uses rounded orthogonal connections and labelled **True** / **False** condition paths. Its drawing surface grows from the actual node and route extents, so wider saved flows are not clipped by a fixed canvas. Keep flows readable rather than relying on extreme spacing.
 
 An unsaved editor draft is protected from normal in-app navigation, browser unload, and query refresh replacement. The saved baseline advances only after a successful save.
@@ -36,6 +38,16 @@ An unsaved editor draft is protected from normal in-app navigation, browser unlo
 | Chat command | Text message matching the configured command prefix/name; command arguments are exposed to the flow event data |
 
 The exact event fields available under `event.*` depend on the trigger that started the run.
+
+## Chat commands
+
+Open **Bot Flows → Chat commands** (`/bots?tab=commands`) to add, edit, enable or delete custom `!name` replies. **Presets** offers editable starter replies. Custom replies are answered by media bots in their command channels; flow command triggers run in the flow engine. Commands are shared by bots on the same server.
+
+The read-only **Built-in commands** list shows names already handled by media bots: playback and queue controls such as `!play`, `!playlist`, `!queue` and `!stop`, radio and streaming commands such as `!radio`, `!stream` and `!tv`, and help commands. See [Media bots — Channel text commands](music-bots.md#channel-text-commands) for usage.
+
+**Command name clashes** warns when a name is used by more than one source: a custom reply, a flow command trigger or a built-in command. Comparison ignores case, surrounding spaces and leading `!` characters, so `!Play` clashes with `play`. The flow editor also shows **Command name clash** beside a conflicting command trigger. Rename the custom reply or trigger to avoid overlap; the warning does not block saving or change command routing.
+
+Old `/media-bots?tab=commands` and `/music-bots?tab=commands` links redirect here.
 
 ## Conditions
 
@@ -189,10 +201,10 @@ Execution status and logs are persisted so admins can inspect recent runs and no
 
 Music bots are a separate subsystem built on the TeamSpeak voice stack. They can also be controlled directly through:
 
-- the **Music Bots** web UI
+- **Bot Hub → Open console**
 - in-channel text commands (`!play`, `!skip`, `!vol`, etc.)
 
-See the Music Bots section in the main README for queue, YouTube, radio, and local-library behavior. **Automation → Bot Hub** gives a live overview of every bot and links to Bot Flows, Media Bots, video streaming and IPTV (see [Music bots — Bot Hub](music-bots.md#bot-hub)).
+See [Media bots](music-bots.md) for queue, YouTube, radio and local-library behavior. **Automation → Bot Hub** is the bot list and opens each bot's console. **Media Library** holds shared songs, playlists, radio stations, requests and streaming defaults (see [Media bots — Bot Hub](music-bots.md#bot-hub)).
 
 ![Bot Hub](bot-hub.png)
 
