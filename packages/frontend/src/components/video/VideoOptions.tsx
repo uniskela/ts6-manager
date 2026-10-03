@@ -1,3 +1,4 @@
+import type { VideoStreamSettings } from '@ts6/common';
 import { Label } from '@/components/ui/label';
 import { ChevronDown } from 'lucide-react';
 import {
@@ -8,12 +9,16 @@ import { noViewerTimeoutLabel, videoOptionsSummary, type VideoStartOptions } fro
 /**
  * Quality, encoder, no-viewer stop and source type for one console start,
  * folded behind a "Video options" row that shows the current choices. They
- * start on the server's streaming defaults; nothing is saved.
+ * inherit the bot and server defaults; nothing is saved.
  */
-export function VideoOptions({ value, onChange }: { value: VideoStartOptions; onChange(v: VideoStartOptions): void }) {
+export function VideoOptions({ value, onChange, defaults }: {
+  value: VideoStartOptions;
+  onChange(v: VideoStartOptions): void;
+  defaults?: VideoStreamSettings;
+}) {
   const field = 'h-10 w-full rounded-md border bg-background px-2 text-sm';
-  // The server's timeout may be one the list doesn't offer (env or a custom value).
-  const timeoutOptions = NO_VIEWER_TIMEOUT_OPTIONS.some((o) => o.value === value.noViewerTimeout)
+  // Preserve any explicit custom timeout alongside the default choice.
+  const timeoutOptions = value.noViewerTimeout === '' || NO_VIEWER_TIMEOUT_OPTIONS.some((o) => o.value === value.noViewerTimeout)
     ? NO_VIEWER_TIMEOUT_OPTIONS
     : [{ value: value.noViewerTimeout, label: noViewerTimeoutLabel(value.noViewerTimeout) }, ...NO_VIEWER_TIMEOUT_OPTIONS];
   return (
@@ -26,12 +31,13 @@ export function VideoOptions({ value, onChange }: { value: VideoStartOptions; on
         </span>
       </summary>
       <div className="space-y-3 border-t p-3">
-        <p className="text-xs text-muted-foreground">For this start only. Starts on this server's streaming defaults.</p>
+        <p className="text-xs text-muted-foreground">For this start only. Use defaults to inherit the bot's quality and this server's streaming settings.</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className="space-y-1">
             <Label htmlFor="vo-quality">Quality</Label>
             <select id="vo-quality" className={field} value={value.quality}
               onChange={(e) => onChange({ ...value, quality: e.target.value as VideoStartOptions['quality'] })}>
+              <option value="">Use bot default</option>
               {QUALITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
@@ -39,6 +45,7 @@ export function VideoOptions({ value, onChange }: { value: VideoStartOptions; on
             <Label htmlFor="vo-encoder">Encoder</Label>
             <select id="vo-encoder" className={field} value={value.encoder}
               onChange={(e) => onChange({ ...value, encoder: e.target.value as VideoStartOptions['encoder'] })}>
+              <option value="">Use server default{defaults ? ` (${ENCODER_OPTIONS.find((o) => o.value === defaults.defaultEncoder)?.label ?? defaults.defaultEncoder})` : ''}</option>
               {ENCODER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
@@ -46,6 +53,7 @@ export function VideoOptions({ value, onChange }: { value: VideoStartOptions; on
             <Label htmlFor="vo-noviewer">Stop with no viewers after</Label>
             <select id="vo-noviewer" className={field} value={value.noViewerTimeout}
               onChange={(e) => onChange({ ...value, noViewerTimeout: e.target.value })}>
+              <option value="">Use server default{defaults ? ` (${noViewerTimeoutLabel(String(defaults.noViewerTimeoutSec))})` : ''}</option>
               {timeoutOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
