@@ -2,7 +2,7 @@ import { Router, Request, Response, type RequestHandler } from 'express';
 import multer from 'multer';
 import { createHash } from 'node:crypto';
 import { actorFromRequest, runRemoteAudited } from '../audit/index.js';
-import { avatarImageType, saveBotAvatar, readBotAvatar, MAX_AVATAR_BYTES, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
+import { avatarImageType, saveBotAvatar, readBotAvatar, removeBotAvatarFile, MAX_AVATAR_BYTES, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
@@ -131,10 +131,18 @@ musicBotRoutes.put('/:id/avatar', (req, res, next) => {
       actor: actorFromRequest(req.user), action: 'music_bot.avatar_update', connectionId: existing.serverConfigId,
       target: { type: 'music_bot', id: existing.id },
     }, async () => {
+      const previous = await avatarBot(req);
       const saved = await saveBotAvatar(existing.id, req.file!.buffer);
       const data = { ...saved, avatarMode: 'custom' as const };
-      await req.app.locals.prisma.musicBot.update({ where: { id: existing.id, serverConfigId: existing.serverConfigId }, data });
+      try {
+        await req.app.locals.prisma.musicBot.update({ where: { id: existing.id, serverConfigId: existing.serverConfigId }, data });
+      } catch (error) {
+        // The previous file is still referenced; only discard the staged replacement.
+        await removeBotAvatarFile(existing.id, saved.avatarFile);
+        throw error;
+      }
       await req.app.locals.voiceBotManager.getBot(existing.id)?.applyAvatar(data);
+      if (previous.avatarFile !== saved.avatarFile) await removeBotAvatarFile(existing.id, previous.avatarFile);
     }));
     res.json({ success: true });
   } catch (error) { next(error); }

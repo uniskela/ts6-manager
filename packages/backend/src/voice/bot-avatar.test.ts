@@ -27,7 +27,7 @@ test('content sniffing rejects renamed non-images and over-200-KB images', () =>
 test('stores only server-generated paths under bot-avatars and refuses path traversal on reads', async () => {
   const dir = await tempDir();
   const saved = await saveBotAvatar(7, png, dir);
-  assert.equal(saved.avatarFile, 'bot-avatars/7.png');
+  assert.match(saved.avatarFile, /^bot-avatars\/7\.[0-9a-f]{32}\.png$/);
   assert.deepEqual(await readFile(path.join(dir, saved.avatarFile)), png);
   await assert.rejects(readBotAvatar({ id: 7, avatarMode: 'custom', avatarFile: '../secret.png' }, dir), /Invalid avatar file/);
   await assert.rejects(saveBotAvatar(Number.NaN, png, dir), /Invalid bot ID/);
@@ -83,12 +83,12 @@ test('every connect re-uploads custom avatar; an offline change replaces the old
   const bot = new VoiceBot({ id: 7, serverConfigId: 1, name: 'Bot', serverHost: '127.0.0.1', serverPort: 9987, nickname: 'Bot', volume: 50, avatarMode: 'custom', avatarFile: saved.avatarFile, avatarDataDir: dir });
   const b = bot as any; b.client = f.client; b.client.connect = async () => {};
   try {
-    await bot.start(); b._status = 'stopped'; await bot.start();
+    await bot.start(); await bot.avatarSettled(); b._status = 'stopped'; await bot.start(); await bot.avatarSettled();
     assert.equal(f.sent.filter((c) => c.name === 'ftinitupload').length, 2);
     b._status = 'stopped'; const changedImage = Buffer.from(png); changedImage[changedImage.length - 1] ^= 1;
     const changed = await saveBotAvatar(7, changedImage, dir); await bot.applyAvatar({ avatarMode: 'custom', avatarFile: changed.avatarFile, avatarMd5: changed.avatarMd5 });
     assert.equal(f.sent.filter((c) => c.name === 'ftinitupload').length, 2, 'offline changes wait for connect');
-    await bot.start(); assert.equal(f.sent.filter((c) => c.name === 'ftinitupload').length, 3);
+    await bot.start(); await bot.avatarSettled(); assert.equal(f.sent.filter((c) => c.name === 'ftinitupload').length, 3);
     assert.equal(bot.currentConfig.avatarMode, 'custom');
     const flags = f.sent.filter((c) => c.name === 'clientupdate').map((c) => c.params.client_flag_avatar);
     assert.equal(flags[0], saved.avatarMd5); assert.equal(flags[1], saved.avatarMd5); assert.equal(flags[2], changed.avatarMd5); assert.notEqual(flags[2], flags[0]);
@@ -109,7 +109,7 @@ test('2568 upload refusal keeps the bot connected and records the exact message'
     b.client.emit('command', command);
     if (command.name === 'error') b.client.emit('ts3error', command.params);
   });
-  try { await bot.start(); assert.equal(bot.status, 'connected'); assert.equal(bot.avatarError, AVATAR_UPLOAD_REFUSED); assert.equal(bot.lastError, 'TeamSpeak refused the avatar upload. Allow file uploads for the bot\'s server group, or choose None.'); }
+  try { await bot.start(); await bot.avatarSettled(); assert.equal(bot.status, 'connected'); assert.equal(bot.avatarError, AVATAR_UPLOAD_REFUSED); assert.equal(bot.lastError, 'TeamSpeak refused the avatar upload. Allow file uploads for the bot\'s server group, or choose None.'); }
   finally { await f.close(); }
 });
 
@@ -127,7 +127,7 @@ test('manager reloads persisted custom metadata and uploads that image on the ne
     await manager.start(); const bot = manager.getBot(7)!;
     assert.equal(bot.currentConfig.avatarMode, 'custom'); assert.equal(bot.currentConfig.avatarFile, saved.avatarFile); assert.equal(bot.currentConfig.avatarMd5, saved.avatarMd5);
     (bot as any).client = f.client; (f.client as any).connect = async () => {};
-    bot.updateConfig({ avatarDataDir: dir }); await bot.start();
+    bot.updateConfig({ avatarDataDir: dir }); await bot.start(); await bot.avatarSettled();
     assert.deepEqual(f.sent.map((c) => c.name), ['ftinitupload', 'clientgetuidfromclid', 'ftgetfileinfo', 'clientupdate']);
     assert.equal(f.sent.at(-1)?.params.client_flag_avatar, saved.avatarMd5);
   } finally { await f.close(); }
@@ -142,7 +142,7 @@ test('an offline avatar choice change clears the old refusal message immediately
   b.client = f.client;
   b.client.connect = async () => {};
   try {
-    await bot.start();
+    await bot.start(); await bot.avatarSettled();
     assert.equal(bot.avatarError, AVATAR_UPLOAD_REFUSED);
     b._status = 'stopped';
     const updates: unknown[] = [];
@@ -153,4 +153,23 @@ test('an offline avatar choice change clears the old refusal message immediately
     assert.deepEqual(updates, [{ avatarError: null }]);
     assert.equal(f.sent.length, 1, 'changing an offline choice does not send commands');
   } finally { await f.close(); }
+});
+
+test('start does not wait for avatar upload, and stop cancels the in-flight transfer', async () => {
+  const dir = await tempDir(); const saved = await saveBotAvatar(7, png, dir);
+  const client = Object.assign(new EventEmitter(), { getClientId: () => 42, sendCommand: (_cmd: string) => {}, connect: async () => {}, disconnect: () => {} });
+  const sent: string[] = [];
+  client.sendCommand = (raw) => { sent.push(parseCommand(raw).name); }; // TS6 never answers ftinitupload
+  const bot = new VoiceBot({ id: 7, serverConfigId: 1, name: 'Bot', serverHost: '127.0.0.1', serverPort: 9987, nickname: 'Bot', volume: 50, avatarMode: 'custom', avatarFile: saved.avatarFile, avatarDataDir: dir });
+  (bot as any).client = client;
+  const changes: unknown[] = []; bot.on('avatarChange', (value) => changes.push(value));
+  let connected = false; bot.on('connected', () => { connected = true; });
+  await bot.start();
+  assert.equal(bot.status, 'connected'); assert.ok(connected, 'connected is emitted before avatar work finishes');
+  for (let i = 0; i < 100 && sent.length === 0; i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(sent, ['ftinitupload']);
+  await bot.stop(); await bot.avatarSettled();
+  assert.equal(bot.avatarError, null, 'a cancelled upload is not reported as a failure');
+  assert.deepEqual(changes, []);
+  assert.equal(client.listenerCount('command'), 0);
 });

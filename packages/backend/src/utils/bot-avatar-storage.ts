@@ -17,10 +17,15 @@ export function avatarImageType(image: Buffer): { extension: 'png' | 'jpg' | 'gi
   throw new AppError(400, 'Avatar must be a PNG, JPEG or GIF image');
 }
 
+/**
+ * Stage an uploaded avatar under a fresh versioned path. The file currently
+ * referenced by the database is never touched, so a failed database update
+ * leaves the previous avatar intact; callers remove whichever file lost.
+ */
 export async function saveBotAvatar(botId: number, image: Buffer, dataDir = botAvatarDataDir()): Promise<{ avatarFile: string; avatarMd5: string }> {
   if (!Number.isSafeInteger(botId) || botId <= 0) throw new AppError(400, 'Invalid bot ID');
   const { extension } = avatarImageType(image);
-  const avatarFile = `bot-avatars/${botId}.${extension}`;
+  const avatarFile = `bot-avatars/${botId}.${randomUUID().replace(/-/g, '')}.${extension}`;
   await mkdir(path.join(dataDir, 'bot-avatars'), { recursive: true });
   const destination = path.join(dataDir, avatarFile);
   const temporary = `${destination}.${randomUUID()}.tmp`;
@@ -34,6 +39,17 @@ export async function saveBotAvatar(botId: number, image: Buffer, dataDir = botA
 export async function readBotAvatar(bot: { id: number; avatarMode?: string; avatarFile?: string | null }, dataDir = botAvatarDataDir()): Promise<Buffer | null> {
   if (!bot.avatarMode || bot.avatarMode === 'none') return null;
   if (bot.avatarMode === 'default') return readFile(DEFAULT_AVATAR_FILE);
-  if (!bot.avatarFile || !new RegExp(`^bot-avatars/${bot.id}\\.(png|jpg|gif)$`).test(bot.avatarFile)) throw new AppError(400, 'Invalid avatar file');
+  if (!isBotAvatarFile(bot.id, bot.avatarFile)) throw new AppError(400, 'Invalid avatar file');
   return readFile(path.join(dataDir, bot.avatarFile));
+}
+
+/** Server-generated paths only: `bot-avatars/<id>[.<version>].<ext>`. */
+function isBotAvatarFile(botId: number, avatarFile: string | null | undefined): avatarFile is string {
+  return !!avatarFile && new RegExp(`^bot-avatars/${botId}(\\.[0-9a-f]{32})?\\.(png|jpg|gif)$`).test(avatarFile);
+}
+
+/** Best-effort removal of a bot's stored avatar file; ignores paths it did not generate. */
+export async function removeBotAvatarFile(botId: number, avatarFile: string | null | undefined, dataDir = botAvatarDataDir()): Promise<void> {
+  if (!isBotAvatarFile(botId, avatarFile)) return;
+  await unlink(path.join(dataDir, avatarFile)).catch(() => {});
 }

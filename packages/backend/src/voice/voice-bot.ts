@@ -137,6 +137,7 @@ export class VoiceBot extends EventEmitter {
   private _lastError: string = '';
   private _avatarError: string | null = null;
   private avatarTail: Promise<void> = Promise.resolve();
+  private avatarAbort: AbortController | null = null;
   private identity: IdentityData | null = null;
   private playbackTimer: ReturnType<typeof setTimeout> | null = null;
   private _nowPlaying: QueueItem | null = null;
@@ -347,20 +348,31 @@ export class VoiceBot extends EventEmitter {
       this.emit('avatarChange', { avatarError: null });
     }
     const next = this.avatarTail.catch(() => {}).then(async () => {
-      if (!['connected', 'playing', 'paused'].includes(this._status)) return;
+      if (this._manuallyStopped || !['connected', 'playing', 'paused'].includes(this._status)) return;
+      const abort = new AbortController();
+      this.avatarAbort = abort;
       try {
         const image = await readBotAvatar(this.config, this.config.avatarDataDir);
-        await applyBotAvatar(this.client, this.config.serverHost, image);
+        await applyBotAvatar(this.client, this.config.serverHost, image, abort.signal);
         if (this._lastError === this._avatarError) this._lastError = '';
         this._avatarError = null;
       } catch (error) {
+        // stop()/restart() cancelled this run; the next connect applies the saved choice again.
+        if (abort.signal.aborted) return;
         this._avatarError = error instanceof Error ? error.message : 'Could not apply bot avatar';
         this._lastError = this._avatarError;
+      } finally {
+        if (this.avatarAbort === abort) this.avatarAbort = null;
       }
       this.emit('avatarChange', { avatarError: this._avatarError });
     });
     this.avatarTail = next;
     await next;
+  }
+
+  /** Settles once all queued avatar work has finished (start() does not wait for it). */
+  avatarSettled(): Promise<void> {
+    return this.avatarTail.catch(() => {});
   }
 
   get lastError(): string {
@@ -759,12 +771,15 @@ export class VoiceBot extends EventEmitter {
     await this.client.connect(opts);
     this._status = 'connected';
     this.emit('statusChange', this._status);
-    await this.applyAvatar();
     this.emit('connected');
+    // Avatar upload can take several TS6 round trips; never hold up startup.
+    // applyAvatar() records failures itself and emits avatarChange.
+    void this.applyAvatar();
   }
 
   async stop(): Promise<void> {
     this._manuallyStopped = true;
+    this.avatarAbort?.abort();
     this.stopAutoStopTimer();
     this.stopIcyPolling();
     this.resetNickname();

@@ -14,14 +14,15 @@ async function fixture(role = 'admin', avatarError: string | null = null) {
   const savedEnv = process.env.DATA_DIR; process.env.DATA_DIR = dir;
   const rows: any[] = []; const applications: any[] = [];
   let dbBot: any = { id: 7, serverConfigId: 3, avatarMode: 'none', avatarFile: null, avatarMd5: null };
-  const prisma: any = { musicBot: { findUnique: async ({ where }: any) => where.id === 7 ? dbBot : null, update: async ({ data }: any) => { dbBot = { ...dbBot, ...data }; return dbBot; } }, adminAuditEvent: { create: async ({ data }: any) => { rows.push(data); return { id: 'event' }; }, updateMany: async ({ where, data }: any) => { for (const row of rows) if (row.operationId === where.operationId) Object.assign(row, data); return { count: 1 }; } }, $transaction: async (fn: any) => fn(prisma) };
+  const db = { failUpdate: false };
+  const prisma: any = { musicBot: { findUnique: async ({ where }: any) => where.id === 7 ? dbBot : null, update: async ({ data }: any) => { if (db.failUpdate) throw new Error('database unavailable'); dbBot = { ...dbBot, ...data }; return dbBot; } }, adminAuditEvent: { create: async ({ data }: any) => { rows.push(data); return { id: 'event' }; }, updateMany: async ({ where, data }: any) => { for (const row of rows) if (row.operationId === where.operationId) Object.assign(row, data); return { count: 1 }; } }, $transaction: async (fn: any) => fn(prisma) };
   const app = express(); app.use(express.json());
   app.use((req, _res, next) => { (req as any).user = { id: 1, username: 'admin', role }; next(); });
   app.locals.prisma = prisma; app.locals.voiceBotManager = { getBot: () => ({ applyAvatar: async (data: any) => applications.push(data), avatarError }) };
   app.use('/api/music-bots', musicBotRoutes); app.use(errorHandler);
   const server = app.listen(0); await new Promise<void>((resolve) => server.once('listening', resolve));
   const url = `http://127.0.0.1:${(server.address() as any).port}/api/music-bots/7/avatar`;
-  return { dir, url, rows, applications, bot: () => dbBot, close: async () => { await new Promise<void>((resolve) => server.close(() => resolve())); if (savedEnv === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = savedEnv; await rm(dir, { recursive: true, force: true }); } };
+  return { dir, url, rows, applications, db, bot: () => dbBot, close: async () => { await new Promise<void>((resolve) => server.close(() => resolve())); if (savedEnv === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = savedEnv; await rm(dir, { recursive: true, force: true }); } };
 }
 function form(data = png, filename = '../../outside.png') { const body = new FormData(); body.append('file', new Blob([data]), filename); return body; }
 
@@ -29,8 +30,8 @@ test('avatar upload sets custom mode, uses a server-generated path, audits and a
   const f = await fixture();
   try {
     const res = await fetch(f.url, { method: 'PUT', body: form() }); assert.equal(res.status, 200);
-    assert.equal(f.bot().avatarMode, 'custom'); assert.equal(f.bot().avatarFile, 'bot-avatars/7.png');
-    assert.deepEqual(await readdir(f.dir), ['bot-avatars']); assert.deepEqual(await readdir(path.join(f.dir, 'bot-avatars')), ['7.png']);
+    assert.equal(f.bot().avatarMode, 'custom'); assert.match(f.bot().avatarFile, /^bot-avatars\/7\.[0-9a-f]{32}\.png$/);
+    assert.deepEqual(await readdir(f.dir), ['bot-avatars']); assert.deepEqual(await readdir(path.join(f.dir, 'bot-avatars')), [path.basename(f.bot().avatarFile)]);
     assert.equal(f.rows[0].action, 'music_bot.avatar_update'); assert.equal(f.rows[0].connectionId, 3); assert.equal(f.rows[0].targetId, '7');
     assert.equal(f.applications[0].avatarMode, 'custom');
     const image = await fetch(f.url); assert.equal(image.status, 200); assert.equal(image.headers.get('cache-control'), 'no-store'); assert.equal(image.headers.get('content-type'), 'image/png'); assert.deepEqual(Buffer.from(await image.arrayBuffer()), png);
@@ -108,5 +109,24 @@ test('audit success means the selected image was saved, even when TeamSpeak refu
     assert.equal((await fetch(f.url)).status, 200, 'chosen image remains available after refusal');
     const detail = await fetch(f.url.replace('/avatar', ''));
     assert.equal((await detail.json()).avatarError, AVATAR_UPLOAD_REFUSED);
+  } finally { await f.close(); }
+});
+
+test('a replacement keeps the previous image until the database update succeeds, then removes it', async () => {
+  const f = await fixture();
+  try {
+    assert.equal((await fetch(f.url, { method: 'PUT', body: form() })).status, 200);
+    const first = f.bot().avatarFile;
+    const replacement = Buffer.from(png); replacement[replacement.length - 1] ^= 1;
+    f.db.failUpdate = true;
+    assert.equal((await fetch(f.url, { method: 'PUT', body: form(replacement) })).status, 500);
+    assert.equal(f.bot().avatarFile, first);
+    assert.deepEqual(await readdir(path.join(f.dir, 'bot-avatars')), [path.basename(first)], 'staged replacement is discarded');
+    assert.deepEqual(Buffer.from(await (await fetch(f.url)).arrayBuffer()), png, 'previous image is still served');
+    f.db.failUpdate = false;
+    assert.equal((await fetch(f.url, { method: 'PUT', body: form(replacement) })).status, 200);
+    assert.notEqual(f.bot().avatarFile, first);
+    assert.deepEqual(await readdir(path.join(f.dir, 'bot-avatars')), [path.basename(f.bot().avatarFile)], 'previous file removed after commit');
+    assert.deepEqual(Buffer.from(await (await fetch(f.url)).arrayBuffer()), replacement);
   } finally { await f.close(); }
 });
