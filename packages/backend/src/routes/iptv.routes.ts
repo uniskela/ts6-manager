@@ -15,7 +15,7 @@ import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { runMediaAudited } from './media-audit.js';
 import { loadIptvLocalHosts } from '../utils/app-settings.js';
-import { iptvChannelKey, listIptvPicks, recordIptvRecent } from '../iptv/iptv-picks.js';
+import { iptvChannelKey, listIptvPicks, recordIptvRecentSafely } from '../iptv/iptv-picks.js';
 
 export const iptvRoutes: Router = Router();
 
@@ -461,7 +461,7 @@ iptvRoutes.post('/stream', async (req: Request, res: Response, next) => {
       );
     }
 
-    await recordIptvRecent(prisma, bot.currentConfig.serverConfigId, channel);
+    await recordIptvRecentSafely(prisma, bot.currentConfig.serverConfigId, channel);
     res.json({ success: true, channel: { id: channel.id, name: channel.name } });
   } catch (err) { next(err); }
 });

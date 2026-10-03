@@ -72,3 +72,12 @@ export async function recordIptvRecent(prisma: PrismaClient, serverConfigId: num
     }
   });
 }
+
+/** Recent is a convenience: a failed write must not turn a live stream into an error. */
+export async function recordIptvRecentSafely(prisma: PrismaClient, serverConfigId: number, channel: IptvChannel): Promise<void> {
+  try {
+    await recordIptvRecent(prisma, serverConfigId, channel);
+  } catch (err: any) {
+    console.warn(`[IPTV] Could not record recent channel ${channel.id}: ${err?.message ?? err}`);
+  }
+}

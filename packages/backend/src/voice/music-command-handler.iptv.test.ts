@@ -66,3 +66,18 @@ test('!tv never streams or records a matching channel from another server', asyn
   assert.match(f.replies.at(-1)!, /No channel matching/);
   assert.equal(await prisma.iptvChannelPick.count({ where: { channelKey: 'Private channel' } }), 0);
 });
+
+test('!tv still reports a started stream when recording recent fails', async () => {
+  await prisma.iptvChannel.create({ data: { playlistId: 1, name: 'Unrecorded channel', url: 'https://example.com/live' } });
+  const original = prisma.$transaction;
+  const warn = console.warn;
+  (prisma as any).$transaction = async () => { throw new Error('database locked'); };
+  console.warn = () => {};
+  try {
+    for (const switching of [false, true]) {
+      const f = fixture(switching);
+      await f.tv('Unrecorded channel');
+      assert.match(f.replies.at(-1)!, switching ? /Now streaming/ : /Video stream started/);
+    }
+  } finally { (prisma as any).$transaction = original; console.warn = warn; }
+});

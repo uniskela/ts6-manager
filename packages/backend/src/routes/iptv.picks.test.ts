@@ -171,6 +171,19 @@ describe('IPTV favourites and recent', () => {
     assert.deepEqual((await send(`/recent?serverConfigId=${serverId}`)).body, []);
   });
 
+  it('keeps a successful stream start when recording recent fails', async () => {
+    const original = prisma.$transaction;
+    const warn = console.warn;
+    (prisma as any).$transaction = async () => { throw new Error('database locked'); };
+    console.warn = () => {};
+    try {
+      const response = await send('/stream', 'POST', { botId: 1, channelId: channel.id });
+      assert.equal(response.status, 200);
+      assert.equal(response.body.success, true);
+    } finally { (prisma as any).$transaction = original; console.warn = warn; }
+    assert.deepEqual((await send(`/recent?serverConfigId=${serverId}`)).body, []);
+  });
+
   it('never lists another server picks or accepts its playlist', async () => {
     await send('/favourites', 'PUT', pickBody());
     await recordIptvRecent(prisma, serverId, channel);
