@@ -366,7 +366,7 @@ test('clash warnings update for custom replies, built-ins, and flow command trig
   await expect(page.getByText(/clash/i)).toBeVisible();
   await page.getByRole('button', { name: 'Edit command rules' }).click();
   await page.getByLabel('Command name').fill('play');
-  await expect(page.getByText(/built-in.*play|clash.*play/i)).toBeVisible();
+  await expect(page.getByText(/!play is used as .*built-in command/i)).toBeVisible();
   await page.getByRole('button', { name: /Cancel/ }).click();
   await page.goto('/bots/1');
   await page.locator('.flow-node[data-node-id="trigger"]').click();
