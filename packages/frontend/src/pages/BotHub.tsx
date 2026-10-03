@@ -21,6 +21,7 @@ import {
 } from '@/hooks/use-music-bots';
 import { hubTone } from '@/lib/bot-hub';
 import { apiErrorMessage } from '@/lib/api-error';
+import { BotAvatar } from '@/components/shared/BotAvatar';
 
 const SECTIONS = [
   { to: '/bots', icon: Bot, title: 'Bot Flows', text: 'Event-driven automations and chat commands.' },
@@ -51,6 +52,7 @@ function SessionCard({ bot, now }: { bot: BotMediaOverview; now: number }) {
       bot={bot}
       now={now}
       variant="compact"
+      avatar={<BotAvatar botId={bot.botId} name={bot.botName} mode={bot.avatarMode} md5={bot.avatarMd5} />}
       footer={
         <>
           {error && <p className="text-xs text-destructive">{apiErrorMessage(error, 'Could not stop')}</p>}

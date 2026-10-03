@@ -15,6 +15,21 @@ export const musicBotsApi = {
   stop: (id: number) => api.post(`/music-bots/${id}/stop`).then((r) => r.data),
   restart: (id: number) => api.post(`/music-bots/${id}/restart`).then((r) => r.data),
 
+  // The authenticated client supplies the bearer header; <img src> cannot.
+  avatar: (id: number, signal?: AbortSignal): Promise<Blob> =>
+    api.get(`/music-bots/${id}/avatar`, { responseType: 'blob', signal }).then((r) => r.data),
+  uploadAvatar: (id: number, file: File) => {
+    const data = new FormData();
+    data.append('file', file);
+    return api.put(`/music-bots/${id}/avatar`, data, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      // Saving also awaits the TS6 upload, size confirmation, and flag commands.
+      timeout: 90000,
+    }).then((r) => r.data);
+  },
+  avatarMode: (id: number, mode: 'custom' | 'default' | 'none') =>
+    api.put(`/music-bots/${id}/avatar/mode`, { mode }, { timeout: 90000 }).then((r) => r.data),
+
   // Playback
   playRadio: (id: number, stationId: number) => api.post(`/music-bots/${id}/play-radio`, { stationId }).then((r) => r.data),
   play: (id: number, songId: number) => api.post(`/music-bots/${id}/play`, { songId }).then((r) => r.data),

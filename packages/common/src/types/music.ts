@@ -1,5 +1,7 @@
 // === Music / Voice Bot Types ===
 
+export type BotAvatarMode = 'none' | 'default' | 'custom';
+
 export type VoiceBotStatus = 'stopped' | 'starting' | 'connected' | 'playing' | 'paused' | 'error';
 
 export interface MusicBotSummary {
@@ -16,6 +18,9 @@ export interface MusicBotSummary {
   voicePort: number;
   volume: number;
   autoStart: boolean;
+  avatarMode?: BotAvatarMode;
+  avatarMd5?: string | null;
+  avatarError?: string | null;
   status: VoiceBotStatus;
   nowPlaying: QueueItemInfo | null;
   createdAt: string;
@@ -242,6 +247,9 @@ export interface MediaSessionConflictBody {
 export interface BotMediaOverview {
   botId: number;
   botName: string;
+  avatarMode?: BotAvatarMode;
+  avatarMd5?: string | null;
+  avatarError?: string | null;
   serverConfigId: number;
   serverName: string | null;
   status: string;

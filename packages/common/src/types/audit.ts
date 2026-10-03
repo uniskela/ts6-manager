@@ -53,6 +53,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.limits_update',
   'settings.video_streaming_update',
   'settings.iptv_network_update',
+  'music_bot.avatar_update',
   'media.music.start',
   'media.music.stop',
   'media.video.start',

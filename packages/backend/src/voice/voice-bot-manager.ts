@@ -1,4 +1,6 @@
 import { EventEmitter } from 'events';
+import { readBotAvatar, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
+import { createHash } from 'node:crypto';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
@@ -90,6 +92,9 @@ export class VoiceBotManager extends EventEmitter {
         defaultChannel: dbBot.defaultChannel ?? undefined,
         channelPassword: dbBot.channelPassword ?? undefined,
         volume: dbBot.volume,
+        avatarMode: dbBot.avatarMode as BotAvatarMode,
+        avatarFile: dbBot.avatarFile,
+        avatarMd5: dbBot.avatarMd5,
         identity,
         sidecarBinaryPath: process.env.SIDECAR_BINARY_PATH,
         sidecarPort: (dbBot as any).sidecarPort ?? 9800,
@@ -134,6 +139,8 @@ export class VoiceBotManager extends EventEmitter {
     bot.on('error', (err: Error) => {
       console.error(`[VoiceBotManager] Bot ${config.id} error: ${err.message}`);
     });
+
+    bot.on('avatarChange', (data) => this.broadcast('music:bot:avatar', { botId: config.id, ...data }));
 
     bot.on('nowPlaying', (item: QueueItem) => {
       const progress = bot.playbackProgress;
@@ -250,6 +257,7 @@ export class VoiceBotManager extends EventEmitter {
     voicePort?: number;
     volume?: number;
     autoStart?: boolean;
+    avatarMode?: BotAvatarMode;
   }): Promise<{ id: number }> {
     // Enforce bot limit
     const limitSetting = await this.prisma.appSetting.findUnique({ where: { key: 'max_music_bots' } });
@@ -271,6 +279,9 @@ export class VoiceBotManager extends EventEmitter {
       typeof value === 'bigint' ? value.toString() : value
     ));
 
+    const avatarMode = data.avatarMode ?? 'none';
+    const avatarImage = avatarMode === 'default' ? await readBotAvatar({ id: 1, avatarMode }) : null;
+    const avatarMd5 = avatarImage ? createHash('md5').update(avatarImage).digest('hex') : null;
     const dbBot = await this.prisma.musicBot.create({
       data: {
         name: data.name,
@@ -284,6 +295,8 @@ export class VoiceBotManager extends EventEmitter {
         voicePort: data.voicePort ?? 9987,
         volume: data.volume ?? 50,
         autoStart: data.autoStart ?? false,
+        avatarMode,
+        avatarMd5,
         identityData: quickIdentityData,
       },
     });
@@ -299,6 +312,8 @@ export class VoiceBotManager extends EventEmitter {
       defaultChannel: dbBot.defaultChannel ?? undefined,
       channelPassword: dbBot.channelPassword ?? undefined,
       volume: dbBot.volume,
+      avatarMode,
+      avatarMd5,
       identity: quickIdentity,
       sidecarBinaryPath: process.env.SIDECAR_BINARY_PATH,
       sidecarPort: 9800,
