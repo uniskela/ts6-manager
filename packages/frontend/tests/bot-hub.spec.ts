@@ -200,6 +200,28 @@ test('old Media Bots links land on their 1.10.0 pages', async ({ page, request }
   await expect(page.getByRole('tab')).toHaveText(['Library', 'Playlists', 'Radio stations', 'Requests', 'Streaming defaults']);
 });
 
+test('a live stream switches source from the console without stopping', async ({ page, request }) => {
+  const switches: unknown[] = [];
+  const stops: string[] = [];
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
+  await page.route('**/api/music-bots', (route) => route.fulfill({ json: summaries() }));
+  await page.route('**/api/music-bots/*/state', (route) => route.fulfill({ json: { status: 'connected', currentIndex: -1, queue: [], position: 0, duration: 0, volume: 50, shuffle: false, repeat: 'off' } }));
+  await page.route('**/api/music-bots/2/stream/status', (route) => route.fulfill({ json: { streaming: true, viewerCount: 0, viewers: [] } }));
+  await page.route('**/api/music-bots/2/stream/stop', (route) => { stops.push(route.request().url()); return route.fulfill({ json: { success: true } }); });
+  await page.route('**/api/music-bots/2/stream/source', async (route) => { switches.push(route.request().postDataJSON()); await route.fulfill({ json: { success: true } }); });
+  await signIn(page, request);
+
+  await page.goto('/bot-hub/2');
+  const input = page.getByLabel('New source for this stream');
+  await input.fill('https://video.invalid/next.mp4');
+  await page.getByRole('button', { name: 'Switch', exact: true }).click();
+
+  await expect.poll(() => switches).toEqual([{ source: 'https://video.invalid/next.mp4' }]);
+  await expect(page.getByText('Stream source switched', { exact: true })).toBeVisible();
+  await expect(input).toHaveValue('');
+  expect(stops).toHaveLength(0);
+});
+
 test('IPTV Stream on… opens the chosen bot\'s console with the channel selected, without streaming', async ({ page, request }) => {
   const streams: unknown[] = [];
   const channel = { id: 7, playlistId: 10, name: 'Morning News', url: 'http://news.invalid/live', logo: null, groupTitle: 'News', tvgId: 'morning.west', position: 0 };
@@ -209,7 +231,11 @@ test('IPTV Stream on… opens the chosen bot\'s console with the channel selecte
   await page.route(/\/api\/iptv\/playlists(\?.*)?$/, (route) => route.fulfill({ json: [{ id: 10, name: 'News', serverConfigId: 1, url: 'http://news.invalid/list.m3u', channelCount: 1, lastRefreshed: null, autoRefresh: false, refreshInterval: 0 }] }));
   await page.route(/\/api\/iptv\/playlists\/10\/groups/, (route) => route.fulfill({ json: ['News'] }));
   await page.route(/\/api\/iptv\/playlists\/10\/channels/, (route) => route.fulfill({ json: { total: 1, page: 1, pageSize: 24, channels: [channel] } }));
-  await page.route('**/api/iptv/channels**', (route) => route.fulfill({ json: { total: 1, page: 1, pageSize: 1, channels: [{ ...channel, group: 'News', playlistName: 'News', channelKey: 'morning.west' }] } }));
+  const lookups: string[] = [];
+  await page.route('**/api/iptv/channels**', (route) => {
+    lookups.push(new URL(route.request().url()).search);
+    return route.fulfill({ json: { total: 1, page: 1, pageSize: 1, channels: [{ ...channel, group: 'News', playlistName: 'News', channelKey: 'morning.west' }] } });
+  });
   await page.route('**/api/iptv/stream', async (route) => { streams.push(route.request().postDataJSON()); await route.fulfill({ json: { success: true } }); });
   await signIn(page, request);
 
@@ -217,8 +243,10 @@ test('IPTV Stream on… opens the chosen bot\'s console with the channel selecte
   await page.getByRole('button', { name: 'Stream Morning News on…' }).click();
   await page.getByRole('menuitem', { name: /Cinema/ }).click();
 
-  await expect(page).toHaveURL('/bot-hub/2?iptv=10%3Amorning.west');
+  await expect(page).toHaveURL('/bot-hub/2?iptv=10%3Amorning.west&iptvChannel=7');
   await expect(page.getByRole('tab', { name: 'IPTV' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.getByRole('button', { name: 'Stream Morning News' })).toBeVisible();
+  // The exact row is looked up, since tvg-id can repeat across a playlist's channels.
+  expect(lookups.some((q) => new URLSearchParams(q).get('channelId') === '7')).toBe(true);
   expect(streams).toHaveLength(0);
 });

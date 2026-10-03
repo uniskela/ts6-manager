@@ -8,6 +8,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, Bot, Square } from 'lucide-react';
 import type { PlaybackState } from '@ts6/common';
 import { NowPlaying } from '@/components/media/NowPlaying';
+import { StreamSourceSwitch } from '@/components/video/StreamSourceSwitch';
 import { StreamViewers } from '@/components/video/StreamViewers';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { PageHeader } from '@/components/shared/PageHeader';
@@ -118,6 +119,7 @@ export default function BotConsole() {
               </>
             )}
           />
+          {tone === 'live' && <StreamSourceSwitch botId={bot.botId} />}
           {tone === 'live' && <StreamViewers botId={bot.botId} now={now} />}
         </section>
 
