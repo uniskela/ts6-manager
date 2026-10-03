@@ -65,6 +65,7 @@ test('uploading a banner selects its public link and saving sends it as the chan
 test('without a public URL the picker asks for one before banners can be chosen', async ({ page, request }) => {
   const { calls, dialog } = await setup(page, request, null);
   await expect(dialog.getByRole('button', { name: 'Use this hosted banner' })).toBeDisabled();
+  await expect(dialog.getByLabel('Public URL')).toHaveValue(new URL(page.url()).origin);
   await dialog.getByLabel('Public URL').fill('https://voice.example.org/');
   await dialog.getByRole('button', { name: 'Save', exact: true }).first().click();
   await expect.poll(() => calls.find((c) => c.url.endsWith('/api/settings/public-url'))?.body).toBe(JSON.stringify({ publicUrl: 'https://voice.example.org/' }));

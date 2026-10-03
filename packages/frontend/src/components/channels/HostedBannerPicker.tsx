@@ -8,6 +8,17 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
 import { Check, Loader2, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
+import api from '@/api/client';
+
+/**
+ * Where this browser reaches the manager: the address the API client uses,
+ * minus its `/api` suffix, so a path prefix in front of the API is kept.
+ */
+function suggestedPublicUrl(): string {
+  if (typeof window === 'undefined') return '';
+  const apiBase = new URL(api.defaults.baseURL ?? '/api', window.location.href);
+  return `${apiBase.origin}${apiBase.pathname.replace(/\/+$/, '').replace(/\/api$/, '')}`;
+}
 
 /**
  * Upload channel banners to this manager and pick one; the chosen banner's
@@ -27,7 +38,7 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
   const data = banners.data;
   const publicUrl = data?.publicUrl ?? null;
   const showUrlForm = !!data && (editingUrl !== null || !publicUrl);
-  const urlDraft = editingUrl ?? (typeof window !== 'undefined' ? window.location.origin : '');
+  const urlDraft = editingUrl ?? suggestedPublicUrl();
   const maxMb = data ? Math.round(data.maxBytes / (1024 * 1024)) : 5;
 
   const handleSaveUrl = () => {
