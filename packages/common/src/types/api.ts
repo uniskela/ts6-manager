@@ -444,3 +444,32 @@ export interface ActivityJournalHistoryResponse {
   items: ClientActivityEntry[];
   nextCursor: string | null;
 }
+
+// === Hosted channel banners ===
+
+export interface HostedChannelBanner {
+  /** Server-generated file name, e.g. `3f2a….png`. */
+  name: string;
+  size: number;
+  createdAt: string;
+  /** Path on this manager, e.g. `/api/banners/3f2a….png`. */
+  path: string;
+  /** Full link for the TS6 banner image URL; null until a public URL is known. */
+  url: string | null;
+}
+
+export interface ChannelBannerList {
+  publicUrl: string | null;
+  publicUrlSource: 'setting' | 'env' | null;
+  maxBytes: number;
+  maxCount: number;
+  banners: HostedChannelBanner[];
+}
+
+export interface PublicUrlSettings {
+  /** The saved setting (null when unset). */
+  publicUrl: string | null;
+  /** What links are built from: saved setting, then PUBLIC_URL env. */
+  effective: string | null;
+  source: 'setting' | 'env' | null;
+}

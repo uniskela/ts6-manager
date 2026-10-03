@@ -11,6 +11,7 @@
 | `JWT_ACCESS_EXPIRY` | `15m` | Access-token lifetime |
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh-token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | Allowed frontend/CORS origin |
+| `PUBLIC_URL` | — | Address TeamSpeak clients use to reach the manager (e.g. `https://ts6.example.com`); hosted channel banner links start with it. A **Public URL** saved in the UI overrides it |
 | `MUSIC_DIR` | `/data/music` | Downloaded/local music directory |
 | `BOT_AUTO_STOP_EMPTY_SECONDS` | `300` | Stop music or video when the bot's channel stays empty this long; `0` disables (including bots created in the UI). A video stream with at least one TeamSpeak viewer is exempt; the no-viewer timeout still applies |
 | `SIDECAR_URL` | — | Optional media-sidecar URL, normally `http://ts6-sidecar:9800` in split Docker |

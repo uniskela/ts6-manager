@@ -81,6 +81,9 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'media.video.source_change': 'Change stream source',
   'media.session.switch': 'Switch media (replace what was playing)',
   'music_bot.avatar_update': 'Update bot avatar',
+  'channel_banner.upload': 'Upload channel banner',
+  'channel_banner.delete': 'Delete channel banner',
+  'settings.public_url_update': 'Update public URL',
 };
 
 const RESULT_CODE_LABELS: Record<AdminAuditResultCode, string> = {
@@ -109,6 +112,7 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   user: 'User',
   settings: 'Settings',
   music_bot: 'Music bot',
+  channel_banner: 'Channel banner',
 };
 
 const AUDIT_GRID =

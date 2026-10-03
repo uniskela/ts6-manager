@@ -340,3 +340,36 @@ export function parseIptvLocalHostsUpdate(body: Record<string, unknown> | null |
   }
   return { ok: true, value: entries };
 }
+
+/**
+ * Public address of this manager as TeamSpeak clients reach it (scheme, host,
+ * optional port and path prefix). Hosted channel banner links are built from it.
+ */
+export const PUBLIC_URL_KEY = 'public_url';
+export const MAX_PUBLIC_URL_LENGTH = 512;
+
+export type PublicUrlUpdate = { ok: true; value: string | null } | { ok: false; error: string };
+
+/** Normalise an operator-supplied public URL; empty clears it. */
+export function parsePublicUrl(raw: unknown): PublicUrlUpdate {
+  if (raw === null || raw === undefined || (typeof raw === 'string' && raw.trim() === '')) return { ok: true, value: null };
+  if (typeof raw !== 'string') return { ok: false, error: 'publicUrl must be a string' };
+  const trimmed = raw.trim();
+  if (trimmed.length > MAX_PUBLIC_URL_LENGTH) return { ok: false, error: `publicUrl is limited to ${MAX_PUBLIC_URL_LENGTH} characters` };
+  let url: URL;
+  try { url = new URL(trimmed); } catch { return { ok: false, error: 'publicUrl must be a full http:// or https:// address' }; }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return { ok: false, error: 'publicUrl must use http:// or https://' };
+  if (url.username || url.password) return { ok: false, error: 'publicUrl must not contain credentials' };
+  if (url.search || url.hash) return { ok: false, error: 'publicUrl must not contain a query or fragment' };
+  return { ok: true, value: `${url.origin}${url.pathname.replace(/\/+$/, '')}` };
+}
+
+/** Saved setting first, then the PUBLIC_URL environment variable; null when neither is valid. */
+export async function loadPublicUrl(prisma: PrismaClient): Promise<{ publicUrl: string | null; source: 'setting' | 'env' | null }> {
+  const row = await prisma.appSetting.findUnique({ where: { key: PUBLIC_URL_KEY } });
+  const saved = parsePublicUrl(row?.value);
+  if (saved.ok && saved.value) return { publicUrl: saved.value, source: 'setting' };
+  const env = parsePublicUrl(process.env.PUBLIC_URL);
+  if (env.ok && env.value) return { publicUrl: env.value, source: 'env' };
+  return { publicUrl: null, source: null };
+}

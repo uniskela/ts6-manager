@@ -54,6 +54,9 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.video_streaming_update',
   'settings.iptv_network_update',
   'music_bot.avatar_update',
+  'channel_banner.upload',
+  'channel_banner.delete',
+  'settings.public_url_update',
   'media.music.start',
   'media.music.stop',
   'media.video.start',
@@ -103,6 +106,7 @@ export const ADMIN_AUDIT_TARGET_TYPES = [
   'user',
   'settings',
   'music_bot',
+  'channel_banner',
 ] as const;
 
 export type AdminAuditTargetType = (typeof ADMIN_AUDIT_TARGET_TYPES)[number];
