@@ -17,14 +17,16 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
 import { cn } from '@/lib/utils';
 import { formatTime } from '../media-bots/shared';
+import { AddMediaLink } from './AddMediaLink';
 import type { ConsoleSourceContext } from './SourcePicker';
 
 type MusicView = 'songs' | 'playlists' | 'recent';
 
-const VIEWS: { id: MusicView; label: string }[] = [
-  { id: 'songs', label: 'Songs' },
-  { id: 'playlists', label: 'Playlists' },
-  { id: 'recent', label: 'Recent requests' },
+/** Each view, with the Media Library shortcut shown beside the view chips. */
+const VIEWS: { id: MusicView; label: string; add: { to: string; label: string } }[] = [
+  { id: 'songs', label: 'Songs', add: { to: '/media-bots', label: 'Add songs' } },
+  { id: 'playlists', label: 'Playlists', add: { to: '/media-bots?tab=playlists', label: 'Add playlist' } },
+  { id: 'recent', label: 'Recent requests', add: { to: '/media-bots?tab=requests', label: 'Manage requests' } },
 ];
 
 function useListPaging(listKey: string, search: string) {
@@ -37,25 +39,29 @@ function useListPaging(listKey: string, search: string) {
 export function MusicSource(ctx: ConsoleSourceContext) {
   const [view, setView] = useState<MusicView>('songs');
   const [search, setSearch] = useState('');
+  const add = (VIEWS.find((v) => v.id === view) ?? VIEWS[0]).add;
 
   return (
     <div className="space-y-3">
-      <div role="tablist" aria-label="Music views" className="flex flex-wrap gap-1">
-        {VIEWS.map((v) => (
-          <button
-            key={v.id}
-            type="button"
-            role="tab"
-            aria-selected={view === v.id}
-            className={cn(
-              'min-h-11 rounded-md px-3 text-sm',
-              view === v.id ? 'bg-primary font-semibold text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
-            )}
-            onClick={() => { setView(v.id); setSearch(''); }}
-          >
-            {v.label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div role="tablist" aria-label="Music views" className="flex flex-wrap gap-1">
+          {VIEWS.map((v) => (
+            <button
+              key={v.id}
+              type="button"
+              role="tab"
+              aria-selected={view === v.id}
+              className={cn(
+                'min-h-11 rounded-md px-3 text-sm',
+                view === v.id ? 'bg-primary font-semibold text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => { setView(v.id); setSearch(''); }}
+            >
+              {v.label}
+            </button>
+          ))}
+        </div>
+        <AddMediaLink to={add.to} label={add.label} />
       </div>
       <Input
         value={search}

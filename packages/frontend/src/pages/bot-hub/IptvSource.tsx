@@ -19,6 +19,7 @@ import {
   useIptvStream,
 } from '@/hooks/use-iptv';
 import type { IptvChannelPickInfo, IptvConsoleChannel, IptvGroupInfo, IptvPlaylistSummary } from '@ts6/common';
+import { AddMediaLink } from './AddMediaLink';
 import type { ConsoleSourceContext } from './SourcePicker';
 import { parseIptvChannelId, parseIptvDeepLink, type IptvDeepLink } from './iptv-deep-link';
 
@@ -169,11 +170,14 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
       {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
       {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
       {filtersQuery.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(filtersQuery.error, 'Could not load filters')}</p>}
-      <div role="group" aria-label="IPTV views" className="flex flex-wrap gap-1.5">
-        {(['Favourites', 'Recent', 'Browse groups'] as const).map((name) => (
-          <Button key={name} type="button" variant={currentView === name ? 'default' : 'outline'} className="min-h-11"
-            aria-pressed={currentView === name} onClick={() => { setView(name); setPage(1); }}>{name}</Button>
-        ))}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div role="group" aria-label="IPTV views" className="flex flex-wrap gap-1.5">
+          {(['Favourites', 'Recent', 'Browse groups'] as const).map((name) => (
+            <Button key={name} type="button" variant={currentView === name ? 'default' : 'outline'} className="min-h-11"
+              aria-pressed={currentView === name} onClick={() => { setView(name); setPage(1); }}>{name}</Button>
+          ))}
+        </div>
+        <AddMediaLink to="/iptv" label="Add playlist" />
       </div>
       <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <div className="space-y-1.5">

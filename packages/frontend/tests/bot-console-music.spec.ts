@@ -117,3 +117,29 @@ test('a radio mood chip filters the station list', async ({ page, request }) => 
   await expect(page.getByText('No Genre Station')).toHaveCount(0);
   await expect(page.getByText('Moods come from each station\'s genre. Set or change it under Media Library → Radio stations.')).toBeVisible();
 });
+
+test('every source tab links to the page that manages its media', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await mockConsole(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  const panel = page.getByRole('tabpanel');
+
+  await page.getByRole('tab', { name: 'Music' }).click();
+  await expect(panel.getByRole('link', { name: 'Add songs' })).toHaveAttribute('href', '/media-bots');
+  await page.getByRole('tab', { name: 'Playlists' }).click();
+  await expect(panel.getByRole('link', { name: 'Add playlist' })).toHaveAttribute('href', '/media-bots?tab=playlists');
+  await page.getByRole('tab', { name: 'Recent requests' }).click();
+  await expect(panel.getByRole('link', { name: 'Manage requests' })).toHaveAttribute('href', '/media-bots?tab=requests');
+
+  await page.getByRole('tab', { name: 'Link' }).click();
+  await expect(panel.getByRole('link', { name: 'Add files' })).toHaveAttribute('href', '/media-bots');
+
+  await page.getByRole('tab', { name: 'IPTV' }).click();
+  await expect(panel.getByRole('link', { name: 'Add playlist' })).toHaveAttribute('href', '/iptv');
+
+  await page.getByRole('tab', { name: 'Radio' }).click();
+  await panel.getByRole('link', { name: 'Add station' }).click();
+  await expect(page).toHaveURL('/media-bots?tab=radio');
+  await expect(page.getByRole('tab', { name: 'Radio stations', selected: true })).toBeVisible();
+});
