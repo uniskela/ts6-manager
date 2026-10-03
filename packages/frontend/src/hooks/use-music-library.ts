@@ -10,6 +10,23 @@ export function useSongs(configId: number | null) {
   });
 }
 
+/** Paged title/artist search for the console Music → Songs view. */
+export function useSongSearch(
+  configId: number | null,
+  search: string,
+  page: number,
+  pageSize: number,
+) {
+  return useQuery({
+    queryKey: ['songs-search', configId, search, page, pageSize],
+    queryFn: () => musicLibraryApi.searchSongs(configId!, { search, page, pageSize }),
+    enabled: !!configId,
+    // Keep the prior page while typing, but never show another server's songs.
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery?.queryKey[1] === configId ? previousData : undefined,
+  });
+}
+
 export function useScanLibrary() {
   const qc = useQueryClient();
   return useMutation({

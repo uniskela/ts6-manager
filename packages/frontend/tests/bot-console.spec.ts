@@ -45,6 +45,11 @@ async function mockBot(page: Page) {
   const calls: { method: string; url: string; body: unknown }[] = [];
   await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
   await page.route('**/api/music-bots/1/state', (r) => r.fulfill({ json: currentState }));
+  await page.route('**/api/servers/1/music-library/songs/search**', (r) =>
+    r.fulfill({ json: { total: 0, page: 1, pageSize: 50, songs: [] } }));
+  await page.route('**/api/playlists**', (r) => r.fulfill({ json: [] }));
+  await page.route('**/api/servers/1/radio-stations', (r) => r.fulfill({ json: [] }));
+  await page.route('**/api/servers/1/music-requests', (r) => r.fulfill({ json: [] }));
   await page.route(/\/api\/music-bots\/1\/queue(\/.*)?$/, async (r) => {
     const req = r.request();
     calls.push({ method: req.method(), url: req.url(), body: req.postDataJSON?.() ?? null });
@@ -197,10 +202,12 @@ test('queue rows cannot be dragged again until a move is saved', async ({ page, 
   expect(calls.filter((c) => c.method === 'PUT')).toHaveLength(1);
 });
 
-test('the Link tab is available on the console', async ({ page, request }) => {
+test('the console shows the Music, Link and Radio source tabs in order', async ({ page, request }) => {
   await mockBot(page);
   await signIn(page, request);
   await page.goto('/bot-hub/1');
-  await expect(page.getByRole('tab', { name: 'Link' })).toBeVisible();
+  const sources = page.getByRole('tablist', { name: 'Source' }).getByRole('tab');
+  await expect(sources).toHaveText(['Music', 'Link', 'Radio']);
+  await page.getByRole('tab', { name: 'Link' }).click();
   await expect(page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')).toBeVisible();
 });

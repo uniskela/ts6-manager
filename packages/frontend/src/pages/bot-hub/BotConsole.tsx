@@ -17,12 +17,16 @@ import { apiErrorMessage } from '@/lib/api-error';
 import { hubTone } from '@/lib/bot-hub';
 import { useEffect, useState } from 'react';
 import { LinkSource } from './LinkSource';
+import { MusicSource } from './MusicSource';
+import { RadioSource } from './RadioSource';
 import { SourcePicker, type ConsoleSourceTab } from './SourcePicker';
 import { UpNextQueue } from './UpNextQueue';
 
-/** Source tabs in order Music · Link · Radio · IPTV (other tabs land in later PRs). */
+/** Source tabs in order Music · Link · Radio · IPTV (IPTV lands in a later PR). */
 export const CONSOLE_TABS: ConsoleSourceTab[] = [
+  { id: 'music', label: 'Music', render: (ctx) => <MusicSource {...ctx} /> },
   { id: 'link', label: 'Link', render: (ctx) => <LinkSource {...ctx} /> },
+  { id: 'radio', label: 'Radio', render: (ctx) => <RadioSource {...ctx} /> },
 ];
 
 function useNow(): number {
