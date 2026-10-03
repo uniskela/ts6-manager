@@ -241,3 +241,135 @@ test('adding and removing nodes are visible dirty edits without changing the sav
   const state = await request.get('/__test/bots').then((response) => response.json());
   expect(state.botUpdateRequests).toHaveLength(0);
 });
+
+const builtinCommands = [
+  'help', 'commands', 'here', 'come', 'play', 'queue', 'add', 'playlist', 'pl', 'repeat', 'seek',
+  'remove', 'shuffle', 'stop', 'pause', 'skip', 'next', 'prev', 'vol', 'volume', 'np',
+  'nowplaying', 'radio', 'stream', 'stopstream', 'viewers', 'channels', 'tv', 'iptv', 'lyrics',
+];
+
+const commandServerFixtures = [
+  { id: 1, name: 'Primary server', host: 'primary.invalid' },
+  { id: 2, name: 'Secondary server', host: 'secondary.invalid' },
+];
+
+async function mockChatCommandApis(page: import('@playwright/test').Page, initialName = 'rules') {
+  let commands = [{ id: 1, name: initialName, response: 'Be kind', description: 'Server rules', enabled: true }];
+  const requestedConfigIds: number[] = [];
+  const presets = [
+    { name: 'rules', description: 'Server rules', response: 'Be kind' },
+    { name: 'links', description: 'Useful links', response: 'https://example.test' },
+  ];
+  await page.route('**/api/servers', async (route) => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: commandServerFixtures });
+    return route.fallback();
+  });
+  await page.route('**/api/servers/*/chat-commands**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const match = url.pathname.match(/\/servers\/(\d+)\/chat-commands(?:\/(.*))?$/);
+    if (!match) return route.fallback();
+    requestedConfigIds.push(Number(match[1]));
+    const suffix = match[2] || '';
+    if (request.method() === 'GET' && suffix === 'presets') return route.fulfill({ json: presets });
+    if (request.method() === 'GET') return route.fulfill({ json: commands });
+    if (request.method() === 'POST' && suffix === 'seed-presets') return route.fulfill({ json: { created: 1, createdNames: ['links'] } });
+    if (request.method() === 'POST') {
+      const body = request.postDataJSON();
+      const created = { id: 2, ...body };
+      commands = [...commands, created];
+      return route.fulfill({ json: created });
+    }
+    if (request.method() === 'PUT') {
+      const id = Number(suffix);
+      const body = request.postDataJSON();
+      commands = commands.map((command) => command.id === id ? { ...command, ...body } : command);
+      return route.fulfill({ json: commands.find((command) => command.id === id) });
+    }
+    if (request.method() === 'DELETE') {
+      commands = commands.filter((command) => command.id !== Number(suffix));
+      return route.fulfill({ json: { success: true } });
+    }
+    return route.fallback();
+  });
+  return { requestedConfigIds };
+}
+
+async function seedServerSelection(page: import('@playwright/test').Page) {
+  await page.evaluate(() => localStorage.setItem('ts6-server', JSON.stringify({ state: { selectedConfigId: 1, selectedSid: 1 }, version: 0 })));
+}
+
+test('Bot Flows exposes Flows and Chat commands tabs with query navigation and ownership copy', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await mockChatCommandApis(page);
+  await seedServerSelection(page);
+  await page.goto('/bots?tab=commands');
+  await expect(page).toHaveURL(/\/bots\?tab=commands$/);
+  await expect(page.getByRole('tab', { name: 'Chat commands' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('Custom replies are answered by media bots in their command channels; flows run in the flow engine.', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Flows' }).click();
+  await expect(page).toHaveURL(/\/bots(?:\?tab=flows)?$/);
+  await expect(page.getByRole('tab', { name: 'Flows' })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Chat commands tab shows the complete read-only built-in command list', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await mockChatCommandApis(page);
+  await seedServerSelection(page);
+  await page.goto('/bots?tab=commands');
+  for (const command of builtinCommands) await expect(page.getByText(`!${command}`, { exact: true }).first()).toBeVisible();
+  await expect(page.getByText('Built-in commands', { exact: true })).toBeVisible();
+});
+
+test('Chat commands keeps server scope, custom CRUD, and presets usable', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  const mock = await mockChatCommandApis(page);
+  await seedServerSelection(page);
+  await page.goto('/bots?tab=commands');
+  await expect(page.getByText('!rules', { exact: true })).toBeVisible();
+  await page.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'Secondary server' }).click();
+  await expect(page.getByRole('combobox')).toContainText('Secondary server');
+  await expect.poll(() => mock.requestedConfigIds).toContain(2);
+  await page.getByRole('button', { name: 'Presets' }).click();
+  await expect(page.getByText('Recommended command presets')).toBeVisible();
+  await expect(page.getByText('!links', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('button', { name: 'Add command' }).click();
+  await page.getByPlaceholder('rules').fill('links');
+  await page.getByRole('dialog').locator('textarea').fill('https://example.test');
+  await page.getByRole('dialog').getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByText('!links', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit command links' }).click();
+  await page.getByRole('dialog').locator('textarea').fill('Updated links');
+  await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(page.getByText('Updated links')).toBeVisible();
+});
+
+test('clash warnings update for custom replies, built-ins, and flow command triggers', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await mockChatCommandApis(page, 'play');
+  await seedServerSelection(page);
+  await page.route('**/api/bots', async (route) => route.fulfill({ json: [{ id: 1, name: 'Command flow', enabled: true, serverConfigId: 1 }] }));
+  await page.route('**/api/bots/1', async (route) => route.fulfill({ json: {
+    id: 1,
+    name: 'Command flow',
+    enabled: true,
+    serverConfigId: 1,
+    flowData: { nodes: [{ id: 'trigger', type: 'trigger_command', label: 'Chat Command', config: { command: '!play' }, x: 80, y: 80 }], edges: [] },
+  } }));
+  await page.goto('/bots?tab=commands');
+  await expect(page.getByText(/clash/i)).toBeVisible();
+  await page.getByRole('button', { name: 'Edit command play' }).click();
+  await page.getByLabel('Command name').fill('play');
+  await expect(page.getByText(/built-in.*play|clash.*play/i)).toBeVisible();
+  await page.getByRole('button', { name: /Cancel/ }).click();
+  await page.goto('/bots/1');
+  await page.locator('.flow-node[data-node-id="trigger"]').click();
+  await expect(page.getByText(/clash/i)).toBeVisible();
+  const trigger = page.getByLabel('Command');
+  await trigger.fill('!rules');
+  await expect(page.getByText(/custom.*rules|clash.*rules/i)).toBeVisible();
+  await trigger.fill('!unique-flow-command');
+  await expect(page.getByText(/clash/i)).toHaveCount(0);
+});

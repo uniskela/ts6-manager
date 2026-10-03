@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useBot, useUpdateBot } from '@/hooks/use-bots';
+import { useChatCommands } from '@/hooks/use-chat-commands';
+import { useFlowCommandTriggers } from '@/hooks/use-flow-command-triggers';
+import { clashesForCommand, describeCommandClash } from '@/lib/command-clashes';
+import { BUILTIN_CHAT_COMMANDS } from '@ts6/common';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -135,6 +139,8 @@ export default function BotEditor() {
   const navigate = useNavigate();
   const location = useLocation();
   const { data: bot, isLoading } = useBot(botId ? parseInt(botId) : null);
+  const { data: customCommands } = useChatCommands(bot?.serverConfigId ?? null);
+  const flowCommandNames = useFlowCommandTriggers(bot?.serverConfigId ?? null);
   const updateBot = useUpdateBot();
 
   const [nodes, setNodes] = useState<FlowNode[]>([]);
@@ -455,6 +461,13 @@ export default function BotEditor() {
 
   const selectedNodeData = useMemo(() => nodes.find((n) => n.id === selectedNode), [nodes, selectedNode]);
   const nodeTypeMeta = useMemo(() => getNodeMeta(selectedNodeData?.type || ''), [selectedNodeData]);
+  const commandClash = selectedNodeData?.type === 'trigger_command'
+    ? clashesForCommand(String(selectedNodeData.config.command || ''), {
+        custom: (Array.isArray(customCommands) ? customCommands : []).map((command: any) => command.name),
+        flows: flowCommandNames,
+        builtins: BUILTIN_CHAT_COMMANDS,
+      })
+    : null;
   const edgeRoutes = useMemo(() => edges.flatMap((edge) => {
     const srcNode = nodes.find((node) => node.id === edge.source);
     const tgtNode = nodes.find((node) => node.id === edge.target);
@@ -864,6 +877,11 @@ export default function BotEditor() {
                             )
                           }
                         />
+                        {commandClash && (
+                          <p role="alert" className="mt-1 text-[10px] text-amber-500">
+                            Command name clash: {describeCommandClash(commandClash)}
+                          </p>
+                        )}
                       </div>
 
                       <div>

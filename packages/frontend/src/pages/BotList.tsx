@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useBots, useCreateBot, useToggleBot } from '@/hooks/use-bots';
 import { useServerStore } from '@/stores/server.store';
 import { botsApi } from '@/api/bots.api';
@@ -19,9 +19,11 @@ import { TemplateGallery } from '@/components/bots/TemplateGallery';
 import { toast } from 'sonner';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { timeAgo } from '@/lib/utils';
+import { CommandsTab } from '@/pages/media-bots/CommandsTab';
 
 export default function BotList() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const qc = useQueryClient();
   const { selectedConfigId, selectedSid } = useServerStore();
   const { data, isLoading } = useBots();
@@ -52,6 +54,39 @@ export default function BotList() {
     });
   };
 
+  const commandsTab = searchParams.get('tab') === 'commands';
+  const tabLinks = (
+    <div className="flex gap-1 border-b" role="tablist" aria-label="Bot Flows sections">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={!commandsTab}
+        className={`border-b-2 px-3 py-2 text-sm ${!commandsTab ? 'border-primary font-medium' : 'border-transparent text-muted-foreground'}`}
+        onClick={() => setSearchParams({})}
+      >Flows</button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={commandsTab}
+        className={`border-b-2 px-3 py-2 text-sm ${commandsTab ? 'border-primary font-medium' : 'border-transparent text-muted-foreground'}`}
+        onClick={() => setSearchParams({ tab: 'commands' })}
+      >Chat commands</button>
+    </div>
+  );
+
+  if (commandsTab) {
+    return (
+      <div className="space-y-5">
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">Bot Flows</h1>
+          <Button variant="outline" size="sm" onClick={() => setSearchParams({})}>Back to flows</Button>
+        </div>
+        {tabLinks}
+        <CommandsTab showClashWarnings />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -61,6 +96,7 @@ export default function BotList() {
           <Button size="sm" disabled={createBlocked} onClick={() => setShowCreate(true)}><Plus className="h-4 w-4 mr-1" /> New Bot</Button>
         </div>
       </div>
+      {tabLinks}
 
       {bots.length > 0 && hasNoConnections && (
         <ConnectionRequiredNotice>New bot flows need a TeamSpeak server connection.</ConnectionRequiredNotice>
