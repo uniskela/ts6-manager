@@ -134,6 +134,7 @@ function getInputHandlePos(node: FlowNode, portIndex: number, portCount: number)
 }
 
 // --- Types ---
+/** Render the flow editor and live command-trigger clash warnings. */
 export default function BotEditor() {
   const { botId } = useParams();
   const navigate = useNavigate();
@@ -464,7 +465,10 @@ export default function BotEditor() {
   const commandClash = selectedNodeData?.type === 'trigger_command'
     ? clashesForCommand(String(selectedNodeData.config.command || ''), {
         custom: (Array.isArray(customCommands) ? customCommands : []).map((command: any) => command.name),
-        flows: flowCommandNames,
+        flows: [
+          ...flowCommandNames,
+          ...(selectedNodeData?.config.command ? [String(selectedNodeData.config.command)] : []),
+        ],
         builtins: BUILTIN_CHAT_COMMANDS,
       })
     : null;

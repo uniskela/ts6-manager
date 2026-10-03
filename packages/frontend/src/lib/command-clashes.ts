@@ -45,6 +45,7 @@ const SOURCE_LABEL: Record<CommandNameSource, string> = {
   builtin: 'a built-in command',
 };
 
+/** Return command names that are registered by at least two command sources. */
 export function findCommandClashes(input: {
   custom: string[];
   flows: string[];
@@ -79,6 +80,7 @@ export function findCommandClashes(input: {
   return clashes;
 }
 
+/** Format a clash for the warning shown beside command configuration. */
 export function describeCommandClash(clash: CommandClash): string {
   const labels = clash.sources.map((s) => SOURCE_LABEL[s]);
   if (labels.length === 2) {
@@ -88,6 +90,7 @@ export function describeCommandClash(clash: CommandClash): string {
 }
 
 /** Clashes involving one command name (e.g. the flow editor's current trigger). */
+/** Find the clash affecting one command name, if any. */
 export function clashesForCommand(
   command: string,
   input: { custom: string[]; flows: string[]; builtins: readonly string[] },

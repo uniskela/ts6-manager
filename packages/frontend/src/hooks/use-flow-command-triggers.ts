@@ -8,9 +8,12 @@ import { collectFlowCommandNames } from '@/lib/command-clashes';
 export function useFlowCommandTriggers(serverConfigId?: number | null) {
   const { data: bots } = useBots();
   const list = Array.isArray(bots) ? bots : [];
+  const serverBots = serverConfigId == null
+    ? []
+    : list.filter((bot: { serverConfigId?: number }) => bot.serverConfigId === serverConfigId);
 
   const details = useQueries({
-    queries: serverConfigId == null ? [] : list.map((bot: { id: number; flowData?: unknown }) => ({
+    queries: serverBots.map((bot: { id: number; flowData?: unknown }) => ({
       queryKey: ['bot', bot.id] as const,
       queryFn: () => botsApi.get(bot.id),
       // Test mock list already includes flowData; skip a redundant fetch when present.
@@ -21,13 +24,10 @@ export function useFlowCommandTriggers(serverConfigId?: number | null) {
   });
 
   return useMemo(() => {
-    const resolved = list.filter((bot: { serverConfigId?: number }) =>
-      serverConfigId == null || bot.serverConfigId === serverConfigId,
-    ).map((bot: { id: number; flowData?: unknown }, i: number) => {
+    const resolved = serverBots.map((bot: { id: number; flowData?: unknown }, i: number) => {
       if (bot.flowData != null) return bot;
-      const originalIndex = list.findIndex((candidate) => candidate.id === bot.id);
-      return details[originalIndex]?.data ?? bot;
+      return details[i]?.data ?? bot;
     });
     return collectFlowCommandNames(resolved);
-  }, [list, details, serverConfigId]);
+  }, [serverBots, details]);
 }

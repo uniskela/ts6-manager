@@ -44,6 +44,7 @@ import { describeCommandClash, findCommandClashes } from '@/lib/command-clashes'
 
 // ─── Commands Tab ────────────────────────────────────────────────────────────
 
+/** Render custom chat command CRUD, optionally with Bot Flows clash context. */
 export function CommandsTab({ showClashWarnings = false }: { showClashWarnings?: boolean } = {}) {
   const { selectedConfigId } = useServerStore();
   const { data: servers } = useServers();
@@ -388,10 +389,11 @@ export function CommandsTab({ showClashWarnings = false }: { showClashWarnings?:
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Command name</Label>
+              <Label className="text-xs" htmlFor="chat-command-name">Command name</Label>
               <div className="flex items-center gap-1">
                 <span className="text-sm text-muted-foreground">!</span>
                 <Input
+                  id="chat-command-name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="rules"
@@ -454,10 +456,11 @@ export function CommandsTab({ showClashWarnings = false }: { showClashWarnings?:
           </DialogHeader>
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">Command name</Label>
+              <Label className="text-xs" htmlFor="chat-command-name">Command name</Label>
               <div className="flex items-center gap-1">
                 <span className="text-sm text-muted-foreground">!</span>
                 <Input
+                  id="chat-command-name"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   className="flex-1"

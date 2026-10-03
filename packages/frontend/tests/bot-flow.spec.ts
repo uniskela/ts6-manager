@@ -305,9 +305,13 @@ test('Bot Flows exposes Flows and Chat commands tabs with query navigation and o
   await seedServerSelection(page);
   await page.goto('/bots?tab=commands');
   await expect(page).toHaveURL(/\/bots\?tab=commands$/);
-  await expect(page.getByRole('tab', { name: 'Chat commands' })).toHaveAttribute('aria-selected', 'true');
+  const chatCommandsTab = page.getByRole('tab', { name: 'Chat commands' });
+  await expect(chatCommandsTab).toHaveAttribute('aria-selected', 'true');
+  await expect(chatCommandsTab).toHaveAttribute('aria-controls', 'bot-chat-commands-panel');
+  await expect(page.locator('#bot-chat-commands-panel')).toHaveAttribute('aria-labelledby', 'bot-chat-commands-tab');
   await expect(page.getByText('Custom replies are answered by media bots in their command channels; flows run in the flow engine.', { exact: true })).toBeVisible();
-  await page.getByRole('tab', { name: 'Flows' }).click();
+  await chatCommandsTab.focus();
+  await chatCommandsTab.press('ArrowLeft');
   await expect(page).toHaveURL(/\/bots(?:\?tab=flows)?$/);
   await expect(page.getByRole('tab', { name: 'Flows' })).toHaveAttribute('aria-selected', 'true');
 });
@@ -348,7 +352,7 @@ test('Chat commands keeps server scope, custom CRUD, and presets usable', async 
 
 test('clash warnings update for custom replies, built-ins, and flow command triggers', async ({ page, request }) => {
   await signInAsAdmin(page, request);
-  await mockChatCommandApis(page, 'play');
+  await mockChatCommandApis(page);
   await seedServerSelection(page);
   await page.route('**/api/bots', async (route) => route.fulfill({ json: [{ id: 1, name: 'Command flow', enabled: true, serverConfigId: 1 }] }));
   await page.route('**/api/bots/1', async (route) => route.fulfill({ json: {
@@ -360,7 +364,7 @@ test('clash warnings update for custom replies, built-ins, and flow command trig
   } }));
   await page.goto('/bots?tab=commands');
   await expect(page.getByText(/clash/i)).toBeVisible();
-  await page.getByRole('button', { name: 'Edit command play' }).click();
+  await page.getByRole('button', { name: 'Edit command rules' }).click();
   await page.getByLabel('Command name').fill('play');
   await expect(page.getByText(/built-in.*play|clash.*play/i)).toBeVisible();
   await page.getByRole('button', { name: /Cancel/ }).click();
