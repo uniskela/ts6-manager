@@ -4,6 +4,7 @@ import type { CommandContext } from './context.js';
 import type { BotChannelConfig } from './context.js';
 /** Debounce parking the main SSH helper when humans move between channels. */
 const MAIN_HELPER_PARK_DEBOUNCE_MS = 800;
+/** Exclude stopped, errored, and still-starting bots from summon candidates. */
 export function isBotSummonable(bot: VoiceBot): boolean {
   return bot.status !== 'stopped' && bot.status !== 'error' && bot.status !== 'starting';
 }
@@ -19,6 +20,7 @@ export function botOccupiesChannel(bot: VoiceBot, channelId: number): boolean {
   return bot.getCurrentChannelId() === channelId;
 }
 
+/** Refresh channel mappings for every configured music bot. */
 export async function refreshAllBotChannels(context: CommandContext): Promise<void> {
   const bots = await context.prisma.musicBot.findMany({ select: { id: true } });
   for (const b of bots) {
@@ -26,6 +28,7 @@ export async function refreshAllBotChannels(context: CommandContext): Promise<vo
   }
 }
 
+/** Reload one bot’s channels and reconcile helper coverage and session ownership. */
 export async function refreshBotChannels(context: CommandContext, botId: number): Promise<void> {
   const prevCfg = context.botChannelConfig.get(botId);
 
@@ -105,6 +108,7 @@ export async function syncCommandListenersForPair(
   }
 }
 
+/** Remove leftover music listeners and park the roaming helper with humans. */
 export async function syncCommandListenersForPairOnce(
   context: CommandContext,
   configId: number,
@@ -172,6 +176,7 @@ export async function syncCommandListenersForPairOnce(
   }
 }
 
+/** Debounce helper parking while leaving channels covered by voice bots alone. */
 export function scheduleMainHelperPark(
   context: CommandContext,
   configId: number,
@@ -239,6 +244,7 @@ export function scheduleMainHelperRebalance(context: CommandContext, configId: n
   );
 }
 
+/** Park the roaming helper in the first human-occupied channel it can cover. */
 export async function rebalanceMainHelper(
   context: CommandContext,
   configId: number,
@@ -265,6 +271,7 @@ export async function rebalanceMainHelper(
   );
 }
 
+/** Park the helper in a requested channel, rebalancing if a voice bot covers it. */
 export async function parkMainHelper(
   context: CommandContext,
   configId: number,
@@ -291,6 +298,7 @@ export async function parkMainHelper(
   );
 }
 
+/** Report whether any bot on this server pair has explicit command channels. */
 export function pairHasExplicitCommandChannels(
   context: CommandContext,
   configId: number,
@@ -303,6 +311,7 @@ export function pairHasExplicitCommandChannels(
   return false;
 }
 
+/** Associate bots on one server pair with channels covered by the roaming helper. */
 export function mapBotsToAutoChannels(
   context: CommandContext,
   configId: number,
@@ -405,6 +414,7 @@ export async function absorbHomeChannelsFromClientList(
   }
 }
 
+/** Remove a bot’s configuration and membership from command channel mappings. */
 export function unregisterBotChannels(context: CommandContext, botId: number): void {
   context.botChannelConfig.delete(botId);
   for (const bots of context.channelToBots.values()) {
@@ -412,6 +422,7 @@ export function unregisterBotChannels(context: CommandContext, botId: number): v
   }
 }
 
+/** Remove bot registration and reconcile its previous helper and session owners. */
 export function unregisterBot(context: CommandContext, botId: number): void {
   const prevCfg = context.botChannelConfig.get(botId);
   context.registeredBots.delete(botId);
@@ -472,6 +483,7 @@ export function getNeededCommandChannelIds(
   return [];
 }
 
+/** Move a bot to the requesting channel before playback and refresh its mappings. */
 export async function joinChannelForCommand(
   context: CommandContext,
   botId: number,

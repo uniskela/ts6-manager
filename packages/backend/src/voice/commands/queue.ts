@@ -6,6 +6,7 @@ import type { CommandContext } from './context.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
 
+/** Advance a bot’s generation so pending background playlist work is discarded. */
 export function invalidateChatPlaylistExpansion(botId: number): void {
   chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
 }
@@ -86,6 +87,7 @@ export async function enqueueMediaUrl(
   }
 }
 
+/** Resolve a server or shared playlist by ID or name and append its tracks in order. */
 export async function handlePlaylist(
   context: CommandContext,
   botId: number,
@@ -133,6 +135,7 @@ export async function handlePlaylist(
   context.reply(bot, userClid, `Queued playlist "${playlist.name.slice(0, 60)}" (${items.length} tracks).`);
 }
 
+/** Report or set the queue repeat mode after validating the requested mode. */
 export function handleRepeat(context: CommandContext, bot: VoiceBot, userClid: number, args: string): void {
   const mode = args.trim().toLowerCase();
   if (mode && mode !== 'off' && mode !== 'track' && mode !== 'queue') {
@@ -142,6 +145,7 @@ export function handleRepeat(context: CommandContext, bot: VoiceBot, userClid: n
   context.reply(bot, userClid, `Repeat mode: ${bot.queue.repeat}`);
 }
 
+/** Remove one unambiguous upcoming track matched by title or artist. */
 export function handleRemove(context: CommandContext, bot: VoiceBot, userClid: number, args: string): void {
   const query = args.trim().toLowerCase();
   if (!query) { context.reply(bot, userClid, 'Usage: !remove <text>'); return; }
@@ -160,6 +164,7 @@ export function handleRemove(context: CommandContext, bot: VoiceBot, userClid: n
   context.reply(bot, userClid, `Removed: ${matches[0].item.title.slice(0, 100)}`);
 }
 
+/** Format all queued tracks with the current playback index. */
 export function showQueue(context: CommandContext, bot: VoiceBot, userClid: number): void {
   const items = bot.queue.getAll();
   const trackLines = items.map((item) => ({
@@ -174,6 +179,7 @@ export function showQueue(context: CommandContext, bot: VoiceBot, userClid: numb
   );
 }
 
+/** Show, remove, play, clear, or append queue items using chat arguments. */
 export async function handleQueue(
   context: CommandContext,
   botId: number,
@@ -242,6 +248,7 @@ export async function handleQueue(
   }
 }
 
+/** Toggle or explicitly set queue shuffling using the accepted chat values. */
 export function handleShuffle(context: CommandContext, bot: VoiceBot, userClid: number, args: string): void {
   const arg = args.trim().toLowerCase();
   let enabled: boolean;
@@ -260,6 +267,7 @@ export function handleShuffle(context: CommandContext, bot: VoiceBot, userClid: 
   context.reply(bot, userClid, enabled ? 'Shuffle on.' : 'Shuffle off.');
 }
 
+/** Record a source URL in server-scoped request history without blocking playback. */
 export function saveMusicRequest(context: CommandContext, bot: VoiceBot, item: QueueItem): void {
   if (!item.sourceUrl || !bot.currentConfig.serverConfigId) return;
   context.prisma.musicRequest.upsert({

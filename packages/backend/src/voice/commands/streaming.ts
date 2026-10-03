@@ -7,6 +7,7 @@ import { classifyStreamHost } from '../streaming/video-download.js';
 import type { CommandContext } from './context.js';
 
 // ─── Video Streaming Commands ─────────────────────────────
+/** Validate stream arguments and start or change a video source with existing preset rules. */
 export async function handleStream(
   context: CommandContext,
   bot: VoiceBot,
@@ -64,6 +65,7 @@ export async function handleStream(
   }
 }
 
+/** Format stream conflicts with another bot while retaining other error messages. */
 export function streamStartError(context: CommandContext, err: any): string {
   if (err instanceof MediaSessionConflictError) {
     const other = err.conflicts.find((c) => c.kind === 'video');
@@ -72,6 +74,7 @@ export function streamStartError(context: CommandContext, err: any): string {
   return err?.message ?? String(err);
 }
 
+/** Stop an active video stream with the existing manual stop reason. */
 export async function handleStopStream(
   context: CommandContext,
   bot: VoiceBot,
@@ -85,6 +88,7 @@ export async function handleStopStream(
   context.reply(bot, userClid, 'Video stream stopped.');
 }
 
+/** List the first matching IPTV channels belonging to the bot’s server. */
 export async function handleChannels(
   context: CommandContext,
   bot: VoiceBot,
@@ -121,6 +125,7 @@ export async function handleChannels(
   );
 }
 
+/** Start or switch to a server-scoped IPTV channel and record successful recent playback. */
 export async function handleTv(
   context: CommandContext,
   bot: VoiceBot,

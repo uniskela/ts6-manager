@@ -5,6 +5,7 @@ import type { CommandContext } from './context.js';
 import { invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
+/** List configured radio stations or play a selected station in the requesting channel. */
 export async function handleRadio(
   context: CommandContext,
   botId: number,
@@ -69,6 +70,7 @@ export async function handleRadio(
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
 
+/** Resume paused playback or resolve a supplied media URL into the queue. */
 export async function handlePlay(
   context: CommandContext,
   botId: number,
@@ -102,6 +104,7 @@ export async function handlePlay(
   }
 }
 
+/** Validate absolute or relative seek input and clamp it to the current track. */
 export async function handleSeek(
   context: CommandContext,
   bot: VoiceBot,
@@ -122,12 +125,14 @@ export async function handleSeek(
   context.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
 }
 
+/** Cancel background playlist expansion and stop audio playback. */
 export function handleStop(context: CommandContext, bot: VoiceBot, userClid: number): void {
   invalidateChatPlaylistExpansion(bot.currentConfig.id);
   bot.stopAudio();
   context.reply(bot, userClid, 'Playback stopped.');
 }
 
+/** Toggle playing or paused audio and report when there is nothing to pause. */
 export function handlePause(context: CommandContext, bot: VoiceBot, userClid: number): void {
   if (bot.status === 'paused') {
     bot.resume();
@@ -140,6 +145,7 @@ export function handlePause(context: CommandContext, bot: VoiceBot, userClid: nu
   }
 }
 
+/** Play the next queued item or stop audio when the queue is exhausted. */
 export async function handleSkip(context: CommandContext, bot: VoiceBot, userClid: number): Promise<void> {
   const next = bot.queue.next();
   if (next) {
@@ -155,6 +161,7 @@ export async function handleSkip(context: CommandContext, bot: VoiceBot, userCli
   }
 }
 
+/** Play the previous queued item or report that no earlier track exists. */
 export async function handlePrev(context: CommandContext, bot: VoiceBot, userClid: number): Promise<void> {
   const prev = bot.queue.previous();
   if (prev) {
@@ -169,6 +176,7 @@ export async function handlePrev(context: CommandContext, bot: VoiceBot, userCli
   }
 }
 
+/** Report or change the shared bot volume using the existing input validation. */
 export async function handleVolume(
   context: CommandContext,
   bot: VoiceBot,

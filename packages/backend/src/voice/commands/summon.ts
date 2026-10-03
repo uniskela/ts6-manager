@@ -3,6 +3,7 @@ import type { CommandContext } from './context.js';
 import { isBotSummonable } from './channel-ownership.js';
 import { hereActionKey, claimHereAction, shouldSpeakHereList } from './dedupe.js';
 
+/** List connected summon candidates on a configured server and virtual server. */
 export async function listSummonableBots(
   context: CommandContext,
   serverConfigId: number,
@@ -29,6 +30,7 @@ export async function listSummonableBots(
   return result;
 }
 
+/** Format available or busy summon candidates with current-channel and idle tags. */
 export function formatHereBotList(
   context: CommandContext,
   bots: Array<{ id: number; name: string }>,
@@ -117,6 +119,7 @@ export async function resolveSummonCandidate(
   return { kind: 'list', bots: candidates, busy: true };
 }
 
+/** Announce a summon before moving the bot and refreshing its channel mappings. */
 export async function summonBotToChannel(
   context: CommandContext,
   target: { id: number; name: string; bot: VoiceBot },
@@ -181,6 +184,7 @@ export async function summonBotToChannel(
   }
 }
 
+/** Deduplicate a voice summon, select a bot or list candidates, and announce before moving. */
 export async function handleHere(
   context: CommandContext,
   botId: number,

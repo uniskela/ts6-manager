@@ -7,6 +7,7 @@ import { isBotSummonable } from './channel-ownership.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 
+/** Attach SSH event routing and synchronize the music session owner. */
 export function setEventBridge(context: CommandContext, bridge: EventBridge): void {
   context.eventBridge = bridge;
   if (!context.eventBridgeListening) {
@@ -119,6 +120,7 @@ export function registerBot(context: CommandContext, botId: number, bot: VoiceBo
   console.log(`[MusicCmd] Registered text command listener on bot ${botId}`);
 }
 
+/** Choose one eligible bot for SSH chat, leaving in-channel help and summons to voice. */
 export async function onCrossChannelTextMessage(
   context: CommandContext,
   configId: number,
@@ -210,6 +212,7 @@ export async function onCrossChannelTextMessage(
   await context.onTextMessage(botId, bot, data, channelId);
 }
 
+/** Parse and dispatch a chat command while preserving flood holds and reply channel scope. */
 export async function onTextMessage(
   context: CommandContext,
   botId: number,
@@ -404,6 +407,7 @@ export async function reply(
   }
 }
 
+/** Choose the active reply channel, voice home, or configured default for a claim key. */
 export function replyChannelForDedupe(
   context: CommandContext,
   botId: number,
@@ -418,6 +422,7 @@ export function replyChannelForDedupe(
   return parseInt(cfg?.defaultChannel || '0', 10) || 0;
 }
 
+/** Read the bot’s mapped virtual server, falling back to server one. */
 export function virtualServerIdForBot(context: CommandContext, botId: number): number {
   return context.botChannelConfig.get(botId)?.virtualServerId ?? 1;
 }

@@ -3,6 +3,7 @@ import type { CommandContext } from './context.js';
 const CHAT_REPLY_COOLDOWN_MS = 2500;
 const chatReplyCooldownUntil = new Map<string, number>();
 
+/** Build a reply claim key scoped to server, virtual server, channel, user, and command. */
 export function chatInfoReplyKey(
   serverConfigId: number,
   virtualServerId: number,
@@ -13,6 +14,7 @@ export function chatInfoReplyKey(
   return `${serverConfigId}:${virtualServerId}:${channelId}:${clid}:${command}`;
 }
 
+/** Claim the custom/info reply cooldown unless the same scoped command is still held. */
 export function tryClaimChatInfoReply(
   serverConfigId: number,
   virtualServerId: number,
@@ -51,6 +53,7 @@ type HelpFlight = {
 };
 const helpFlights = new Map<string, HelpFlight>();
 
+/** Build a help claim key scoped to one server, virtual server, channel, and user. */
 export function helpActionKey(
   serverConfigId: number,
   virtualServerId: number,
@@ -110,6 +113,7 @@ const hereListCooldownUntil = new Map<string, number>();
 const HERE_ACTION_DEDUP_MS = 1500;
 const hereActionUntil = new Map<string, number>();
 
+/** Build a summon claim key that includes the requester channel and command arguments. */
 export function hereActionKey(
   serverConfigId: number,
   virtualServerId: number,
@@ -137,6 +141,7 @@ export function resetHereDedupForTests(): void {
   chatReplyCooldownUntil.clear();
 }
 
+/** Claim the shorter cooldown used for repeated summon candidate lists. */
 export function shouldSpeakHereList(
   context: CommandContext,
   serverConfigId: number,

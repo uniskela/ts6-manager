@@ -5,6 +5,7 @@ import { formatCustomCommandsMessage, formatHelpMessage, formatNowPlayingMessage
 import type { CommandContext } from './context.js';
 import { tryClaimChatInfoReply, helpActionKey, beginHelpAction, completeHelpAction } from './dedupe.js';
 
+/** List enabled custom replies after claiming the server, channel, and user cooldown. */
 export async function handleCustomCommandsList(
   context: CommandContext,
   botId: number,
@@ -27,6 +28,7 @@ export async function handleCustomCommandsList(
   await context.reply(bot, userClid, formatCustomCommandsMessage(custom));
 }
 
+/** Claim a shared help flight and reply with built-in and enabled custom commands. */
 export async function handleHelp(
   context: CommandContext,
   botId: number,
@@ -187,6 +189,7 @@ export async function handleHelpCrossChannel(
   }
 }
 
+/** Look up an enabled server-scoped custom command and apply its reply cooldown. */
 export async function handleCustomCommand(
   context: CommandContext,
   botId: number,
@@ -214,6 +217,7 @@ export async function handleCustomCommand(
   await context.reply(bot, userClid, custom.response);
 }
 
+/** Format current playback progress, queue context, and available controls. */
 export function handleNowPlaying(context: CommandContext, bot: VoiceBot, userClid: number): void {
   const np = bot.nowPlaying;
   if (!np) {
@@ -248,6 +252,7 @@ export function handleNowPlaying(context: CommandContext, bot: VoiceBot, userCli
   );
 }
 
+/** Fetch lyrics for a supplied query or the current track and send bounded chunks. */
 export async function handleLyrics(
   context: CommandContext,
   bot: VoiceBot,
@@ -288,6 +293,7 @@ export async function handleLyrics(
   }
 }
 
+/** Show current stream viewers and how long each viewer has been connected. */
 export function handleViewers(context: CommandContext, bot: VoiceBot, userClid: number): void {
   const status = bot.videoStreamStatus;
   if (!status.streaming) {
