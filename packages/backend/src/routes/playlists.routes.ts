@@ -177,12 +177,11 @@ playlistRoutes.delete('/:id', async (req: Request, res: Response, next) => {
 
 const MAX_SONGS_PER_ADD = 1000;
 
-async function appendSongsToPlaylist(
+async function appendSongsOnce(
   prisma: any,
   playlistId: number,
   songIds: number[],
 ): Promise<number> {
-  // One transaction so a batch lands whole and concurrent adds cannot share a position.
   return prisma.$transaction(async (tx: any) => {
     const maxPos = await tx.playlistSong.aggregate({
       where: { playlistId },
@@ -204,6 +203,31 @@ async function appendSongsToPlaylist(
     }
     return added;
   });
+}
+
+/** SQLite write conflicts surface from Prisma as P2034 or a "database is locked" error. */
+function isWriteConflict(err: any): boolean {
+  return err?.code === 'P2034' || /database is locked|SQLITE_BUSY/i.test(String(err?.message ?? ''));
+}
+
+/**
+ * Append songs in one transaction so a batch lands whole and concurrent adds
+ * cannot share a position. A conflicting writer can abort the transaction, so
+ * the whole thing (including the position read) is retried a few times.
+ */
+async function appendSongsToPlaylist(
+  prisma: any,
+  playlistId: number,
+  songIds: number[],
+): Promise<number> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await appendSongsOnce(prisma, playlistId, songIds);
+    } catch (err) {
+      if (attempt >= 3 || !isWriteConflict(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
+    }
+  }
 }
 
 // POST /:id/songs — Add one song ({ songId }) or several ({ songIds }) to a playlist.

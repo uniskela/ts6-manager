@@ -20,7 +20,7 @@ async function post(app: Express, path: string, body: unknown) {
   }
 }
 
-function fixture(existingSongIds: number[] = []) {
+function fixture(existingSongIds: number[] = [], conflicts = 0) {
   const songs = [
     { id: 1, source: 'youtube' },
     { id: 2, source: 'youtube' },
@@ -35,7 +35,12 @@ function fixture(existingSongIds: number[] = []) {
     next();
   });
   const prisma: any = {
-    $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(prisma),
+    transactions: 0,
+    $transaction: async (fn: (tx: any) => Promise<unknown>) => {
+      prisma.transactions++;
+      if (conflicts-- > 0) throw Object.assign(new Error('write conflict'), { code: 'P2034' });
+      return fn(prisma);
+    },
     playlist: {
       findUnique: async ({ where }: any) =>
         where.id === 7 ? { id: 7, mode: 'stream', youtubePlaylistId: null } : null,
@@ -58,7 +63,7 @@ function fixture(existingSongIds: number[] = []) {
   app.locals.prisma = prisma;
   app.use('/playlists', playlistRoutes);
   app.use(errorHandler);
-  return { app, links };
+  return { app, links, prisma };
 }
 
 describe('POST /playlists/:id/songs', () => {
@@ -87,6 +92,22 @@ describe('POST /playlists/:id/songs', () => {
     const f = fixture();
     const res = await post(f.app, '/playlists/7/songs', { songIds: [1, 4] });
     assert.equal(res.status, 400);
+    assert.equal(f.links.length, 0);
+  });
+
+  it('retries the whole batch after a write conflict', async () => {
+    const f = fixture([], 1);
+    const res = await post(f.app, '/playlists/7/songs', { songIds: [1, 2] });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.added, 2);
+    assert.equal(f.prisma.transactions, 2);
+  });
+
+  it('gives up after repeated write conflicts', async () => {
+    const f = fixture([], 5);
+    const res = await post(f.app, '/playlists/7/songs', { songIds: [1] });
+    assert.equal(res.status, 500);
+    assert.equal(f.prisma.transactions, 3);
     assert.equal(f.links.length, 0);
   });
 
