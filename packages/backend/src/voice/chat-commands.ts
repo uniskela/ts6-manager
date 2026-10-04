@@ -26,7 +26,7 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'seek', usage: '!seek <seconds|+seconds|-seconds>', blurb: 'Seek within a local/downloaded track' },
   { name: 'remove', usage: '!remove <text>', blurb: 'Remove an unambiguous upcoming title/artist match' },
   { name: 'shuffle', usage: '!shuffle [on|off]', blurb: 'Toggle or set queue shuffle' },
-  { name: 'stop', usage: '!stop', blurb: 'Stop playback and clear current track' },
+  { name: 'stop', usage: '!stop', blurb: 'Stop playback and clear the queue' },
   { name: 'pause', usage: '!pause', blurb: 'Pause / resume' },
   { name: 'skip', usage: '!skip', blurb: 'Skip to next track' },
   { name: 'next', usage: '!next', blurb: 'Alias for !skip' },

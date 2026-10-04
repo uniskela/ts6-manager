@@ -26,6 +26,7 @@ function fixture(status = 'connected') {
     playbackProgress: { position: 60, duration: 100 },
     play: async (item: any) => played.push(item), seek: async (n: number) => seeks.push(n),
     clearPlayback: () => {},
+    stopAudio() { if (this.status === 'playing' || this.status === 'paused') this.status = 'connected'; },
     videoSessionInfo: () => null, musicSessionInfo: () => null,
   };
   const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
@@ -91,6 +92,22 @@ test('remove searches only upcoming tracks, refuses ambiguity and removes duplic
   await f.command('!queue clear'); assert.equal(f.bot.queue.length, 0);
 });
 
+test('!stop clears the queue so a later playlist does not inherit stale track counts', async () => {
+  const f = fixture('playing');
+  f.bot.queue.addMany([
+    { id: '1', title: 'Old A', filePath: '', source: 'local' as const },
+    { id: '2', title: 'Old B', filePath: '', source: 'local' as const },
+    { id: '3', title: 'Old C', filePath: '', source: 'local' as const },
+  ]);
+  f.bot.queue.playAt(1);
+  await f.command('!stop');
+  assert.equal(f.bot.queue.length, 0);
+  assert.equal(f.bot.queue.index, -1);
+  assert.match(f.replies.at(-1)!, /Playback stopped/);
+  await f.command('!playlist 3');
+  assert.equal(f.bot.queue.length, 1);
+  assert.equal(f.bot.queue.index, 0);
+});
 
 test('idle playlist append resumes existing queue order instead of jumping past queued tracks', async () => {
   const f = fixture();

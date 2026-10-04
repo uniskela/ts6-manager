@@ -2,6 +2,7 @@ import type { VoiceBot } from '../voice-bot.js';
 import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
+import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
@@ -130,9 +131,12 @@ export async function handleSeek(
   context.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
 }
 
-/** Cancel background playlist expansion and stop audio playback. */
+/** Cancel chat + HTTP playlist expansions, clear the queue, and stop audio. */
 export function handleStop(context: CommandContext, bot: VoiceBot, userClid: number): void {
-  invalidateChatPlaylistExpansion(bot.currentConfig.id);
+  const botId = bot.currentConfig.id;
+  invalidateChatPlaylistExpansion(botId);
+  invalidatePlaylistExpansion(botId);
+  bot.queue.clear();
   bot.stopAudio();
   context.reply(bot, userClid, 'Playback stopped.');
 }
