@@ -56,6 +56,18 @@ export function useAddSongToPlaylist() {
   });
 }
 
+export function useAddSongsToPlaylist() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ playlistId, songIds }: { playlistId: number; songIds: number[] }) =>
+      playlistsApi.addSongs(playlistId, songIds),
+    onSuccess: (_, { playlistId }) => {
+      qc.invalidateQueries({ queryKey: ['playlist', playlistId] });
+      qc.invalidateQueries({ queryKey: ['playlists'] });
+    },
+  });
+}
+
 export function useAddPlaylistToPlaylist() {
   const qc = useQueryClient();
   return useMutation({
