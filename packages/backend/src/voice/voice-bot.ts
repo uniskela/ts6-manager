@@ -1,5 +1,6 @@
 import { EventEmitter } from 'events';
 import { applyBotAvatar } from './bot-avatar.js';
+import { fitAvatarForTeamSpeak } from './bot-avatar-fit.js';
 import { readBotAvatar, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
 import fs from 'fs';
 import type { Readable } from 'stream';
@@ -361,7 +362,7 @@ export class VoiceBot extends EventEmitter {
       const abort = new AbortController();
       this.avatarAbort = abort;
       try {
-        const image = await readBotAvatar(this.config, this.config.avatarDataDir);
+        const image = await fitAvatarForTeamSpeak(await readBotAvatar(this.config, this.config.avatarDataDir));
         await applyBotAvatar(this.client, this.config.serverHost, image, abort.signal);
         if (this._lastError === this._avatarError) this._lastError = '';
         this._avatarError = null;
