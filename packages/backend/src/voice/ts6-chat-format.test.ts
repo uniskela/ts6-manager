@@ -34,6 +34,7 @@ describe('ts6-chat-format', () => {
     assert.ok(msg.includes('!play <url>'));
     assert.ok(msg.includes('### Custom'));
     assert.ok(msg.includes('!rules'));
+    assert.ok(msg.includes('@Bot 2'), 'explains how to pick a bot');
   });
 
   it('formats queue with current marker', () => {

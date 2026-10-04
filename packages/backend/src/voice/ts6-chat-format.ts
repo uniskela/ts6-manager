@@ -113,6 +113,8 @@ export function formatHelpMessage(
   for (const entry of builtin) {
     lines.push(`- **${entry.usage}** — ${entry.blurb}`);
   }
+  lines.push('');
+  lines.push('_Several bots in one channel? Add a bot\'s name: **!next Bot 2** or **!vol 30 @Bot 2**._');
 
   if (custom.length > 0) {
     lines.push('');
