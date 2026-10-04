@@ -2,13 +2,20 @@
  * TeamSpeak 6 clients show avatars up to about 320x320 pixels and leave larger
  * server-stored avatars blank (the TS6 client resizes its own uploads; a bot's
  * upload must do the same). The web UI keeps showing the original image.
+ *
+ * Fitted output must also stay within TeamSpeak's avatar upload size
+ * (i_client_max_avatar_filesize / MAX_AVATAR_BYTES). Resizing a large JPEG to
+ * PNG can exceed that even when the original passed the route check.
  */
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { MAX_AVATAR_BYTES } from '../utils/bot-avatar-storage.js';
 
 export const TS_AVATAR_MAX_PX = 300;
 const FFMPEG_TIMEOUT_MS = 15_000;
 const MAX_OUTPUT_BYTES = 1024 * 1024;
+
+type FitFormat = 'gif' | 'png' | 'jpeg';
 
 /** Width and height from the image header, or null when the header is not recognised. */
 export function avatarDimensions(image: Buffer): { width: number; height: number } | null {
@@ -34,17 +41,21 @@ export function avatarDimensions(image: Buffer): { width: number; height: number
   return null;
 }
 
-function ffmpegArgs(isGif: boolean): string[] {
+function ffmpegArgs(format: FitFormat): string[] {
   const scale = `scale=w='min(${TS_AVATAR_MAX_PX},iw)':h='min(${TS_AVATAR_MAX_PX},ih)':force_original_aspect_ratio=decrease:flags=lanczos`;
-  return isGif
+  if (format === 'gif') {
     // Keep GIF animation, with a palette built from the scaled frames.
-    ? ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vf', `${scale},split[a][b];[a]palettegen[p];[b][p]paletteuse`, '-f', 'gif', 'pipe:1']
-    : ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vf', scale, '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', 'pipe:1'];
+    return ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vf', `${scale},split[a][b];[a]palettegen[p];[b][p]paletteuse`, '-f', 'gif', 'pipe:1'];
+  }
+  if (format === 'jpeg') {
+    return ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vf', scale, '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '3', 'pipe:1'];
+  }
+  return ['-hide_banner', '-loglevel', 'error', '-i', 'pipe:0', '-vf', scale, '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'png', 'pipe:1'];
 }
 
-function runFfmpeg(image: Buffer, isGif: boolean): Promise<Buffer> {
+function runFfmpeg(image: Buffer, format: FitFormat): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffmpeg', ffmpegArgs(isGif), { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
+    const proc = spawn('ffmpeg', ffmpegArgs(format), { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
     const out: Buffer[] = []; let outBytes = 0; let stderr = '';
     const timer = setTimeout(() => proc.kill('SIGKILL'), FFMPEG_TIMEOUT_MS);
     proc.stdout.on('data', (chunk: Buffer) => {
@@ -63,6 +74,17 @@ function runFfmpeg(image: Buffer, isGif: boolean): Promise<Buffer> {
   });
 }
 
+/** Resize, then retry as JPEG when PNG/GIF exceeds TeamSpeak's upload-size limit. */
+async function encodeFitted(image: Buffer, isGif: boolean): Promise<Buffer> {
+  const first = await runFfmpeg(image, isGif ? 'gif' : 'png');
+  if (first.length <= MAX_AVATAR_BYTES) return first;
+  const jpeg = await runFfmpeg(image, 'jpeg');
+  if (jpeg.length > MAX_AVATAR_BYTES) {
+    throw new Error(`Fitted avatar is ${jpeg.length} bytes; TeamSpeak allows at most ${MAX_AVATAR_BYTES}`);
+  }
+  return jpeg;
+}
+
 const fitted = new Map<string, Promise<Buffer>>();
 
 /**
@@ -78,7 +100,7 @@ export async function fitAvatarForTeamSpeak(image: Buffer | null): Promise<Buffe
   let pending = fitted.get(key);
   if (!pending) {
     const isGif = image.subarray(0, 3).toString('ascii') === 'GIF';
-    pending = runFfmpeg(image, isGif).catch((error: unknown) => {
+    pending = encodeFitted(image, isGif).catch((error: unknown) => {
       fitted.delete(key);
       const detail = (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'ffmpeg is not installed' : error instanceof Error ? error.message : String(error);
       throw new Error(`Could not resize the avatar to ${TS_AVATAR_MAX_PX}x${TS_AVATAR_MAX_PX} for TeamSpeak: ${detail}`);

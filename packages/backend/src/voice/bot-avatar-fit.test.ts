@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { avatarDimensions, fitAvatarForTeamSpeak, TS_AVATAR_MAX_PX } from './bot-avatar-fit.js';
-import { DEFAULT_AVATAR_FILE } from '../utils/bot-avatar-storage.js';
+import { DEFAULT_AVATAR_FILE, MAX_AVATAR_BYTES } from '../utils/bot-avatar-storage.js';
 
 const hasFfmpeg = spawnSync('ffmpeg', ['-version']).status === 0;
 
@@ -40,4 +40,15 @@ test('small and unrecognised images are uploaded unchanged', async () => {
   const fake = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex');
   assert.equal(await fitAvatarForTeamSpeak(fake), fake);
   assert.equal(await fitAvatarForTeamSpeak(null), null);
+});
+
+test('fitted output stays within TeamSpeak upload size', { skip: !hasFfmpeg }, async () => {
+  // A noisy full-frame source that PNG-encodes large after a 300px shrink.
+  const noisy = ffmpegImage(['-f', 'lavfi', '-i', 'rgbtestsrc=s=1200x1200', '-frames:v', '1', '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '1']);
+  assert.ok(noisy.length <= MAX_AVATAR_BYTES || noisy.length > 0);
+  const fitted = await fitAvatarForTeamSpeak(noisy);
+  assert.ok(fitted);
+  assert.ok(fitted!.length <= MAX_AVATAR_BYTES, `fitted ${fitted!.length} bytes exceeds ${MAX_AVATAR_BYTES}`);
+  const dims = avatarDimensions(fitted!);
+  assert.ok(dims && dims.width <= TS_AVATAR_MAX_PX && dims.height <= TS_AVATAR_MAX_PX);
 });
