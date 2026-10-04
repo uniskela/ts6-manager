@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { chunk, playlistAddMessage, urlInfoPlaylistLabel } from '../../src/pages/media-bots/shared';
+import { allUrlItemKeys, chunk, playlistAddMessage, selectedUrlItems, urlInfoPlaylistLabel } from '../../src/pages/media-bots/shared';
 
 const item = (id: string) => ({ id, title: id, artist: 'A', duration: 60, thumbnail: '' }) as any;
 
@@ -36,5 +36,13 @@ describe('playlist URL add', () => {
       playlistAddMessage({ added: 0, alreadyInPlaylist: 1, playlistName: 'Music', stream: true }),
       'That track is already in Music',
     );
+  });
+
+  it('selectedUrlItems keeps a single-video selection when keys are initialized', () => {
+    const items = [item('only')];
+    const empty = selectedUrlItems(items, new Set());
+    assert.equal(empty.length, 0);
+    const selected = selectedUrlItems(items, allUrlItemKeys(items.length));
+    assert.deepEqual(selected.map((t) => t.id), ['only']);
   });
 });

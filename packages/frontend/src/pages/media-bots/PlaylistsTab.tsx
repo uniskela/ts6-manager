@@ -225,11 +225,12 @@ export function PlaylistsTab() {
         onSuccess: (data: UrlLoadInfo) => {
           if (requestId !== addUrlRequestId.current) return;
           setAddUrlInfo(data);
-          if (data.type === 'playlist') {
-            setAddSelectedUrlIds(allUrlItemKeys(data.items.length));
-          }
+          setAddSelectedUrlIds(allUrlItemKeys(data.items.length));
         },
-        onError: (err: unknown) => toast.error(youtubeInfoErrorMessage(err)),
+        onError: (err: unknown) => {
+          if (requestId !== addUrlRequestId.current) return;
+          toast.error(youtubeInfoErrorMessage(err));
+        },
       },
     );
   };
