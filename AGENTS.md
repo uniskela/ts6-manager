@@ -113,7 +113,7 @@ If CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, close the PR without merge
 - [ ] Confirm tag `vX.Y.Z`, GitHub Release, and GHCR image publish from the Release Please workflow
 
 <!-- adhd-hub:project-agent:start -->
-<!-- adhd-hub:guidance-version:5 -->
+<!-- adhd-hub:guidance-version:6 -->
 ## ADHD Hub continuity
 
 For substantial work in this project:
@@ -127,18 +127,21 @@ For substantial work in this project:
   could otherwise imply continuity was saved. Then continue the authorized
   work. Never invent Hub state or claim a Hub write succeeded.
 - **MCP unavailable** is the Hub continuity trigger (not runtime alone). Use
-  the `env-check` skill / `skills/env-check/scripts/check_runtime.sh` for
-  CLOUD_AGENT vs LOCAL_WORKSPACE as supporting context (`CURSOR_AGENT`,
-  container cues — never `$USER=root` alone). When Hub MCP is unreachable,
-  use the forge issue mailbox only when issue-write access is available and
-  the authenticated identity is accepted by Hub Inbox authors. Open/update a
-  GitHub/Gitea issue titled `[ADHD] …` with a short Goal/Focus/Next/Resume
-  cue. Optional labels: `adhd-hub`, `project:<slug>`, `source:cursor`; skip
-  labels if the token cannot set them. Recommended: append
-  `Made with [ADHD Progress Hub](https://github.com/uniskela/adhd-hub)` under
-  a non-imported heading (e.g. `## Attribution`) so it does not land in Resume.
-  Prefer short repository-relative summaries; never invent Hub continuity,
-  progress, or thread state after a forge-only write.
+  the `env-check` skill — resolve `scripts/check_runtime.sh` from the installed
+  skill (project-scoped: `.agents/skills/env-check/…`; Hub source:
+  `skills/env-check/…`) — for CLOUD_AGENT vs LOCAL_WORKSPACE as supporting
+  context (`CURSOR_AGENT`, container cues — never `$USER=root` alone). When Hub
+  MCP is unreachable, use the forge issue mailbox only when issue-write access
+  is available and the authenticated identity is accepted by Hub Inbox authors.
+  Open/update a GitHub/Gitea issue titled `[ADHD] …` with a short
+  Goal/Focus/Next/Resume cue. Optional labels: `adhd-hub`, `project:<slug>`,
+  `source:cursor`; skip labels if the token cannot set them. Recommended:
+  append `Made with [ADHD Progress Hub](https://github.com/uniskela/adhd-hub)`
+  under a non-imported heading (e.g. `## Attribution`) so it does not land in
+  Resume. Prefer short repository-relative summaries; never invent Hub
+  continuity, progress, or thread state after a forge-only write. Never put
+  credentials, tokens, personal/customer data, private hostnames/IPs, absolute
+  local paths, transcripts, or secrets/env contents in forge issues.
 - CLOUD_AGENT: do not assume machine-installed local skill CLIs (e.g.
   `graphify`) exist. If missing: one-line notice, continue via repo tools /
   committed `graphify-out/` when present; never fabricate graph or Hub state.
@@ -147,8 +150,10 @@ For substantial work in this project:
   mailbox when allowed. LOCAL_WORKSPACE: those local CLIs may be available;
   local docker / localhost OK; prefer Hub MCP when up.
 - Skip Hub for trivial/read-only/tiny work.
-- Once per meaningful session: `resolve_project`, then `session_digest` with
-  the task query. Reuse resolved context where possible.
+- Once per meaningful session: `resolve_project` with
+  `create_if_missing=false`, then `session_digest` with the task query. Reuse
+  resolved context where possible. Create/register only after the workspace is
+  authorized as a Hub project.
 - **One thread = one independently finishable outcome** (not the whole repo).
   Before updating a thread, compare new work to that thread's Goal; if it does
   not advance the same outcome, use another thread or create one.
@@ -162,7 +167,8 @@ For substantial work in this project:
   — never close unrelated overlap results.
 - If Hub guidance looks stale (session_digest guidance status, or doctor),
   mention it once, keep using the current MCP contract, and recommend
-  `adhd-hub setup . --refresh` — do not nag repeatedly or hand-edit AGENTS.md.
+  `adhd-hub setup . --refresh` and `adhd-hub sync-project .` (or
+  `setup . --project-skills`) — do not nag repeatedly or hand-edit AGENTS.md.
 - Summaries only; never secrets, credentials, env files, transcripts, private
   Hub URLs, internal hosts/IPs, or absolute machine paths in public artifacts.
 <!-- adhd-hub:project-agent:end -->
