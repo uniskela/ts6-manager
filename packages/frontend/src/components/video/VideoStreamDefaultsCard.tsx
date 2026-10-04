@@ -371,6 +371,12 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
                       {!e.available && e.error && (
                         <span className="block break-words text-muted-foreground">{e.error}</span>
                       )}
+                      {!e.available && e.detail && (
+                        <details className="mt-0.5 text-muted-foreground/80">
+                          <summary className="cursor-pointer select-none">ffmpeg output</summary>
+                          <span className="block break-words font-mono text-[11px]">{e.detail}</span>
+                        </details>
+                      )}
                     </span>
                   </li>
                 ))}

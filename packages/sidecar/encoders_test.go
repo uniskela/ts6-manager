@@ -162,6 +162,37 @@ func TestProbeReportsFailureReason(t *testing.T) {
 	}
 }
 
+// A host without the NVIDIA runtime fails the NVENC probe while loading the
+// driver; the row says so plainly and keeps ffmpeg's text as the detail.
+func TestProbeNvencWithoutDriver(t *testing.T) {
+	run := func(ctx context.Context, args []string) (string, error) {
+		return "[h264_nvenc @ 0x564b2539c3c0] Cannot load libcuda.so.1\n" +
+				"[vost#0:0/h264_nvenc @ 0x1] Error initializing output stream 0:0 -- Error while opening encoder for output stream #0:0 - maybe incorrect parameters such as bit_rate, rate, width or height\n",
+			errors.New("exit status 1")
+	}
+	spec, _ := lookupEncoder("h264_nvenc")
+	res := probeOneEncoder(spec, false, run)
+	if res.Available || res.Error != "NVIDIA GPU/runtime not present" {
+		t.Fatalf("unexpected result %+v", res)
+	}
+	if !strings.Contains(res.Detail, "Cannot load libcuda.so.1") {
+		t.Fatalf("raw ffmpeg reason should be kept as detail, got %q", res.Detail)
+	}
+}
+
+// Other NVENC failures (a GPU that is present but rejects the settings) keep
+// ffmpeg's own reason.
+func TestProbeNvencOtherFailureKeepsReason(t *testing.T) {
+	run := func(ctx context.Context, args []string) (string, error) {
+		return "[h264_nvenc @ 0x1] Driver does not support the required nvenc API version\n", errors.New("exit status 1")
+	}
+	spec, _ := lookupEncoder("h264_nvenc")
+	res := probeOneEncoder(spec, false, run)
+	if !strings.Contains(res.Error, "nvenc API version") || res.Detail != "" {
+		t.Fatalf("unexpected result %+v", res)
+	}
+}
+
 func TestSummarizeFFmpegErrorRedactsURLs(t *testing.T) {
 	out := "noise\r\nhttps://user:pass@iptv.example/live/1.ts: Server returned 403 Forbidden\nError opening input files: Server returned 403 Forbidden\n"
 	got := summarizeFFmpegError(out)
@@ -255,7 +286,7 @@ func TestProbeRunsNvencWithoutVaapiDevice(t *testing.T) {
 		return "[h264_nvenc] Cannot load libnvidia-encode.so.1\n", errors.New("exit status 1")
 	}
 	res = probeOneEncoder(spec, true, fail)
-	if res.Available || calls != 1 || !strings.Contains(res.Error, "libnvidia-encode") {
+	if res.Available || calls != 1 || res.Error != "NVIDIA GPU/runtime not present" || !strings.Contains(res.Detail, "libnvidia-encode") {
 		t.Fatalf("expected one failed probe with its reason, got %+v after %d calls", res, calls)
 	}
 }

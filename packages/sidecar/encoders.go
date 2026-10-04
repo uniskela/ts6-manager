@@ -286,6 +286,8 @@ type EncoderProbeResult struct {
 	Available bool   `json:"available"`
 	LowPower  bool   `json:"lowPower,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// Detail is the raw ffmpeg reason when Error is a friendlier summary of it.
+	Detail string `json:"detail,omitempty"`
 }
 
 // EncoderCapabilities is the cached capability report.
@@ -362,11 +364,41 @@ func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) Enco
 			res.Error = fmt.Sprintf("test encode timed out after %s", encoderProbeTimeout)
 		case strings.TrimSpace(out) != "":
 			res.Error = summarizeFFmpegError(out)
+			if reason := nvencMissingReason(spec, out); reason != "" {
+				res.Error, res.Detail = reason, res.Error
+			}
 		default:
 			res.Error = err.Error()
 		}
 	}
 	return res
+}
+
+// nvencDriverMissing are ffmpeg messages meaning the host has no usable NVIDIA
+// GPU or driver, as opposed to a problem with the test encode itself. ffmpeg
+// loads the driver libraries only when the encoder opens, so a GPU-less host
+// fails there and ffmpeg appends its generic "maybe incorrect parameters"
+// hint, which is misleading here.
+var nvencDriverMissing = []string{
+	"Cannot load libcuda",
+	"Cannot load libnvidia-encode",
+	"No NVENC capable devices found",
+	"CUDA_ERROR_NO_DEVICE",
+	"no CUDA-capable device",
+}
+
+// nvencMissingReason is a short reason for an NVENC probe that failed because
+// no NVIDIA GPU or runtime is present, or "" for any other failure.
+func nvencMissingReason(spec EncoderSpec, out string) string {
+	if spec.Backend != backendNVENC {
+		return ""
+	}
+	for _, marker := range nvencDriverMissing {
+		if strings.Contains(out, marker) {
+			return "NVIDIA GPU/runtime not present"
+		}
+	}
+	return ""
 }
 
 // probeEncoders test-encodes every registered encoder concurrently.
