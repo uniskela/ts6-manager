@@ -34,7 +34,8 @@ function fixture(existingSongIds: number[] = []) {
     req.user = { id: 1, role: 'admin', username: 'tester' };
     next();
   });
-  app.locals.prisma = {
+  const prisma: any = {
+    $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(prisma),
     playlist: {
       findUnique: async ({ where }: any) =>
         where.id === 7 ? { id: 7, mode: 'stream', youtubePlaylistId: null } : null,
@@ -54,6 +55,7 @@ function fixture(existingSongIds: number[] = []) {
       },
     },
   };
+  app.locals.prisma = prisma;
   app.use('/playlists', playlistRoutes);
   app.use(errorHandler);
   return { app, links };

@@ -68,7 +68,7 @@ import type {
   PlaylistMode,
 } from '@ts6/common';
 import { settingsApi } from '@/api/settings.api';
-import { formatTime, UrlLoadInfo, youtubeInfoErrorMessage, urlInfoPlaylistLabel, urlItemSelectKey, allUrlItemKeys, selectedUrlItems, importJobProgressLabel, importJobCompleteMessage, importCapHint, chunk, REGISTER_BATCH_SIZE, playlistAddMessage } from './shared';
+import { formatTime, UrlLoadInfo, youtubeInfoErrorMessage, urlInfoPlaylistLabel, urlItemSelectKey, allUrlItemKeys, selectedUrlItems, importJobProgressLabel, importJobCompleteMessage, importCapHint, chunk, REGISTER_BATCH_SIZE, ADD_SONGS_BATCH_SIZE, playlistAddMessage } from './shared';
 import { ImportQueueOptions } from './ImportQueueOptions';
 
 
@@ -250,11 +250,17 @@ export function PlaylistsTab() {
   /** Link library songs to the open playlist; songs already in it are skipped server-side. */
   const addSongIdsToPlaylist = async (songIds: number[], stream: boolean) => {
     if (!selectedId) return;
-    const res = await addSongs.mutateAsync({ playlistId: selectedId, songIds });
+    let added = 0;
+    let alreadyInPlaylist = 0;
+    for (const batch of chunk([...new Set(songIds)], ADD_SONGS_BATCH_SIZE)) {
+      const res = await addSongs.mutateAsync({ playlistId: selectedId, songIds: batch });
+      added += res.added;
+      alreadyInPlaylist += res.alreadyInPlaylist;
+    }
     toast.success(
       playlistAddMessage({
-        added: res.added,
-        alreadyInPlaylist: res.alreadyInPlaylist,
+        added,
+        alreadyInPlaylist,
         playlistName: detail?.name || 'the playlist',
         stream,
       }),

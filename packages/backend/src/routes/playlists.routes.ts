@@ -175,30 +175,35 @@ playlistRoutes.delete('/:id', async (req: Request, res: Response, next) => {
   }
 });
 
+const MAX_SONGS_PER_ADD = 1000;
+
 async function appendSongsToPlaylist(
   prisma: any,
   playlistId: number,
   songIds: number[],
 ): Promise<number> {
-  const maxPos = await prisma.playlistSong.aggregate({
-    where: { playlistId },
-    _max: { position: true },
-  });
-  let nextPosition = (maxPos._max.position ?? -1) + 1;
-  let added = 0;
+  // One transaction so a batch lands whole and concurrent adds cannot share a position.
+  return prisma.$transaction(async (tx: any) => {
+    const maxPos = await tx.playlistSong.aggregate({
+      where: { playlistId },
+      _max: { position: true },
+    });
+    let nextPosition = (maxPos._max.position ?? -1) + 1;
+    let added = 0;
 
-  for (const songId of songIds) {
-    const existing = await prisma.playlistSong.findUnique({
-      where: { playlistId_songId: { playlistId, songId } },
-    });
-    if (existing) continue;
-    await prisma.playlistSong.create({
-      data: { playlistId, songId, position: nextPosition },
-    });
-    nextPosition++;
-    added++;
-  }
-  return added;
+    for (const songId of songIds) {
+      const existing = await tx.playlistSong.findUnique({
+        where: { playlistId_songId: { playlistId, songId } },
+      });
+      if (existing) continue;
+      await tx.playlistSong.create({
+        data: { playlistId, songId, position: nextPosition },
+      });
+      nextPosition++;
+      added++;
+    }
+    return added;
+  });
 }
 
 // POST /:id/songs — Add one song ({ songId }) or several ({ songIds }) to a playlist.
@@ -212,7 +217,7 @@ playlistRoutes.post('/:id/songs', async (req: Request, res: Response, next) => {
     const ids = [...new Set(rawIds.map((id) => parseInt(String(id))))];
     if (ids.length === 0) throw new AppError(400, 'songId is required');
     if (ids.some((id) => Number.isNaN(id))) throw new AppError(400, 'songIds must be numbers');
-    if (ids.length > 1000) throw new AppError(400, 'At most 1000 songs per request');
+    if (ids.length > MAX_SONGS_PER_ADD) throw new AppError(400, `At most ${MAX_SONGS_PER_ADD} songs per request`);
 
     const playlist = await prisma.playlist.findUnique({ where: { id: playlistId } });
     if (!playlist) throw new AppError(404, 'Playlist not found');

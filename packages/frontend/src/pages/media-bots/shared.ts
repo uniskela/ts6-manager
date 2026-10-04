@@ -52,6 +52,10 @@ function trackCount(n: number): string {
 export const REGISTER_BATCH_SIZE = 200;
 
 
+/** The playlist add endpoint accepts at most this many song IDs per request. */
+export const ADD_SONGS_BATCH_SIZE = 1000;
+
+
 export function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
