@@ -1302,6 +1302,7 @@ export class VoiceBot extends EventEmitter {
     const wasPlaying = this._status === 'playing';
     const input = this.fileInput;
     const item = this._nowPlaying;
+    const owner = this.playbackOwner;
 
     this.clearTimer();
     if (this.streamKill) {
@@ -1313,11 +1314,25 @@ export class VoiceBot extends EventEmitter {
     this.streamChunksSize = 0;
 
     // A resolved YouTube URL can expire mid-track; download it instead.
-    const opened = await this.startFileStream(
-      input,
-      target,
-      isRemoteInput(input) ? () => this.playDownloadFallback(item, target) : undefined,
-    );
+    // validateUrl failures throw before ffmpeg starts — do not use the download
+    // fallback for those; restore a clean connected state instead.
+    let opened: boolean;
+    try {
+      opened = await this.startFileStream(
+        input,
+        target,
+        isRemoteInput(input) ? () => this.playDownloadFallback(item, target) : undefined,
+      );
+    } catch (err) {
+      if (owner !== this.playbackOwner) return;
+      if (!this._videoStreaming) this.stopAutoStopTimer();
+      this.endMusicSession('source_unreachable', 'Track could not be played');
+      this._status = 'connected';
+      this._nowPlaying = null;
+      this.emit('statusChange', this._status);
+      this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    }
     // A newer track took over while the decoder opened: leave its state alone.
     if (!opened) return;
 

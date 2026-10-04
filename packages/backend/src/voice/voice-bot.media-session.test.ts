@@ -159,6 +159,30 @@ describe('single active media session (per bot)', () => {
     b.stopPlayback();
   });
 
+  it('clears playback when seek URL validation fails after the old decoder stops', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    const item = { id: '5b', title: 'Clip', source: 'youtube' as const, filePath: '', sourceUrl: 'https://youtu.be/z', duration: 300 };
+    b._nowPlaying = item;
+    let calls = 0;
+    b.pipeline.toPcmFileStream = async (input: string) => {
+      calls++;
+      if (calls === 1) {
+        return { stdout: new PassThrough(), process: new EventEmitter(), kill: () => {} };
+      }
+      throw new Error('Stream URL blocked: DNS lookup failed');
+    };
+    b.ensurePlayableFile = async () => assert.fail('blocked URLs must not use the download fallback');
+
+    await b.startFileStream('https://rr1.googlevideo.com/d', 0);
+    await assert.rejects(bot.seek(90), /Stream URL blocked/);
+    assert.equal(bot.status, 'connected');
+    assert.equal(bot.nowPlaying, null);
+    assert.equal(bot.lastMusicStop?.reason, 'source_unreachable');
+    assert.equal(bot.canSeek, false);
+  });
+
   it('downloads and resumes at the seek target when a streamed URL has expired', async () => {
     const bot = makeBot();
     fakeMusic(bot);
