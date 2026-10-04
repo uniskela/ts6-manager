@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
+import { resetChatReplyCooldownsForTests } from './dedupe.js';
 
 const bots: ChannelBot[] = [
   { id: 1, names: ['Test', 'Test'], active: false },
@@ -78,6 +79,20 @@ describe('chat commands with two bots in one channel', async () => {
     const f = setup();
     await f.say('!next');
     assert.deepEqual(f.skips, [2]);
+  });
+
+  it('stops only the lower-ID bot when both are playing', async () => {
+    resetChatReplyCooldownsForTests();
+    const f = setup();
+    f.bots.get(1)!.status = 'playing';
+    f.bots.get(2)!.status = 'playing';
+    const stops: number[] = [];
+    f.handler.handleStop = (bot: any) => {
+      stops.push(bot.id);
+      bot.status = 'connected';
+    };
+    await f.say('!stop');
+    assert.deepEqual(stops, [1]);
   });
 
   it('lets a named bot answer and strips its name from the arguments', async () => {

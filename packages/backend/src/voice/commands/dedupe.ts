@@ -36,6 +36,7 @@ export function resetChatReplyCooldownsForTests(): void {
   helpFlights.clear();
   hereActionUntil.clear();
   hereListCooldownUntil.clear();
+  channelCommandUntil.clear();
 }
 
 /** Collapse duplicate !help when several bots hear the same channel message. */
@@ -139,6 +140,7 @@ export function resetHereDedupForTests(): void {
   helpActionUntil.clear();
   helpFlights.clear();
   chatReplyCooldownUntil.clear();
+  channelCommandUntil.clear();
 }
 
 /** Claim the shorter cooldown used for repeated summon candidate lists. */
@@ -153,5 +155,29 @@ export function shouldSpeakHereList(
   const until = hereListCooldownUntil.get(key) ?? 0;
   if (Date.now() < until) return false;
   hereListCooldownUntil.set(key, Date.now() + HERE_LIST_COOLDOWN_MS);
+  return true;
+}
+
+/** Collapse one channel command when several bots hear the same chat line. */
+const CHANNEL_COMMAND_DEDUP_MS = 1500;
+const channelCommandUntil = new Map<string, number>();
+
+/** Build a claim key for one user command line in a channel. */
+export function channelCommandKey(
+  serverConfigId: number,
+  virtualServerId: number,
+  channelId: number,
+  userClid: number,
+  command: string,
+  msg: string,
+): string {
+  return `${serverConfigId}:${virtualServerId}:${channelId}:${userClid}:${command}:${msg}`;
+}
+
+/** True when this bot should run the command; false when a peer already claimed it. */
+export function claimChannelCommand(key: string): boolean {
+  const until = channelCommandUntil.get(key) ?? 0;
+  if (Date.now() < until) return false;
+  channelCommandUntil.set(key, Date.now() + CHANNEL_COMMAND_DEDUP_MS);
   return true;
 }

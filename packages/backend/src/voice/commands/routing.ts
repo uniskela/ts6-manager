@@ -5,6 +5,7 @@ import { channelListenerKey } from '../music-command-channels.js';
 import type { CommandContext } from './context.js';
 import { botOccupiesChannel, isBotSummonable } from './channel-ownership.js';
 import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
+import { channelCommandKey, claimChannelCommand } from './dedupe.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 
@@ -279,10 +280,29 @@ export async function onTextMessage(
     replyChannelId ?? (parsedChannelId > 0 ? parsedChannelId : undefined);
 
   // Every bot in the channel hears this line: exactly one of them answers.
+  // Claim after selection so a side effect like !stop (active → connected) cannot
+  // retarget the next peer handler onto a different bot.
   const peers = commandChannelId ? channelBots(context, botId, bot, commandChannelId) : [];
   if (peers.length > 1) {
     const target = parseBotTarget(command, rawArgs, peers);
     if (chooseCommandBot(peers, target.botId) !== botId) return;
+    const cfg = context.botChannelConfig.get(botId);
+    if (
+      cfg &&
+      commandChannelId &&
+      !claimChannelCommand(
+        channelCommandKey(
+          cfg.serverConfigId,
+          cfg.virtualServerId,
+          commandChannelId,
+          userClid,
+          command,
+          data.msg || '',
+        ),
+      )
+    ) {
+      return;
+    }
     rawArgs = target.args;
   }
   if (commandChannelId && commandChannelId > 0) {
