@@ -250,21 +250,29 @@ export function PlaylistsTab() {
   /** Link library songs to the open playlist; songs already in it are skipped server-side. */
   const addSongIdsToPlaylist = async (songIds: number[], stream: boolean) => {
     if (!selectedId) return;
+    const ids = [...new Set(songIds)];
     let added = 0;
     let alreadyInPlaylist = 0;
-    for (const batch of chunk([...new Set(songIds)], ADD_SONGS_BATCH_SIZE)) {
-      const res = await addSongs.mutateAsync({ playlistId: selectedId, songIds: batch });
-      added += res.added;
-      alreadyInPlaylist += res.alreadyInPlaylist;
+    const report = () =>
+      toast.success(
+        playlistAddMessage({ added, alreadyInPlaylist, playlistName: detail?.name || 'the playlist', stream }),
+      );
+    for (const batch of chunk(ids, ADD_SONGS_BATCH_SIZE)) {
+      try {
+        const res = await addSongs.mutateAsync({ playlistId: selectedId, songIds: batch });
+        added += res.added;
+        alreadyInPlaylist += res.alreadyInPlaylist;
+      } catch (err: any) {
+        // Earlier batches already landed; say so before reporting what is left.
+        const handled = added + alreadyInPlaylist;
+        if (handled > 0) report();
+        const reason = err?.response?.data?.error || err?.message || 'request failed';
+        throw new Error(
+          handled > 0 ? `${ids.length - handled} tracks were not added: ${reason}` : reason,
+        );
+      }
     }
-    toast.success(
-      playlistAddMessage({
-        added,
-        alreadyInPlaylist,
-        playlistName: detail?.name || 'the playlist',
-        stream,
-      }),
-    );
+    report();
   };
 
   const addUrlItems = async (items: { id: string; title?: string; artist?: string; duration?: number }[]) => {
