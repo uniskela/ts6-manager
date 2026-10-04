@@ -627,7 +627,10 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
     invalidatePlaylistExpansion(id);
-    await runMediaAudited(req, bot, 'media.music.stop', async () => bot.stopAudio());
+    await runMediaAudited(req, bot, 'media.music.stop', async () => {
+      bot.queue.clear();
+      bot.stopAudio();
+    });
     res.json({ success: true });
   } catch (err) { next(err); }
 });

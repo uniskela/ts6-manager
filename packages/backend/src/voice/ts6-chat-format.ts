@@ -96,7 +96,7 @@ export function formatNowPlayingMessage(input: NowPlayingFormatInput): string {
     lines.push('- `!pause` — pause / resume');
     lines.push('- `!skip` or `!next` — skip track');
     lines.push('- `!prev` — previous track');
-    lines.push('- `!stop` — stop playback');
+    lines.push('- `!stop` — stop playback and clear the queue');
     lines.push('- `!queue show` — full queue');
     lines.push('</details>');
   }

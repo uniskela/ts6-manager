@@ -130,9 +130,10 @@ export async function handleSeek(
   context.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
 }
 
-/** Cancel background playlist expansion and stop audio playback. */
+/** Cancel background playlist expansion, clear the queue, and stop audio. */
 export function handleStop(context: CommandContext, bot: VoiceBot, userClid: number): void {
   invalidateChatPlaylistExpansion(bot.currentConfig.id);
+  bot.queue.clear();
   bot.stopAudio();
   context.reply(bot, userClid, 'Playback stopped.');
 }
