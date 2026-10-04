@@ -38,7 +38,7 @@ async function mockIptv(page: Page) {
   return streams;
 }
 
-test('browse groups, search channels, and stream with live IPTV defaults', async ({ page, request }) => {
+test('browse groups, search channels, and inherit live IPTV defaults', async ({ page, request }) => {
   const streams = await mockIptv(page);
   await signIn(page, request);
   await page.goto('/bot-hub/1');
@@ -47,9 +47,9 @@ test('browse groups, search channels, and stream with live IPTV defaults', async
   await page.getByRole('button', { name: /News/ }).click();
   await expect(page.getByText('Morning News')).toBeVisible();
   await page.getByRole('button', { name: 'Stream Morning News' }).click();
-  // Starts on Auto quality and this server's streaming defaults (env or Streaming defaults).
+  // Omitted overrides let the backend apply bot quality and current server defaults.
   await expect.poll(() => streams[0]).toEqual({
-    botId: 1, channelId: 7, preset: 'auto', encoder: 'h264_vaapi', noViewerTimeoutSec: 900, sourceMode: 'live',
+    botId: 1, channelId: 7, sourceMode: 'live',
   });
   await page.getByRole('button', { name: 'All groups' }).click();
   await page.getByLabel('Search channels').fill('Morning');
@@ -79,8 +79,43 @@ test('streaming waits for the server defaults and keeps an early edit on top of 
   await expect(stream).toBeEnabled();
   await stream.click();
   await expect.poll(() => streams[0]).toEqual({
-    botId: 1, channelId: 7, preset: '1080p', encoder: 'h264_vaapi', noViewerTimeoutSec: 900, sourceMode: 'live',
+    botId: 1, channelId: 7, preset: '1080p', sourceMode: 'live',
   });
+});
+
+test('Auto and Off are explicit overrides and returning to defaults omits them', async ({ page, request }) => {
+  const streams = await mockIptv(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'IPTV' }).click();
+  await page.getByRole('button', { name: /News/ }).click();
+  const stream = page.getByRole('button', { name: 'Stream Morning News' });
+  await expect(stream).toBeEnabled();
+  await page.locator('summary', { hasText: 'Video options' }).click();
+
+  const quality = page.locator('#vo-quality');
+  const encoder = page.locator('#vo-encoder');
+  const timeout = page.locator('#vo-noviewer');
+  await expect(quality).toHaveValue('');
+  await expect(encoder).toHaveValue('');
+  await expect(timeout).toHaveValue('');
+  await expect(quality.locator('option:checked')).toHaveText(/default/i);
+  await expect(encoder.locator('option:checked')).toHaveText(/default.*H\.264.*VAAPI/i);
+  await expect(timeout.locator('option:checked')).toHaveText(/default.*15 min/i);
+
+  await quality.selectOption('auto');
+  await encoder.selectOption('auto');
+  await timeout.selectOption('0');
+  await stream.click();
+  await expect.poll(() => streams[0]).toEqual({
+    botId: 1, channelId: 7, preset: 'auto', encoder: 'auto', noViewerTimeoutSec: 0, sourceMode: 'live',
+  });
+
+  await quality.selectOption('');
+  await encoder.selectOption('');
+  await timeout.selectOption('');
+  await stream.click();
+  await expect.poll(() => streams[1]).toEqual({ botId: 1, channelId: 7, sourceMode: 'live' });
 });
 
 type PickFixture = {

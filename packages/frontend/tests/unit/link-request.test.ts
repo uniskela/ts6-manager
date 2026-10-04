@@ -32,9 +32,6 @@ describe('console link request mapping', () => {
         endpoint: 'stream/start',
         body: {
           source: 'https://youtu.be/abc',
-          preset: 'auto',
-          encoder: 'auto',
-          noViewerTimeoutSec: undefined,
           sourceMode: 'auto',
         },
       },
@@ -46,9 +43,6 @@ describe('console link request mapping', () => {
       buildLinkStartRequest('show.mp4', 'video', DEFAULT_VIDEO_START_OPTIONS).body,
       {
         source: 'show.mp4',
-        preset: 'auto',
-        encoder: 'auto',
-        noViewerTimeoutSec: undefined,
         sourceMode: 'auto',
       },
     );
@@ -72,11 +66,11 @@ describe('console link request mapping', () => {
     );
   });
 
-  it('default options send Auto and leave the timeout to the server', () => {
+  it('default options inherit quality, encoder and timeout', () => {
     const body = buildLinkStartRequest('clip.mp4', 'video', DEFAULT_VIDEO_START_OPTIONS).body;
-    assert.equal(body.preset, 'auto');
-    assert.equal(body.encoder, 'auto');
-    assert.equal(body.noViewerTimeoutSec, undefined);
+    assert.equal('preset' in body, false);
+    assert.equal('encoder' in body, false);
+    assert.equal('noViewerTimeoutSec' in body, false);
     assert.equal(body.sourceMode, 'auto');
   });
 });

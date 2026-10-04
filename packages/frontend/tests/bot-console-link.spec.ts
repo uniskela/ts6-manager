@@ -47,6 +47,9 @@ async function mockConsole(page: Page) {
   const calls: { method: string; url: string; body: unknown }[] = [];
   await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
   await page.route('**/api/music-bots/1/state', (r) => r.fulfill({ json: state }));
+  await page.route('**/api/settings/video-streaming/servers/1', (r) => r.fulfill({ json: {
+    global: {}, overrides: {}, effective: { defaultEncoder: 'h264_vaapi', noViewerTimeoutSec: 900 },
+  } }));
   await page.route('**/api/music-bots/1/play-url', async (r) => {
     calls.push({ method: r.request().method(), url: r.request().url(), body: r.request().postDataJSON() });
     await r.fulfill({ json: { success: true, queued: 1 } });
@@ -90,7 +93,7 @@ test('Stream as video sends stream/start with the source and chosen options', as
   await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
     .fill('https://youtu.be/dQw4w9WgXcQ');
   await page.getByRole('radio', { name: 'Stream as video' }).check();
-  await expect(page.locator('summary', { hasText: 'Video options' })).toContainText('Auto · Auto encoder');
+  await expect(page.locator('summary', { hasText: 'Video options' })).toContainText(/default/i);
   await page.locator('summary', { hasText: 'Video options' }).click();
   await page.locator('#vo-quality').selectOption('1080p');
   await page.locator('#vo-encoder').selectOption('h264_vaapi');
@@ -104,6 +107,21 @@ test('Stream as video sends stream/start with the source and chosen options', as
     encoder: 'h264_vaapi',
     noViewerTimeoutSec: 600,
     sourceMode: 'live',
+  });
+});
+
+test('Stream as video inherits bot and server defaults when no overrides are chosen', async ({ page, request }) => {
+  const calls = await mockConsole(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Link' }).click();
+  await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
+    .fill('https://youtu.be/dQw4w9WgXcQ');
+  await page.getByRole('radio', { name: 'Stream as video' }).check();
+  await page.getByRole('button', { name: 'Stream as video' }).click();
+
+  await expect.poll(() => calls.find((c) => c.url.includes('/stream/start'))?.body).toEqual({
+    source: 'https://youtu.be/dQw4w9WgXcQ', sourceMode: 'auto',
   });
 });
 
