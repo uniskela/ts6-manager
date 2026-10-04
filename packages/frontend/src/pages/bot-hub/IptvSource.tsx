@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Search, Star, Tv } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { ArrowLeft, List, Search, Star, Tv } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -37,7 +38,8 @@ function matchesMetadata(value: string | null | undefined, selected: string): bo
 
 /** Console IPTV browser, search, and explicit stream controls. */
 export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourceContext) {
-  const [deepLink] = useState<IptvDeepLink | null>(() => parseIptvDeepLink(searchParams.get('iptv')));
+  const [, setSearchParams] = useSearchParams();
+  const [deepLink, setDeepLink] = useState<IptvDeepLink | null>(() => parseIptvDeepLink(searchParams.get('iptv')));
   // Older links carry only the key; newer ones also name the exact row.
   const [deepChannelId] = useState<number | null>(() => (deepLink ? parseIptvChannelId(searchParams.get('iptvChannel')) : null));
   const [playlistId, setPlaylistId] = useState<number | undefined>(deepLink?.playlistId);
@@ -129,6 +131,17 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     setGroup('');
   };
 
+  /** Leave the single-channel deep link and browse every channel again. */
+  const showAllChannels = () => {
+    setDeepLink(null);
+    setSearchParams((params) => {
+      const next = new URLSearchParams(params);
+      next.delete('iptv');
+      next.delete('iptvChannel');
+      return next;
+    }, { replace: true });
+  };
+
   /** Stream only after the administrator presses the channel button. */
   const startStream = (channel: IptvConsoleChannel) => {
     stream.mutate({ botId, channelId: channel.id, options });
@@ -151,14 +164,37 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   const favouriteError = setFavourite.error ?? favouritesQuery.error;
 
   if (deepLinkMode) {
+    const showAll = (
+      <Button type="button" variant="outline" className="min-h-11" onClick={showAllChannels}>
+        <List className="mr-1.5 h-4 w-4" aria-hidden="true" /> Show all channels
+      </Button>
+    );
     if (!deepLinkFinished || channelsQuery.isFetching) return <p className="text-sm text-muted-foreground">Loading channel…</p>;
-    if (channelsQuery.isError) return <p role="alert" className="text-sm text-destructive">{apiErrorMessage(channelsQuery.error, 'Could not load channel')}</p>;
-    if (!deepChannel) return <p className="text-sm">That channel is no longer in the playlist</p>;
+    if (channelsQuery.isError) {
+      return (
+        <div className="space-y-3">
+          <p role="alert" className="text-sm text-destructive">{apiErrorMessage(channelsQuery.error, 'Could not load channel')}</p>
+          {showAll}
+        </div>
+      );
+    }
+    if (!deepChannel) {
+      return (
+        <div className="space-y-3">
+          <p className="text-sm">That channel is no longer in the playlist</p>
+          {showAll}
+        </div>
+      );
+    }
     return (
       <div className="space-y-4">
         <VideoOptions value={options} onChange={setOptions} defaults={defaults} />
         {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
         {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">Selected channel</h3>
+          {showAll}
+        </div>
         {renderChannel(deepChannel, channelsQuery.isFetching)}
       </div>
     );
