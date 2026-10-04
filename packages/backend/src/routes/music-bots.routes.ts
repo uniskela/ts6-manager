@@ -504,7 +504,11 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
                   req,
                   live,
                   'media.music.start',
-                  () => live.play(item, { replaceSessionIds: opts.replaceSessionIds }),
+                  async () => {
+                    // Re-check after audit insert — a concurrent stop may have advanced generation.
+                    if (playlistExpansionGeneration(id) !== generation) return [];
+                    return live.play(item, { replaceSessionIds: opts.replaceSessionIds });
+                  },
                   opts.replaceSessionIds,
                 );
               } else {
