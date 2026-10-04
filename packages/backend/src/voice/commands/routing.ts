@@ -3,7 +3,8 @@ import { BUILTIN_CHAT_COMMANDS } from '../chat-commands.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import { channelListenerKey } from '../music-command-channels.js';
 import type { CommandContext } from './context.js';
-import { isBotSummonable } from './channel-ownership.js';
+import { botOccupiesChannel, isBotSummonable } from './channel-ownership.js';
+import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 
@@ -118,6 +119,38 @@ export function registerBot(context: CommandContext, botId: number, bot: VoiceBo
   void context.refreshBotChannels(botId);
 
   console.log(`[MusicCmd] Registered text command listener on bot ${botId}`);
+}
+
+/** Running music bots of this bot's server that are in `channelId`, this bot included. */
+function channelBots(
+  context: CommandContext,
+  botId: number,
+  bot: VoiceBot,
+  channelId: number,
+): ChannelBot[] {
+  const manager = context.voiceBotManager;
+  if (typeof manager?.listBots !== 'function') return [];
+  const own = context.botChannelConfig.get(botId);
+  const describe = (id: number, peer: VoiceBot): ChannelBot => {
+    const cfg = peer.currentConfig;
+    return {
+      id,
+      names: [cfg.name, cfg.nickname].filter((n): n is string => !!n),
+      active: peer.status === 'playing' || peer.status === 'paused' || peer.videoStreaming,
+    };
+  };
+  const bots = [describe(botId, bot)];
+  for (const { id } of manager.listBots()) {
+    if (id === botId) continue;
+    const peer = manager.getBot(id);
+    if (!peer || !botOccupiesChannel(peer, channelId)) continue;
+    const cfg = context.botChannelConfig.get(id);
+    if (own && cfg && (cfg.serverConfigId !== own.serverConfigId || cfg.virtualServerId !== own.virtualServerId)) {
+      continue;
+    }
+    bots.push(describe(id, peer));
+  }
+  return bots;
 }
 
 /** Choose one eligible bot for SSH chat, leaving in-channel help and summons to voice. */
@@ -235,7 +268,7 @@ export async function onTextMessage(
 
   const parts = msg.substring(CMD_PREFIX.length).split(/\s+/);
   const command = parts[0].toLowerCase();
-  const rawArgs = parts.slice(1).join(' ').trim();
+  let rawArgs = parts.slice(1).join(' ').trim();
 
   const parsedChannelId = parseInt(
     data.target || data.invokerchannelid || data.cid || '0',
@@ -243,6 +276,14 @@ export async function onTextMessage(
   );
   const commandChannelId =
     replyChannelId ?? (parsedChannelId > 0 ? parsedChannelId : undefined);
+
+  // Every bot in the channel hears this line: exactly one of them answers.
+  const peers = commandChannelId ? channelBots(context, botId, bot, commandChannelId) : [];
+  if (peers.length > 1) {
+    const target = parseBotTarget(rawArgs, peers);
+    if (chooseCommandBot(peers, target.botId) !== botId) return;
+    rawArgs = target.args;
+  }
   if (commandChannelId && commandChannelId > 0) {
     context.activeReplyChannel.set(`${botId}:${userClid}`, commandChannelId);
   }
