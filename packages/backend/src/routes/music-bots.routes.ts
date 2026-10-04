@@ -81,8 +81,10 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
 /** Cancels stale background playlist expansions when a newer play-url starts for the same bot. */
 const playlistExpandGeneration = new Map<number, number>();
 
-function invalidatePlaylistExpansion(botId: number): void {
-  playlistExpandGeneration.set(botId, (playlistExpandGeneration.get(botId) ?? 0) + 1);
+function invalidatePlaylistExpansion(botId: number): number {
+  const next = (playlistExpandGeneration.get(botId) ?? 0) + 1;
+  playlistExpandGeneration.set(botId, next);
+  return next;
 }
 
 // All routes require admin role
@@ -626,8 +628,10 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     const id = parseInt(req.params.id as string);
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
-    invalidatePlaylistExpansion(id);
+    // Capture generation so a stop delayed by audit insert cannot clear/stop a newer play-url.
+    const stopGeneration = invalidatePlaylistExpansion(id);
     await runMediaAudited(req, bot, 'media.music.stop', async () => {
+      if ((playlistExpandGeneration.get(id) ?? 0) !== stopGeneration) return;
       bot.queue.clear();
       bot.stopAudio();
     });
