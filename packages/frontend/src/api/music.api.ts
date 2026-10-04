@@ -151,8 +151,12 @@ export const musicLibraryApi = {
 export const radioStationsApi = {
   list: (configId: number) => api.get(`/servers/${configId}/radio-stations`).then((r) => r.data),
   presets: (configId: number) => api.get(`/servers/${configId}/radio-stations/presets`).then((r) => r.data),
-  create: (configId: number, data: { name: string; url: string; genre?: string }) =>
-    api.post(`/servers/${configId}/radio-stations`, data).then((r) => r.data),
+  browse: (configId: number, params: { q?: string; tag?: string; country?: string; limit?: number }) =>
+    api.get(`/servers/${configId}/radio-stations/browse`, { params }).then((r) => r.data),
+  create: (
+    configId: number,
+    data: { name: string; url: string; genre?: string; imageUrl?: string; stationuuid?: string },
+  ) => api.post(`/servers/${configId}/radio-stations`, data).then((r) => r.data),
   update: (configId: number, id: number, data: { name?: string; url?: string; genre?: string | null }) =>
     api.put(`/servers/${configId}/radio-stations/${id}`, data).then((r) => r.data),
   delete: (configId: number, id: number) =>

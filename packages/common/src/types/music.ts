@@ -143,6 +143,18 @@ export interface RadioPreset {
   genre: string;
 }
 
+/** Station result from Community Radio Browser search (import candidate). */
+export interface RadioBrowserStationInfo {
+  stationuuid: string;
+  name: string;
+  url: string;
+  genre: string;
+  imageUrl: string | null;
+  countrycode: string;
+  codec: string;
+  bitrate: number;
+}
+
 // === Chat Commands (music bot !commands) ===
 
 export interface ChatCommandInfo {

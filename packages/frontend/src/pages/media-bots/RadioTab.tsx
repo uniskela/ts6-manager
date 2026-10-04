@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import {
   useRadioStations,
   useRadioPresets,
+  useBrowseRadioStations,
   useCreateRadioStation,
   useUpdateRadioStation,
   useDeleteRadioStation,
@@ -33,10 +34,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Radio } from 'lucide-react';
+import { Plus, Trash2, Radio, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
-import type { RadioStationInfo, RadioPreset } from '@ts6/common';
+import type { RadioStationInfo, RadioPreset, RadioBrowserStationInfo } from '@ts6/common';
 
 
 // ─── Radio Tab ───────────────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ export function RadioTab() {
 
   const { data: stations, isLoading } = useRadioStations(configId);
   const { data: presets } = useRadioPresets(configId);
+  const browseStations = useBrowseRadioStations();
   const createStation = useCreateRadioStation();
   const updateStation = useUpdateRadioStation();
   const stationPending = createStation.isPending || updateStation.isPending;
@@ -60,6 +62,12 @@ export function RadioTab() {
 
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
+  const [showBrowse, setShowBrowse] = useState(false);
+  const [browseQuery, setBrowseQuery] = useState('');
+  const [browseResults, setBrowseResults] = useState<RadioBrowserStationInfo[]>([]);
+  const [browseSearchState, setBrowseSearchState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  // Bumped when the dialog resets or the query changes so a slow search cannot restore stale results.
+  const browseRequestId = useRef(0);
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
   const [editingStation, setEditingStation] = useState<RadioStationInfo | null>(null);
   const stationSaveInFlight = useRef(false);
@@ -68,6 +76,7 @@ export function RadioTab() {
   const serverList = Array.isArray(servers) ? servers : [];
   const stationList = (Array.isArray(stations) ? stations : []) as RadioStationInfo[];
   const presetList = (Array.isArray(presets) ? presets : []) as RadioPreset[];
+  const existingUrls = new Set(stationList.map((s) => s.url));
 
   useEffect(() => {
     if (linkedServer) {
@@ -117,6 +126,45 @@ export function RadioTab() {
     });
   };
 
+  const handleBrowseSearch = () => {
+    if (!configId || !browseQuery.trim()) return;
+    const requestId = ++browseRequestId.current;
+    setBrowseResults([]);
+    setBrowseSearchState('pending');
+    browseStations.mutate(
+      { configId, q: browseQuery.trim() },
+      {
+        onSuccess: (data) => {
+          if (requestId !== browseRequestId.current) return;
+          setBrowseResults(Array.isArray(data) ? data as RadioBrowserStationInfo[] : []);
+          setBrowseSearchState('success');
+        },
+        onError: (error) => {
+          if (requestId !== browseRequestId.current) return;
+          setBrowseSearchState('error');
+          toast.error(apiErrorMessage(error, 'Radio Browser search failed'));
+        },
+      },
+    );
+  };
+
+  const handleAddBrowseStation = (station: RadioBrowserStationInfo) => {
+    if (!configId || existingUrls.has(station.url)) return;
+    createStation.mutate({
+      configId,
+      data: {
+        name: station.name,
+        url: station.url,
+        genre: station.genre || undefined,
+        imageUrl: station.imageUrl || undefined,
+        stationuuid: station.stationuuid,
+      },
+    }, {
+      onSuccess: () => toast.success(`Added: ${station.name}`),
+      onError: (error) => toast.error(apiErrorMessage(error, `Failed to add: ${station.name}`)),
+    });
+  };
+
   if (!configId) {
     return <EmptyState icon={Radio} title="Select a server" description="Choose a server to manage radio stations." />;
   }
@@ -150,6 +198,19 @@ export function RadioTab() {
         >
           Reset IDs
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            browseRequestId.current += 1;
+            setBrowseQuery('');
+            setBrowseResults([]);
+            setBrowseSearchState('idle');
+            setShowBrowse(true);
+          }}
+        >
+          <Search className="h-4 w-4 mr-1" /> Search stations
+        </Button>
         <Button variant="outline" size="sm" onClick={() => setShowPresets(true)}>
           <Radio className="h-4 w-4 mr-1" /> Presets
         </Button>
@@ -168,7 +229,7 @@ export function RadioTab() {
 
       {/* Station List */}
       {isLoading ? <PageLoader /> : stationList.length === 0 ? (
-        <EmptyState icon={Radio} title="No radio stations" description="Add stations manually or from presets, then play them from a bot's console." />
+        <EmptyState icon={Radio} title="No radio stations" description="Add stations manually, from presets, or search Community Radio Browser, then play them from a bot's console." />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {stationList.map((station) => (
@@ -248,6 +309,94 @@ export function RadioTab() {
             <Button onClick={handleAddStation} disabled={!addForm.name.trim() || !addForm.url.trim() || stationPending}>
               {editingStation ? 'Save' : 'Add Station'}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Community Radio Browser search */}
+      <Dialog open={showBrowse} onOpenChange={setShowBrowse}>
+        <DialogContent className="max-w-lg [--dialog-max-height:80vh] flex flex-col overflow-auto">
+          <DialogHeader>
+            <DialogTitle>Search stations</DialogTitle>
+            <DialogDescription>
+              Find internet radio stations and add them to this server&apos;s list.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleBrowseSearch();
+            }}
+          >
+            <Input
+              value={browseQuery}
+              onChange={(e) => {
+                browseRequestId.current += 1;
+                setBrowseQuery(e.target.value);
+                setBrowseResults([]);
+                setBrowseSearchState('idle');
+              }}
+              placeholder="Name, e.g. Jazz, BBC, Techno…"
+              disabled={browseSearchState === 'pending'}
+              aria-label="Search stations"
+            />
+            <Button type="submit" disabled={!browseQuery.trim() || browseSearchState === 'pending'}>
+              Search
+            </Button>
+          </form>
+          <div className="flex-1 max-h-[400px] overflow-y-auto">
+            {browseSearchState === 'pending' ? (
+              <p className="text-xs text-muted-foreground text-center py-8">Searching…</p>
+            ) : browseSearchState === 'error' ? (
+              <p className="text-xs text-muted-foreground text-center py-8">Search failed. Try again.</p>
+            ) : browseResults.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">
+                {browseSearchState === 'success' ? 'No stations found.' : 'Enter a name to search.'}
+              </p>
+            ) : (
+              browseResults.map((station) => {
+                const alreadyAdded = existingUrls.has(station.url);
+                return (
+                  <div key={station.stationuuid} className="flex items-center gap-3 px-2 py-2 hover:bg-muted/50 transition-colors rounded">
+                    <Radio className="h-4 w-4 text-muted-foreground shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-medium truncate">{station.name}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">
+                        {[station.genre, station.countrycode, station.codec && `${station.codec}${station.bitrate ? ` ${station.bitrate}k` : ''}`]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-7 text-xs shrink-0"
+                      onClick={() => handleAddBrowseStation(station)}
+                      disabled={alreadyAdded || createStation.isPending}
+                    >
+                      <Plus className="h-3 w-3 mr-1" />
+                      {alreadyAdded ? 'Added' : 'Add'}
+                    </Button>
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Station data from{' '}
+            <a
+              href="https://www.radio-browser.info/"
+              target="_blank"
+              rel="noreferrer"
+              className="text-primary underline-offset-4 hover:underline"
+            >
+              Community Radio Browser
+            </a>
+            .
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBrowse(false)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

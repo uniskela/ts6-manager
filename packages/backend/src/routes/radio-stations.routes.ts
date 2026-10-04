@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { validateUrl } from '../utils/url-validator.js';
+import { radioBrowser } from '../utils/radio-browser.js';
 import type { RadioPreset } from '@ts6/common';
 
 export const radioStationRoutes: Router = Router({ mergeParams: true });
@@ -33,6 +34,30 @@ radioStationRoutes.get('/presets', (_req: Request, res: Response) => {
   res.json(RADIO_PRESETS);
 });
 
+// GET /browse — Search Community Radio Browser (import candidates)
+radioStationRoutes.get('/browse', async (req: Request, res: Response, next) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const tag = typeof req.query.tag === 'string' ? req.query.tag : '';
+    const country = typeof req.query.country === 'string' ? req.query.country : '';
+    const limitRaw = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : undefined;
+    if (!q.trim() && !tag.trim() && !country.trim()) {
+      throw new AppError(400, 'Provide a search query, tag, or country code');
+    }
+    const stations = await radioBrowser.searchStations({
+      name: q,
+      tag,
+      countrycode: country,
+      limit: Number.isFinite(limitRaw) ? limitRaw : undefined,
+    });
+    res.json(stations);
+  } catch (err) {
+    if (err instanceof AppError) return next(err);
+    const message = err instanceof Error ? err.message : 'Radio Browser search failed';
+    next(new AppError(502, message));
+  }
+});
+
 // GET / — List radio stations for this server
 radioStationRoutes.get('/', async (req: Request, res: Response, next) => {
   try {
@@ -51,7 +76,7 @@ radioStationRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
-    const { name, url, genre, imageUrl } = req.body;
+    const { name, url, genre, imageUrl, stationuuid } = req.body;
     if (!name || !url) throw new AppError(400, 'name and url are required');
 
     // C4: Validate radio station URL
@@ -67,6 +92,10 @@ radioStationRoutes.post('/', async (req: Request, res: Response, next) => {
         serverConfigId: configId,
       },
     });
+    // Best-effort popularity click when imported from Radio Browser.
+    if (typeof stationuuid === 'string' && stationuuid.trim()) {
+      void radioBrowser.recordClick(stationuuid);
+    }
     res.status(201).json(station);
   } catch (err) { next(err); }
 });
