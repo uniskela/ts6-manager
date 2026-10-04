@@ -63,7 +63,7 @@ Bounded, paged `logview` output with level badges and page-local search and leve
 ![Server Logs](docs/server-logs.png)
 
 ### Bot Hub
-One place for what every bot is doing right now: the current track or stream, channel, video quality, viewers, and last stop reason, with shortcuts to Bot Flows, Media Bots, video streaming and IPTV.
+The bot list and one place for what every bot is doing right now: the current track or stream, channel, video quality, viewers, and last stop reason. Each bot has **Open console** for playback, and the page links to Bot Flows, Media Library, Streaming defaults and IPTV.
 
 ![Bot Hub](docs/bot-hub.png)
 
