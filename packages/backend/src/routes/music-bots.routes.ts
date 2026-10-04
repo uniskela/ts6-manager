@@ -496,22 +496,26 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             firstCall = false;
             const live = manager.getBot(id);
             if (!live || playlistExpansionGeneration(id) !== generation) return;
-            live.queue.add(item);
-            if (isFirst || !enqueueOnly) {
-              live.queue.playAt(live.queue.length - 1);
-              if (isFirst && opts.replaceSessionIds !== undefined) {
-                await runMediaAudited(
-                  req,
-                  live,
-                  'media.music.start',
-                  async () => {
-                    // Re-check after audit insert — a concurrent stop may have advanced generation.
-                    if (playlistExpansionGeneration(id) !== generation) return [];
-                    return live.play(item, { replaceSessionIds: opts.replaceSessionIds });
-                  },
-                  opts.replaceSessionIds,
-                );
-              } else {
+            const shouldStart = isFirst || !enqueueOnly;
+            // Audited start: mutate queue only after the audit wait + generation re-check,
+            // so a concurrent stop cannot leave a stale first-item entry behind.
+            if (shouldStart && isFirst && opts.replaceSessionIds !== undefined) {
+              await runMediaAudited(
+                req,
+                live,
+                'media.music.start',
+                async () => {
+                  if (playlistExpansionGeneration(id) !== generation) return [];
+                  live.queue.add(item);
+                  live.queue.playAt(live.queue.length - 1);
+                  return live.play(item, { replaceSessionIds: opts.replaceSessionIds });
+                },
+                opts.replaceSessionIds,
+              );
+            } else {
+              live.queue.add(item);
+              if (shouldStart) {
+                live.queue.playAt(live.queue.length - 1);
                 await live.play(item).catch((err) => {
                   console.error('[music-bots.routes] Failed to resume playlist playback:', err);
                 });
@@ -628,10 +632,11 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
     // Capture generation so a stop delayed by audit insert cannot clear/stop a newer play-url.
+    // Invalidate chat before the wait so a skipped/stale stop callback cannot leave chat expanding.
     const stopGeneration = invalidatePlaylistExpansion(id);
+    invalidateChatPlaylistExpansion(id);
     await runMediaAudited(req, bot, 'media.music.stop', async () => {
       if (playlistExpansionGeneration(id) !== stopGeneration) return;
-      invalidateChatPlaylistExpansion(id);
       bot.queue.clear();
       bot.stopAudio();
     });
