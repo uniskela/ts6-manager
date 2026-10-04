@@ -288,6 +288,27 @@ test('IPTV deep links select a channel without starting a stream', async ({ page
   expect(streams).toHaveLength(0);
 });
 
+test('Show all channels leaves an IPTV deep link and browses every channel', async ({ page, request }) => {
+  await mockIptv(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1?iptv=10:morning:west');
+  await expect(page.getByRole('button', { name: 'Stream Morning News' })).toBeVisible();
+  await page.getByRole('button', { name: 'Show all channels', exact: true }).click();
+  await expect(page).toHaveURL(/\/bot-hub\/1$/);
+  await expect(page.getByRole('tab', { name: 'IPTV' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('group', { name: 'IPTV views' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Show all channels', exact: true })).toHaveCount(0);
+});
+
+test('a stale IPTV deep link offers Show all channels', async ({ page, request }) => {
+  await mockIptv(page);
+  await page.route('**/api/iptv/channels**', (route) => route.fulfill({ json: { total: 0, page: 1, pageSize: 50, channels: [] } }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1?iptv=10:gone');
+  await page.getByRole('button', { name: 'Show all channels', exact: true }).click();
+  await expect(page.getByRole('group', { name: 'IPTV views' })).toBeVisible();
+});
+
 test('a stale IPTV deep link stays open and explains the missing channel', async ({ page, request }) => {
   await mockIptv(page);
   await page.route('**/api/iptv/channels**', (route) => route.fulfill({ json: { total: 0, page: 1, pageSize: 50, channels: [] } }));
