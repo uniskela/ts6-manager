@@ -201,22 +201,32 @@ async function appendSongsToPlaylist(
   return added;
 }
 
-// POST /:id/songs — Add song to playlist
+// POST /:id/songs — Add one song ({ songId }) or several ({ songIds }) to a playlist.
+// Songs already in the playlist are skipped; `added` counts only new rows.
 playlistRoutes.post('/:id/songs', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const playlistId = parseInt(req.params.id as string);
-    const { songId } = req.body;
-    if (!songId) throw new AppError(400, 'songId is required');
+    const { songId, songIds } = req.body;
+    const rawIds: unknown[] = Array.isArray(songIds) ? songIds : songId ? [songId] : [];
+    const ids = [...new Set(rawIds.map((id) => parseInt(String(id))))];
+    if (ids.length === 0) throw new AppError(400, 'songId is required');
+    if (ids.some((id) => Number.isNaN(id))) throw new AppError(400, 'songIds must be numbers');
+    if (ids.length > 1000) throw new AppError(400, 'At most 1000 songs per request');
 
     const playlist = await prisma.playlist.findUnique({ where: { id: playlistId } });
     if (!playlist) throw new AppError(404, 'Playlist not found');
 
-    const song = await prisma.song.findUnique({ where: { id: parseInt(songId) } });
-    if (!song) throw new AppError(404, 'Song not found');
+    const songs: { id: number; source: string }[] = await prisma.song.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, source: true },
+    });
+    if (songs.length !== ids.length) {
+      throw new AppError(404, ids.length === 1 ? 'Song not found' : 'One or more songs not found');
+    }
 
     const mode = effectivePlaylistMode(playlist);
-    if (!songMatchesMode(song.source, mode)) {
+    if (songs.some((song) => !songMatchesMode(song.source, mode))) {
       throw new AppError(
         400,
         mode === 'local'
@@ -225,8 +235,8 @@ playlistRoutes.post('/:id/songs', async (req: Request, res: Response, next) => {
       );
     }
 
-    const added = await appendSongsToPlaylist(prisma, playlistId, [song.id]);
-    res.status(201).json({ success: true, added });
+    const added = await appendSongsToPlaylist(prisma, playlistId, ids);
+    res.status(201).json({ success: true, added, alreadyInPlaylist: ids.length - added });
   } catch (err) {
     next(err);
   }

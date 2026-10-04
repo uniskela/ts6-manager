@@ -193,6 +193,8 @@ export const playlistsApi = {
   update: (id: number, data: any) => api.put(`/playlists/${id}`, data).then((r) => r.data),
   delete: (id: number) => api.delete(`/playlists/${id}`),
   addSong: (id: number, songId: number) => api.post(`/playlists/${id}/songs`, { songId }).then((r) => r.data),
+  addSongs: (id: number, songIds: number[]): Promise<{ added: number; alreadyInPlaylist: number }> =>
+    api.post(`/playlists/${id}/songs`, { songIds }).then((r) => r.data),
   addFromPlaylist: (id: number, sourcePlaylistId: number) =>
     api.post(`/playlists/${id}/songs/from-playlist`, { sourcePlaylistId }).then((r) => r.data),
   removeSong: (id: number, songId: number) => api.delete(`/playlists/${id}/songs/${songId}`).then((r) => r.data),

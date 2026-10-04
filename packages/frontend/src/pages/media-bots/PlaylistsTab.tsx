@@ -17,6 +17,7 @@ import {
   useUpdatePlaylist,
   useDeletePlaylist,
   useAddSongToPlaylist,
+  useAddSongsToPlaylist,
   useAddPlaylistToPlaylist,
   useRemoveSongFromPlaylist,
 } from '@/hooks/use-playlists';
@@ -67,7 +68,7 @@ import type {
   PlaylistMode,
 } from '@ts6/common';
 import { settingsApi } from '@/api/settings.api';
-import { formatTime, UrlLoadInfo, youtubeInfoErrorMessage, urlInfoPlaylistLabel, urlItemSelectKey, allUrlItemKeys, selectedUrlItems, importJobProgressLabel, importJobCompleteMessage, importCapHint } from './shared';
+import { formatTime, UrlLoadInfo, youtubeInfoErrorMessage, urlInfoPlaylistLabel, urlItemSelectKey, allUrlItemKeys, selectedUrlItems, importJobProgressLabel, importJobCompleteMessage, importCapHint, chunk, REGISTER_BATCH_SIZE, playlistAddMessage } from './shared';
 import { ImportQueueOptions } from './ImportQueueOptions';
 
 
@@ -81,6 +82,7 @@ export function PlaylistsTab() {
   const updatePlaylist = useUpdatePlaylist();
   const deletePlaylist = useDeletePlaylist();
   const addSong = useAddSongToPlaylist();
+  const addSongs = useAddSongsToPlaylist();
   const addFromPlaylist = useAddPlaylistToPlaylist();
   const removeSong = useRemoveSongFromPlaylist();
   const ytInfo = useYouTubeInfo();
@@ -146,7 +148,6 @@ export function PlaylistsTab() {
     setAddUrlInfo(null);
     setAddSelectedUrlIds(new Set());
     setAddBatchProgress(null);
-    setAddImportJobId(null);
   };
 
   // Playlists belong to a server: switching servers closes the old server's
@@ -163,6 +164,7 @@ export function PlaylistsTab() {
     setAddTab('songs');
     setImportQueueBotId('');
     resetAddUrlState();
+    setAddImportJobId(null);
   }, [selectedConfigId]);
 
   const handleCreate = () => {
@@ -237,164 +239,94 @@ export function PlaylistsTab() {
     });
   };
 
-  const handleAddSingleDownload = (item: { id: string; title?: string; artist?: string; duration?: number }) => {
-    if (!selectedConfigId || !selectedId) return;
-    const url = `https://www.youtube.com/watch?v=${item.id}`;
+  const watchUrl = (id: string) => `https://www.youtube.com/watch?v=${id}`;
+  const addBusy =
+    addBatchProgress !== null ||
+    ytDownload.isPending ||
+    ytBatchDownload.isPending ||
+    ytRegister.isPending ||
+    addSongs.isPending;
 
-    // Stream playlists: register URL only (download on play). Local: download now.
-    if (playlistMode === 'stream') {
-      ytRegister.mutate(
-        {
-          configId: selectedConfigId,
-          items: [{ url, title: item.title, artist: item.artist, duration: item.duration }],
-        },
-        {
-          onSuccess: async (data: any) => {
-            const song = Array.isArray(data?.results) ? data.results[0] : null;
-            if (!song?.id) {
-              toast.error('Failed to register track');
-              return;
-            }
-            addSong.mutate(
-              { playlistId: selectedId, songId: song.id },
-              {
-                onSuccess: () => toast.success('Added to stream playlist (on-demand)'),
-                onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to add song'),
-              },
-            );
-            setAddUrlInfo(null);
-            setAddYtUrl('');
-          },
-          onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to register track'),
-        },
-      );
-      return;
-    }
-
-    ytDownload.mutate(
-      { configId: selectedConfigId, url },
-      {
-        onSuccess: (song: any) => {
-          addSong.mutate(
-            { playlistId: selectedId, songId: song.id },
-            {
-              onSuccess: () => toast.success('Added to playlist'),
-              onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to add song'),
-            },
-          );
-          setAddUrlInfo(null);
-          setAddYtUrl('');
-        },
-        onError: () => toast.error('Download failed'),
-      },
+  /** Link library songs to the open playlist; songs already in it are skipped server-side. */
+  const addSongIdsToPlaylist = async (songIds: number[], stream: boolean) => {
+    if (!selectedId) return;
+    const res = await addSongs.mutateAsync({ playlistId: selectedId, songIds });
+    toast.success(
+      playlistAddMessage({
+        added: res.added,
+        alreadyInPlaylist: res.alreadyInPlaylist,
+        playlistName: detail?.name || 'the playlist',
+        stream,
+      }),
     );
   };
 
-  const handleAddBatchDownload = () => {
-    if (!selectedConfigId || !selectedId || !addUrlInfo) return;
-    const selectedItems = selectedUrlItems(addUrlInfo.items, addSelectedUrlIds);
-    if (selectedItems.length === 0) return;
-
-    if (playlistMode === 'stream') {
-      setAddBatchProgress(`Registering 0/${selectedItems.length}...`);
-      ytRegister.mutate(
-        {
-          configId: selectedConfigId,
-          items: selectedItems.map((i) => ({
-            url: `https://www.youtube.com/watch?v=${i.id}`,
-            title: i.title,
-            artist: i.artist,
-            duration: i.duration,
-          })),
-        },
-        {
-          onSuccess: async (data: any) => {
-            setAddBatchProgress(null);
-            const results = Array.isArray(data?.results) ? data.results : [];
-            let added = 0;
-            for (const song of results) {
-              if (!song?.id || playlistSongIds.has(song.id)) continue;
-              try {
-                await addSong.mutateAsync({ playlistId: selectedId, songId: song.id });
-                added++;
-              } catch {
-                /* skip */
-              }
-            }
-            toast.success(
-              added > 0
-                ? `Added ${added} stream track${added === 1 ? '' : 's'} (download on play)`
-                : 'Nothing new to add',
-            );
-            if (data.errors?.length) toast.error(`${data.errors.length} failed`);
-            resetAddUrlState();
-          },
-          onError: (err: any) => {
-            setAddBatchProgress(null);
-            toast.error(err?.response?.data?.error || 'Failed to register tracks');
-          },
-        },
-      );
-      return;
+  const addUrlItems = async (items: { id: string; title?: string; artist?: string; duration?: number }[]) => {
+    if (!selectedConfigId || !selectedId || items.length === 0) return;
+    const songIds: number[] = [];
+    const errors: string[] = [];
+    try {
+      if (playlistMode === 'stream') {
+        // Stream playlists save each URL as a library entry; the audio is fetched when it plays.
+        for (const [i, batch] of chunk(items, REGISTER_BATCH_SIZE).entries()) {
+          setAddBatchProgress(`Saving ${i * REGISTER_BATCH_SIZE}/${items.length}…`);
+          const data = await ytRegister.mutateAsync({
+            configId: selectedConfigId,
+            items: batch.map((i) => ({ url: watchUrl(i.id), title: i.title, artist: i.artist, duration: i.duration })),
+          });
+          for (const song of Array.isArray(data?.results) ? data.results : []) if (song?.id) songIds.push(song.id);
+          if (Array.isArray(data?.errors)) errors.push(...data.errors);
+        }
+      } else if (items.length === 1) {
+        setAddBatchProgress('Downloading…');
+        const song = await ytDownload.mutateAsync({ configId: selectedConfigId, url: watchUrl(items[0].id) });
+        if (song?.id) songIds.push(song.id);
+      } else {
+        setAddBatchProgress('Downloading…');
+        const data = await ytBatchDownload.mutateAsync({ configId: selectedConfigId, urls: items.map((i) => watchUrl(i.id)) });
+        for (const song of Array.isArray(data?.results) ? data.results : []) if (song?.id) songIds.push(song.id);
+        if (Array.isArray(data?.errors)) errors.push(...data.errors);
+      }
+      if (songIds.length > 0) await addSongIdsToPlaylist(songIds, playlistMode === 'stream');
+      if (errors.length > 0) {
+        toast.error(`${errors.length} track${errors.length === 1 ? '' : 's'} could not be added`, {
+          description: errors[0],
+        });
+      }
+      if (songIds.length > 0) resetAddUrlState();
+    } catch (err: any) {
+      toast.error(err?.response?.data?.error || err?.message || 'Failed to add tracks');
+    } finally {
+      setAddBatchProgress(null);
     }
-
-    const urls = selectedItems.map((i: any) => `https://www.youtube.com/watch?v=${i.id}`);
-    setAddBatchProgress('Preparing download…');
-    ytBatchDownload.mutate(
-      { configId: selectedConfigId, urls },
-      {
-        onSuccess: async (data: any) => {
-          setAddBatchProgress(null);
-          const results = Array.isArray(data?.results) ? data.results : [];
-          let added = 0;
-          for (const song of results) {
-            if (!song?.id || playlistSongIds.has(song.id)) continue;
-            try {
-              await addSong.mutateAsync({ playlistId: selectedId, songId: song.id });
-              added++;
-            } catch {
-              // skip duplicates / mode mismatches
-            }
-          }
-          toast.success(
-            added > 0
-              ? `Added ${added} song${added === 1 ? '' : 's'} from URL`
-              : `Downloaded ${data.downloaded ?? 0}/${data.total ?? 0} — nothing new to add`,
-          );
-          if (data.errors?.length) toast.error(`${data.errors.length} failed`);
-          resetAddUrlState();
-        },
-        onError: () => {
-          setAddBatchProgress(null);
-          toast.error('Batch download failed');
-        },
-      },
-    );
   };
 
-  const handleAddImportPlaylist = (reimport = false, queueOnly = false) => {
+  const handleAddSelected = () => {
+    if (!addUrlInfo) return;
+    void addUrlItems(selectedUrlItems(addUrlInfo.items, addSelectedUrlIds));
+  };
+
+  const handleSendToQueue = () => {
     if (!selectedConfigId || !addYtUrl.trim()) return;
-    if (queueOnly && !importQueueBotId) {
-      toast.error('Select a running media bot to import to its queue');
+    if (!importQueueBotId) {
+      toast.error('Select a running media bot to send to its queue');
       return;
     }
-    const musicBotId = importQueueBotId ? parseInt(importQueueBotId, 10) : undefined;
     ytImportPlaylist.mutate(
       {
         configId: selectedConfigId,
         url: addYtUrl.trim(),
-        ...(queueOnly ? {} : { playlistId: selectedId! }),
-        reimport,
-        ...(musicBotId ? { musicBotId, clearFirst: importClearQueue } : {}),
+        musicBotId: parseInt(importQueueBotId, 10),
+        clearFirst: importClearQueue,
       },
       {
         onSuccess: (data: any) => {
           setAddImportJobId(data.jobId);
-          toast.success(queueOnly ? 'Queue import started' : 'Playlist import started', {
-            description: importCapHint(maxPlaylistImport),
+          toast.success('Sending to the bot queue', {
+            description: `Keeps going if you close this dialog. ${importCapHint(maxPlaylistImport)}`,
           });
         },
-        onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to start playlist import'),
+        onError: (err: any) => toast.error(err?.response?.data?.error || 'Failed to start queue import'),
       },
     );
   };
@@ -409,9 +341,9 @@ export function PlaylistsTab() {
         qc.invalidateQueries({ queryKey: ['music-bot', addImportJob.musicBotId] });
         qc.invalidateQueries({ queryKey: ['music-bot-state', addImportJob.musicBotId] });
       }
-      resetAddUrlState();
+      setAddImportJobId(null);
     } else if (addImportJob?.status === 'failed') {
-      toast.error(addImportJob.errors?.[0] || 'Playlist import failed');
+      toast.error(addImportJob.errors?.[0] || 'Queue import failed');
       setAddImportJobId(null);
     }
   }, [addImportJob?.status, selectedConfigId, selectedId, qc, addImportJob]);
@@ -675,13 +607,13 @@ export function PlaylistsTab() {
           }
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg grid-cols-[minmax(0,1fr)]">
           <DialogHeader>
             <DialogTitle>Add to {detail?.name || 'playlist'}</DialogTitle>
             <DialogDescription>
               {playlistMode === 'local'
                 ? 'Add local library songs, or copy matching songs from another playlist.'
-                : 'Add via URL (saved for on-demand play — no download until played), pick stream library tracks, or copy from another playlist.'}
+                : 'Add tracks from a link, from your stream library, or from another playlist. Stream tracks play on demand, nothing downloads until played.'}
             </DialogDescription>
           </DialogHeader>
 
@@ -813,60 +745,158 @@ export function PlaylistsTab() {
               )}
             </ScrollArea>
           ) : (
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               {!selectedConfigId ? (
                 <p className="text-xs text-muted-foreground text-center py-6">
-                  Select a server in the sidebar to import from YouTube.
+                  Select a server in the sidebar to add from a URL.
                 </p>
               ) : (
                 <>
-                  <ImportQueueOptions
-                    bots={playlistMusicBots}
-                    configId={selectedConfigId}
-                    botId={importQueueBotId}
-                    onBotIdChange={setImportQueueBotId}
-                    clearFirst={importClearQueue}
-                    onClearFirstChange={setImportClearQueue}
-                  />
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {(ytDownload.progress || ytBatchDownload.progress) && (
-                      <p role="status" className="w-full text-xs text-muted-foreground">{ytDownload.isPending ? ytDownload.progress : ytBatchDownload.isPending ? ytBatchDownload.progress : ytDownload.progress || ytBatchDownload.progress}</p>
-                    )}
-                    <div className="relative flex-1">
+                  <div className="flex items-center gap-2">
+                    <div className="relative min-w-0 flex-1">
                       <Link className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                       <Input
                         value={addYtUrl}
-                        onChange={(e) => setAddYtUrl(e.target.value)}
+                        onChange={(e) => {
+                          setAddYtUrl(e.target.value);
+                          setAddUrlInfo(null);
+                        }}
                         onKeyDown={(e) => e.key === 'Enter' && handleAddLoadUrl()}
-                        placeholder="Paste YouTube, Apple Music, or Playlist URL..."
+                        placeholder="Paste a YouTube, YouTube Music or Apple Music link"
+                        aria-label="Track or playlist URL"
                         className="pl-9"
                       />
                     </div>
                     <Button
-                      variant="outline"
+                      variant={addUrlInfo ? 'outline' : 'default'}
                       size="sm"
+                      className="shrink-0"
                       onClick={handleAddLoadUrl}
                       disabled={ytInfo.isPending || !addYtUrl.trim()}
                     >
                       {ytInfo.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
+                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                       ) : (
                         <Youtube className="h-4 w-4 mr-1" />
                       )}
                       Load
                     </Button>
-                    {ytInfo.isPending && (
-                      <span className="text-[10px] text-muted-foreground">
-                        Large Apple Music playlists can take 1–2 minutes
-                      </span>
-                    )}
-                    {addYtUrl.trim() && !addUrlInfo && (
-                      <>
+                  </div>
+                  {ytInfo.isPending ? (
+                    <p className="text-[10px] text-muted-foreground">
+                      Loading tracks… large Apple Music playlists can take 1–2 minutes.
+                    </p>
+                  ) : (
+                    !addUrlInfo && (
+                      <p className="text-[10px] text-muted-foreground">
+                        Load the link, pick the tracks you want, then add them. Tracks are saved as links and
+                        stream when played, so nothing downloads now.
+                      </p>
+                    )
+                  )}
+
+                  {addUrlInfo && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Badge variant="secondary" className="text-xs">
+                          {urlInfoPlaylistLabel(addUrlInfo)}
+                        </Badge>
+                        {addUrlInfo.type === 'playlist' && (
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-[10px]"
+                              onClick={() => setAddSelectedUrlIds(allUrlItemKeys(addUrlInfo.items.length))}
+                            >
+                              Select all
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 text-[10px]"
+                              onClick={() => setAddSelectedUrlIds(new Set())}
+                            >
+                              Select none
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                      <ScrollArea className="max-h-60 [&>[data-radix-scroll-area-viewport]>div]:!block">
+                        {addUrlInfo.items.map((item, index) => (
+                          <div
+                            key={`${item.id}-${index}`}
+                            className={`flex min-w-0 items-center gap-3 px-2 py-1.5 rounded transition-colors ${
+                              addUrlInfo.type === 'playlist'
+                                ? `cursor-pointer ${addSelectedUrlIds.has(urlItemSelectKey(index)) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
+                                : 'hover:bg-muted/50'
+                            }`}
+                            onClick={() => addUrlInfo.type === 'playlist' && toggleAddUrlSelect(index)}
+                          >
+                            {addUrlInfo.type === 'playlist' && (
+                              <input
+                                type="checkbox"
+                                checked={addSelectedUrlIds.has(urlItemSelectKey(index))}
+                                onClick={(e) => e.stopPropagation()}
+                                onChange={() => toggleAddUrlSelect(index)}
+                                aria-label={`Select ${item.title}`}
+                                className="shrink-0 accent-primary"
+                              />
+                            )}
+                            {item.thumbnail && (
+                              <img src={item.thumbnail} alt="" className="h-8 w-12 rounded object-cover shrink-0" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className="text-xs font-medium truncate">{item.title}</p>
+                              <p className="text-[10px] text-muted-foreground truncate">
+                                {item.artist} - {formatTime(item.duration)}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </ScrollArea>
+                      <Button
+                        className="w-full"
+                        size="sm"
+                        onClick={handleAddSelected}
+                        disabled={addBusy || (addUrlInfo.type === 'playlist' && addSelectedUrlIds.size === 0)}
+                      >
+                        {addBusy ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                            {ytDownload.progress || ytBatchDownload.progress || addBatchProgress || 'Adding…'}
+                          </>
+                        ) : (
+                          <>
+                            <Plus className="h-4 w-4 mr-1" />
+                            {addUrlInfo.type === 'playlist'
+                              ? `Add ${addSelectedUrlIds.size} track${addSelectedUrlIds.size === 1 ? '' : 's'} to ${detail?.name || 'playlist'}`
+                              : `Add to ${detail?.name || 'playlist'}`}
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  )}
+
+                  <div className="space-y-2 border-t border-border pt-3">
+                    <p className="text-[10px] text-muted-foreground">
+                      Or send a whole playlist link straight to a running bot&apos;s queue instead of this playlist.
+                    </p>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <ImportQueueOptions
+                        bots={playlistMusicBots}
+                        configId={selectedConfigId}
+                        botId={importQueueBotId}
+                        onBotIdChange={setImportQueueBotId}
+                        clearFirst={importClearQueue}
+                        onClearFirstChange={setImportClearQueue}
+                      />
+                      {importQueueBotId && (
                         <Button
                           variant="secondary"
                           size="sm"
-                          onClick={() => handleAddImportPlaylist(false)}
-                          disabled={ytImportPlaylist.isPending || !!addImportJobId || !selectedId}
+                          onClick={handleSendToQueue}
+                          disabled={!addYtUrl.trim() || ytImportPlaylist.isPending || !!addImportJobId}
                         >
                           {addImportJobId ? (
                             <>
@@ -875,154 +905,13 @@ export function PlaylistsTab() {
                             </>
                           ) : (
                             <>
-                              <ListMusic className="h-3 w-3 mr-1" /> Import all
+                              <ListMusic className="h-3 w-3 mr-1" /> Send to queue
                             </>
                           )}
                         </Button>
-                        {importQueueBotId && (
-                          <Button
-                            variant="default"
-                            size="sm"
-                            onClick={() => handleAddImportPlaylist(false, true)}
-                            disabled={ytImportPlaylist.isPending || !!addImportJobId}
-                          >
-                            <ListMusic className="h-3 w-3 mr-1" /> Import to queue
-                          </Button>
-                        )}
-                      </>
-                    )}
-                  </div>
-
-                  {addUrlInfo && (
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between flex-wrap gap-2">
-                        <Badge variant="secondary" className="text-xs">
-                          {urlInfoPlaylistLabel(addUrlInfo)}
-                        </Badge>
-                        {addUrlInfo.type === 'playlist' && (
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 text-[10px]"
-                              onClick={() =>
-                                setAddSelectedUrlIds(allUrlItemKeys(addUrlInfo.items.length))
-                              }
-                            >
-                              Select All
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-6 text-[10px]"
-                              onClick={() => setAddSelectedUrlIds(new Set())}
-                            >
-                              Deselect All
-                            </Button>
-                            <Button
-                              variant="default"
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={handleAddBatchDownload}
-                              disabled={
-                                addSelectedUrlIds.size === 0 ||
-                                ytBatchDownload.isPending ||
-                                ytRegister.isPending
-                              }
-                            >
-                              {ytBatchDownload.isPending || ytRegister.isPending ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />{' '}
-                                  {ytBatchDownload.progress || addBatchProgress || (playlistMode === 'stream' ? 'Adding...' : 'Downloading...')}
-                                </>
-                              ) : (
-                                <>
-                                  <Plus className="h-3 w-3 mr-1" /> Add {addSelectedUrlIds.size}{' '}
-                                  Selected
-                                </>
-                              )}
-                            </Button>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              className="h-7 text-xs"
-                              onClick={() => handleAddImportPlaylist(false)}
-                              disabled={ytImportPlaylist.isPending || !!addImportJobId}
-                            >
-                              {addImportJobId ? (
-                                <>
-                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                  {importJobProgressLabel(addImportJob)}
-                                </>
-                              ) : (
-                                <>
-                                  <ListMusic className="h-3 w-3 mr-1" /> Import all
-                                </>
-                              )}
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                      <ScrollArea className="max-h-60">
-                        {addUrlInfo.items.map((item, index) => (
-                          <div
-                            key={`${item.id}-${index}`}
-                            className={`flex items-center gap-3 px-2 py-1.5 rounded transition-colors ${
-                              addUrlInfo.type === 'playlist'
-                                ? `cursor-pointer ${addSelectedUrlIds.has(urlItemSelectKey(index)) ? 'bg-primary/10' : 'hover:bg-muted/50'}`
-                                : 'hover:bg-muted/50'
-                            }`}
-                            onClick={() =>
-                              addUrlInfo.type === 'playlist' && toggleAddUrlSelect(index)
-                            }
-                          >
-                            {addUrlInfo.type === 'playlist' && (
-                              <input
-                                type="checkbox"
-                                checked={addSelectedUrlIds.has(urlItemSelectKey(index))}
-                                onClick={(e) => e.stopPropagation()}
-                                onChange={() => toggleAddUrlSelect(index)}
-                                className="shrink-0 accent-primary"
-                              />
-                            )}
-                            {item.thumbnail && (
-                              <img
-                                src={item.thumbnail}
-                                alt=""
-                                className="h-8 w-12 rounded object-cover shrink-0"
-                              />
-                            )}
-                            <div className="min-w-0 flex-1">
-                              <p className="text-xs font-medium truncate">{item.title}</p>
-                              <p className="text-[10px] text-muted-foreground">
-                                {item.artist} - {formatTime(item.duration)}
-                              </p>
-                            </div>
-                            {addUrlInfo.type === 'video' && (
-                              <Button
-                                variant="default"
-                                size="sm"
-                                className="h-7 text-xs shrink-0"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleAddSingleDownload(item);
-                                }}
-                                disabled={ytDownload.isPending || ytRegister.isPending}
-                              >
-                                {ytDownload.isPending || ytRegister.isPending ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                ) : (
-                                  <>
-                                    <Plus className="h-3 w-3 mr-1" /> Add
-                                  </>
-                                )}
-                              </Button>
-                            )}
-                          </div>
-                        ))}
-                      </ScrollArea>
+                      )}
                     </div>
-                  )}
+                  </div>
                 </>
               )}
             </div>

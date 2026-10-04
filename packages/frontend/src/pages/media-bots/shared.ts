@@ -34,12 +34,51 @@ export function youtubeInfoErrorMessage(err: unknown): string {
 
 
 export function urlInfoPlaylistLabel(info: UrlLoadInfo): string {
-  if (info.type !== 'playlist') return 'Single Video';
+  if (info.type !== 'playlist') return 'Single track';
   if (info.sourceTrackCount != null && info.matchedCount != null) {
     const cap = info.cappedAt ?? info.items.length;
     return `${info.matchedCount} matched of ${info.sourceTrackCount} (first ${cap} searched)`;
   }
-  return `Playlist (${info.items.length} videos)`;
+  return trackCount(info.items.length);
+}
+
+
+function trackCount(n: number): string {
+  return `${n} track${n === 1 ? '' : 's'}`;
+}
+
+
+/** The register endpoint accepts at most this many URLs per request. */
+export const REGISTER_BATCH_SIZE = 200;
+
+
+export function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+
+/** Toast text after adding URL tracks to a playlist. Stream tracks are saved as links and fetched when played. */
+export function playlistAddMessage({
+  added,
+  alreadyInPlaylist,
+  playlistName,
+  stream,
+}: {
+  added: number;
+  alreadyInPlaylist: number;
+  playlistName: string;
+  stream: boolean;
+}): string {
+  if (added === 0) {
+    return alreadyInPlaylist > 0
+      ? `${alreadyInPlaylist === 1 ? 'That track is' : 'All selected tracks are'} already in ${playlistName}`
+      : 'Nothing new to add';
+  }
+  const already = alreadyInPlaylist > 0 ? ` (${alreadyInPlaylist} already there)` : '';
+  const tail = stream ? '. Nothing downloads until played.' : '';
+  return `Added ${trackCount(added)} to ${playlistName}${already}${tail}`;
 }
 
 
