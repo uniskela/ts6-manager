@@ -68,7 +68,7 @@ The bot list and one place for what every bot is doing right now: the current tr
 ![Bot Hub](docs/bot-hub.png)
 
 ### Music Bots
-Run multiple music bots per server. Each bot has its own queue, volume control, and playback state. Supports radio streams, YouTube, and a local music library. Users in the bot's channel can control it via text commands (`!radio`, `!play`, `!vol`, etc.).
+Run multiple music bots per server. Each bot has its own queue, volume control, and playback state. Supports radio streams, YouTube, and a local music library. Admins can import stations from [Community Radio Browser](https://www.radio-browser.info/) under Media Library → Radio stations. Users in the bot's channel can control it via text commands (`!radio`, `!play`, `!vol`, etc.).
 
 ![Music Bots](docs/musicbots.png)
 

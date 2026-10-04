@@ -17,11 +17,32 @@ export function useRadioPresets(configId: number | null) {
   });
 }
 
+export function useBrowseRadioStations() {
+  return useMutation({
+    mutationFn: ({
+      configId,
+      q,
+      tag,
+      country,
+    }: {
+      configId: number;
+      q?: string;
+      tag?: string;
+      country?: string;
+    }) => radioStationsApi.browse(configId, { q, tag, country }),
+  });
+}
+
 export function useCreateRadioStation() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ configId, data }: { configId: number; data: { name: string; url: string; genre?: string } }) =>
-      radioStationsApi.create(configId, data),
+    mutationFn: ({
+      configId,
+      data,
+    }: {
+      configId: number;
+      data: { name: string; url: string; genre?: string; imageUrl?: string; stationuuid?: string };
+    }) => radioStationsApi.create(configId, data),
     onSuccess: (_, { configId }) => qc.invalidateQueries({ queryKey: ['radio-stations', configId] }),
   });
 }

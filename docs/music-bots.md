@@ -37,7 +37,7 @@ Radio and video keep the music queue. **Play queue** resumes the upcoming songs,
 |-----|---------|
 | **Library** | Manage local/downloaded songs and media imports. |
 | **Playlists** | Create and edit saved playlists. |
-| **Radio stations** | Add stations or edit their name, stream URL and mood or genre. |
+| **Radio stations** | Add stations manually, from built-in presets, or by searching [Community Radio Browser](https://www.radio-browser.info/), then edit name, stream URL and mood or genre. |
 | **Requests** | Review `!play` history and replay or enqueue a request. |
 | **Streaming defaults** | Set defaults for future streams and auto-stop chat notices. |
 

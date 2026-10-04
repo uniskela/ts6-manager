@@ -72,6 +72,57 @@ for (const width of [1400, 390]) {
   });
 }
 
+test('search Community Radio Browser and add a station', async ({ page, request }) => {
+  const stations = [
+    { id: 7, serverConfigId: 1, name: 'Original station', url: 'https://example.com/live', genre: 'Rock', imageUrl: null },
+  ];
+  const created: unknown[] = [];
+  await page.route('**/api/servers/1/radio-stations/browse**', async (route) => {
+    expect(route.request().url()).toContain('q=jazz');
+    await route.fulfill({
+      json: [{
+        stationuuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+        name: 'Jazz Radio',
+        url: 'https://stream.example.com/jazz',
+        genre: 'jazz, chill',
+        imageUrl: null,
+        countrycode: 'DE',
+        codec: 'MP3',
+        bitrate: 128,
+      }],
+    });
+  });
+  await page.route('**/api/servers/1/radio-stations', async (route) => {
+    if (route.request().method() === 'POST') {
+      const data = route.request().postDataJSON();
+      created.push(data);
+      const row = { id: 8, serverConfigId: 1, ...data, genre: data.genre || null, imageUrl: data.imageUrl || null };
+      stations.push(row);
+      await route.fulfill({ status: 201, json: row });
+      return;
+    }
+    await route.fulfill({ json: stations });
+  });
+  await page.route('**/api/servers/1/radio-stations/presets', (route) => route.fulfill({ json: [] }));
+
+  await signIn(page, request);
+  await page.goto('/media-bots?tab=radio&server=1');
+  await page.getByRole('button', { name: 'Search stations', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Search stations' });
+  await expect(dialog.getByText('Community Radio Browser')).toBeVisible();
+  await dialog.getByLabel('Search stations').fill('jazz');
+  await dialog.getByRole('button', { name: 'Search', exact: true }).click();
+  await expect(dialog.getByText('Jazz Radio', { exact: true })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Add', exact: true }).click();
+  await expect(page.getByText('Added: Jazz Radio', { exact: true })).toBeVisible();
+  expect(created).toEqual([{
+    name: 'Jazz Radio',
+    url: 'https://stream.example.com/jazz',
+    genre: 'jazz, chill',
+    stationuuid: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+  }]);
+});
+
 test('a rejected station edit keeps the form and saved station unchanged', async ({ page, request }) => {
   await radioFixture(page);
   await signIn(page, request);
