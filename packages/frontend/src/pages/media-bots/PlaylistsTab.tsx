@@ -113,6 +113,8 @@ export function PlaylistsTab() {
   const [editName, setEditName] = useState('');
   const [editMode, setEditMode] = useState<PlaylistMode>('local');
   const [addYtUrl, setAddYtUrl] = useState('');
+  // Bumped whenever the URL changes so a slow Load for an old URL is ignored.
+  const addUrlRequestId = useRef(0);
   const [addUrlInfo, setAddUrlInfo] = useState<UrlLoadInfo | null>(null);
   const [addSelectedUrlIds, setAddSelectedUrlIds] = useState<Set<string>>(new Set());
   const [addBatchProgress, setAddBatchProgress] = useState<string | null>(null);
@@ -144,6 +146,7 @@ export function PlaylistsTab() {
   const otherPlaylists = playlists.filter((pl) => pl.id !== selectedId);
 
   const resetAddUrlState = () => {
+    addUrlRequestId.current += 1;
     setAddYtUrl('');
     setAddUrlInfo(null);
     setAddSelectedUrlIds(new Set());
@@ -215,10 +218,12 @@ export function PlaylistsTab() {
 
   const handleAddLoadUrl = () => {
     if (!addYtUrl.trim() || !selectedConfigId) return;
+    const requestId = ++addUrlRequestId.current;
     ytInfo.mutate(
       { configId: selectedConfigId, url: addYtUrl.trim() },
       {
         onSuccess: (data: UrlLoadInfo) => {
+          if (requestId !== addUrlRequestId.current) return;
           setAddUrlInfo(data);
           if (data.type === 'playlist') {
             setAddSelectedUrlIds(allUrlItemKeys(data.items.length));
@@ -772,6 +777,7 @@ export function PlaylistsTab() {
                       <Input
                         value={addYtUrl}
                         onChange={(e) => {
+                          addUrlRequestId.current += 1;
                           setAddYtUrl(e.target.value);
                           setAddUrlInfo(null);
                         }}
