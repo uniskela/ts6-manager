@@ -384,6 +384,8 @@ export interface VideoEncoderCapability {
   available: boolean;
   lowPower?: boolean;
   error?: string;
+  /** Raw ffmpeg reason when `error` is a friendlier summary of it. */
+  detail?: string;
 }
 
 export interface VideoEncoderCapabilities {
