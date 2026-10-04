@@ -13,6 +13,11 @@ import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
+import {
+  invalidatePlaylistExpansion,
+  playlistExpansionGeneration,
+} from '../voice/playlist-expansion.js';
+import { invalidateChatPlaylistExpansion } from '../voice/commands/queue.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
 import type { BotMediaOverview } from '@ts6/common';
 
@@ -76,15 +81,6 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
       await saveBotVolume(prisma, id, vol);
     }
   }
-}
-
-/** Cancels stale background playlist expansions when a newer play-url starts for the same bot. */
-const playlistExpandGeneration = new Map<number, number>();
-
-function invalidatePlaylistExpansion(botId: number): number {
-  const next = (playlistExpandGeneration.get(botId) ?? 0) + 1;
-  playlistExpandGeneration.set(botId, next);
-  return next;
 }
 
 // All routes require admin role
@@ -487,8 +483,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
       }
     };
 
-    const generation = (playlistExpandGeneration.get(id) ?? 0) + 1;
-    playlistExpandGeneration.set(id, generation);
+    const generation = invalidatePlaylistExpansion(id);
 
     let firstCall = true;
     let pipelineResult: Awaited<ReturnType<typeof runMediaUrlPipeline>>;
@@ -500,7 +495,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             const isFirst = firstCall;
             firstCall = false;
             const live = manager.getBot(id);
-            if (!live || playlistExpandGeneration.get(id) !== generation) return;
+            if (!live || playlistExpansionGeneration(id) !== generation) return;
             live.queue.add(item);
             if (isFirst || !enqueueOnly) {
               live.queue.playAt(live.queue.length - 1);
@@ -521,7 +516,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             if (item.sourceUrl) await saveHistory(item.sourceUrl, item.title);
           },
           enqueue: (item: QueueItem) => {
-            if (playlistExpandGeneration.get(id) !== generation) return;
+            if (playlistExpansionGeneration(id) !== generation) return;
             const live = manager.getBot(id);
             if (!live || live.status === 'stopped' || live.status === 'error') return;
             live.queue.add(item);
@@ -531,7 +526,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             const live = manager.getBot(id);
             return Boolean(live && live.status === 'connected' && !live.nowPlaying);
           },
-          isCancelled: () => playlistExpandGeneration.get(id) !== generation,
+          isCancelled: () => playlistExpansionGeneration(id) !== generation,
         },
         { url, enqueueOnly },
         {
@@ -631,7 +626,8 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     // Capture generation so a stop delayed by audit insert cannot clear/stop a newer play-url.
     const stopGeneration = invalidatePlaylistExpansion(id);
     await runMediaAudited(req, bot, 'media.music.stop', async () => {
-      if ((playlistExpandGeneration.get(id) ?? 0) !== stopGeneration) return;
+      if (playlistExpansionGeneration(id) !== stopGeneration) return;
+      invalidateChatPlaylistExpansion(id);
       bot.queue.clear();
       bot.stopAudio();
     });
