@@ -56,18 +56,19 @@ function ffmpegArgs(format: FitFormat): string[] {
 function runFfmpeg(image: Buffer, format: FitFormat): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffmpeg', ffmpegArgs(format), { shell: false, stdio: ['pipe', 'pipe', 'pipe'] });
-    const out: Buffer[] = []; let outBytes = 0; let stderr = '';
+    const out: Buffer[] = []; let outBytes = 0; let stderr = ''; let overflow = false;
     const timer = setTimeout(() => proc.kill('SIGKILL'), FFMPEG_TIMEOUT_MS);
     proc.stdout.on('data', (chunk: Buffer) => {
+      if (overflow) return;
       outBytes += chunk.length;
-      if (outBytes > MAX_OUTPUT_BYTES) proc.kill('SIGKILL'); else out.push(chunk);
+      if (outBytes > MAX_OUTPUT_BYTES) { overflow = true; proc.kill('SIGKILL'); } else out.push(chunk);
     });
     proc.stderr.on('data', (chunk: Buffer) => { if (stderr.length < 500) stderr += chunk.toString(); });
     proc.on('error', (error) => { clearTimeout(timer); reject(error); });
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code === 0 && outBytes > 0 && outBytes <= MAX_OUTPUT_BYTES) resolve(Buffer.concat(out));
-      else reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+      else reject(new Error(overflow ? 'ffmpeg output exceeded the size limit' : stderr.trim() || `ffmpeg exited with code ${code}`));
     });
     proc.stdin.on('error', () => {}); // ffmpeg may close stdin early on bad input; 'close' reports it.
     proc.stdin.end(image);
