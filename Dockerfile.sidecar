@@ -10,6 +10,7 @@ FROM debian:bookworm-slim
 # VAAPI encoders when /dev/dri is passed through (see docs/video-streaming.md).
 # Software encoding is unaffected when no device is mapped.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     VAAPI_PACKAGES="mesa-va-drivers" && \
     if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="$VAAPI_PACKAGES intel-media-va-driver"; fi && \
     apt-get install -y --no-install-recommends ffmpeg ca-certificates $VAAPI_PACKAGES && \
