@@ -71,6 +71,24 @@ test('opens a bot console from the Bot Hub', async ({ page, request }) => {
   await expect(page.getByRole('heading', { name: 'Now playing' })).toBeVisible();
 });
 
+test('phone Now playing keeps Pause, Skip, and Stop fully on screen', async ({ page, request }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await mockBot(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+
+  const controls = [
+    page.getByRole('button', { name: 'Pause Aurora Radio' }),
+    page.getByRole('button', { name: 'Skip track on Aurora Radio' }),
+    page.getByRole('button', { name: 'Stop', exact: true }),
+  ];
+  for (const control of controls) {
+    await expect(control).toBeVisible();
+    await expect(control).toBeInViewport({ ratio: 1 });
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('Up next lists the tracks after the playing one', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
   await mockBot(page);
