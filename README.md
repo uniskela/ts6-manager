@@ -10,6 +10,8 @@
 
 Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets - all from your browser.
 
+**Built for the community.** TS6 Manager is an independent FOSS project maintained by contributors passionate about TeamSpeak and self-hosting. Development is driven by the needs of users and contributors rather than a commercial product or hosting service.
+
 Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSpeak builds). Telnet is not used or supported.
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
