@@ -297,25 +297,26 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
               </div>
             ) : null}
 
-            <div className={cn('grid gap-2', radio ? 'grid-cols-2' : 'grid-cols-3')}>
+            {/* ponytail: 3 nowrap buttons overflow ~390px; Stop full-width below sm */}
+            <div className={cn('grid min-w-0 gap-2', radio ? 'grid-cols-2' : 'grid-cols-2 sm:grid-cols-3')}>
               {isPaused ? (
-                <Button variant="outline" className="h-11" aria-label={`Resume ${bot.botName}`} disabled={playbackPending}
+                <Button variant="outline" className="h-11 min-w-0" aria-label={`Resume ${bot.botName}`} disabled={playbackPending}
                   onClick={() => resumePlayback.mutate(bot.botId)}>
                   <Play className="mr-1.5 h-4 w-4" aria-hidden="true" /> Resume
                 </Button>
               ) : (
-                <Button variant="outline" className="h-11" aria-label={`Pause ${bot.botName}`} disabled={playbackPending}
+                <Button variant="outline" className="h-11 min-w-0" aria-label={`Pause ${bot.botName}`} disabled={playbackPending}
                   onClick={() => pausePlayback.mutate(bot.botId)}>
                   <Pause className="mr-1.5 h-4 w-4" aria-hidden="true" /> Pause
                 </Button>
               )}
               {!radio && (
-                <Button variant="outline" className="h-11" aria-label={`Skip track on ${bot.botName}`} disabled={playbackPending}
+                <Button variant="outline" className="h-11 min-w-0" aria-label={`Skip track on ${bot.botName}`} disabled={playbackPending}
                   onClick={() => skipTrack.mutate(bot.botId)}>
                   <SkipForward className="mr-1.5 h-4 w-4" aria-hidden="true" /> Skip
                 </Button>
               )}
-              <Button variant="outline" className="h-11 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+              <Button variant="outline" className={cn('h-11 min-w-0 border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive', !radio && 'col-span-2 sm:col-span-1')}
                 disabled={stopMusic.isPending} onClick={() => stopMusic.mutate(bot.botId)}>
                 <Square className="mr-1.5 h-4 w-4" aria-hidden="true" /> {radio ? 'Stop radio' : 'Stop'}
               </Button>
