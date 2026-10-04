@@ -121,7 +121,12 @@ export async function handleSeek(
   const relative = /^[+-]/.test(args);
   const target = Math.max(0, Math.min((relative ? (progress?.position ?? 0) : 0) + Number(args),
     progress?.duration || bot.nowPlaying?.duration || Infinity));
-  await bot.seek(target);
+  try {
+    await bot.seek(target);
+  } catch {
+    context.reply(bot, userClid, 'Could not seek — playback stopped.');
+    return;
+  }
   context.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
 }
 

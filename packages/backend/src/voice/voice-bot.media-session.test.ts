@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { describe, it } from 'node:test';
 import { VoiceBot } from './voice-bot.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import { MediaSessionConflictError } from './media-session.js';
+import { BYTES_PER_FRAME } from './audio/pipeline.js';
 
 function makeBot(id = 7, name = 'Bot'): VoiceBot {
   const bot = new VoiceBot({
@@ -91,20 +94,214 @@ describe('single active media session (per bot)', () => {
   it('keeps the music session when a YouTube stream falls back to a download', async () => {
     const bot = makeBot();
     fakeMusic(bot);
+    const b = bot as any;
     const before = bot.musicSessionInfo()!;
-    const item = { id: '3', title: 'Clip', source: 'youtube' as const, filePath: '', streamUrl: 'https://example.com/a' };
-    (bot as any)._nowPlaying = item;
-    (bot as any).pipeline.toPcmStream = async () => { throw new Error('403'); };
+    const item = { id: '3', title: 'Clip', source: 'youtube' as const, filePath: '', sourceUrl: 'https://youtu.be/x' };
+    b._nowPlaying = item;
+    const opened: string[] = [];
+    const procs: EventEmitter[] = [];
+    b.pipeline.toPcmFileStream = async (input: string) => {
+      opened.push(input);
+      const process = new EventEmitter();
+      procs.push(process);
+      return { stdout: new PassThrough(), process, kill: () => {} };
+    };
+    b.ensurePlayableFile = async () => '/data/music/clip.m4a';
 
-    await assert.rejects((bot as any).startStream(item, {}, true), /403/);
-    assert.equal(bot.status, 'playing', 'play() is about to play the download');
+    await b.startFileStream('https://rr1.googlevideo.com/a', 0, () => b.playDownloadFallback(item));
+    // ffmpeg could not open the URL: no audio, non-zero exit.
+    procs[0].emit('close', 1);
+    await new Promise((r) => setImmediate(r));
+
+    assert.deepEqual(opened, ['https://rr1.googlevideo.com/a', '/data/music/clip.m4a']);
+    assert.equal(bot.status, 'playing', 'the download plays the same item');
     assert.equal(bot.musicSessionInfo()?.id, before.id);
     assert.equal(bot.lastMusicStop, null);
+    b.stopPlayback();
 
-    // Without a pending fallback the failure ends the session.
-    await assert.rejects(bot.playStream(item), /403/);
+    // Without a pending fallback a failed radio stream ends the session.
+    b.pipeline.toPcmStream = async () => { throw new Error('403'); };
+    await assert.rejects(bot.playStream({ ...item, source: 'radio' as const, streamUrl: 'https://example.com/a' }), /403/);
     assert.equal(bot.musicSessionInfo(), null);
     assert.equal(bot.lastMusicStop?.reason, 'source_unreachable');
+  });
+
+  it('keeps a pending download through pause and starts it paused', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    const item = { id: '4', title: 'Clip', source: 'youtube' as const, filePath: '', sourceUrl: 'https://youtu.be/y' };
+    b._nowPlaying = item;
+    const procs: EventEmitter[] = [];
+    const outs: PassThrough[] = [];
+    b.pipeline.toPcmFileStream = async () => {
+      const process = new EventEmitter();
+      const stdout = new PassThrough();
+      procs.push(process);
+      outs.push(stdout);
+      return { stdout, process, kill: () => {} };
+    };
+    let finishDownload!: (p: string) => void;
+    b.ensurePlayableFile = () => new Promise<string>((r) => { finishDownload = r; });
+
+    await b.startFileStream('https://rr1.googlevideo.com/b', 0, () => b.playDownloadFallback(item));
+    procs[0].emit('close', 1);
+    bot.pause();
+    finishDownload('/data/music/clip.m4a');
+    await new Promise((r) => setImmediate(r));
+
+    assert.equal(procs.length, 2, 'the download was started');
+    assert.equal(bot.status, 'paused');
+    assert.equal(outs[1].isPaused(), true);
+    bot.resume();
+    assert.equal(bot.status, 'playing');
+    assert.equal(outs[1].isPaused(), false);
+    b.stopPlayback();
+  });
+
+  it('clears playback when seek URL validation fails after the old decoder stops', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    const item = { id: '5b', title: 'Clip', source: 'youtube' as const, filePath: '', sourceUrl: 'https://youtu.be/z', duration: 300 };
+    b._nowPlaying = item;
+    let calls = 0;
+    b.pipeline.toPcmFileStream = async (input: string) => {
+      calls++;
+      if (calls === 1) {
+        return { stdout: new PassThrough(), process: new EventEmitter(), kill: () => {} };
+      }
+      throw new Error('Stream URL blocked: DNS lookup failed');
+    };
+    b.ensurePlayableFile = async () => assert.fail('blocked URLs must not use the download fallback');
+
+    await b.startFileStream('https://rr1.googlevideo.com/d', 0);
+    await assert.rejects(bot.seek(90), /Stream URL blocked/);
+    assert.equal(bot.status, 'connected');
+    assert.equal(bot.nowPlaying, null);
+    assert.equal(bot.lastMusicStop?.reason, 'source_unreachable');
+    assert.equal(bot.canSeek, false);
+  });
+
+  it('downloads and resumes at the seek target when a streamed URL has expired', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    const item = { id: '5', title: 'Clip', source: 'youtube' as const, filePath: '', sourceUrl: 'https://youtu.be/z', duration: 300 };
+    b._nowPlaying = item;
+    const opened: Array<[string, number]> = [];
+    const procs: EventEmitter[] = [];
+    b.pipeline.toPcmFileStream = async (input: string, start: number) => {
+      opened.push([input, start]);
+      const process = new EventEmitter();
+      procs.push(process);
+      return { stdout: new PassThrough(), process, kill: () => {} };
+    };
+    b.ensurePlayableFile = async () => '/data/music/clip.m4a';
+
+    await b.startFileStream('https://rr1.googlevideo.com/d', 0);
+    await bot.seek(90);
+    procs[1].emit('close', 1);
+    await new Promise((r) => setImmediate(r));
+
+    assert.deepEqual(opened[2], ['/data/music/clip.m4a', 90]);
+    assert.equal(bot.status, 'playing');
+    b.stopPlayback();
+  });
+
+  it('does not start a track that was stopped while it downloaded', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    let opened = 0;
+    b.pipeline.toPcmFileStream = async () => {
+      opened++;
+      return { stdout: new PassThrough(), process: new EventEmitter(), kill: () => {} };
+    };
+    let finishDownload!: (p: string) => void;
+    b.ensurePlayableFile = () => new Promise<string>((r) => { finishDownload = r; });
+
+    const playing = bot.play({ id: '6', title: 'Song', source: 'local' as const, filePath: '' });
+    await new Promise((r) => setImmediate(r));
+    bot.clearPlayback();
+    finishDownload('/data/music/song.mp3');
+    await playing;
+
+    assert.equal(opened, 0);
+    assert.equal(bot.status, 'connected');
+    assert.equal(bot.lastMusicStop?.reason, 'manual');
+  });
+
+  it('leaves a newer track alone when a paused seek loses ownership', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    const outs: PassThrough[] = [];
+    let calls = 0;
+    let release: (() => void) | null = null;
+    b.pipeline.toPcmFileStream = async () => {
+      const call = ++calls;
+      if (call === 2) await new Promise<void>((r) => { release = r; });
+      const stdout = new PassThrough();
+      outs.push(stdout);
+      return { stdout, process: new EventEmitter(), kill: () => {} };
+    };
+
+    await b.startFileStream('/x.mp3', 0);
+    bot.pause();
+    const seeking = bot.seek(30);
+    await new Promise((r) => setImmediate(r));
+    // A new track takes over while the seek's decoder is still opening.
+    b.stopPlayback();
+    b._status = 'playing';
+    await b.startFileStream('/next.mp3', 0);
+    release!();
+    await seeking;
+
+    assert.equal(outs[outs.length - 1].isPaused(), false, 'the new track keeps playing');
+    assert.ok(b.playbackTimer, 'its playback timer is untouched');
+    b.stopPlayback();
+  });
+
+  it('drops a file stream whose start lost ownership while the URL was checked', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    let killed = false;
+    let release!: () => void;
+    b.pipeline.toPcmFileStream = async () => {
+      await new Promise<void>((r) => { release = r; });
+      return { stdout: new PassThrough(), process: new EventEmitter(), kill: () => { killed = true; } };
+    };
+
+    const start = b.startFileStream('https://rr1.googlevideo.com/c', 0);
+    await new Promise((r) => setImmediate(r));
+    b.stopPlayback();
+    release();
+    await start;
+
+    assert.equal(killed, true);
+    assert.equal(bot.canSeek, false);
+  });
+
+  it('plays a streamed YouTube track to the end instead of stopping when the download finishes', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    b.client.sendVoice = () => {};
+    const stdout = new PassThrough();
+    const process = new EventEmitter();
+    b.pipeline.toPcmFileStream = async () => ({ stdout, process, kill: () => {} });
+
+    await b.startFileStream('https://rr1.googlevideo.com/a', 0, () => assert.fail('no fallback once audio arrived'));
+    stdout.write(Buffer.alloc(BYTES_PER_FRAME * 10));
+    await new Promise((r) => setImmediate(r));
+    // ffmpeg has read the whole source while most of it is still buffered.
+    process.emit('close', 0);
+
+    assert.equal(bot.status, 'playing');
+    assert.equal(bot.lastMusicStop, null);
+    assert.equal(bot.canSeek, true, 'a streamed track seeks like a file');
+    b.stopPlayback();
   });
 });
 

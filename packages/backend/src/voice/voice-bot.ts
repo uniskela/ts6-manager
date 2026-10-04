@@ -4,7 +4,7 @@ import { readBotAvatar, type BotAvatarMode } from '../utils/bot-avatar-storage.j
 import fs from 'fs';
 import type { Readable } from 'stream';
 import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, isConnectionRefusal } from './tslib/index.js';
-import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME } from './audio/pipeline.js';
+import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME, isRemoteInput } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
@@ -142,8 +142,15 @@ export class VoiceBot extends EventEmitter {
   private playbackTimer: ReturnType<typeof setTimeout> | null = null;
   private _nowPlaying: QueueItem | null = null;
 
-  // Local files are decoded incrementally through ffmpeg instead of buffering
-  // the entire PCM track in memory before playback starts.
+  // Local files (and resolved YouTube audio URLs) are decoded incrementally
+  // through ffmpeg instead of buffering the entire PCM track in memory.
+  private fileInput = '';
+  /**
+   * Replaced by every stopPlayback() (stop, clear, a new play). Async starts
+   * (URL resolution, downloads, ffmpeg spawn) compare it after each await so a
+   * stopped or replaced track never starts. Pausing does not replace it.
+   */
+  private playbackOwner: object = {};
   private fileStdout: Readable | null = null;
   private fileFramesSent = 0;
   private fileBaseSeconds = 0;
@@ -826,6 +833,8 @@ export class VoiceBot extends EventEmitter {
 
     this.stopIcyPolling();
     this.stopPlayback();
+    const owner = this.playbackOwner;
+    const current = () => owner === this.playbackOwner;
     this._nowPlaying = item;
     this._status = 'playing';
     this.emit('statusChange', this._status);
@@ -841,11 +850,17 @@ export class VoiceBot extends EventEmitter {
       ) {
         try {
           const { streamUrl, info } = await resolveYouTubeAudioStream(item.sourceUrl);
-          item.streamUrl = streamUrl;
+          if (!current()) return replaced;
           if (!item.duration && info.duration) item.duration = info.duration;
-          await this.startStream(item, {}, true);
+          // A finite track: paced, pausable and seekable like a local file, and
+          // the queue advances when it ends. If ffmpeg cannot open the URL,
+          // the same item is downloaded instead.
+          if (await this.startFileStream(streamUrl, 0, () => this.playDownloadFallback(item))) {
+            this.startAutoStopTimer();
+          }
           return replaced;
         } catch (streamErr: any) {
+          if (!current()) return replaced;
           console.warn(
             `[VoiceBot ${this.config.id}] YouTube stream failed for “${item.title}”, falling back to download: ${streamErr.message}`,
           );
@@ -853,9 +868,11 @@ export class VoiceBot extends EventEmitter {
       }
 
       const filePath = await this.ensurePlayableFile(item);
-      await this.startFileStream(filePath, 0);
-      this.startAutoStopTimer();
+      if (!current()) return replaced;
+      if (await this.startFileStream(filePath, 0)) this.startAutoStopTimer();
     } catch (err) {
+      // A stopped or replaced track's failure must not end the newer session.
+      if (!current()) return replaced;
       this.endMusicSession('source_unreachable', 'Track could not be played');
       this._status = 'connected';
       this._nowPlaying = null;
@@ -865,12 +882,29 @@ export class VoiceBot extends EventEmitter {
     return replaced;
   }
 
-  /** Start or restart bounded-memory local file decoding at the requested position. */
-  private async startFileStream(filePath: string, startSeconds: number): Promise<void> {
-    const stream = await this.pipeline.toPcmFileStream(filePath, startSeconds);
+  /**
+   * Start or restart bounded-memory decoding of a finite track at the requested
+   * position. `onOpenFailed` runs instead of the error path when ffmpeg exits
+   * before producing any audio (e.g. a resolved YouTube URL that answers 403).
+   * Returns false when playback was stopped or replaced meanwhile and nothing
+   * was installed.
+   */
+  private async startFileStream(
+    input: string,
+    startSeconds: number,
+    onOpenFailed?: () => void,
+  ): Promise<boolean> {
+    const owner = this.playbackOwner;
+    const stream = await this.pipeline.toPcmFileStream(input, startSeconds);
+    if (owner !== this.playbackOwner) {
+      // Playback was stopped or replaced while the URL was being validated.
+      stream.kill();
+      return false;
+    }
     this.fileStreamStartEpoch = ++this.loopEpoch;
     const epoch = this.fileStreamStartEpoch;
 
+    this.fileInput = input;
     this.streamKill = stream.kill;
     this.fileStdout = stream.stdout;
     this.streamChunks = [];
@@ -895,6 +929,10 @@ export class VoiceBot extends EventEmitter {
         this.fileStdout = null;
         this.streamChunks = [];
         this.streamChunksSize = 0;
+        if (onOpenFailed && this.fileFramesSent === 0) {
+          onOpenFailed();
+          return;
+        }
         if (!this._videoStreaming) this.stopAutoStopTimer();
         this._status = 'error';
         this.emit('error', new Error(`FFmpeg file playback exited with code ${code}`));
@@ -920,6 +958,42 @@ export class VoiceBot extends EventEmitter {
 
     this.fileNextDue = performance.now() + 200;
     this.playbackTimer = setTimeout(this.fileTick, 200);
+    return true;
+  }
+
+  /**
+   * A streamed YouTube track could not be opened: download the same item and
+   * play it from `startSeconds`. Pausing meanwhile keeps the download; it then
+   * starts paused so resume() continues it. Stopping or replacing cancels it.
+   */
+  private playDownloadFallback(item: QueueItem, startSeconds = 0): void {
+    const owner = this.playbackOwner;
+    const current = () => owner === this.playbackOwner && this._nowPlaying === item;
+    console.warn(
+      `[VoiceBot ${this.config.id}] YouTube stream for “${item.title}” ended before any audio, falling back to download`,
+    );
+    this.ensurePlayableFile(item)
+      .then(async (filePath) => {
+        if (!current()) return;
+        const paused = this._status === 'paused';
+        if (!(await this.startFileStream(filePath, startSeconds))) return;
+        if (paused) {
+          if (this.playbackTimer) {
+            clearTimeout(this.playbackTimer);
+            this.playbackTimer = null;
+          }
+          this.fileStdout?.pause();
+        }
+      })
+      .catch((err) => {
+        if (!current()) return;
+        if (!this._videoStreaming) this.stopAutoStopTimer();
+        this.endMusicSession('source_unreachable', 'Track could not be played');
+        this._status = 'connected';
+        this._nowPlaying = null;
+        this.emit('statusChange', this._status);
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      });
   }
 
   private resumeFileStreamTick(): void {
@@ -1035,18 +1109,6 @@ export class VoiceBot extends EventEmitter {
 
   /** Returns sessions actually replaced (this bot's video) when starting a stream. */
   async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
-    return this.startStream(item, options, false);
-  }
-
-  /**
-   * `fallbackPending`: play() will download this same item if the stream
-   * fails, so a failure keeps the session, status and now-playing for it.
-   */
-  private async startStream(
-    item: QueueItem,
-    options: MusicStartOptions,
-    fallbackPending: boolean,
-  ): Promise<MediaSessionInfo[]> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
@@ -1158,9 +1220,6 @@ export class VoiceBot extends EventEmitter {
       this.stopIcyPolling();
       this._isStreaming = false;
       this.streamKill = null;
-      // play() falls back to downloading this same item: keep its session,
-      // status and now-playing, and let play() end them if that fails too.
-      if (fallbackPending) throw err;
       this.endMusicSession('source_unreachable', 'Stream could not be opened');
       this._status = 'connected';
       this._nowPlaying = null;
@@ -1241,7 +1300,9 @@ export class VoiceBot extends EventEmitter {
     const duration = this._nowPlaying.duration ?? Infinity;
     const target = Math.max(0, Math.min(seconds, duration));
     const wasPlaying = this._status === 'playing';
-    const filePath = this._nowPlaying.filePath;
+    const input = this.fileInput;
+    const item = this._nowPlaying;
+    const owner = this.playbackOwner;
 
     this.clearTimer();
     if (this.streamKill) {
@@ -1252,7 +1313,28 @@ export class VoiceBot extends EventEmitter {
     this.streamChunks = [];
     this.streamChunksSize = 0;
 
-    await this.startFileStream(filePath, target);
+    // A resolved YouTube URL can expire mid-track; download it instead.
+    // validateUrl failures throw before ffmpeg starts — do not use the download
+    // fallback for those; restore a clean connected state instead.
+    let opened: boolean;
+    try {
+      opened = await this.startFileStream(
+        input,
+        target,
+        isRemoteInput(input) ? () => this.playDownloadFallback(item, target) : undefined,
+      );
+    } catch (err) {
+      if (owner !== this.playbackOwner) return;
+      if (!this._videoStreaming) this.stopAutoStopTimer();
+      this.endMusicSession('source_unreachable', 'Track could not be played');
+      this._status = 'connected';
+      this._nowPlaying = null;
+      this.emit('statusChange', this._status);
+      this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      throw err;
+    }
+    // A newer track took over while the decoder opened: leave its state alone.
+    if (!opened) return;
 
     if (!wasPlaying) {
       if (this.playbackTimer) {
@@ -1492,6 +1574,8 @@ export class VoiceBot extends EventEmitter {
   private stopPlayback(): void {
     this.clearTimer();
     this._fileStreamActive = false;
+    this.fileInput = '';
+    this.playbackOwner = {};
     this.fileStdout = null;
     this.fileFramesSent = 0;
     this.fileBaseSeconds = 0;
