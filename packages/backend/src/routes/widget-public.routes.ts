@@ -161,8 +161,7 @@ widgetPublicRoutes.get('/player/:botId/data', async (req: Request, res: Response
 
     const nowPlaying = bot.nowPlaying;
     const progress = bot.playbackProgress;
-    const queueItems = bot.queue.getAll();
-    const upcoming = queueItems.slice(0, 5);
+    const upcoming = bot.queue.upcoming(5);
 
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Cache-Control', 'public, max-age=10');
@@ -170,7 +169,7 @@ widgetPublicRoutes.get('/player/:botId/data', async (req: Request, res: Response
       nowPlaying: nowPlaying ? { title: nowPlaying.title, artist: nowPlaying.artist, duration: nowPlaying.duration, source: nowPlaying.source } : null,
       progress: progress ? { position: progress.position, duration: progress.duration } : null,
       status: bot.status,
-      queueLength: queueItems.length,
+      queueLength: bot.queue.length,
       upcoming: upcoming.map((q) => ({ title: q.title, artist: q.artist, duration: q.duration })),
     });
   } catch (err) { next(err); }
@@ -191,8 +190,8 @@ widgetPublicRoutes.get('/player/:botId/bbcode', async (req: Request, res: Respon
 
     const nowPlaying = bot.nowPlaying;
     const progress = bot.playbackProgress;
-    const queueItems = bot.queue.getAll();
-    const upcoming = queueItems.slice(0, 5);
+    const upcoming = bot.queue.upcoming(5);
+    const remaining = bot.queue.upcomingCount;
 
     let bb = '[b]🎵 Now Playing[/b]\n';
     if (nowPlaying) {
@@ -213,8 +212,8 @@ widgetPublicRoutes.get('/player/:botId/bbcode', async (req: Request, res: Respon
         const artist = item.artist ? ` — ${item.artist}` : '';
         bb += `${i + 1}. ${item.title}${artist}\n`;
       });
-      if (queueItems.length > 5) {
-        bb += `[i]... and ${queueItems.length - 5} more[/i]\n`;
+      if (remaining > upcoming.length) {
+        bb += `[i]... and ${remaining - upcoming.length} more[/i]\n`;
       }
     }
 

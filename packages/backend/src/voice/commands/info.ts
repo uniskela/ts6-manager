@@ -226,14 +226,11 @@ export function handleNowPlaying(context: CommandContext, bot: VoiceBot, userCli
   }
 
   const progress = bot.playbackProgress;
-  const queueItems = bot.queue.getAll();
-  const upcoming = queueItems
-    .slice(bot.queue.index + 1, bot.queue.index + 6)
-    .map((item) => ({
-      title: item.title,
-      artist: item.artist,
-      duration: item.duration,
-    }));
+  const upcoming = bot.queue.upcoming(5).map((item) => ({
+    title: item.title,
+    artist: item.artist,
+    duration: item.duration,
+  }));
 
   context.reply(
     bot,
@@ -245,7 +242,7 @@ export function handleNowPlaying(context: CommandContext, bot: VoiceBot, userCli
       duration: progress?.duration ?? np.duration,
       paused: bot.status === 'paused',
       upcoming,
-      totalQueueLength: queueItems.length,
+      totalQueueLength: bot.queue.length,
       queueIndex: bot.queue.index,
       includeControls: true,
     }),

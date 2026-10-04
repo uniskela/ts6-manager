@@ -31,3 +31,22 @@ test('toggling shuffle preserves the logical current track in both directions', 
   assert.equal(queue.current, current);
   assert.equal(queue.index, 2);
 });
+
+test('upcoming returns displayed tracks after the current index (shuffle-aware)', () => {
+  const queue = new PlayQueue();
+  for (const title of ['a', 'b', 'c', 'd', 'e', 'f']) {
+    queue.add({ id: title, title, filePath: '', source: 'local' });
+  }
+  queue.playAt(2);
+  assert.deepEqual(queue.upcoming(2).map((t) => t.title), ['d', 'e']);
+  assert.deepEqual(queue.upcoming().map((t) => t.title), ['d', 'e', 'f']);
+
+  queue.setShuffle(true);
+  const displayed = queue.getAll().map((t) => t.title);
+  const idx = queue.index;
+  assert.deepEqual(
+    queue.upcoming(3).map((t) => t.title),
+    displayed.slice(idx + 1, idx + 4),
+  );
+  assert.equal(queue.upcomingCount, displayed.length - idx - 1);
+});

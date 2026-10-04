@@ -49,6 +49,17 @@ export class PlayQueue {
     return [...this.items];
   }
 
+  /** Tracks after the current index in display order (shuffle-aware). */
+  upcoming(limit?: number): QueueItem[] {
+    const all = this.getAll();
+    const start = Math.max(this.currentIndex + 1, 0);
+    return limit == null ? all.slice(start) : all.slice(start, start + limit);
+  }
+
+  get upcomingCount(): number {
+    return Math.max(this.length - Math.max(this.currentIndex + 1, 0), 0);
+  }
+
   add(item: QueueItem): void {
     this.items.push(item);
     if (this._shuffle) {
