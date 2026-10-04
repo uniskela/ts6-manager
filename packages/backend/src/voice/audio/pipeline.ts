@@ -10,14 +10,21 @@ export const BYTES_PER_FRAME = FRAME_SIZE * CHANNELS * 2; // 16-bit = 2 bytes pe
 export const FRAME_MS = 20;
 const BITRATE = 96000;
 
-export function buildPcmFileArgs(filePath: string, startSeconds = 0): string[] {
+export function isRemoteInput(input: string): boolean {
+  return /^https?:\/\//i.test(input);
+}
+
+export function buildPcmFileArgs(input: string, startSeconds = 0): string[] {
   const args: string[] = [];
   if (startSeconds > 0) {
     args.push("-ss", startSeconds.toFixed(3));
   }
+  if (isRemoteInput(input)) {
+    args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
+  }
   args.push(
     "-re",
-    "-i", filePath,
+    "-i", input,
     "-f", "s16le",
     "-acodec", "pcm_s16le",
     "-ar", String(SAMPLE_RATE),
@@ -55,17 +62,24 @@ export class AudioPipeline {
   }
 
   /**
-   * Decode a local audio file to PCM incrementally at media speed.
+   * Decode a finite track (a local file, or a resolved YouTube audio URL) to
+   * PCM incrementally at media speed.
    *
-   * `-re` prevents ffmpeg from racing through a finite file faster than the
+   * `-re` prevents ffmpeg from racing through a finite track faster than the
    * 20 ms playback clock, while stream pause/backpressure stops the pipe when
    * the user pauses. This keeps memory bounded for multi-hour tracks.
    */
   async toPcmFileStream(
-    filePath: string,
+    input: string,
     startSeconds = 0,
   ): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
-    const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(filePath, startSeconds), { shell: false });
+    if (isRemoteInput(input)) {
+      const urlCheck = await validateUrl(input, { allowedProtocols: ['http:', 'https:'] });
+      if (!urlCheck.valid) {
+        throw new Error(`Stream URL blocked: ${urlCheck.error}`);
+      }
+    }
+    const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(input, startSeconds), { shell: false });
     return {
       stdout: ffmpeg.stdout,
       process: ffmpeg,

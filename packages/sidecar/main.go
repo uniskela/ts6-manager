@@ -1317,8 +1317,10 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 		fps = envIntOrDefault("VIDEO_FRAMERATE", 30)
 	}
 
-	// Periodic progress lines feed the encode-health tracker.
-	args := []string{"-stats_period", "2"}
+	// Periodic progress lines feed the encode-health tracker. -stats keeps
+	// them at warning level, which drops per-segment info chatter such as
+	// HLS "Skip ('#EXT-X-PROGRAM-DATE-TIME...')" lines from IPTV sources.
+	args := []string{"-stats_period", "2", "-stats", "-loglevel", "warning"}
 	args = append(args, hwInitArgs(spec, req.Source != "")...)
 
 	source := req.Source

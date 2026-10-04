@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { describe, it } from 'node:test';
 import { VoiceBot } from './voice-bot.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import { MediaSessionConflictError } from './media-session.js';
+import { BYTES_PER_FRAME } from './audio/pipeline.js';
 
 function makeBot(id = 7, name = 'Bot'): VoiceBot {
   const bot = new VoiceBot({
@@ -91,20 +94,57 @@ describe('single active media session (per bot)', () => {
   it('keeps the music session when a YouTube stream falls back to a download', async () => {
     const bot = makeBot();
     fakeMusic(bot);
+    const b = bot as any;
     const before = bot.musicSessionInfo()!;
-    const item = { id: '3', title: 'Clip', source: 'youtube' as const, filePath: '', streamUrl: 'https://example.com/a' };
-    (bot as any)._nowPlaying = item;
-    (bot as any).pipeline.toPcmStream = async () => { throw new Error('403'); };
+    const item = { id: '3', title: 'Clip', source: 'youtube' as const, filePath: '', sourceUrl: 'https://youtu.be/x' };
+    b._nowPlaying = item;
+    const opened: string[] = [];
+    const procs: EventEmitter[] = [];
+    b.pipeline.toPcmFileStream = async (input: string) => {
+      opened.push(input);
+      const process = new EventEmitter();
+      procs.push(process);
+      return { stdout: new PassThrough(), process, kill: () => {} };
+    };
+    b.ensurePlayableFile = async () => '/data/music/clip.m4a';
 
-    await assert.rejects((bot as any).startStream(item, {}, true), /403/);
-    assert.equal(bot.status, 'playing', 'play() is about to play the download');
+    await b.startFileStream('https://rr1.googlevideo.com/a', 0, () => b.playDownloadFallback(item));
+    // ffmpeg could not open the URL: no audio, non-zero exit.
+    procs[0].emit('close', 1);
+    await new Promise((r) => setImmediate(r));
+
+    assert.deepEqual(opened, ['https://rr1.googlevideo.com/a', '/data/music/clip.m4a']);
+    assert.equal(bot.status, 'playing', 'the download plays the same item');
     assert.equal(bot.musicSessionInfo()?.id, before.id);
     assert.equal(bot.lastMusicStop, null);
+    b.stopPlayback();
 
-    // Without a pending fallback the failure ends the session.
-    await assert.rejects(bot.playStream(item), /403/);
+    // Without a pending fallback a failed radio stream ends the session.
+    b.pipeline.toPcmStream = async () => { throw new Error('403'); };
+    await assert.rejects(bot.playStream({ ...item, source: 'radio' as const, streamUrl: 'https://example.com/a' }), /403/);
     assert.equal(bot.musicSessionInfo(), null);
     assert.equal(bot.lastMusicStop?.reason, 'source_unreachable');
+  });
+
+  it('plays a streamed YouTube track to the end instead of stopping when the download finishes', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    b.client.sendVoice = () => {};
+    const stdout = new PassThrough();
+    const process = new EventEmitter();
+    b.pipeline.toPcmFileStream = async () => ({ stdout, process, kill: () => {} });
+
+    await b.startFileStream('https://rr1.googlevideo.com/a', 0, () => assert.fail('no fallback once audio arrived'));
+    stdout.write(Buffer.alloc(BYTES_PER_FRAME * 10));
+    await new Promise((r) => setImmediate(r));
+    // ffmpeg has read the whole source while most of it is still buffered.
+    process.emit('close', 0);
+
+    assert.equal(bot.status, 'playing');
+    assert.equal(bot.lastMusicStop, null);
+    assert.equal(bot.canSeek, true, 'a streamed track seeks like a file');
+    b.stopPlayback();
   });
 });
 

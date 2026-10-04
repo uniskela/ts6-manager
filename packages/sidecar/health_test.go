@@ -135,4 +135,7 @@ func TestSourceModeDrivesPacingAndLooping(t *testing.T) {
 	if a := args(SourceRequest{Source: "/data/music/bg.mp4"}); !strings.HasPrefix(a, "-stats_period 2") {
 		t.Fatalf("progress stats must be enabled: %s", a)
 	}
+	if a := args(SourceRequest{Source: "https://iptv.example/live.m3u8"}); !strings.Contains(a, "-stats -loglevel warning") {
+		t.Fatalf("live sources must not log info-level segment chatter: %s", a)
+	}
 }

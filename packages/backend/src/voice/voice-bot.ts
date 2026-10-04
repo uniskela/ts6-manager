@@ -142,8 +142,9 @@ export class VoiceBot extends EventEmitter {
   private playbackTimer: ReturnType<typeof setTimeout> | null = null;
   private _nowPlaying: QueueItem | null = null;
 
-  // Local files are decoded incrementally through ffmpeg instead of buffering
-  // the entire PCM track in memory before playback starts.
+  // Local files (and resolved YouTube audio URLs) are decoded incrementally
+  // through ffmpeg instead of buffering the entire PCM track in memory.
+  private fileInput = '';
   private fileStdout: Readable | null = null;
   private fileFramesSent = 0;
   private fileBaseSeconds = 0;
@@ -841,9 +842,12 @@ export class VoiceBot extends EventEmitter {
       ) {
         try {
           const { streamUrl, info } = await resolveYouTubeAudioStream(item.sourceUrl);
-          item.streamUrl = streamUrl;
           if (!item.duration && info.duration) item.duration = info.duration;
-          await this.startStream(item, {}, true);
+          // A finite track: paced, pausable and seekable like a local file, and
+          // the queue advances when it ends. If ffmpeg cannot open the URL,
+          // the same item is downloaded instead.
+          await this.startFileStream(streamUrl, 0, () => this.playDownloadFallback(item));
+          this.startAutoStopTimer();
           return replaced;
         } catch (streamErr: any) {
           console.warn(
@@ -865,12 +869,22 @@ export class VoiceBot extends EventEmitter {
     return replaced;
   }
 
-  /** Start or restart bounded-memory local file decoding at the requested position. */
-  private async startFileStream(filePath: string, startSeconds: number): Promise<void> {
-    const stream = await this.pipeline.toPcmFileStream(filePath, startSeconds);
+  /**
+   * Start or restart bounded-memory decoding of a finite track at the requested
+   * position. `onOpenFailed` runs instead of the error path when ffmpeg exits
+   * before producing any audio (e.g. a resolved YouTube URL that answers 403).
+   */
+  private async startFileStream(
+    input: string,
+    startSeconds: number,
+    onOpenFailed?: () => void,
+  ): Promise<void> {
+    const stream = await this.pipeline.toPcmFileStream(input, startSeconds);
     this.fileStreamStartEpoch = ++this.loopEpoch;
     const epoch = this.fileStreamStartEpoch;
+    let receivedAudio = false;
 
+    this.fileInput = input;
     this.streamKill = stream.kill;
     this.fileStdout = stream.stdout;
     this.streamChunks = [];
@@ -882,6 +896,7 @@ export class VoiceBot extends EventEmitter {
 
     stream.stdout.on('data', (chunk: Buffer) => {
       if (epoch !== this.loopEpoch) return;
+      receivedAudio = true;
       this.streamChunks.push(chunk);
       this.streamChunksSize += chunk.length;
     });
@@ -895,6 +910,10 @@ export class VoiceBot extends EventEmitter {
         this.fileStdout = null;
         this.streamChunks = [];
         this.streamChunksSize = 0;
+        if (onOpenFailed && !receivedAudio) {
+          onOpenFailed();
+          return;
+        }
         if (!this._videoStreaming) this.stopAutoStopTimer();
         this._status = 'error';
         this.emit('error', new Error(`FFmpeg file playback exited with code ${code}`));
@@ -920,6 +939,28 @@ export class VoiceBot extends EventEmitter {
 
     this.fileNextDue = performance.now() + 200;
     this.playbackTimer = setTimeout(this.fileTick, 200);
+  }
+
+  /** A streamed YouTube track could not be opened: download and play the same item. */
+  private playDownloadFallback(item: QueueItem): void {
+    const epoch = this.loopEpoch;
+    const current = () => epoch === this.loopEpoch && this._nowPlaying === item;
+    console.warn(
+      `[VoiceBot ${this.config.id}] YouTube stream for “${item.title}” ended before any audio, falling back to download`,
+    );
+    this.ensurePlayableFile(item)
+      .then(async (filePath) => {
+        if (current()) await this.startFileStream(filePath, 0);
+      })
+      .catch((err) => {
+        if (!current()) return;
+        if (!this._videoStreaming) this.stopAutoStopTimer();
+        this.endMusicSession('source_unreachable', 'Track could not be played');
+        this._status = 'connected';
+        this._nowPlaying = null;
+        this.emit('statusChange', this._status);
+        this.emit('error', err instanceof Error ? err : new Error(String(err)));
+      });
   }
 
   private resumeFileStreamTick(): void {
@@ -1035,18 +1076,6 @@ export class VoiceBot extends EventEmitter {
 
   /** Returns sessions actually replaced (this bot's video) when starting a stream. */
   async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
-    return this.startStream(item, options, false);
-  }
-
-  /**
-   * `fallbackPending`: play() will download this same item if the stream
-   * fails, so a failure keeps the session, status and now-playing for it.
-   */
-  private async startStream(
-    item: QueueItem,
-    options: MusicStartOptions,
-    fallbackPending: boolean,
-  ): Promise<MediaSessionInfo[]> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
@@ -1158,9 +1187,6 @@ export class VoiceBot extends EventEmitter {
       this.stopIcyPolling();
       this._isStreaming = false;
       this.streamKill = null;
-      // play() falls back to downloading this same item: keep its session,
-      // status and now-playing, and let play() end them if that fails too.
-      if (fallbackPending) throw err;
       this.endMusicSession('source_unreachable', 'Stream could not be opened');
       this._status = 'connected';
       this._nowPlaying = null;
@@ -1241,7 +1267,7 @@ export class VoiceBot extends EventEmitter {
     const duration = this._nowPlaying.duration ?? Infinity;
     const target = Math.max(0, Math.min(seconds, duration));
     const wasPlaying = this._status === 'playing';
-    const filePath = this._nowPlaying.filePath;
+    const input = this.fileInput;
 
     this.clearTimer();
     if (this.streamKill) {
@@ -1252,7 +1278,7 @@ export class VoiceBot extends EventEmitter {
     this.streamChunks = [];
     this.streamChunksSize = 0;
 
-    await this.startFileStream(filePath, target);
+    await this.startFileStream(input, target);
 
     if (!wasPlaying) {
       if (this.playbackTimer) {
@@ -1492,6 +1518,7 @@ export class VoiceBot extends EventEmitter {
   private stopPlayback(): void {
     this.clearTimer();
     this._fileStreamActive = false;
+    this.fileInput = '';
     this.fileStdout = null;
     this.fileFramesSent = 0;
     this.fileBaseSeconds = 0;
