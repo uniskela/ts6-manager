@@ -66,6 +66,8 @@ export function RadioTab() {
   const [browseQuery, setBrowseQuery] = useState('');
   const [browseResults, setBrowseResults] = useState<RadioBrowserStationInfo[]>([]);
   const [browseSearchState, setBrowseSearchState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
+  // Bumped when the dialog resets or the query changes so a slow search cannot restore stale results.
+  const browseRequestId = useRef(0);
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
   const [editingStation, setEditingStation] = useState<RadioStationInfo | null>(null);
   const stationSaveInFlight = useRef(false);
@@ -126,16 +128,19 @@ export function RadioTab() {
 
   const handleBrowseSearch = () => {
     if (!configId || !browseQuery.trim()) return;
+    const requestId = ++browseRequestId.current;
     setBrowseResults([]);
     setBrowseSearchState('pending');
     browseStations.mutate(
       { configId, q: browseQuery.trim() },
       {
         onSuccess: (data) => {
+          if (requestId !== browseRequestId.current) return;
           setBrowseResults(Array.isArray(data) ? data as RadioBrowserStationInfo[] : []);
           setBrowseSearchState('success');
         },
         onError: (error) => {
+          if (requestId !== browseRequestId.current) return;
           setBrowseSearchState('error');
           toast.error(apiErrorMessage(error, 'Radio Browser search failed'));
         },
@@ -197,6 +202,7 @@ export function RadioTab() {
           variant="outline"
           size="sm"
           onClick={() => {
+            browseRequestId.current += 1;
             setBrowseQuery('');
             setBrowseResults([]);
             setBrowseSearchState('idle');
@@ -326,6 +332,7 @@ export function RadioTab() {
             <Input
               value={browseQuery}
               onChange={(e) => {
+                browseRequestId.current += 1;
                 setBrowseQuery(e.target.value);
                 setBrowseResults([]);
                 setBrowseSearchState('idle');
