@@ -176,8 +176,12 @@ export function channelCommandKey(
 
 /** True when this bot should run the command; false when a peer already claimed it. */
 export function claimChannelCommand(key: string): boolean {
+  const now = Date.now();
+  for (const [claimKey, expiresAt] of channelCommandUntil) {
+    if (now >= expiresAt) channelCommandUntil.delete(claimKey);
+  }
   const until = channelCommandUntil.get(key) ?? 0;
-  if (Date.now() < until) return false;
-  channelCommandUntil.set(key, Date.now() + CHANNEL_COMMAND_DEDUP_MS);
+  if (now < until) return false;
+  channelCommandUntil.set(key, now + CHANNEL_COMMAND_DEDUP_MS);
   return true;
 }
