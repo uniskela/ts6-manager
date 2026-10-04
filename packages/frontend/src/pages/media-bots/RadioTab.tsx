@@ -65,6 +65,7 @@ export function RadioTab() {
   const [showBrowse, setShowBrowse] = useState(false);
   const [browseQuery, setBrowseQuery] = useState('');
   const [browseResults, setBrowseResults] = useState<RadioBrowserStationInfo[]>([]);
+  const [browseSearchState, setBrowseSearchState] = useState<'idle' | 'pending' | 'success' | 'error'>('idle');
   const [addForm, setAddForm] = useState({ name: '', url: '', genre: '' });
   const [editingStation, setEditingStation] = useState<RadioStationInfo | null>(null);
   const stationSaveInFlight = useRef(false);
@@ -125,13 +126,19 @@ export function RadioTab() {
 
   const handleBrowseSearch = () => {
     if (!configId || !browseQuery.trim()) return;
+    setBrowseResults([]);
+    setBrowseSearchState('pending');
     browseStations.mutate(
       { configId, q: browseQuery.trim() },
       {
         onSuccess: (data) => {
           setBrowseResults(Array.isArray(data) ? data as RadioBrowserStationInfo[] : []);
+          setBrowseSearchState('success');
         },
-        onError: (error) => toast.error(apiErrorMessage(error, 'Radio Browser search failed')),
+        onError: (error) => {
+          setBrowseSearchState('error');
+          toast.error(apiErrorMessage(error, 'Radio Browser search failed'));
+        },
       },
     );
   };
@@ -192,6 +199,7 @@ export function RadioTab() {
           onClick={() => {
             setBrowseQuery('');
             setBrowseResults([]);
+            setBrowseSearchState('idle');
             setShowBrowse(true);
           }}
         >
@@ -317,21 +325,27 @@ export function RadioTab() {
           >
             <Input
               value={browseQuery}
-              onChange={(e) => setBrowseQuery(e.target.value)}
+              onChange={(e) => {
+                setBrowseQuery(e.target.value);
+                setBrowseResults([]);
+                setBrowseSearchState('idle');
+              }}
               placeholder="Name, e.g. Jazz, BBC, Techno…"
-              disabled={browseStations.isPending}
+              disabled={browseSearchState === 'pending'}
               aria-label="Search stations"
             />
-            <Button type="submit" disabled={!browseQuery.trim() || browseStations.isPending}>
+            <Button type="submit" disabled={!browseQuery.trim() || browseSearchState === 'pending'}>
               Search
             </Button>
           </form>
           <div className="flex-1 max-h-[400px] overflow-y-auto">
-            {browseStations.isPending ? (
+            {browseSearchState === 'pending' ? (
               <p className="text-xs text-muted-foreground text-center py-8">Searching…</p>
+            ) : browseSearchState === 'error' ? (
+              <p className="text-xs text-muted-foreground text-center py-8">Search failed. Try again.</p>
             ) : browseResults.length === 0 ? (
               <p className="text-xs text-muted-foreground text-center py-8">
-                {browseQuery.trim() ? 'No stations found.' : 'Enter a name to search.'}
+                {browseSearchState === 'success' ? 'No stations found.' : 'Enter a name to search.'}
               </p>
             ) : (
               browseResults.map((station) => {
