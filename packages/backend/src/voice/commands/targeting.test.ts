@@ -8,20 +8,25 @@ const bots: ChannelBot[] = [
 ];
 
 describe('parseBotTarget', () => {
-  it('reads a bare bot name as the whole argument', () => {
-    assert.deepEqual(parseBotTarget('bot 2', bots), { botId: 2, args: '' });
-    assert.deepEqual(parseBotTarget('  Test ', bots), { botId: 1, args: '' });
+  it('reads a bare bot name as the whole argument of a no-argument command', () => {
+    assert.deepEqual(parseBotTarget('next', 'bot 2', bots), { botId: 2, args: '' });
+    assert.deepEqual(parseBotTarget('stop', '  Test ', bots), { botId: 1, args: '' });
+  });
+
+  it('keeps a bare name as the argument of a command that takes one', () => {
+    assert.deepEqual(parseBotTarget('playlist', 'Test', bots), { botId: null, args: 'Test' });
+    assert.deepEqual(parseBotTarget('playlist', 'Test @Bot 2', bots), { botId: 2, args: 'Test' });
   });
 
   it('reads a trailing @name and keeps the rest', () => {
-    assert.deepEqual(parseBotTarget('30 @Bot 2', bots), { botId: 2, args: '30' });
-    assert.deepEqual(parseBotTarget('@test', bots), { botId: 1, args: '' });
+    assert.deepEqual(parseBotTarget('vol', '30 @Bot 2', bots), { botId: 2, args: '30' });
+    assert.deepEqual(parseBotTarget('next', '@test', bots), { botId: 1, args: '' });
   });
 
   it('leaves arguments alone when no bot is named', () => {
-    assert.deepEqual(parseBotTarget('30', bots), { botId: null, args: '30' });
-    assert.deepEqual(parseBotTarget('song by @someone', bots), { botId: null, args: 'song by @someone' });
-    assert.deepEqual(parseBotTarget('mail@Test', bots), { botId: null, args: 'mail@Test' });
+    assert.deepEqual(parseBotTarget('vol', '30', bots), { botId: null, args: '30' });
+    assert.deepEqual(parseBotTarget('play', 'song by @someone', bots), { botId: null, args: 'song by @someone' });
+    assert.deepEqual(parseBotTarget('play', 'mail@Test', bots), { botId: null, args: 'mail@Test' });
   });
 });
 
@@ -59,8 +64,15 @@ describe('chat commands with two bots in one channel', async () => {
     const say = async (msg: string) => {
       for (const [id, bot] of bots) await handler.onTextMessage(id, bot, { invokerid: '2', msg }, 5);
     };
-    return { bots, say, skips, volumes };
+    return { bots, handler, say, skips, volumes };
   }
+
+  it('ignores a peer whose server is unknown', async () => {
+    const f = setup();
+    f.handler.botChannelConfig.delete(2);
+    await f.say('!next');
+    assert.deepEqual(f.skips, [1, 2], 'each bot acts alone, as before');
+  });
 
   it('lets only the playing bot answer an unaddressed command', async () => {
     const f = setup();

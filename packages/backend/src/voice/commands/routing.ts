@@ -144,8 +144,9 @@ function channelBots(
     if (id === botId) continue;
     const peer = manager.getBot(id);
     if (!peer || !botOccupiesChannel(peer, channelId)) continue;
+    // Only bots known to be on the same server and virtual server compete.
     const cfg = context.botChannelConfig.get(id);
-    if (own && cfg && (cfg.serverConfigId !== own.serverConfigId || cfg.virtualServerId !== own.virtualServerId)) {
+    if (!own || !cfg || cfg.serverConfigId !== own.serverConfigId || cfg.virtualServerId !== own.virtualServerId) {
       continue;
     }
     bots.push(describe(id, peer));
@@ -280,7 +281,7 @@ export async function onTextMessage(
   // Every bot in the channel hears this line: exactly one of them answers.
   const peers = commandChannelId ? channelBots(context, botId, bot, commandChannelId) : [];
   if (peers.length > 1) {
-    const target = parseBotTarget(rawArgs, peers);
+    const target = parseBotTarget(command, rawArgs, peers);
     if (chooseCommandBot(peers, target.botId) !== botId) return;
     rawArgs = target.args;
   }
