@@ -185,6 +185,59 @@ describe('single active media session (per bot)', () => {
     b.stopPlayback();
   });
 
+  it('does not start a track that was stopped while it downloaded', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    let opened = 0;
+    b.pipeline.toPcmFileStream = async () => {
+      opened++;
+      return { stdout: new PassThrough(), process: new EventEmitter(), kill: () => {} };
+    };
+    let finishDownload!: (p: string) => void;
+    b.ensurePlayableFile = () => new Promise<string>((r) => { finishDownload = r; });
+
+    const playing = bot.play({ id: '6', title: 'Song', source: 'local' as const, filePath: '' });
+    await new Promise((r) => setImmediate(r));
+    bot.clearPlayback();
+    finishDownload('/data/music/song.mp3');
+    await playing;
+
+    assert.equal(opened, 0);
+    assert.equal(bot.status, 'connected');
+    assert.equal(bot.lastMusicStop?.reason, 'manual');
+  });
+
+  it('leaves a newer track alone when a paused seek loses ownership', async () => {
+    const bot = makeBot();
+    fakeMusic(bot);
+    const b = bot as any;
+    const outs: PassThrough[] = [];
+    let calls = 0;
+    let release: (() => void) | null = null;
+    b.pipeline.toPcmFileStream = async () => {
+      const call = ++calls;
+      if (call === 2) await new Promise<void>((r) => { release = r; });
+      const stdout = new PassThrough();
+      outs.push(stdout);
+      return { stdout, process: new EventEmitter(), kill: () => {} };
+    };
+
+    await b.startFileStream('/x.mp3', 0);
+    bot.pause();
+    const seeking = bot.seek(30);
+    await new Promise((r) => setImmediate(r));
+    // A new track takes over while the seek's decoder is still opening.
+    b.stopPlayback();
+    b._status = 'playing';
+    await b.startFileStream('/next.mp3', 0);
+    release!();
+    await seeking;
+
+    assert.equal(outs[outs.length - 1].isPaused(), false, 'the new track keeps playing');
+    assert.ok(b.playbackTimer, 'its playback timer is untouched');
+    b.stopPlayback();
+  });
+
   it('drops a file stream whose start lost ownership while the URL was checked', async () => {
     const bot = makeBot();
     fakeMusic(bot);
