@@ -37,6 +37,7 @@ import {
 import { Plus, Trash2, Radio, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
+import { splitGenreTags } from '@/lib/radio-moods';
 import type { RadioStationInfo, RadioPreset, RadioBrowserStationInfo } from '@ts6/common';
 
 
@@ -241,7 +242,11 @@ export function RadioTab() {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">{station.name}</p>
                   {station.genre && (
-                    <Badge variant="outline" className="text-[9px] mt-0.5">{station.genre}</Badge>
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {splitGenreTags(station.genre).map((tag) => (
+                        <Badge key={tag} variant="outline" className="text-[9px]">{tag}</Badge>
+                      ))}
+                    </div>
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">

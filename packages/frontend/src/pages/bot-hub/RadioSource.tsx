@@ -1,5 +1,5 @@
 /**
- * Console Radio tab: search, mood chips from station genre, Play.
+ * Console Radio tab: search, mood chips from station genre tags, Play.
  */
 
 import { useEffect, useMemo, useState } from 'react';
@@ -11,13 +11,15 @@ import { Input } from '@/components/ui/input';
 import { usePlayRadio, useRadioStations } from '@/hooks/use-radio-stations';
 import { apiErrorMessage } from '@/lib/api-error';
 import { pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
+import { RADIO_MOOD_CHIP_LIMIT, radioMoods, splitGenreTags, stationHasMood } from '@/lib/radio-moods';
 import { cn } from '@/lib/utils';
 import { AddMediaLink } from './AddMediaLink';
 import type { ConsoleSourceContext } from './SourcePicker';
 
 export function RadioSource(ctx: ConsoleSourceContext) {
   const [search, setSearch] = useState('');
-  const [mood, setMood] = useState<string | null>(null); // null = All
+  const [mood, setMood] = useState<string | null>(null); // mood key; null = All
+  const [showAllMoods, setShowAllMoods] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<PageSize>(() => rememberedPageSize('console-radio'));
   const stationsQuery = useRadioStations(ctx.serverConfigId);
@@ -27,22 +29,18 @@ export function RadioSource(ctx: ConsoleSourceContext) {
 
   const stations = (Array.isArray(stationsQuery.data) ? stationsQuery.data : []) as RadioStationInfo[];
 
-  const genreCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const s of stations) {
-      const g = s.genre?.trim();
-      if (!g) continue;
-      counts.set(g, (counts.get(g) ?? 0) + 1);
-    }
-    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [stations]);
+  const moods = useMemo(() => radioMoods(stations), [stations]);
+  const visibleMoods = useMemo(() => {
+    if (showAllMoods || moods.length <= RADIO_MOOD_CHIP_LIMIT) return moods;
+    const top = moods.slice(0, RADIO_MOOD_CHIP_LIMIT);
+    const selected = mood != null && !top.some((m) => m.key === mood) ? moods.find((m) => m.key === mood) : undefined;
+    return selected ? [...top, selected] : top;
+  }, [moods, showAllMoods, mood]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return stations.filter((s) => {
-      if (mood != null) {
-        if ((s.genre?.trim() || '') !== mood) return false;
-      }
+      if (mood != null && !stationHasMood(s.genre, mood)) return false;
       if (!q) return true;
       const hay = `${s.name} ${s.genre ?? ''}`.toLowerCase();
       return hay.includes(q);
@@ -77,20 +75,30 @@ export function RadioSource(ctx: ConsoleSourceContext) {
         >
           All ({stations.length})
         </button>
-        {genreCounts.map(([genre, count]) => (
+        {visibleMoods.map(({ key, label, count }) => (
           <button
-            key={genre}
+            key={key}
             type="button"
             className={cn(
               'min-h-11 rounded-md px-3 text-sm',
-              mood === genre ? 'bg-primary font-semibold text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
+              mood === key ? 'bg-primary font-semibold text-primary-foreground' : 'bg-muted/40 text-muted-foreground hover:text-foreground',
             )}
-            aria-pressed={mood === genre}
-            onClick={() => setMood(genre)}
+            aria-pressed={mood === key}
+            onClick={() => setMood(key)}
           >
-            {genre} ({count})
+            {label} ({count})
           </button>
         ))}
+        {moods.length > RADIO_MOOD_CHIP_LIMIT && (
+          <button
+            type="button"
+            className="min-h-11 rounded-md px-3 text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+            aria-expanded={showAllMoods}
+            onClick={() => setShowAllMoods((v) => !v)}
+          >
+            {showAllMoods ? 'Fewer moods' : `More moods (${moods.length - RADIO_MOOD_CHIP_LIMIT})`}
+          </button>
+        )}
       </div>
 
       {error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(error, 'Could not load stations')}</p>}
@@ -105,7 +113,7 @@ export function RadioSource(ctx: ConsoleSourceContext) {
               <Radio className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{station.name}</p>
-                {station.genre && <p className="truncate text-xs text-muted-foreground">{station.genre}</p>}
+                {station.genre && <p className="truncate text-xs text-muted-foreground">{splitGenreTags(station.genre).join(' · ')}</p>}
               </div>
               <Button
                 variant="default"

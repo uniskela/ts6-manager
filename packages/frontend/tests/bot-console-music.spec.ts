@@ -63,6 +63,7 @@ async function mockConsole(page: Page) {
         { id: 1, name: 'Chill FM', url: 'https://example.com/chill', genre: 'Chill', imageUrl: null, serverConfigId: 1 },
         { id: 2, name: 'Focus Beats', url: 'https://example.com/focus', genre: 'Focus', imageUrl: null, serverConfigId: 1 },
         { id: 3, name: 'No Genre Station', url: 'https://example.com/other', genre: null, imageUrl: null, serverConfigId: 1 },
+        { id: 4, name: 'Coast Local', url: 'https://example.com/coast', genre: 'local, local news, chill', imageUrl: null, serverConfigId: 1 },
       ],
     }));
   await page.route('**/api/servers/1/music-requests', (r) => r.fulfill({ json: [] }));
@@ -111,11 +112,29 @@ test('a radio mood chip filters the station list', async ({ page, request }) => 
   await expect(page.getByText('Focus Beats')).toBeVisible();
   await expect(page.getByText('No Genre Station')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Chill (1)' }).click();
+  await page.getByRole('button', { name: 'Chill (2)' }).click();
   await expect(page.getByText('Chill FM')).toBeVisible();
+  await expect(page.getByText('Coast Local')).toBeVisible();
   await expect(page.getByText('Focus Beats')).toHaveCount(0);
   await expect(page.getByText('No Genre Station')).toHaveCount(0);
   await expect(page.getByText('Moods come from each station\'s genre. Set or change it under Media Library → Radio stations.')).toBeVisible();
+});
+
+test('a multi-tag station genre becomes one mood chip per tag', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await mockConsole(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+
+  await page.getByRole('tab', { name: 'Radio' }).click();
+  const moods = page.getByRole('group', { name: 'Moods' });
+  await expect(moods.getByRole('button', { name: 'Local (1)' })).toBeVisible();
+  await expect(moods.getByRole('button', { name: 'Local News (1)' })).toBeVisible();
+  await expect(moods.getByRole('button', { name: /local, local news/i })).toHaveCount(0);
+
+  await moods.getByRole('button', { name: 'Local News (1)' }).click();
+  await expect(page.getByText('Coast Local')).toBeVisible();
+  await expect(page.getByText('Chill FM')).toHaveCount(0);
 });
 
 test('every source tab links to the page that manages its media', async ({ page, request }) => {

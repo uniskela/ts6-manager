@@ -87,10 +87,17 @@ export function mapRadioBrowserStation(raw: unknown): RadioBrowserStation | null
   const url = String(s.url_resolved || s.url || '').trim();
   if (!stationuuid || !name || !url) return null;
   if (!/^https?:\/\//i.test(url)) return null;
+  // Keep the first three distinct tags (case-insensitive); the UI splits them into mood chips.
+  const seenTags = new Set<string>();
   const tags = String(s.tags ?? '')
     .split(',')
-    .map((t) => t.trim())
-    .filter(Boolean)
+    .map((t) => t.trim().replace(/\s+/g, ' '))
+    .filter((t) => {
+      const key = t.toLowerCase();
+      if (!t || seenTags.has(key)) return false;
+      seenTags.add(key);
+      return true;
+    })
     .slice(0, 3)
     .join(', ');
   const favicon = String(s.favicon ?? '').trim();
