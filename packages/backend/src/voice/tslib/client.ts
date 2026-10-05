@@ -327,14 +327,10 @@ export class Ts3Client extends EventEmitter {
 
   /** Immediately close the socket without sending a disconnect command */
   forceClose(): void {
-    if (this.state === "disconnected") return;
-    this.state = "disconnected";
-    if (this.resendTimer) clearInterval(this.resendTimer);
-    if (this.pingTimer) clearInterval(this.pingTimer);
-    this.resendTimer = null;
-    this.pingTimer = null;
-    this.socket?.close();
-    this.socket = null;
+    // Same teardown as cleanup() (incl. emit). Must not leave state at
+    // "disconnected" without clearing clid / emitting — a later scheduled
+    // cleanup() would early-return and skip both.
+    this.cleanup();
   }
 
   disconnect(): void {
@@ -350,9 +346,9 @@ export class Ts3Client extends EventEmitter {
   }
 
   private cleanup(): void {
-    // Match forceClose(): disconnect() schedules cleanup after 500ms, and
-    // notifyclientleftview can call cleanup earlier — without this guard the
-    // second call re-emits "disconnected" (upstream clusterzx/ts6-manager#86).
+    // disconnect() schedules cleanup after 500ms, and notifyclientleftview
+    // can call cleanup earlier — without this guard the second call re-emits
+    // "disconnected" (upstream clusterzx/ts6-manager#86).
     if (this.state === "disconnected") return;
     this.state = "disconnected";
     // Drop assigned clid so callers do not treat a recycled human clid as this bot.
