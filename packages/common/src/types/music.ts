@@ -398,6 +398,19 @@ export interface VideoEncoderCapability {
   error?: string;
   /** Raw ffmpeg reason when `error` is a friendlier summary of it. */
   detail?: string;
+  /** Test encodes run, in order. Absent when the check was skipped without running ffmpeg. */
+  attempts?: VideoEncoderProbeAttempt[];
+}
+
+/** One ffmpeg test encode of an encoder capability check. */
+export interface VideoEncoderProbeAttempt {
+  command: string;
+  lowPower?: boolean;
+  ok: boolean;
+  /** How ffmpeg ended: "exit 0", "exit status 1", a timeout, or a start error. */
+  result: string;
+  /** ffmpeg's combined output (tail only). */
+  output?: string;
 }
 
 export interface VideoEncoderCapabilities {

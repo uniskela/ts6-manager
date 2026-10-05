@@ -288,6 +288,46 @@ type EncoderProbeResult struct {
 	Error     string `json:"error,omitempty"`
 	// Detail is the raw ffmpeg reason when Error is a friendlier summary of it.
 	Detail string `json:"detail,omitempty"`
+	// Attempts are the test encodes run, in order, so the UI can show the
+	// exact ffmpeg command and what it printed. Empty when the probe was
+	// skipped without running ffmpeg (e.g. no VAAPI device).
+	Attempts []EncoderProbeAttempt `json:"attempts,omitempty"`
+}
+
+// EncoderProbeAttempt is one ffmpeg test encode of a probe.
+type EncoderProbeAttempt struct {
+	Command  string `json:"command"`
+	LowPower bool   `json:"lowPower,omitempty"`
+	OK       bool   `json:"ok"`
+	// Result is how ffmpeg ended: "exit 0", "exit status 1", a timeout, or
+	// the error that kept it from starting.
+	Result string `json:"result"`
+	// Output is ffmpeg's combined stdout/stderr, trimmed to its tail.
+	Output string `json:"output,omitempty"`
+}
+
+// maxProbeOutput caps the ffmpeg output kept per attempt; the tail is what
+// carries the failure.
+const maxProbeOutput = 4000
+
+func probeOutputTail(out string) string {
+	out = strings.TrimSpace(strings.ReplaceAll(out, "\r\n", "\n"))
+	if len(out) > maxProbeOutput {
+		out = "…" + out[len(out)-maxProbeOutput:]
+	}
+	return urlPattern.ReplaceAllString(out, "<source>")
+}
+
+// probeCommandLine renders args as a copy-pasteable shell command.
+func probeCommandLine(args []string) string {
+	parts := make([]string, 0, len(args)+1)
+	for _, a := range append([]string{getFfmpegPath()}, args...) {
+		if a == "" || strings.ContainsAny(a, " \t'\"\\$`;&|<>()*?[]#~!{}") {
+			a = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+		}
+		parts = append(parts, a)
+	}
+	return strings.Join(parts, " ")
 }
 
 // EncoderCapabilities is the cached capability report.
@@ -350,9 +390,24 @@ func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) Enco
 	}
 	for _, lowPower := range attempts {
 		ctx, cancel := context.WithTimeout(context.Background(), encoderProbeTimeout)
-		out, err := run(ctx, encoderProbeArgs(spec, lowPower))
+		args := encoderProbeArgs(spec, lowPower)
+		out, err := run(ctx, args)
 		timedOut := ctx.Err() != nil
 		cancel()
+		attempt := EncoderProbeAttempt{
+			Command:  probeCommandLine(args),
+			LowPower: lowPower,
+			OK:       err == nil,
+			Result:   "exit 0",
+			Output:   probeOutputTail(out),
+		}
+		switch {
+		case timedOut:
+			attempt.Result = fmt.Sprintf("timed out after %s", encoderProbeTimeout)
+		case err != nil:
+			attempt.Result = err.Error()
+		}
+		res.Attempts = append(res.Attempts, attempt)
 		if err == nil {
 			res.Available = true
 			res.LowPower = lowPower
