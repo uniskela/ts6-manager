@@ -292,6 +292,13 @@ export class Ts3Client extends EventEmitter {
           this.emit("debug", `[Ts3Client] Could not set UDP buffer size: ${String(e)}`);
         }
 
+        // A sync debug listener may call forceClose() → cleanup(). Do not
+        // start timers or Init0 on a client that is already torn down.
+        if (this.state === "disconnected") {
+          reject(new Error("Connection closed"));
+          return;
+        }
+
         // Start resend timer (100ms interval)
         this.resendTimer = setInterval(() => this.resendLoop(), 100);
         // Ping timer starts after connection
