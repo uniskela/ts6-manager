@@ -25,6 +25,8 @@ Under **Play something**, choose a source:
 - **Radio** — Search stations or filter by mood, then play a station. Moods come from each station's **Mood or genre** in **Media Library → Radio stations**.
 - **IPTV** — Browse groups or search across playlists, filter by **Playlist**, and use **Favourites** or **Recent**. See [IPTV playlists](video-streaming.md#iptv-playlists).
 
+Each **Play something** tab has a **+** link to the matching manage page: **Add songs**, **Add playlist** or **Manage requests** on Music, **Add files** on Link, **Add station** on Radio, and **Add playlist** on IPTV. The link only opens that page.
+
 If the bot is offline, the console offers **Start bot** before showing its sources. When a start conflicts with an active media session, **Replace what is playing?** lists what will stop. Choose **Keep playing** to cancel or **Stop and switch** to replace it.
 
 Radio and video keep the music queue. **Play queue** resumes the upcoming songs, with the replacement prompt when needed; while radio or video plays and nothing is queued, **Up next** is hidden. Radio shows the station and live status rather than track progress or skip controls. Music controls include pause/resume, skip and volume; **Up next** also provides **Shuffle** and repeat modes.
@@ -101,7 +103,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!seek <seconds|+seconds|-seconds>`** — Seek within local/downloaded media
 - **`!remove <text>`** — Remove one unambiguous upcoming match
 - **`!shuffle [on|off]`** — Toggle or set shuffle
-- **`!stop`** — Stop playback
+- **`!stop`** — Stop playback and clear the music queue, including a playlist still expanding in the background. **Stop media** on a Bot Hub card does the same.
 - **`!pause`** — Toggle pause/resume
 - **`!skip` / `!next`** — Advance the queue
 - **`!prev`** — Previous track
@@ -116,6 +118,12 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!lyrics [artist - title]`** — Show/search lyrics
 
 Custom chat commands are configured in **Bot Flows → Chat commands**, alongside the built-in list and clash warnings. See [Bot Flows](bot-flows.md).
+
+### Several bots in one channel
+
+When more than one bot shares a command channel, exactly one of them answers. Name the bot to choose it: `!next Bot 2` when the command takes no other arguments, or `!vol 30 @Bot 2` when it does. The name is the bot's configured name; matching ignores case and extra spaces. An unknown name stays part of the command, so `!playlist Test` still looks up that playlist.
+
+With no name, the bot that is playing, paused or streaming answers. If none is, the lowest bot id answers; if more than one is, the lowest id among those active bots answers. `!help` shows the name syntax.
 
 ### Custom command presets
 
