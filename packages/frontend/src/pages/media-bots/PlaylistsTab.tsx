@@ -107,9 +107,16 @@ export function PlaylistsTab() {
   const [addAfterCreate, setAddAfterCreateState] = useState(false);
   // Read by the create callback, which may run after the dialog was closed.
   const addAfterCreateRef = useRef(false);
+  // Bumped on cancel so a stale create success ignores Add intent.
+  const createRequestIdRef = useRef(0);
   const setAddAfterCreate = (value: boolean) => {
     addAfterCreateRef.current = value;
     setAddAfterCreateState(value);
+  };
+  const cancelCreate = () => {
+    createRequestIdRef.current += 1;
+    setAddAfterCreate(false);
+    setShowCreate(false);
   };
   const [pendingAddId, setPendingAddId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
@@ -214,13 +221,17 @@ export function PlaylistsTab() {
   };
 
   const handleCreate = () => {
+    if (createPlaylist.isPending || !newName) return;
     const createdOnConfigId = selectedConfigId;
+    const requestId = ++createRequestIdRef.current;
+    const addAfterCreateForRequest = addAfterCreateRef.current;
     createPlaylist.mutate(
       { name: newName, mode: newMode, serverConfigId: selectedConfigId ?? undefined },
       {
         onSuccess: (created: { id?: number } | undefined) => {
           toast.success('Playlist created');
-          if (addAfterCreateRef.current && created?.id && shownConfigId.current === createdOnConfigId) addSongsTo(created.id);
+          if (createRequestIdRef.current !== requestId) return;
+          if (addAfterCreateForRequest && created?.id && shownConfigId.current === createdOnConfigId) addSongsTo(created.id);
           setAddAfterCreate(false);
           setShowCreate(false);
           setNewName('');
@@ -635,8 +646,8 @@ export function PlaylistsTab() {
       <Dialog
         open={showCreate}
         onOpenChange={(open) => {
-          setShowCreate(open);
-          if (!open) setAddAfterCreate(false);
+          if (open) setShowCreate(true);
+          else cancelCreate();
         }}
       >
         <DialogContent>
@@ -653,7 +664,7 @@ export function PlaylistsTab() {
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="My Playlist"
-                onKeyDown={(e) => e.key === 'Enter' && newName && handleCreate()}
+                onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               />
             </div>
             <div>
@@ -670,7 +681,7 @@ export function PlaylistsTab() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreate(false)}>
+            <Button variant="outline" onClick={cancelCreate}>
               Cancel
             </Button>
             <Button onClick={handleCreate} disabled={!newName || createPlaylist.isPending}>
