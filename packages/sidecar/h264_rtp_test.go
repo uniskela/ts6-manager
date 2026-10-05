@@ -75,9 +75,6 @@ func TestH264LateJoinPrefixInjectsSPSAndPPSBeforeIDR(t *testing.T) {
 	if len(prefix) != 2 {
 		t.Fatalf("want SPS+PPS prefix, got %d packets", len(prefix))
 	}
-	if prefix[0].SequenceNumber != 998 || prefix[1].SequenceNumber != 999 {
-		t.Fatalf("seq = %d,%d want 998,999", prefix[0].SequenceNumber, prefix[1].SequenceNumber)
-	}
 	if prefix[0].Timestamp != idr.Timestamp || prefix[1].Timestamp != idr.Timestamp {
 		t.Fatal("parameter sets must share the IDR timestamp")
 	}
@@ -101,6 +98,18 @@ func TestH264LateJoinPrefixInjectsSPSAndPPSBeforeIDR(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("viewer NAL order %v want %v", got, want)
 		}
+	}
+
+	// After a gate reset the peer already delivered seq 100. Continuity numbers
+	// the dropped STAP-A as 101 and the IDR as 102; prefix must not reuse 100.
+	peer := &Peer{videoOutSeq: 100, videoOutSeqOK: true}
+	var seqs []uint16
+	for _, p := range append(prefix, idr) {
+		out := peer.nextVideoRTP(p)
+		seqs = append(seqs, out.SequenceNumber)
+	}
+	if seqs[0] != 101 || seqs[1] != 102 || seqs[2] != 103 {
+		t.Fatalf("per-peer seq after restart = %v, want [101 102 103]", seqs)
 	}
 }
 

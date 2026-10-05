@@ -579,6 +579,11 @@ type Peer struct {
 	// pendingICE holds candidates that arrived before the viewer's answer;
 	// SetAnswer flushes them. Guarded by mu.
 	pendingICE []webrtc.ICECandidateInit
+	// videoOutSeq is the next RTP sequence number to write on VideoTrack.
+	// Guarded by mu. Survives stream-gate resets so an H.264 SPS/PPS prefix
+	// cannot reuse a sequence SRTP already accepted from this peer.
+	videoOutSeq   uint16
+	videoOutSeqOK bool
 }
 
 // maxPendingICE bounds the candidates held for a peer that has not answered
@@ -834,18 +839,43 @@ func (s *Sidecar) processVideoRTP() {
 			peer.mu.Unlock()
 
 			if active && started && track != nil {
+				var batch []*rtp.Packet
 				if opening && codec == codecH264 {
 					prefix := s.h264Params.prefixBefore(pkt)
-					for _, p := range prefix {
-						_ = track.WriteRTP(p)
-					}
+					batch = append(batch, prefix...)
 					debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
 				}
-				_ = track.WriteRTP(pkt)
+				batch = append(batch, pkt)
+				for _, p := range batch {
+					peer.mu.Lock()
+					out := peer.nextVideoRTP(p)
+					peer.mu.Unlock()
+					if out != nil {
+						_ = track.WriteRTP(out)
+					}
+				}
 			}
 		}
 		s.peersLock.RUnlock()
 	}
+}
+
+// nextVideoRTP clones pkt with a per-peer sequence number. Caller holds p.mu.
+// The first packet keeps its sequence; later packets increment from the last
+// one actually written, including injected H.264 parameter-set prefixes.
+func (p *Peer) nextVideoRTP(pkt *rtp.Packet) *rtp.Packet {
+	out := cloneRTPPacket(pkt)
+	if out == nil {
+		return nil
+	}
+	if !p.videoOutSeqOK {
+		p.videoOutSeq = out.SequenceNumber
+		p.videoOutSeqOK = true
+	} else {
+		p.videoOutSeq++
+		out.SequenceNumber = p.videoOutSeq
+	}
+	return out
 }
 
 func (s *Sidecar) processAudioRTP() {

@@ -107,8 +107,10 @@ func (c *h264ParamCache) observe(payload []byte) {
 
 // prefixBefore returns SPS/PPS RTP packets to write ahead of pkt when pkt is
 // about to open a peer's stream gate but does not already carry both sets.
-// Sequence numbers are placed immediately before pkt's; timestamps match pkt.
-// Returns nil when reinjection is unnecessary or the cache is incomplete.
+// Timestamps and payload type match pkt; sequence numbers are placeholders —
+// Peer.nextVideoRTP assigns per-peer sequences so a restart cannot collide
+// with SRTP anti-replay. Returns nil when reinjection is unnecessary or the
+// cache is incomplete.
 func (c *h264ParamCache) prefixBefore(pkt *rtp.Packet) []*rtp.Packet {
 	hasSPS := h264PayloadHasNAL(pkt.Payload, 7)
 	hasPPS := h264PayloadHasNAL(pkt.Payload, 8)
@@ -118,29 +120,17 @@ func (c *h264ParamCache) prefixBefore(pkt *rtp.Packet) []*rtp.Packet {
 	c.mu.Lock()
 	sps, pps := c.sps, c.pps
 	c.mu.Unlock()
-	need := 0
-	if !hasSPS && len(sps) > 0 {
-		need++
-	}
-	if !hasPPS && len(pps) > 0 {
-		need++
-	}
-	if need == 0 {
-		return nil
-	}
-	seq := pkt.SequenceNumber - uint16(need)
 	var out []*rtp.Packet
 	if !hasSPS && len(sps) > 0 {
-		out = append(out, h264ParamRTP(pkt, seq, sps))
-		seq++
+		out = append(out, h264ParamRTP(pkt, sps))
 	}
 	if !hasPPS && len(pps) > 0 {
-		out = append(out, h264ParamRTP(pkt, seq, pps))
+		out = append(out, h264ParamRTP(pkt, pps))
 	}
 	return out
 }
 
-func h264ParamRTP(template *rtp.Packet, seq uint16, nal []byte) *rtp.Packet {
+func h264ParamRTP(template *rtp.Packet, nal []byte) *rtp.Packet {
 	p := &rtp.Packet{
 		Header: rtp.Header{
 			Version:        template.Version,
@@ -148,7 +138,7 @@ func h264ParamRTP(template *rtp.Packet, seq uint16, nal []byte) *rtp.Packet {
 			Extension:      false,
 			Marker:         false,
 			PayloadType:    template.PayloadType,
-			SequenceNumber: seq,
+			SequenceNumber: template.SequenceNumber, // rewritten by Peer.nextVideoRTP
 			Timestamp:      template.Timestamp,
 			SSRC:           template.SSRC,
 		},
