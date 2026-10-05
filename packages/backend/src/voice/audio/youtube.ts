@@ -248,6 +248,17 @@ function buildSpotifyFetchUrl(allowedHost: SpotifyFetchHost, from: URL): URL {
  * so redirects cannot pivot SSRF off an open redirect.
  */
 async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Response> {
+  return (await fetchSpotifyPage(initialUrl, maxRedirects)).response;
+}
+
+/**
+ * Same as {@link fetchSpotifyOgPage}, also returning the final allowlisted URL after
+ * redirects (short `spotify.link` URLs land on `open.spotify.com/<kind>/<id>`).
+ */
+export async function fetchSpotifyPage(
+  initialUrl: URL,
+  maxRedirects = 5,
+): Promise<{ response: Response; url: URL }> {
   let current = initialUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
@@ -279,7 +290,7 @@ async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Re
       continue;
     }
 
-    return res;
+    return { response: res, url: safeUrl };
   }
 
   throw new Error("Too many redirects while fetching allowlisted URL");
@@ -955,4 +966,11 @@ export async function findSongForQuery(
   const top = (await deps.searchVideos(trimmed)).find(isPlayableSearchResult);
   if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube" };
   return null;
+}
+
+/** Best YouTube watch URL for an artist + title pair (Apple Music / Spotify tracks), or null. */
+export async function trackToYouTubeUrl(track: { artist?: string; title: string }): Promise<string | null> {
+  const query = [track.artist, track.title].filter(Boolean).join(" ").trim();
+  if (!query) return null;
+  return (await findSongForQuery(query))?.url ?? null;
 }

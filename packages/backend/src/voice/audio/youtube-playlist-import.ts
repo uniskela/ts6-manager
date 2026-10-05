@@ -1,12 +1,13 @@
 /**
- * Background YouTube / Apple Music playlist import with job tracking.
+ * Background YouTube / Apple Music / Spotify playlist import with job tracking.
  * Adapted from coom/ts6-manager (Aug 2026 playlist import series).
  */
 
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import type { PrismaClient, Song } from '../../../generated/prisma/index.js';
-import { parseYouTubeUrl, getYouTubeUrlInfo, downloadYouTube } from './youtube.js';
+import { parseYouTubeUrl, getYouTubeUrlInfo, downloadYouTube, isSpotifyShareUrl } from './youtube.js';
+import { resolveSpotifyCollection } from './spotify.js';
 import { isYouTubePlaylistUrl, planImport, youtubeWatchUrl } from './playlist-import-plan.js';
 import {
   appleMusicTrackToYouTubeUrl,
@@ -179,20 +180,25 @@ async function resolveImportItems(
   cap: number,
   job: ImportJob,
 ): Promise<{ items: ImportItem[]; listId: string | null; title?: string }> {
-  if (isAppleMusicShareUrl(url)) {
-    const am = await resolveAppleMusicTracks(url);
+  const spotify = isSpotifyShareUrl(url) ? await resolveSpotifyCollection(url) : null;
+  if (isSpotifyShareUrl(url) && !spotify) {
+    throw new Error('That Spotify link is a single song, not a playlist or album');
+  }
+  if (spotify || isAppleMusicShareUrl(url)) {
+    const source = spotify ? 'Spotify' : 'Apple Music';
+    const am = spotify ?? await resolveAppleMusicTracks(url);
     job.title = am.title;
     job.sourceTrackCount = am.tracks.length;
     job.importCap = cap;
     if (am.tracks.length > cap) {
       console.log(
-        `[MusicLibrary] Apple Music “${am.title || 'playlist'}”: ${am.tracks.length} tracks — importing first ${cap} (max_playlist_import cap; raise in Settings → Limits)`,
+        `[MusicLibrary] ${source} “${am.title || 'playlist'}”: ${am.tracks.length} tracks — importing first ${cap} (max_playlist_import cap; raise in Settings → Limits)`,
       );
     }
     const tracks = am.tracks.slice(0, cap);
     const items = await matchAppleTracksToImportItems(tracks, job);
     if (!items.length) {
-      throw new Error('No YouTube matches found for that Apple Music URL');
+      throw new Error(`No YouTube matches found for that ${source} URL`);
     }
     return { items, listId: null, title: am.title };
   }
@@ -310,7 +316,8 @@ async function runImport(
 ): Promise<void> {
   job.status = 'running';
   const cap = await loadMaxPlaylistImport(prisma);
-  const isApple = isAppleMusicShareUrl(url);
+  // Spotify / Apple Music collections are matched track by track (no YouTube list id).
+  const isApple = isAppleMusicShareUrl(url) || isSpotifyShareUrl(url);
   const queueTarget = options.musicBotId != null;
   const playlistTarget = options.playlistId != null || !queueTarget;
 

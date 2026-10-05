@@ -14,6 +14,7 @@ import {
   isSpotifyShareUrl,
 } from './audio/youtube.js';
 import { isYouTubePlaylistUrl } from './audio/playlist-import-plan.js';
+import { resolveSpotifyCollection } from './audio/spotify.js';
 import type { QueueItem } from './playlist/queue.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
@@ -22,6 +23,8 @@ const PLAYLIST_CAP = 25;
 export interface MediaUrlPipelineDeps {
   resolveSpotify(url: string): Promise<string>;
   resolveAppleMusic(url: string): Promise<AppleMusicResolved>;
+  /** Tracks of a Spotify playlist/album, or null when the link is a single track. */
+  resolveSpotifyCollection(url: string): Promise<{ title?: string; tracks: AppleMusicTrack[] } | null>;
   appleTrackToYouTube(track: AppleMusicTrack): Promise<string | null>;
   expandYouTube(url: string, cap: number): Promise<{ title?: string; urls: string[] } | null>;
   downloadTrack(url: string): Promise<QueueItem>;
@@ -44,6 +47,7 @@ export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
   return {
     resolveSpotify: resolveSpotifyToYouTube,
     resolveAppleMusic: resolveAppleMusicTracks,
+    resolveSpotifyCollection,
     appleTrackToYouTube: appleMusicTrackToYouTubeUrl,
     expandYouTube: async (url, cap) => {
       const expanded = await expandYouTubeToWatchUrls(url, cap);
@@ -83,28 +87,38 @@ export async function runMediaUrlPipeline(
 ): Promise<{ first: QueueItem; playlistTitle?: string; queuedInBackground: number }> {
   const cap = req.cap ?? PLAYLIST_CAP;
   let mediaUrl = req.url;
-  if (isSpotifyShareUrl(mediaUrl)) {
-    mediaUrl = await deps.resolveSpotify(mediaUrl);
-  }
-
   let urlsToPlay = [mediaUrl];
   let playlistTitle: string | undefined;
-  let appleMusicPending: AppleMusicTrack[] = [];
+  let pendingTracks: AppleMusicTrack[] = [];
+  let pendingSource = 'Apple Music';
 
-  if (isAppleMusicShareUrl(mediaUrl)) {
-    const resolved = await deps.resolveAppleMusic(mediaUrl);
-    if (!resolved.tracks.length) {
-      throw new Error('Could not resolve any tracks from that Apple Music URL');
+  // Spotify / Apple Music playlists and albums: match each track on YouTube.
+  let collection: { title?: string; tracks: AppleMusicTrack[] } | null = null;
+  if (isSpotifyShareUrl(mediaUrl)) {
+    collection = await deps.resolveSpotifyCollection(mediaUrl);
+    if (collection) {
+      pendingSource = 'Spotify';
+    } else {
+      mediaUrl = await deps.resolveSpotify(mediaUrl);
+      urlsToPlay = [mediaUrl];
     }
-    playlistTitle = resolved.title;
-    const firstYt = await deps.appleTrackToYouTube(resolved.tracks[0]);
+  } else if (isAppleMusicShareUrl(mediaUrl)) {
+    collection = await deps.resolveAppleMusic(mediaUrl);
+  }
+
+  if (collection) {
+    if (!collection.tracks.length) {
+      throw new Error(`Could not resolve any tracks from that ${pendingSource} URL`);
+    }
+    playlistTitle = collection.title;
+    const firstYt = await deps.appleTrackToYouTube(collection.tracks[0]);
     if (!firstYt) {
       throw new Error(
-        `No YouTube match for Apple Music track: ${resolved.tracks[0].artist} - ${resolved.tracks[0].title}`,
+        `No YouTube match for ${pendingSource} track: ${collection.tracks[0].artist} - ${collection.tracks[0].title}`,
       );
     }
     urlsToPlay = [firstYt];
-    appleMusicPending = resolved.tracks.slice(1, cap);
+    pendingTracks = collection.tracks.slice(1, cap);
   } else if (isYouTubeHostUrl(mediaUrl)) {
     const parsed = parseYouTubeUrl(mediaUrl);
     if (isYouTubePlaylistUrl(mediaUrl)) {
@@ -137,7 +151,7 @@ export async function runMediaUrlPipeline(
   }
 
   const rest = urlsToPlay.slice(1);
-  const queuedInBackground = rest.length + appleMusicPending.length;
+  const queuedInBackground = rest.length + pendingTracks.length;
   if (queuedInBackground > 0) {
     void (async () => {
       const report = (error: unknown, label: string) => {
@@ -165,13 +179,13 @@ export async function runMediaUrlPipeline(
         }
       }
 
-      for (const track of appleMusicPending) {
+      for (const track of pendingTracks) {
         if (target.isCancelled?.()) return;
         const label = `${track.artist} - ${track.title}`;
         try {
           const url = await deps.appleTrackToYouTube(track);
           if (!url) {
-            report(new Error(`No YouTube match for Apple Music track: ${label}`), label);
+            report(new Error(`No YouTube match for ${pendingSource} track: ${label}`), label);
             continue;
           }
           if (!await queueUrl(url)) return;

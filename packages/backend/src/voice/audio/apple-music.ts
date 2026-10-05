@@ -1,4 +1,4 @@
-import { searchYouTube } from "./youtube.js";
+import { trackToYouTubeUrl } from "./youtube.js";
 
 export interface AppleMusicTrack {
   artist: string;
@@ -439,13 +439,9 @@ export async function resolveAppleMusicTracks(url: string): Promise<AppleMusicRe
   throw new Error("Could not resolve any tracks from that Apple Music URL");
 }
 
-/** Search YouTube for one Apple Music track; returns a watch URL or null. */
+/** Search YouTube Music (then YouTube) for one Apple Music track; returns a watch URL or null. */
 export async function appleMusicTrackToYouTubeUrl(track: AppleMusicTrack): Promise<string | null> {
-  const q = [track.artist, track.title, "audio"].filter(Boolean).join(" ").trim();
-  if (!q) return null;
-  const results = await searchYouTube(q, 1);
-  if (!results.length) return null;
-  return `https://www.youtube.com/watch?v=${results[0].id}`;
+  return trackToYouTubeUrl(track);
 }
 
 /**

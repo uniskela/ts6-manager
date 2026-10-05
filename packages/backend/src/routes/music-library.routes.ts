@@ -11,6 +11,7 @@ import {
   isSpotifyShareUrl,
   resolveSpotifyToYouTube,
 } from '../voice/audio/youtube.js';
+import { resolveSpotifyCollection } from '../voice/audio/spotify.js';
 import { getImportJob, startYouTubePlaylistImport } from '../voice/audio/youtube-playlist-import.js';
 import {
   appleMusicTrackToYouTubeUrl,
@@ -56,27 +57,38 @@ async function mapPool<T, R>(
   return results;
 }
 
-async function resolveAppleMusicAsYouTubeInfo(url: string, cap = APPLE_MUSIC_INFO_CAP): Promise<{
+type CollectionInfo = {
   type: 'video' | 'playlist';
   items: Array<{ id: string; title: string; artist: string; duration: number; thumbnail: string }>;
   title?: string;
   sourceTrackCount?: number;
   matchedCount?: number;
   cappedAt?: number;
-}> {
+};
+
+async function resolveAppleMusicAsYouTubeInfo(url: string, cap = APPLE_MUSIC_INFO_CAP): Promise<CollectionInfo> {
   let am;
   try {
     am = await resolveAppleMusicTracks(url);
   } catch (err: any) {
     throw new AppError(502, err?.message || 'Could not resolve that Apple Music URL');
   }
+  return matchCollectionAsYouTubeInfo(am, 'Apple Music', cap);
+}
+
+/** Match a Spotify / Apple Music track list on YouTube and shape it like yt-dlp playlist info. */
+async function matchCollectionAsYouTubeInfo(
+  am: { title?: string; tracks: { artist: string; title: string }[] },
+  source: string,
+  cap = APPLE_MUSIC_INFO_CAP,
+): Promise<CollectionInfo> {
   if (!am.tracks.length) {
-    throw new AppError(502, 'Could not resolve any tracks from that Apple Music URL');
+    throw new AppError(502, `Could not resolve any tracks from that ${source} URL`);
   }
 
   const tracks = am.tracks.slice(0, cap);
   console.log(
-    `[MusicLibrary] Apple Music “${am.title || 'playlist'}”: ${am.tracks.length} tracks — matching first ${tracks.length} on YouTube (concurrency ${APPLE_MUSIC_YT_CONCURRENCY})`,
+    `[MusicLibrary] ${source} “${am.title || 'playlist'}”: ${am.tracks.length} tracks — matching first ${tracks.length} on YouTube (concurrency ${APPLE_MUSIC_YT_CONCURRENCY})`,
   );
 
   const matched = await mapPool(tracks, APPLE_MUSIC_YT_CONCURRENCY, async (track) => {
@@ -103,10 +115,10 @@ async function resolveAppleMusicAsYouTubeInfo(url: string, cap = APPLE_MUSIC_INF
   );
 
   if (!items.length) {
-    throw new AppError(502, 'No YouTube matches found for that Apple Music URL');
+    throw new AppError(502, `No YouTube matches found for that ${source} URL`);
   }
 
-  console.log(`[MusicLibrary] Apple Music match complete: ${items.length}/${tracks.length} YouTube hits`);
+  console.log(`[MusicLibrary] ${source} match complete: ${items.length}/${tracks.length} YouTube hits`);
 
   return {
     type: items.length > 1 ? 'playlist' : 'video',
@@ -127,8 +139,25 @@ async function resolveSpotifyForYouTube(url: string): Promise<string> {
   }
 }
 
+/** Read a Spotify playlist / album track list; null for single tracks. */
+async function resolveSpotifyCollectionOrThrow(url: string) {
+  try {
+    return await resolveSpotifyCollection(url);
+  } catch (err: any) {
+    throw new AppError(502, err?.message || 'Could not resolve that Spotify URL');
+  }
+}
+
 async function resolveMediaUrlForYouTubeDownload(url: string): Promise<string> {
-  if (isSpotifyShareUrl(url)) return resolveSpotifyForYouTube(url);
+  if (isSpotifyShareUrl(url)) {
+    if (await resolveSpotifyCollectionOrThrow(url)) {
+      throw new AppError(
+        400,
+        'Spotify playlists and albums cannot be downloaded as a single track — Load the URL first, then download selected songs or use !play / Play URL',
+      );
+    }
+    return resolveSpotifyForYouTube(url);
+  }
   if (!isAppleMusicShareUrl(url)) return url;
   let am;
   try {
@@ -602,8 +631,15 @@ musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, nex
       const info = await resolveAppleMusicAsYouTubeInfo(trimmed, cap);
       return res.json(info);
     }
-    const probeUrl = isSpotifyShareUrl(trimmed) ? await resolveSpotifyForYouTube(trimmed) : trimmed;
-    const info = await getYouTubeUrlInfo(probeUrl);
+    if (isSpotifyShareUrl(trimmed)) {
+      const collection = await resolveSpotifyCollectionOrThrow(trimmed);
+      if (collection) {
+        const cap = await loadMaxPlaylistImport(req.app.locals.prisma);
+        return res.json(await matchCollectionAsYouTubeInfo(collection, 'Spotify', cap));
+      }
+      return res.json(await getYouTubeUrlInfo(await resolveSpotifyForYouTube(trimmed)));
+    }
+    const info = await getYouTubeUrlInfo(trimmed);
     res.json(info);
   } catch (err: any) {
     if (err instanceof AppError) return next(err);
