@@ -49,6 +49,15 @@ if [[ "$fail" -eq 0 ]]; then
   echo "OK: shell -n passed for ${#shell_scripts[@]} script(s)"
 fi
 
+echo "==> pnpm lockfile overrides match package.json"
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "python3 is required for pnpm overrides check" >&2
+  exit 1
+fi
+if ! python3 "$ROOT/scripts/ci/check-pnpm-overrides.py"; then
+  fail=1
+fi
+
 echo "==> Obsolete top-level version: in docker-compose*.yml"
 mapfile -t compose_files < <(git ls-files 'docker-compose*.yml' | sort)
 if ((${#compose_files[@]} == 0)); then

@@ -16,3 +16,5 @@ packages/backend/prisma/migrations/
 build-and-push.ps1
 packages/frontend/test-results/
 packages/frontend/playwright-report/
+.pr-test/
+bin/

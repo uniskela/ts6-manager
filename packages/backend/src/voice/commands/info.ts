@@ -1,7 +1,12 @@
 import type { VoiceBot } from '../voice-bot.js';
 import { fetchLyrics, chunkLyrics, lyricsInputFromTrack } from '../lyrics.js';
-import { BUILTIN_COMMAND_HELP } from '../chat-commands.js';
-import { formatCustomCommandsMessage, formatHelpMessage, formatNowPlayingMessage } from '../ts6-chat-format.js';
+import { BUILTIN_COMMAND_HELP, suggestBuiltinCommand } from '../chat-commands.js';
+import {
+  formatCustomCommandsMessage,
+  formatHelpMessage,
+  formatNowPlayingMessage,
+  formatUnknownCommandMessage,
+} from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { tryClaimChatInfoReply, helpActionKey, beginHelpAction, completeHelpAction } from './dedupe.js';
 
@@ -196,6 +201,8 @@ export async function handleCustomCommand(
   bot: VoiceBot,
   userClid: number,
   command: string,
+  message = `!${command}`,
+  sourceListenerChannelId?: string,
 ): Promise<void> {
   const dbBot = await context.prisma.musicBot.findUnique({
     where: { id: botId },
@@ -208,10 +215,17 @@ export async function handleCustomCommand(
       serverConfigId_name: { serverConfigId: dbBot.serverConfigId, name: command },
     },
   });
-  if (!custom || !custom.enabled) return;
-
   const channelId = context.replyChannelForDedupe(botId, userClid, bot);
   const sid = context.virtualServerIdForBot(botId);
+
+  if (!custom || !custom.enabled) {
+    if (!/^[\p{L}\p{N}][\p{L}\p{N}_-]*$/u.test(command)) return;
+    if (context.flowCommandLookup?.(dbBot.serverConfigId, sid, message, sourceListenerChannelId)) return;
+    if (!tryClaimChatInfoReply(dbBot.serverConfigId, sid, channelId, userClid, `unknown:${command}`)) return;
+    await context.reply(bot, userClid, formatUnknownCommandMessage(command, suggestBuiltinCommand(command)));
+    return;
+  }
+
   if (!tryClaimChatInfoReply(dbBot.serverConfigId, sid, channelId, userClid, command)) return;
   console.log(`[MusicCmd] Bot ${botId}: !${command} (custom, from clid=${userClid})`);
   await context.reply(bot, userClid, custom.response);

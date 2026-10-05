@@ -26,11 +26,15 @@ function fixture(status = 'connected') {
     playbackProgress: { position: 60, duration: 100 },
     play: async (item: any) => played.push(item), seek: async (n: number) => seeks.push(n),
     clearPlayback: () => {},
-    stopAudio() { if (this.status === 'playing' || this.status === 'paused') this.status = 'connected'; },
+    isStreaming: false,
+    stopAudio() {
+      if (this.status === 'playing' || this.status === 'paused') this.status = 'connected';
+      this.isStreaming = false;
+    },
     videoSessionInfo: () => null, musicSessionInfo: () => null,
   };
   const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
-  return { bot, command, replies, played, seeks, playlists };
+  return { bot, command, replies, played, seeks, playlists, handler };
 }
 
 test('new commands and aliases are reserved and documented', () => {
@@ -150,4 +154,114 @@ test('commands during a TeamSpeak flood hold are set aside, not run or answered'
   // Plain chat is not a command and is not counted.
   await f.command('hello');
   assert.equal(ignored, 2);
+});
+test('!play <song name> searches YouTube Music and enqueues the top match', async () => {
+  const f = fixture();
+  const searched: string[] = [];
+  const enqueued: string[] = [];
+  f.handler.findSong = async (query: string) => {
+    searched.push(query);
+    return { id: 'dQw4w9WgXcQ', title: 'Never Gonna Give You Up', artist: 'Rick Astley', duration: 213,
+      thumbnail: '', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', source: 'youtube-music' };
+  };
+  f.handler.enqueueMediaUrl = async (_botId: number, _bot: unknown, _clid: number, url: string) => { enqueued.push(url); };
+  f.handler.joinChannelForCommand = async () => {};
+  await f.command('!play never gonna give you up');
+  assert.deepEqual(searched, ['never gonna give you up']);
+  assert.deepEqual(enqueued, ['https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+  assert.match(f.replies[0], /Searching YouTube Music for "never gonna give you up"/);
+
+  await f.command('!play https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(searched.length, 1, 'URLs skip search');
+  assert.equal(enqueued.at(-1), 'https://youtu.be/dQw4w9WgXcQ');
+
+  await f.command('!play HTTPS://youtu.be/dQw4w9WgXcQ');
+  assert.equal(searched.length, 1, 'scheme check ignores case');
+  assert.equal(enqueued.at(-1), 'HTTPS://youtu.be/dQw4w9WgXcQ');
+});
+test('!play <song name> reports no results and search failures without enqueueing', async () => {
+  const f = fixture();
+  let enqueued = 0;
+  f.handler.enqueueMediaUrl = async () => { enqueued++; };
+  f.handler.joinChannelForCommand = async () => {};
+  f.handler.findSong = async () => null;
+  await f.command('!play zzzz nothing');
+  assert.match(f.replies.at(-1)!, /No results for "zzzz nothing"/);
+  f.handler.findSong = async () => { throw new Error('yt-dlp missing'); };
+  await f.command('!play anything');
+  assert.match(f.replies.at(-1)!, /Search failed: yt-dlp missing/);
+  assert.equal(enqueued, 0);
+});
+
+test('!stop during radio keeps the queued songs', async () => {
+  const f = fixture('playing');
+  f.bot.queue.addMany([
+    { id: '1', title: 'Song A', filePath: '', source: 'local' as const },
+    { id: '2', title: 'Song B', filePath: '', source: 'local' as const },
+  ]);
+  f.bot.isStreaming = true;
+  await f.command('!stop');
+  assert.equal(f.bot.status, 'connected');
+  assert.equal(f.bot.isStreaming, false);
+  assert.deepEqual(f.bot.queue.getAll().map((t) => t.title), ['Song A', 'Song B']);
+  assert.match(f.replies.at(-1)!, /Playback stopped/);
+});
+
+test('!stop and !queue clear cancel a pending song lookup, including late failures', async () => {
+  for (const stop of ['!stop', '!queue clear']) {
+    for (const fails of [false, true]) {
+      const f = fixture();
+      let finish!: () => void;
+      let searchSignal!: AbortSignal;
+      let markStarted!: () => void;
+      const started = new Promise<void>(resolve => { markStarted = resolve; });
+      f.handler.findSong = (_query: string, signal: AbortSignal) => {
+        searchSignal = signal;
+        markStarted();
+        return new Promise((resolve, reject) => {
+          finish = () => fails ? reject(new Error('late failure')) : resolve({ url: 'https://youtu.be/dQw4w9WgXcQ' });
+        });
+      };
+      let enqueued = 0;
+      f.handler.enqueueMediaUrl = async () => { enqueued++; };
+      f.handler.joinChannelForCommand = async () => {};
+      const pending = f.command('!play slow song');
+      await started;
+      await f.command(stop);
+      assert.ok(searchSignal.aborted);
+      const replies = f.replies.length;
+      finish();
+      await pending;
+      assert.equal(enqueued, 0);
+      assert.equal(f.replies.length, replies, 'cancelled lookup does not reply later');
+    }
+  }
+});
+
+test('concurrent commands from the same invoker preserve each request channel', async () => {
+  const f = fixture();
+  let markStarted!: () => void;
+  const started = new Promise<void>(resolve => { markStarted = resolve; });
+  let finish!: (value: unknown) => void;
+  f.handler.findSong = () => {
+    markStarted();
+    return new Promise(resolve => { finish = resolve; });
+  };
+  const channels: Array<[string, number | undefined]> = [];
+  f.handler.reply = (_bot: unknown, _id: number, msg: string) => {
+    channels.push([msg, f.handler.context.activeReplyChannel.get('1:2')]);
+  };
+  f.handler.joinChannelForCommand = async () => {};
+  f.handler.enqueueMediaUrl = async () => {
+    channels.push(['enqueue', f.handler.context.activeReplyChannel.get('1:2')]);
+    f.handler.reply(f.bot, 2, 'finished');
+  };
+  const command = (msg: string, target: string) => f.handler.onTextMessage(1, f.bot, { invokerid: '2', msg, target });
+  const pending = command('!play slow song', '5');
+  await started;
+  await command('!repeat', '6');
+  finish({ url: 'https://youtu.be/dQw4w9WgXcQ' });
+  await pending;
+  assert.deepEqual(channels.map(([, channel]) => channel), [5, 6, 5, 5]);
+  assert.equal(f.handler.activeReplyChannel.size, 0);
 });

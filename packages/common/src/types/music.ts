@@ -208,9 +208,9 @@ export type VideoStreamPresetKey = (typeof VIDEO_STREAM_PRESET_KEYS)[number];
 /** A fixed preset, or `auto` to pick the largest preset the source fills (capped by the Auto limit). */
 export type VideoQualityRequest = 'auto' | VideoStreamPresetKey;
 
-export const VIDEO_ENCODER_IDS = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc'] as const;
+export const VIDEO_ENCODER_IDS = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc', 'h264_amf'] as const;
 export type VideoEncoderId = (typeof VIDEO_ENCODER_IDS)[number];
-/** `auto` picks software VP8, or the first working hardware encoder (VAAPI or NVENC) when hardware is preferred. */
+/** `auto` picks software VP8, or the first working hardware encoder (VAAPI, NVENC or AMF) when hardware is preferred. */
 export type VideoEncoderRequest = 'auto' | VideoEncoderId;
 export type VideoCodec = 'vp8' | 'vp9' | 'h264';
 
@@ -379,7 +379,7 @@ export interface VideoStreamSettings {
   /** Highest preset Auto may select. */
   autoMaxPreset: VideoStreamPresetKey;
   defaultEncoder: VideoEncoderRequest;
-  /** Let `auto` use a working hardware encoder (VAAPI or NVENC). */
+  /** Let `auto` use a working hardware encoder (VAAPI, NVENC or AMF). */
   preferHardware: boolean;
   /** Clamp for any stream bitrate in kbps; 0 = no clamp. */
   maxBitrateKbps: number;

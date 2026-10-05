@@ -89,8 +89,8 @@ func TestFFmpegEncoderProbe(t *testing.T) {
 		if !r.Hardware && !r.Available {
 			t.Errorf("software encoder %s should be available: %s", r.ID, r.Error)
 		}
-		if r.Hardware && r.Available {
-			t.Errorf("hardware encoder %s cannot be available without a device", r.ID)
+		if r.Backend == backendVAAPI && r.Available {
+			t.Errorf("VAAPI encoder %s cannot be available without a VAAPI device", r.ID)
 		}
 	}
 }

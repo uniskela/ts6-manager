@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { BotMediaOverview } from '@ts6/common';
-import { hubFacts, hubHeadline, hubLastStop, hubTone, queuePosition, videoDetails } from '../../src/lib/bot-hub';
+import { activeBots, activeBotsLabel, hubFacts, hubHeadline, hubLastStop, hubTone, queuePosition, videoDetails } from '../../src/lib/bot-hub';
 
 const base: BotMediaOverview = {
   botId: 1, botName: 'Aurora', serverConfigId: 1, serverName: 'Ops', status: 'connected',
@@ -64,5 +64,26 @@ describe('console Now playing details', () => {
     assert.equal(videoDetails(live, now).find((d) => d.label === 'Viewers')?.value, '3 in channel');
     assert.equal(videoDetails(live, now).find((d) => d.label === 'Auto-stop')?.value, 'if no viewers for 5 min');
     assert.deepEqual(videoDetails(base, now), []);
+  });
+});
+
+describe('active bots pill', () => {
+  const music = (botId: number, status: string, title: string): BotMediaOverview => ({
+    ...base, botId, status,
+    session: { id: String(botId), kind: 'music', state: 'active', botId, botName: 'Aurora', startedAt: 0, label: title },
+    music: { title, artist: null, live: false, position: 1, duration: 10 },
+  });
+
+  it('lists bots with a session, playing before paused, skipping idle and offline ones', () => {
+    const paused = music(2, 'paused', 'Two');
+    const playing = music(3, 'playing', 'Three');
+    const offline = { ...music(4, 'stopped', 'Four') };
+    assert.deepEqual(activeBots([base, paused, offline, playing]).map((b) => b.botId), [3, 2]);
+  });
+
+  it('labels one bot by its track and several by count', () => {
+    assert.equal(activeBotsLabel([]), null);
+    assert.equal(activeBotsLabel([music(2, 'playing', 'Two')]), 'Two');
+    assert.equal(activeBotsLabel([music(2, 'playing', 'Two'), music(3, 'playing', 'Three')]), '2 active bots');
   });
 });

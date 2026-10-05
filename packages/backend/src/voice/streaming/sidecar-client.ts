@@ -4,6 +4,8 @@
  */
 
 import type { VideoCodec, VideoEncoderCapabilities, VideoEncoderId, VideoSourceMode } from '@ts6/common';
+import path from 'node:path';
+import { resolvePathUnderMusicDir } from './video-download.js';
 
 /** Encoder the sidecar reports running after POST /source. */
 export interface SidecarEncoderSession {
@@ -109,7 +111,11 @@ export class SidecarClient {
 
   /** Start/restart ffmpeg for `source`. Resolves with the encoder actually running. */
   async setSource(source: string, options: SidecarSourceOptions = {}): Promise<SidecarEncoderSession | null> {
-    const res = await this.call('POST', '/source', { source, ...options });
+    // Shared files can have different absolute paths on the backend and sidecar hosts.
+    const portableSource = source && !/^https?:\/\//.test(source)
+      ? `music://${path.basename(resolvePathUnderMusicDir(source))}`
+      : source;
+    const res = await this.call('POST', '/source', { source: portableSource, ...options });
     return res?.encoder ?? null;
   }
 

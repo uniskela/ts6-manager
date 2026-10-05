@@ -548,8 +548,10 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
       if (err instanceof AppError || typeof err?.statusCode === 'number') throw err;
       const message = err?.message ?? String(err);
       const isResolutionError =
-        message === 'Could not resolve any tracks from that Apple Music URL'
-        || message.startsWith('No YouTube match for Apple Music track:')
+        /^Could not resolve any tracks from that (Apple Music|Spotify) URL$/.test(message)
+        || /^No YouTube match for (Apple Music|Spotify) track:/.test(message)
+        || message.startsWith('No YouTube match found for Spotify title:')
+        || message.startsWith('Could not read the tracks of that Spotify')
         || message === 'Could not resolve any videos from that playlist URL'
         || message === 'Could not resolve that YouTube URL';
       throw new AppError(isResolutionError ? 502 : 500, isResolutionError ? message : `Failed to play URL: ${message}`);
@@ -637,7 +639,8 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     invalidateChatPlaylistExpansion(id);
     await runMediaAudited(req, bot, 'media.music.stop', async () => {
       if (playlistExpansionGeneration(id) !== stopGeneration) return;
-      bot.queue.clear();
+      // Radio keeps Up next (shown as kept while radio plays); music stop clears it.
+      if (!bot.isStreaming) bot.queue.clear();
       bot.stopAudio();
     });
     res.json({ success: true });

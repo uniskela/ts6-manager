@@ -292,6 +292,13 @@ export class Ts3Client extends EventEmitter {
           this.emit("debug", `[Ts3Client] Could not set UDP buffer size: ${String(e)}`);
         }
 
+        // A sync debug listener may call forceClose() → cleanup(). Do not
+        // start timers or Init0 on a client that is already torn down.
+        if (this.state === "disconnected") {
+          reject(new Error("Connection closed"));
+          return;
+        }
+
         // Start resend timer (100ms interval)
         this.resendTimer = setInterval(() => this.resendLoop(), 100);
         // Ping timer starts after connection
@@ -327,14 +334,10 @@ export class Ts3Client extends EventEmitter {
 
   /** Immediately close the socket without sending a disconnect command */
   forceClose(): void {
-    if (this.state === "disconnected") return;
-    this.state = "disconnected";
-    if (this.resendTimer) clearInterval(this.resendTimer);
-    if (this.pingTimer) clearInterval(this.pingTimer);
-    this.resendTimer = null;
-    this.pingTimer = null;
-    this.socket?.close();
-    this.socket = null;
+    // Same teardown as cleanup() (incl. emit). Must not leave state at
+    // "disconnected" without clearing clid / emitting — a later scheduled
+    // cleanup() would early-return and skip both.
+    this.cleanup();
   }
 
   disconnect(): void {
@@ -350,6 +353,10 @@ export class Ts3Client extends EventEmitter {
   }
 
   private cleanup(): void {
+    // disconnect() schedules cleanup after 500ms, and notifyclientleftview
+    // can call cleanup earlier — without this guard the second call re-emits
+    // "disconnected" (upstream clusterzx/ts6-manager#86).
+    if (this.state === "disconnected") return;
     this.state = "disconnected";
     // Drop assigned clid so callers do not treat a recycled human clid as this bot.
     this.clientId = 0;

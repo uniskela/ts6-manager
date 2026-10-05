@@ -27,6 +27,8 @@ import {
   AUTO_LIMIT_OPTIONS,
   ENCODER_LABELS,
   ENCODER_OPTIONS,
+  autoEncoderPreferenceHint,
+  autoEncoderPreferenceLabel,
   formatTimeout,
 } from '@/lib/video-streaming';
 import { cn } from '@/lib/utils';
@@ -223,6 +225,14 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
           </div>
         </div>
 
+        {draft.defaultEncoder === 'auto' && !advancedOpen && (
+          <p className="text-xs text-muted-foreground">
+            Default encoder is {autoEncoderPreferenceLabel(draft.preferHardware)}.
+            {' '}{autoEncoderPreferenceHint(draft.preferHardware)}
+            {' '}Toggle under Advanced.
+          </p>
+        )}
+
         <div className="rounded-md border">
           <button
             type="button"
@@ -285,7 +295,11 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
                 >
                   <SelectTrigger id="default-encoder"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ENCODER_OPTIONS.map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                    {ENCODER_OPTIONS.map((o) => (
+                      <SelectItem key={o.value} value={o.value}>
+                        {o.value === 'auto' ? autoEncoderPreferenceLabel(draft.preferHardware) : o.label}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
                 <div className="flex items-center gap-2 pt-1">
@@ -295,9 +309,10 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
                     onCheckedChange={(v) => set('preferHardware', v)}
                   />
                   <Label htmlFor="prefer-hardware" className="text-sm font-normal">
-                    Auto prefers hardware (VAAPI or NVENC) when a test encode succeeds
+                    Auto prefers hardware (VAAPI, NVENC or AMF) when a test encode succeeds
                   </Label>
                 </div>
+                <p className="text-xs text-muted-foreground">{autoEncoderPreferenceHint(draft.preferHardware)}</p>
               </div>
             </div>
           )}
@@ -332,7 +347,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
             <div>
               <p className="text-sm font-medium">Encoder capabilities</p>
               <p className="text-xs text-muted-foreground">
-                Runs short test encodes on the media sidecar. VAAPI encoders need <code>/dev/dri</code> passed through; NVENC needs the NVIDIA container runtime.
+                Runs short test encodes on the media sidecar. VAAPI requires <code>/dev/dri</code>; NVENC requires an NVIDIA driver and, in Docker, the NVIDIA container runtime. AMF is available when the sidecar runs natively on Windows with an AMF-enabled FFmpeg build and a compatible AMD GPU/driver.
               </p>
             </div>
             <Button

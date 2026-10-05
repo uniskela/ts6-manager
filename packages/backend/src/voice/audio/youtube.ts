@@ -207,6 +207,16 @@ export function isSpotifyShareHostname(hostname: string): boolean {
   return resolveSpotifyFetchHost(hostname) !== null;
 }
 
+/** True for Spotify share links that must be resolved before yt-dlp sees them. */
+export function isSpotifyShareUrl(url: string): boolean {
+  try {
+    const host = new URL(url.trim()).hostname.toLowerCase().replace(/\.+$/, "");
+    return host === "spotify.com" || host.endsWith(".spotify.com") || host === "spotify.link";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Decode a small set of HTML entities once. Decode `&amp;` last so sequences
  * like `&amp;#39;` cannot be double-unescaped into a quote.
@@ -238,6 +248,17 @@ function buildSpotifyFetchUrl(allowedHost: SpotifyFetchHost, from: URL): URL {
  * so redirects cannot pivot SSRF off an open redirect.
  */
 async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Response> {
+  return (await fetchSpotifyPage(initialUrl, maxRedirects)).response;
+}
+
+/**
+ * Same as {@link fetchSpotifyOgPage}, also returning the final allowlisted URL after
+ * redirects (short `spotify.link` URLs land on `open.spotify.com/<kind>/<id>`).
+ */
+export async function fetchSpotifyPage(
+  initialUrl: URL,
+  maxRedirects = 5,
+): Promise<{ response: Response; url: URL }> {
   let current = initialUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop++) {
@@ -269,7 +290,7 @@ async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Re
       continue;
     }
 
-    return res;
+    return { response: res, url: safeUrl };
   }
 
   throw new Error("Too many redirects while fetching allowlisted URL");
@@ -287,8 +308,10 @@ function withMediaUrl(args: string[], url: string): string[] {
   return [...args, "--", url];
 }
 
+/** Run yt-dlp, preserving caller cancellation and bounding signal-driven requests. */
 function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     const proc = spawn("yt-dlp", args, { shell: false, signal, timeout: signal ? 180_000 : undefined, killSignal: "SIGKILL" });
     let stdout = "";
     let stderr = "";
@@ -312,7 +335,7 @@ function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, sign
       consumeProgress('stderr', chunk);
     });
     proc.on("close", (code) => resolve({ code, stdout, stderr }));
-    proc.on("error", (err) => reject(new Error(`yt-dlp not found: ${err.message}`)));
+    proc.on("error", (err) => reject(signal?.aborted ? signal.reason : new Error(`yt-dlp not found: ${err.message}`)));
   });
 }
 
@@ -336,27 +359,44 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
     throw new Error("URL credentials are not allowed");
   }
 
-  // Fetch Open Graph title from the Spotify page (no Spotify API key required).
+  // Fetch Open Graph tags from the Spotify page (no Spotify API key required).
   // Redirects are followed manually; each hop is rebuilt onto an allowlisted https host.
-  let title = "";
+  let query = "";
   try {
     const res = await fetchSpotifyOgPage(parsed);
-    const html = await res.text();
-    const og =
-      html.match(/property="og:title"\s+content="([^"]+)"/i) ||
-      html.match(/content="([^"]+)"\s+property="og:title"/i);
-    title = og?.[1] ? decodeBasicHtmlEntities(og[1]) : "";
+    query = spotifySearchQueryFromOg(await res.text());
   } catch {
     /* fall through */
   }
 
-  if (!title) {
-    title = decodeURIComponent(parsed.pathname.split("/").pop() || "").replace(/-/g, " ");
+  if (!query) {
+    query = decodeURIComponent(parsed.pathname.split("/").pop() || "").replace(/-/g, " ");
   }
 
-  const results = await searchYouTube(`${title} audio`, 1);
-  if (!results.length) throw new Error(`No YouTube match found for Spotify title: ${title}`);
-  return `https://www.youtube.com/watch?v=${results[0].id}`;
+  const song = await findSongForQuery(query);
+  if (!song) throw new Error(`No YouTube match found for Spotify title: ${query}`);
+  return song.url;
+}
+
+/** Read one Open Graph `content` value from a page (either attribute order). */
+function readOgContent(html: string, property: "title" | "description"): string {
+  // Same <meta> tag, attributes in either order, other attributes allowed in between.
+  const og = html.match(
+    new RegExp(`<meta\\b(?=[^>]*\\bproperty="og:${property}")[^>]*\\bcontent="([^"]*)"`, "i"),
+  );
+  return og?.[1] ? decodeBasicHtmlEntities(og[1]).trim() : "";
+}
+
+/**
+ * Build a search query from a Spotify page's Open Graph tags. Track pages describe
+ * themselves as `Artist · Song · 1987`, so the artist is added to the title when present.
+ */
+export function spotifySearchQueryFromOg(html: string): string {
+  const title = readOgContent(html, "title");
+  if (!title) return "";
+  const parts = readOgContent(html, "description").split("·").map((p) => p.trim());
+  const artist = parts.length >= 2 && /^song$/i.test(parts[1]) ? parts[0] : "";
+  return artist ? `${artist} ${title}` : title;
 }
 
 /**
@@ -802,9 +842,10 @@ export async function expandYouTubeToWatchUrls(
 }
 
 /**
- * Search YouTube using yt-dlp
+ * Search YouTube using yt-dlp, aborting the process when the caller cancels.
  */
-export async function searchYouTube(query: string, maxResults: number = 10): Promise<YouTubeSearchResult[]> {
+export async function searchYouTube(query: string, maxResults: number = 10, signal: AbortSignal = AbortSignal.timeout(180_000)): Promise<YouTubeSearchResult[]> {
+  signal?.throwIfAborted();
   if (query.trim().startsWith("-")) {
     throw new Error("Invalid search query");
   }
@@ -815,7 +856,8 @@ export async function searchYouTube(query: string, maxResults: number = 10): Pro
     "--dump-json",
     "--flat-playlist",
     "--no-download",
-  ]);
+  ], undefined, signal);
+  signal?.throwIfAborted();
 
   if (result.code !== 0 && !result.stdout.trim()) {
     throw new Error(`yt-dlp search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
@@ -840,4 +882,117 @@ export async function searchYouTube(query: string, maxResults: number = 10): Pro
   } catch {
     return [];
   }
+}
+
+/** YouTube Music search URL limited to the Songs section (handled by yt-dlp's music search extractor). */
+export function youTubeMusicSongSearchUrl(query: string): string {
+  return `https://music.youtube.com/search?q=${encodeURIComponent(query)}#songs`;
+}
+
+/** Map one line of yt-dlp `--flat-playlist --dump-json` output; null when it is not a usable entry. */
+function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
+  try {
+    const entry = JSON.parse(line);
+    if (!entry || typeof entry.id !== "string" || !entry.id) return null;
+    return {
+      id: entry.id,
+      title: entry.title || "Unknown",
+      artist:
+        (Array.isArray(entry.artists) && entry.artists[0]) ||
+        entry.artist ||
+        entry.uploader ||
+        entry.channel ||
+        "Unknown",
+      duration: entry.duration || 0,
+      thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Search YouTube Music songs (best match first), aborting yt-dlp on cancellation. */
+export async function searchYouTubeMusic(query: string, maxResults: number = 5, signal: AbortSignal = AbortSignal.timeout(180_000)): Promise<YouTubeSearchResult[]> {
+  signal?.throwIfAborted();
+  const trimmed = query.trim();
+  if (!trimmed) throw new Error("Invalid search query");
+  const result = await runYtDlp(withMediaUrl([
+    ...getCookieArgs(),
+    "--no-warnings",
+    "--flat-playlist",
+    "--dump-json",
+    "--no-download",
+    "--playlist-items",
+    `1-${Math.max(1, Math.floor(maxResults))}`,
+  ], youTubeMusicSongSearchUrl(trimmed)), undefined, signal);
+  signal?.throwIfAborted();
+
+  if (result.code !== 0 && !result.stdout.trim()) {
+    throw new Error(`yt-dlp music search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+  }
+
+  return parseFlatSearchOutput(result.stdout);
+}
+
+/** Parse yt-dlp `--flat-playlist --dump-json` output (one JSON entry per line). */
+export function parseFlatSearchOutput(stdout: string): YouTubeSearchResult[] {
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{"))
+    .map(mapFlatSearchEntry)
+    .filter((item): item is YouTubeSearchResult => item !== null);
+}
+
+/** Search entries must be single videos (11-char IDs), not channels or playlists. */
+function isPlayableSearchResult(item: YouTubeSearchResult): boolean {
+  return /^[A-Za-z0-9_-]{11}$/.test(item.id);
+}
+
+export interface SongSearchDeps {
+  searchMusic: (query: string, signal?: AbortSignal) => Promise<YouTubeSearchResult[]>;
+  searchVideos: (query: string, signal?: AbortSignal) => Promise<YouTubeSearchResult[]>;
+}
+
+/**
+ * Find the most relevant song for a free-text query: the top YouTube Music song result,
+ * falling back to the top regular YouTube result when Music returns nothing or fails.
+ * Cancellation stops the search without starting a fallback or returning stale results.
+ */
+export async function findSongForQuery(
+  query: string,
+  deps: SongSearchDeps = {
+    searchMusic: (q, signal) => searchYouTubeMusic(q, 1, signal),
+    searchVideos: (q, signal) => searchYouTube(q, 1, signal),
+  },
+  signal?: AbortSignal,
+): Promise<(YouTubeSearchResult & { url: string; source: "youtube-music" | "youtube" }) | null> {
+  signal?.throwIfAborted();
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  try {
+    const results = await deps.searchMusic(trimmed, signal);
+    signal?.throwIfAborted();
+    const top = results.find(isPlayableSearchResult);
+    if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube-music" };
+  } catch (err) {
+    signal?.throwIfAborted();
+    if (err instanceof Error && err.name === "AbortError") throw err;
+    console.warn("[YouTube] Music search failed, falling back to YouTube search:", (err as Error)?.message ?? err);
+  }
+
+  signal?.throwIfAborted();
+  const results = await deps.searchVideos(trimmed, signal);
+  signal?.throwIfAborted();
+  const top = results.find(isPlayableSearchResult);
+  if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube" };
+  return null;
+}
+
+/** Best YouTube watch URL for an artist + title pair (Apple Music / Spotify tracks), or null. */
+export async function trackToYouTubeUrl(track: { artist?: string; title: string }): Promise<string | null> {
+  const query = [track.artist, track.title].filter(Boolean).join(" ").trim();
+  if (!query) return null;
+  return (await findSongForQuery(query))?.url ?? null;
 }

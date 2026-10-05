@@ -42,7 +42,8 @@ for (const width of [1400, 390]) {
     await signIn(page, request);
     await page.goto('/media-bots?tab=radio&server=1');
     // With no running bot, Play stays visible but disabled and points at Bot Hub.
-    await expect(page.getByRole('link', { name: 'Bot Hub' })).toHaveAttribute('href', '/bot-hub');
+    // exact: header idle pill also links to Bot Hub (aria-label "Open Bot Hub").
+    await expect(page.getByRole('link', { name: 'Bot Hub', exact: true })).toHaveAttribute('href', '/bot-hub');
     await expect(page.getByRole('button', { name: 'Play Original station' })).toBeDisabled();
     await expect(page.getByText('Start a bot on this server to play stations here')).toBeVisible();
     await page.getByRole('button', { name: /^Edit / }).click();

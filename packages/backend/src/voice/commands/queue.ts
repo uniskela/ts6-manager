@@ -5,9 +5,28 @@ import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
+/** Abort pending song searches when the bot's media request is replaced or stopped. */
+const chatMediaControllers = new Map<number, AbortController>();
+
+/** One cancellation identity spans song search, channel movement, and queue insertion. */
+export interface ChatMediaRequest {
+  signal: AbortSignal;
+  isCancelled(): boolean;
+}
+
+/** Start a request using the same generation as background playlist expansion. */
+export function beginChatMediaRequest(botId: number): ChatMediaRequest {
+  invalidateChatPlaylistExpansion(botId);
+  const generation = chatPlaylistGeneration.get(botId);
+  const controller = new AbortController();
+  chatMediaControllers.set(botId, controller);
+  return { signal: controller.signal, isCancelled: () => chatPlaylistGeneration.get(botId) !== generation };
+}
 
 /** Advance a bot’s generation so pending background playlist work is discarded. */
 export function invalidateChatPlaylistExpansion(botId: number): void {
+  chatMediaControllers.get(botId)?.abort();
+  chatMediaControllers.delete(botId);
   chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
 }
 
@@ -21,10 +40,11 @@ export async function enqueueMediaUrl(
   bot: VoiceBot,
   userClid: number,
   rawUrl: string,
+  request = beginChatMediaRequest(botId),
 ): Promise<void> {
+  if (request.isCancelled()) return;
   await context.joinChannelForCommand(botId, bot, userClid);
-  const generation = (chatPlaylistGeneration.get(botId) ?? 0) + 1;
-  chatPlaylistGeneration.set(botId, generation);
+  if (request.isCancelled()) return;
   let firstCall = true;
   let alreadyPlaying = false;
 
@@ -35,7 +55,7 @@ export async function enqueueMediaUrl(
         const isFirst = firstCall;
         firstCall = false;
         const live = context.voiceBotManager.getBot(botId);
-        if (!live || chatPlaylistGeneration.get(botId) !== generation) return;
+        if (!live || request.isCancelled()) return;
         if (isFirst) alreadyPlaying = live.status === 'playing' || live.status === 'paused';
         live.queue.add(item);
         context.saveMusicRequest(live, item);
@@ -50,7 +70,7 @@ export async function enqueueMediaUrl(
         }
       },
       enqueue: (item) => {
-        if (chatPlaylistGeneration.get(botId) !== generation) return;
+        if (request.isCancelled()) return;
         const live = context.voiceBotManager.getBot(botId);
         if (!live || live.status === 'stopped' || live.status === 'error') return;
         live.queue.add(item);
@@ -60,7 +80,7 @@ export async function enqueueMediaUrl(
         const live = context.voiceBotManager.getBot(botId);
         return Boolean(live && live.status === 'connected' && !live.nowPlaying);
       },
-      isCancelled: () => chatPlaylistGeneration.get(botId) !== generation,
+      isCancelled: request.isCancelled,
     },
     { url: rawUrl, enqueueOnly: false },
     {
@@ -69,6 +89,8 @@ export async function enqueueMediaUrl(
       },
     },
   );
+
+  if (request.isCancelled()) return;
 
   const pendingTotal = result.queuedInBackground;
   const playlistNote =

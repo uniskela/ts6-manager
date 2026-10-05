@@ -44,8 +44,9 @@ Streaming defaults also offer **Performance / Balanced / Quality** profiles (def
 | H.264 (software) | H.264 | `libx264`, offered as **Constrained High** — the only H.264 profile the TeamSpeak client renders |
 | VP8 / VP9 / H.264 (VAAPI) | same | GPU encode through VAAPI; H.264 uses Constrained High as well |
 | H.264 (NVENC) | H.264 | GPU encode on NVIDIA; Constrained High. NVIDIA has no VP8 or VP9 encoder |
+| H.264 (AMF) | H.264 | AMD GPU encode with a native Windows sidecar and AMF-enabled FFmpeg; explicitly requests Constrained High (`-profile:v constrained_high`) with no B frames for TeamSpeak |
 
-**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
+**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, H.264 on AMF, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
 
 If a hardware encoder cannot open the device or exits during startup, the sidecar restarts with the software encoder **of the same codec** (so connected viewers keep working) and the stream panel shows the fallback and its reason. Use **Check encoders** under *Streaming defaults* to run the test encodes on demand; routine status polling never runs them.
 
@@ -77,6 +78,111 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
 4. Optionally set `VIDEO_HW_DECODE=1` on the sidecar to decode on the GPU too (`-hwaccel cuda`).
 
 NVENC encodes H.264 only. The preset is `p4` with the low-latency tune; `VIDEO_NVENC_PRESET` changes the preset. When the host has no NVIDIA GPU or container runtime, **Check encoders** shows **NVIDIA GPU/runtime not present** on that row instead of ffmpeg's generic parameter hint. A summarized ffmpeg error stays under **ffmpeg output**.
+
+### AMD AMF (Windows)
+
+AMF is a supported production encoder when the media sidecar runs **natively on Windows**, with a compatible AMD GPU/driver and an AMF-enabled Windows FFmpeg build. The Linux Docker sidecar cannot use Windows AMF directly. VAAPI requires `/dev/dri`; NVENC needs a working NVIDIA driver (and NVIDIA container runtime when containerized); AMF needs neither. Windows-native NVENC and software encoders remain available when that FFmpeg build and hardware support them. On hosts without AMF, its test encode fails normally and Auto can choose another encoder.
+
+Download a Windows FFmpeg build with AMF support from a provider listed on the [FFmpeg download page](https://ffmpeg.org/download.html#build-windows), extract it, and add the directory containing `ffmpeg.exe` and its companion `ffprobe.exe` to `PATH` (or configure their full paths below). Use a compatible AMD Windows graphics driver. Verify in PowerShell:
+
+```powershell
+ffmpeg -hide_banner -encoders | Select-String "amf"
+```
+
+The output must include `h264_amf`. AV1/HEVC AMF encoders may also be present, but TS6 Manager currently selects only H.264 AMF. The capability check performs a real small encode; an encoder appearing in this list alone does not prove the driver can initialize it.
+
+Native Windows production deployments currently build the sidecar from source. TODO: publish automated Windows release artifacts separately. This is the normal cross-platform media sidecar; AMF is one runtime capability.
+
+Build the sidecar from the same checkout/release as the backend, using Go 1.25 or newer. From the repository root:
+
+```powershell
+New-Item -ItemType Directory -Force .\bin | Out-Null
+Push-Location .\packages\sidecar
+try {
+    go build -o ..\..\bin\sidecar.exe .
+    if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
+} finally { Pop-Location }
+```
+
+Configure a strong `SIDECAR_SECRET` in the backend environment and pass exactly the same value to the Windows process. The following example reads only that entry from a local `.env` file without printing it (supports the simple unquoted or quoted values used by the example). Supply secrets through your service environment/secret store for unattended production operation:
+
+```powershell
+$secretLine = Get-Content -LiteralPath .\.env |
+    Where-Object { $_ -match '^\s*SIDECAR_SECRET\s*=' } |
+    Select-Object -Last 1
+if (-not $secretLine) { throw "SIDECAR_SECRET is MISSING in .env" }
+$env:SIDECAR_SECRET = ($secretLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
+if (-not $env:SIDECAR_SECRET) { throw "SIDECAR_SECRET is MISSING in .env" }
+Remove-Variable secretLine
+
+$env:SIDECAR_PORT = "9800"
+$env:FFMPEG_PATH = (Get-Command ffmpeg -ErrorAction Stop).Source
+$env:FFPROBE_PATH = (Get-Command ffprobe -ErrorAction Stop).Source
+# Choose a persistent Windows directory containing the backend's shared files.
+New-Item -ItemType Directory -Force .\media | Out-Null
+$env:MUSIC_DIR = (Resolve-Path .\media).Path
+$env:WEBRTC_UDP_PORT = "10000"
+$env:WEBRTC_NAT1TO1_IP = "127.0.0.1" # Browser preview on this Windows host only.
+.\bin\sidecar.exe
+```
+
+For TeamSpeak viewers, or browsers on another machine, replace the advertised IP with the Windows host's **reachable LAN or Tailscale IPv4** before starting the sidecar. You may advertise both `127.0.0.1` and that IPv4 as a comma-separated list. The TeamSpeak client does not use loopback even on the same machine. `WEBRTC_UDP_PORT` is owned by the native process; it requires no Docker mapping, and the Docker-only `WEBRTC_BIND_IP` setting does not apply.
+
+Set the backend's `SIDECAR_URL` to the Windows host's private HTTP address. A Docker Desktop backend on the same Windows machine uses `http://host.docker.internal:9800`; a backend on another machine uses a reachable private LAN/Tailscale address instead. Keep the HTTP API private and trusted: the native HTTP listener and fixed UDP mux listen on all interfaces. Windows Firewall must allow TCP `9800` **only from the backend's trusted address/network** (including the Docker Desktop path when used), and UDP `10000` from intended viewers. Do not expose TCP `9800` to the public Internet; its mutating endpoints require the shared bearer secret, but health/status endpoints are not a substitute for network isolation. Use a private encrypted network or HTTPS reverse proxy when the backend is across machines. Do not disable the firewall to troubleshoot connectivity.
+
+Local video files and downloaded clips must be accessible to both processes. Mount the Windows media directory into the backend at its `MUSIC_DIR` (for example `/data/music`) and set the sidecar's `MUSIC_DIR` to the Windows path to those **same files**. The backend sends a portable `music://filename` reference for local sources under its music root; the sidecar resolves it under its own root and rejects traversal. Existing absolute paths remain supported for deployments sharing one path, and HTTP/HTTPS media URLs are unchanged. A shared directory is still required: the reference does not transfer file contents.
+
+In a second PowerShell window, verify health and then open **Streaming defaults → Check encoders**. **H.264 (AMF)** should show available and hardware; its FFmpeg diagnostics remain visible on failure. Select AMF explicitly, or enable **Auto prefers hardware**. AMF uses software decoding, NV12 frames in system memory, explicitly requests H.264 Constrained High (`-profile:v constrained_high`) and disables B frames. AMF's plain High profile is a separate setting; disabling B frames alone does not select Constrained High. `VIDEO_HW_DECODE` currently applies only to VAAPI/NVENC. Software fallback stays H.264 (`libx264`).
+
+```powershell
+Invoke-RestMethod http://localhost:9800/health
+# For the PR-test container; adapt the container name for your deployment:
+docker exec ts6-pr-backend curl -fsS http://host.docker.internal:9800/health
+```
+
+### Windows AMF PR-test
+
+The dedicated `docker-compose.pr-test.windows-amf.yml` builds **TeamSpeak, backend and frontend only**. Run it alone, rather than combining it with the normal PR-test compose, which still runs a Linux Docker sidecar for software/VAAPI/NVENC testing. Both harnesses use the same container names and persistent data volumes; stop the other harness before switching.
+
+Requirements: Docker Desktop with Linux containers, Go, Windows FFmpeg/ffprobe, and the checkout containing this feature. From the repository root in PowerShell:
+
+```powershell
+# Once, if .env does not already exist; this contains disposable test secrets.
+if (-not (Test-Path .\.env)) { Copy-Item .\.env.pr-test.example .\.env }
+New-Item -ItemType Directory -Force .\bin, .\.pr-test\music | Out-Null
+Push-Location .\packages\sidecar
+try {
+    go build -o ..\..\bin\sidecar.exe .
+    if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
+} finally { Pop-Location }
+
+$secretLine = Get-Content -LiteralPath .\.env |
+    Where-Object { $_ -match '^\s*SIDECAR_SECRET\s*=' } |
+    Select-Object -Last 1
+if (-not $secretLine) { throw "SIDECAR_SECRET is MISSING in .env" }
+$env:SIDECAR_SECRET = ($secretLine -split '=', 2)[1].Trim().Trim('"').Trim("'")
+if (-not $env:SIDECAR_SECRET) { throw "SIDECAR_SECRET is MISSING in .env" }
+Remove-Variable secretLine
+$env:SIDECAR_PORT = "9800"
+$env:FFMPEG_PATH = (Get-Command ffmpeg -ErrorAction Stop).Source
+$env:FFPROBE_PATH = (Get-Command ffprobe -ErrorAction Stop).Source
+$env:MUSIC_DIR = (Resolve-Path .\.pr-test\music).Path
+$env:WEBRTC_UDP_PORT = "10000"
+$env:WEBRTC_NAT1TO1_IP = "127.0.0.1" # Add reachable LAN/Tailscale IPv4 for TeamSpeak.
+.\bin\sidecar.exe
+```
+
+Keep this terminal running. In a second PowerShell window at the repository root:
+
+```powershell
+docker compose -f docker-compose.pr-test.windows-amf.yml up --build -d
+Invoke-RestMethod http://localhost:9800/health
+docker exec ts6-pr-backend curl -fsS http://host.docker.internal:9800/health
+```
+
+Open `http://localhost:3000/setup`, create an admin and log in. The bundled TeamSpeak connection is seeded as in the normal PR test. Under **Media Library → Streaming defaults**, run **Check encoders**, then select **H.264 (AMF)** or Auto with hardware preference. Test a downloaded video and a file copied into `.pr-test/music`; the backend sees `/data/music` while the native sidecar sees the Windows directory. Use a reachable advertised IPv4 and the restricted UDP firewall allowance described above when testing TeamSpeak viewing. All Docker published ports in this harness bind `127.0.0.1`; no Docker service publishes UDP `10000` or HTTP `9800`.
+
+Stop the stack with `docker compose -f docker-compose.pr-test.windows-amf.yml down`, then stop the native sidecar with Ctrl+C. Downloaded/local media in `.pr-test/music` persists independently of Docker named volumes.
 
 ## Source type and stream health
 
@@ -201,7 +307,7 @@ If a stream does not start, check:
 
 1. the backend can reach `SIDECAR_URL`, and the sidecar image is the same release as the backend (an older sidecar ignores encoder selection and always sends VP8 — the stream panel says so);
 2. backend and sidecar use the same `SIDECAR_SECRET`;
-3. the media volume is mounted at the same path in both containers; and
+3. both processes see the same media files under their own `MUSIC_DIR` (portable local-video references allow different Linux/Windows paths; legacy absolute references need matching paths); and
 4. the source URL is still available to yt-dlp/FFmpeg.
 
 Use the Runtime / media strip in **Media Library → Streaming defaults** or beside the IPTV channel browser (**Refresh**) for a bounded on-demand sidecar and tool probe. Routine music-bot status polling does not call the sidecar health endpoint.

@@ -82,25 +82,65 @@ func getMusicDir() string {
 	return envOrDefault("MUSIC_DIR", "/data/music")
 }
 
-func validSource(source string) error {
-	if source == "" {
-		return nil
+// Portable references contain one allowlisted filename, never an OS path or URL escapes.
+var musicSourceName = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,200}|\.stream-[0-9]+\.mp4)$`)
+
+func resolveMusicSource(source string) (string, error) {
+	if !strings.HasPrefix(source, "music://") {
+		return source, nil
 	}
-	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		return nil
+	name := strings.TrimPrefix(source, "music://")
+	if !musicSourceName.MatchString(name) {
+		return "", fmt.Errorf("music source must be a filename under MUSIC_DIR")
+	}
+	root, err := filepath.Abs(getMusicDir())
+	if err != nil {
+		return "", fmt.Errorf("invalid MUSIC_DIR: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("invalid MUSIC_DIR: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, name))
+	if err != nil {
+		return "", fmt.Errorf("local music source not found: %w", err)
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("local source must be under MUSIC_DIR")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("local music source must be a regular file")
+	}
+	return resolved, nil
+}
+
+// resolveSource validates local paths and translates portable shared-file references.
+func resolveSource(source string) (string, error) {
+	if strings.HasPrefix(source, "music://") {
+		return resolveMusicSource(source)
+	}
+	if source == "" || isRemoteSource(source) {
+		return source, nil
 	}
 	absSource, err := filepath.Abs(source)
 	if err != nil {
-		return fmt.Errorf("invalid source path: %w", err)
+		return "", fmt.Errorf("invalid source path: %w", err)
 	}
 	absMusic, err := filepath.Abs(getMusicDir())
 	if err != nil {
-		return fmt.Errorf("invalid MUSIC_DIR: %w", err)
+		return "", fmt.Errorf("invalid MUSIC_DIR: %w", err)
 	}
 	if absSource != absMusic && !strings.HasPrefix(absSource, absMusic+string(os.PathSeparator)) {
-		return fmt.Errorf("local source must be under MUSIC_DIR")
+		return "", fmt.Errorf("local source must be under MUSIC_DIR")
 	}
-	return nil
+	return source, nil
+}
+
+func validSource(source string) error {
+	_, err := resolveSource(source)
+	return err
 }
 
 // validAudioSource checks the optional second input: a remote URL carrying
@@ -235,10 +275,27 @@ func (s *Sidecar) resetSyncTiming() {
 	s.timingMu.Lock()
 	defer s.timingMu.Unlock()
 
+	// Keep the run's clock line, which the next run's timestamps carry on.
+	s.prevVideoLine = clockLine{}
+	s.prevAudioLine = clockLine{}
+	s.prevLineMinElapsed = 0
+	if s.streamBaseSet {
+		if s.videoTiming.initialized {
+			s.prevVideoLine = clockLine{valid: true, base: s.videoTiming.baseRTP, wall: s.streamBaseWall}
+			s.prevLineMinElapsed = max(s.prevLineMinElapsed, s.videoRTP.leadOn(s.prevVideoLine))
+		}
+		if s.audioTiming.initialized {
+			s.prevAudioLine = clockLine{valid: true, base: s.audioTiming.baseRTP, wall: s.streamBaseWall}
+			s.prevLineMinElapsed = max(s.prevLineMinElapsed, s.audioRTP.leadOn(s.prevAudioLine))
+		}
+	}
 	s.streamBaseWall = time.Time{}
 	s.streamBaseSet = false
 	s.videoTiming = TrackTiming{}
 	s.audioTiming = TrackTiming{}
+	// The next FFmpeg run starts its RTP numbering afresh.
+	s.videoRTP.markRestart()
+	s.audioRTP.markRestart()
 }
 
 func (s *Sidecar) drainRTPQueues() {
@@ -588,6 +645,16 @@ type Sidecar struct {
 	// The most one track is held back to meet the other, and the longest the
 	// first track waits for the other to start.
 	maxTrackDelay time.Duration
+
+	// Outgoing RTP numbering, kept continuous across FFmpeg restarts.
+	videoRTP rtpContinuity
+	audioRTP rtpContinuity
+	// The previous run's clock lines, guarded by timingMu.
+	prevVideoLine clockLine
+	prevAudioLine clockLine
+	// prevLineMinElapsed is how far along the previous lines the next run
+	// must start, so that neither track steps back from its last packet.
+	prevLineMinElapsed time.Duration
 }
 
 func NewSidecar() *Sidecar {
@@ -602,6 +669,8 @@ func NewSidecar() *Sidecar {
 		videoQueue: make(chan queuedPacket, envIntOrDefault("VIDEO_QUEUE_SIZE", 4096)),
 		audioQueue: make(chan queuedPacket, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
 	}
+	s.videoRTP.clockRate = 90000
+	s.audioRTP.clockRate = 48000
 	s.streamCodec.Store(codecVP8)
 	return s
 }
@@ -673,6 +742,7 @@ func (s *Sidecar) readVideoRTP() {
 			continue
 		}
 
+		s.continueRTP("video", cloned, s.currentCodec(), arrived)
 		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("video", cloned.Timestamp, arrived)}
 		select {
 		case s.videoQueue <- q:
@@ -717,6 +787,7 @@ func (s *Sidecar) readAudioRTP() {
 			continue
 		}
 
+		s.continueRTP("audio", cloned, "", arrived)
 		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("audio", cloned.Timestamp, arrived)}
 		select {
 		case s.audioQueue <- q:
@@ -1476,8 +1547,9 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	s.ffmpegLock.Lock()
 	defer s.ffmpegLock.Unlock()
 
-	if err := validSource(req.Source); err != nil {
-		log.Printf("[FFmpeg] Rejected source: %v", err)
+	var err error
+	req.Source, err = resolveSource(req.Source)
+	if err != nil {
 		return EncoderSession{}, err
 	}
 	if err := validAudioSource(req.Source, req.AudioSource); err != nil {

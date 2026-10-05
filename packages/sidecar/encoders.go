@@ -27,11 +27,12 @@ const (
 const h264ConstrainedHighFmtp = "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c1f"
 
 // GPU backends a hardware encoder can run on. VAAPI (Intel, AMD) opens a DRM
-// render node and takes frames uploaded to it; NVENC (NVIDIA) opens the GPU
-// through the driver's own libraries and takes frames from system memory.
+// render node and takes frames uploaded to it; NVENC (NVIDIA) and AMF (AMD,
+// native Windows) open the GPU through driver libraries and take system-memory frames.
 const (
 	backendVAAPI = "vaapi"
 	backendNVENC = "nvenc"
+	backendAMF   = "amf"
 )
 
 // Browsers do not list Constrained High, so a browser answers an offer of
@@ -87,6 +88,7 @@ var encoderOrder = []EncoderSpec{
 	{ID: "vp9_vaapi", Codec: codecVP9, FFmpeg: "vp9_vaapi", Hardware: true, Backend: backendVAAPI},
 	{ID: "h264_vaapi", Codec: codecH264, FFmpeg: "h264_vaapi", Hardware: true, Backend: backendVAAPI},
 	{ID: "h264_nvenc", Codec: codecH264, FFmpeg: "h264_nvenc", Hardware: true, Backend: backendNVENC},
+	{ID: "h264_amf", Codec: codecH264, FFmpeg: "h264_amf", Hardware: true, Backend: backendAMF},
 }
 
 func lookupEncoder(id string) (EncoderSpec, bool) {
@@ -168,8 +170,8 @@ func uploadFilter(spec EncoderSpec) string {
 	switch spec.Backend {
 	case backendVAAPI:
 		return "format=nv12,hwupload"
-	case backendNVENC:
-		// NVENC uploads system-memory frames itself, so there is no hwupload.
+	case backendNVENC, backendAMF:
+		// NVENC and AMF upload system-memory frames themselves, without hwupload.
 		// The 4:2:0 format is not optional: handed anything else, h264_nvenc
 		// switches to High 4:4:4 Predictive and ignores -profile:v, a profile
 		// the TeamSpeak client cannot decode.
@@ -249,6 +251,9 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 		args = []string{"-c:v", "vp9_vaapi", "-bf", "0"}
 	case "h264_vaapi":
 		args = []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-bf", "0"}
+	case "h264_amf":
+		// AMF distinguishes Constrained High from High, even without B-frames.
+		args = []string{"-c:v", "h264_amf", "-profile:v", "constrained_high", "-bf", "0"}
 	case "h264_nvenc":
 		args = []string{
 			"-c:v", "h264_nvenc",
