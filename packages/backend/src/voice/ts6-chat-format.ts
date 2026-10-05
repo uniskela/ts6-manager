@@ -183,3 +183,10 @@ export function formatRadioListMessage(
   lines.push('_Play with `!radio <id>`_');
   return lines.join('\n');
 }
+
+/** Reply for a `!command` no bot, custom command or flow handles. */
+export function formatUnknownCommandMessage(command: string, suggestion: string | null): string {
+  const shown = command.length > 32 ? `${command.slice(0, 32)}…` : command;
+  const hint = suggestion ? ` Did you mean **!${suggestion}**?` : '';
+  return `Unknown command **!${shown}**.${hint} Type **!help** for music commands or **!commands** for custom ones.`;
+}

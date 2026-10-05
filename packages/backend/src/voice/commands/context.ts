@@ -5,6 +5,9 @@ import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import type { findSongForQuery } from '../audio/youtube.js';
 
+/** Whether a running bot flow on this server/SID answers `!commandName`. */
+export type FlowCommandLookup = (serverConfigId: number, virtualServerId: number, commandName: string) => boolean;
+
 export interface BotChannelConfig {
   serverConfigId: number;
   virtualServerId: number;
@@ -151,6 +154,7 @@ export interface CommandContext extends CommandMethods {
   voiceBotManager: VoiceBotManager;
   registeredBots: Set<number>;
   eventBridge: EventBridge | null;
+  readonly flowCommandLookup: FlowCommandLookup | null;
   eventBridgeListening: boolean;
   botChannelConfig: Map<number, BotChannelConfig>;
   channelToBots: Map<string, Set<number>>;

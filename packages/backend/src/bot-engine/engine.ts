@@ -310,8 +310,24 @@ export class BotEngine {
     this.flowRunner.setVoiceBotManager(manager);
   }
 
+  /** True when a running flow on this server/SID has a `!name` command trigger (case-insensitive). */
+  hasCommandFlow(configId: number, sid: number, commandName: string): boolean {
+    const wanted = commandName.toLowerCase();
+    for (const flow of this.flows.values()) {
+      if (flow.serverConfigId !== configId || flow.virtualServerId !== sid) continue;
+      for (const t of flow.triggerNodes) {
+        const td: any = t.data;
+        if (td?.triggerType !== 'command') continue;
+        if ((td.commandPrefix || '!') !== '!') continue;
+        if (String(td.commandName || '').toLowerCase() === wanted) return true;
+      }
+    }
+    return false;
+  }
+
   setMusicCommandHandler(handler: MusicCommandHandler): void {
     this.musicCommandHandler = handler;
+    handler.setFlowCommandLookup((configId, sid, name) => this.hasCommandFlow(configId, sid, name));
     // Music bots may need SSH (command listeners / auto-discovery) even with no flows.
     if (this.running) {
       void this.syncSessionOwnership();

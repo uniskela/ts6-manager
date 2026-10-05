@@ -139,6 +139,8 @@ With no name, the bot that is playing, paused or streaming answers. If none is, 
 
 Seeded presets start **disabled**. Edit the placeholder Markdown, then enable. `!commands` is a built-in that lists enabled customs (also shown under Custom in `!help`). Multiple bots on the same channel only send one informational reply (`!help` / `!commands` / customs) per user within a short cooldown.
 
+A `!command` that is not built in, not an enabled custom command and not a Bot Flow command trigger gets a short **Unknown command** reply pointing to `!help` and `!commands`, with a "Did you mean…" hint for near-miss typos such as `!plya`.
+
 ## Download progress
 
 Explicit library downloads run as bounded background jobs and can expose:

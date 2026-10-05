@@ -3,7 +3,7 @@ import type { VoiceBotManager } from '../voice-bot-manager.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
-import type { BotChannelConfig, CommandContext } from './context.js';
+import type { BotChannelConfig, CommandContext, FlowCommandLookup } from './context.js';
 import * as routing from './routing.js';
 import * as channelOwnership from './channel-ownership.js';
 import * as playback from './playback.js';
@@ -18,6 +18,7 @@ import { findSongForQuery } from '../audio/youtube.js';
 export class MusicCommandHandler {
   private registeredBots = new Set<number>();
   private eventBridge: EventBridge | null = null;
+  private flowCommandLookup: FlowCommandLookup | null = null;
   private eventBridgeListening = false;
   private botChannelConfig = new Map<number, BotChannelConfig>();
   private channelToBots = new Map<string, Set<number>>();
@@ -48,6 +49,7 @@ export class MusicCommandHandler {
       get registeredBots() { return handler.registeredBots; },
       get eventBridge() { return handler.eventBridge; },
       set eventBridge(value) { handler.eventBridge = value; },
+      get flowCommandLookup() { return handler.flowCommandLookup; },
       get eventBridgeListening() { return handler.eventBridgeListening; },
       set eventBridgeListening(value) { handler.eventBridgeListening = value; },
       get botChannelConfig() { return handler.botChannelConfig; },
@@ -127,6 +129,11 @@ export class MusicCommandHandler {
       handleViewers: (...args) => handler.handleViewers(...args),
       saveMusicRequest: (...args) => handler.saveMusicRequest(...args),
     };
+  }
+
+  /** Lets the bot engine say which `!commands` its flows handle, so they are not reported as unknown. */
+  setFlowCommandLookup(lookup: FlowCommandLookup): void {
+    this.flowCommandLookup = lookup;
   }
 
   setEventBridge(bridge: EventBridge): void {
