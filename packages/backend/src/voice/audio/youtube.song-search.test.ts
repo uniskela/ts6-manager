@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
   findSongForQuery,
+  parseFlatSearchOutput,
   isSpotifyShareUrl,
   spotifySearchQueryFromOg,
   youTubeMusicSongSearchUrl,
@@ -18,6 +19,27 @@ describe("youTubeMusicSongSearchUrl", () => {
       youTubeMusicSongSearchUrl("AC/DC & friends #1"),
       "https://music.youtube.com/search?q=AC%2FDC%20%26%20friends%20%231#songs",
     );
+  });
+});
+
+describe("parseFlatSearchOutput", () => {
+  it("maps yt-dlp Music search lines and lets findSongForQuery pick the first playable song", async () => {
+    const stdout = [
+      "[youtube:music:search_url] Downloading API JSON",
+      JSON.stringify({ _type: "url", id: "MPREb_abcdefghijk", title: "Album result" }),
+      JSON.stringify({ _type: "url", id: "fJ9rUzIMcZQ", title: "Bohemian Rhapsody", artists: ["Queen"], duration: 355 }),
+      "not json",
+    ].join("\n");
+    const parsed = parseFlatSearchOutput(stdout);
+    assert.equal(parsed.length, 2);
+    assert.equal(parsed[1].artist, "Queen");
+
+    const found = await findSongForQuery("bohemian rhapsody", {
+      searchMusic: async () => parsed,
+      searchVideos: async () => { throw new Error("should not fall back"); },
+    });
+    assert.equal(found?.id, "fJ9rUzIMcZQ");
+    assert.equal(found?.source, "youtube-music");
   });
 });
 

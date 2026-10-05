@@ -46,9 +46,14 @@ test('mistyped built-in suggests the closest command', async () => {
 
 test('custom commands and flow commands are not reported as unknown', async () => {
   const f = fixture({ rules: { response: 'Be nice', enabled: true }, off: { response: 'x', enabled: false } });
-  f.handler.setFlowCommandLookup((cfg: number, sid: number, name: string) => cfg === 9 && sid === 1 && name === 'roll');
+  const seen: string[] = [];
+  f.handler.setFlowCommandLookup((cfg: number, sid: number, message: string) => {
+    seen.push(message);
+    return cfg === 9 && sid === 1 && /^!roll extra( |$)/i.test(message);
+  });
   await f.command('!rules');
-  await f.command('!roll 20');
+  await f.command('!roll extra 20');
+  assert.deepEqual(seen, ['!roll extra 20'], 'flow lookup sees the full chat line');
   assert.deepEqual(f.replies, ['Be nice']);
   await f.command('!off');
   assert.match(f.replies.at(-1)!, /Unknown command \*\*!off\*\*/);

@@ -925,7 +925,12 @@ export async function searchYouTubeMusic(query: string, maxResults: number = 5):
     throw new Error(`yt-dlp music search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
   }
 
-  return result.stdout
+  return parseFlatSearchOutput(result.stdout);
+}
+
+/** Parse yt-dlp `--flat-playlist --dump-json` output (one JSON entry per line). */
+export function parseFlatSearchOutput(stdout: string): YouTubeSearchResult[] {
+  return stdout
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line.startsWith("{"))

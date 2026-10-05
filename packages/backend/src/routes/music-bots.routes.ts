@@ -548,8 +548,10 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
       if (err instanceof AppError || typeof err?.statusCode === 'number') throw err;
       const message = err?.message ?? String(err);
       const isResolutionError =
-        message === 'Could not resolve any tracks from that Apple Music URL'
-        || message.startsWith('No YouTube match for Apple Music track:')
+        /^Could not resolve any tracks from that (Apple Music|Spotify) URL$/.test(message)
+        || /^No YouTube match for (Apple Music|Spotify) track:/.test(message)
+        || message.startsWith('No YouTube match found for Spotify title:')
+        || message.startsWith('Could not read the tracks of that Spotify')
         || message === 'Could not resolve any videos from that playlist URL'
         || message === 'Could not resolve that YouTube URL';
       throw new AppError(isResolutionError ? 502 : 500, isResolutionError ? message : `Failed to play URL: ${message}`);

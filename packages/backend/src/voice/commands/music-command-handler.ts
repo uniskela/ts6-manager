@@ -255,8 +255,14 @@ export class MusicCommandHandler {
     return info.handleHelpCrossChannel(this.context, configId, sid, channelId, data);
   }
 
-  private handleCustomCommand(botId: number, bot: VoiceBot, userClid: number, command: string): Promise<void> {
-    return info.handleCustomCommand(this.context, botId, bot, userClid, command);
+  private handleCustomCommand(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    command: string,
+    message?: string,
+  ): Promise<void> {
+    return info.handleCustomCommand(this.context, botId, bot, userClid, command, message);
   }
 
   private reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void> {

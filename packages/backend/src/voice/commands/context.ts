@@ -5,8 +5,8 @@ import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import type { findSongForQuery } from '../audio/youtube.js';
 
-/** Whether a running bot flow on this server/SID answers `!commandName`. */
-export type FlowCommandLookup = (serverConfigId: number, virtualServerId: number, commandName: string) => boolean;
+/** Whether a running bot flow on this server/SID answers this full chat line (e.g. `!roll extra 20`). */
+export type FlowCommandLookup = (serverConfigId: number, virtualServerId: number, message: string) => boolean;
 
 export interface BotChannelConfig {
   serverConfigId: number;
@@ -58,7 +58,7 @@ export interface CommandMethods {
     channelId: number,
     data: Record<string, string>,
   ): Promise<void>;
-  handleCustomCommand(botId: number, bot: VoiceBot, userClid: number, command: string): Promise<void>;
+  handleCustomCommand(botId: number, bot: VoiceBot, userClid: number, command: string, message?: string): Promise<void>;
   reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void>;
   handleRadio(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   joinChannelForCommand(botId: number, bot: VoiceBot, userClid: number): Promise<void>;

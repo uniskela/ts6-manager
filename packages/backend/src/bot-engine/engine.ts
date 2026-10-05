@@ -310,16 +310,23 @@ export class BotEngine {
     this.flowRunner.setVoiceBotManager(manager);
   }
 
-  /** True when a running flow on this server/SID has a `!name` command trigger (case-insensitive). */
-  hasCommandFlow(configId: number, sid: number, commandName: string): boolean {
-    const wanted = commandName.toLowerCase();
+  /**
+   * True when a running flow on this server/SID has a `!` command trigger matching this chat
+   * line (case-insensitive). Like dispatch, the trigger may be several words (`!roll extra`)
+   * and must be followed by the end of the line or a space.
+   */
+  hasCommandFlow(configId: number, sid: number, message: string): boolean {
+    const msg = message.trim().toLowerCase();
     for (const flow of this.flows.values()) {
       if (flow.serverConfigId !== configId || flow.virtualServerId !== sid) continue;
       for (const t of flow.triggerNodes) {
         const td: any = t.data;
         if (td?.triggerType !== 'command') continue;
         if ((td.commandPrefix || '!') !== '!') continue;
-        if (String(td.commandName || '').toLowerCase() === wanted) return true;
+        const name = String(td.commandName || '').toLowerCase();
+        if (!name) continue;
+        const full = `!${name}`;
+        if (msg === full || msg.startsWith(`${full} `)) return true;
       }
     }
     return false;
@@ -327,7 +334,7 @@ export class BotEngine {
 
   setMusicCommandHandler(handler: MusicCommandHandler): void {
     this.musicCommandHandler = handler;
-    handler.setFlowCommandLookup((configId, sid, name) => this.hasCommandFlow(configId, sid, name));
+    handler.setFlowCommandLookup((configId, sid, message) => this.hasCommandFlow(configId, sid, message));
     // Music bots may need SSH (command listeners / auto-discovery) even with no flows.
     if (this.running) {
       void this.syncSessionOwnership();
