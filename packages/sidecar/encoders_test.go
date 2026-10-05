@@ -319,7 +319,7 @@ func TestBuildFFmpegArgsAmf(t *testing.T) {
 	}
 	args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "/data/music/clip.mp4", Width: 1920, Height: 1080, Bitrate: "4500k"}, spec, true), " ")
 	for _, want := range []string{
-		"-c:v h264_amf", "-profile:v high", "-bf 0", ",format=nv12 ",
+		"-c:v h264_amf", "-profile:v constrained_high", "-bf 0", ",format=nv12 ",
 		"-b:v 4500k", "-maxrate 4500k", "-bufsize 9000k", "-g 15",
 	} {
 		if !strings.Contains(args, want) {
@@ -347,7 +347,7 @@ func TestProbeRunsAmfWithoutVaapiDevice(t *testing.T) {
 			run := func(ctx context.Context, args []string) (string, error) {
 				calls++
 				joined := strings.Join(args, " ")
-				for _, want := range []string{"-f lavfi", "-frames:v 3", "-vf format=nv12", "-c:v h264_amf", "-profile:v high", "-bf 0"} {
+				for _, want := range []string{"-f lavfi", "-frames:v 3", "-vf format=nv12", "-c:v h264_amf", "-profile:v constrained_high", "-bf 0"} {
 					if !strings.Contains(joined, want) {
 						t.Errorf("AMF probe missing %q: %s", want, joined)
 					}

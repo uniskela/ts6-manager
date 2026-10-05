@@ -252,8 +252,8 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 	case "h264_vaapi":
 		args = []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-bf", "0"}
 	case "h264_amf":
-		// Constrained High, using shared bitrate/GOP settings below.
-		args = []string{"-c:v", "h264_amf", "-profile:v", "high", "-bf", "0"}
+		// AMF distinguishes Constrained High from High, even without B-frames.
+		args = []string{"-c:v", "h264_amf", "-profile:v", "constrained_high", "-bf", "0"}
 	case "h264_nvenc":
 		args = []string{
 			"-c:v", "h264_nvenc",

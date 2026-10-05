@@ -44,7 +44,7 @@ Streaming defaults also offer **Performance / Balanced / Quality** profiles (def
 | H.264 (software) | H.264 | `libx264`, offered as **Constrained High** — the only H.264 profile the TeamSpeak client renders |
 | VP8 / VP9 / H.264 (VAAPI) | same | GPU encode through VAAPI; H.264 uses Constrained High as well |
 | H.264 (NVENC) | H.264 | GPU encode on NVIDIA; Constrained High. NVIDIA has no VP8 or VP9 encoder |
-| H.264 (AMF) | H.264 | AMD GPU encode with a native Windows sidecar and AMF-enabled FFmpeg; High profile with no B frames, compatible with TeamSpeak's Constrained High contract |
+| H.264 (AMF) | H.264 | AMD GPU encode with a native Windows sidecar and AMF-enabled FFmpeg; explicitly requests Constrained High (`-profile:v constrained_high`) with no B frames for TeamSpeak |
 
 **Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, H.264 on AMF, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
 
@@ -132,7 +132,7 @@ Set the backend's `SIDECAR_URL` to the Windows host's private HTTP address. A Do
 
 Local video files and downloaded clips must be accessible to both processes. Mount the Windows media directory into the backend at its `MUSIC_DIR` (for example `/data/music`) and set the sidecar's `MUSIC_DIR` to the Windows path to those **same files**. The backend sends a portable `music://filename` reference for local sources under its music root; the sidecar resolves it under its own root and rejects traversal. Existing absolute paths remain supported for deployments sharing one path, and HTTP/HTTPS media URLs are unchanged. A shared directory is still required: the reference does not transfer file contents.
 
-In a second PowerShell window, verify health and then open **Streaming defaults → Check encoders**. **H.264 (AMF)** should show available and hardware; its FFmpeg diagnostics remain visible on failure. Select AMF explicitly, or enable **Auto prefers hardware**. AMF uses software decoding, NV12 frames in system memory, H.264 High profile and no B frames; `VIDEO_HW_DECODE` currently applies only to VAAPI/NVENC. Software fallback stays H.264 (`libx264`).
+In a second PowerShell window, verify health and then open **Streaming defaults → Check encoders**. **H.264 (AMF)** should show available and hardware; its FFmpeg diagnostics remain visible on failure. Select AMF explicitly, or enable **Auto prefers hardware**. AMF uses software decoding, NV12 frames in system memory, explicitly requests H.264 Constrained High (`-profile:v constrained_high`) and disables B frames. AMF's plain High profile is a separate setting; disabling B frames alone does not select Constrained High. `VIDEO_HW_DECODE` currently applies only to VAAPI/NVENC. Software fallback stays H.264 (`libx264`).
 
 ```powershell
 Invoke-RestMethod http://localhost:9800/health
