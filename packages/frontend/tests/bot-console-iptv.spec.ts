@@ -271,8 +271,11 @@ test('a channel deep link exposes an accessible star at phone width without stre
   const star = page.getByRole('button', { name: 'Add Morning News to favourites', exact: true });
   await expect(star).toBeVisible();
   const bounds = await star.boundingBox();
-  expect(bounds?.width).toBeGreaterThanOrEqual(44);
-  expect(bounds?.height).toBeGreaterThanOrEqual(44);
+  // Playwright 1.63 can report ~43.9999 for a 44px box; allow tiny measure noise only.
+  const touchMin = 44;
+  const measureEps = 0.01;
+  expect(bounds?.width ?? 0).toBeGreaterThanOrEqual(touchMin - measureEps);
+  expect(bounds?.height ?? 0).toBeGreaterThanOrEqual(touchMin - measureEps);
   await star.click();
   await expect(page.getByRole('button', { name: 'Remove Morning News from favourites', exact: true })).toBeVisible();
   expect(writes).toHaveLength(1);
