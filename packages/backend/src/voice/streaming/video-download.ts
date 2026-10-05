@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
 import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
 import { describeDuration } from './lifecycle.js';
+import { AppError } from '../../middleware/error-handler.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 
@@ -278,7 +279,7 @@ async function resolveTwitchStreamUrl(
     resolved.durationSec != null &&
     resolved.durationSec > maxDurationSec
   ) {
-    throw new Error(
+    throw new VideoSourceRefusedError(
       `Twitch VOD is longer than the ${maxDurationSec}s limit (${Math.round(resolved.durationSec)}s)`,
     );
   }
@@ -386,6 +387,19 @@ function probeVideoDurationSec(filePath: string): Promise<number | null> {
     });
     proc.on('error', () => resolve(null));
   });
+}
+
+/**
+ * A source the server will not stream as configured (over the download length
+ * limit, or a live broadcast that cannot be downloaded). The message tells the
+ * user what to change, so it answers 422 with that message instead of the
+ * generic 500 a plain Error would become.
+ */
+export class VideoSourceRefusedError extends AppError {
+  constructor(message: string) {
+    super(422, message);
+    this.name = 'VideoSourceRefusedError';
+  }
 }
 
 /**
@@ -498,7 +512,7 @@ export async function downloadVideoForStream(
       }
       const skipped = durationFilterSkipMessage(stdout, maxDurationSec);
       if (skipped) {
-        reject(new Error(skipped));
+        reject(new VideoSourceRefusedError(skipped));
         return;
       }
       resolve();
