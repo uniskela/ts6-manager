@@ -50,3 +50,36 @@ test('upcoming returns displayed tracks after the current index (shuffle-aware)'
   );
   assert.equal(queue.upcomingCount, displayed.length - idx - 1);
 });
+
+test('moving with shuffle on moves only the dragged track in the displayed order', () => {
+  const queue = new PlayQueue();
+  for (const title of ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h']) {
+    queue.add({ id: title, title, filePath: '', source: 'local' });
+  }
+  queue.playAt(1);
+  queue.setShuffle(true);
+  const current = queue.current;
+  const before = queue.getAll().map((t) => t.title);
+
+  assert.ok(queue.move(6, 3));
+  const expected = [...before];
+  const [dragged] = expected.splice(6, 1);
+  expected.splice(3, 0, dragged);
+  assert.deepEqual(queue.getAll().map((t) => t.title), expected);
+  assert.equal(queue.current, current);
+  assert.equal(queue.index, 1);
+
+  // Turning shuffle off afterwards still keeps the current track.
+  queue.setShuffle(false);
+  assert.equal(queue.current, current);
+});
+
+test('moving without shuffle keeps the current track playing', () => {
+  const queue = new PlayQueue();
+  for (const title of ['a', 'b', 'c', 'd']) queue.add({ id: title, title, filePath: '', source: 'local' });
+  queue.playAt(1);
+  assert.ok(queue.move(3, 0));
+  assert.deepEqual(queue.getAll().map((t) => t.title), ['d', 'a', 'b', 'c']);
+  assert.equal(queue.current?.title, 'b');
+  assert.equal(queue.move(0, 1.5), false);
+});

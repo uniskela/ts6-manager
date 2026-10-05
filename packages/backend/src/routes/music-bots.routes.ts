@@ -637,7 +637,8 @@ musicBotRoutes.post('/:id/stop-playback', async (req: Request, res: Response, ne
     invalidateChatPlaylistExpansion(id);
     await runMediaAudited(req, bot, 'media.music.stop', async () => {
       if (playlistExpansionGeneration(id) !== stopGeneration) return;
-      bot.queue.clear();
+      // Radio keeps Up next (shown as kept while radio plays); music stop clears it.
+      if (!bot.isStreaming) bot.queue.clear();
       bot.stopAudio();
     });
     res.json({ success: true });
