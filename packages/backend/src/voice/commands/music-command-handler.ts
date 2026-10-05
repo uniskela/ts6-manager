@@ -12,6 +12,7 @@ import * as streaming from './streaming.js';
 import * as info from './info.js';
 import * as summon from './summon.js';
 import * as dedupe from './dedupe.js';
+import { findSongForQuery } from '../audio/youtube.js';
 
 /** Stable facade for voice and SSH chat commands. Implementations live in the command groups. */
 export class MusicCommandHandler {
@@ -101,6 +102,7 @@ export class MusicCommandHandler {
       handleHereCrossChannel: (...args) => handler.handleHereCrossChannel(...args),
       handlePlay: (...args) => handler.handlePlay(...args),
       enqueueMediaUrl: (...args) => handler.enqueueMediaUrl(...args),
+      findSong: (...args) => handler.findSong(...args),
       handlePlaylist: (...args) => handler.handlePlaylist(...args),
       handleRepeat: (...args) => handler.handleRepeat(...args),
       handleSeek: (...args) => handler.handleSeek(...args),
@@ -362,6 +364,10 @@ export class MusicCommandHandler {
 
   private enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string): Promise<void> {
     return queue.enqueueMediaUrl(this.context, botId, bot, userClid, rawUrl);
+  }
+
+  private findSong(query: string): ReturnType<typeof findSongForQuery> {
+    return findSongForQuery(query);
   }
 
   private handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {

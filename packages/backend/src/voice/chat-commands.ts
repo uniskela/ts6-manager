@@ -15,8 +15,8 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'come', usage: '!come [id]', blurb: 'Alias for !here' },
   {
     name: 'play',
-    usage: '!play <url>',
-    blurb: 'Play YouTube / Spotify / Apple Music (song or playlist)',
+    usage: '!play <url|song name>',
+    blurb: 'Play a YouTube / Spotify / Apple Music link, or search YouTube Music by song name',
   },
   { name: 'queue', usage: '!queue [url|show|clear|remove <n>|play <n>]', blurb: 'Show queue or add a URL' },
   { name: 'add', usage: '!add <url>', blurb: 'Alias for !queue <url>' },

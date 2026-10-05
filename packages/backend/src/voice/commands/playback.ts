@@ -71,7 +71,10 @@ export async function handleRadio(
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
 
-/** Resume paused playback or resolve a supplied media URL into the queue. */
+/** Longest free-text query `!play <song name>` sends to search. */
+const MAX_SONG_QUERY_LENGTH = 200;
+
+/** Resume paused playback, or resolve a media URL or song search into the queue. */
 export async function handlePlay(
   context: CommandContext,
   botId: number,
@@ -87,19 +90,31 @@ export async function handlePlay(
       context.reply(bot, userClid, 'Resumed.');
       return;
     }
-    context.reply(bot, userClid, 'Usage: !play <youtube-url|spotify-url|apple-music-url>');
+    context.reply(bot, userClid, 'Usage: !play <url|song name>');
     return;
   }
 
+  let url = args;
   if (!args.startsWith('http://') && !args.startsWith('https://')) {
-    context.reply(bot, userClid, 'Please provide a valid URL. Usage: !play <url>');
-    return;
+    const query = args.trim().slice(0, MAX_SONG_QUERY_LENGTH);
+    context.reply(bot, userClid, `Searching YouTube Music for "${query}"...`);
+    try {
+      const song = await context.findSong(query);
+      if (!song) {
+        context.reply(bot, userClid, `No results for "${query}".`);
+        return;
+      }
+      url = song.url;
+    } catch (err: any) {
+      context.reply(bot, userClid, `Search failed: ${err.message}`);
+      return;
+    }
+  } else {
+    context.reply(bot, userClid, 'Loading...');
   }
-
-  context.reply(bot, userClid, 'Loading...');
 
   try {
-    await context.enqueueMediaUrl(botId, bot, userClid, args);
+    await context.enqueueMediaUrl(botId, bot, userClid, url);
   } catch (err: any) {
     context.reply(bot, userClid, `Failed to play: ${err.message}`);
   }

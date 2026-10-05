@@ -30,7 +30,7 @@ function fixture(status = 'connected') {
     videoSessionInfo: () => null, musicSessionInfo: () => null,
   };
   const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
-  return { bot, command, replies, played, seeks, playlists };
+  return { bot, command, replies, played, seeks, playlists, handler };
 }
 
 test('new commands and aliases are reserved and documented', () => {
@@ -150,4 +150,37 @@ test('commands during a TeamSpeak flood hold are set aside, not run or answered'
   // Plain chat is not a command and is not counted.
   await f.command('hello');
   assert.equal(ignored, 2);
+});
+test('!play <song name> searches YouTube Music and enqueues the top match', async () => {
+  const f = fixture();
+  const searched: string[] = [];
+  const enqueued: string[] = [];
+  f.handler.findSong = async (query: string) => {
+    searched.push(query);
+    return { id: 'dQw4w9WgXcQ', title: 'Never Gonna Give You Up', artist: 'Rick Astley', duration: 213,
+      thumbnail: '', url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', source: 'youtube-music' };
+  };
+  f.handler.enqueueMediaUrl = async (_botId: number, _bot: unknown, _clid: number, url: string) => { enqueued.push(url); };
+  f.handler.joinChannelForCommand = async () => {};
+  await f.command('!play never gonna give you up');
+  assert.deepEqual(searched, ['never gonna give you up']);
+  assert.deepEqual(enqueued, ['https://www.youtube.com/watch?v=dQw4w9WgXcQ']);
+  assert.match(f.replies[0], /Searching YouTube Music for "never gonna give you up"/);
+
+  await f.command('!play https://youtu.be/dQw4w9WgXcQ');
+  assert.equal(searched.length, 1, 'URLs skip search');
+  assert.equal(enqueued.at(-1), 'https://youtu.be/dQw4w9WgXcQ');
+});
+test('!play <song name> reports no results and search failures without enqueueing', async () => {
+  const f = fixture();
+  let enqueued = 0;
+  f.handler.enqueueMediaUrl = async () => { enqueued++; };
+  f.handler.joinChannelForCommand = async () => {};
+  f.handler.findSong = async () => null;
+  await f.command('!play zzzz nothing');
+  assert.match(f.replies.at(-1)!, /No results for "zzzz nothing"/);
+  f.handler.findSong = async () => { throw new Error('yt-dlp missing'); };
+  await f.command('!play anything');
+  assert.match(f.replies.at(-1)!, /Search failed: yt-dlp missing/);
+  assert.equal(enqueued, 0);
 });

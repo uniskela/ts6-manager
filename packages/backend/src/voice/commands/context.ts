@@ -3,6 +3,7 @@ import type { VoiceBotManager } from '../voice-bot-manager.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
+import type { findSongForQuery } from '../audio/youtube.js';
 
 export interface BotChannelConfig {
   serverConfigId: number;
@@ -118,6 +119,7 @@ export interface CommandMethods {
   ): Promise<void>;
   handlePlay(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string): Promise<void>;
+  findSong(query: string): ReturnType<typeof findSongForQuery>;
   handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   handleRepeat(bot: VoiceBot, userClid: number, args: string): void;
   handleSeek(bot: VoiceBot, userClid: number, args: string): Promise<void>;

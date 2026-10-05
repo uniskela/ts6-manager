@@ -841,3 +841,92 @@ export async function searchYouTube(query: string, maxResults: number = 10): Pro
     return [];
   }
 }
+
+/** YouTube Music search URL limited to the Songs section (handled by yt-dlp's music search extractor). */
+export function youTubeMusicSongSearchUrl(query: string): string {
+  return `https://music.youtube.com/search?q=${encodeURIComponent(query)}#songs`;
+}
+
+/** Map one line of yt-dlp `--flat-playlist --dump-json` output; null when it is not a usable entry. */
+function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
+  try {
+    const entry = JSON.parse(line);
+    if (!entry || typeof entry.id !== "string" || !entry.id) return null;
+    return {
+      id: entry.id,
+      title: entry.title || "Unknown",
+      artist:
+        (Array.isArray(entry.artists) && entry.artists[0]) ||
+        entry.artist ||
+        entry.uploader ||
+        entry.channel ||
+        "Unknown",
+      duration: entry.duration || 0,
+      thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Search YouTube Music songs (best match first) using yt-dlp. */
+export async function searchYouTubeMusic(query: string, maxResults: number = 5): Promise<YouTubeSearchResult[]> {
+  const trimmed = query.trim();
+  if (!trimmed) throw new Error("Invalid search query");
+  const result = await runYtDlp(withMediaUrl([
+    ...getCookieArgs(),
+    "--no-warnings",
+    "--flat-playlist",
+    "--dump-json",
+    "--no-download",
+    "--playlist-items",
+    `1-${Math.max(1, Math.floor(maxResults))}`,
+  ], youTubeMusicSongSearchUrl(trimmed)));
+
+  if (result.code !== 0 && !result.stdout.trim()) {
+    throw new Error(`yt-dlp music search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
+  }
+
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("{"))
+    .map(mapFlatSearchEntry)
+    .filter((item): item is YouTubeSearchResult => item !== null);
+}
+
+/** Search entries must be single videos (11-char IDs), not channels or playlists. */
+function isPlayableSearchResult(item: YouTubeSearchResult): boolean {
+  return /^[A-Za-z0-9_-]{11}$/.test(item.id);
+}
+
+export interface SongSearchDeps {
+  searchMusic: (query: string) => Promise<YouTubeSearchResult[]>;
+  searchVideos: (query: string) => Promise<YouTubeSearchResult[]>;
+}
+
+/**
+ * Find the most relevant song for a free-text query: the top YouTube Music song result,
+ * falling back to the top regular YouTube result when Music returns nothing or fails.
+ */
+export async function findSongForQuery(
+  query: string,
+  deps: SongSearchDeps = {
+    searchMusic: (q) => searchYouTubeMusic(q, 1),
+    searchVideos: (q) => searchYouTube(q, 1),
+  },
+): Promise<(YouTubeSearchResult & { url: string; source: "youtube-music" | "youtube" }) | null> {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  try {
+    const top = (await deps.searchMusic(trimmed)).find(isPlayableSearchResult);
+    if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube-music" };
+  } catch (err) {
+    console.warn("[YouTube] Music search failed, falling back to YouTube search:", (err as Error)?.message ?? err);
+  }
+
+  const top = (await deps.searchVideos(trimmed)).find(isPlayableSearchResult);
+  if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube" };
+  return null;
+}

@@ -95,6 +95,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!here [id]`** / **`!come [id]`** — Summon an idle music bot to your channel (or target a bot by ID)
 - **`!commands`** — List enabled custom chat commands only
 - **`!play <url>`** — Play supported media
+- **`!play <song name>`** — Search YouTube Music and play the best match (falls back to a regular YouTube search). Queues it if something is already playing
 - **`!play`** — Resume paused playback
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue
 - **`!add <url>`** — Alias for adding to the queue
