@@ -72,13 +72,15 @@ test('custom !rules routes to enabled server-scoped response', async () => {
   assert.match(replies[0], /Be nice/);
 });
 
-test('disabled custom commands do not reply', async () => {
+test('disabled custom commands answer as unknown, not with their response', async () => {
   const handler = makeHandler([
     { name: 'rules', response: '## Be nice', enabled: false },
   ]);
   const { bot, replies } = makeBot(1);
   await handler.onTextMessage(1, bot, { invokerid: '2', msg: '!rules' }, 5);
-  assert.equal(replies.length, 0);
+  assert.equal(replies.length, 1);
+  assert.doesNotMatch(replies[0], /Be nice/);
+  assert.match(replies[0], /Unknown command \*\*!rules\*\*/);
 });
 
 test('!commands lists only enabled customs', async () => {

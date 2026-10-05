@@ -24,6 +24,21 @@ import crypto from 'crypto';
 /** Max wait for EventBridge registration before arming WebQuery-only bots anyway. */
 const BOT_ARM_FALLBACK_MS = 90_000;
 
+/** Dedicated command listeners and the base connection dispatch different triggers. */
+function matchesCommandTrigger(
+  trigger: CommandTriggerData,
+  message: string,
+  sourceListenerChannelId?: string,
+): boolean {
+  if (trigger.channelId) {
+    if (sourceListenerChannelId !== String(trigger.channelId)) return false;
+  } else if (sourceListenerChannelId) {
+    return false;
+  }
+  const fullCommand = (trigger.commandPrefix || '!') + trigger.commandName;
+  return message === fullCommand || message.startsWith(`${fullCommand} `);
+}
+
 /**
  * Normalize flow data from the frontend editor format to the engine format.
  *
@@ -310,8 +325,29 @@ export class BotEngine {
     this.flowRunner.setVoiceBotManager(manager);
   }
 
+  /**
+   * True when a running flow on this server/SID has a `!` command trigger matching this chat
+   * line from this listener. Matching uses the same case, whitespace, and channel rules
+   * as dispatch, including multiword commands (`!roll extra`).
+   */
+  hasCommandFlow(configId: number, sid: number, message: string, sourceListenerChannelId?: string): boolean {
+    for (const flow of this.flows.values()) {
+      if (flow.serverConfigId !== configId || flow.virtualServerId !== sid) continue;
+      for (const t of flow.triggerNodes) {
+        const td: any = t.data;
+        if (td?.triggerType !== 'command') continue;
+        if ((td.commandPrefix || '!') !== '!') continue;
+        if (matchesCommandTrigger(td, message, sourceListenerChannelId)) return true;
+      }
+    }
+    return false;
+  }
+
   setMusicCommandHandler(handler: MusicCommandHandler): void {
     this.musicCommandHandler = handler;
+    handler.setFlowCommandLookup((configId, sid, message, sourceListenerChannelId) =>
+      this.hasCommandFlow(configId, sid, message, sourceListenerChannelId),
+    );
     // Music bots may need SSH (command listeners / auto-discovery) even with no flows.
     if (this.running) {
       void this.syncSessionOwnership();
@@ -695,27 +731,10 @@ export class BotEngine {
         if (triggerData.triggerType === 'command' && eventName === 'notifytextmessage') {
           const cmdTrigger = triggerData as CommandTriggerData;
 
-          // Backward-compat:
-          // - if trigger has NO channelId => only react to base connection events
-          // - if trigger HAS channelId => only react if event came from that cmd listener OR matches target
-          const sourceListenerCid = data.__cmd_listener_channel_id;
-
-          if (!cmdTrigger.channelId) {
-            if (sourceListenerCid) continue;
-          } else {
-            const required = String(cmdTrigger.channelId);
-
-            // For channel-specific commands: only accept events coming from the dedicated cmd listener
-            if (!sourceListenerCid) continue;
-            if (sourceListenerCid !== required) continue;
-          }
-
           const msg = data.msg || '';
+          if (!matchesCommandTrigger(cmdTrigger, msg, data.__cmd_listener_channel_id)) continue;
           const fullCommand = (cmdTrigger.commandPrefix || '!') + cmdTrigger.commandName;
-          if (!msg.startsWith(fullCommand)) continue;
-
           const afterCmd = msg.substring(fullCommand.length);
-          if (afterCmd.length > 0 && afterCmd[0] !== ' ') continue;
 
           const args = afterCmd.trim();
           const argsParts = args.length > 0 ? args.split(/\s+/).filter(Boolean) : [];

@@ -20,6 +20,7 @@ function fakeDeps(overrides: Partial<MediaUrlPipelineDeps> = {}): MediaUrlPipeli
   return {
     resolveSpotify: async (url) => url,
     resolveAppleMusic: async (): Promise<AppleMusicResolved> => ({ tracks: [] }),
+    resolveSpotifyCollection: async () => null,
     appleTrackToYouTube: async (track) => `https://www.youtube.com/watch?v=${track.title}`,
     expandYouTube: async () => null,
     downloadTrack: async (url) => item(url),
@@ -232,4 +233,44 @@ test('pipeline preserves exact resolution error messages', async () => {
     }),
     { message: 'Could not resolve that YouTube URL' },
   );
+});
+
+test('Spotify playlist queues its tracks instead of a song named after the playlist', async () => {
+  const { target, calls } = fakeTarget();
+  let singleResolves = 0;
+
+  const result = await runMediaUrlPipeline(
+    fakeDeps({
+      resolveSpotify: async () => { singleResolves++; return 'https://www.youtube.com/watch?v=playlistname'; },
+      resolveSpotifyCollection: async () => ({
+        title: 'RapCaviar',
+        tracks: [{ artist: 'A', title: 'one' }, { artist: 'B', title: 'two' }, { artist: 'C', title: 'three' }],
+      }),
+      appleTrackToYouTube: async (track) => `https://youtu.be/${track.title}`,
+    }),
+    target,
+    { url: 'https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd', enqueueOnly: false },
+  );
+  await flushBackground();
+
+  assert.equal(singleResolves, 0);
+  assert.equal(result.playlistTitle, 'RapCaviar');
+  assert.equal(result.queuedInBackground, 2);
+  assert.equal(calls.play[0].item.sourceUrl, 'https://youtu.be/one');
+  assert.deepEqual(calls.enqueue.map((track) => track.sourceUrl), ['https://youtu.be/two', 'https://youtu.be/three']);
+});
+
+test('unreadable Spotify playlist fails instead of playing a guess', async () => {
+  const { target, calls } = fakeTarget();
+  await assert.rejects(
+    runMediaUrlPipeline(
+      fakeDeps({
+        resolveSpotifyCollection: async () => { throw new Error('Could not read the tracks of that Spotify playlist.'); },
+      }),
+      target,
+      { url: 'https://open.spotify.com/playlist/37i9dQZF1DX0XUsuxWHRQd', enqueueOnly: false },
+    ),
+    /Could not read the tracks/,
+  );
+  assert.equal(calls.play.length, 0);
 });

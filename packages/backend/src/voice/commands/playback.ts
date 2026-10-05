@@ -3,7 +3,7 @@ import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
-import { invalidateChatPlaylistExpansion } from './queue.js';
+import { beginChatMediaRequest, invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
 /** List configured radio stations or play a selected station in the requesting channel. */
@@ -71,7 +71,10 @@ export async function handleRadio(
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
 
-/** Resume paused playback or resolve a supplied media URL into the queue. */
+/** Longest free-text query `!play <song name>` sends to search. */
+const MAX_SONG_QUERY_LENGTH = 200;
+
+/** Resume paused playback, or resolve a media URL or song search into the queue. */
 export async function handlePlay(
   context: CommandContext,
   botId: number,
@@ -79,7 +82,9 @@ export async function handlePlay(
   userClid: number,
   args: string,
 ): Promise<void> {
+  const request = args ? beginChatMediaRequest(botId) : undefined;
   await context.joinChannelForCommand(botId, bot, userClid);
+  if (request?.isCancelled()) return;
 
   if (!args) {
     if (bot.status === 'paused') {
@@ -87,20 +92,35 @@ export async function handlePlay(
       context.reply(bot, userClid, 'Resumed.');
       return;
     }
-    context.reply(bot, userClid, 'Usage: !play <youtube-url|spotify-url|apple-music-url>');
+    context.reply(bot, userClid, 'Usage: !play <url|song name>');
     return;
   }
 
-  if (!args.startsWith('http://') && !args.startsWith('https://')) {
-    context.reply(bot, userClid, 'Please provide a valid URL. Usage: !play <url>');
-    return;
+  let url = args;
+  if (!/^https?:\/\//i.test(args)) {
+    const query = args.trim().slice(0, MAX_SONG_QUERY_LENGTH);
+    context.reply(bot, userClid, `Searching YouTube Music for "${query}"...`);
+    try {
+      const song = await context.findSong(query, request!.signal);
+      if (request!.isCancelled()) return;
+      if (!song) {
+        context.reply(bot, userClid, `No results for "${query}".`);
+        return;
+      }
+      url = song.url;
+    } catch (err: any) {
+      if (request!.isCancelled()) return;
+      context.reply(bot, userClid, `Search failed: ${err.message}`);
+      return;
+    }
+  } else {
+    context.reply(bot, userClid, 'Loading...');
   }
-
-  context.reply(bot, userClid, 'Loading...');
 
   try {
-    await context.enqueueMediaUrl(botId, bot, userClid, args);
+    await context.enqueueMediaUrl(botId, bot, userClid, url, request);
   } catch (err: any) {
+    if (request?.isCancelled()) return;
     context.reply(bot, userClid, `Failed to play: ${err.message}`);
   }
 }

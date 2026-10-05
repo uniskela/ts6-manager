@@ -3,6 +3,16 @@ import type { VoiceBotManager } from '../voice-bot-manager.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
+import type { findSongForQuery } from '../audio/youtube.js';
+import type { ChatMediaRequest } from './queue.js';
+
+/** Whether a running flow answers this raw chat line from the base or dedicated listener. */
+export type FlowCommandLookup = (
+  serverConfigId: number,
+  virtualServerId: number,
+  message: string,
+  sourceListenerChannelId?: string,
+) => boolean;
 
 export interface BotChannelConfig {
   serverConfigId: number;
@@ -54,7 +64,7 @@ export interface CommandMethods {
     channelId: number,
     data: Record<string, string>,
   ): Promise<void>;
-  handleCustomCommand(botId: number, bot: VoiceBot, userClid: number, command: string): Promise<void>;
+  handleCustomCommand(botId: number, bot: VoiceBot, userClid: number, command: string, message?: string, sourceListenerChannelId?: string): Promise<void>;
   reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void>;
   handleRadio(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   joinChannelForCommand(botId: number, bot: VoiceBot, userClid: number): Promise<void>;
@@ -117,7 +127,8 @@ export interface CommandMethods {
     args: string,
   ): Promise<void>;
   handlePlay(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
-  enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string): Promise<void>;
+  enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string, request?: ChatMediaRequest): Promise<void>;
+  findSong(query: string, signal?: AbortSignal): ReturnType<typeof findSongForQuery>;
   handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   handleRepeat(bot: VoiceBot, userClid: number, args: string): void;
   handleSeek(bot: VoiceBot, userClid: number, args: string): Promise<void>;
@@ -149,6 +160,7 @@ export interface CommandContext extends CommandMethods {
   voiceBotManager: VoiceBotManager;
   registeredBots: Set<number>;
   eventBridge: EventBridge | null;
+  readonly flowCommandLookup: FlowCommandLookup | null;
   eventBridgeListening: boolean;
   botChannelConfig: Map<number, BotChannelConfig>;
   channelToBots: Map<string, Set<number>>;

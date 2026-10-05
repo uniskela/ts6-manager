@@ -1,9 +1,10 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PrismaClient } from '../../../generated/prisma/index.js';
 import type { VoiceBotManager } from '../voice-bot-manager.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
-import type { BotChannelConfig, CommandContext } from './context.js';
+import type { BotChannelConfig, CommandContext, FlowCommandLookup } from './context.js';
 import * as routing from './routing.js';
 import * as channelOwnership from './channel-ownership.js';
 import * as playback from './playback.js';
@@ -12,15 +13,19 @@ import * as streaming from './streaming.js';
 import * as info from './info.js';
 import * as summon from './summon.js';
 import * as dedupe from './dedupe.js';
+import { findSongForQuery } from '../audio/youtube.js';
 
 /** Stable facade for voice and SSH chat commands. Implementations live in the command groups. */
 export class MusicCommandHandler {
   private registeredBots = new Set<number>();
   private eventBridge: EventBridge | null = null;
+  private flowCommandLookup: FlowCommandLookup | null = null;
   private eventBridgeListening = false;
   private botChannelConfig = new Map<number, BotChannelConfig>();
   private channelToBots = new Map<string, Set<number>>();
   private activeReplyChannel = new Map<string, number>();
+  /** Keep reply and movement channels local to each asynchronous command. */
+  private commandChannels = new AsyncLocalStorage<Map<string, number>>();
   /** Channels the roaming helper recently covered (key: configId:sid) — for mapping only. */
   private autoCommandChannels = new Map<string, number[]>();
   private mainHelperParkTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -47,11 +52,12 @@ export class MusicCommandHandler {
       get registeredBots() { return handler.registeredBots; },
       get eventBridge() { return handler.eventBridge; },
       set eventBridge(value) { handler.eventBridge = value; },
+      get flowCommandLookup() { return handler.flowCommandLookup; },
       get eventBridgeListening() { return handler.eventBridgeListening; },
       set eventBridgeListening(value) { handler.eventBridgeListening = value; },
       get botChannelConfig() { return handler.botChannelConfig; },
       get channelToBots() { return handler.channelToBots; },
-      get activeReplyChannel() { return handler.activeReplyChannel; },
+      get activeReplyChannel() { return handler.commandChannels.getStore() ?? handler.activeReplyChannel; },
       get autoCommandChannels() { return handler.autoCommandChannels; },
       get mainHelperParkTimers() { return handler.mainHelperParkTimers; },
       get mainHelperRebalanceTimers() { return handler.mainHelperRebalanceTimers; },
@@ -101,6 +107,7 @@ export class MusicCommandHandler {
       handleHereCrossChannel: (...args) => handler.handleHereCrossChannel(...args),
       handlePlay: (...args) => handler.handlePlay(...args),
       enqueueMediaUrl: (...args) => handler.enqueueMediaUrl(...args),
+      findSong: (...args) => handler.findSong(...args),
       handlePlaylist: (...args) => handler.handlePlaylist(...args),
       handleRepeat: (...args) => handler.handleRepeat(...args),
       handleSeek: (...args) => handler.handleSeek(...args),
@@ -125,6 +132,11 @@ export class MusicCommandHandler {
       handleViewers: (...args) => handler.handleViewers(...args),
       saveMusicRequest: (...args) => handler.saveMusicRequest(...args),
     };
+  }
+
+  /** Lets the bot engine say which `!commands` its flows handle, so they are not reported as unknown. */
+  setFlowCommandLookup(lookup: FlowCommandLookup): void {
+    this.flowCommandLookup = lookup;
   }
 
   setEventBridge(bridge: EventBridge): void {
@@ -218,7 +230,8 @@ export class MusicCommandHandler {
     data: Record<string, string>,
     replyChannelId?: number,
   ): Promise<void> {
-    return routing.onTextMessage(this.context, botId, bot, data, replyChannelId);
+    return this.commandChannels.run(new Map(this.activeReplyChannel), () =>
+      routing.onTextMessage(this.context, botId, bot, data, replyChannelId));
   }
 
   private replyChannelForDedupe(botId: number, userClid: number, bot: VoiceBot): number {
@@ -246,8 +259,15 @@ export class MusicCommandHandler {
     return info.handleHelpCrossChannel(this.context, configId, sid, channelId, data);
   }
 
-  private handleCustomCommand(botId: number, bot: VoiceBot, userClid: number, command: string): Promise<void> {
-    return info.handleCustomCommand(this.context, botId, bot, userClid, command);
+  private handleCustomCommand(
+    botId: number,
+    bot: VoiceBot,
+    userClid: number,
+    command: string,
+    message?: string,
+    sourceListenerChannelId?: string,
+  ): Promise<void> {
+    return info.handleCustomCommand(this.context, botId, bot, userClid, command, message, sourceListenerChannelId);
   }
 
   private reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void> {
@@ -360,8 +380,12 @@ export class MusicCommandHandler {
     return playback.handlePlay(this.context, botId, bot, userClid, args);
   }
 
-  private enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string): Promise<void> {
-    return queue.enqueueMediaUrl(this.context, botId, bot, userClid, rawUrl);
+  private enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string, request?: queue.ChatMediaRequest): Promise<void> {
+    return queue.enqueueMediaUrl(this.context, botId, bot, userClid, rawUrl, request);
+  }
+
+  private findSong(query: string, signal?: AbortSignal): ReturnType<typeof findSongForQuery> {
+    return findSongForQuery(query, undefined, signal);
   }
 
   private handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {

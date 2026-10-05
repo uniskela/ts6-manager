@@ -95,6 +95,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!here [id]`** / **`!come [id]`** — Summon an idle music bot to your channel (or target a bot by ID)
 - **`!commands`** — List enabled custom chat commands only
 - **`!play <url>`** — Play supported media
+- **`!play <song name>`** — Search YouTube Music and play the best match (falls back to a regular YouTube search). Queues it if something is already playing
 - **`!play`** — Resume paused playback
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue
 - **`!add <url>`** — Alias for adding to the queue
@@ -137,6 +138,8 @@ With no name, the bot that is playing, paused or streaming answers. If none is, 
 | `!info` / `!about` | Short community blurb |
 
 Seeded presets start **disabled**. Edit the placeholder Markdown, then enable. `!commands` is a built-in that lists enabled customs (also shown under Custom in `!help`). Multiple bots on the same channel only send one informational reply (`!help` / `!commands` / customs) per user within a short cooldown.
+
+A `!command` that is not built in, not an enabled custom command and not a Bot Flow command trigger gets a short **Unknown command** reply pointing to `!help` and `!commands`, with a "Did you mean…" hint for near-miss typos such as `!plya`.
 
 ## Download progress
 
