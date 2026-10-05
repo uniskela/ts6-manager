@@ -344,8 +344,12 @@ func TestProbeSoftwareSuccessRecordsAttempt(t *testing.T) {
 func TestProbeSkippedHasNoAttempts(t *testing.T) {
 	run := func(ctx context.Context, args []string) (string, error) { return "", nil }
 	spec, _ := lookupEncoder("vp9_vaapi")
-	if res := probeOneEncoder(spec, false, run); len(res.Attempts) != 0 {
+	res := probeOneEncoder(spec, false, run)
+	if len(res.Attempts) != 0 {
 		t.Fatalf("skipped probe should not report attempts, got %+v", res.Attempts)
+	}
+	if !strings.Contains(res.Skipped, "not present") {
+		t.Fatalf("skipped probe should say why, got %q", res.Skipped)
 	}
 }
 

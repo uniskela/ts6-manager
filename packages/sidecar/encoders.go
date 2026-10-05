@@ -292,6 +292,8 @@ type EncoderProbeResult struct {
 	// exact ffmpeg command and what it printed. Empty when the probe was
 	// skipped without running ffmpeg (e.g. no VAAPI device).
 	Attempts []EncoderProbeAttempt `json:"attempts,omitempty"`
+	// Skipped is why ffmpeg was not run at all; empty when it ran.
+	Skipped string `json:"skipped,omitempty"`
 }
 
 // EncoderProbeAttempt is one ffmpeg test encode of a probe.
@@ -381,6 +383,7 @@ func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) Enco
 	res := EncoderProbeResult{EncoderSpec: spec}
 	if spec.Backend == backendVAAPI && !devicePresent {
 		res.Error = "VAAPI device not present"
+		res.Skipped = fmt.Sprintf("VAAPI device %s not present", getVaapiDevice())
 		return res
 	}
 	attempts := []bool{false}

@@ -400,6 +400,8 @@ export interface VideoEncoderCapability {
   detail?: string;
   /** Test encodes run, in order. Absent when the check was skipped without running ffmpeg. */
   attempts?: VideoEncoderProbeAttempt[];
+  /** Why ffmpeg was not run at all (e.g. no VAAPI device); absent when it ran. */
+  skipped?: string;
 }
 
 /** One ffmpeg test encode of an encoder capability check. */

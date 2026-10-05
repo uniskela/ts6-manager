@@ -10,10 +10,11 @@ const caps = {
   encoders: [
     { id: 'vp8', codec: 'vp8', hardware: false, available: true, attempts: [{ command: cmd('libvpx'), ok: true, result: 'exit 0' }] },
     { id: 'vp9', codec: 'vp9', hardware: false, available: true, attempts: [{ command: cmd('libvpx-vp9'), ok: true, result: 'exit 0' }] },
-    { id: 'h264', codec: 'h264', hardware: false, available: true, attempts: [{ command: cmd('libx264'), ok: true, result: 'exit 0' }] },
-    { id: 'vp8_vaapi', codec: 'vp8', hardware: true, available: false, error: 'VAAPI device not present' },
-    { id: 'vp9_vaapi', codec: 'vp9', hardware: true, available: false, error: 'VAAPI device not present' },
-    { id: 'h264_vaapi', codec: 'h264', hardware: true, available: false, error: 'VAAPI device not present' },
+    // As reported by a sidecar older than per-attempt output.
+    { id: 'h264', codec: 'h264', hardware: false, available: true },
+    { id: 'vp8_vaapi', codec: 'vp8', hardware: true, available: false, error: 'VAAPI device not present', skipped: 'VAAPI device /dev/dri/renderD128 not present' },
+    { id: 'vp9_vaapi', codec: 'vp9', hardware: true, available: false, error: 'VAAPI device not present', skipped: 'VAAPI device /dev/dri/renderD128 not present' },
+    { id: 'h264_vaapi', codec: 'h264', hardware: true, available: false, error: 'VAAPI device not present', skipped: 'VAAPI device /dev/dri/renderD128 not present' },
     {
       id: 'h264_nvenc', codec: 'h264', hardware: true, available: false,
       error: 'NVIDIA GPU/runtime not present', detail: 'Cannot load libcuda.so.1',
@@ -44,8 +45,11 @@ test('every encoder check row offers its ffmpeg output', async ({ page, request 
   await expect(row('VP8 (software)')).toContainText('exit 0');
   await expect(row('VP8 (software)')).toContainText('(no output)');
 
+  await row('H.264 (software)').locator('summary').click();
+  await expect(row('H.264 (software)')).toContainText('No ffmpeg output was reported');
+
   await row('VP9 (VAAPI)').locator('summary').click();
-  await expect(row('VP9 (VAAPI)')).toContainText('ffmpeg was not run: VAAPI device not present.');
+  await expect(row('VP9 (VAAPI)')).toContainText('ffmpeg was not run: VAAPI device /dev/dri/renderD128 not present.');
 
   await row('H.264 (NVENC)').locator('summary').click();
   await expect(row('H.264 (NVENC)')).toContainText('exit status 1');

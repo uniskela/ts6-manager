@@ -391,8 +391,6 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
  */
 function EncoderProbeOutput({ encoder }: { encoder: VideoEncoderCapability }) {
   const attempts = encoder.attempts ?? [];
-  // Older sidecars report only the raw reason; keep showing it.
-  if (attempts.length === 0 && !encoder.detail && encoder.available) return null;
   return (
     <details className="group mt-1 text-muted-foreground">
       <summary className="inline-flex cursor-pointer select-none list-none items-center gap-1 rounded-sm text-[11px] outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
@@ -401,10 +399,13 @@ function EncoderProbeOutput({ encoder }: { encoder: VideoEncoderCapability }) {
       </summary>
       <div className="mt-1 space-y-1.5">
         {attempts.length === 0 ? (
-          encoder.detail ? (
+          encoder.skipped ? (
+            <p className="text-[11px]">ffmpeg was not run: {encoder.skipped}.</p>
+          ) : encoder.detail ? (
             <pre className="whitespace-pre-wrap break-words rounded bg-background/60 p-1.5 font-mono text-[11px]">{encoder.detail}</pre>
           ) : (
-            <p className="text-[11px]">ffmpeg was not run: {encoder.error ?? 'check skipped'}.</p>
+            // Sidecars older than this UI report no per-attempt output.
+            <p className="text-[11px]">No ffmpeg output was reported. Update the media sidecar to see it.</p>
           )
         ) : attempts.map((a, i) => (
           <div key={i} className="space-y-0.5 rounded bg-background/60 p-1.5 font-mono text-[11px]">
