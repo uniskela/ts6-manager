@@ -391,6 +391,9 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 | `VIDEO_CPU_USED` | `4` | libvpx realtime speed/quality trade-off |
 | `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
 | `VIDEO_BUFSIZE` | auto | Optional override; otherwise approximately `2 × VIDEO_BITRATE` |
+| `FFMPEG_HTTP_PERSISTENT` | `auto` | `auto` and `0` send `Connection: close` on remote HTTP(S) requests, including opaque/redirected HLS playlists and segments. Safe for MPEG-TS and MP4 too. `1` leaves FFmpeg's connection behavior unchanged. Applied to playback and probing; sidecar only. |
+| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra options before each remote input, also used for probing. Custom headers are preserved; `Connection` is managed by `FFMPEG_HTTP_PERSISTENT`. HLS-only options such as `-http_persistent` can break MP4/MPEG-TS. Values containing `-i` or bare URLs are ignored. |
+| `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra FFmpeg options inserted before each RTP output. |
 
 ## Music Bot Text Commands
 

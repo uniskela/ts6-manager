@@ -40,6 +40,10 @@ services:
       - MUSIC_DIR=/data/music
       - VIDEO_QUEUE_SIZE=8192
       - AUDIO_QUEUE_SIZE=16384
+      # Standard HTTP connection closing also covers opaque/redirected HLS.
+      - FFMPEG_HTTP_PERSISTENT=${FFMPEG_HTTP_PERSISTENT:-auto}
+      - FFMPEG_EXTRA_INPUT_ARGS=${FFMPEG_EXTRA_INPUT_ARGS:-}
+      - FFMPEG_EXTRA_OUTPUT_ARGS=${FFMPEG_EXTRA_OUTPUT_ARGS:-}
       # Optional: browser WebRTC preview through Docker. Uncomment ports + set
       # WEBRTC_NAT1TO1_IP / WEBRTC_BIND_IP to a host/LAN/Tailscale IPv4 the browser can reach.
       # - WEBRTC_UDP_PORT=${WEBRTC_UDP_PORT:-10000}

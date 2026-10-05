@@ -95,6 +95,7 @@ func probeRemoteSource(ctx context.Context, source string, policy *egressPolicy)
 		args = append(args, egressInputArgs(proxy.URL())...)
 		env = egressCommandEnv()
 	}
+	args = append(args, remoteFFmpegInputArgs()...)
 	args = append(args,
 		"-rw_timeout", "8000000", // microseconds: bounds each network read
 		"-select_streams", "v:0",

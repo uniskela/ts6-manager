@@ -103,6 +103,7 @@ jobs:
   sidecar:
     name: Go sidecar test and vet
     runs-on: ubuntu-latest
+    container: golang:1.25-bookworm
     timeout-minutes: 10
     defaults:
       run:
@@ -118,7 +119,12 @@ jobs:
           go-version-file: packages/sidecar/go.mod
           cache-dependency-path: packages/sidecar/go.sum
 
+      - name: Install FFmpeg for playback regression tests
+        run: apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg
+
       - name: Test
+        env:
+          SIDECAR_FFMPEG_IT: "1"
         run: go test ./...
 
       - name: Vet
