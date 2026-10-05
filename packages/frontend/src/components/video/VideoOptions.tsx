@@ -3,6 +3,7 @@ import { Label } from '@/components/ui/label';
 import { ChevronDown } from 'lucide-react';
 import {
   ENCODER_OPTIONS, NO_VIEWER_TIMEOUT_OPTIONS, QUALITY_OPTIONS, SOURCE_MODE_OPTIONS,
+  autoEncoderPreferenceHint, autoEncoderPreferenceLabel,
 } from '@/lib/video-streaming';
 import { noViewerTimeoutLabel, videoOptionsSummary, type VideoStartOptions } from '@/lib/video-options';
 
@@ -21,6 +22,11 @@ export function VideoOptions({ value, onChange, defaults }: {
   const timeoutOptions = value.noViewerTimeout === '' || NO_VIEWER_TIMEOUT_OPTIONS.some((o) => o.value === value.noViewerTimeout)
     ? NO_VIEWER_TIMEOUT_OPTIONS
     : [{ value: value.noViewerTimeout, label: noViewerTimeoutLabel(value.noViewerTimeout) }, ...NO_VIEWER_TIMEOUT_OPTIONS];
+  const serverEncoderLabel = !defaults
+    ? null
+    : defaults.defaultEncoder === 'auto'
+      ? autoEncoderPreferenceLabel(defaults.preferHardware)
+      : (ENCODER_OPTIONS.find((o) => o.value === defaults.defaultEncoder)?.label ?? defaults.defaultEncoder);
   return (
     <details className="group rounded-md border">
       <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 px-3 text-sm [&::-webkit-details-marker]:hidden">
@@ -45,9 +51,18 @@ export function VideoOptions({ value, onChange, defaults }: {
             <Label htmlFor="vo-encoder">Encoder</Label>
             <select id="vo-encoder" className={field} value={value.encoder}
               onChange={(e) => onChange({ ...value, encoder: e.target.value as VideoStartOptions['encoder'] })}>
-              <option value="">Use server default{defaults ? ` (${ENCODER_OPTIONS.find((o) => o.value === defaults.defaultEncoder)?.label ?? defaults.defaultEncoder})` : ''}</option>
-              {ENCODER_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              <option value="">Use server default{serverEncoderLabel ? ` (${serverEncoderLabel})` : ''}</option>
+              {ENCODER_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.value === 'auto' && defaults
+                    ? autoEncoderPreferenceLabel(defaults.preferHardware)
+                    : o.label}
+                </option>
+              ))}
             </select>
+            {defaults && (
+              <p className="text-xs text-muted-foreground">{autoEncoderPreferenceHint(defaults.preferHardware)}</p>
+            )}
           </div>
           <div className="space-y-1">
             <Label htmlFor="vo-noviewer">Stop with no viewers after</Label>
