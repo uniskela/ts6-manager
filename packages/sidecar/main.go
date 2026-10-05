@@ -235,6 +235,17 @@ func (s *Sidecar) resetSyncTiming() {
 	s.timingMu.Lock()
 	defer s.timingMu.Unlock()
 
+	// Keep the run's clock line, which the next run's timestamps carry on.
+	s.prevVideoLine = clockLine{}
+	s.prevAudioLine = clockLine{}
+	if s.streamBaseSet {
+		if s.videoTiming.initialized {
+			s.prevVideoLine = clockLine{valid: true, base: s.videoTiming.baseRTP, wall: s.streamBaseWall}
+		}
+		if s.audioTiming.initialized {
+			s.prevAudioLine = clockLine{valid: true, base: s.audioTiming.baseRTP, wall: s.streamBaseWall}
+		}
+	}
 	s.streamBaseWall = time.Time{}
 	s.streamBaseSet = false
 	s.videoTiming = TrackTiming{}
@@ -595,6 +606,9 @@ type Sidecar struct {
 	// Outgoing RTP numbering, kept continuous across FFmpeg restarts.
 	videoRTP rtpContinuity
 	audioRTP rtpContinuity
+	// The previous run's clock lines, guarded by timingMu.
+	prevVideoLine clockLine
+	prevAudioLine clockLine
 }
 
 func NewSidecar() *Sidecar {
@@ -682,7 +696,7 @@ func (s *Sidecar) readVideoRTP() {
 			continue
 		}
 
-		s.videoRTP.rewrite(cloned, s.currentCodec(), arrived)
+		s.continueRTP("video", cloned, s.currentCodec(), arrived)
 		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("video", cloned.Timestamp, arrived)}
 		select {
 		case s.videoQueue <- q:
@@ -727,7 +741,7 @@ func (s *Sidecar) readAudioRTP() {
 			continue
 		}
 
-		s.audioRTP.rewrite(cloned, "", arrived)
+		s.continueRTP("audio", cloned, "", arrived)
 		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("audio", cloned.Timestamp, arrived)}
 		select {
 		case s.audioQueue <- q:

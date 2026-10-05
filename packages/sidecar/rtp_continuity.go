@@ -59,8 +59,10 @@ func (c *rtpContinuity) markRestart() {
 }
 
 // rewrite shifts pkt's sequence number, timestamp and (for VP8/VP9) picture
-// ID in place. now is the packet's arrival time.
-func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time) {
+// ID in place. now is the packet's arrival time. When pkt starts a new run,
+// target gives the timestamp it should carry; nil carries on by the wall
+// clock gap since the last packet. Either way the timestamp moves forward.
+func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time, target func() uint32) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -72,13 +74,16 @@ func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time) {
 		if c.restarted || step > maxContinuousSeqStep || step < -maxContinuousSeqBack {
 			c.restarted = false
 			c.seqOffset = c.lastSeq + 1 - pkt.SequenceNumber
-			ticks := uint32(1)
-			if gap := now.Sub(c.lastAt); gap > 0 {
-				if t := uint32(uint64(gap) * uint64(c.clockRate) / uint64(time.Second)); t > 0 {
-					ticks = t
-				}
+			var want uint32
+			if target != nil {
+				want = target()
+			} else {
+				want = c.lastTS + uint32(uint64(max(now.Sub(c.lastAt), 0))*uint64(c.clockRate)/uint64(time.Second))
 			}
-			c.tsOffset = c.lastTS + ticks - pkt.Timestamp
+			if int32(want-c.lastTS) <= 0 {
+				want = c.lastTS + 1
+			}
+			c.tsOffset = want - pkt.Timestamp
 			c.rebasePictureID(pkt, codec)
 		}
 	}
@@ -158,4 +163,50 @@ func pictureID(payload []byte, codec string) (id uint16, at int, ok bool) {
 		return uint16(payload[at]&0x7F)<<8 | uint16(payload[at+1]), at, true
 	}
 	return uint16(payload[at] & 0x7F), at, true
+}
+
+// clockLine is a run's mapping of RTP time to the wall clock, as the pacer
+// and the Sender Reports use it: base is the timestamp at media time zero,
+// which left FFmpeg at wall.
+type clockLine struct {
+	valid bool
+	base  uint32
+	wall  time.Time
+}
+
+func (l clockLine) at(t time.Time, clockRate uint32) uint32 {
+	return l.base + uint32(int64(t.Sub(l.wall))*int64(clockRate)/int64(time.Second))
+}
+
+// continueRTP rewrites one packet from FFmpeg (see rtpContinuity) before the
+// pacer records it.
+//
+// A new run's timestamps carry on the previous run's clock line, with both
+// tracks anchored at the same wall time, the new run's media time zero. The
+// pacer and the Sender Reports assume both tracks start together at that
+// instant, so a viewer keeps the audio and video lined up across a switch
+// instead of carrying the old mapping over a shifted timeline.
+func (s *Sidecar) continueRTP(kind string, pkt *rtp.Packet, codec string, arrived time.Time) {
+	s.timingMu.Lock()
+	defer s.timingMu.Unlock()
+
+	current, _, clockRate := s.trackTimingsLocked(kind)
+	cont, prev := &s.videoRTP, s.prevVideoLine
+	if kind == "audio" {
+		cont, prev = &s.audioRTP, s.prevAudioLine
+	}
+	cont.rewrite(pkt, codec, arrived, func() uint32 {
+		anchor := arrived
+		if s.streamBaseSet {
+			anchor = s.streamBaseWall
+		}
+		switch {
+		case current.initialized:
+			// Packets of the old run started this one; follow its line.
+			return clockLine{base: current.baseRTP, wall: s.streamBaseWall}.at(arrived, clockRate)
+		case prev.valid:
+			return prev.at(anchor, clockRate)
+		}
+		return cont.lastTS + uint32(int64(max(arrived.Sub(cont.lastAt), 0))*int64(clockRate)/int64(time.Second))
+	})
 }
