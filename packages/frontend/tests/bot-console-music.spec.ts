@@ -63,6 +63,7 @@ async function mockConsole(page: Page) {
         { id: 1, name: 'Chill FM', url: 'https://example.com/chill', genre: 'Chill', imageUrl: null, serverConfigId: 1 },
         { id: 2, name: 'Focus Beats', url: 'https://example.com/focus', genre: 'Focus', imageUrl: null, serverConfigId: 1 },
         { id: 3, name: 'No Genre Station', url: 'https://example.com/other', genre: null, imageUrl: null, serverConfigId: 1 },
+        { id: 4, name: 'Coast Local', url: 'https://example.com/coast', genre: 'local, local news, chill', imageUrl: null, serverConfigId: 1 },
       ],
     }));
   await page.route('**/api/servers/1/music-requests', (r) => r.fulfill({ json: [] }));
@@ -111,11 +112,29 @@ test('a radio mood chip filters the station list', async ({ page, request }) => 
   await expect(page.getByText('Focus Beats')).toBeVisible();
   await expect(page.getByText('No Genre Station')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Chill (1)' }).click();
+  await page.getByRole('button', { name: 'Chill (2)' }).click();
   await expect(page.getByText('Chill FM')).toBeVisible();
+  await expect(page.getByText('Coast Local')).toBeVisible();
   await expect(page.getByText('Focus Beats')).toHaveCount(0);
   await expect(page.getByText('No Genre Station')).toHaveCount(0);
   await expect(page.getByText('Moods come from each station\'s genre. Set or change it under Media Library → Radio stations.')).toBeVisible();
+});
+
+test('a multi-tag station genre becomes one mood chip per tag', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await mockConsole(page);
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+
+  await page.getByRole('tab', { name: 'Radio' }).click();
+  const moods = page.getByRole('group', { name: 'Moods' });
+  await expect(moods.getByRole('button', { name: 'Local (1)' })).toBeVisible();
+  await expect(moods.getByRole('button', { name: 'Local News (1)' })).toBeVisible();
+  await expect(moods.getByRole('button', { name: /local, local news/i })).toHaveCount(0);
+
+  await moods.getByRole('button', { name: 'Local News (1)' }).click();
+  await expect(page.getByText('Coast Local')).toBeVisible();
+  await expect(page.getByText('Chill FM')).toHaveCount(0);
 });
 
 test('every source tab links to the page that manages its media', async ({ page, request }) => {
@@ -142,4 +161,42 @@ test('every source tab links to the page that manages its media', async ({ page,
   await panel.getByRole('link', { name: 'Add station' }).click();
   await expect(page).toHaveURL('/media-bots?tab=radio');
   await expect(page.getByRole('tab', { name: 'Radio stations', selected: true })).toBeVisible();
+});
+
+test('the console fits a phone screen with a long song title', async ({ page, request }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const longTitle = 'How\'d You Make That Rap Song | JT Catalano (Official Music Video) [Remastered Extended Edition]';
+  await mockConsole(page);
+  await page.route('**/api/music-bots/media', (r) => {
+    const [bot] = media(Date.now());
+    return r.fulfill({ json: [{ ...bot, music: { ...bot.music, title: longTitle } }] });
+  });
+  await page.route('**/api/servers/1/music-library/songs/search**', (r) =>
+    r.fulfill({
+      json: {
+        total: 1, page: 1, pageSize: 50,
+        songs: [{
+          id: 42, title: longTitle, artist: 'JT Catalano', duration: 214,
+          filePath: '/a.ogg', source: 'local', sourceUrl: null, fileSize: 1,
+          serverConfigId: 1, createdAt: '2026-10-01T00:00:00.000Z',
+        }],
+      },
+    }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await expect(page.getByRole('button', { name: 'Pause Aurora Radio' })).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByText(longTitle)).toBeVisible();
+
+  for (const tab of ['Music', 'Link', 'Radio', 'IPTV']) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    const overflow = await page.evaluate(() => {
+      const vw = document.documentElement.clientWidth;
+      const main = document.querySelector('main') ?? document.documentElement;
+      const wide = [...main.querySelectorAll('*')]
+        .filter((el) => el.getBoundingClientRect().right > vw + 1)
+        .map((el) => `${el.tagName}.${el.className}`);
+      return { scroll: main.scrollWidth - main.clientWidth, wide: wide.slice(0, 5) };
+    });
+    expect(overflow, `${tab} tab`).toEqual({ scroll: 0, wide: [] });
+  }
 });

@@ -100,8 +100,8 @@ export default function BotConsole() {
         )}
       />
 
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
-        <section aria-labelledby="now-playing" className="space-y-4">
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+        <section aria-labelledby="now-playing" className="min-w-0 space-y-4">
           <NowPlaying
             bot={bot}
             now={now}

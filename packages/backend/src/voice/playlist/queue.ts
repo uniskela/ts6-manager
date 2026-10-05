@@ -11,6 +11,11 @@ export interface QueueItem {
   streamUrl?: string; // If set, play as live stream (radio) instead of file
 }
 
+function moveEntry<T>(list: T[], from: number, to: number): void {
+  const [entry] = list.splice(from, 1);
+  list.splice(to, 0, entry);
+}
+
 export class PlayQueue {
   private items: QueueItem[] = [];
   private currentIndex = -1;
@@ -153,13 +158,14 @@ export class PlayQueue {
     return this.current;
   }
 
+  /** Move a displayed queue position; with shuffle on, only the shuffled order changes. */
   move(fromIndex: number, toIndex: number): boolean {
-    if (fromIndex < 0 || fromIndex >= this.items.length) return false;
-    if (toIndex < 0 || toIndex >= this.items.length) return false;
+    if (!Number.isInteger(fromIndex) || fromIndex < 0 || fromIndex >= this.items.length) return false;
+    if (!Number.isInteger(toIndex) || toIndex < 0 || toIndex >= this.items.length) return false;
     if (fromIndex === toIndex) return true;
 
-    const [item] = this.items.splice(fromIndex, 1);
-    this.items.splice(toIndex, 0, item);
+    if (this._shuffle) moveEntry(this.shuffleOrder, fromIndex, toIndex);
+    else moveEntry(this.items, fromIndex, toIndex);
 
     // Adjust currentIndex to follow the currently playing track
     if (this.currentIndex === fromIndex) {
@@ -168,11 +174,6 @@ export class PlayQueue {
       this.currentIndex--;
     } else if (fromIndex > this.currentIndex && toIndex <= this.currentIndex) {
       this.currentIndex++;
-    }
-
-    // Regenerate shuffle order since indices changed
-    if (this._shuffle) {
-      this.regenerateShuffleOrder();
     }
 
     return true;
