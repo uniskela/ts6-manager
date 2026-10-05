@@ -20,6 +20,10 @@ const caps = {
       error: 'NVIDIA GPU/runtime not present', detail: 'Cannot load libcuda.so.1',
       attempts: [{ command: cmd('h264_nvenc'), ok: false, result: 'exit status 1', output: '[h264_nvenc @ 0x1] Cannot load libcuda.so.1' }],
     },
+    {
+      id: 'h264_amf', codec: 'h264', hardware: true, available: true,
+      attempts: [{ command: cmd('h264_amf'), ok: true, result: 'exit 0' }],
+    },
   ],
 };
 
@@ -54,4 +58,15 @@ test('every encoder check row offers its ffmpeg output', async ({ page, request 
   await row('H.264 (NVENC)').locator('summary').click();
   await expect(row('H.264 (NVENC)')).toContainText('exit status 1');
   await expect(row('H.264 (NVENC)')).toContainText('Cannot load libcuda.so.1');
+
+  await row('H.264 (AMF)').locator('summary').click();
+  await expect(row('H.264 (AMF)').getByLabel('available', { exact: true })).toBeVisible();
+  await expect(row('H.264 (AMF)')).toContainText('-c:v h264_amf');
+  await expect(row('H.264 (AMF)')).toContainText('exit 0');
+  await expect(page.getByText(/AMF is available when the sidecar runs natively on Windows/)).toBeVisible();
+
+  await page.getByRole('button', { name: 'Advanced quality settings' }).click();
+  await expect(page.getByText('Auto prefers hardware (VAAPI, NVENC or AMF) when a test encode succeeds')).toBeVisible();
+  await page.getByLabel('Default encoder', { exact: true }).click();
+  await expect(page.getByRole('option', { name: 'H.264 (AMF)', exact: true })).toBeVisible();
 });

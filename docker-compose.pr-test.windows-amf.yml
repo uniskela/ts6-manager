@@ -1,0 +1,121 @@
+# Windows-native AMF PR test: Docker TeamSpeak/backend/frontend + native Windows sidecar.
+# Start the native sidecar first; see docs/video-streaming.md#windows-amf-pr-test.
+# Run this file alone, not as an override of docker-compose.pr-test.yml.
+# HTTP 9800 and WebRTC UDP are owned by the native process, never published here.
+# All Docker host ports bind loopback; this is a same-host development harness.
+
+services:
+  teamspeak:
+    image: teamspeaksystems/teamspeak6-server:6.0.0-beta13
+    container_name: ts6-pr-teamspeak
+    restart: unless-stopped
+    environment:
+      TSSERVER_LICENSE_ACCEPTED: accept
+      TSSERVER_QUERY_HTTP_ENABLED: "1"
+      TSSERVER_QUERY_HTTP_PORT: "10080"
+      TSSERVER_QUERY_HTTP_ALLOW_GUEST: "0"
+      TSSERVER_QUERY_SSH_ENABLED: "1"
+      TSSERVER_QUERY_SSH_PORT: "10022"
+      TSSERVER_QUERY_SSH_ALLOW_GUEST: "0"
+      TSSERVER_QUERY_ADMIN_PASSWORD: ${TS_PR_TEST_ADMIN_PASSWORD:-testadmin}
+      TSSERVER_QUERY_ADMIN_API_KEY: ${TS_PR_TEST_API_KEY:-local-pr-test-webquery-api-key-not-for-prod}
+      # Native Prometheus metrics (default off in the TS image; bind all interfaces
+      # so other compose services and the published host port can scrape).
+      TSSERVER_METRICS_ENABLED: "1"
+      TSSERVER_METRICS_IP: "0.0.0.0"
+      TSSERVER_METRICS_PORT: "9187"
+    # Persistent data includes TS logfiles under /var/tsserver/logs. If Server Logs
+    # shows TeamSpeak error 2052 ("file input/output error"), inspect ownership of
+    # that directory inside this container, then recreate the volume if needed:
+    #   docker compose -f docker-compose.pr-test.windows-amf.yml down -v
+    # Do not chown the bind as root on the host while the image user still runs TS.
+    volumes:
+      - pr-test-teamspeak-data:/var/tsserver
+    ports:
+      - "127.0.0.1:9987:9987/udp"
+      - "127.0.0.1:30033:30033/tcp"
+      - "127.0.0.1:10022:10022/tcp"   # SSH ServerQuery (not Linux sshd)
+      - "127.0.0.1:9187:9187/tcp"     # Prometheus metrics (GET /metrics)
+    # Container start ≠ Query ready. Gate backend until WebQuery + SSH ports accept TCP.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/10080 && exec 4<>/dev/tcp/127.0.0.1/10022'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 15s
+    networks:
+      - ts6-pr-test
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        GIT_SHA: ${GIT_SHA:-pr-test}
+    container_name: ts6-pr-backend
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: file:/app/packages/backend/data/ts6webui.db
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env}
+      SIDECAR_SECRET: ${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env}
+      SIDECAR_URL: http://host.docker.internal:9800
+      JWT_ACCESS_EXPIRY: 15m
+      JWT_REFRESH_EXPIRY: 7d
+      FRONTEND_URL: http://localhost:3000
+      MUSIC_DIR: /data/music
+      TS_ALLOW_SELF_SIGNED: ${TS_ALLOW_SELF_SIGNED:-true}
+      TS_ALLOW_PRIVATE_HOSTS: ${TS_ALLOW_PRIVATE_HOSTS:-true}
+      # Local-only gated seed of the bundled TeamSpeak connection (never wire into prod compose)
+      LOCAL_DEV_BOOTSTRAP_CONNECTION: ${LOCAL_DEV_BOOTSTRAP_CONNECTION:-1}
+      TS_BOOTSTRAP_HOST: ${TS_BOOTSTRAP_HOST:-teamspeak}
+      TS_BOOTSTRAP_WEBQUERY_PORT: ${TS_BOOTSTRAP_WEBQUERY_PORT:-10080}
+      TS_BOOTSTRAP_API_KEY: ${TS_PR_TEST_API_KEY:-local-pr-test-webquery-api-key-not-for-prod}
+      TS_BOOTSTRAP_NAME: ${TS_BOOTSTRAP_NAME:-Local TeamSpeak 6}
+      TS_BOOTSTRAP_SSH_PORT: ${TS_BOOTSTRAP_SSH_PORT:-10022}
+      TS_BOOTSTRAP_SSH_USER: ${TS_BOOTSTRAP_SSH_USER:-serveradmin}
+      TS_BOOTSTRAP_SSH_PASSWORD: ${TS_PR_TEST_ADMIN_PASSWORD:-testadmin}
+    volumes:
+      - pr-test-backend-data:/app/packages/backend/data
+      # Same files as native Windows MUSIC_DIR, through a different OS path.
+      - ./.pr-test/music:/data/music
+    # API is proxied through the frontend on :3000 — only publish 3001 if you need direct API access.
+    # ports:
+    #   - "127.0.0.1:3001:3001"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      teamspeak:
+        condition: service_healthy
+    networks:
+      - ts6-pr-test
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        GIT_SHA: ${GIT_SHA:-pr-test}
+    container_name: ts6-pr-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - ts6-pr-test
+
+volumes:
+  pr-test-backend-data:
+  pr-test-teamspeak-data:
+
+networks:
+  ts6-pr-test:
+    driver: bridge

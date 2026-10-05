@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { VideoEncoderCapabilities } from '@ts6/common';
-import { ENCODER_CODEC, isHardwareEncoder, normalizeEncoderRequest, selectEncoder } from './encoders.js';
+import { ENCODER_CODEC, encoderDisplayName, isHardwareEncoder, normalizeEncoderRequest, selectEncoder } from './encoders.js';
 
 function caps(available: string[], devicePresent = true): VideoEncoderCapabilities {
-  const ids = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc'] as const;
+  const ids = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc', 'h264_amf'] as const;
   return {
     checkedAt: new Date(0).toISOString(),
     vaapiDevice: '/dev/dri/renderD128',
@@ -13,7 +13,7 @@ function caps(available: string[], devicePresent = true): VideoEncoderCapabiliti
     encoders: ids.map((id) => ({
       id,
       codec: ENCODER_CODEC[id],
-      hardware: id.endsWith('_vaapi') || id.endsWith('_nvenc'),
+      hardware: isHardwareEncoder(id),
       available: available.includes(id),
     })),
   };
@@ -49,12 +49,28 @@ describe('selectEncoder', () => {
   it('explains software when hardware was preferred but unusable', () => {
     const noDevice = selectEncoder('auto', true, caps(['vp8'], false));
     assert.equal(noDevice.selected, 'vp8');
-    assert.match(noDevice.note ?? '', /no VAAPI device/);
+    assert.match(noDevice.note ?? '', /no working hardware encoder passed the test encode/);
     const failed = selectEncoder('auto', true, caps(['vp8'], true));
     assert.match(failed.note ?? '', /test encode/);
     const unknown = selectEncoder('auto', true, null);
     assert.equal(unknown.selected, 'vp8');
     assert.match(unknown.note ?? '', /unavailable/);
+  });
+
+  it('uses AMF when its probe passes without a VAAPI device', () => {
+    const amd = caps(['vp8', 'vp9', 'h264', 'h264_amf'], false);
+    assert.deepEqual(selectEncoder('auto', true, amd), { selected: 'h264_amf', note: null });
+    assert.deepEqual(selectEncoder('auto', false, amd), { selected: 'vp8', note: null });
+    assert.deepEqual(selectEncoder('h264_amf', false, null), { selected: 'h264_amf', note: null });
+    assert.equal(ENCODER_CODEC.h264_amf, 'h264');
+    assert.equal(isHardwareEncoder('h264_amf'), true);
+    assert.equal(normalizeEncoderRequest('h264_amf', 'auto'), 'h264_amf');
+    assert.equal(encoderDisplayName('h264_amf'), 'H.264 (AMF)');
+  });
+
+  it('keeps VAAPI and NVENC ahead of AMF when several probes pass', () => {
+    assert.equal(selectEncoder('auto', true, caps(['h264_vaapi', 'h264_nvenc', 'h264_amf'])).selected, 'h264_vaapi');
+    assert.equal(selectEncoder('auto', true, caps(['h264_nvenc', 'h264_amf'], false)).selected, 'h264_nvenc');
   });
 
   it('normalizes encoder requests', () => {

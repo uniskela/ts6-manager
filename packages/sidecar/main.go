@@ -82,25 +82,65 @@ func getMusicDir() string {
 	return envOrDefault("MUSIC_DIR", "/data/music")
 }
 
-func validSource(source string) error {
-	if source == "" {
-		return nil
+// Portable references contain one allowlisted filename, never an OS path or URL escapes.
+var musicSourceName = regexp.MustCompile(`^(?:[A-Za-z0-9][A-Za-z0-9._-]{0,200}|\.stream-[0-9]+\.mp4)$`)
+
+func resolveMusicSource(source string) (string, error) {
+	if !strings.HasPrefix(source, "music://") {
+		return source, nil
 	}
-	if strings.HasPrefix(source, "http://") || strings.HasPrefix(source, "https://") {
-		return nil
+	name := strings.TrimPrefix(source, "music://")
+	if !musicSourceName.MatchString(name) {
+		return "", fmt.Errorf("music source must be a filename under MUSIC_DIR")
+	}
+	root, err := filepath.Abs(getMusicDir())
+	if err != nil {
+		return "", fmt.Errorf("invalid MUSIC_DIR: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("invalid MUSIC_DIR: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(root, name))
+	if err != nil {
+		return "", fmt.Errorf("local music source not found: %w", err)
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) || filepath.IsAbs(rel) {
+		return "", fmt.Errorf("local source must be under MUSIC_DIR")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", fmt.Errorf("local music source must be a regular file")
+	}
+	return resolved, nil
+}
+
+// resolveSource validates local paths and translates portable shared-file references.
+func resolveSource(source string) (string, error) {
+	if strings.HasPrefix(source, "music://") {
+		return resolveMusicSource(source)
+	}
+	if source == "" || isRemoteSource(source) {
+		return source, nil
 	}
 	absSource, err := filepath.Abs(source)
 	if err != nil {
-		return fmt.Errorf("invalid source path: %w", err)
+		return "", fmt.Errorf("invalid source path: %w", err)
 	}
 	absMusic, err := filepath.Abs(getMusicDir())
 	if err != nil {
-		return fmt.Errorf("invalid MUSIC_DIR: %w", err)
+		return "", fmt.Errorf("invalid MUSIC_DIR: %w", err)
 	}
 	if absSource != absMusic && !strings.HasPrefix(absSource, absMusic+string(os.PathSeparator)) {
-		return fmt.Errorf("local source must be under MUSIC_DIR")
+		return "", fmt.Errorf("local source must be under MUSIC_DIR")
 	}
-	return nil
+	return source, nil
+}
+
+func validSource(source string) error {
+	_, err := resolveSource(source)
+	return err
 }
 
 // validAudioSource checks the optional second input: a remote URL carrying
@@ -1507,8 +1547,9 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	s.ffmpegLock.Lock()
 	defer s.ffmpegLock.Unlock()
 
-	if err := validSource(req.Source); err != nil {
-		log.Printf("[FFmpeg] Rejected source: %v", err)
+	var err error
+	req.Source, err = resolveSource(req.Source)
+	if err != nil {
 		return EncoderSession{}, err
 	}
 	if err := validAudioSource(req.Source, req.AudioSource); err != nil {

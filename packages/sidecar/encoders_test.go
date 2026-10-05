@@ -75,7 +75,7 @@ func TestLibvpxHoldsBitrateWithMinrate(t *testing.T) {
 			t.Errorf("%s needs -minrate to hold its bitrate: %s", id, args)
 		}
 	}
-	for _, id := range []string{"h264", "vp9_vaapi", "h264_vaapi"} {
+	for _, id := range []string{"h264", "vp9_vaapi", "h264_vaapi", "h264_nvenc", "h264_amf"} {
 		spec, _ := lookupEncoder(id)
 		if args := strings.Join(encoderArgs(spec, "5500k", false, 0), " "); strings.Contains(args, "-minrate") {
 			t.Errorf("%s holds -maxrate on its own and must not get -minrate: %s", id, args)
@@ -208,7 +208,7 @@ func TestSummarizeFFmpegErrorRedactsURLs(t *testing.T) {
 // a 1500-byte MTU and is fragmented on the way to the viewer.
 func TestVideoRTPPacketsFitTheMTU(t *testing.T) {
 	s := NewSidecar()
-	for _, key := range []string{"vp8", "vp9", "h264_vaapi"} {
+	for _, key := range []string{"vp8", "vp9", "h264", "h264_vaapi", "h264_nvenc", "h264_amf"} {
 		spec, ok := lookupEncoder(key)
 		if !ok {
 			t.Fatalf("no %s encoder", key)
@@ -296,9 +296,80 @@ func TestHardwareEncodersNameTheirBackend(t *testing.T) {
 		switch {
 		case !spec.Hardware && spec.Backend != "":
 			t.Errorf("software encoder %s has backend %q", spec.ID, spec.Backend)
-		case spec.Hardware && spec.Backend != backendVAAPI && spec.Backend != backendNVENC:
+		case spec.Hardware && spec.Backend != backendVAAPI && spec.Backend != backendNVENC && spec.Backend != backendAMF:
 			t.Errorf("hardware encoder %s has backend %q", spec.ID, spec.Backend)
 		}
+	}
+}
+
+func TestBuildFFmpegArgsAmf(t *testing.T) {
+	// AMF encoding is independent of VAAPI and VIDEO_HW_DECODE. In particular,
+	// the decode flag must not enable CUDA (or Windows hardware decoding).
+	t.Setenv("VAAPI_DEVICE", "/nonexistent/renderD128")
+	t.Setenv("VIDEO_HW_DECODE", "1")
+	t.Setenv("VIDEO_GOP", "15")
+	t.Setenv("VIDEO_BUFSIZE", "")
+	s := NewSidecar()
+	spec, ok := lookupEncoder("h264_amf")
+	if !ok || !spec.Hardware || spec.Backend != backendAMF || spec.Codec != codecH264 || spec.FFmpeg != "h264_amf" {
+		t.Fatalf("h264_amf spec = %+v (found %v)", spec, ok)
+	}
+	if got := uploadFilter(spec); got != "format=nv12" {
+		t.Fatalf("AMF filter = %q", got)
+	}
+	args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "/data/music/clip.mp4", Width: 1920, Height: 1080, Bitrate: "4500k"}, spec, true), " ")
+	for _, want := range []string{
+		"-c:v h264_amf", "-profile:v high", "-bf 0", ",format=nv12 ",
+		"-b:v 4500k", "-maxrate 4500k", "-bufsize 9000k", "-g 15",
+	} {
+		if !strings.Contains(args, want) {
+			t.Errorf("h264_amf args missing %q: %s", want, args)
+		}
+	}
+	for _, forbidden := range []string{"hwupload", "-init_hw_device", "vaapi", "-low_power", "-hwaccel"} {
+		if strings.Contains(args, forbidden) {
+			t.Errorf("h264_amf args must not contain %q: %s", forbidden, args)
+		}
+	}
+	sw := softwareEncoderFor(spec.Codec)
+	if sw.ID != "h264" || sw.FFmpeg != "libx264" || sw.Hardware {
+		t.Fatalf("AMF software fallback = %+v", sw)
+	}
+}
+
+func TestProbeRunsAmfWithoutVaapiDevice(t *testing.T) {
+	t.Setenv("VAAPI_LOW_POWER", "1")
+	t.Setenv("VIDEO_HW_DECODE", "1")
+	spec, _ := lookupEncoder("h264_amf")
+	for _, failure := range []string{"", "Unknown encoder 'h264_amf'", "[h264_amf] AMF initialization failed"} {
+		t.Run(failure, func(t *testing.T) {
+			calls := 0
+			run := func(ctx context.Context, args []string) (string, error) {
+				calls++
+				joined := strings.Join(args, " ")
+				for _, want := range []string{"-f lavfi", "-frames:v 3", "-vf format=nv12", "-c:v h264_amf", "-profile:v high", "-bf 0"} {
+					if !strings.Contains(joined, want) {
+						t.Errorf("AMF probe missing %q: %s", want, joined)
+					}
+				}
+				for _, forbidden := range []string{"hwupload", "-init_hw_device", "vaapi", "-low_power", "-hwaccel"} {
+					if strings.Contains(joined, forbidden) {
+						t.Errorf("AMF probe contains %q: %s", forbidden, joined)
+					}
+				}
+				if failure != "" {
+					return failure + "\n", errors.New("exit status 1")
+				}
+				return "", nil
+			}
+			res := probeOneEncoder(spec, false, run)
+			if calls != 1 || len(res.Attempts) != 1 || res.LowPower || res.Skipped != "" {
+				t.Fatalf("expected one AMF probe without VAAPI, got %+v after %d calls", res, calls)
+			}
+			if res.Available != (failure == "") || res.Error != failure || res.Attempts[0].Output != failure {
+				t.Fatalf("AMF availability/failure diagnostics = %+v", res)
+			}
+		})
 	}
 }
 
