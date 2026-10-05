@@ -143,3 +143,41 @@ test('every source tab links to the page that manages its media', async ({ page,
   await expect(page).toHaveURL('/media-bots?tab=radio');
   await expect(page.getByRole('tab', { name: 'Radio stations', selected: true })).toBeVisible();
 });
+
+test('the console fits a phone screen with a long song title', async ({ page, request }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const longTitle = 'How\'d You Make That Rap Song | JT Catalano (Official Music Video) [Remastered Extended Edition]';
+  await mockConsole(page);
+  await page.route('**/api/music-bots/media', (r) => {
+    const [bot] = media(Date.now());
+    return r.fulfill({ json: [{ ...bot, music: { ...bot.music, title: longTitle } }] });
+  });
+  await page.route('**/api/servers/1/music-library/songs/search**', (r) =>
+    r.fulfill({
+      json: {
+        total: 1, page: 1, pageSize: 50,
+        songs: [{
+          id: 42, title: longTitle, artist: 'JT Catalano', duration: 214,
+          filePath: '/a.ogg', source: 'local', sourceUrl: null, fileSize: 1,
+          serverConfigId: 1, createdAt: '2026-10-01T00:00:00.000Z',
+        }],
+      },
+    }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await expect(page.getByRole('button', { name: 'Pause Aurora Radio' })).toBeVisible();
+  await expect(page.getByRole('tabpanel').getByText(longTitle)).toBeVisible();
+
+  for (const tab of ['Music', 'Link', 'Radio', 'IPTV']) {
+    await page.getByRole('tab', { name: tab, exact: true }).click();
+    const overflow = await page.evaluate(() => {
+      const vw = document.documentElement.clientWidth;
+      const main = document.querySelector('main') ?? document.documentElement;
+      const wide = [...main.querySelectorAll('*')]
+        .filter((el) => el.getBoundingClientRect().right > vw + 1)
+        .map((el) => `${el.tagName}.${el.className}`);
+      return { scroll: main.scrollWidth - main.clientWidth, wide: wide.slice(0, 5) };
+    });
+    expect(overflow, `${tab} tab`).toEqual({ scroll: 0, wide: [] });
+  }
+});
