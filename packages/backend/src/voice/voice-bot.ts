@@ -4,7 +4,7 @@ import { fitAvatarForTeamSpeak } from './bot-avatar-fit.js';
 import { readBotAvatar, type BotAvatarMode } from '../utils/bot-avatar-storage.js';
 import fs from 'fs';
 import type { Readable } from 'stream';
-import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, isConnectionRefusal } from './tslib/index.js';
+import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, buildSendTextCommands, isConnectionRefusal } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME, isRemoteInput } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
@@ -467,22 +467,20 @@ export class VoiceBot extends EventEmitter {
   /** Private (DM) text to a client. Dropped during a flood hold. */
   sendTextMessage(targetClid: number, msg: string): void {
     if (this.floodHoldActive) return;
-    const cmd = buildCommand('sendtextmessage', {
-      targetmode: 1,
-      target: targetClid,
-      msg,
-    });
-    this.client.sendCommand(cmd);
+    this.sendTextCommands(buildSendTextCommands(msg, 1, targetClid));
   }
 
   /** Channel chat in the bot's current channel (visible to everyone there). Dropped during a flood hold. */
   sendChannelMessage(msg: string): void {
     if (this.floodHoldActive) return;
-    const cmd = buildCommand('sendtextmessage', {
-      targetmode: 2,
-      msg,
-    });
-    this.client.sendCommand(cmd);
+    this.sendTextCommands(buildSendTextCommands(msg, 2));
+  }
+
+  /** Send each already-sized chat command. Callers chunk so none of them fragment. */
+  private sendTextCommands(commands: string[]): void {
+    for (const cmd of commands) {
+      this.client.sendCommand(cmd);
+    }
   }
 
   get currentConfig(): VoiceBotConfig {

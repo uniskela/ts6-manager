@@ -19,7 +19,7 @@ export class Ts3Client extends ProtocolTs3Client {
 
 export type { Ts3ClientOptions } from './client.js';
 export { CONNECTION_REFUSED_ERRORS, isConnectionRefusal } from './client.js';
-export { buildCommand, parseCommand, tsEscape, tsUnescape } from './commands.js';
+export { buildCommand, buildSendTextCommands, parseCommand, tsEscape, tsUnescape, MAX_TS_COMMAND_BYTES } from './commands.js';
 export type { ParsedCommand } from './commands.js';
 export { eaxEncrypt, eaxDecrypt, deriveKeyNonce, hashPassword, sha1, sha256, sha512 } from './crypto.js';
 export { generateIdentity, generateIdentityAsync, restoreIdentity, fromTsIdentity, fromBase64Key, exportPublicKeyString, getSharedSecret } from './identity.js';
