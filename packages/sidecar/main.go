@@ -1283,6 +1283,10 @@ type SourceRequest struct {
 	AllowedHosts []string
 	// CpuUsed overrides VIDEO_CPU_USED / VIDEO_VP9_CPU_USED when > 0.
 	CpuUsed int
+	// freshHTTP is set by StartFFmpeg when a live probe saw an HLS playlist.
+	// It is not part of the POST /source body. Playlist URLs (.m3u8/.m3u)
+	// are recognized in buildFFmpegArgs without this map.
+	freshHTTP map[string]bool
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -1392,6 +1396,7 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 	// them at warning level, which drops per-segment info chatter such as
 	// HLS "Skip ('#EXT-X-PROGRAM-DATE-TIME...')" lines from IPTV sources.
 	args := []string{"-stats_period", "2", "-stats", "-loglevel", "warning"}
+	extraOut := extraFFmpegOutputArgs()
 	args = append(args, hwInitArgs(spec, req.Source != "")...)
 
 	source := req.Source
@@ -1410,12 +1415,20 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			inputs = append(inputs, req.AudioSource)
 			audioMap = "1:a:0"
 		}
+		extraIn := extraFFmpegInputArgs()
 		for _, input := range inputs {
 			if isRemoteSource(input) {
 				if s.egress != nil {
 					args = append(args, egressInputArgs(s.egress.URL())...)
 				}
 				args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
+				// After reconnect flags and before -fflags/-re, so -re stays
+				// adjacent to -i. Extra input args follow, and a later
+				// -http_persistent wins over this default.
+				if disablePersistentHTTP(mode, input, req.freshHTTP) {
+					args = append(args, "-http_persistent", "0")
+				}
+				args = append(args, extraIn...)
 			} else if req.Loop && mode == modeFile {
 				args = append(args, "-stream_loop", "-1")
 			}
@@ -1458,6 +1471,9 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 	args = append(args,
 		"-payload_type", "96",
 		"-ssrc", "11111111",
+	)
+	args = append(args, extraOut...)
+	args = append(args,
 		"-f", "rtp",
 		// FFmpeg's default is 1472 bytes. SRTP adds its auth tag on top, which
 		// puts the packet over a 1500-byte MTU: it is fragmented, and one lost
@@ -1498,6 +1514,9 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			"-ac", "2",
 			"-payload_type", "111",
 			"-ssrc", "22222222",
+		)
+		args = append(args, extraOut...)
+		args = append(args,
 			"-f", "rtp",
 			fmt.Sprintf("rtp://127.0.0.1:%d", s.audioPort),
 		)
@@ -1577,6 +1596,7 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 
 	s.source = req.Source
 	s.streamCodec.Store(requested.Codec)
+	req.freshHTTP = detectLiveHLS(req, s.egress)
 
 	spec := requested
 	fallbackReason := ""

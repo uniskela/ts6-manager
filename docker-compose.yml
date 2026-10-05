@@ -40,6 +40,13 @@ services:
       - MUSIC_DIR=/data/music
       - VIDEO_QUEUE_SIZE=8192
       - AUDIO_QUEUE_SIZE=16384
+      # HLS segment hosts rotate on some providers. The sidecar already opens a
+      # new HTTP connection per HLS segment (FFMPEG_HTTP_PERSISTENT=auto).
+      # Set these on this service to override that, or to add other ffmpeg
+      # options. They do nothing on the backend service.
+      # - FFMPEG_HTTP_PERSISTENT=1
+      # - FFMPEG_EXTRA_INPUT_ARGS=-http_persistent 1
+      # - FFMPEG_EXTRA_OUTPUT_ARGS=
       # Optional: browser WebRTC preview through Docker. Uncomment ports + set
       # WEBRTC_NAT1TO1_IP / WEBRTC_BIND_IP to a host/LAN/Tailscale IPv4 the browser can reach.
       # - WEBRTC_UDP_PORT=${WEBRTC_UDP_PORT:-10000}

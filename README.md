@@ -391,6 +391,9 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 | `VIDEO_CPU_USED` | `4` | libvpx realtime speed/quality trade-off |
 | `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
 | `VIDEO_BUFSIZE` | auto | Optional override; otherwise approximately `2 × VIDEO_BITRATE` |
+| `FFMPEG_HTTP_PERSISTENT` | `auto` | HLS inputs open a new HTTP connection per segment. `1` restores FFmpeg's persistent connection. `0` forces that for every live URL. Set on the **sidecar**, not the backend. |
+| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra FFmpeg options before each remote `-i`. A later `-http_persistent 1` overrides the default. `-i` and bare URLs are ignored. |
+| `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra FFmpeg options inserted before each RTP output. |
 
 ## Music Bot Text Commands
 
