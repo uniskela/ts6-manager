@@ -33,6 +33,13 @@ describe('radio-browser client', () => {
     });
   });
 
+  it('drops duplicate tags before keeping the first three', () => {
+    const mapped = mapRadioBrowserStation({
+      stationuuid: 'x', name: 'A', url: 'https://x', tags: 'News, news ,  local   news, talk, sport',
+    });
+    assert.equal(mapped?.genre, 'News, local news, talk');
+  });
+
   it('rejects stations without a usable http(s) stream URL', () => {
     assert.equal(mapRadioBrowserStation({ stationuuid: 'x', name: 'A', url: 'ftp://x' }), null);
     assert.equal(mapRadioBrowserStation({ stationuuid: '', name: 'A', url: 'https://x' }), null);
