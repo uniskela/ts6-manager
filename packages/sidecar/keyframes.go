@@ -75,8 +75,9 @@ func isVP9KeyframeStart(payload []byte) bool {
 	return frameType == 0
 }
 
-// isH264KeyframeStart opens the gate on SPS (sent in-band ahead of each IDR)
-// or an IDR slice, covering single NAL, STAP-A and FU-A packetization.
+// isH264KeyframeStart opens the gate on SPS or an IDR slice (single NAL,
+// STAP-A, FU-A). Encoders should repeat SPS/PPS before IDRs; the sidecar also
+// reinjects a cached SPS/PPS when a late joiner opens on a bare IDR.
 func isH264KeyframeStart(payload []byte) bool {
 	if len(payload) < 1 {
 		return false

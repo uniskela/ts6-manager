@@ -67,6 +67,30 @@ func TestEncoderArgsHonorsCpuUsed(t *testing.T) {
 	}
 }
 
+func TestH264EncoderArgsRepeatParameterSets(t *testing.T) {
+	t.Setenv("VIDEO_GOP", "15")
+	sw, _ := lookupEncoder("h264")
+	swArgs := strings.Join(encoderArgs(sw, "2500k", false, 0), " ")
+	for _, want := range []string{"-c:v libx264", "-profile:v high", "-bf 0", "-x264-params repeat-headers=1"} {
+		if !strings.Contains(swArgs, want) {
+			t.Errorf("libx264 args missing %q: %s", want, swArgs)
+		}
+	}
+	amf, _ := lookupEncoder("h264_amf")
+	amfArgs := strings.Join(encoderArgs(amf, "2500k", false, 0), " ")
+	for _, want := range []string{"-c:v h264_amf", "-header_spacing 15", "-g 15"} {
+		if !strings.Contains(amfArgs, want) {
+			t.Errorf("h264_amf args missing %q: %s", want, amfArgs)
+		}
+	}
+	// NVENC repeats SPS/PPS for RTP when global_header is off; do not invent flags.
+	nv, _ := lookupEncoder("h264_nvenc")
+	nvArgs := strings.Join(encoderArgs(nv, "2500k", false, 0), " ")
+	if strings.Contains(nvArgs, "header_spacing") || strings.Contains(nvArgs, "repeat-headers") {
+		t.Errorf("nvenc must keep its own repeat behaviour: %s", nvArgs)
+	}
+}
+
 func TestLibvpxHoldsBitrateWithMinrate(t *testing.T) {
 	for _, id := range []string{"vp8", "vp9"} {
 		spec, _ := lookupEncoder(id)
@@ -319,8 +343,8 @@ func TestBuildFFmpegArgsAmf(t *testing.T) {
 	}
 	args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "/data/music/clip.mp4", Width: 1920, Height: 1080, Bitrate: "4500k"}, spec, true), " ")
 	for _, want := range []string{
-		"-c:v h264_amf", "-profile:v constrained_high", "-bf 0", ",format=nv12 ",
-		"-b:v 4500k", "-maxrate 4500k", "-bufsize 9000k", "-g 15",
+		"-c:v h264_amf", "-profile:v constrained_high", "-bf 0", "-header_spacing 15",
+		",format=nv12 ", "-b:v 4500k", "-maxrate 4500k", "-bufsize 9000k", "-g 15",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("h264_amf args missing %q: %s", want, args)

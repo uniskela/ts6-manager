@@ -296,6 +296,7 @@ func (s *Sidecar) resetSyncTiming() {
 	// The next FFmpeg run starts its RTP numbering afresh.
 	s.videoRTP.markRestart()
 	s.audioRTP.markRestart()
+	s.h264Params.clear()
 }
 
 func (s *Sidecar) drainRTPQueues() {
@@ -655,6 +656,9 @@ type Sidecar struct {
 	// prevLineMinElapsed is how far along the previous lines the next run
 	// must start, so that neither track steps back from its last packet.
 	prevLineMinElapsed time.Duration
+
+	// Latest H.264 SPS/PPS from the live RTP path, for late-joining peers.
+	h264Params h264ParamCache
 }
 
 func NewSidecar() *Sidecar {
@@ -807,6 +811,9 @@ func (s *Sidecar) processVideoRTP() {
 		s.waitToSend("video", q)
 		pkt := q.pkt
 		codec := s.currentCodec()
+		if codec == codecH264 {
+			s.h264Params.observe(pkt.Payload)
+		}
 
 		s.peersLock.RLock()
 		for _, peer := range s.peers {
@@ -815,16 +822,25 @@ func (s *Sidecar) processVideoRTP() {
 			active := peer.Active && peer.Codec == codec
 			started := peer.Started
 			track := peer.VideoTrack
+			opening := false
 
 			if active && !started && isKeyframeStart(codec, pkt.Payload) {
 				peer.Started = true
 				started = true
+				opening = true
 				log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", peer.ID, codec, pkt.Timestamp)
 			}
 
 			peer.mu.Unlock()
 
 			if active && started && track != nil {
+				if opening && codec == codecH264 {
+					prefix := s.h264Params.prefixBefore(pkt)
+					for _, p := range prefix {
+						_ = track.WriteRTP(p)
+					}
+					debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
+				}
 				_ = track.WriteRTP(pkt)
 			}
 		}

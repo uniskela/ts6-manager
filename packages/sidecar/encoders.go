@@ -244,6 +244,8 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 			"-profile:v", "high",
 			"-bf", "0",
 			"-keyint_min", gop,
+			// Late-joining WebRTC viewers need SPS/PPS before their first IDR.
+			"-x264-params", "repeat-headers=1",
 		}
 	case "vp8_vaapi":
 		args = []string{"-c:v", "vp8_vaapi"}
@@ -253,7 +255,14 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 		args = []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-bf", "0"}
 	case "h264_amf":
 		// AMF distinguishes Constrained High from High, even without B-frames.
-		args = []string{"-c:v", "h264_amf", "-profile:v", "constrained_high", "-bf", "0"}
+		// Default header_spacing is off (SPS/PPS once at start). Match -g /
+		// IDR period so every IDR carries fresh parameter sets for late joiners.
+		args = []string{
+			"-c:v", "h264_amf",
+			"-profile:v", "constrained_high",
+			"-bf", "0",
+			"-header_spacing", gop,
+		}
 	case "h264_nvenc":
 		args = []string{
 			"-c:v", "h264_nvenc",
