@@ -2,6 +2,58 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.10.0](https://github.com/uniskela/ts6-manager/compare/v1.9.3...v1.10.0) (2026-10-05)
+
+
+### Features
+
+* !play song search, unknown-command replies and Spotify playlist support ([#328](https://github.com/uniskela/ts6-manager/issues/328)) ([b77fa2f](https://github.com/uniskela/ts6-manager/commit/b77fa2f3cf414945a00d6d16578390c9913c9051))
+* add AMD AMF encoding and Windows-native sidecar support ([#357](https://github.com/uniskela/ts6-manager/issues/357)) ([a09b96d](https://github.com/uniskela/ts6-manager/commit/a09b96d3d40fcb274556bbe3482aa2f83abe5a77))
+* add shortcuts from the bot console tabs to the media pages ([#294](https://github.com/uniskela/ts6-manager/issues/294)) ([5d82b0a](https://github.com/uniskela/ts6-manager/commit/5d82b0aded5152c8b99791cf1778f90f5f1702c7))
+* announce auto-stops in chat with a 1-minute video warning ([#274](https://github.com/uniskela/ts6-manager/issues/274)) ([b2434fd](https://github.com/uniskela/ts6-manager/commit/b2434fddc4f5b60468d0d15df2f94214696650eb))
+* bot avatars ([#283](https://github.com/uniskela/ts6-manager/issues/283)) ([e0e99e2](https://github.com/uniskela/ts6-manager/commit/e0e99e20b33ff916b3fcecc8354af3b1068a2326))
+* bot console page with now playing and drag-and-drop queue ([#275](https://github.com/uniskela/ts6-manager/issues/275)) ([999b7c8](https://github.com/uniskela/ts6-manager/commit/999b7c8c5dbb61fa96c9b658e766c6595f681b5e))
+* Bot Hub becomes the bot list and Media Bots becomes Media Library ([#285](https://github.com/uniskela/ts6-manager/issues/285)) ([b11f73f](https://github.com/uniskela/ts6-manager/commit/b11f73f34b4a156bccb68b58d7b8852b9a2c3d04))
+* console IPTV tab with groups and search ([#282](https://github.com/uniskela/ts6-manager/issues/282)) ([3649ae6](https://github.com/uniskela/ts6-manager/commit/3649ae6c45984cf69384e06b063f9013d119cd8d))
+* console link tab ([#278](https://github.com/uniskela/ts6-manager/issues/278)) ([d5eeddf](https://github.com/uniskela/ts6-manager/commit/d5eeddf34e10c15d2fd59a6e4e9c7d798208b3ea))
+* console music and radio tabs ([#279](https://github.com/uniskela/ts6-manager/issues/279)) ([643fba0](https://github.com/uniskela/ts6-manager/commit/643fba0768b7cd5cba2a375602efd28ea0262b9f))
+* edit radio stations ([#266](https://github.com/uniskela/ts6-manager/issues/266)) ([8f96de3](https://github.com/uniskela/ts6-manager/commit/8f96de3a09137a366e69ea5225c08a64677dd6b1))
+* filter IPTV channels by country and language ([#293](https://github.com/uniskela/ts6-manager/issues/293)) ([0b5a58b](https://github.com/uniskela/ts6-manager/commit/0b5a58baf44126002217ae24b36dfe9c4ccbaf67))
+* host channel banner images in the manager ([#287](https://github.com/uniskela/ts6-manager/issues/287)) ([24d5c03](https://github.com/uniskela/ts6-manager/commit/24d5c036d1e32a1828fd7276eb066b2bc8f476b0))
+* IPTV favourites and recent channels ([#286](https://github.com/uniskela/ts6-manager/issues/286)) ([92a9da9](https://github.com/uniskela/ts6-manager/commit/92a9da992ec9477ff1d61622af482b4451a97cbb))
+* let one bot answer chat commands in a shared channel ([#311](https://github.com/uniskela/ts6-manager/issues/311)) ([29a753a](https://github.com/uniskela/ts6-manager/commit/29a753a1750ebec7c11e13b70e9baf27ed27fa7f))
+* **media-library:** now-playing pill in header and page-level Add songs ([#330](https://github.com/uniskela/ts6-manager/issues/330)) ([6c6adc7](https://github.com/uniskela/ts6-manager/commit/6c6adc796d116baad36e5db202b0ae885faf0b1c))
+* move chat commands to Bot Flows with clash warnings ([#281](https://github.com/uniskela/ts6-manager/issues/281)) ([caaf263](https://github.com/uniskela/ts6-manager/commit/caaf26306d2196e3f64cd68f2ce01b0d642f90da))
+* polish the bot console to match the 1.10.0 mockup ([#290](https://github.com/uniskela/ts6-manager/issues/290)) ([eed82c2](https://github.com/uniskela/ts6-manager/commit/eed82c282f3e3cf5fa14035629f2fd1cd8cc4558))
+* search and import stations from Community Radio Browser ([#315](https://github.com/uniskela/ts6-manager/issues/315)) ([f0e9a7d](https://github.com/uniskela/ts6-manager/commit/f0e9a7db08697c8f77751b187efeac4f5eb86154))
+* share playlists across all bots on a server ([#273](https://github.com/uniskela/ts6-manager/issues/273)) ([c824ef0](https://github.com/uniskela/ts6-manager/commit/c824ef03f722977703bd9cb590f67b12b72c29e7))
+* show ffmpeg output for every encoder capability check ([#331](https://github.com/uniskela/ts6-manager/issues/331)) ([ba1268f](https://github.com/uniskela/ts6-manager/commit/ba1268f7e5e35e2e03d324810cc82d80f0085ae0))
+* **streaming:** H.264 hardware encoding on NVIDIA (NVENC) ([#238](https://github.com/uniskela/ts6-manager/issues/238)) ([1ea4eda](https://github.com/uniskela/ts6-manager/commit/1ea4eda7d2fadf9a6bf640a8f98f39c82010fc7b))
+* **streaming:** stream YouTube videos directly instead of downloading first ([#270](https://github.com/uniskela/ts6-manager/issues/270)) ([08c8128](https://github.com/uniskela/ts6-manager/commit/08c8128334dd1168fb39e631c92b4b5b5a84d1c2))
+
+
+### Bug Fixes
+
+* align widget Up Next with shuffled bot queue ([#319](https://github.com/uniskela/ts6-manager/issues/319)) ([af5a60b](https://github.com/uniskela/ts6-manager/commit/af5a60b4a4bd4d09b0ecfef5651e0954f62ad835))
+* **bot-hub:** let an IPTV deep link return to all channels ([#307](https://github.com/uniskela/ts6-manager/issues/307)) ([08f9099](https://github.com/uniskela/ts6-manager/commit/08f90996db72335b506b59781f59fded03c56a61))
+* clear the music queue on !stop and stop-playback ([#321](https://github.com/uniskela/ts6-manager/issues/321)) ([7b85101](https://github.com/uniskela/ts6-manager/commit/7b8510152ed22ea9112fd869f4aa055c504573d8))
+* **deps:** bump serialize-javascript and uuid via overrides ([#314](https://github.com/uniskela/ts6-manager/issues/314)) ([dd85c20](https://github.com/uniskela/ts6-manager/commit/dd85c20fc80698502423d34915b91c2a9fbb7f2d))
+* keep streamed YouTube music playing until the track ends ([#308](https://github.com/uniskela/ts6-manager/issues/308)) ([2f05c29](https://github.com/uniskela/ts6-manager/commit/2f05c29d8dcdd5423e1253dd0f1a7c40072900a2))
+* keep the Bot Hub console inside a phone screen ([#327](https://github.com/uniskela/ts6-manager/issues/327)) ([f68ba6d](https://github.com/uniskela/ts6-manager/commit/f68ba6d7d4d4e06df52b5c61aa386af50d035307))
+* keep the Up next queue on shuffle drags and radio stop ([#334](https://github.com/uniskela/ts6-manager/issues/334)) ([1437ea1](https://github.com/uniskela/ts6-manager/commit/1437ea14f1fabacea55b843a9d8a31b4a1be282c))
+* let bot streams inherit saved defaults ([#295](https://github.com/uniskela/ts6-manager/issues/295)) ([f6dae0a](https://github.com/uniskela/ts6-manager/commit/f6dae0a7c7d32949e770124456f9a55cb7a98982))
+* make the Add to Music URL flow one load, pick and add step ([#309](https://github.com/uniskela/ts6-manager/issues/309)) ([94bc345](https://github.com/uniskela/ts6-manager/commit/94bc345a0d1f6e2fc813e19735299cb2a92e8aa3))
+* **media:** send queue options with YouTube playlist imports ([#268](https://github.com/uniskela/ts6-manager/issues/268)) ([650d0e7](https://github.com/uniskela/ts6-manager/commit/650d0e7b508083cb4cea78df9885f6dbaad1e831))
+* **media:** share volume across music, video, and IPTV ([#251](https://github.com/uniskela/ts6-manager/issues/251)) ([1bf31b2](https://github.com/uniskela/ts6-manager/commit/1bf31b2f182c93f22e92002dd0f5a58dd2d1c8f1))
+* show a plain reason when NVENC has no NVIDIA runtime ([#306](https://github.com/uniskela/ts6-manager/issues/306)) ([bc02093](https://github.com/uniskela/ts6-manager/commit/bc020937e298f242ea9fd9c08c1ecc6884867691))
+* show the long-video refusal instead of Internal server error ([#333](https://github.com/uniskela/ts6-manager/issues/333)) ([69d99cf](https://github.com/uniskela/ts6-manager/commit/69d99cf7be0b5d1b4bf39641189c5c57dd9a2523))
+* show video straight away and keep it in sync after switching a stream's source ([#332](https://github.com/uniskela/ts6-manager/issues/332)) ([428d812](https://github.com/uniskela/ts6-manager/commit/428d81273643447d7c97356f47f3c0c8abf14ad1))
+* shrink bot avatars to fit TeamSpeak 6 before uploading ([#312](https://github.com/uniskela/ts6-manager/issues/312)) ([f6bc137](https://github.com/uniskela/ts6-manager/commit/f6bc1378f62070e6b7f1232b56c2315b6688eb53))
+* **sidecar:** measure A/V latency at arrival so the pacer aligns any skew ([#269](https://github.com/uniskela/ts6-manager/issues/269)) ([819ae27](https://github.com/uniskela/ts6-manager/commit/819ae27b551934ac554d888b2514ccee777c1480))
+* split multi-tag radio genres into separate mood chips ([#329](https://github.com/uniskela/ts6-manager/issues/329)) ([9e924c9](https://github.com/uniskela/ts6-manager/commit/9e924c9a5e18297a0fa6310e79949e65ef759e6e))
+* **ui:** keep Bot Hub Now playing controls on screen on phones ([#318](https://github.com/uniskela/ts6-manager/issues/318)) ([bd6a70b](https://github.com/uniskela/ts6-manager/commit/bd6a70bf003d419c9ffee46332552685dc80bb86))
+* **voice:** make TS client cleanup idempotent ([#347](https://github.com/uniskela/ts6-manager/issues/347)) ([e42ed57](https://github.com/uniskela/ts6-manager/commit/e42ed572d5f5168ad69f7add7889955e73afdbd4))
+
 ## [1.9.3](https://github.com/uniskela/ts6-manager/compare/v1.9.2...v1.9.3) (2026-10-01)
 
 
