@@ -350,6 +350,10 @@ export class Ts3Client extends EventEmitter {
   }
 
   private cleanup(): void {
+    // Match forceClose(): disconnect() schedules cleanup after 500ms, and
+    // notifyclientleftview can call cleanup earlier — without this guard the
+    // second call re-emits "disconnected" (upstream clusterzx/ts6-manager#86).
+    if (this.state === "disconnected") return;
     this.state = "disconnected";
     // Drop assigned clid so callers do not treat a recycled human clid as this bot.
     this.clientId = 0;

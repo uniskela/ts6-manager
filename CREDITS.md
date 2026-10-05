@@ -39,6 +39,8 @@ Ideas, bug reports, and patches from the upstream tracker that informed or were 
 | [Issue #36](https://github.com/clusterzx/ts6-manager/issues/36) | [@vinookie](https://github.com/vinookie) | yt-dlp freshness concern; build-time updates and immutable runtime diagnostics |
 | [PR #72](https://github.com/clusterzx/ts6-manager/pull/72) / [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (reliability subset only) | [@coom](https://github.com/coom) | Connection-pool refresh / self-heal ideas (no Discord/SSO/i18n absorption) |
 | [PR #64](https://github.com/clusterzx/ts6-manager/pull/64) | [@joaobosconff](https://github.com/joaobosconff) | All-in-one Docker image (nginx + backend + sidecar) + first-run login → setup redirect |
+| [Issue #86](https://github.com/clusterzx/ts6-manager/issues/86) | [@youmanwhole](https://github.com/youmanwhole) | Idempotent voice-client `cleanup()` so a second teardown does not re-emit `disconnected` |
+| [Issue #87](https://github.com/clusterzx/ts6-manager/issues/87) | [@youmanwhole](https://github.com/youmanwhole) | Reconnect attempt inflation during grace period (already addressed via `inFlight` / `reconnectAttemptBusy`) |
 
 ## Fork contributions
 
