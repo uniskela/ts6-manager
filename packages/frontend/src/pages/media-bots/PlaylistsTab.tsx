@@ -102,6 +102,10 @@ export function PlaylistsTab() {
   const { data: songs } = useSongs(selectedConfigId);
 
   const [showCreate, setShowCreate] = useState(false);
+  // Page-level Add songs: pick where the songs go, then open the Add dialog for it.
+  const [showPickTarget, setShowPickTarget] = useState(false);
+  const [addAfterCreate, setAddAfterCreate] = useState(false);
+  const [pendingAddId, setPendingAddId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [newMode, setNewMode] = useState<PlaylistMode>('local');
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -162,6 +166,8 @@ export function PlaylistsTab() {
     setSelectedId(null);
     setShowEdit(false);
     setShowAddSong(false);
+    setShowPickTarget(false);
+    setPendingAddId(null);
     setDeleteId(null);
     setSongFilter('');
     setAddTab('songs');
@@ -170,12 +176,36 @@ export function PlaylistsTab() {
     setAddImportJobId(null);
   }, [selectedConfigId]);
 
+  const openAddSongs = (mode: PlaylistMode) => {
+    setAddTab(mode === 'stream' ? 'url' : 'songs');
+    setSongFilter('');
+    resetAddUrlState();
+    setShowAddSong(true);
+  };
+
+  // A playlist picked from the page-level Add songs button opens its Add dialog
+  // once its details (and so its mode) have loaded.
+  useEffect(() => {
+    if (pendingAddId === null || detail?.id !== pendingAddId) return;
+    setPendingAddId(null);
+    openAddSongs(detail.mode === 'stream' ? 'stream' : 'local');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAddId, detail?.id, detail?.mode]);
+
+  const addSongsTo = (id: number) => {
+    setShowPickTarget(false);
+    setSelectedId(id);
+    setPendingAddId(id);
+  };
+
   const handleCreate = () => {
     createPlaylist.mutate(
       { name: newName, mode: newMode, serverConfigId: selectedConfigId ?? undefined },
       {
-        onSuccess: () => {
+        onSuccess: (created: { id?: number } | undefined) => {
           toast.success('Playlist created');
+          if (addAfterCreate && created?.id) addSongsTo(created.id);
+          setAddAfterCreate(false);
           setShowCreate(false);
           setNewName('');
           setNewMode('local');
@@ -376,16 +406,35 @@ export function PlaylistsTab() {
         <p className="text-sm text-muted-foreground">
           {playlists.length} playlist{playlists.length !== 1 ? 's' : ''}
         </p>
-        <Button
-          size="sm"
-          onClick={() => {
-            setNewName('');
-            setNewMode('local');
-            setShowCreate(true);
-          }}
-        >
-          <Plus className="h-4 w-4 mr-1" /> New Playlist
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              if (playlists.length === 0) {
+                setNewName('');
+                setNewMode('local');
+                setAddAfterCreate(true);
+                setShowCreate(true);
+              } else {
+                setShowPickTarget(true);
+              }
+            }}
+          >
+            <Music className="h-4 w-4 mr-1" /> Add songs
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              setNewName('');
+              setNewMode('local');
+              setAddAfterCreate(false);
+              setShowCreate(true);
+            }}
+          >
+            <Plus className="h-4 w-4 mr-1" /> New Playlist
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[300px_1fr] gap-4">
@@ -458,12 +507,7 @@ export function PlaylistsTab() {
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs"
-                    onClick={() => {
-                      setAddTab(playlistMode === 'stream' ? 'url' : 'songs');
-                      setSongFilter('');
-                      resetAddUrlState();
-                      setShowAddSong(true);
-                    }}
+                    onClick={() => openAddSongs(playlistMode)}
                   >
                     <Plus className="h-3 w-3 mr-1" /> Add Songs
                   </Button>
@@ -520,7 +564,62 @@ export function PlaylistsTab() {
         )}
       </div>
 
-      <Dialog open={showCreate} onOpenChange={setShowCreate}>
+      <Dialog
+        open={showPickTarget}
+        onOpenChange={setShowPickTarget}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Add songs to…</DialogTitle>
+            <DialogDescription>
+              Pick a playlist to add to, or start a new one. To send a link straight to a running bot&apos;s
+              queue, use the Library tab.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-72">
+            <div className="space-y-1">
+              {playlists.map((pl) => (
+                <button
+                  key={pl.id}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:outline-none"
+                  onClick={() => addSongsTo(pl.id)}
+                >
+                  <ListMusic className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-medium">{pl.name}</span>
+                    <span className="block text-[10px] text-muted-foreground">
+                      {pl.mode === 'stream' ? 'stream' : 'local'} · {pl.songCount} song{pl.songCount !== 1 ? 's' : ''}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowPickTarget(false);
+                setNewName('');
+                setNewMode('local');
+                setAddAfterCreate(true);
+                setShowCreate(true);
+              }}
+            >
+              <Plus className="h-4 w-4 mr-1" /> New playlist…
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={showCreate}
+        onOpenChange={(open) => {
+          setShowCreate(open);
+          if (!open) setAddAfterCreate(false);
+        }}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>New Playlist</DialogTitle>
@@ -556,7 +655,7 @@ export function PlaylistsTab() {
               Cancel
             </Button>
             <Button onClick={handleCreate} disabled={!newName || createPlaylist.isPending}>
-              Create
+              {addAfterCreate ? 'Create and add songs' : 'Create'}
             </Button>
           </DialogFooter>
         </DialogContent>

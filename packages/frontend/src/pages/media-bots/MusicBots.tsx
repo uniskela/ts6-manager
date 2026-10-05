@@ -10,6 +10,7 @@ import {
   Video,
 } from 'lucide-react';
 import { RequestsTab } from '@/components/media/RequestsTab';
+import { ActiveBotsMenu } from '@/components/media/ActiveBotsMenu';
 import { isMediaLibraryTab, mediaLibraryRedirect, type MediaLibraryTab } from '@/lib/media-library-redirect';
 import { LibraryTab } from './LibraryTab';
 import { PlaylistsTab } from './PlaylistsTab';
@@ -43,6 +44,7 @@ export default function MusicBots() {
         title="Media Library"
         icon={Library}
         description="Songs, playlists, radio stations, !play requests and streaming defaults, shared by every bot on a server."
+        actions={<ActiveBotsMenu />}
       />
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
