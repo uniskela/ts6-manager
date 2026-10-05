@@ -14,6 +14,7 @@ async function signIn(page: Page, request: APIRequestContext) {
 async function radioFixture(page: Page, saveGate?: Promise<void>, savedUrl = 'https://example.com/live') {
   let station = { id: 7, serverConfigId: 1, name: 'Original station', url: savedUrl, genre: 'Rock', imageUrl: null };
   const updates: unknown[] = [];
+  await page.route('**/api/music-bots', (route) => route.fulfill({ json: [] }));
   await page.route('**/api/servers/1/radio-stations', (route) => route.fulfill({ json: [station] }));
   await page.route('**/api/servers/1/radio-stations/7', async (route) => {
     expect(route.request().method()).toBe('PUT');
@@ -40,10 +41,11 @@ for (const width of [1400, 390]) {
     const updates = await radioFixture(page);
     await signIn(page, request);
     await page.goto('/media-bots?tab=radio&server=1');
-    // Stations play from a bot's console; this tab only manages them.
+    // With no running bot, Play stays visible but disabled and points at Bot Hub.
     // exact: header idle pill also links to Bot Hub (aria-label "Open Bot Hub").
     await expect(page.getByRole('link', { name: 'Bot Hub', exact: true })).toHaveAttribute('href', '/bot-hub');
-    await expect(page.getByRole('button', { name: /^Play / })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Play Original station' })).toBeDisabled();
+    await expect(page.getByText('Start a bot on this server to play stations here')).toBeVisible();
     await page.getByRole('button', { name: /^Edit / }).click();
     const dialog = page.getByRole('dialog', { name: 'Edit station' });
     await expect(dialog.getByLabel('Name', { exact: true })).toHaveValue('Original station');
@@ -72,6 +74,37 @@ for (const width of [1400, 390]) {
     await expect(addDialog.getByRole('button', { name: 'Add Station', exact: true })).toBeDisabled();
   });
 }
+
+test('Play sends a station to the bot picked under Play on', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await radioFixture(page);
+  await page.route('**/api/music-bots', (route) => route.fulfill({
+    json: [
+      { id: 1, name: 'Aurora', serverConfigId: 1, status: 'playing' },
+      { id: 2, name: 'Study Beats', serverConfigId: 1, status: 'connected' },
+      { id: 3, name: 'Stopped Bot', serverConfigId: 1, status: 'stopped' },
+      { id: 5, name: 'Starting Bot', serverConfigId: 1, status: 'starting' },
+      { id: 4, name: 'Other Server Bot', serverConfigId: 2, status: 'playing' },
+    ],
+  }));
+  const plays: Array<{ url: string; body: unknown }> = [];
+  await page.route(/\/api\/music-bots\/\d+\/play-radio$/, async (route) => {
+    plays.push({ url: route.request().url(), body: route.request().postDataJSON() });
+    await route.fulfill({ json: { success: true } });
+  });
+  await signIn(page, request);
+  await page.goto('/media-bots?tab=radio&server=1');
+
+  const playOn = page.getByLabel('Play on');
+  await expect(playOn).toHaveText('Aurora');
+  await playOn.click();
+  await expect(page.getByRole('option')).toHaveText(['Aurora', 'Study Beats']);
+  await page.getByRole('option', { name: 'Study Beats' }).click();
+
+  await page.getByRole('button', { name: 'Play Original station' }).click();
+  await expect.poll(() => plays).toEqual([{ url: expect.stringMatching(/\/music-bots\/2\/play-radio$/), body: { stationId: 7 } }]);
+  await expect(page.getByText('Playing Original station on Study Beats')).toBeVisible();
+});
 
 test('search Community Radio Browser and add a station', async ({ page, request }) => {
   const stations = [

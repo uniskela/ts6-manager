@@ -8,7 +8,9 @@ import {
   useUpdateRadioStation,
   useDeleteRadioStation,
   useResetRadioStationIds,
+  usePlayRadio,
 } from '@/hooks/use-radio-stations';
+import { useMusicBots } from '@/hooks/use-music-bots';
 import { useServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
@@ -34,16 +36,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Plus, Trash2, Radio, Search } from 'lucide-react';
+import { Play, Plus, Trash2, Radio, Search } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiErrorMessage } from '@/lib/api-error';
+import { toastMediaStarted } from '@/lib/media-start-toast';
 import { splitGenreTags } from '@/lib/radio-moods';
-import type { RadioStationInfo, RadioPreset, RadioBrowserStationInfo } from '@ts6/common';
+import type { MusicBotSummary, RadioStationInfo, RadioPreset, RadioBrowserStationInfo } from '@ts6/common';
 
 
 // ─── Radio Tab ───────────────────────────────────────────────────────────────
 
-/** Manage a server's radio stations. Stations play from a bot's console in the Bot Hub. */
+/** Manage a server's radio stations and play one on a running bot. */
 export function RadioTab() {
   const [searchParams] = useSearchParams();
   const linkedServer = Number(searchParams.get('server')) || null;
@@ -60,6 +63,24 @@ export function RadioTab() {
   const stationPending = createStation.isPending || updateStation.isPending;
   const deleteStation = useDeleteRadioStation();
   const resetStationIds = useResetRadioStationIds();
+  const playRadio = usePlayRadio();
+
+  // Ready bots on this server (the statuses play-radio accepts); Play uses the one picked under "Play on".
+  const { data: bots } = useMusicBots();
+  const runningBots = (Array.isArray(bots) ? bots : []).filter(
+    (b: MusicBotSummary) =>
+      b.serverConfigId === configId && (b.status === 'connected' || b.status === 'playing' || b.status === 'paused'),
+  );
+  const [pickedBotId, setPickedBotId] = useState<number | null>(null);
+  const playBot = runningBots.find((b: MusicBotSummary) => b.id === pickedBotId) ?? runningBots[0] ?? null;
+
+  const handlePlay = (station: RadioStationInfo) => {
+    if (!playBot) return;
+    playRadio.mutate({ botId: playBot.id, stationId: station.id }, {
+      onSuccess: () => toastMediaStarted(`Playing ${station.name} on ${playBot.name}`),
+      onError: (err) => toast.error(apiErrorMessage(err, 'Could not play radio')),
+    });
+  };
 
   const [showAdd, setShowAdd] = useState(false);
   const [showPresets, setShowPresets] = useState(false);
@@ -183,6 +204,20 @@ export function RadioTab() {
           </SelectContent>
         </Select>
 
+        {runningBots.length > 1 && (
+          <>
+            <Label htmlFor="radio-play-on" className="text-xs text-muted-foreground">Play on</Label>
+            <Select value={playBot ? String(playBot.id) : ''} onValueChange={(v) => setPickedBotId(parseInt(v))}>
+              <SelectTrigger id="radio-play-on" className="w-48"><SelectValue placeholder="Bot..." /></SelectTrigger>
+              <SelectContent>
+                {runningBots.map((b: MusicBotSummary) => (
+                  <SelectItem key={b.id} value={String(b.id)}>{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
+        )}
+
         <div className="flex-1" />
 
         <Button
@@ -224,8 +259,11 @@ export function RadioTab() {
         </Button>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        Play a station from a bot&apos;s console in the <Link to="/bot-hub" className="text-primary underline-offset-4 hover:underline">Bot Hub</Link>.
+      <p id="radio-play-hint" className="text-sm text-muted-foreground">
+        {playBot
+          ? <>Play sends a station to <span className="font-medium text-foreground">{playBot.name}</span>. You can also play from a bot&apos;s console in the </>
+          : <>Start a bot on this server to play stations here, or play from a bot&apos;s console in the </>}
+        <Link to="/bot-hub" className="text-primary underline-offset-4 hover:underline">Bot Hub</Link>.
       </p>
 
       {/* Station List */}
@@ -250,6 +288,18 @@ export function RadioTab() {
                   )}
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="default"
+                    size="icon"
+                    className="h-11 w-11"
+                    disabled={!playBot || playRadio.isPending}
+                    aria-label={`Play ${station.name}`}
+                    aria-describedby={playBot ? undefined : 'radio-play-hint'}
+                    title={playBot ? `Play on ${playBot.name}` : 'Start a bot on this server first'}
+                    onClick={() => handlePlay(station)}
+                  >
+                    <Play className="h-4 w-4" aria-hidden="true" />
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"
