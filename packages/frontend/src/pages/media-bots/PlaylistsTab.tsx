@@ -104,7 +104,13 @@ export function PlaylistsTab() {
   const [showCreate, setShowCreate] = useState(false);
   // Page-level Add songs: pick where the songs go, then open the Add dialog for it.
   const [showPickTarget, setShowPickTarget] = useState(false);
-  const [addAfterCreate, setAddAfterCreate] = useState(false);
+  const [addAfterCreate, setAddAfterCreateState] = useState(false);
+  // Read by the create callback, which may run after the dialog was closed.
+  const addAfterCreateRef = useRef(false);
+  const setAddAfterCreate = (value: boolean) => {
+    addAfterCreateRef.current = value;
+    setAddAfterCreateState(value);
+  };
   const [pendingAddId, setPendingAddId] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [newMode, setNewMode] = useState<PlaylistMode>('local');
@@ -214,7 +220,7 @@ export function PlaylistsTab() {
       {
         onSuccess: (created: { id?: number } | undefined) => {
           toast.success('Playlist created');
-          if (addAfterCreate && created?.id && shownConfigId.current === createdOnConfigId) addSongsTo(created.id);
+          if (addAfterCreateRef.current && created?.id && shownConfigId.current === createdOnConfigId) addSongsTo(created.id);
           setAddAfterCreate(false);
           setShowCreate(false);
           setNewName('');

@@ -97,3 +97,32 @@ test('Playlists Add songs picks a playlist first, then opens its Add dialog', as
   // Stream playlists open on the URL tab.
   await expect(add.getByLabel('Track or playlist URL')).toBeVisible();
 });
+
+test('Playlists Add songs can create a playlist and open its Add dialog', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const existing = { id: 10, name: 'Music', mode: 'stream', songCount: 3, serverConfigId: 1, musicBotId: null };
+  const created = { id: 12, name: 'Road Trip', mode: 'local', songCount: 0, serverConfigId: 1, musicBotId: null };
+  let list = [existing];
+  await page.route(/\/api\/playlists(\?.*)?$/, (r) => {
+    if (r.request().method() === 'POST') {
+      list = [existing, created];
+      return r.fulfill({ status: 201, json: created });
+    }
+    return r.fulfill({ json: list });
+  });
+  await page.route(/\/api\/playlists\/12$/, (r) => r.fulfill({ json: { ...created, songs: [] } }));
+
+  await signIn(page, request);
+  await page.goto('/media-bots?tab=playlists');
+  await page.getByRole('button', { name: 'Add songs', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Add songs to…' }).getByRole('button', { name: 'New playlist…' }).click();
+
+  const create = page.getByRole('dialog', { name: 'New Playlist' });
+  await create.getByPlaceholder('My Playlist').fill('Road Trip');
+  await create.getByRole('button', { name: 'Create and add songs' }).click();
+
+  const add = page.getByRole('dialog', { name: 'Add to Road Trip' });
+  await expect(add).toBeVisible();
+  // Local playlists open on the Songs tab.
+  await expect(add.getByPlaceholder('Filter songs...')).toBeVisible();
+});
