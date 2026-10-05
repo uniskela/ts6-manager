@@ -156,3 +156,35 @@ func TestSwitchKeepsTracksOnOneClockLine(t *testing.T) {
 		t.Errorf("audio base %d, want old line + %v", s.audioTiming.baseRTP-testAudioRTP, want)
 	}
 }
+
+// A track whose last packets ran ahead of its clock line (an accepted forward
+// step) must not be clamped alone: both tracks move along by the same amount.
+func TestSwitchMovesBothTracksPastALeadingTrack(t *testing.T) {
+	s := newTestPacer()
+	t0 := time.Unix(1_000_000, 0)
+	first := map[string]uint32{"audio": testAudioRTP, "video": testVideoRTP}
+	feed(s, 100, first, frames("audio", t0, 10*time.Millisecond, 2*time.Second),
+		frames("video", t0, 10*time.Millisecond, 2*time.Second))
+	// Video jumps 0.9 s ahead within the run: under a second, so accepted.
+	jumpTicks := uint32(81000)
+	jump := frames("video", t0.Add(2*time.Second), 10*time.Millisecond, 200*time.Millisecond)
+	for i := range jump {
+		jump[i].index += 60
+	}
+	feed(s, 100, map[string]uint32{"video": uint32(testVideoRTP) + jumpTicks}, jump)
+
+	s.resetSyncTiming()
+	t1 := t0.Add(2300 * time.Millisecond)
+	feed(s, 40000, map[string]uint32{"audio": 7, "video": 3_000_000_000},
+		frames("audio", t1, 10*time.Millisecond, 3*time.Second),
+		frames("video", t1, 10*time.Millisecond, 3*time.Second))
+
+	if int32(s.videoRTP.lastTS-testVideoRTP) <= 0 {
+		t.Fatal("video stepped back")
+	}
+	videoBase := time.Duration(s.videoTiming.baseRTP-testVideoRTP) * time.Second / 90000
+	audioBase := time.Duration(s.audioTiming.baseRTP-testAudioRTP) * time.Second / 48000
+	if !near(videoBase, audioBase) {
+		t.Errorf("new run starts video at %v and audio at %v on the old lines; want the same", videoBase, audioBase)
+	}
+}

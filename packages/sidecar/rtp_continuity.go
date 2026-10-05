@@ -174,6 +174,19 @@ type clockLine struct {
 	wall  time.Time
 }
 
+// leadOn is how far along line the last packet sent lies, plus one
+// millisecond: the least elapsed time at which a new run on line steps
+// forward from it. Zero before anything was sent.
+func (c *rtpContinuity) leadOn(line clockLine) time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.started || c.clockRate == 0 {
+		return 0
+	}
+	lead := time.Duration(int64(int32(c.lastTS-line.base)) * int64(time.Second) / int64(c.clockRate))
+	return lead + time.Millisecond
+}
+
 func (l clockLine) at(t time.Time, clockRate uint32) uint32 {
 	return l.base + uint32(int64(t.Sub(l.wall))*int64(clockRate)/int64(time.Second))
 }
@@ -205,6 +218,11 @@ func (s *Sidecar) continueRTP(kind string, pkt *rtp.Packet, codec string, arrive
 			// Packets of the old run started this one; follow its line.
 			return clockLine{base: current.baseRTP, wall: s.streamBaseWall}.at(arrived, clockRate)
 		case prev.valid:
+			// Both tracks start at the same point on their lines, past both
+			// their last packets, so they stay paired.
+			if earliest := prev.wall.Add(s.prevLineMinElapsed); anchor.Before(earliest) {
+				anchor = earliest
+			}
 			return prev.at(anchor, clockRate)
 		}
 		return cont.lastTS + uint32(int64(max(arrived.Sub(cont.lastAt), 0))*int64(clockRate)/int64(time.Second))

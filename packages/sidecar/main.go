@@ -238,12 +238,15 @@ func (s *Sidecar) resetSyncTiming() {
 	// Keep the run's clock line, which the next run's timestamps carry on.
 	s.prevVideoLine = clockLine{}
 	s.prevAudioLine = clockLine{}
+	s.prevLineMinElapsed = 0
 	if s.streamBaseSet {
 		if s.videoTiming.initialized {
 			s.prevVideoLine = clockLine{valid: true, base: s.videoTiming.baseRTP, wall: s.streamBaseWall}
+			s.prevLineMinElapsed = max(s.prevLineMinElapsed, s.videoRTP.leadOn(s.prevVideoLine))
 		}
 		if s.audioTiming.initialized {
 			s.prevAudioLine = clockLine{valid: true, base: s.audioTiming.baseRTP, wall: s.streamBaseWall}
+			s.prevLineMinElapsed = max(s.prevLineMinElapsed, s.audioRTP.leadOn(s.prevAudioLine))
 		}
 	}
 	s.streamBaseWall = time.Time{}
@@ -609,6 +612,9 @@ type Sidecar struct {
 	// The previous run's clock lines, guarded by timingMu.
 	prevVideoLine clockLine
 	prevAudioLine clockLine
+	// prevLineMinElapsed is how far along the previous lines the next run
+	// must start, so that neither track steps back from its last packet.
+	prevLineMinElapsed time.Duration
 }
 
 func NewSidecar() *Sidecar {
