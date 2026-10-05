@@ -91,13 +91,15 @@ ffmpeg -hide_banner -encoders | Select-String "amf"
 
 The output must include `h264_amf`. AV1/HEVC AMF encoders may also be present, but TS6 Manager currently selects only H.264 AMF. The capability check performs a real small encode; an encoder appearing in this list alone does not prove the driver can initialize it.
 
+Native Windows production deployments currently build the sidecar from source. TODO: publish automated Windows release artifacts separately. This is the normal cross-platform media sidecar; AMF is one runtime capability.
+
 Build the sidecar from the same checkout/release as the backend, using Go 1.25 or newer. From the repository root:
 
 ```powershell
 New-Item -ItemType Directory -Force .\bin | Out-Null
 Push-Location .\packages\sidecar
 try {
-    go build -o ..\..\bin\sidecar-amf.exe .
+    go build -o ..\..\bin\sidecar.exe .
     if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
 } finally { Pop-Location }
 ```
@@ -121,7 +123,7 @@ New-Item -ItemType Directory -Force .\media | Out-Null
 $env:MUSIC_DIR = (Resolve-Path .\media).Path
 $env:WEBRTC_UDP_PORT = "10000"
 $env:WEBRTC_NAT1TO1_IP = "127.0.0.1" # Browser preview on this Windows host only.
-.\bin\sidecar-amf.exe
+.\bin\sidecar.exe
 ```
 
 For TeamSpeak viewers, or browsers on another machine, replace the advertised IP with the Windows host's **reachable LAN or Tailscale IPv4** before starting the sidecar. You may advertise both `127.0.0.1` and that IPv4 as a comma-separated list. The TeamSpeak client does not use loopback even on the same machine. `WEBRTC_UDP_PORT` is owned by the native process; it requires no Docker mapping, and the Docker-only `WEBRTC_BIND_IP` setting does not apply.
@@ -150,7 +152,7 @@ if (-not (Test-Path .\.env)) { Copy-Item .\.env.pr-test.example .\.env }
 New-Item -ItemType Directory -Force .\bin, .\.pr-test\music | Out-Null
 Push-Location .\packages\sidecar
 try {
-    go build -o ..\..\bin\sidecar-amf.exe .
+    go build -o ..\..\bin\sidecar.exe .
     if ($LASTEXITCODE -ne 0) { throw "Sidecar build failed" }
 } finally { Pop-Location }
 
@@ -167,7 +169,7 @@ $env:FFPROBE_PATH = (Get-Command ffprobe -ErrorAction Stop).Source
 $env:MUSIC_DIR = (Resolve-Path .\.pr-test\music).Path
 $env:WEBRTC_UDP_PORT = "10000"
 $env:WEBRTC_NAT1TO1_IP = "127.0.0.1" # Add reachable LAN/Tailscale IPv4 for TeamSpeak.
-.\bin\sidecar-amf.exe
+.\bin\sidecar.exe
 ```
 
 Keep this terminal running. In a second PowerShell window at the repository root:
