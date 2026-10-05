@@ -301,3 +301,63 @@ func TestHardwareEncodersNameTheirBackend(t *testing.T) {
 		}
 	}
 }
+
+// Every probe that runs ffmpeg reports each attempt's command, exit and output,
+// passing or failing, so the UI can show them for every encoder row.
+func TestProbeRecordsEachAttempt(t *testing.T) {
+	t.Setenv("VAAPI_LOW_POWER", "")
+	run := func(ctx context.Context, args []string) (string, error) {
+		if strings.Contains(strings.Join(args, " "), "-low_power 1") {
+			return "", nil
+		}
+		return "[h264_vaapi] No usable encoding entrypoint found\n", errors.New("exit status 1")
+	}
+	spec, _ := lookupEncoder("h264_vaapi")
+	res := probeOneEncoder(spec, true, run)
+	if len(res.Attempts) != 2 {
+		t.Fatalf("expected two attempts, got %+v", res.Attempts)
+	}
+	first, second := res.Attempts[0], res.Attempts[1]
+	if first.OK || first.Result != "exit status 1" || !strings.Contains(first.Output, "No usable encoding entrypoint") {
+		t.Fatalf("unexpected failed attempt %+v", first)
+	}
+	if !second.OK || !second.LowPower || second.Result != "exit 0" || second.Output != "" {
+		t.Fatalf("unexpected passing attempt %+v", second)
+	}
+	if !strings.Contains(first.Command, "-c:v h264_vaapi") {
+		t.Fatalf("command should name the encoder, got %q", first.Command)
+	}
+}
+
+func TestProbeSoftwareSuccessRecordsAttempt(t *testing.T) {
+	run := func(ctx context.Context, args []string) (string, error) { return "", nil }
+	spec, _ := lookupEncoder("vp8")
+	res := probeOneEncoder(spec, true, run)
+	if !res.Available || len(res.Attempts) != 1 || !res.Attempts[0].OK {
+		t.Fatalf("unexpected result %+v", res)
+	}
+	if !strings.Contains(res.Attempts[0].Command, "-c:v libvpx") {
+		t.Fatalf("command should name the encoder, got %q", res.Attempts[0].Command)
+	}
+}
+
+func TestProbeSkippedHasNoAttempts(t *testing.T) {
+	run := func(ctx context.Context, args []string) (string, error) { return "", nil }
+	spec, _ := lookupEncoder("vp9_vaapi")
+	res := probeOneEncoder(spec, false, run)
+	if len(res.Attempts) != 0 {
+		t.Fatalf("skipped probe should not report attempts, got %+v", res.Attempts)
+	}
+	if !strings.Contains(res.Skipped, "not present") {
+		t.Fatalf("skipped probe should say why, got %q", res.Skipped)
+	}
+}
+
+func TestProbeCommandLineQuotes(t *testing.T) {
+	t.Setenv("FFMPEG_PATH", "ffmpeg")
+	got := probeCommandLine([]string{"-vf", "format=nv12,hwupload", "-f", "null", "-", "it's here"})
+	want := `ffmpeg -vf format=nv12,hwupload -f null - 'it'\''s here'`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}

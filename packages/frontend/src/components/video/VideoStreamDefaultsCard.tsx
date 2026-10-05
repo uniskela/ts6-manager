@@ -5,9 +5,9 @@
  */
 
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Loader2, RefreshCw, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Loader2, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
-import type { VideoEncodeProfile, VideoEncoderRequest, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
+import type { VideoEncodeProfile, VideoEncoderCapability, VideoEncoderRequest, VideoStreamPresetKey, VideoStreamSettings } from '@ts6/common';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -361,22 +361,17 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
               </p>
               <ul className="grid gap-1 sm:grid-cols-2">
                 {encoders.caps.encoders.map((e) => (
-                  <li key={e.id} className="flex items-start gap-2 rounded bg-muted/50 px-2.5 py-1.5 text-xs">
+                  <li key={e.id} className="flex min-w-0 items-start gap-2 rounded bg-muted/50 px-2.5 py-1.5 text-xs">
                     {e.available
                       ? <Check className="mt-0.5 h-3.5 w-3.5 shrink-0 text-success" aria-label="available" />
                       : <X className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-label="unavailable" />}
-                    <span className="min-w-0">
+                    <span className="min-w-0 flex-1">
                       <span className="font-medium">{ENCODER_LABELS[e.id] ?? e.id}</span>
                       {e.lowPower ? <span className="text-muted-foreground"> · low-power</span> : null}
                       {!e.available && e.error && (
                         <span className="block break-words text-muted-foreground">{e.error}</span>
                       )}
-                      {!e.available && e.detail && (
-                        <details className="mt-0.5 text-muted-foreground/80">
-                          <summary className="cursor-pointer select-none">ffmpeg output</summary>
-                          <span className="block break-words font-mono text-[11px]">{e.detail}</span>
-                        </details>
-                      )}
+                      <EncoderProbeOutput encoder={e} />
                     </span>
                   </li>
                 ))}
@@ -386,5 +381,45 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Collapsible ffmpeg log for one encoder check: each test encode's command,
+ * how it ended and what ffmpeg printed. A check skipped without running
+ * ffmpeg says why instead.
+ */
+function EncoderProbeOutput({ encoder }: { encoder: VideoEncoderCapability }) {
+  const attempts = encoder.attempts ?? [];
+  return (
+    <details className="group mt-1 text-muted-foreground">
+      <summary className="inline-flex cursor-pointer select-none list-none items-center gap-1 rounded-sm text-[11px] outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 shrink-0 transition-transform group-open:rotate-90" aria-hidden />
+        ffmpeg output
+      </summary>
+      <div className="mt-1 space-y-1.5">
+        {attempts.length === 0 ? (
+          encoder.skipped ? (
+            <p className="text-[11px]">ffmpeg was not run: {encoder.skipped}.</p>
+          ) : encoder.detail ? (
+            <pre className="whitespace-pre-wrap break-words rounded bg-background/60 p-1.5 font-mono text-[11px]">{encoder.detail}</pre>
+          ) : (
+            // Sidecars older than this UI report no per-attempt output.
+            <p className="text-[11px]">No ffmpeg output was reported. Update the media sidecar to see it.</p>
+          )
+        ) : attempts.map((a, i) => (
+          <div key={i} className="space-y-0.5 rounded bg-background/60 p-1.5 font-mono text-[11px]">
+            {attempts.length > 1 && (
+              <p className="font-sans text-muted-foreground">
+                Attempt {i + 1}{a.lowPower ? ' (low-power)' : ''}
+              </p>
+            )}
+            <p className="break-words text-foreground/80">$ {a.command}</p>
+            <p className={a.ok ? 'text-success' : 'text-destructive'}>→ {a.result}</p>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words">{a.output || '(no output)'}</pre>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
