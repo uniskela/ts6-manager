@@ -62,7 +62,9 @@ func (c *rtpContinuity) markRestart() {
 // ID in place. now is the packet's arrival time. When pkt starts a new run,
 // target gives the timestamp it should carry; nil carries on by the wall
 // clock gap since the last packet. Either way the timestamp moves forward.
-func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time, target func() uint32) {
+// seqJump is true when this packet was treated as a new FFmpeg run because its
+// sequence number jumped, not merely because markRestart was pending.
+func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time, target func() uint32) (seqJump bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -71,7 +73,9 @@ func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time, ta
 		c.restarted = false
 	} else {
 		step := int16(pkt.SequenceNumber - c.lastInSeq)
-		if c.restarted || step > maxContinuousSeqStep || step < -maxContinuousSeqBack {
+		jump := step > maxContinuousSeqStep || step < -maxContinuousSeqBack
+		if c.restarted || jump {
+			seqJump = jump
 			c.restarted = false
 			c.seqOffset = c.lastSeq + 1 - pkt.SequenceNumber
 			var want uint32
@@ -104,6 +108,7 @@ func (c *rtpContinuity) rewrite(pkt *rtp.Packet, codec string, now time.Time, ta
 		c.lastPic = pic
 		c.picOK = true
 	}
+	return seqJump
 }
 
 // rebasePictureID sets picOffset so pkt's picture ID follows the last one
@@ -183,8 +188,11 @@ func (c *rtpContinuity) leadOn(line clockLine) time.Duration {
 	if !c.started || c.clockRate == 0 {
 		return 0
 	}
-	lead := time.Duration(int64(int32(c.lastTS-line.base)) * int64(time.Second) / int64(c.clockRate))
-	return lead + time.Millisecond
+	// Unsigned distance on the RTP timeline. int32(lastTS-base) goes negative
+	// after half the wrap range (~6h38m at 90 kHz) and would drop a leading
+	// track's lead on the next source switch.
+	ticks := c.lastTS - line.base
+	return time.Duration(uint64(ticks)*uint64(time.Second)/uint64(c.clockRate)) + time.Millisecond
 }
 
 func (l clockLine) at(t time.Time, clockRate uint32) uint32 {
@@ -208,23 +216,32 @@ func (s *Sidecar) continueRTP(kind string, pkt *rtp.Packet, codec string, arrive
 	if kind == "audio" {
 		cont, prev = &s.audioRTP, s.prevAudioLine
 	}
-	cont.rewrite(pkt, codec, arrived, func() uint32 {
+	seqJump := cont.rewrite(pkt, codec, arrived, func() uint32 {
 		anchor := arrived
 		if s.streamBaseSet {
 			anchor = s.streamBaseWall
 		}
 		switch {
-		case current.initialized:
-			// Packets of the old run started this one; follow its line.
-			return clockLine{base: current.baseRTP, wall: s.streamBaseWall}.at(arrived, clockRate)
 		case prev.valid:
-			// Both tracks start at the same point on their lines, past both
-			// their last packets, so they stay paired.
+			// Shared restart anchor wins over a clock line started by a
+			// leftover old-run packet: that packet can set current.initialized
+			// before the new run's sequence jump arrives.
 			if earliest := prev.wall.Add(s.prevLineMinElapsed); anchor.Before(earliest) {
 				anchor = earliest
 			}
 			return prev.at(anchor, clockRate)
+		case current.initialized:
+			return clockLine{base: current.baseRTP, wall: s.streamBaseWall}.at(arrived, clockRate)
 		}
 		return cont.lastTS + uint32(int64(max(arrived.Sub(cont.lastAt), 0))*int64(clockRate)/int64(time.Second))
 	})
+	// Once this track's new run is identified, drop its saved anchor so a
+	// later mid-run sequence jump follows the current line.
+	if seqJump {
+		if kind == "audio" {
+			s.prevAudioLine = clockLine{}
+		} else {
+			s.prevVideoLine = clockLine{}
+		}
+	}
 }

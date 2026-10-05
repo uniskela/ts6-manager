@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math"
 	"sort"
 	"testing"
 	"time"
@@ -186,5 +187,80 @@ func TestSwitchMovesBothTracksPastALeadingTrack(t *testing.T) {
 	audioBase := time.Duration(s.audioTiming.baseRTP-testAudioRTP) * time.Second / 48000
 	if !near(videoBase, audioBase) {
 		t.Errorf("new run starts video at %v and audio at %v on the old lines; want the same", videoBase, audioBase)
+	}
+}
+
+// leadOn must keep a lead past the signed int32 half-range (~6h38m at 90 kHz).
+func TestLeadOnPastSignedHalfRange(t *testing.T) {
+	c := rtpContinuity{clockRate: 90000, started: true}
+	line := clockLine{valid: true, base: 0, wall: time.Unix(0, 0)}
+	ticks := uint32(math.MaxInt32) + 90000 // one second past half-range
+	c.lastTS = ticks
+	got := c.leadOn(line)
+	want := time.Duration(ticks)*time.Second/90000 + time.Millisecond
+	if !near(got, want) {
+		t.Fatalf("lead %v, want %v", got, want)
+	}
+}
+
+// A switch after video has run past the signed half-range must still keep the
+// video lead and start both tracks together on the old lines.
+func TestSwitchPreservesLeadPastSignedHalfRange(t *testing.T) {
+	s := newTestPacer()
+	t0 := time.Unix(1_000_000, 0)
+	first := map[string]uint32{"audio": testAudioRTP, "video": testVideoRTP}
+	feed(s, 100, first, frames("audio", t0, 10*time.Millisecond, 2*time.Second),
+		frames("video", t0, 10*time.Millisecond, 2*time.Second))
+
+	// Place video just past int32(lastTS-base) flipping negative, and a bit
+	// ahead of audio so a broken leadOn would drop the lead.
+	halfPlus := uint32(math.MaxInt32) + 90000
+	s.timingMu.Lock()
+	s.videoRTP.lastTS = testVideoRTP + halfPlus
+	s.videoRTP.lastAt = t0.Add(time.Duration(halfPlus) * time.Second / 90000)
+	s.timingMu.Unlock()
+
+	s.resetSyncTiming()
+	t1 := t0.Add(time.Duration(halfPlus)*time.Second/90000 + time.Second)
+	feed(s, 40000, map[string]uint32{"audio": 7, "video": 3_000_000_000},
+		frames("audio", t1, 10*time.Millisecond, 2*time.Second),
+		frames("video", t1, 10*time.Millisecond, 2*time.Second))
+
+	videoBase := time.Duration(s.videoTiming.baseRTP-testVideoRTP) * time.Second / 90000
+	audioBase := time.Duration(s.audioTiming.baseRTP-testAudioRTP) * time.Second / 48000
+	if videoBase < time.Duration(halfPlus)*time.Second/90000 {
+		t.Fatalf("video base %v dropped the half-range lead", videoBase)
+	}
+	if !near(videoBase, audioBase) {
+		t.Errorf("new run starts video at %v and audio at %v; want the same", videoBase, audioBase)
+	}
+}
+
+// A leftover old-run video packet after reset must not steal the shared
+// restart anchor from the new run's sequence jump.
+func TestSwitchKeepsAnchorThroughLeftoverPacket(t *testing.T) {
+	s := newTestPacer()
+	t0 := time.Unix(1_000_000, 0)
+	first := map[string]uint32{"audio": testAudioRTP, "video": testVideoRTP}
+	feed(s, 100, first, frames("audio", t0, 10*time.Millisecond, 2*time.Second),
+		frames("video", t0, 10*time.Millisecond, 2*time.Second))
+
+	s.resetSyncTiming()
+	t1 := t0.Add(2100 * time.Millisecond)
+	// Leftover of the old run: continuous sequence, consumes the restart mark.
+	leftoverTS := uint32(testVideoRTP)
+	leftoverTS += 60 * videoStep
+	leftover := &rtp.Packet{Header: rtp.Header{SequenceNumber: 160, Timestamp: leftoverTS}}
+	s.continueRTP("video", leftover, "", t1)
+	s.recordFrame("video", leftover.Timestamp, t1)
+
+	feed(s, 40000, map[string]uint32{"audio": 7, "video": 3_000_000_000},
+		frames("audio", t1.Add(20*time.Millisecond), 10*time.Millisecond, 3*time.Second),
+		frames("video", t1.Add(20*time.Millisecond), 10*time.Millisecond, 3*time.Second))
+
+	videoBase := time.Duration(s.videoTiming.baseRTP-testVideoRTP) * time.Second / 90000
+	audioBase := time.Duration(s.audioTiming.baseRTP-testAudioRTP) * time.Second / 48000
+	if !near(videoBase, audioBase) {
+		t.Errorf("after leftover + new run, video at %v and audio at %v; want the same", videoBase, audioBase)
 	}
 }
