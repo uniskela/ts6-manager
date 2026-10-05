@@ -96,6 +96,21 @@ describe('TeamSpeak anti-flood hold (error 524)', () => {
     assert.equal(bot.floodHoldActive, false);
     assert.equal(sent.length, 0);
   });
+
+  it('stops a multi-piece chat burst once a 524 hold starts', () => {
+    const { bot, sent } = connectedBot();
+    let n = 0;
+    (bot as any).client.sendCommand = (cmd: string) => {
+      sent.push(cmd);
+      if (++n === 1) {
+        (bot as any).client.emit('ts3error', { id: '524', msg: 'client is flooding' });
+      }
+    };
+    // One oversized channel reply becomes several sendtextmessage commands.
+    bot.sendChannelMessage('x'.repeat(2000));
+    assert.equal(bot.floodHoldActive, true);
+    assert.equal(sent.length, 1, 'later pieces must not keep flooding the server');
+  });
 });
 
 describe('setupstream reply', () => {

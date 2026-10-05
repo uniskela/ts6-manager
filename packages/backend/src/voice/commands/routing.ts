@@ -9,6 +9,50 @@ import { channelCommandKey, claimChannelCommand } from './dedupe.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 
+/**
+ * Channel a ServerQuery text event belongs to.
+ * A per-channel command listener already knows its channel. Otherwise use an id
+ * carried on the event. The helper's parked channel is only the fallback:
+ * `textchannel` is supposed to be view-scoped, but when the registration hears
+ * more than that channel, labeling every line with the park sends the reply
+ * somewhere the user is not sitting.
+ */
+export function sshTextChannelId(
+  data: Record<string, string>,
+  helperChannelId: number,
+): number {
+  const listener = parseInt(data.__cmd_listener_channel_id || '0', 10);
+  if (listener > 0) return listener;
+  // Parse each field on its own: a truthy "0" must not hide a real cid.
+  for (const key of ['invokerchannelid', 'cid'] as const) {
+    const named = parseInt(data[key] || '0', 10);
+    if (named > 0) return named;
+  }
+  if (parseInt(data.targetmode || '0', 10) === 2) {
+    const target = parseInt(data.target || '0', 10);
+    if (target > 0) return target;
+  }
+  return helperChannelId > 0 ? helperChannelId : 0;
+}
+
+/** True when this user is tracked in a summonable voice bot's current channel. */
+function invokerSitsWithVoiceBot(
+  context: CommandContext,
+  botIds: Iterable<number>,
+  userClid: number,
+): boolean {
+  if (userClid <= 0) return false;
+  for (const id of botIds) {
+    const bot = context.voiceBotManager.getBot(id);
+    if (!bot || !isBotSummonable(bot)) continue;
+    const peers = typeof bot.getHumanChannelPeerClids === 'function'
+      ? bot.getHumanChannelPeerClids()
+      : [];
+    if (peers.includes(userClid)) return true;
+  }
+  return false;
+}
+
 /** Attach SSH event routing and synchronize the music session owner. */
 export function setEventBridge(context: CommandContext, bridge: EventBridge): void {
   context.eventBridge = bridge;
@@ -37,17 +81,11 @@ export function setEventBridge(context: CommandContext, bridge: EventBridge): vo
       if (eventName !== 'notifytextmessage') return;
 
       // Prefer legacy per-channel CMD markers when BotEngine flows still use them.
-      let channelId = parseInt(data.__cmd_listener_channel_id || '0', 10);
-      if (channelId <= 0) {
-        // Main SSH roaming helper — hears chat only in its parked channel.
-        channelId = bridge.getMainHelperChannelId(configId, sid);
-      }
-      if (channelId <= 0) {
-        channelId = parseInt(
-          data.target || data.invokerchannelid || data.cid || '0',
-          10,
-        );
-      }
+      // Otherwise an id on the event, then the helper's parked channel.
+      const channelId = sshTextChannelId(
+        data,
+        bridge.getMainHelperChannelId(configId, sid),
+      );
       if (channelId <= 0) {
         const preview = (data.msg || '').slice(0, 40);
         console.log(
@@ -220,6 +258,17 @@ export async function onCrossChannelTextMessage(
       if (voiceBotInChannel) {
         console.log(
           `[MusicCmd] Cross-channel !help skipped: voice bot already in cid=${channelId}`,
+        );
+        return;
+      }
+      // The helper park is not the user's channel when a voice bot already has
+      // them in view. Posting !help there (and letting the voice reply fragment)
+      // is how in-channel !help goes missing. The voice bot answers where it sits.
+      const userClid = parseInt(data.invokerid || '0', 10);
+      if (invokerSitsWithVoiceBot(context, botIds, userClid)) {
+        console.log(
+          `[MusicCmd] Cross-channel !help skipped: clid=${userClid} is with a voice bot ` +
+            `(helper cid=${channelId})`,
         );
         return;
       }

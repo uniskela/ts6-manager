@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MusicCommandHandler, resetHereDedupForTests } from './music-command-handler.js';
+import { sshTextChannelId } from './commands/routing.js';
 import { isReservedChatCommandName, BUILTIN_COMMAND_HELP } from './chat-commands.js';
 
 function makeBot(
@@ -796,6 +797,52 @@ test('cross-channel !help posts via SSH helper when no voice bot is in channel',
   assert.equal(sent.length, 1);
   assert.match(sent[0]!.msg, /!here/i);
   assert.equal(sent[0]!.nick, 'TS6 Helper');
+});
+
+test('ssh text uses the event channel before the helper park', () => {
+  assert.equal(sshTextChannelId({ __cmd_listener_channel_id: '8', cid: '5' }, 1), 8);
+  assert.equal(sshTextChannelId({ invokerchannelid: '5' }, 1), 5);
+  assert.equal(sshTextChannelId({ cid: '5' }, 1), 5);
+  // "0" is truthy; it must not hide a real cid behind the helper park.
+  assert.equal(sshTextChannelId({ invokerchannelid: '0', cid: '5' }, 1), 5);
+  assert.equal(sshTextChannelId({ targetmode: '2', target: '5' }, 1), 5);
+  // Private-message target is a client id, not a channel.
+  assert.equal(sshTextChannelId({ targetmode: '1', target: '3' }, 1), 1);
+  assert.equal(sshTextChannelId({ msg: '!help' }, 1), 1);
+  assert.equal(sshTextChannelId({ msg: '!help' }, 0), 0);
+});
+
+test('cross-channel !help is not posted to the helper when the user sits with the bot', async () => {
+  // Log from #368: helper cid=1, voice bot homeCid=5, same invoker. The helper
+  // must not answer in channel 1; the voice bot answers where it sits.
+  const bot = makeBot(2, { name: 'Home', channelId: 5, peerClids: [3] });
+  const f = fixture([bot]);
+  const sent: number[] = [];
+  f.handler.eventBridge = {
+    sendChannelText: async (_c: number, _s: number, cid: number) => {
+      sent.push(cid);
+      return true;
+    },
+  };
+  await f.handler.onCrossChannelTextMessage(9, 1, 1, { invokerid: '3', msg: '!help' });
+  assert.deepEqual(sent, []);
+  await f.handler.onTextMessage(2, bot, { invokerid: '3', msg: '!help' }, 5);
+  assert.equal(f.replies.length, 1);
+  assert.match(f.replies[0]!, /Music bot commands/i);
+});
+
+test('cross-channel !help still posts when the user is not with a voice bot', async () => {
+  const bot = makeBot(2, { name: 'Home', channelId: 5, peerClids: [9] });
+  const f = fixture([bot]);
+  const sent: number[] = [];
+  f.handler.eventBridge = {
+    sendChannelText: async (_c: number, _s: number, cid: number) => {
+      sent.push(cid);
+      return true;
+    },
+  };
+  await f.handler.onCrossChannelTextMessage(9, 1, 1, { invokerid: '3', msg: '!help' });
+  assert.deepEqual(sent, [1]);
 });
 
 test('cross-channel !help is skipped when a voice bot is already in the channel', async () => {

@@ -27,7 +27,7 @@ import {
   getSharedSecret2,
   generateTemporaryKey,
 } from "./license.js";
-import { buildCommand, parseCommand, type ParsedCommand } from "./commands.js";
+import { buildCommand, parseCommand, MAX_TS_COMMAND_BYTES, type ParsedCommand } from "./commands.js";
 import { qlzDecompress } from "./quicklz.js";
 
 // Packet types
@@ -74,7 +74,10 @@ const FLAG_UNENCRYPTED = 0x80;
 const C2S_HEADER_LEN = 5; // PId(2) + CId(2) + PT(1)
 const S2C_HEADER_LEN = 3; // PId(2) + PT(1)
 const MAX_PACKET_SIZE = 500;
-const MAX_OUT_CONTENT = MAX_PACKET_SIZE - MAC_LEN - C2S_HEADER_LEN;
+const MAX_OUT_CONTENT = MAX_TS_COMMAND_BYTES;
+if (MAX_OUT_CONTENT !== MAX_PACKET_SIZE - MAC_LEN - C2S_HEADER_LEN) {
+  throw new Error("MAX_TS_COMMAND_BYTES drifted from the voice packet budget");
+}
 
 // Version sign - TS3AudioBot default (Linux 3.?.? far-future build)
 const VERSION_SIGN = {
