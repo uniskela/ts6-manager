@@ -227,8 +227,8 @@ To keep FFmpeg's single connection for a playlist that works better that way, se
 Example, on the sidecar only:
 
 ```bash
-FFMPEG_HTTP_PERSISTENT=1
-FFMPEG_EXTRA_INPUT_ARGS=-user_agent "IPTV"
+export FFMPEG_HTTP_PERSISTENT=1
+export FFMPEG_EXTRA_INPUT_ARGS='-user_agent IPTV'
 ```
 
 ## One media session at a time
