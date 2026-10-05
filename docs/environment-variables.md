@@ -14,7 +14,7 @@
 | `PUBLIC_URL` | — | Address TeamSpeak clients use to reach the manager (e.g. `https://ts6.example.com`); hosted channel banner links start with it. A **Public URL** saved in the UI overrides it |
 | `MUSIC_DIR` | `/data/music` | Downloaded/local music directory |
 | `BOT_AUTO_STOP_EMPTY_SECONDS` | `300` | Stop music or video when the bot's channel stays empty this long; `0` disables (including bots created in the UI). A video stream with at least one TeamSpeak viewer is exempt; the no-viewer timeout still applies |
-| `SIDECAR_URL` | — | Optional media-sidecar URL, normally `http://ts6-sidecar:9800` in split Docker |
+| `SIDECAR_URL` | — | Optional media-sidecar URL, normally `http://ts6-sidecar:9800` in split Docker. For a native Windows sidecar with a Docker Desktop backend, use `http://host.docker.internal:9800`; otherwise use the Windows host's private address |
 | `SIDECAR_SECRET` | — | Shared bearer secret; required with `SIDECAR_URL` in production |
 | `SIDECAR_BINARY_PATH` | — | Optional sidecar binary path for non-standard deployments |
 | `YT_COOKIE_FILE` | — | Optional Netscape-format yt-dlp cookie file |
@@ -28,8 +28,8 @@ These seed the **Streaming defaults** shown to admins on the Video Stream tab. A
 |---|---|---|
 | `VIDEO_NO_VIEWER_TIMEOUT_SECONDS` | `300` | Stop a video stream no TeamSpeak client has open for this long; `0` disables. Separate from the channel-empty stop (`BOT_AUTO_STOP_EMPTY_SECONDS`) |
 | `VIDEO_AUTO_MAX_PRESET` | `1080p` | Highest preset **Auto** quality may pick (`720p`–`2160p`); Balanced profile default |
-| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi`, `h264_nvenc` |
-| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first hardware encoder (VAAPI or NVENC) that passes the sidecar test encode |
+| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi`, `h264_nvenc`, `h264_amf` |
+| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first hardware encoder (VAAPI / NVENC / AMF) that passes the sidecar test encode |
 | `VIDEO_MAX_BITRATE_KBPS` | `4500` | Clamp every stream bitrate (kbps); `0` = no clamp. Balanced profile default is `4500` |
 | `VIDEO_ENCODE_PROFILE` | `balanced` | `performance`, `balanced`, `quality`, or `custom` — expands into Auto max, bitrate clamp, and encode speed |
 | `VIDEO_CPU_USED` | `4` | Default libvpx `-cpu-used` when no admin profile/cpuUsed is stored (higher = faster) |
@@ -49,12 +49,12 @@ The values below are code defaults. Compose files may override them.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SIDECAR_PORT` | `9800` | Sidecar HTTP port |
+| `SIDECAR_PORT` | `9800` | Sidecar HTTP port; the native process listens on all interfaces, so restrict access to trusted backend hosts using the host firewall |
 | `SIDECAR_SECRET` | — | Shared backend/sidecar secret |
 | `WEBRTC_UDP_PORT` | unset | When set (for example `10000`), bind a shared IPv4 ICE UDP mux on that port so Docker can publish one host UDP mapping for browser WebRTC preview. Leave unset to keep ephemeral ICE ports (Docker host browsers usually cannot reach them). |
 | `WEBRTC_NAT1TO1_IP` | unset | Comma-separated **IPv4** addresses advertised as ICE **host** candidates (replaces container-private addresses). This is what the **browser** must be able to reach. IPv6 is rejected — the mux binds `udp4` only. Pair with `WEBRTC_UDP_PORT` and a published UDP mapping. `docker-compose.pr-test.yml` defaults to `127.0.0.1` for **same-host** browsers only. For LAN/Tailscale clients use that reachable IPv4; for a public-NAT browser use the public IPv4 (and forward UDP to the host). Do not advertise `127.0.0.1` to remote clients. The same addresses are offered to **TeamSpeak viewers**, and the TeamSpeak client does not connect to `127.0.0.1` even on the Docker host: to watch in TeamSpeak, add the host's LAN or Tailscale IPv4 (for example `127.0.0.1,192.168.1.20`) and publish the port on it. |
 | `WEBRTC_BIND_IP` | `127.0.0.1` (compose) | Local Docker **host** address for the published UDP mapping (compose only; not a sidecar env). Distinct from `WEBRTC_NAT1TO1_IP`: bind can stay on a host/LAN address (or `0.0.0.0` if you accept broader exposure) while NAT1To1 advertises the address clients dial. Defaults to loopback for same-host preview. Example (public NAT): advertise `WEBRTC_NAT1TO1_IP=<public-ipv4>`, bind `WEBRTC_BIND_IP=0.0.0.0` (or the host LAN IP), publish `${WEBRTC_BIND_IP}:${WEBRTC_UDP_PORT}:…/udp`, and forward that UDP port from the public IP to the Docker host. |
-| `MUSIC_DIR` | `/data/music` | Shared media directory |
+| `MUSIC_DIR` | `/data/music` | Shared media directory. For a native Windows sidecar, set a Windows path to the same files mounted in the backend's `MUSIC_DIR`. Local video sources use a portable `music://filename` reference resolved under each sidecar's own root; legacy absolute sources still require a matching path |
 | `VIDEO_QUEUE_SIZE` | `4096` | Video RTP queue (packets); holds `SYNC_MAX_DELAY_MS` of a 4K stream |
 | `AUDIO_QUEUE_SIZE` | `2048` | Audio RTP queue |
 | `SYNC_PLAYOUT_BUFFER_MS` | `50` | Playout buffer added to both tracks on top of the later track's latency |
@@ -63,7 +63,8 @@ The values below are code defaults. Compose files may override them.
 | `AUDIO_DELAY_MS` | `0` | Optional manual audio delay |
 | `SIDECAR_DEBUG_LOGS` | `0` | Verbose sidecar logs when set to `1` |
 | `SIDECAR_EGRESS_PROXY` | on | `off` lets ffmpeg connect to remote sources directly, without checking redirects and HLS segment hosts. Not recommended; the backend still checks the first URL. The checking proxy ignores `http_proxy`/`HTTPS_PROXY`, so a sidecar that can only reach the internet through an outbound proxy needs `off` |
-| `FFPROBE_PATH` | `ffprobe` | ffprobe binary for the *Auto* quality probe of URL sources |
+| `FFMPEG_PATH` | `ffmpeg` | FFmpeg executable; for Windows AMF, use the full path to an AMF-enabled `ffmpeg.exe` (PowerShell: `(Get-Command ffmpeg).Source`) |
+| `FFPROBE_PATH` | `ffprobe` | ffprobe binary for the *Auto* quality probe of URL sources; set the Windows executable path if it is not on `PATH` |
 | `VIDEO_RTP_READ_BUFFER` | `4194304` | Requested video UDP read buffer |
 | `AUDIO_RTP_READ_BUFFER` | `1048576` | Requested audio UDP read buffer |
 | `VIDEO_WIDTH` | `1280` | Default output width |
@@ -82,6 +83,8 @@ The values below are code defaults. Compose files may override them.
 | `VAAPI_DEVICE` | `/dev/dri/renderD128` | Render node used by VAAPI encoders |
 | `VAAPI_LOW_POWER` | `0` | Try the low-power (VDEnc) entrypoint first; the capability probe also retries it automatically |
 | `VAAPI_VERIFY_MS` | `1500` | How long a hardware encoder must survive startup before the sidecar trusts it (otherwise it falls back to software) |
-| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`, or `-hwaccel cuda` with NVENC); ffmpeg falls back to software decode for unsupported codecs |
+| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`, or `-hwaccel cuda` with NVENC); ffmpeg falls back to software decode for unsupported codecs. AMF currently uses software decode and uploads NV12 frames from system memory; this setting does not enable AMF hardware decode |
+
+For a native Windows sidecar, set `WEBRTC_UDP_PORT` directly in the Windows process (typically `10000`) and advertise a Windows LAN/Tailscale IPv4 reachable by viewers via `WEBRTC_NAT1TO1_IP`. There is no Docker UDP publication and `WEBRTC_BIND_IP` has no effect on the native process. Permit the HTTP TCP port only from the backend, and the WebRTC UDP port from intended viewers; do not expose the HTTP API publicly. See [AMD AMF (Windows)](video-streaming.md#amd-amf-windows) for supported production deployment and the separate PR-test setup.
 
 TeamSpeak beta13 Query environment variables belong on the TeamSpeak server/container, not on TS6 Manager. See [TeamSpeak compatibility](teamspeak-compatibility.md).

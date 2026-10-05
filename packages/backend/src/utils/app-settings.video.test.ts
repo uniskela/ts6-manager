@@ -87,6 +87,15 @@ describe('video streaming settings', () => {
     });
   });
 
+  it('accepts AMF in env defaults, stored settings, updates and server overrides', () => {
+    assert.equal(videoStreamingDefaults({ VIDEO_ENCODER: 'h264_amf' }).defaultEncoder, 'h264_amf');
+    assert.equal(parseVideoStreamingSettings(new Map([[VIDEO_DEFAULT_ENCODER_KEY, 'h264_amf']])).defaultEncoder, 'h264_amf');
+    const update = parseVideoStreamingUpdate({ defaultEncoder: 'h264_amf' });
+    assert.ok(update.ok);
+    assert.equal(update.rows.find((r) => r.key === VIDEO_DEFAULT_ENCODER_KEY)?.value, 'h264_amf');
+    assert.equal(parseServerOverrides({ defaultEncoder: 'h264_amf' }).defaultEncoder, 'h264_amf');
+  });
+
   it('marks custom when Advanced knobs diverge from a named profile', () => {
     const settings = parseVideoStreamingSettings(
       new Map([

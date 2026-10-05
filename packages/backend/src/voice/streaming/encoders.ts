@@ -20,22 +20,23 @@ export const ENCODER_CODEC: Record<VideoEncoderId, VideoCodec> = {
   vp9_vaapi: 'vp9',
   h264_vaapi: 'h264',
   h264_nvenc: 'h264',
+  h264_amf: 'h264',
 };
 
 /**
  * Hardware preference order for `auto`: H.264 (Constrained High) has the widest
- * VAAPI encode support, and is the only codec NVENC encodes; VP8 VAAPI exists
- * only on some older Intel generations. A host normally has one backend, so
- * the order between VAAPI and NVENC only matters where both are passed in.
+ * VAAPI encode support, and is the supported codec for NVENC and AMF; VP8 VAAPI
+ * exists only on some older Intel generations. A host normally has one backend,
+ * so the order between backends only matters where several pass their probes.
  */
-export const AUTO_HARDWARE_ORDER: readonly VideoEncoderId[] = ['h264_vaapi', 'h264_nvenc', 'vp9_vaapi', 'vp8_vaapi'];
+export const AUTO_HARDWARE_ORDER: readonly VideoEncoderId[] = ['h264_vaapi', 'h264_nvenc', 'h264_amf', 'vp9_vaapi', 'vp8_vaapi'];
 
 export function isEncoderId(value: unknown): value is VideoEncoderId {
   return typeof value === 'string' && (VIDEO_ENCODER_IDS as readonly string[]).includes(value);
 }
 
 export function isHardwareEncoder(id: VideoEncoderId): boolean {
-  return id.endsWith('_vaapi') || id.endsWith('_nvenc');
+  return id.endsWith('_vaapi') || id.endsWith('_nvenc') || id.endsWith('_amf');
 }
 
 export function normalizeEncoderRequest(value: unknown, fallback: VideoEncoderRequest): VideoEncoderRequest {
@@ -68,10 +69,7 @@ export function selectEncoder(
       return { selected: id, note: null };
     }
   }
-  const reason = caps.vaapiDevicePresent
-    ? 'no hardware encoder passed the test encode'
-    : 'no VAAPI device and no working NVENC encoder';
-  return { selected: 'vp8', note: `Hardware preferred but ${reason} — using software VP8` };
+  return { selected: 'vp8', note: 'Hardware preferred but no working hardware encoder passed the test encode — using software VP8' };
 }
 
 const ENCODER_NAMES: Record<VideoEncoderId, string> = {
@@ -82,6 +80,7 @@ const ENCODER_NAMES: Record<VideoEncoderId, string> = {
   vp9_vaapi: 'VP9 (VAAPI)',
   h264_vaapi: 'H.264 (VAAPI)',
   h264_nvenc: 'H.264 (NVENC)',
+  h264_amf: 'H.264 (AMF)',
 };
 
 export function encoderDisplayName(id: VideoEncoderId): string {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  ENCODER_OPTIONS,
   encoderLabel,
   formatClock,
   formatTimeout,
@@ -45,9 +46,25 @@ describe('video streaming labels', () => {
       'H.264 (NVENC)',
     );
     assert.equal(
+      encoderLabel({ ...base, requested: 'h264_amf', selected: 'h264_amf', active: 'h264' }),
+      'H.264 (AMF) → H.264 (software)',
+    );
+    assert.equal(
+      encoderLabel({ ...base, hardware: true, fallbackReason: null, requested: 'h264_amf', selected: 'h264_amf', active: 'h264_amf' }),
+      'H.264 (AMF)',
+    );
+    assert.equal(
+      encoderLabel({ ...base, hardware: true, fallbackReason: null, requested: 'auto', selected: 'h264_amf', active: 'h264_amf' }),
+      'Auto → H.264 (AMF)',
+    );
+    assert.equal(
       encoderLabel({ ...base, codec: 'vp8', requested: 'auto', selected: 'vp8', active: 'vp8' }),
       'Auto → VP8 (software)',
     );
+  });
+
+  it('offers AMF in encoder selections', () => {
+    assert.deepEqual(ENCODER_OPTIONS.find((o) => o.value === 'h264_amf'), { value: 'h264_amf', label: 'H.264 (AMF)' });
   });
 
   it('describes the last stop truthfully', () => {
