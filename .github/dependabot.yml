@@ -7,10 +7,84 @@ updates:
       day: monday
       time: "05:10"
       timezone: Australia/Sydney
-    open-pull-requests-limit: 5
+    # Split groups so Dependabot cannot open one 30+ package PR.
+    # Specific groups first; packages matching none open individually.
+    open-pull-requests-limit: 10
     groups:
-      javascript-dependencies:
-        patterns: ["*"]
+      playwright:
+        patterns:
+          - "@playwright/*"
+          - "playwright"
+        update-types:
+          - "minor"
+          - "patch"
+      lucide:
+        patterns:
+          - "lucide-react"
+        update-types:
+          - "minor"
+          - "patch"
+      workbox:
+        patterns:
+          - "workbox-*"
+        update-types:
+          - "minor"
+          - "patch"
+      backend-runtime:
+        patterns:
+          - "express"
+          - "helmet"
+          - "ws"
+          - "libsodium-wrappers-sumo"
+          - "cors"
+          - "multer"
+          - "pino"
+          - "pino-pretty"
+          - "ssh2"
+          - "jsonwebtoken"
+          - "express-rate-limit"
+          - "node-cron"
+          - "nanoid"
+          - "bcryptjs"
+          - "dotenv"
+          - "zod"
+          - "@prisma/*"
+          - "prisma"
+        update-types:
+          - "minor"
+          - "patch"
+      frontend-ui:
+        patterns:
+          - "@radix-ui/*"
+        update-types:
+          - "minor"
+          - "patch"
+      frontend-app:
+        patterns:
+          - "@tanstack/*"
+          - "@hookform/*"
+          - "react-hook-form"
+          - "zustand"
+          - "date-fns"
+          - "axios"
+          - "recharts"
+          - "sonner"
+          - "react-router-dom"
+          - "@dnd-kit/*"
+        update-types:
+          - "minor"
+          - "patch"
+      npm-tooling:
+        patterns:
+          - "tsx"
+          - "typescript"
+          - "@types/*"
+          - "autoprefixer"
+          - "postcss"
+          - "tailwindcss"
+          - "vite"
+          - "@vitejs/*"
+          - "vite-plugin-pwa"
         update-types:
           - "minor"
           - "patch"
