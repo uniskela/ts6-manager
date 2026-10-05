@@ -2,6 +2,8 @@
 
 TS6 Manager is designed so normal container upgrades retain the application database and encrypted TeamSpeak credentials.
 
+Coming from `clusterzx/ts6-manager`? Follow [Switching from clusterzx](migrating-from-clusterzx.md) first; it needs two extra environment variables.
+
 ## Before upgrading
 
 Preserve:

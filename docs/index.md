@@ -11,6 +11,7 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [Configuration](configuration.md) — required secrets, TeamSpeak connection setup, and application settings
 - [Environment variables](environment-variables.md) — backend, frontend, and sidecar settings
 - [Upgrading](upgrading.md) — update containers without losing credentials or database state
+- [Switching from clusterzx](migrating-from-clusterzx.md) — move an existing clusterzx/ts6-manager install to these images and keep its data
 
 ## Use TS6 Manager
 
