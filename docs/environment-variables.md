@@ -76,9 +76,6 @@ The values below are code defaults. Compose files may override them.
 | `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
 | `VIDEO_BUFSIZE` | automatic | Optional explicit bitrate buffer |
 | `VIDEO_LIVE_PACING` | `re` | `re` reads live sources with `-re` (measured steady ~1.0x); `source` lets the live source pace input (startup burst) |
-| `FFMPEG_HTTP_PERSISTENT` | `auto` | How HLS inputs reuse HTTP connections. `auto` passes `-http_persistent 0` for remote URLs whose path ends in `.m3u8` or `.m3u`, so a segment on another host or edge address gets its own connection. `1` leaves FFmpeg's default (one kept connection). `0` also passes it for every live URL, including opaque IPTV addresses that are still HLS; a live MPEG-TS URL will then fail to open. Set this on the sidecar process. It has no effect on the backend |
-| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra FFmpeg input options for each remote input, after the built-in ones and before `-i`. Parsed as arguments, not a shell. Quotes group a value that contains spaces; inside double quotes, `\r`, `\n` and `\t` expand. These options are added to every remote input. An HLS-only option such as `-http_persistent` makes MP4 and MPEG-TS fail to open; use `FFMPEG_HTTP_PERSISTENT=1` to keep one HTTP connection instead. The whole value is ignored, and the rest of the command is unchanged, when it contains `-i` or a bare `scheme://` token. A URL inside a header value is fine. Sidecar only |
-| `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra FFmpeg options inserted immediately before each RTP muxer (`-f rtp`), video and audio. Same parsing and rejection rules as the input variable. Sidecar only |
 | `VIDEO_GOP` | `15` | Keyframe interval in frames (new viewers start at a keyframe) |
 | `VIDEO_VP9_CPU_USED` | `8` | libvpx-vp9 realtime speed/quality trade-off |
 | `VIDEO_X264_PRESET` | `veryfast` | libx264 preset for software H.264 |
