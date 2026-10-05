@@ -98,3 +98,17 @@ export function hubLastStop(bot: BotMediaOverview, now: number): string | null {
   if (!latest) return null;
   return `Last ${latest.kind.toLowerCase()}: ${lastStopLabel(latest, now)}`;
 }
+
+/** Bots with music or a stream on right now, playing ones before paused ones. */
+export function activeBots(bots: BotMediaOverview[]): BotMediaOverview[] {
+  return bots
+    .filter((b) => b.session && hubTone(b) !== 'offline')
+    .sort((a, b) => Number(a.status === 'paused') - Number(b.status === 'paused'));
+}
+
+/** The header pill: "Neon Skyline — Aurora", "2 active bots", or null when nothing is on. */
+export function activeBotsLabel(active: BotMediaOverview[]): string | null {
+  if (active.length === 0) return null;
+  if (active.length > 1) return `${active.length} active bots`;
+  return hubHeadline(active[0]);
+}

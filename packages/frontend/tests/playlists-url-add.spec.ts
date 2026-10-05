@@ -42,7 +42,7 @@ test('adding a loaded playlist link stays inside the dialog and counts only new 
   await signIn(page, request);
   await page.goto('/media-bots?tab=playlists');
   await page.getByText('Music', { exact: true }).click();
-  await page.getByRole('button', { name: 'Add Songs' }).click();
+  await page.getByRole('button', { name: 'Add Songs', exact: true }).click();
 
   const dialog = page.getByRole('dialog');
   await dialog.getByLabel('Track or playlist URL').fill('https://music.youtube.com/playlist?list=PLtest');
