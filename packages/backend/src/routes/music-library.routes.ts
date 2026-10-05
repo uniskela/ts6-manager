@@ -2,7 +2,15 @@ import { downloadJobs } from '../voice/audio/download-progress.js';
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { downloadYouTube, searchYouTube, getYouTubeUrlInfo, fetchYouTubeVideoMeta, parseYouTubeUrl } from '../voice/audio/youtube.js';
+import {
+  downloadYouTube,
+  searchYouTube,
+  getYouTubeUrlInfo,
+  fetchYouTubeVideoMeta,
+  parseYouTubeUrl,
+  isSpotifyShareUrl,
+  resolveSpotifyToYouTube,
+} from '../voice/audio/youtube.js';
 import { getImportJob, startYouTubePlaylistImport } from '../voice/audio/youtube-playlist-import.js';
 import {
   appleMusicTrackToYouTubeUrl,
@@ -110,7 +118,17 @@ async function resolveAppleMusicAsYouTubeInfo(url: string, cap = APPLE_MUSIC_INF
   };
 }
 
+/** Resolve a Spotify share link to its best YouTube match before yt-dlp sees it. */
+async function resolveSpotifyForYouTube(url: string): Promise<string> {
+  try {
+    return await resolveSpotifyToYouTube(url);
+  } catch (err: any) {
+    throw new AppError(502, err?.message || 'Could not resolve that Spotify URL');
+  }
+}
+
 async function resolveMediaUrlForYouTubeDownload(url: string): Promise<string> {
+  if (isSpotifyShareUrl(url)) return resolveSpotifyForYouTube(url);
   if (!isAppleMusicShareUrl(url)) return url;
   let am;
   try {
@@ -572,7 +590,7 @@ musicLibraryRoutes.post('/youtube/download', musicWriteLimiter, async (req: Requ
   } catch (err) { next(err); }
 });
 
-// POST /youtube/info — Get info about a YouTube / Apple Music URL (video or playlist)
+// POST /youtube/info — Get info about a YouTube / Apple Music / Spotify URL (video or playlist)
 musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, next) => {
   try {
     const { url } = req.body;
@@ -584,7 +602,8 @@ musicLibraryRoutes.post('/youtube/info', async (req: Request, res: Response, nex
       const info = await resolveAppleMusicAsYouTubeInfo(trimmed, cap);
       return res.json(info);
     }
-    const info = await getYouTubeUrlInfo(trimmed);
+    const probeUrl = isSpotifyShareUrl(trimmed) ? await resolveSpotifyForYouTube(trimmed) : trimmed;
+    const info = await getYouTubeUrlInfo(probeUrl);
     res.json(info);
   } catch (err: any) {
     if (err instanceof AppError) return next(err);

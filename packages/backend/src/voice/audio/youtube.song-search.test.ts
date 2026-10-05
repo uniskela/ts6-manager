@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { findSongForQuery, youTubeMusicSongSearchUrl, type YouTubeSearchResult } from "./youtube.js";
+import {
+  findSongForQuery,
+  isSpotifyShareUrl,
+  spotifySearchQueryFromOg,
+  youTubeMusicSongSearchUrl,
+  type YouTubeSearchResult,
+} from "./youtube.js";
 
 const song = (id: string, title = "Song"): YouTubeSearchResult => ({
   id, title, artist: "Artist", duration: 200, thumbnail: "",
@@ -48,5 +54,36 @@ describe("findSongForQuery", () => {
       null,
     );
     assert.equal(await findSongForQuery("   "), null);
+  });
+});
+
+describe("isSpotifyShareUrl", () => {
+  it("matches Spotify share hosts only", () => {
+    assert.equal(isSpotifyShareUrl("https://open.spotify.com/track/4PTG3Z6ehGkBFwjybzWkR8"), true);
+    assert.equal(isSpotifyShareUrl("https://spotify.link/abc"), true);
+    assert.equal(isSpotifyShareUrl("https://open.spotify.com./track/x"), true);
+    assert.equal(isSpotifyShareUrl("https://notspotify.com/track/x"), false);
+    assert.equal(isSpotifyShareUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), false);
+    assert.equal(isSpotifyShareUrl("not a url"), false);
+  });
+});
+
+describe("spotifySearchQueryFromOg", () => {
+  it("adds the artist for track pages", () => {
+    const html =
+      '<meta property="og:title" content="Never Gonna Give You Up"/>' +
+      '<meta property="og:description" content="Rick Astley · Song · 1987"/>';
+    assert.equal(spotifySearchQueryFromOg(html), "Rick Astley Never Gonna Give You Up");
+  });
+
+  it("uses the title alone for albums and playlists, and decodes entities", () => {
+    const html =
+      '<meta content="Rock &amp; Roll" property="og:title"/>' +
+      '<meta property="og:description" content="Various · album · 2001 · 12 songs."/>';
+    assert.equal(spotifySearchQueryFromOg(html), "Rock & Roll");
+  });
+
+  it("returns empty when the page has no title", () => {
+    assert.equal(spotifySearchQueryFromOg("<html></html>"), "");
   });
 });

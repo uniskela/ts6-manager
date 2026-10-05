@@ -207,6 +207,16 @@ export function isSpotifyShareHostname(hostname: string): boolean {
   return resolveSpotifyFetchHost(hostname) !== null;
 }
 
+/** True for Spotify share links that must be resolved before yt-dlp sees them. */
+export function isSpotifyShareUrl(url: string): boolean {
+  try {
+    const host = new URL(url.trim()).hostname.toLowerCase().replace(/\.+$/, "");
+    return host === "spotify.com" || host.endsWith(".spotify.com") || host === "spotify.link";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Decode a small set of HTML entities once. Decode `&amp;` last so sequences
  * like `&amp;#39;` cannot be double-unescaped into a quote.
@@ -336,27 +346,43 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
     throw new Error("URL credentials are not allowed");
   }
 
-  // Fetch Open Graph title from the Spotify page (no Spotify API key required).
+  // Fetch Open Graph tags from the Spotify page (no Spotify API key required).
   // Redirects are followed manually; each hop is rebuilt onto an allowlisted https host.
-  let title = "";
+  let query = "";
   try {
     const res = await fetchSpotifyOgPage(parsed);
-    const html = await res.text();
-    const og =
-      html.match(/property="og:title"\s+content="([^"]+)"/i) ||
-      html.match(/content="([^"]+)"\s+property="og:title"/i);
-    title = og?.[1] ? decodeBasicHtmlEntities(og[1]) : "";
+    query = spotifySearchQueryFromOg(await res.text());
   } catch {
     /* fall through */
   }
 
-  if (!title) {
-    title = decodeURIComponent(parsed.pathname.split("/").pop() || "").replace(/-/g, " ");
+  if (!query) {
+    query = decodeURIComponent(parsed.pathname.split("/").pop() || "").replace(/-/g, " ");
   }
 
-  const results = await searchYouTube(`${title} audio`, 1);
-  if (!results.length) throw new Error(`No YouTube match found for Spotify title: ${title}`);
-  return `https://www.youtube.com/watch?v=${results[0].id}`;
+  const song = await findSongForQuery(query);
+  if (!song) throw new Error(`No YouTube match found for Spotify title: ${query}`);
+  return song.url;
+}
+
+/** Read one Open Graph `content` value from a page (either attribute order). */
+function readOgContent(html: string, property: string): string {
+  const og =
+    html.match(new RegExp(`property="og:${property}"\\s+content="([^"]*)"`, "i")) ||
+    html.match(new RegExp(`content="([^"]*)"\\s+property="og:${property}"`, "i"));
+  return og?.[1] ? decodeBasicHtmlEntities(og[1]).trim() : "";
+}
+
+/**
+ * Build a search query from a Spotify page's Open Graph tags. Track pages describe
+ * themselves as `Artist · Song · 1987`, so the artist is added to the title when present.
+ */
+export function spotifySearchQueryFromOg(html: string): string {
+  const title = readOgContent(html, "title");
+  if (!title) return "";
+  const parts = readOgContent(html, "description").split("·").map((p) => p.trim());
+  const artist = parts.length >= 2 && /^song$/i.test(parts[1]) ? parts[0] : "";
+  return artist ? `${artist} ${title}` : title;
 }
 
 /**

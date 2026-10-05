@@ -11,6 +11,7 @@ import {
   isYouTubeHostUrl,
   parseYouTubeUrl,
   resolveSpotifyToYouTube,
+  isSpotifyShareUrl,
 } from './audio/youtube.js';
 import { isYouTubePlaylistUrl } from './audio/playlist-import-plan.js';
 import type { QueueItem } from './playlist/queue.js';
@@ -61,20 +62,6 @@ export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
       };
     },
   };
-}
-
-function isSpotifyShareUrl(url: string): boolean {
-  try {
-    const host = new URL(url).hostname.toLowerCase();
-    return (
-      host === 'open.spotify.com' ||
-      host === 'spotify.com' ||
-      host.endsWith('.spotify.com') ||
-      host === 'spotify.link'
-    );
-  } catch {
-    return false;
-  }
 }
 
 function asError(error: unknown): Error {
