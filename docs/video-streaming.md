@@ -208,6 +208,31 @@ The bot has one volume. `!vol` and the volume sliders in Bot Hub and the console
 
 Live inputs are read with `-re` like everything else. Measured on a 4-core host with the sidecar's 720p30 VP8 pipeline against live HLS (MPEG-TS) and CMAF (fMP4 with a `moov` repeated in every segment): `-re` held a steady ~1.01x at 30 fps, while reading without it burst to ~2x at startup (the buffered live-edge segments) before settling. The `Found duplicated MOOV Atom. Skipped it` messages from such CMAF sources were harmless in that test. Sustained ~0.5x therefore points at host encode capacity (or a provider-specific timestamp problem), which the health warning now makes visible. Set `VIDEO_LIVE_PACING=source` on the sidecar to let live sources set their own pace instead.
 
+### HTTP connections and HLS segments
+
+Some IPTV providers stutter when FFmpeg reuses a connection for later HLS segments. FFmpeg normally reconnects when the hostname or port changes, but connection affinity, rotating edge addresses or unreliable keep-alive handling can still cause trouble. The reconnect flags retry connection failures; they do not prevent connection reuse.
+
+The sidecar sends the standard `Connection: close` HTTP header for remote playback and probing by default. FFmpeg propagates it to HLS playlists, segments and redirects, so opaque addresses such as `/get.php` work without guessing the format or fetching the stream ahead of FFmpeg. HTTP servers close each response connection; the egress proxy also closes its corresponding upstream connection. HTTPS uses the same header inside the proxy's CONNECT tunnel. MPEG-TS and progressive MP4 inputs continue to work because no HLS-only demuxer option is added. Local files are unchanged.
+
+Set these variables on the **sidecar** container or process. The supplied Docker Compose file forwards them from `.env` or the shell environment. They are process-wide; there is no per-channel setting.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `FFMPEG_HTTP_PERSISTENT` | `auto` | `auto` and `0` send `Connection: close` for remote HTTP(S) inputs. `1` leaves FFmpeg's default connection behavior and custom headers unchanged. |
+| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra options before every remote input, including ffprobe. Custom headers are preserved; their `Connection` header is managed by `FFMPEG_HTTP_PERSISTENT`. Use options understood by both ffmpeg and ffprobe. HLS-only options such as `-http_persistent` can break MP4/MPEG-TS. Values containing `-i` or a bare `scheme://` URL are ignored. |
+| `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra options immediately before each RTP output. Same argument parsing and rejection rules. |
+
+For a provider that benefits from keep-alive, set `FFMPEG_HTTP_PERSISTENT=1`. Extra arguments are split into arguments, never run as a shell; inside double quotes, `\r`, `\n` and `\t` expand for HTTP header values.
+
+Example, in the shell used to start the sidecar or Docker Compose:
+
+```bash
+export FFMPEG_HTTP_PERSISTENT=1
+export FFMPEG_EXTRA_INPUT_ARGS='-user_agent IPTV'
+```
+
+This addresses connection reuse, not every cause of IPTV stutter. Verify sustained playback against the affected provider before treating a channel-specific report as resolved.
+
 ## One media session at a time
 
 - A bot plays **music or video, never both**.

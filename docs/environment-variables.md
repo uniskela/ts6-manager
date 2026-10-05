@@ -76,6 +76,9 @@ The values below are code defaults. Compose files may override them.
 | `VIDEO_ENCODE_THREADS` | CPU count | libvpx encode thread count |
 | `VIDEO_BUFSIZE` | automatic | Optional explicit bitrate buffer |
 | `VIDEO_LIVE_PACING` | `re` | `re` reads live sources with `-re` (measured steady ~1.0x); `source` lets the live source pace input (startup burst) |
+| `FFMPEG_HTTP_PERSISTENT` | `auto` | `auto` and `0` send the standard `Connection: close` header on remote HTTP(S) inputs. FFmpeg forwards it to HLS playlists, segments and redirects, including URLs without a playlist suffix. MPEG-TS and MP4 remain supported. `1` leaves FFmpeg's connection behavior and custom headers unchanged. Applies to playback and ffprobe; sidecar only |
+| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra options before each remote input, also used by ffprobe. Parsed as arguments, not a shell. Quotes group values containing spaces; inside double quotes, `\r`, `\n` and `\t` expand. Custom headers are preserved, but `Connection` is replaced with `close` unless `FFMPEG_HTTP_PERSISTENT=1`. Options must work with both ffmpeg and ffprobe and with every remote input format. Do not put HLS-only `-http_persistent` here. The whole value is ignored when it contains `-i` or a bare `scheme://` token; a URL inside a header value is fine. Sidecar only |
+| `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra FFmpeg options inserted immediately before each RTP muxer (`-f rtp`), video and audio. Same parsing and rejection rules as the input variable. Sidecar only |
 | `VIDEO_GOP` | `15` | Keyframe interval in frames (new viewers start at a keyframe) |
 | `VIDEO_VP9_CPU_USED` | `8` | libvpx-vp9 realtime speed/quality trade-off |
 | `VIDEO_X264_PRESET` | `veryfast` | libx264 preset for software H.264 |
