@@ -219,17 +219,17 @@ There is no per-channel FFmpeg setting. A playlist refresh replaces the channel 
 | Variable | Default | Effect |
 |---|---|---|
 | `FFMPEG_HTTP_PERSISTENT` | `auto` | `1` restores FFmpeg's kept connection for every input. `0` also passes `-http_persistent 0` for every live URL, which covers HLS channels whose URLs do not end in `.m3u8` or `.m3u`. A live MPEG-TS URL will fail to open until you set it back to `auto` or `1`. |
-| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra input options on each remote input, after the defaults, so `-http_persistent 1` wins over the built-in `0`. The value is split into arguments, not run in a shell. An unsafe value (`-i`, or a token that is itself a `scheme://` URL) is logged and ignored. |
+| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra input options on each remote input, after the defaults. The value is split into arguments, not run in a shell. The same options are added to every remote input, including MP4 and MPEG-TS, so do not put HLS-only options such as `-http_persistent` here. An unsafe value (`-i`, or a token that is itself a `scheme://` URL) is logged and ignored. |
 | `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra options placed immediately before each RTP output. Same parsing rules. |
+
+To keep FFmpeg's single connection for a playlist that works better that way, set `FFMPEG_HTTP_PERSISTENT=1` on the sidecar. Leave it unset for the default.
 
 Example, on the sidecar only:
 
 ```bash
-FFMPEG_HTTP_PERSISTENT=auto
-FFMPEG_EXTRA_INPUT_ARGS=-user_agent "IPTV" -http_persistent 1
+FFMPEG_HTTP_PERSISTENT=1
+FFMPEG_EXTRA_INPUT_ARGS=-user_agent "IPTV"
 ```
-
-The second variable is how to keep persistent HTTP for a playlist that works better with one connection. Leave both unset for the default.
 
 ## One media session at a time
 
