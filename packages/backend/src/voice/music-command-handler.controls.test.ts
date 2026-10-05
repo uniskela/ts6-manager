@@ -170,6 +170,10 @@ test('!play <song name> searches YouTube Music and enqueues the top match', asyn
   await f.command('!play https://youtu.be/dQw4w9WgXcQ');
   assert.equal(searched.length, 1, 'URLs skip search');
   assert.equal(enqueued.at(-1), 'https://youtu.be/dQw4w9WgXcQ');
+
+  await f.command('!play HTTPS://youtu.be/dQw4w9WgXcQ');
+  assert.equal(searched.length, 1, 'scheme check ignores case');
+  assert.equal(enqueued.at(-1), 'HTTPS://youtu.be/dQw4w9WgXcQ');
 });
 test('!play <song name> reports no results and search failures without enqueueing', async () => {
   const f = fixture();

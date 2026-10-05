@@ -69,6 +69,13 @@ describe("isSpotifyShareUrl", () => {
 });
 
 describe("spotifySearchQueryFromOg", () => {
+  it("matches Open Graph attributes with other attributes in between, in either order", () => {
+    const html =
+      '<meta property="og:title" data-rh="true" content="Never Gonna Give You Up"/>' +
+      '<meta content="Rick Astley · Song · 1987" data-rh="true" property="og:description"/>';
+    assert.equal(spotifySearchQueryFromOg(html), "Rick Astley Never Gonna Give You Up");
+  });
+
   it("adds the artist for track pages", () => {
     const html =
       '<meta property="og:title" content="Never Gonna Give You Up"/>' +

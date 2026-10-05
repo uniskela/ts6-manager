@@ -97,7 +97,8 @@ export async function identifySpotifyLink(url: string): Promise<{ kind: SpotifyL
   const direct = parseSpotifyPath(parsed.pathname);
   if (direct.kind !== "other") return direct;
   // Short links only reveal their target after redirects.
-  const { url: finalUrl } = await fetchSpotifyPage(parsed);
+  const { response, url: finalUrl } = await fetchSpotifyPage(parsed);
+  await response.body?.cancel().catch(() => undefined);
   return parseSpotifyPath(finalUrl.pathname);
 }
 

@@ -377,10 +377,11 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
 }
 
 /** Read one Open Graph `content` value from a page (either attribute order). */
-function readOgContent(html: string, property: string): string {
-  const og =
-    html.match(new RegExp(`property="og:${property}"\\s+content="([^"]*)"`, "i")) ||
-    html.match(new RegExp(`content="([^"]*)"\\s+property="og:${property}"`, "i"));
+function readOgContent(html: string, property: "title" | "description"): string {
+  // Same <meta> tag, attributes in either order, other attributes allowed in between.
+  const og = html.match(
+    new RegExp(`<meta\\b(?=[^>]*\\bproperty="og:${property}")[^>]*\\bcontent="([^"]*)"`, "i"),
+  );
   return og?.[1] ? decodeBasicHtmlEntities(og[1]).trim() : "";
 }
 

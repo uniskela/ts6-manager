@@ -95,7 +95,7 @@ export async function handlePlay(
   }
 
   let url = args;
-  if (!args.startsWith('http://') && !args.startsWith('https://')) {
+  if (!/^https?:\/\//i.test(args)) {
     const query = args.trim().slice(0, MAX_SONG_QUERY_LENGTH);
     context.reply(bot, userClid, `Searching YouTube Music for "${query}"...`);
     try {
