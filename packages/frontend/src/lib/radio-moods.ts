@@ -65,6 +65,7 @@ export function radioMoods(stations: ReadonlyArray<{ genre?: string | null }>): 
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
 }
 
+/** True when one of the station's genre tags matches the mood key (case-insensitive). */
 export function stationHasMood(genre: string | null | undefined, key: string): boolean {
   return splitGenreTags(genre).some((tag) => tag.toLowerCase() === key);
 }

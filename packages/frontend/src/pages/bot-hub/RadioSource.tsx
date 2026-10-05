@@ -38,11 +38,11 @@ export function RadioSource(ctx: ConsoleSourceContext) {
   }, [moods, showAllMoods, mood]);
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
+    const q = search.trim().replace(/\s+/g, ' ').toLowerCase();
     return stations.filter((s) => {
       if (mood != null && !stationHasMood(s.genre, mood)) return false;
       if (!q) return true;
-      const hay = `${s.name} ${s.genre ?? ''}`.toLowerCase();
+      const hay = [s.name, ...splitGenreTags(s.genre)].join(' ').replace(/\s+/g, ' ').toLowerCase();
       return hay.includes(q);
     });
   }, [stations, search, mood]);
