@@ -208,29 +208,6 @@ The bot has one volume. `!vol` and the volume sliders in Bot Hub and the console
 
 Live inputs are read with `-re` like everything else. Measured on a 4-core host with the sidecar's 720p30 VP8 pipeline against live HLS (MPEG-TS) and CMAF (fMP4 with a `moov` repeated in every segment): `-re` held a steady ~1.01x at 30 fps, while reading without it burst to ~2x at startup (the buffered live-edge segments) before settling. The `Found duplicated MOOV Atom. Skipped it` messages from such CMAF sources were harmless in that test. Sustained ~0.5x therefore points at host encode capacity (or a provider-specific timestamp problem), which the health warning now makes visible. Set `VIDEO_LIVE_PACING=source` on the sidecar to let live sources set their own pace instead.
 
-### HLS connections (multi-address playlists)
-
-FFmpeg's HLS demuxer keeps one HTTP connection open and sends the next segment on it (`http_persistent` defaults to on). That stalls when the playlist sends successive segments to different hosts, or to different edge addresses of the same name: the open connection stays pinned to the first server. Remote inputs already use `-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5`. Those flags retry a dropped connection; they do not stop the demuxer from reusing one.
-
-For an input whose path ends in `.m3u8` or `.m3u`, the sidecar passes `-http_persistent 0` before `-i`, so each segment opens its own connection. The URL path is what counts: a query string such as `?token=` does not hide a playlist suffix, and a suffix is not guessed from an opaque path such as `/get.php?type=m3u8`. Those opaque live URLs are not fetched ahead of FFmpeg, and they are not assumed to be HLS, because `-http_persistent` is valid only for the HLS demuxer and makes FFmpeg refuse MPEG-TS or MP4. Progressive on-demand files, such as `.mp4`, are unchanged. Set `FFMPEG_HTTP_PERSISTENT=0` when the live channels are HLS but their URLs have no playlist suffix.
-
-There is no per-channel FFmpeg setting. A playlist refresh replaces the channel rows, and those rows do not store encoder options. Set the variables below on the **sidecar** container or process. Setting them only on the backend does nothing, because FFmpeg runs in the sidecar.
-
-| Variable | Default | Effect |
-|---|---|---|
-| `FFMPEG_HTTP_PERSISTENT` | `auto` | `1` restores FFmpeg's kept connection for every input. `0` also passes `-http_persistent 0` for every live URL, which covers HLS channels whose URLs do not end in `.m3u8` or `.m3u`. A live MPEG-TS URL will fail to open until you set it back to `auto` or `1`. |
-| `FFMPEG_EXTRA_INPUT_ARGS` | unset | Extra input options on each remote input, after the defaults. The value is split into arguments, not run in a shell. The same options are added to every remote input, including MP4 and MPEG-TS, so do not put HLS-only options such as `-http_persistent` here. An unsafe value (`-i`, or a token that is itself a `scheme://` URL) is logged and ignored. |
-| `FFMPEG_EXTRA_OUTPUT_ARGS` | unset | Extra options placed immediately before each RTP output. Same parsing rules. |
-
-To keep FFmpeg's single connection for a playlist that works better that way, set `FFMPEG_HTTP_PERSISTENT=1` on the sidecar. Leave it unset for the default.
-
-Example, on the sidecar only:
-
-```bash
-export FFMPEG_HTTP_PERSISTENT=1
-export FFMPEG_EXTRA_INPUT_ARGS='-user_agent IPTV'
-```
-
 ## One media session at a time
 
 - A bot plays **music or video, never both**.
