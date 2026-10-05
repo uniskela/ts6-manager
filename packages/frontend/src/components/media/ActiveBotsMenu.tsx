@@ -51,7 +51,7 @@ function ActiveBotRow({ bot }: { bot: BotMediaOverview }) {
   return (
     <div className="flex items-center gap-1">
       <DropdownMenuItem asChild className="min-w-0 flex-1">
-        <Link to={`/bot-hub/${bot.botId}`} aria-label={`Open console for ${bot.botName}`}>
+        <Link to={`/bot-hub/${bot.botId}`} aria-label={`Open console for ${bot.botName}: ${hubHeadline(bot)}`}>
           <BotAvatar
             botId={bot.botId}
             name={bot.botName}
@@ -81,6 +81,18 @@ export function ActiveBotsMenu() {
   const { data } = useBotMedia();
   const active = activeBots(data ?? []);
   const label = activeBotsLabel(active);
+
+  // Until the first poll succeeds we don't know what's playing: link to Bot Hub without a status.
+  if (data === undefined) {
+    return (
+      <Button asChild variant="outline" size="sm" className="h-9 text-muted-foreground">
+        <Link to="/bot-hub" aria-label="Open Bot Hub">
+          <LayoutGrid className="h-4 w-4 sm:mr-1.5" aria-hidden="true" />
+          <span className="hidden sm:inline">Bot Hub</span>
+        </Link>
+      </Button>
+    );
+  }
 
   if (!label) {
     return (

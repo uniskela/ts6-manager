@@ -41,13 +41,13 @@ test('Media Library header shows playing bots and pauses one from the menu', asy
   await signIn(page, request);
   await page.goto('/media-bots');
   const header = page.getByTestId('page-header');
-  const pill = header.getByRole('button', { name: /Now playing: 2 bots playing/ });
+  const pill = header.getByRole('button', { name: /Now playing: 2 active bots/ });
   await expect(pill).toBeVisible();
   await page.screenshot({ path: test.info().outputPath('header-pill.png') });
 
   await pill.click();
   const menu = page.getByRole('menu');
-  await expect(menu.getByRole('menuitem', { name: 'Open console for Aurora Radio' })).toHaveAttribute('href', '/bot-hub/1');
+  await expect(menu.getByRole('menuitem', { name: /^Open console for Aurora Radio/ })).toHaveAttribute('href', '/bot-hub/1');
   await expect(menu.getByRole('menuitem', { name: 'Resume Study Beats' })).toBeVisible();
   await expect(menu.getByText('Backup Bot')).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath('header-menu.png') });
@@ -56,7 +56,7 @@ test('Media Library header shows playing bots and pauses one from the menu', asy
   await expect.poll(() => paused).toBe(1);
   await expect(menu).toBeVisible();
 
-  await menu.getByRole('menuitem', { name: 'Open console for Aurora Radio' }).click();
+  await menu.getByRole('menuitem', { name: /^Open console for Aurora Radio/ }).click();
   await expect(page).toHaveURL('/bot-hub/1');
 });
 

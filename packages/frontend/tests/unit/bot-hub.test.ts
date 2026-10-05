@@ -84,6 +84,6 @@ describe('active bots pill', () => {
   it('labels one bot by its track and several by count', () => {
     assert.equal(activeBotsLabel([]), null);
     assert.equal(activeBotsLabel([music(2, 'playing', 'Two')]), 'Two');
-    assert.equal(activeBotsLabel([music(2, 'playing', 'Two'), music(3, 'playing', 'Three')]), '2 bots playing');
+    assert.equal(activeBotsLabel([music(2, 'playing', 'Two'), music(3, 'playing', 'Three')]), '2 active bots');
   });
 });

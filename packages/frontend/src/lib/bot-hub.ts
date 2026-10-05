@@ -106,9 +106,9 @@ export function activeBots(bots: BotMediaOverview[]): BotMediaOverview[] {
     .sort((a, b) => Number(a.status === 'paused') - Number(b.status === 'paused'));
 }
 
-/** The header pill: "Neon Skyline — Aurora", "2 bots playing", or null when nothing is on. */
+/** The header pill: "Neon Skyline — Aurora", "2 active bots", or null when nothing is on. */
 export function activeBotsLabel(active: BotMediaOverview[]): string | null {
   if (active.length === 0) return null;
-  if (active.length > 1) return `${active.length} bots playing`;
+  if (active.length > 1) return `${active.length} active bots`;
   return hubHeadline(active[0]);
 }

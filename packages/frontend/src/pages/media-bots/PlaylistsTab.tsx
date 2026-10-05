@@ -199,12 +199,13 @@ export function PlaylistsTab() {
   };
 
   const handleCreate = () => {
+    const createdOnConfigId = selectedConfigId;
     createPlaylist.mutate(
       { name: newName, mode: newMode, serverConfigId: selectedConfigId ?? undefined },
       {
         onSuccess: (created: { id?: number } | undefined) => {
           toast.success('Playlist created');
-          if (addAfterCreate && created?.id) addSongsTo(created.id);
+          if (addAfterCreate && created?.id && shownConfigId.current === createdOnConfigId) addSongsTo(created.id);
           setAddAfterCreate(false);
           setShowCreate(false);
           setNewName('');
@@ -454,7 +455,10 @@ export function PlaylistsTab() {
                     ? 'bg-primary/10 border border-primary/30'
                     : 'hover:bg-muted/50 border border-transparent'
                 }`}
-                onClick={() => setSelectedId(pl.id)}
+                onClick={() => {
+                  setSelectedId(pl.id);
+                  setPendingAddId(null);
+                }}
               >
                 <ListMusic
                   className={`h-4 w-4 shrink-0 ${selectedId === pl.id ? 'text-primary' : 'text-muted-foreground'}`}
