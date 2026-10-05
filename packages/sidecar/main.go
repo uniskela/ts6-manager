@@ -239,6 +239,9 @@ func (s *Sidecar) resetSyncTiming() {
 	s.streamBaseSet = false
 	s.videoTiming = TrackTiming{}
 	s.audioTiming = TrackTiming{}
+	// The next FFmpeg run starts its RTP numbering afresh.
+	s.videoRTP.markRestart()
+	s.audioRTP.markRestart()
 }
 
 func (s *Sidecar) drainRTPQueues() {
@@ -588,6 +591,10 @@ type Sidecar struct {
 	// The most one track is held back to meet the other, and the longest the
 	// first track waits for the other to start.
 	maxTrackDelay time.Duration
+
+	// Outgoing RTP numbering, kept continuous across FFmpeg restarts.
+	videoRTP rtpContinuity
+	audioRTP rtpContinuity
 }
 
 func NewSidecar() *Sidecar {
@@ -602,6 +609,8 @@ func NewSidecar() *Sidecar {
 		videoQueue: make(chan queuedPacket, envIntOrDefault("VIDEO_QUEUE_SIZE", 4096)),
 		audioQueue: make(chan queuedPacket, envIntOrDefault("AUDIO_QUEUE_SIZE", 2048)),
 	}
+	s.videoRTP.clockRate = 90000
+	s.audioRTP.clockRate = 48000
 	s.streamCodec.Store(codecVP8)
 	return s
 }
@@ -673,6 +682,7 @@ func (s *Sidecar) readVideoRTP() {
 			continue
 		}
 
+		s.videoRTP.rewrite(cloned, s.currentCodec(), arrived)
 		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("video", cloned.Timestamp, arrived)}
 		select {
 		case s.videoQueue <- q:
@@ -717,6 +727,7 @@ func (s *Sidecar) readAudioRTP() {
 			continue
 		}
 
+		s.audioRTP.rewrite(cloned, "", arrived)
 		q := queuedPacket{pkt: cloned, arrived: arrived, clock: s.recordFrame("audio", cloned.Timestamp, arrived)}
 		select {
 		case s.audioQueue <- q:
