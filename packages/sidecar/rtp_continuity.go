@@ -188,11 +188,13 @@ func (c *rtpContinuity) leadOn(line clockLine) time.Duration {
 	if !c.started || c.clockRate == 0 {
 		return 0
 	}
-	// Unsigned distance on the RTP timeline. int32(lastTS-base) goes negative
-	// after half the wrap range (~6h38m at 90 kHz) and would drop a leading
-	// track's lead on the next source switch.
-	ticks := c.lastTS - line.base
-	return time.Duration(uint64(ticks)*uint64(time.Second)/uint64(c.clockRate)) + time.Millisecond
+	// Wall time keeps leads past half the RTP wrap. The signed delta corrects
+	// packet timing without treating a small backward step as a full wrap.
+	expected := line.at(c.lastAt, c.clockRate)
+	ticks := int64(int32(c.lastTS - expected))
+	return c.lastAt.Sub(line.wall) +
+		time.Duration(ticks)*time.Second/time.Duration(c.clockRate) +
+		time.Millisecond
 }
 
 func (l clockLine) at(t time.Time, clockRate uint32) uint32 {

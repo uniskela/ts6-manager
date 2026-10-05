@@ -196,9 +196,23 @@ func TestLeadOnPastSignedHalfRange(t *testing.T) {
 	line := clockLine{valid: true, base: 0, wall: time.Unix(0, 0)}
 	ticks := uint32(math.MaxInt32) + 90000 // one second past half-range
 	c.lastTS = ticks
+	c.lastAt = line.wall.Add(time.Duration(ticks) * time.Second / time.Duration(c.clockRate))
 	got := c.leadOn(line)
 	want := time.Duration(ticks)*time.Second/90000 + time.Millisecond
 	if !near(got, want) {
+		t.Fatalf("lead %v, want %v", got, want)
+	}
+}
+
+// A small backward lastTS must not become a ~13h wrap lead.
+func TestLeadOnSmallNegativeOffset(t *testing.T) {
+	c := rtpContinuity{clockRate: 90000, started: true}
+	line := clockLine{valid: true, base: 100_000, wall: time.Unix(0, 0)}
+	c.lastTS = line.base - 10
+	c.lastAt = line.wall
+
+	want := time.Millisecond - 10*time.Second/time.Duration(c.clockRate)
+	if got := c.leadOn(line); got != want {
 		t.Fatalf("lead %v, want %v", got, want)
 	}
 }
