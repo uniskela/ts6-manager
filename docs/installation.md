@@ -1,15 +1,17 @@
 # Installation
 
-TS6 Manager publishes four container images for immutable releases:
+TS6 Manager publishes four container images for immutable releases. **GitHub Container Registry is the default** (compose files in this repo). Docker Hub mirrors the same release digests.
 
-| Service | Image |
-|---|---|
-| Backend | `ghcr.io/uniskela/ts6-manager/backend:latest` |
-| Frontend | `ghcr.io/uniskela/ts6-manager/frontend:latest` |
-| Sidecar | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
-| All-in-one | `ghcr.io/uniskela/ts6-manager/all-in-one:latest` |
+| Service | GHCR (default) | Docker Hub (mirror) |
+|---|---|---|
+| Backend | `ghcr.io/uniskela/ts6-manager/backend:latest` | `uniskela/ts6-manager:backend` |
+| Frontend | `ghcr.io/uniskela/ts6-manager/frontend:latest` | `uniskela/ts6-manager:frontend` |
+| Sidecar | `ghcr.io/uniskela/ts6-manager/sidecar:latest` | `uniskela/ts6-manager:sidecar` |
+| All-in-one | `ghcr.io/uniskela/ts6-manager/all-in-one:latest` | `uniskela/ts6-manager:all-in-one` |
 
-Release images are published after a Release Please release is created. Ordinary pushes and pull requests do not publish GHCR images.
+See [Docker Hub](https://hub.docker.com/r/uniskela/ts6-manager). Versioned Hub tags use the form `uniskela/ts6-manager:backend-1.10.1`.
+
+Release images are published after a Release Please release is created. Ordinary pushes and pull requests do not publish images.
 
 ## Split stack
 

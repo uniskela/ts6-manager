@@ -24,8 +24,11 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  # Images: ghcr.io/<owner>/ts6-manager/<component>
+  # Default registry: ghcr.io/<owner>/ts6-manager/<component>
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/ts6-manager
+  # Docker Hub mirror (flat repo): <owner>/ts6-manager:<component>[-version]
+  # https://hub.docker.com/r/uniskela/ts6-manager
+  DOCKERHUB_IMAGE: ${{ github.repository_owner }}/ts6-manager
 
 permissions:
   contents: read
@@ -68,19 +71,34 @@ jobs:
         env:
           TAG: ${{ inputs.tag }}
           COMPONENT: ${{ matrix.component }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
           FULL_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="${FULL_SHA:0:7}"
           VERSION="${TAG#v}"
           MAJOR_MINOR="${VERSION%.*}"
+          PUSH_HUB=0
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            PUSH_HUB=1
+          else
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; publishing GHCR only"
+          fi
           {
             echo "git_sha=${FULL_SHA}"
+            echo "push_hub=${PUSH_HUB}"
             echo "list<<EOF"
             echo "${IMAGE_PREFIX}/${COMPONENT}:sha-${SHORT_SHA}"
             echo "${IMAGE_PREFIX}/${COMPONENT}:${TAG}"
             echo "${IMAGE_PREFIX}/${COMPONENT}:${VERSION}"
             echo "${IMAGE_PREFIX}/${COMPONENT}:${MAJOR_MINOR}"
+            if [ "$PUSH_HUB" = "1" ]; then
+              echo "${DOCKERHUB_IMAGE}:${COMPONENT}-sha-${SHORT_SHA}"
+              echo "${DOCKERHUB_IMAGE}:${COMPONENT}-${TAG}"
+              echo "${DOCKERHUB_IMAGE}:${COMPONENT}-${VERSION}"
+              echo "${DOCKERHUB_IMAGE}:${COMPONENT}-${MAJOR_MINOR}"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -93,6 +111,13 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.tags.outputs.push_hub == '1'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract labels
         id: meta
@@ -142,19 +167,34 @@ jobs:
         id: tags
         env:
           TAG: ${{ inputs.tag }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
           FULL_SHA="$(git rev-parse HEAD)"
           SHORT_SHA="${FULL_SHA:0:7}"
           VERSION="${TAG#v}"
           MAJOR_MINOR="${VERSION%.*}"
+          PUSH_HUB=0
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            PUSH_HUB=1
+          else
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; publishing GHCR only"
+          fi
           {
             echo "git_sha=${FULL_SHA}"
+            echo "push_hub=${PUSH_HUB}"
             echo "list<<EOF"
             echo "${IMAGE_PREFIX}/all-in-one:sha-${SHORT_SHA}"
             echo "${IMAGE_PREFIX}/all-in-one:${TAG}"
             echo "${IMAGE_PREFIX}/all-in-one:${VERSION}"
             echo "${IMAGE_PREFIX}/all-in-one:${MAJOR_MINOR}"
+            if [ "$PUSH_HUB" = "1" ]; then
+              echo "${DOCKERHUB_IMAGE}:all-in-one-sha-${SHORT_SHA}"
+              echo "${DOCKERHUB_IMAGE}:all-in-one-${TAG}"
+              echo "${DOCKERHUB_IMAGE}:all-in-one-${VERSION}"
+              echo "${DOCKERHUB_IMAGE}:all-in-one-${MAJOR_MINOR}"
+            fi
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -167,6 +207,13 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.tags.outputs.push_hub == '1'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Extract labels
         id: meta
@@ -189,7 +236,8 @@ jobs:
             GIT_SHA=${{ steps.tags.outputs.git_sha }}
           pull: true
 
-  # Promote the successfully built immutable release tag to :latest.
+  # Promote the successfully built immutable release tag to :latest (GHCR) /
+  # :<component> (Docker Hub, matching clusterzx-style tags).
   promote-latest:
     name: Promote ${{ matrix.component }}:latest
     needs: build-and-push
@@ -199,6 +247,20 @@ jobs:
       matrix:
         component: [backend, frontend, sidecar]
     steps:
+      - name: Detect Docker Hub credentials
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "push_hub=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "push_hub=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; promoting GHCR only"
+          fi
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -206,22 +268,50 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: steps.hub.outputs.push_hub == '1'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Retag release as latest
         env:
           TAG: ${{ inputs.tag }}
           COMPONENT: ${{ matrix.component }}
+          PUSH_HUB: ${{ steps.hub.outputs.push_hub }}
         run: |
           set -euo pipefail
           SRC="${IMAGE_PREFIX}/${COMPONENT}:${TAG}"
           DST="${IMAGE_PREFIX}/${COMPONENT}:latest"
           echo "Promoting ${SRC} → ${DST}"
           docker buildx imagetools create --tag "${DST}" "${SRC}"
+          if [ "$PUSH_HUB" = "1" ]; then
+            HUB_SRC="${DOCKERHUB_IMAGE}:${COMPONENT}-${TAG}"
+            HUB_DST="${DOCKERHUB_IMAGE}:${COMPONENT}"
+            echo "Promoting ${HUB_SRC} → ${HUB_DST}"
+            docker buildx imagetools create --tag "${HUB_DST}" "${HUB_SRC}"
+          fi
 
   promote-all-in-one-latest:
     name: Promote all-in-one:latest
     needs: build-all-in-one
     runs-on: ubuntu-latest
     steps:
+      - name: Detect Docker Hub credentials
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "push_hub=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "push_hub=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; promoting GHCR only"
+          fi
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -229,15 +319,29 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        if: steps.hub.outputs.push_hub == '1'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       - name: Retag release as latest
         env:
           TAG: ${{ inputs.tag }}
+          PUSH_HUB: ${{ steps.hub.outputs.push_hub }}
         run: |
           set -euo pipefail
           SRC="${IMAGE_PREFIX}/all-in-one:${TAG}"
           DST="${IMAGE_PREFIX}/all-in-one:latest"
           echo "Promoting ${SRC} → ${DST}"
           docker buildx imagetools create --tag "${DST}" "${SRC}"
+          if [ "$PUSH_HUB" = "1" ]; then
+            HUB_SRC="${DOCKERHUB_IMAGE}:all-in-one-${TAG}"
+            HUB_DST="${DOCKERHUB_IMAGE}:all-in-one"
+            echo "Promoting ${HUB_SRC} → ${HUB_DST}"
+            docker buildx imagetools create --tag "${HUB_DST}" "${HUB_SRC}"
+          fi
 
   # First publish often creates private packages; attempt to mark them public for pull-without-auth.
   # If this fails (org policy / token scope), set visibility manually under Packages → Package settings.
