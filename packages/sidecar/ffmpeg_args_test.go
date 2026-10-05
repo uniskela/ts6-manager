@@ -1,8 +1,6 @@
 package main
 
 import (
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -37,28 +35,6 @@ func TestHLSPlaylistURL(t *testing.T) {
 		if hlsPlaylistURL(u) {
 			t.Errorf("want non-playlist URL: %s", u)
 		}
-	}
-	if !nonHLSMediaURL("https://cdn.example/live/stream.ts?token=1") {
-		t.Fatal("mpegts URL should skip the HLS sniff")
-	}
-	if nonHLSMediaURL("https://cdn.example/get.php?type=m3u8") {
-		t.Fatal("opaque URL should still be sniffed when live")
-	}
-}
-
-func TestPlaylistBytesAreHLS(t *testing.T) {
-	if !playlistBytesAreHLS([]byte("\n\n#EXTM3U\n#EXTINF:6,\nhttp://a/1.ts\n")) {
-		t.Fatal("playlist prefix")
-	}
-	bom := append([]byte{0xEF, 0xBB, 0xBF}, []byte("#extm3u\n")...)
-	if !playlistBytesAreHLS(bom) {
-		t.Fatal("BOM and lowercase marker")
-	}
-	if playlistBytesAreHLS([]byte{0x47, 0x40, 0x11}) {
-		t.Fatal("mpegts sync byte is not a playlist")
-	}
-	if playlistBytesAreHLS([]byte("<html>#EXTM3U</html>")) {
-		t.Fatal("marker must be the prefix")
 	}
 }
 
@@ -106,14 +82,9 @@ func TestBuildFFmpegArgsDisablesPersistentHTTPForHLSOnly(t *testing.T) {
 	if strings.Contains(liveOpaque, "http_persistent") {
 		t.Fatalf("opaque live URL is not assumed to be HLS: %s", liveOpaque)
 	}
-	sniffed := ffmpegArgLine(SourceRequest{
-		Source:    "https://cdn.example/get.php?type=m3u8",
-		Mode:      modeLive,
-		Volume:    100,
-		freshHTTP: map[string]bool{"https://cdn.example/get.php?type=m3u8": true},
-	})
-	if !strings.Contains(sniffed, "-http_persistent 0 -fflags +genpts+igndts+discardcorrupt -re -i") {
-		t.Fatalf("sniffed live HLS must disable persistent HTTP and keep pacing: %s", sniffed)
+	livePlaylist := ffmpegArgLine(SourceRequest{Source: "https://cdn.example/live.m3u8", Mode: modeLive, Volume: 100})
+	if !strings.Contains(livePlaylist, "-http_persistent 0 -fflags +genpts+igndts+discardcorrupt -re -i") {
+		t.Fatalf("live playlist must disable persistent HTTP and keep pacing: %s", livePlaylist)
 	}
 
 	vod := ffmpegArgLine(SourceRequest{Source: "https://cdn.example/clip.mp4", Mode: modeVOD, Volume: 100})
@@ -203,65 +174,5 @@ func TestExtraFFmpegArgsOverrideAndReject(t *testing.T) {
 	broken := ffmpegArgLine(SourceRequest{Source: "https://cdn.example/a.m3u8", Volume: 100})
 	if strings.Contains(broken, "unterminated") || !strings.Contains(broken, "-http_persistent 0") {
 		t.Fatalf("a bad extra value is ignored and the default remains: %s", broken)
-	}
-}
-
-func TestSniffAndDetectLiveHLS(t *testing.T) {
-	playlist := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.UserAgent() == "" {
-			t.Errorf("sniff request had an empty user agent")
-		}
-		_, _ = w.Write([]byte("#EXTM3U\n#EXT-X-TARGETDURATION:6\n"))
-	}))
-	t.Cleanup(playlist.Close)
-	mpegts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte{0x47, 0x40, 0x00, 0x10})
-	}))
-	t.Cleanup(mpegts.Close)
-	denied := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusForbidden)
-	}))
-	t.Cleanup(denied.Close)
-
-	if hls, err := sniffHLSPlaylist(playlist.URL+"/live", ""); err != nil || !hls {
-		t.Fatalf("direct sniff should see the playlist: hls=%v err=%v", hls, err)
-	}
-	if hls, err := sniffHLSPlaylist(mpegts.URL+"/stream", ""); err != nil || hls {
-		t.Fatalf("mpegts body is not HLS: hls=%v err=%v", hls, err)
-	}
-	if hls, err := sniffHLSPlaylist(denied.URL, ""); err != nil || hls {
-		t.Fatalf("non-success status is not HLS: hls=%v err=%v", hls, err)
-	}
-
-	proxy := startTestProxy(t, testPolicy(allowedTestIP))
-	if hls, err := sniffHLSPlaylist(playlist.URL+"/via-proxy", proxy.URL()); err != nil || !hls {
-		t.Fatalf("sniff through the egress proxy should see the playlist: hls=%v err=%v", hls, err)
-	}
-	blocked := startTestProxy(t, testPolicy())
-	if hls, _ := sniffHLSPlaylist(playlist.URL+"/blocked", blocked.URL()); hls {
-		t.Fatal("egress must be able to refuse the sniff")
-	}
-
-	probed := detectLiveHLS(SourceRequest{Source: playlist.URL + "/channel", Mode: modeLive}, nil)
-	if !probed[playlist.URL+"/channel"] {
-		t.Fatalf("live opaque playlist should be recorded: %#v", probed)
-	}
-	var hits int
-	called := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		_, _ = w.Write([]byte("#EXTM3U\n"))
-	}))
-	t.Cleanup(called.Close)
-	if got := detectLiveHLS(SourceRequest{Source: called.URL + "/clip.mp4", Mode: modeLive}, nil); len(got) != 0 {
-		t.Fatalf("media URL must not be probed: %#v", got)
-	}
-	if got := detectLiveHLS(SourceRequest{Source: called.URL + "/a.m3u8", Mode: modeLive}, nil); len(got) != 0 {
-		t.Fatalf("named playlist must not be probed: %#v", got)
-	}
-	if got := detectLiveHLS(SourceRequest{Source: called.URL + "/channel", Mode: modeVOD}, nil); len(got) != 0 {
-		t.Fatalf("vod must not be probed: %#v", got)
-	}
-	if hits != 0 {
-		t.Fatalf("skipped inputs were fetched %d times", hits)
 	}
 }

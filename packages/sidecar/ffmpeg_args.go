@@ -1,17 +1,12 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"errors"
-	"io"
 	"log"
-	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"strings"
-	"time"
 )
 
 // FFmpeg's HLS demuxer reuses one HTTP connection (http_persistent defaults
@@ -25,9 +20,6 @@ const (
 	httpPersistentAuto = "auto"
 	httpPersistentOff  = "0" // pass -http_persistent 0 for live and playlist URLs
 	httpPersistentOn   = "1" // leave FFmpeg's own default alone
-	hlsSniffTimeout    = 3 * time.Second
-	hlsSniffBytes      = 512
-	ffmpegHLSUserAgent = "Lavf/59.27.100" // bookworm ffmpeg 5.1; many IPTV panels allow Lavf
 )
 
 func httpPersistentMode() string {
@@ -56,28 +48,16 @@ func sourcePath(source string) string {
 }
 
 // hlsPlaylistURL reports whether the URL path (query and fragment stripped)
-// ends in an HLS playlist suffix. Opaque IPTV URLs do not match; those are
-// sniffed when the source mode is live.
+// ends in an HLS playlist suffix. Opaque IPTV URLs do not match; set
+// FFMPEG_HTTP_PERSISTENT=0 to cover those without fetching the URL first.
 func hlsPlaylistURL(source string) bool {
 	ext := strings.ToLower(path.Ext(sourcePath(source)))
 	return ext == ".m3u8" || ext == ".m3u"
 }
 
-// nonHLSMediaURL is a remote URL whose path names a single media file.
-// Those are not sniffed: a live MPEG-TS .ts URL is one connection, and
-// http_persistent is not a valid option for it.
-func nonHLSMediaURL(source string) bool {
-	switch strings.ToLower(path.Ext(sourcePath(source))) {
-	case ".ts", ".mp4", ".m4v", ".mkv", ".webm", ".mp3", ".aac", ".flv", ".mpd", ".mov", ".m4a":
-		return true
-	default:
-		return false
-	}
-}
-
 // disablePersistentHTTP reports whether this input should get
-// -http_persistent 0. sniffed is true when a live probe saw an HLS playlist.
-func disablePersistentHTTP(mode, input string, sniffed map[string]bool) bool {
+// -http_persistent 0. The flag is valid only for the HLS demuxer.
+func disablePersistentHTTP(mode, input string) bool {
 	if !isRemoteSource(input) {
 		return false
 	}
@@ -87,104 +67,8 @@ func disablePersistentHTTP(mode, input string, sniffed map[string]bool) bool {
 	case httpPersistentOff:
 		return mode == modeLive || hlsPlaylistURL(input)
 	default:
-		return hlsPlaylistURL(input) || sniffed[input]
+		return hlsPlaylistURL(input)
 	}
-}
-
-// detectLiveHLS probes live remote inputs that are not already named as
-// playlists. The result is consumed by buildFFmpegArgs. Playlist suffixes
-// are decided there without a probe.
-func detectLiveHLS(req SourceRequest, proxy *egressProxy) map[string]bool {
-	if httpPersistentMode() != httpPersistentAuto {
-		return nil
-	}
-	mode := resolveSourceMode(req.Mode, req.Source)
-	if mode != modeLive {
-		return nil
-	}
-	proxyURL := ""
-	if proxy != nil {
-		proxyURL = proxy.URL()
-	}
-	found := map[string]bool{}
-	seen := map[string]bool{}
-	for _, input := range []string{req.Source, req.AudioSource} {
-		if input == "" || seen[input] || !isRemoteSource(input) || hlsPlaylistURL(input) || nonHLSMediaURL(input) {
-			continue
-		}
-		seen[input] = true
-		hls, err := sniffHLSPlaylist(input, proxyURL)
-		if err != nil {
-			log.Printf("[FFmpeg] Could not inspect live input for HLS; leaving persistent HTTP unchanged")
-			continue
-		}
-		if hls {
-			found[input] = true
-			log.Printf("[FFmpeg] Live HTTP input is an HLS playlist; opening a new connection per segment")
-			continue
-		}
-		log.Printf("[FFmpeg] Live HTTP input is not an HLS playlist; leaving persistent HTTP at FFmpeg's default")
-	}
-	return found
-}
-
-func playlistBytesAreHLS(body []byte) bool {
-	body = bytes.TrimSpace(body)
-	body = bytes.TrimPrefix(body, []byte{0xEF, 0xBB, 0xBF})
-	body = bytes.TrimSpace(body)
-	return bytes.HasPrefix(bytes.ToUpper(body), []byte("#EXTM3U"))
-}
-
-// sniffHLSPlaylist reads the start of source. A nil error means the response
-// was read: true when it is an HLS playlist, false when it is not. A non-nil
-// error means the probe did not complete; the caller leaves FFmpeg's default
-// in place. proxyURL, when set, is the sidecar egress proxy so redirects stay
-// on the checked path.
-func sniffHLSPlaylist(source, proxyURL string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), hlsSniffTimeout)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
-	if err != nil {
-		return false, err
-	}
-	req.Header.Set("User-Agent", ffmpegHLSUserAgent)
-	req.Header.Set("Accept-Encoding", "identity")
-	transport := &http.Transport{
-		Proxy:                 nil,
-		DisableCompression:    true,
-		DisableKeepAlives:     true,
-		ResponseHeaderTimeout: hlsSniffTimeout,
-	}
-	if proxyURL != "" {
-		parsed, err := url.Parse(proxyURL)
-		if err != nil {
-			return false, err
-		}
-		transport.Proxy = http.ProxyURL(parsed)
-	}
-	client := &http.Client{
-		Transport: transport,
-		Timeout:   hlsSniffTimeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 5 {
-				return errors.New("too many redirects")
-			}
-			return nil
-		},
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return false, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return false, nil
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, hlsSniffBytes))
-	if err != nil && len(body) == 0 {
-		return false, err
-	}
-	return playlistBytesAreHLS(body), nil
 }
 
 // extraFFmpegInputArgs is FFMPEG_EXTRA_INPUT_ARGS, applied to each remote

@@ -1283,10 +1283,6 @@ type SourceRequest struct {
 	AllowedHosts []string
 	// CpuUsed overrides VIDEO_CPU_USED / VIDEO_VP9_CPU_USED when > 0.
 	CpuUsed int
-	// freshHTTP is set by StartFFmpeg when a live probe saw an HLS playlist.
-	// It is not part of the POST /source body. Playlist URLs (.m3u8/.m3u)
-	// are recognized in buildFFmpegArgs without this map.
-	freshHTTP map[string]bool
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -1425,7 +1421,7 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 				// After reconnect flags and before -fflags/-re, so -re stays
 				// adjacent to -i. Extra input args follow, and a later
 				// -http_persistent wins over this default.
-				if disablePersistentHTTP(mode, input, req.freshHTTP) {
+				if disablePersistentHTTP(mode, input) {
 					args = append(args, "-http_persistent", "0")
 				}
 				args = append(args, extraIn...)
@@ -1596,7 +1592,6 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 
 	s.source = req.Source
 	s.streamCodec.Store(requested.Codec)
-	req.freshHTTP = detectLiveHLS(req, s.egress)
 
 	spec := requested
 	fallbackReason := ""
