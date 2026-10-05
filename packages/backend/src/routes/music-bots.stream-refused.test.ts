@@ -4,6 +4,7 @@ import express, { type Express } from 'express';
 import { musicBotRoutes } from './music-bots.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import {
+  VideoSourceFailedError,
   VideoSourceRefusedError,
   durationFilterSkipMessage,
 } from '../voice/streaming/video-download.js';
@@ -61,6 +62,13 @@ describe('stream/start with direct YouTube streaming off', () => {
     assert.equal(res.status, 422);
     assert.equal(res.body.error, message);
     assert.match(res.body.error, /Stream YouTube videos directly/);
+  });
+
+  it('passes a yt-dlp failure through as 502 with its reason', async () => {
+    const reason = 'YouTube URL resolve timed out after 90s';
+    const res = await startStream(buildApp(async () => { throw new VideoSourceFailedError(reason); }));
+    assert.equal(res.status, 502);
+    assert.equal(res.body.error, reason);
   });
 
   it('keeps unexpected failures generic', async () => {

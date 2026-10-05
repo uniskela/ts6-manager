@@ -48,6 +48,36 @@ export function youtubeVideoFormatArgs(maxHeight: number): string[] {
   return ['-f', filter, '-S', YOUTUBE_VIDEO_FORMAT_SORT];
 }
 
+/**
+ * A source the server will not stream as configured (over the download length
+ * limit, or a live broadcast that cannot be downloaded). The message tells the
+ * user what to change, so it answers 422 with that message instead of the
+ * generic 500 a plain Error would become.
+ */
+export class VideoSourceRefusedError extends AppError {
+  constructor(message: string) {
+    super(422, message);
+    this.name = 'VideoSourceRefusedError';
+  }
+}
+
+/**
+ * yt-dlp could not get the video (it failed, timed out, or returned nothing
+ * playable). The source's fault rather than ours, so 502 with the reason.
+ */
+export class VideoSourceFailedError extends AppError {
+  constructor(message: string) {
+    super(502, message);
+    this.name = 'VideoSourceFailedError';
+  }
+}
+
+/**
+ * Bounds one yt-dlp resolve. Below the web UI's 120s stream-start timeout, so
+ * a slow resolve comes back as a readable error instead of a client timeout.
+ */
+const RESOLVE_TIMEOUT_MS = 90_000;
+
 /** ENOENT → missing binary; anything else → generic start failure. */
 function ytDlpSpawnFailureMessage(err: NodeJS.ErrnoException): string {
   return err.code === 'ENOENT'
@@ -178,7 +208,7 @@ export interface DownloadedStreamVideo {
 export function parseTwitchResolve(data: Record<string, unknown>): DownloadedStreamVideo {
   const streamUrl = typeof data.url === 'string' ? data.url.trim() : '';
   if (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://')) {
-    throw new Error('yt-dlp did not return a playable Twitch stream URL');
+    throw new VideoSourceFailedError('yt-dlp did not return a playable Twitch stream URL');
   }
 
   const isLive = data.is_live === true || data.live_status === 'is_live';
@@ -220,8 +250,8 @@ async function resolveWithYtDlp(
     proc.stderr.on('data', (chunk: Buffer) => { err += chunk.toString(); });
     const timer = setTimeout(() => {
       proc.kill('SIGKILL');
-      reject(new Error(`${site} URL resolve timed out after 2 minutes`));
-    }, 2 * 60_000);
+      reject(new VideoSourceFailedError(`${site} URL resolve timed out after ${RESOLVE_TIMEOUT_MS / 1000}s`));
+    }, RESOLVE_TIMEOUT_MS);
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
       resolve({ stdout: out, stderr: err, code: exitCode });
@@ -233,7 +263,7 @@ async function resolveWithYtDlp(
   });
 
   if (code !== 0) {
-    throw new Error(`yt-dlp failed to resolve ${site} URL (code ${code}): ${stderr.slice(0, 280)}`);
+    throw new VideoSourceFailedError(`yt-dlp failed to resolve ${site} URL (code ${code}): ${stderr.slice(0, 280)}`);
   }
 
   try {
@@ -241,7 +271,7 @@ async function resolveWithYtDlp(
       stdout.trim().split('\n').find((line) => line.startsWith('{')) || stdout.trim();
     return JSON.parse(jsonLine);
   } catch {
-    throw new Error(`Failed to parse yt-dlp ${site} metadata`);
+    throw new VideoSourceFailedError(`Failed to parse yt-dlp ${site} metadata`);
   }
 }
 
@@ -336,7 +366,7 @@ export function parseYoutubeResolve(data: Record<string, unknown>): DownloadedSt
 
   const combined = mediaUrl(data.url);
   if (!combined) {
-    throw new Error('yt-dlp did not return a playable YouTube stream URL');
+    throw new VideoSourceFailedError('yt-dlp did not return a playable YouTube stream URL');
   }
   return { path: combined, durationSec, live: isLive, resolution: pictureSize(data) };
 }
@@ -387,19 +417,6 @@ function probeVideoDurationSec(filePath: string): Promise<number | null> {
     });
     proc.on('error', () => resolve(null));
   });
-}
-
-/**
- * A source the server will not stream as configured (over the download length
- * limit, or a live broadcast that cannot be downloaded). The message tells the
- * user what to change, so it answers 422 with that message instead of the
- * generic 500 a plain Error would become.
- */
-export class VideoSourceRefusedError extends AppError {
-  constructor(message: string) {
-    super(422, message);
-    this.name = 'VideoSourceRefusedError';
-  }
 }
 
 /**
@@ -501,13 +518,13 @@ export async function downloadVideoForStream(
     proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
     const timer = setTimeout(() => {
       proc.kill('SIGKILL');
-      reject(new Error('Video download timed out after 10 minutes'));
+      reject(new VideoSourceFailedError('Video download timed out after 10 minutes'));
     }, 10 * 60_000);
 
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        reject(new Error(`yt-dlp failed (code ${code}): ${stderr.slice(0, 280)}`));
+        reject(new VideoSourceFailedError(`yt-dlp failed (code ${code}): ${stderr.slice(0, 280)}`));
         return;
       }
       const skipped = durationFilterSkipMessage(stdout, maxDurationSec);
@@ -535,7 +552,7 @@ export async function downloadVideoForStream(
     return { path: canonicalTemp, durationSec };
   } catch (err: any) {
     if (err?.message === LOCAL_VIDEO_NOT_FOUND) {
-      throw new Error(
+      throw new VideoSourceFailedError(
         'yt-dlp finished but the stream temp file was missing — the source may be live or unsupported for download',
       );
     }
