@@ -5,6 +5,7 @@ import {
   durationFilterSkipMessage,
   parseYoutubeResolve,
   youtubeVideoFormatArgs,
+  ytDlpErrorReason,
 } from './video-download.js';
 
 describe('youtubeVideoFormatArgs', () => {
@@ -138,5 +139,24 @@ describe('parseYoutubeResolve', () => {
       () => parseYoutubeResolve({ requested_formats: [{ vcodec: 'vp9', acodec: 'none', url: 'ftp://x/v' }] }),
       /playable YouTube stream URL/,
     );
+  });
+});
+
+describe('ytDlpErrorReason', () => {
+  it('keeps only the last ERROR line, without the extractor prefix', () => {
+    const stderr =
+      'WARNING: [youtube] abc: some player client failed\n' +
+      "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot. Use --cookies\n";
+    assert.equal(ytDlpErrorReason(stderr), "Sign in to confirm you're not a bot. Use --cookies");
+  });
+
+  it('masks file paths', () => {
+    const stderr = 'ERROR: unable to open for writing: /data/music/.stream-1.mp4.part\n';
+    assert.equal(ytDlpErrorReason(stderr), 'unable to open for writing: <path>');
+  });
+
+  it('is null without an ERROR line', () => {
+    assert.equal(ytDlpErrorReason('Traceback (most recent call last):\n  File "/usr/lib/x.py"\n'), null);
+    assert.equal(ytDlpErrorReason(''), null);
   });
 });
