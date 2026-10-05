@@ -803,6 +803,8 @@ test('ssh text uses the event channel before the helper park', () => {
   assert.equal(sshTextChannelId({ __cmd_listener_channel_id: '8', cid: '5' }, 1), 8);
   assert.equal(sshTextChannelId({ invokerchannelid: '5' }, 1), 5);
   assert.equal(sshTextChannelId({ cid: '5' }, 1), 5);
+  // "0" is truthy; it must not hide a real cid behind the helper park.
+  assert.equal(sshTextChannelId({ invokerchannelid: '0', cid: '5' }, 1), 5);
   assert.equal(sshTextChannelId({ targetmode: '2', target: '5' }, 1), 5);
   // Private-message target is a client id, not a channel.
   assert.equal(sshTextChannelId({ targetmode: '1', target: '3' }, 1), 1);

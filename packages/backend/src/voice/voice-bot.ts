@@ -479,6 +479,9 @@ export class VoiceBot extends EventEmitter {
   /** Send each already-sized chat command. Callers chunk so none of them fragment. */
   private sendTextCommands(commands: string[]): void {
     for (const cmd of commands) {
+      // 524 can land while earlier pieces are still leaving; stop so we don't
+      // keep feeding the server during its anti-flood block.
+      if (this.floodHoldActive) return;
       this.client.sendCommand(cmd);
     }
   }

@@ -23,8 +23,11 @@ export function sshTextChannelId(
 ): number {
   const listener = parseInt(data.__cmd_listener_channel_id || '0', 10);
   if (listener > 0) return listener;
-  const named = parseInt(data.invokerchannelid || data.cid || '0', 10);
-  if (named > 0) return named;
+  // Parse each field on its own: a truthy "0" must not hide a real cid.
+  for (const key of ['invokerchannelid', 'cid'] as const) {
+    const named = parseInt(data[key] || '0', 10);
+    if (named > 0) return named;
+  }
   if (parseInt(data.targetmode || '0', 10) === 2) {
     const target = parseInt(data.target || '0', 10);
     if (target > 0) return target;
