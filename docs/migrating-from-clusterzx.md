@@ -41,9 +41,9 @@ A new shared secret between the backend and the media sidecar. Use any random st
 
 Edit your **existing** `docker-compose.yml`, in the same folder. Docker Compose names volumes after the project folder, so a compose file in a different folder creates new, empty volumes.
 
-1. Change the images (GHCR is the default; Docker Hub mirrors the same releases if you prefer Hub-style tags):
+1. Change the images (GHCR is the default; Docker Hub is an optional mirror of the same releases when Hub publish secrets are set):
 
-   | Service | From | To (GHCR, default) | To (Docker Hub mirror) |
+   | Service | From | To (GHCR, default) | To (Docker Hub mirror, when secrets set) |
    |---|---|---|---|
    | backend | `clusterzx/ts6-manager:backend` | `ghcr.io/uniskela/ts6-manager/backend:latest` | `uniskela/ts6-manager:backend` |
    | sidecar | `clusterzx/ts6-manager:sidecar` | `ghcr.io/uniskela/ts6-manager/sidecar:latest` | `uniskela/ts6-manager:sidecar` |

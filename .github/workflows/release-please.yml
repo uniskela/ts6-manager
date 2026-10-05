@@ -3,8 +3,9 @@ name: Release Please
 # After a trusted merge to main, Release Please opens (or updates) a release PR.
 # It never merges that PR itself. When a maintainer merges the release PR,
 # Release Please creates the immutable vX.Y.Z tag + GitHub Release, and this
-# workflow publishes GHCR (+ Docker Hub mirror) images (GITHUB_TOKEN tag
-# pushes do not retrigger publish-images.yml on their own).
+# workflow publishes GHCR images, and the Docker Hub mirror when both
+# DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are set (GITHUB_TOKEN tag pushes
+# do not retrigger publish-images.yml on their own).
 on:
   push:
     branches: [main]

@@ -5,7 +5,7 @@
 
 > [!IMPORTANT]
 > **This is an opinionated continuation of [`clusterzx/ts6-manager`](https://github.com/clusterzx/ts6-manager), not a mirror or drop-in republish of upstream.**
-> Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`, mirrored on Docker Hub as `uniskela/ts6-manager:<component>`).
+> Expect security/reliability-focused changes, selective QoL, and different container images (`ghcr.io/uniskela/ts6-manager/...`, optionally mirrored on Docker Hub as `uniskela/ts6-manager:<component>` when Hub publish secrets are configured).
 > Community issue/PR credits: [`CREDITS.md`](CREDITS.md) (including [fork contributions](CREDITS.md#fork-contributions)).
 
 Web-based management interface for TeamSpeak servers. Control virtual servers, channels, clients, permissions, music bots, automated workflows, and embeddable server widgets - all from your browser.
@@ -228,7 +228,7 @@ Prebuilt images are published only for immutable `vX.Y.Z` releases created by Re
 | Sidecar  | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
 | All-in-one | `ghcr.io/uniskela/ts6-manager/all-in-one:latest` |
 
-**Docker Hub (mirror)** — same digests, flat tags on [`uniskela/ts6-manager`](https://hub.docker.com/r/uniskela/ts6-manager):
+**Docker Hub (mirror)** — same digests, flat tags on [`uniskela/ts6-manager`](https://hub.docker.com/r/uniskela/ts6-manager), published only when both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets are set (otherwise GHCR still publishes and Hub tags may be missing or stale):
 
 | Service  | Image |
 |----------|--------|
@@ -237,7 +237,7 @@ Prebuilt images are published only for immutable `vX.Y.Z` releases created by Re
 | Sidecar  | `uniskela/ts6-manager:sidecar` |
 | All-in-one | `uniskela/ts6-manager:all-in-one` |
 
-Versioned Hub tags look like `uniskela/ts6-manager:backend-1.10.1`. Prefer GHCR unless you specifically want Docker Hub.
+When Hub publish is enabled, versioned Hub tags look like `uniskela/ts6-manager:backend-1.10.1`. Prefer GHCR unless you specifically want Docker Hub.
 
 Pull GHCR without logging in once the packages are **Public** (Packages → each image → Package settings). The workflow tries to set that automatically after the first publish.
 
