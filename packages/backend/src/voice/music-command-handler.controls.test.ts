@@ -26,7 +26,11 @@ function fixture(status = 'connected') {
     playbackProgress: { position: 60, duration: 100 },
     play: async (item: any) => played.push(item), seek: async (n: number) => seeks.push(n),
     clearPlayback: () => {},
-    stopAudio() { if (this.status === 'playing' || this.status === 'paused') this.status = 'connected'; },
+    isStreaming: false,
+    stopAudio() {
+      if (this.status === 'playing' || this.status === 'paused') this.status = 'connected';
+      this.isStreaming = false;
+    },
     videoSessionInfo: () => null, musicSessionInfo: () => null,
   };
   const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
@@ -150,4 +154,18 @@ test('commands during a TeamSpeak flood hold are set aside, not run or answered'
   // Plain chat is not a command and is not counted.
   await f.command('hello');
   assert.equal(ignored, 2);
+});
+
+test('!stop during radio keeps the queued songs', async () => {
+  const f = fixture('playing');
+  f.bot.queue.addMany([
+    { id: '1', title: 'Song A', filePath: '', source: 'local' as const },
+    { id: '2', title: 'Song B', filePath: '', source: 'local' as const },
+  ]);
+  f.bot.isStreaming = true;
+  await f.command('!stop');
+  assert.equal(f.bot.status, 'connected');
+  assert.equal(f.bot.isStreaming, false);
+  assert.deepEqual(f.bot.queue.getAll().map((t) => t.title), ['Song A', 'Song B']);
+  assert.match(f.replies.at(-1)!, /Playback stopped/);
 });

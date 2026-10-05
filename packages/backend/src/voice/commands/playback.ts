@@ -131,12 +131,15 @@ export async function handleSeek(
   context.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
 }
 
-/** Cancel chat + HTTP playlist expansions, clear the queue, and stop audio. */
+/**
+ * Cancel chat + HTTP playlist expansions and stop audio. Music stop clears the
+ * queue; radio keeps it, since Up next is kept while radio plays.
+ */
 export function handleStop(context: CommandContext, bot: VoiceBot, userClid: number): void {
   const botId = bot.currentConfig.id;
   invalidateChatPlaylistExpansion(botId);
   invalidatePlaylistExpansion(botId);
-  bot.queue.clear();
+  if (!bot.isStreaming) bot.queue.clear();
   bot.stopAudio();
   context.reply(bot, userClid, 'Playback stopped.');
 }
