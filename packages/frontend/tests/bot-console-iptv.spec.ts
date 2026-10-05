@@ -271,8 +271,9 @@ test('a channel deep link exposes an accessible star at phone width without stre
   const star = page.getByRole('button', { name: 'Add Morning News to favourites', exact: true });
   await expect(star).toBeVisible();
   const bounds = await star.boundingBox();
-  expect(bounds?.width).toBeGreaterThanOrEqual(44);
-  expect(bounds?.height).toBeGreaterThanOrEqual(44);
+  // Playwright 1.63 can report subpixel boxes (e.g. 43.9999); round to CSS px.
+  expect(Math.round(bounds?.width ?? 0)).toBeGreaterThanOrEqual(44);
+  expect(Math.round(bounds?.height ?? 0)).toBeGreaterThanOrEqual(44);
   await star.click();
   await expect(page.getByRole('button', { name: 'Remove Morning News from favourites', exact: true })).toBeVisible();
   expect(writes).toHaveLength(1);
