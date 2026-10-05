@@ -78,6 +78,31 @@ export class VideoSourceFailedError extends AppError {
  */
 const RESOLVE_TIMEOUT_MS = 90_000;
 
+/**
+ * The user-facing reason from yt-dlp's stderr: its last "ERROR:" line (e.g.
+ * "Sign in to confirm you're not a bot"), without the extractor prefix, file
+ * paths or the rest of the output, which stays in the server log. Null when
+ * there is no such line. Exported for unit tests.
+ */
+export function ytDlpErrorReason(stderr: string): string | null {
+  const lines = stderr.split('\n').filter((line) => line.startsWith('ERROR:'));
+  const last = lines[lines.length - 1];
+  if (!last) return null;
+  const reason = last
+    .replace(/^ERROR:\s*/, '')
+    .replace(/^\[[^\]]+\]\s*[^:\s]*:\s*/, '')
+    .replace(/(?:[A-Za-z]:)?[\\/][^\s'"]*[\\/][^\s'"]*/g, '<path>')
+    .trim();
+  return reason ? reason.slice(0, 200) : null;
+}
+
+/** A short failure message for the client; the full stderr goes to the log. */
+function ytDlpFailure(what: string, code: number | null, stderr: string): VideoSourceFailedError {
+  console.warn(`[VideoDownload] ${what} (code ${code}): ${stderr.slice(0, 2000)}`);
+  const reason = ytDlpErrorReason(stderr);
+  return new VideoSourceFailedError(reason ? `${what}: ${reason}` : what);
+}
+
 /** ENOENT → missing binary; anything else → generic start failure. */
 function ytDlpSpawnFailureMessage(err: NodeJS.ErrnoException): string {
   return err.code === 'ENOENT'
@@ -263,7 +288,7 @@ async function resolveWithYtDlp(
   });
 
   if (code !== 0) {
-    throw new VideoSourceFailedError(`yt-dlp failed to resolve ${site} URL (code ${code}): ${stderr.slice(0, 280)}`);
+    throw ytDlpFailure(`yt-dlp could not resolve the ${site} URL`, code, stderr);
   }
 
   try {
@@ -524,7 +549,7 @@ export async function downloadVideoForStream(
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        reject(new VideoSourceFailedError(`yt-dlp failed (code ${code}): ${stderr.slice(0, 280)}`));
+        reject(ytDlpFailure('yt-dlp could not download the video', code, stderr));
         return;
       }
       const skipped = durationFilterSkipMessage(stdout, maxDurationSec);
