@@ -83,6 +83,7 @@ test('Play sends a station to the bot picked under Play on', async ({ page, requ
       { id: 1, name: 'Aurora', serverConfigId: 1, status: 'playing' },
       { id: 2, name: 'Study Beats', serverConfigId: 1, status: 'connected' },
       { id: 3, name: 'Stopped Bot', serverConfigId: 1, status: 'stopped' },
+      { id: 5, name: 'Starting Bot', serverConfigId: 1, status: 'starting' },
       { id: 4, name: 'Other Server Bot', serverConfigId: 2, status: 'playing' },
     ],
   }));

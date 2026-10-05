@@ -65,10 +65,11 @@ export function RadioTab() {
   const resetStationIds = useResetRadioStationIds();
   const playRadio = usePlayRadio();
 
-  // Running bots on this server; Play uses the one picked under "Play on".
+  // Ready bots on this server (the statuses play-radio accepts); Play uses the one picked under "Play on".
   const { data: bots } = useMusicBots();
   const runningBots = (Array.isArray(bots) ? bots : []).filter(
-    (b: MusicBotSummary) => b.serverConfigId === configId && b.status !== 'stopped' && b.status !== 'error',
+    (b: MusicBotSummary) =>
+      b.serverConfigId === configId && (b.status === 'connected' || b.status === 'playing' || b.status === 'paused'),
   );
   const [pickedBotId, setPickedBotId] = useState<number | null>(null);
   const playBot = runningBots.find((b: MusicBotSummary) => b.id === pickedBotId) ?? runningBots[0] ?? null;
