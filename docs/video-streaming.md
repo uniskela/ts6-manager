@@ -76,7 +76,7 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
 3. Open *Streaming defaults* → **Check encoders** and confirm the **H.264 (NVENC)** row passes. Select it, or leave the encoder on Auto with *Auto prefers hardware* on.
 4. Optionally set `VIDEO_HW_DECODE=1` on the sidecar to decode on the GPU too (`-hwaccel cuda`).
 
-NVENC encodes H.264 only. The preset is `p4` with the low-latency tune; `VIDEO_NVENC_PRESET` changes the preset. When the host has no NVIDIA GPU or container runtime, **Check encoders** shows **NVIDIA GPU/runtime not present** on that row instead of ffmpeg's generic parameter hint. The raw ffmpeg text stays under **ffmpeg output**.
+NVENC encodes H.264 only. The preset is `p4` with the low-latency tune; `VIDEO_NVENC_PRESET` changes the preset. When the host has no NVIDIA GPU or container runtime, **Check encoders** shows **NVIDIA GPU/runtime not present** on that row instead of ffmpeg's generic parameter hint. A summarized ffmpeg error stays under **ffmpeg output**.
 
 ## Source type and stream health
 
@@ -141,7 +141,7 @@ The console's **IPTV** tab brings together channels from every playlist on the s
 
 Star a channel to add it to **Favourites**. **Recent** shows the last 20 successfully started channels, newest first. Both lists are shared by all bots and administrators on the same server, persist across playlist refreshes when the channel can still be matched, and support playlist and channel-name filtering. The tab opens **Favourites** when there are saved favourites, otherwise **Browse groups**. If a saved channel disappears from its playlist, it shows **No longer in this playlist** with **Remove** instead of a Stream button.
 
-When channels include `tvg-country` or `tvg-language`, **Country** and **Language** list the codes found on any playlist for that server. They stay hidden when no playlist has those tags. A channel tagged with several codes, split on `;` or `,`, matches each one. The filters combine with **Playlist**, group and search, including **Favourites** and **Recent**. **All countries** and **All languages** clear them, and a selection returns to all if that code is no longer present. Existing playlists gain the tags on their next refresh.
+When channels include `tvg-country` or `tvg-language`, **Country** and **Language** list the codes found on any playlist for that server. They stay hidden when no playlist has those tags. A channel tagged with several codes, split on `;` or `,`, matches each one. In **Browse groups**, the filters combine with **Playlist**, group and search. In **Favourites** and **Recent**, they combine with **Playlist** and search. **All countries** and **All languages** clear them, and a selection returns to all if that code is no longer present. Existing playlists gain the tags on their next refresh.
 
 Opening an IPTV link preselects its channel without starting media. If the channel has disappeared, the console shows **That channel is no longer in the playlist**. IPTV starts default to **Live**; quality, encoder and the no-viewer timeout can be changed for that start, and the auto-stop notices above apply to IPTV too.
 
