@@ -42,6 +42,13 @@
       "kind": "doc"
     },
     {
+      "source": "docs/migrating-from-clusterzx.md",
+      "slug": "migrating-from-clusterzx",
+      "title": "Switching from clusterzx",
+      "group": "Start here",
+      "kind": "doc"
+    },
+    {
       "source": "docs/server-management.md",
       "slug": "server-management",
       "title": "Server management",
