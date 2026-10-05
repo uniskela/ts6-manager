@@ -296,6 +296,7 @@ func (s *Sidecar) resetSyncTiming() {
 	// The next FFmpeg run starts its RTP numbering afresh.
 	s.videoRTP.markRestart()
 	s.audioRTP.markRestart()
+	s.h264Params.clear()
 }
 
 func (s *Sidecar) drainRTPQueues() {
@@ -578,6 +579,11 @@ type Peer struct {
 	// pendingICE holds candidates that arrived before the viewer's answer;
 	// SetAnswer flushes them. Guarded by mu.
 	pendingICE []webrtc.ICECandidateInit
+	// videoOutSeq is the next RTP sequence number to write on VideoTrack.
+	// Guarded by mu. Survives stream-gate resets so an H.264 SPS/PPS prefix
+	// cannot reuse a sequence SRTP already accepted from this peer.
+	videoOutSeq   uint16
+	videoOutSeqOK bool
 }
 
 // maxPendingICE bounds the candidates held for a peer that has not answered
@@ -655,6 +661,9 @@ type Sidecar struct {
 	// prevLineMinElapsed is how far along the previous lines the next run
 	// must start, so that neither track steps back from its last packet.
 	prevLineMinElapsed time.Duration
+
+	// Latest H.264 SPS/PPS from the live RTP path, for late-joining peers.
+	h264Params h264ParamCache
 }
 
 func NewSidecar() *Sidecar {
@@ -807,6 +816,9 @@ func (s *Sidecar) processVideoRTP() {
 		s.waitToSend("video", q)
 		pkt := q.pkt
 		codec := s.currentCodec()
+		if codec == codecH264 {
+			s.h264Params.observe(pkt.Payload)
+		}
 
 		s.peersLock.RLock()
 		for _, peer := range s.peers {
@@ -815,21 +827,55 @@ func (s *Sidecar) processVideoRTP() {
 			active := peer.Active && peer.Codec == codec
 			started := peer.Started
 			track := peer.VideoTrack
+			opening := false
 
 			if active && !started && isKeyframeStart(codec, pkt.Payload) {
 				peer.Started = true
 				started = true
+				opening = true
 				log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", peer.ID, codec, pkt.Timestamp)
 			}
 
 			peer.mu.Unlock()
 
 			if active && started && track != nil {
-				_ = track.WriteRTP(pkt)
+				var batch []*rtp.Packet
+				if opening && codec == codecH264 {
+					prefix := s.h264Params.prefixBefore(pkt)
+					batch = append(batch, prefix...)
+					debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
+				}
+				batch = append(batch, pkt)
+				for _, p := range batch {
+					peer.mu.Lock()
+					out := peer.nextVideoRTP(p)
+					peer.mu.Unlock()
+					if out != nil {
+						_ = track.WriteRTP(out)
+					}
+				}
 			}
 		}
 		s.peersLock.RUnlock()
 	}
+}
+
+// nextVideoRTP clones pkt with a per-peer sequence number. Caller holds p.mu.
+// The first packet keeps its sequence; later packets increment from the last
+// one actually written, including injected H.264 parameter-set prefixes.
+func (p *Peer) nextVideoRTP(pkt *rtp.Packet) *rtp.Packet {
+	out := cloneRTPPacket(pkt)
+	if out == nil {
+		return nil
+	}
+	if !p.videoOutSeqOK {
+		p.videoOutSeq = out.SequenceNumber
+		p.videoOutSeqOK = true
+	} else {
+		p.videoOutSeq++
+		out.SequenceNumber = p.videoOutSeq
+	}
+	return out
 }
 
 func (s *Sidecar) processAudioRTP() {
