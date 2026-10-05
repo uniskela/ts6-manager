@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   ENCODER_OPTIONS,
+  autoEncoderPreferenceHint,
+  autoEncoderPreferenceLabel,
   encoderLabel,
   formatClock,
   formatTimeout,
@@ -65,6 +67,15 @@ describe('video streaming labels', () => {
 
   it('offers AMF in encoder selections', () => {
     assert.deepEqual(ENCODER_OPTIONS.find((o) => o.value === 'h264_amf'), { value: 'h264_amf', label: 'H.264 (AMF)' });
+  });
+
+  it('labels Auto by whether hardware preference is on', () => {
+    assert.equal(autoEncoderPreferenceLabel(false), 'Auto (software preferred)');
+    assert.equal(autoEncoderPreferenceLabel(true), 'Auto (hardware preferred)');
+    assert.match(autoEncoderPreferenceHint(false), /VP8 software/);
+    assert.match(autoEncoderPreferenceHint(false), /Streaming defaults/);
+    assert.match(autoEncoderPreferenceHint(true), /hardware encoder/);
+    assert.match(autoEncoderPreferenceHint(true), /Per-stream Auto/);
   });
 
   it('describes the last stop truthfully', () => {

@@ -1,7 +1,23 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { VideoEncoderCapabilities } from '@ts6/common';
+import type { VideoEncoderCapabilities, VideoEncoderRequest, VideoStreamSettings } from '@ts6/common';
+import {
+  VIDEO_DEFAULT_ENCODER_KEY,
+  VIDEO_PREFER_HARDWARE_KEY,
+  parseVideoStreamingSettings,
+  videoStreamingDefaults,
+} from '../../utils/app-settings.js';
 import { ENCODER_CODEC, encoderDisplayName, isHardwareEncoder, normalizeEncoderRequest, selectEncoder } from './encoders.js';
+
+/** Same resolve path as VoiceBot.startVideoStreamClaimed (options → settings → selectEncoder). */
+function resolveStartEncoder(
+  optionsEncoder: VideoEncoderRequest | undefined,
+  settings: Pick<VideoStreamSettings, 'defaultEncoder' | 'preferHardware'>,
+  caps: VideoEncoderCapabilities | null,
+) {
+  const requested = normalizeEncoderRequest(optionsEncoder, settings.defaultEncoder);
+  return selectEncoder(requested, settings.preferHardware, caps);
+}
 
 function caps(available: string[], devicePresent = true): VideoEncoderCapabilities {
   const ids = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc', 'h264_amf'] as const;
@@ -76,5 +92,49 @@ describe('selectEncoder', () => {
   it('normalizes encoder requests', () => {
     assert.equal(normalizeEncoderRequest('h264', 'auto'), 'h264');
     assert.equal(normalizeEncoderRequest('nvenc', 'auto'), 'auto');
+  });
+});
+
+describe('stream start encoder resolution', () => {
+  const amd = caps(['vp8', 'vp9', 'h264', 'h264_amf'], false);
+
+  it('honors persisted Auto + preferHardware for Use server default', () => {
+    const settings = parseVideoStreamingSettings(new Map([
+      [VIDEO_DEFAULT_ENCODER_KEY, 'auto'],
+      [VIDEO_PREFER_HARDWARE_KEY, 'true'],
+    ]));
+    assert.equal(settings.defaultEncoder, 'auto');
+    assert.equal(settings.preferHardware, true);
+    // omitted options.encoder = "Use server default"
+    assert.equal(resolveStartEncoder(undefined, settings, amd).selected, 'h264_amf');
+  });
+
+  it('keeps explicit per-stream Auto on the server hardware preference', () => {
+    const settings = parseVideoStreamingSettings(new Map([
+      [VIDEO_DEFAULT_ENCODER_KEY, 'vp9'],
+      [VIDEO_PREFER_HARDWARE_KEY, 'true'],
+    ]));
+    assert.equal(resolveStartEncoder('auto', settings, amd).selected, 'h264_amf');
+  });
+
+  it('stays on VP8 when Auto prefers hardware is off (default)', () => {
+    const settings = videoStreamingDefaults({});
+    assert.equal(settings.preferHardware, false);
+    assert.equal(resolveStartEncoder(undefined, settings, amd).selected, 'vp8');
+    assert.equal(resolveStartEncoder('auto', settings, amd).selected, 'vp8');
+  });
+
+  it('keeps software fallback when AMF is unavailable', () => {
+    const settings = parseVideoStreamingSettings(new Map([
+      [VIDEO_DEFAULT_ENCODER_KEY, 'auto'],
+      [VIDEO_PREFER_HARDWARE_KEY, 'true'],
+    ]));
+    assert.equal(resolveStartEncoder(undefined, settings, null).selected, 'vp8');
+    assert.equal(resolveStartEncoder('auto', settings, caps(['vp8'], false)).selected, 'vp8');
+  });
+
+  it('leaves explicit H.264 AMF unchanged', () => {
+    const settings = videoStreamingDefaults({});
+    assert.equal(resolveStartEncoder('h264_amf', settings, null).selected, 'h264_amf');
   });
 });

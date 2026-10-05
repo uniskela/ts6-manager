@@ -43,6 +43,18 @@ export const ENCODER_OPTIONS: ReadonlyArray<{ value: VideoEncoderRequest; label:
   ...(Object.keys(ENCODER_LABELS) as VideoEncoderId[]).map((id) => ({ value: id, label: ENCODER_LABELS[id] })),
 ];
 
+/** Auto menu label from Streaming defaults.preferHardware (default off → software). */
+export function autoEncoderPreferenceLabel(preferHardware: boolean): string {
+  return preferHardware ? 'Auto (hardware preferred)' : 'Auto (software preferred)';
+}
+
+/** Short helper for Video options / Streaming defaults. */
+export function autoEncoderPreferenceHint(preferHardware: boolean): string {
+  return preferHardware
+    ? 'Auto picks the first working hardware encoder (VAAPI, NVENC, or AMF), then falls back to VP8 software. Per-stream Auto uses this same preference.'
+    : 'Auto uses VP8 software unless "Auto prefers hardware" is enabled in Streaming defaults. Per-stream Auto inherits that setting.';
+}
+
 /** Per-stream no-viewer timeout choices, in seconds. */
 export const NO_VIEWER_TIMEOUT_OPTIONS: ReadonlyArray<{ value: string; label: string }> = [
   { value: '0', label: 'Off' },
