@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { PrismaClient } from '../../../generated/prisma/index.js';
 import type { VoiceBotManager } from '../voice-bot-manager.js';
 import type { VoiceBot } from '../voice-bot.js';
@@ -23,6 +24,8 @@ export class MusicCommandHandler {
   private botChannelConfig = new Map<number, BotChannelConfig>();
   private channelToBots = new Map<string, Set<number>>();
   private activeReplyChannel = new Map<string, number>();
+  /** Keep reply and movement channels local to each asynchronous command. */
+  private commandChannels = new AsyncLocalStorage<Map<string, number>>();
   /** Channels the roaming helper recently covered (key: configId:sid) — for mapping only. */
   private autoCommandChannels = new Map<string, number[]>();
   private mainHelperParkTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -54,7 +57,7 @@ export class MusicCommandHandler {
       set eventBridgeListening(value) { handler.eventBridgeListening = value; },
       get botChannelConfig() { return handler.botChannelConfig; },
       get channelToBots() { return handler.channelToBots; },
-      get activeReplyChannel() { return handler.activeReplyChannel; },
+      get activeReplyChannel() { return handler.commandChannels.getStore() ?? handler.activeReplyChannel; },
       get autoCommandChannels() { return handler.autoCommandChannels; },
       get mainHelperParkTimers() { return handler.mainHelperParkTimers; },
       get mainHelperRebalanceTimers() { return handler.mainHelperRebalanceTimers; },
@@ -227,7 +230,8 @@ export class MusicCommandHandler {
     data: Record<string, string>,
     replyChannelId?: number,
   ): Promise<void> {
-    return routing.onTextMessage(this.context, botId, bot, data, replyChannelId);
+    return this.commandChannels.run(new Map(this.activeReplyChannel), () =>
+      routing.onTextMessage(this.context, botId, bot, data, replyChannelId));
   }
 
   private replyChannelForDedupe(botId: number, userClid: number, bot: VoiceBot): number {
@@ -261,8 +265,9 @@ export class MusicCommandHandler {
     userClid: number,
     command: string,
     message?: string,
+    sourceListenerChannelId?: string,
   ): Promise<void> {
-    return info.handleCustomCommand(this.context, botId, bot, userClid, command, message);
+    return info.handleCustomCommand(this.context, botId, bot, userClid, command, message, sourceListenerChannelId);
   }
 
   private reply(bot: VoiceBot, targetClid: number, msg: string): Promise<void> {
@@ -375,12 +380,12 @@ export class MusicCommandHandler {
     return playback.handlePlay(this.context, botId, bot, userClid, args);
   }
 
-  private enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string): Promise<void> {
-    return queue.enqueueMediaUrl(this.context, botId, bot, userClid, rawUrl);
+  private enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string, request?: queue.ChatMediaRequest): Promise<void> {
+    return queue.enqueueMediaUrl(this.context, botId, bot, userClid, rawUrl, request);
   }
 
-  private findSong(query: string): ReturnType<typeof findSongForQuery> {
-    return findSongForQuery(query);
+  private findSong(query: string, signal?: AbortSignal): ReturnType<typeof findSongForQuery> {
+    return findSongForQuery(query, undefined, signal);
   }
 
   private handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {

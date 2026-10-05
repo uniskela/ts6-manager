@@ -3,7 +3,7 @@ import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
-import { invalidateChatPlaylistExpansion } from './queue.js';
+import { beginChatMediaRequest, invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
 /** List configured radio stations or play a selected station in the requesting channel. */
@@ -82,7 +82,9 @@ export async function handlePlay(
   userClid: number,
   args: string,
 ): Promise<void> {
+  const request = args ? beginChatMediaRequest(botId) : undefined;
   await context.joinChannelForCommand(botId, bot, userClid);
+  if (request?.isCancelled()) return;
 
   if (!args) {
     if (bot.status === 'paused') {
@@ -99,13 +101,15 @@ export async function handlePlay(
     const query = args.trim().slice(0, MAX_SONG_QUERY_LENGTH);
     context.reply(bot, userClid, `Searching YouTube Music for "${query}"...`);
     try {
-      const song = await context.findSong(query);
+      const song = await context.findSong(query, request!.signal);
+      if (request!.isCancelled()) return;
       if (!song) {
         context.reply(bot, userClid, `No results for "${query}".`);
         return;
       }
       url = song.url;
     } catch (err: any) {
+      if (request!.isCancelled()) return;
       context.reply(bot, userClid, `Search failed: ${err.message}`);
       return;
     }
@@ -114,8 +118,9 @@ export async function handlePlay(
   }
 
   try {
-    await context.enqueueMediaUrl(botId, bot, userClid, url);
+    await context.enqueueMediaUrl(botId, bot, userClid, url, request);
   } catch (err: any) {
+    if (request?.isCancelled()) return;
     context.reply(bot, userClid, `Failed to play: ${err.message}`);
   }
 }

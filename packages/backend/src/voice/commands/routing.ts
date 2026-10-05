@@ -409,7 +409,7 @@ export async function onTextMessage(
   }
 
   // Admin-defined custom commands for this bot's server
-  await context.handleCustomCommand(botId, bot, userClid, command, msg);
+  await context.handleCustomCommand(botId, bot, userClid, command, data.msg || '', data.__cmd_listener_channel_id);
   } finally {
     if (userClid) context.activeReplyChannel.delete(`${botId}:${userClid}`);
   }

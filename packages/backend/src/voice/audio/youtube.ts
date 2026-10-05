@@ -308,8 +308,10 @@ function withMediaUrl(args: string[], url: string): string[] {
   return [...args, "--", url];
 }
 
+/** Run yt-dlp, preserving caller cancellation and bounding signal-driven requests. */
 function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
+    signal?.throwIfAborted();
     const proc = spawn("yt-dlp", args, { shell: false, signal, timeout: signal ? 180_000 : undefined, killSignal: "SIGKILL" });
     let stdout = "";
     let stderr = "";
@@ -333,7 +335,7 @@ function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, sign
       consumeProgress('stderr', chunk);
     });
     proc.on("close", (code) => resolve({ code, stdout, stderr }));
-    proc.on("error", (err) => reject(new Error(`yt-dlp not found: ${err.message}`)));
+    proc.on("error", (err) => reject(signal?.aborted ? signal.reason : new Error(`yt-dlp not found: ${err.message}`)));
   });
 }
 
@@ -840,9 +842,10 @@ export async function expandYouTubeToWatchUrls(
 }
 
 /**
- * Search YouTube using yt-dlp
+ * Search YouTube using yt-dlp, aborting the process when the caller cancels.
  */
-export async function searchYouTube(query: string, maxResults: number = 10): Promise<YouTubeSearchResult[]> {
+export async function searchYouTube(query: string, maxResults: number = 10, signal: AbortSignal = AbortSignal.timeout(180_000)): Promise<YouTubeSearchResult[]> {
+  signal?.throwIfAborted();
   if (query.trim().startsWith("-")) {
     throw new Error("Invalid search query");
   }
@@ -853,7 +856,8 @@ export async function searchYouTube(query: string, maxResults: number = 10): Pro
     "--dump-json",
     "--flat-playlist",
     "--no-download",
-  ]);
+  ], undefined, signal);
+  signal?.throwIfAborted();
 
   if (result.code !== 0 && !result.stdout.trim()) {
     throw new Error(`yt-dlp search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
@@ -907,8 +911,9 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
   }
 }
 
-/** Search YouTube Music songs (best match first) using yt-dlp. */
-export async function searchYouTubeMusic(query: string, maxResults: number = 5): Promise<YouTubeSearchResult[]> {
+/** Search YouTube Music songs (best match first), aborting yt-dlp on cancellation. */
+export async function searchYouTubeMusic(query: string, maxResults: number = 5, signal: AbortSignal = AbortSignal.timeout(180_000)): Promise<YouTubeSearchResult[]> {
+  signal?.throwIfAborted();
   const trimmed = query.trim();
   if (!trimmed) throw new Error("Invalid search query");
   const result = await runYtDlp(withMediaUrl([
@@ -919,7 +924,8 @@ export async function searchYouTubeMusic(query: string, maxResults: number = 5):
     "--no-download",
     "--playlist-items",
     `1-${Math.max(1, Math.floor(maxResults))}`,
-  ], youTubeMusicSongSearchUrl(trimmed)));
+  ], youTubeMusicSongSearchUrl(trimmed)), undefined, signal);
+  signal?.throwIfAborted();
 
   if (result.code !== 0 && !result.stdout.trim()) {
     throw new Error(`yt-dlp music search failed (code ${result.code}): ${summarizeYtDlpStderr(result.stderr)}`);
@@ -944,32 +950,42 @@ function isPlayableSearchResult(item: YouTubeSearchResult): boolean {
 }
 
 export interface SongSearchDeps {
-  searchMusic: (query: string) => Promise<YouTubeSearchResult[]>;
-  searchVideos: (query: string) => Promise<YouTubeSearchResult[]>;
+  searchMusic: (query: string, signal?: AbortSignal) => Promise<YouTubeSearchResult[]>;
+  searchVideos: (query: string, signal?: AbortSignal) => Promise<YouTubeSearchResult[]>;
 }
 
 /**
  * Find the most relevant song for a free-text query: the top YouTube Music song result,
  * falling back to the top regular YouTube result when Music returns nothing or fails.
+ * Cancellation stops the search without starting a fallback or returning stale results.
  */
 export async function findSongForQuery(
   query: string,
   deps: SongSearchDeps = {
-    searchMusic: (q) => searchYouTubeMusic(q, 1),
-    searchVideos: (q) => searchYouTube(q, 1),
+    searchMusic: (q, signal) => searchYouTubeMusic(q, 1, signal),
+    searchVideos: (q, signal) => searchYouTube(q, 1, signal),
   },
+  signal?: AbortSignal,
 ): Promise<(YouTubeSearchResult & { url: string; source: "youtube-music" | "youtube" }) | null> {
+  signal?.throwIfAborted();
   const trimmed = query.trim();
   if (!trimmed) return null;
 
   try {
-    const top = (await deps.searchMusic(trimmed)).find(isPlayableSearchResult);
+    const results = await deps.searchMusic(trimmed, signal);
+    signal?.throwIfAborted();
+    const top = results.find(isPlayableSearchResult);
     if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube-music" };
   } catch (err) {
+    signal?.throwIfAborted();
+    if (err instanceof Error && err.name === "AbortError") throw err;
     console.warn("[YouTube] Music search failed, falling back to YouTube search:", (err as Error)?.message ?? err);
   }
 
-  const top = (await deps.searchVideos(trimmed)).find(isPlayableSearchResult);
+  signal?.throwIfAborted();
+  const results = await deps.searchVideos(trimmed, signal);
+  signal?.throwIfAborted();
+  const top = results.find(isPlayableSearchResult);
   if (top) return { ...top, url: `https://www.youtube.com/watch?v=${top.id}`, source: "youtube" };
   return null;
 }

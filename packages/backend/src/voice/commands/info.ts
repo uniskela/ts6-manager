@@ -202,6 +202,7 @@ export async function handleCustomCommand(
   userClid: number,
   command: string,
   message = `!${command}`,
+  sourceListenerChannelId?: string,
 ): Promise<void> {
   const dbBot = await context.prisma.musicBot.findUnique({
     where: { id: botId },
@@ -219,7 +220,7 @@ export async function handleCustomCommand(
 
   if (!custom || !custom.enabled) {
     if (!/^[\p{L}\p{N}][\p{L}\p{N}_-]*$/u.test(command)) return;
-    if (context.flowCommandLookup?.(dbBot.serverConfigId, sid, message)) return;
+    if (context.flowCommandLookup?.(dbBot.serverConfigId, sid, message, sourceListenerChannelId)) return;
     if (!tryClaimChatInfoReply(dbBot.serverConfigId, sid, channelId, userClid, `unknown:${command}`)) return;
     await context.reply(bot, userClid, formatUnknownCommandMessage(command, suggestBuiltinCommand(command)));
     return;

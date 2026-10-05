@@ -43,6 +43,7 @@ export interface MediaUrlTarget {
   isCancelled?(): boolean;
 }
 
+/** Use the shared media resolvers and cache downloads as playable queue items. */
 export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
   return {
     resolveSpotify: resolveSpotifyToYouTube,
@@ -68,6 +69,7 @@ export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
   };
 }
 
+/** Normalize a rejected value for the background playlist error callback. */
 function asError(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error));
 }

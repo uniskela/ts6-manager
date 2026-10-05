@@ -25,7 +25,10 @@ function fixture(customCommands: Record<string, { response: string; enabled: boo
     currentConfig: { id: 1, serverConfigId: 9 }, ts3ClientId: 42, queue: new PlayQueue(),
     status: 'connected', nowPlaying: null, getCurrentChannelId: () => 5,
   };
-  const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
+  const command = (msg: string, sourceListenerChannelId?: string) => handler.onTextMessage(1, bot, {
+    invokerid: '2', msg,
+    ...(sourceListenerChannelId ? { __cmd_listener_channel_id: sourceListenerChannelId } : {}),
+  });
   return { handler, command, replies };
 }
 
@@ -49,7 +52,7 @@ test('custom commands and flow commands are not reported as unknown', async () =
   const seen: string[] = [];
   f.handler.setFlowCommandLookup((cfg: number, sid: number, message: string) => {
     seen.push(message);
-    return cfg === 9 && sid === 1 && /^!roll extra( |$)/i.test(message);
+    return cfg === 9 && sid === 1 && /^!roll extra( |$)/.test(message);
   });
   await f.command('!rules');
   await f.command('!roll extra 20');
@@ -57,6 +60,29 @@ test('custom commands and flow commands are not reported as unknown', async () =
   assert.deepEqual(f.replies, ['Be nice']);
   await f.command('!off');
   assert.match(f.replies.at(-1)!, /Unknown command \*\*!off\*\*/);
+});
+
+test('unknown lookup receives the raw case, whitespace, and dedicated listener source', async () => {
+  const f = fixture();
+  const seen: unknown[][] = [];
+  f.handler.setFlowCommandLookup((...args: unknown[]) => {
+    seen.push(args);
+    return false;
+  });
+  await f.command(' !ROLL extra 20 ', '6');
+  assert.deepEqual(seen, [[9, 1, ' !ROLL extra 20 ', '6']]);
+  assert.match(f.replies[0], /Unknown command \*\*!roll\*\*/);
+});
+
+test('a channel-specific flow suppresses unknown only for its dedicated listener', async () => {
+  const f = fixture();
+  f.handler.setFlowCommandLookup((cfg: number, sid: number, message: string, source?: string) =>
+    cfg === 9 && sid === 1 && message === '!roll' && source === '5',
+  );
+  await f.command('!roll', '5');
+  assert.deepEqual(f.replies, []);
+  await f.command('!roll');
+  assert.match(f.replies[0], /Unknown command \*\*!roll\*\*/);
 });
 
 test('bare or punctuation-only prefixes are ignored', async () => {
