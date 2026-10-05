@@ -160,6 +160,8 @@ export function PlaylistsTab() {
   // Playlists belong to a server: switching servers closes the old server's
   // playlist and anything open for it.
   const shownConfigId = useRef(selectedConfigId);
+  // The server a pending page-level Add was started on.
+  const pendingAddConfigId = useRef(selectedConfigId);
   useEffect(() => {
     if (shownConfigId.current === selectedConfigId) return;
     shownConfigId.current = selectedConfigId;
@@ -176,6 +178,7 @@ export function PlaylistsTab() {
     setAddImportJobId(null);
   }, [selectedConfigId]);
 
+  /** Open the Add dialog on the tab that suits the playlist's mode. */
   const openAddSongs = (mode: PlaylistMode) => {
     setAddTab(mode === 'stream' ? 'url' : 'songs');
     setSongFilter('');
@@ -186,15 +189,21 @@ export function PlaylistsTab() {
   // A playlist picked from the page-level Add songs button opens its Add dialog
   // once its details (and so its mode) have loaded.
   useEffect(() => {
-    if (pendingAddId === null || detail?.id !== pendingAddId) return;
+    if (
+      pendingAddId === null ||
+      detail?.id !== pendingAddId ||
+      pendingAddConfigId.current !== selectedConfigId
+    ) return;
     setPendingAddId(null);
     openAddSongs(detail.mode === 'stream' ? 'stream' : 'local');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pendingAddId, detail?.id, detail?.mode]);
+  }, [pendingAddId, detail?.id, detail?.mode, selectedConfigId]);
 
+  /** Select a playlist and open its Add dialog once its details load. */
   const addSongsTo = (id: number) => {
     setShowPickTarget(false);
     setSelectedId(id);
+    pendingAddConfigId.current = selectedConfigId;
     setPendingAddId(id);
   };
 

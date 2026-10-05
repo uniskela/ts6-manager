@@ -21,6 +21,7 @@ import { useBotMedia, usePausePlayback, useResumePlayback } from '@/hooks/use-mu
 import { activeBots, activeBotsLabel, hubHeadline, hubTone } from '@/lib/bot-hub';
 import { apiErrorMessage } from '@/lib/api-error';
 
+/** Pause or resume a music bot without closing the menu. */
 function PlayPauseItem({ bot }: { bot: BotMediaOverview }) {
   const pause = usePausePlayback();
   const resume = useResumePlayback();
@@ -45,6 +46,7 @@ function PlayPauseItem({ bot }: { bot: BotMediaOverview }) {
   );
 }
 
+/** One active bot: a link to its console, plus pause/resume for music. */
 function ActiveBotRow({ bot }: { bot: BotMediaOverview }) {
   const tone = hubTone(bot);
   const KindIcon = tone === 'live' ? Tv : Radio;
