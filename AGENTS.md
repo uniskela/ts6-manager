@@ -6,16 +6,18 @@ This repo uses [Release Please](https://github.com/googleapis/release-please) on
 
 | File | Role |
 |------|------|
-| `.github/workflows/release-please.yml` | Runs Release Please on `main`; publishes GHCR images only after Release Please creates a release |
+| `.github/workflows/release-please.yml` | Runs Release Please on `main`; publishes images only after Release Please creates a release |
 | `release-please-config.json` | Release type + files to bump |
 | `.release-please-manifest.json` | Last released version |
 | `version.txt` | Simple releaser version source |
 | `packages/*/package.json` | App package versions (`$.version`, via `extra-files`) |
 | `packages/frontend/src/lib/app-version.ts` | UI fallback version (`// x-release-please-version`) |
 | `CHANGELOG.md` | Generated / updated by Release Please, with final human curation before merge when needed |
-| `.github/workflows/publish-images.yml` | Reusable GHCR workflow invoked only for an immutable `vX.Y.Z` release; also supports manual recovery for an existing release tag |
+| `.github/workflows/publish-images.yml` | Reusable image publish for an immutable `vX.Y.Z` release (GHCR default + Docker Hub mirror); also supports manual recovery for an existing release tag |
 
 Ordinary pushes and PR merges to `main` must **not** publish container images. Image publication is tied to a created GitHub Release so `latest`, semver tags, and SHA tags all point at a deliberate release.
+
+Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. If either is unset, the workflow still publishes GHCR and warns.
 
 ### Normal flow (agents + humans)
 
@@ -28,7 +30,7 @@ Ordinary pushes and PR merges to `main` must **not** publish container images. I
    - collapse duplicate bullets that describe the same user-facing change;
    - keep notes focused on shipped behavior, not every intermediate implementation commit.
 6. Merge the release PR → GitHub creates tag `vX.Y.Z` and the GitHub Release; the Release Please workflow then invokes `publish-images.yml` for that exact tag.
-7. Confirm the tag, GitHub Release, and all expected GHCR tags were published from the release commit.
+7. Confirm the tag, GitHub Release, GHCR tags, and (when Hub secrets are set) Docker Hub mirror tags were published from the release commit.
 
 Commit prefixes that matter:
 
@@ -110,7 +112,7 @@ If CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, close the PR without merge
 - [ ] After merge: wait for / review the Release Please release PR
 - [ ] Compare generated notes with current `main`; remove reverted entries and duplicate descriptions
 - [ ] Merge the release PR only after its changelog matches shipped behavior
-- [ ] Confirm tag `vX.Y.Z`, GitHub Release, and GHCR image publish from the Release Please workflow
+- [ ] Confirm tag `vX.Y.Z`, GitHub Release, GHCR publish, and Docker Hub mirror (if secrets set) from the Release Please workflow
 
 <!-- adhd-hub:project-agent:start -->
 <!-- adhd-hub:guidance-version:6 -->
