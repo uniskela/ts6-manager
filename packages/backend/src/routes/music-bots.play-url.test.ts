@@ -63,12 +63,14 @@ test('play-url keeps resolution failures at 502', async () => {
   assert.equal(response.body.error, 'Could not resolve any videos from that playlist URL');
 });
 
-test('play-url maps unexpected failures to 500 with the legacy prefix', async () => {
+test('play-url maps unexpected failures to a generic 500', async () => {
   const response = await post(buildApp(deps({
     downloadTrack: async () => { throw new Error('yt-dlp failed'); },
   })), { url: 'https://www.youtube.com/watch?v=00000000001' });
   assert.equal(response.status, 500);
-  assert.equal(response.body.error, 'Failed to play URL: yt-dlp failed');
+  assert.equal(response.body.reason, 'unexpected_error');
+  assert.equal(response.body.error, 'Something went wrong');
+  assert.equal(JSON.stringify(response.body).includes('yt-dlp failed'), false);
 });
 
 test('play-url passes through status-bearing errors', async () => {

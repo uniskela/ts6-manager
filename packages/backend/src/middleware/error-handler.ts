@@ -190,7 +190,15 @@ export function mapOperationalError(err: Error): AppError | null {
       { reason: timeout ? 'sidecar_timeout' : 'sidecar_unavailable', retryable: true },
     );
   }
-  if (msg.startsWith('Failed to start sidecar:') || msg.startsWith('Sidecar ')) {
+  if (msg.startsWith('Sidecar ')) {
+    return new AppError(
+      502,
+      'The media sidecar is unavailable',
+      'Check that the sidecar is running, then try again.',
+      { reason: 'sidecar_unavailable', retryable: true },
+    );
+  }
+  if (msg.startsWith('Failed to start sidecar:')) {
     const timeout = /timeout|abort/i.test(msg) || err.name === 'TimeoutError' || err.name === 'AbortError';
     return new AppError(
       timeout ? 504 : 502,
@@ -198,6 +206,11 @@ export function mapOperationalError(err: Error): AppError | null {
       'Check that the sidecar is running, then try again.',
       { reason: timeout ? 'sidecar_timeout' : 'sidecar_unavailable', retryable: true },
     );
+  }
+  if (msg.startsWith('yt-dlp not found:') || msg.startsWith('yt-dlp failed to start:')) {
+    return new AppError(502, 'Could not start yt-dlp', 'Check that yt-dlp is installed, then try again.', {
+      reason: 'source_unavailable',
+    });
   }
   if (msg.startsWith('TeamSpeak did not answer the stream request')) {
     return new AppError(

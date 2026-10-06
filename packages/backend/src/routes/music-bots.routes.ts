@@ -554,7 +554,8 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
         || message.startsWith('Could not read the tracks of that Spotify')
         || message === 'Could not resolve any videos from that playlist URL'
         || message === 'Could not resolve that YouTube URL';
-      throw new AppError(isResolutionError ? 502 : 500, isResolutionError ? message : `Failed to play URL: ${message}`);
+      if (isResolutionError) throw new AppError(502, message);
+      throw err;
     }
 
     res.json({

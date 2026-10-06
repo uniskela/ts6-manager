@@ -148,4 +148,24 @@ describe('mapOperationalError', () => {
     const sidecar = mapOperationalError(new Error('Sidecar health check timeout'));
     assert.equal(sidecar?.reason, 'sidecar_timeout');
   });
+
+  it('does not treat timeout text in a Sidecar HTTP body as sidecar_timeout', () => {
+    const mapped = mapOperationalError(new Error('Sidecar /source: 500 {"error":"timeout abort"}'));
+    assert.equal(mapped?.reason, 'sidecar_unavailable');
+    assert.equal(mapped?.statusCode, 502);
+  });
+
+  it('maps Failed to start sidecar timeouts as sidecar_timeout', () => {
+    const mapped = mapOperationalError(new Error('Failed to start sidecar: spawn timeout'));
+    assert.equal(mapped?.reason, 'sidecar_timeout');
+    assert.equal(mapped?.statusCode, 504);
+  });
+
+  it('maps yt-dlp spawn failures as source_unavailable without leaking spawn text', () => {
+    const mapped = mapOperationalError(new Error('yt-dlp failed to start: spawn /opt/secret-ytdlp ENOENT'));
+    assert.equal(mapped?.reason, 'source_unavailable');
+    assert.equal(mapped?.statusCode, 502);
+    assert.equal(mapped?.message, 'Could not start yt-dlp');
+    assert.equal(mapped?.details?.includes('secret-ytdlp'), false);
+  });
 });

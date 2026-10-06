@@ -99,6 +99,25 @@ describe('single active media session (per bot)', () => {
     assert.equal(same.alreadyRunning, true);
   });
 
+  it('does not treat a different explicit framerate or bitrate as already running', async () => {
+    const bot = makeBot();
+    fakeVideo(bot);
+    await assert.rejects(
+      bot.startVideoStream('https://user:pw@iptv.example/live.m3u8', { framerate: 24 }),
+      (err: unknown) => {
+        assert.equal((err as AppError).reason, 'stream_already_running');
+        return true;
+      },
+    );
+    await assert.rejects(
+      bot.startVideoStream('https://user:pw@iptv.example/live.m3u8', { bitrate: '1000k' }),
+      (err: unknown) => {
+        assert.equal((err as AppError).reason, 'stream_already_running');
+        return true;
+      },
+    );
+  });
+
   it('refuses music over video until the video session is confirmed', async () => {
     const bot = makeBot();
     const stops = fakeVideo(bot);

@@ -2025,11 +2025,15 @@ export class VoiceBot extends EventEmitter {
     if (options.sourceMode != null && options.sourceMode !== this._videoSourceModeRequest) {
       return false;
     }
-    if (options.framerate != null && this._videoRequestedFramerate != null && options.framerate !== this._videoRequestedFramerate) {
+    if (options.framerate != null && options.framerate !== this._videoFramerate) {
       return false;
     }
-    if (options.bitrate != null && this._videoRequestedBitrate != null && options.bitrate !== this._videoRequestedBitrate) {
-      return false;
+    if (options.bitrate != null) {
+      const current = this._videoRequestedBitrate ?? this._videoBitrate;
+      const wanted = this._videoRequestedBitrate != null
+        ? options.bitrate
+        : effectiveBitrate(options.bitrate, STREAM_PRESETS[this._videoPreset].bitrate, this._videoSettings.maxBitrateKbps);
+      if (wanted !== current) return false;
     }
     if (
       options.noViewerTimeoutSec != null
