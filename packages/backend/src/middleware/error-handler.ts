@@ -214,7 +214,7 @@ export function mapOperationalError(err: Error): AppError | null {
   }
   if (err.name === 'TimeoutError' || err.name === 'AbortError') {
     return new AppError(504, 'The request timed out', 'Try again.', {
-      reason: 'sidecar_timeout',
+      reason: 'request_timeout',
       retryable: true,
     });
   }

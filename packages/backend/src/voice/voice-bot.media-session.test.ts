@@ -84,6 +84,21 @@ describe('single active media session (per bot)', () => {
     assert.equal(outcome.alreadyRunning, true);
   });
 
+  it('does not treat an explicit auto sourceMode as a match for a live stream', async () => {
+    const bot = makeBot();
+    fakeVideo(bot);
+    (bot as any)._videoSourceModeRequest = 'live';
+    await assert.rejects(
+      bot.startVideoStream('https://user:pw@iptv.example/live.m3u8', { sourceMode: 'auto' }),
+      (err: unknown) => {
+        assert.equal((err as AppError).reason, 'stream_already_running');
+        return true;
+      },
+    );
+    const same = await bot.startVideoStream('https://user:pw@iptv.example/live.m3u8', { sourceMode: 'live' });
+    assert.equal(same.alreadyRunning, true);
+  });
+
   it('refuses music over video until the video session is confirmed', async () => {
     const bot = makeBot();
     const stops = fakeVideo(bot);

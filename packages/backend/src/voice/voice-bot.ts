@@ -2022,13 +2022,7 @@ export class VoiceBot extends EventEmitter {
     if (options.encoder != null && this._videoEncoder?.requested != null && options.encoder !== this._videoEncoder.requested) {
       return false;
     }
-    if (
-      options.sourceMode != null
-      && options.sourceMode !== 'auto'
-      && this._videoSourceModeRequest != null
-      && this._videoSourceModeRequest !== 'auto'
-      && options.sourceMode !== this._videoSourceModeRequest
-    ) {
+    if (options.sourceMode != null && options.sourceMode !== this._videoSourceModeRequest) {
       return false;
     }
     if (options.framerate != null && this._videoRequestedFramerate != null && options.framerate !== this._videoRequestedFramerate) {

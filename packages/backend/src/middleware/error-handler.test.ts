@@ -137,4 +137,15 @@ describe('mapOperationalError', () => {
     assert.equal(mapped?.reason, 'bot_not_connected');
     assert.equal(mapped?.statusCode, 409);
   });
+
+  it('maps a generic abort to request_timeout, not sidecar_timeout', () => {
+    const abort = new Error('The operation was aborted');
+    abort.name = 'AbortError';
+    const mapped = mapOperationalError(abort);
+    assert.equal(mapped?.reason, 'request_timeout');
+    assert.equal(mapped?.statusCode, 504);
+
+    const sidecar = mapOperationalError(new Error('Sidecar health check timeout'));
+    assert.equal(sidecar?.reason, 'sidecar_timeout');
+  });
 });

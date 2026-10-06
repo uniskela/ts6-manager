@@ -44,6 +44,7 @@ Starting a new stream is not an implicit restart. Encoder and quality are applie
 | `source_timeout` | 504 | Source resolve or download timed out |
 | `sidecar_unavailable` | 502/503 | Sidecar missing, crash, or HTTP error (body is not forwarded) |
 | `sidecar_timeout` | 504 | Sidecar health or request timed out |
+| `request_timeout` | 504 | Generic abort/timeout on a route that is not sidecar-specific |
 | `bot_not_connected` | 409 | Bot must be started first |
 | `bot_already_started` | 409 | Start while already connected |
 | `ts_query_flood` | 429 | TeamSpeak Query flood protection |

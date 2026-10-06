@@ -23,6 +23,7 @@ const REASON_DEFAULTS: Record<string, Partial<ApiErrorPresentation>> = {
   stream_stopping: { title: 'The stream is stopping', retryable: true },
   sidecar_unavailable: { title: 'Media sidecar unavailable', retryable: true, action: 'Check that the sidecar is running, then retry.' },
   sidecar_timeout: { title: 'Media sidecar timed out', retryable: true },
+  request_timeout: { title: 'The request timed out', retryable: true },
   source_invalid: { title: 'Invalid source', retryable: false },
   source_not_found: { title: 'File not found', retryable: false },
   source_refused: { title: 'This source cannot be used', retryable: false },
