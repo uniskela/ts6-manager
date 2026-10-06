@@ -2,6 +2,19 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.10.1](https://github.com/uniskela/ts6-manager/compare/v1.10.0...v1.10.1) (2026-10-06)
+
+
+### Bug Fixes
+
+* bring back Play buttons on Media Library radio stations ([#367](https://github.com/uniskela/ts6-manager/issues/367)) ([3c58fb2](https://github.com/uniskela/ts6-manager/commit/3c58fb2430c3093734e2b4509c457eecbf8a9ee9))
+* close HTTP connections for opaque and redirected HLS ([#377](https://github.com/uniskela/ts6-manager/issues/377)) ([2fbf776](https://github.com/uniskela/ts6-manager/commit/2fbf776bfbfffbdf1038ed446342b12d2b68b295))
+* deliver in-channel !help without UDP fragmentation ([#371](https://github.com/uniskela/ts6-manager/issues/371)) ([b9f3a3b](https://github.com/uniskela/ts6-manager/commit/b9f3a3b66a52642157a4e441f87adef8b479c1f7))
+* disable persistent HTTP for multi-host HLS ([#372](https://github.com/uniskela/ts6-manager/issues/372)) ([913ab79](https://github.com/uniskela/ts6-manager/commit/913ab79efa57877cdb8e1e55f6fdf823372de294))
+* **errors:** add structured user-facing error handling ([#384](https://github.com/uniskela/ts6-manager/issues/384)) ([e3ff5a7](https://github.com/uniskela/ts6-manager/commit/e3ff5a7baac0529b8d828ad176d48cc8fd529f78))
+* **streaming:** clarify Auto hardware encoder behavior ([#364](https://github.com/uniskela/ts6-manager/issues/364)) ([7548c76](https://github.com/uniskela/ts6-manager/commit/7548c76dc81e882997d2975ab1cf21d172eea57a))
+* **streaming:** restore H.264 playback for WebRTC viewers ([#365](https://github.com/uniskela/ts6-manager/issues/365)) ([f3dcff2](https://github.com/uniskela/ts6-manager/commit/f3dcff228095209d372ee840291b69012735f72a))
+
 ## [1.10.0](https://github.com/uniskela/ts6-manager/compare/v1.9.3...v1.10.0) (2026-10-05)
 
 
