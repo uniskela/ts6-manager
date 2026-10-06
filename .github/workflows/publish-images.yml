@@ -397,6 +397,8 @@ jobs:
       - name: Checkout workflow revision
         if: steps.hub.outputs.push_hub == '1'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Keep Hub README rewrite script
         if: steps.hub.outputs.push_hub == '1'
@@ -409,6 +411,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
 
       # The Hub action completes URLs from GITHUB_REF_NAME (caller ref, usually
       # main). GitHub forbids overriding GITHUB_* env vars, so rewrite first.

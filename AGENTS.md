@@ -17,7 +17,7 @@ This repo uses [Release Please](https://github.com/googleapis/release-please) on
 
 Ordinary pushes and PR merges to `main` must **not** publish container images. Image publication is tied to a created GitHub Release so `latest`, semver tags, and SHA tags all point at a deliberate release.
 
-Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. If either is unset, the workflow still publishes GHCR and warns. The same secrets update the Hub repository short description and full README from `README.md` after a successful image build (`DOCKERHUB_TOKEN` must be a Hub PAT with Read, Write, and Delete).
+Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. If either is unset, the workflow still publishes GHCR and warns. The same secrets update the Hub repository short description and the README from `README.md`, truncated to 25,000 bytes on Hub, after a successful image build (`DOCKERHUB_TOKEN` must be a Hub PAT with Read, Write, and Delete).
 
 ### Normal flow (agents + humans)
 
