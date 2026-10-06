@@ -2028,6 +2028,9 @@ export class VoiceBot extends EventEmitter {
     if (options.framerate != null && options.framerate !== this._videoFramerate) {
       return false;
     }
+    if (options.volume != null && this.clampVolume(options.volume) !== this.config.volume) {
+      return false;
+    }
     if (options.bitrate != null) {
       const current = this._videoRequestedBitrate ?? this._videoBitrate;
       const wanted = this._videoRequestedBitrate != null
@@ -2062,7 +2065,7 @@ export class VoiceBot extends EventEmitter {
       throw new AppError(
         409,
         'This video is already streaming',
-        'Stop the current stream before starting it again with different quality or encoder settings.',
+        'Stop the current stream before starting it again with different options.',
         { reason: 'stream_already_running' },
       );
     }

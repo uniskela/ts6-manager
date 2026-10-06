@@ -116,6 +116,15 @@ describe('single active media session (per bot)', () => {
         return true;
       },
     );
+    await assert.rejects(
+      bot.startVideoStream('https://user:pw@iptv.example/live.m3u8', { volume: 20 }),
+      (err: unknown) => {
+        assert.equal((err as AppError).reason, 'stream_already_running');
+        return true;
+      },
+    );
+    const sameVolume = await bot.startVideoStream('https://user:pw@iptv.example/live.m3u8', { volume: 50 });
+    assert.equal(sameVolume.alreadyRunning, true);
   });
 
   it('refuses music over video until the video session is confirmed', async () => {
