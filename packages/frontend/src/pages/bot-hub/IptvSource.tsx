@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
 import { useVideoStartOptions } from '@/hooks/use-video-streaming';
 import { Pager } from '@/components/shared/Pager';
+import { ApiErrorAlert } from '@/components/ApiErrorAlert';
 import { apiErrorMessage } from '@/lib/api-error';
 import { clampPage, pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
 import {
@@ -189,7 +190,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
     return (
       <div className="space-y-4">
         <VideoOptions value={options} onChange={setOptions} defaults={defaults} />
-        {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
+        {stream.error && <ApiErrorAlert error={stream.error} fallback="Failed to start stream" />}
         {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold">Selected channel</h3>
@@ -203,7 +204,7 @@ export function IptvSource({ serverConfigId, botId, searchParams }: ConsoleSourc
   return (
     <div className="min-w-0 space-y-4">
       <VideoOptions value={options} onChange={setOptions} defaults={defaults} />
-      {stream.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(stream.error, 'Failed to start stream')}</p>}
+      {stream.error && <ApiErrorAlert error={stream.error} fallback="Failed to start stream" />}
       {favouriteError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(favouriteError, 'Could not load favourites')}</p>}
       {filtersQuery.error && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(filtersQuery.error, 'Could not load filters')}</p>}
       <div className="flex flex-wrap items-center justify-between gap-2">

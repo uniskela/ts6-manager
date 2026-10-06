@@ -142,3 +142,60 @@ test('a 409 media_session_conflict opens Replace what is playing?', async ({ pag
   await expect(page.getByRole('heading', { name: 'Replace what is playing?' })).toBeVisible();
   await expect(page.getByText('Music “Neon Skyline” on Aurora Radio')).toBeVisible();
 });
+
+test('duplicate-stream 409 shows structured copy, not Internal server error', async ({ page, request }) => {
+  await mockConsole(page);
+  await page.route('**/api/music-bots/1/stream/start', (r) => r.fulfill({
+    status: 409,
+    json: {
+      error: 'A video is already streaming',
+      details: 'amf-test.mp4 is already playing on this bot. Stop the current stream or use Switch source.',
+      reason: 'stream_already_running',
+    },
+  }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Link' }).click();
+  await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder').fill('amf-test.mp4');
+  await page.getByRole('button', { name: 'Stream as video' }).click();
+  await expect(page.getByRole('alert')).toContainText('A video is already streaming');
+  await expect(page.getByRole('alert')).toContainText('amf-test.mp4');
+  await expect(page.getByText('Internal server error')).toHaveCount(0);
+});
+
+test('unexpected 500 is generic and clears after a successful retry and mode change', async ({ page, request }) => {
+  let fail = true;
+  await mockConsole(page);
+  await page.route('**/api/music-bots/1/stream/start', async (r) => {
+    if (fail) {
+      await r.fulfill({
+        status: 500,
+        json: {
+          error: 'Something went wrong while starting the stream',
+          details: 'Try again. If it keeps happening, check the server logs.',
+          reason: 'unexpected_error',
+          errorId: 'deadbeef',
+        },
+      });
+      return;
+    }
+    await r.fulfill({ json: { success: true } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Link' }).click();
+  await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
+    .fill('https://youtu.be/dQw4w9WgXcQ');
+  await page.getByRole('radio', { name: 'Stream as video' }).check();
+  await page.getByRole('button', { name: 'Stream as video' }).click();
+  await expect(page.getByRole('alert')).toContainText('Something went wrong while starting the stream');
+  await expect(page.getByText('password=secret')).toHaveCount(0);
+
+  await page.getByRole('radio', { name: 'Play as music' }).check();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+
+  await page.getByRole('radio', { name: 'Stream as video' }).check();
+  fail = false;
+  await page.getByRole('button', { name: 'Stream as video' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+});

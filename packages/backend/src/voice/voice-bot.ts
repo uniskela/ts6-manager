@@ -52,6 +52,7 @@ import {
   type AutoStopMedia,
 } from './streaming/lifecycle.js';
 import { videoStreamingDefaults } from '../utils/app-settings.js';
+import { AppError } from '../middleware/error-handler.js';
 import { MediaSessionConflictError, newMediaSessionId, safeSourceLabel } from './media-session.js';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
@@ -2008,13 +2009,87 @@ export class VoiceBot extends EventEmitter {
     }
   }
 
-  /** Start video streaming to TS6 via WebRTC */
-  async startVideoStream(source: string, options: VideoStreamStartOptions = {}): Promise<void> {
+  /**
+   * True when this bot is already streaming `source` with the same encoder /
+   * quality request. Omitted options are not a mismatch (admin defaults).
+   */
+  private equivalentVideoAlreadyRunning(source: string, options: VideoStreamStartOptions): boolean {
+    if (!this._videoStreaming || this._videoStarting || this._videoStopping) return false;
+    if (this._videoSource !== source) return false;
+    if (options.preset != null && this._videoQuality?.requested != null && options.preset !== this._videoQuality.requested) {
+      return false;
+    }
+    if (options.encoder != null && this._videoEncoder?.requested != null && options.encoder !== this._videoEncoder.requested) {
+      return false;
+    }
+    if (options.sourceMode != null && options.sourceMode !== this._videoSourceModeRequest) {
+      return false;
+    }
+    if (options.framerate != null && options.framerate !== this._videoFramerate) {
+      return false;
+    }
+    if (options.volume != null && this.clampVolume(options.volume) !== this.config.volume) {
+      return false;
+    }
+    if (options.bitrate != null) {
+      const current = this._videoRequestedBitrate ?? this._videoBitrate;
+      const wanted = this._videoRequestedBitrate != null
+        ? options.bitrate
+        : effectiveBitrate(options.bitrate, STREAM_PRESETS[this._videoPreset].bitrate, this._videoSettings.maxBitrateKbps);
+      if (wanted !== current) return false;
+    }
+    if (
+      options.noViewerTimeoutSec != null
+      && options.noViewerTimeoutSec !== this._noViewerTimeoutSec
+    ) {
+      return false;
+    }
+    return true;
+  }
+
+  private refuseActiveVideoStart(source: string, options: VideoStreamStartOptions): never {
+    if (this._videoStopping) {
+      throw new AppError(409, 'The stream is stopping', 'Wait for it to finish, then start again.', {
+        reason: 'stream_stopping',
+        retryable: true,
+      });
+    }
+    if (this._videoStarting) {
+      throw new AppError(409, 'The stream is still starting', 'Wait a moment, then try again if it does not appear.', {
+        reason: 'stream_starting',
+        retryable: true,
+      });
+    }
+    const sameSource = this._videoSource === source;
+    if (sameSource) {
+      throw new AppError(
+        409,
+        'This video is already streaming',
+        'Stop the current stream before starting it again with different options.',
+        { reason: 'stream_already_running' },
+      );
+    }
+    const label = safeSourceLabel(this._videoSource);
+    throw new AppError(
+      409,
+      'A video is already streaming',
+      label
+        ? `${label} is already playing on this bot. Stop the current stream or use Switch source.`
+        : 'Stop the current stream or use Switch source to change the video without stopping it.',
+      { reason: 'stream_already_running' },
+    );
+  }
+
+  /** Start video streaming to TS6 via WebRTC. Resolves `alreadyRunning` for an exact duplicate. */
+  async startVideoStream(source: string, options: VideoStreamStartOptions = {}): Promise<{ alreadyRunning: boolean }> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
-    if (this._videoStreaming || this._videoStarting) {
-      throw new Error('Video stream already active');
+    if (this.equivalentVideoAlreadyRunning(source, options)) {
+      return { alreadyRunning: true };
+    }
+    if (this._videoStreaming || this._videoStarting || this._videoStopping) {
+      this.refuseActiveVideoStart(source, options);
     }
     const music = this.musicSessionInfo();
     if (music && !options.replaceSessionIds?.includes(music.id)) {
@@ -2038,6 +2113,7 @@ export class VoiceBot extends EventEmitter {
     } finally {
       this._videoStarting = false;
     }
+    return { alreadyRunning: false };
   }
 
   private async startVideoStreamClaimed(source: string, options: VideoStreamStartOptions): Promise<void> {

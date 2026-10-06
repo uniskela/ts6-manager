@@ -59,3 +59,5 @@ nginx frontend, backend, and sidecar run as separate containers on an internal n
 nginx, backend, and sidecar run in one image. nginx is the published service; backend and sidecar remain on loopback.
 
 See [Installation](installation.md) for deployment commands and [Security](security.md) for the expected network boundaries.
+
+User-facing API failures: [API errors](api-errors.md).

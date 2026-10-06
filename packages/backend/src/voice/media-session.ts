@@ -27,6 +27,7 @@ export class MediaSessionConflictError extends AppError {
       409,
       `${what}. Starting ${requested === 'video' ? 'the video stream' : 'music'} will stop it.`,
       'Confirm the switch to replace the active media session.',
+      { reason: 'media_session_conflict' },
     );
     this.name = 'MediaSessionConflictError';
   }
