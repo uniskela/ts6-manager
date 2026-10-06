@@ -228,7 +228,7 @@ Prebuilt images are published only for immutable `vX.Y.Z` releases created by Re
 | Sidecar  | `ghcr.io/uniskela/ts6-manager/sidecar:latest` |
 | All-in-one | `ghcr.io/uniskela/ts6-manager/all-in-one:latest` |
 
-**Docker Hub (mirror)** — same digests, flat tags on [`uniskela/ts6-manager`](https://hub.docker.com/r/uniskela/ts6-manager), published only when both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets are set (otherwise GHCR still publishes and Hub tags may be missing or stale):
+**Docker Hub (mirror)** — same digests, flat tags on [`uniskela/ts6-manager`](https://hub.docker.com/r/uniskela/ts6-manager), published only when both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` repository secrets are set (otherwise GHCR still publishes and Hub tags may be missing or stale). After a successful image publish, the same secrets also push this README (Hub truncates at 25k bytes) and the GitHub repository short description onto that Hub page:
 
 | Service  | Image |
 |----------|--------|

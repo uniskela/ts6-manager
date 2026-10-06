@@ -369,6 +369,47 @@ jobs:
           echo "Promoting ${SRC} → ${DST}"
           docker buildx imagetools create --tag "${DST}" "${SRC}"
 
+  # Keep Hub's README/short description in sync with the released git tag.
+  # Uses the same DOCKERHUB_* secrets as the mirror; PAT needs Read/Write/Delete.
+  # Docker Hub truncates full descriptions at 25k bytes.
+  update-dockerhub-description:
+    name: Update Docker Hub description
+    needs: [build-and-push, build-all-in-one]
+    runs-on: ubuntu-latest
+    if: always() && (needs.build-and-push.result == 'success' || needs.build-all-in-one.result == 'success')
+    steps:
+      - name: Detect Docker Hub credentials
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            echo "push_hub=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "push_hub=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; skipping Hub description update"
+          fi
+
+      - name: Checkout release tag
+        if: steps.hub.outputs.push_hub == '1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      - name: Docker Hub Description
+        if: steps.hub.outputs.push_hub == '1'
+        continue-on-error: true
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: ${{ env.DOCKERHUB_IMAGE }}
+          short-description: ${{ github.event.repository.description }}
+          readme-filepath: ./README.md
+          enable-url-completion: true
+
   # First publish often creates private packages; attempt to mark them public for pull-without-auth.
   # If this fails (org policy / token scope), set visibility manually under Packages → Package settings.
   make-public:

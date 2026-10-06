@@ -13,11 +13,11 @@ This repo uses [Release Please](https://github.com/googleapis/release-please) on
 | `packages/*/package.json` | App package versions (`$.version`, via `extra-files`) |
 | `packages/frontend/src/lib/app-version.ts` | UI fallback version (`// x-release-please-version`) |
 | `CHANGELOG.md` | Generated / updated by Release Please, with final human curation before merge when needed |
-| `.github/workflows/publish-images.yml` | Reusable image publish for an immutable `vX.Y.Z` release (GHCR default + Docker Hub mirror); also supports manual recovery for an existing release tag |
+| `.github/workflows/publish-images.yml` | Reusable image publish for an immutable `vX.Y.Z` release (GHCR default + Docker Hub mirror + Hub README/description); also supports manual recovery for an existing release tag |
 
 Ordinary pushes and PR merges to `main` must **not** publish container images. Image publication is tied to a created GitHub Release so `latest`, semver tags, and SHA tags all point at a deliberate release.
 
-Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. If either is unset, the workflow still publishes GHCR and warns.
+Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. If either is unset, the workflow still publishes GHCR and warns. The same secrets update the Hub repository short description and full README from `README.md` after a successful image build (`DOCKERHUB_TOKEN` must be a Hub PAT with Read, Write, and Delete).
 
 ### Normal flow (agents + humans)
 
