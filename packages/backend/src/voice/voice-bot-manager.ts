@@ -412,15 +412,16 @@ export class VoiceBotManager extends EventEmitter {
    *
    * Returns the sessions actually replaced under `videoClaimLock` (other bots'
    * video and this bot's music), so callers can audit stops without a stale
-   * pre-dispatch snapshot.
+   * pre-dispatch snapshot. `alreadyRunning` is set when this bot is already
+   * streaming the same source with the same settings (idempotent start).
    */
   async startVideoStream(
     bot: VoiceBot,
     source: string,
     options: VideoStreamStartOptions = {},
-  ): Promise<MediaSessionInfo[]> {
+  ): Promise<{ replaced: MediaSessionInfo[]; alreadyRunning: boolean }> {
     const replaced: MediaSessionInfo[] = [];
-    let started!: Promise<void>;
+    let started!: Promise<{ alreadyRunning: boolean }>;
     const release = this.videoClaimLock;
     let unlock!: () => void;
     this.videoClaimLock = new Promise<void>((resolve) => { unlock = resolve; });
@@ -443,8 +444,8 @@ export class VoiceBotManager extends EventEmitter {
     } finally {
       unlock();
     }
-    await started;
-    return replaced;
+    const outcome = await started;
+    return { replaced: outcome.alreadyRunning ? [] : replaced, alreadyRunning: outcome.alreadyRunning };
   }
 
   getBot(id: number): VoiceBot | undefined {

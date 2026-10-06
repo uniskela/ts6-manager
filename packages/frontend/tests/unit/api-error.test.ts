@@ -1,16 +1,18 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  apiErrorMessage,
+  apiErrorPresentation,
   isTeamSpeakLogviewIo,
   isTeamSpeakSshDisconnected,
   isTeamSpeakStarting,
   teamSpeakConnectionTitle,
   teamSpeakQueryRetry,
   teamSpeakQueryRetryDelay,
-} from './api-error.ts';
+} from '../../src/lib/api-error.ts';
 
 function axiosLike(status: number, data: Record<string, unknown>, headers?: Record<string, string>) {
-  return { response: { status, data, headers: headers ?? {} }, message: 'Request failed' };
+  return { response: { status, data, headers: headers ?? {} }, message: 'Request failed with status code ' + status };
 }
 
 describe('api-error logview I/O', () => {
@@ -70,5 +72,57 @@ describe('api-error SSH disconnect', () => {
     });
     assert.equal(isTeamSpeakSshDisconnected(legacy), true);
     assert.equal(teamSpeakQueryRetry(0, legacy), true);
+  });
+});
+
+describe('apiErrorPresentation', () => {
+  it('uses structured duplicate-stream copy instead of Axios Request failed', () => {
+    const err = axiosLike(409, {
+      error: 'A video is already streaming',
+      details: 'amf-test.mp4 is already playing on this bot. Stop the current stream or use Switch source.',
+      reason: 'stream_already_running',
+    });
+    const p = apiErrorPresentation(err, 'Failed to start stream');
+    assert.equal(p.title, 'A video is already streaming');
+    assert.match(p.message, /amf-test\.mp4/);
+    assert.equal(p.retryable, false);
+    assert.equal(apiErrorMessage(err, 'Failed to start stream').includes('Request failed'), false);
+  });
+
+  it('lets a known backend reason win over generic Axios text', () => {
+    const err = axiosLike(503, {
+      error: 'The media sidecar is unavailable',
+      details: 'Check that the sidecar is running, then try again.',
+      reason: 'sidecar_unavailable',
+      retryable: true,
+    });
+    assert.equal(apiErrorPresentation(err, 'Failed to start stream').title, 'The media sidecar is unavailable');
+    assert.equal(apiErrorMessage(err, 'Failed').includes('Request failed'), false);
+  });
+
+  it('keeps Retry-After / retryable flood handling', () => {
+    const flood = axiosLike(429, {
+      error: 'TeamSpeak Query temporarily paused',
+      details: 'flood',
+      reason: 'ts_query_flood',
+      retryAfterSeconds: 12,
+      retryable: true,
+    }, { 'retry-after': '12' });
+    assert.equal(apiErrorPresentation(flood, 'Failed').retryable, true);
+    assert.equal(teamSpeakQueryRetryDelay(0, flood), 12_000);
+    assert.equal(teamSpeakQueryRetry(0, flood), false);
+  });
+
+  it('shows a safe fallback for unexpected 500s', () => {
+    const err = axiosLike(500, {
+      error: 'Something went wrong while starting the stream',
+      details: 'Try again. If it keeps happening, check the server logs.',
+      reason: 'unexpected_error',
+      errorId: 'abc123de',
+    });
+    const p = apiErrorPresentation(err, 'Failed to start stream');
+    assert.equal(p.title, 'Something went wrong while starting the stream');
+    assert.equal(JSON.stringify(p).includes('password'), false);
+    assert.match(p.message, /server logs/);
   });
 });

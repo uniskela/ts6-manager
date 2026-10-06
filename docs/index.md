@@ -30,6 +30,7 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 ## Project
 
 - [Architecture](architecture.md) — service and package layout
+- [API errors](api-errors.md) — user-facing error contract and reason codes
 - [Roadmap](roadmap.md) — implemented phases and public follow-up direction
 - [1.8 acceptance evidence](plans/91-slice-6-acceptance.md) — #91 / #101 shipped-status vs demonstrated behavior
 

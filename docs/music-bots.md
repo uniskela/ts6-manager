@@ -10,7 +10,7 @@ Use **New bot** to create a bot with a single **Name**, used as both the admin l
 
 ![Bot Hub showing one playing bot and one idle bot](bot-hub.png)
 
-A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time).
+A bot plays music **or** video, never both, and only one video stream runs at a time. See [Video streaming — one media session at a time](video-streaming.md#one-media-session-at-a-time). Start/stop failures use the [API error contract](api-errors.md).
 
 ## Bot console
 

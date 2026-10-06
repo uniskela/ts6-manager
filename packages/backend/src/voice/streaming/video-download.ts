@@ -56,7 +56,7 @@ export function youtubeVideoFormatArgs(maxHeight: number): string[] {
  */
 export class VideoSourceRefusedError extends AppError {
   constructor(message: string) {
-    super(422, message);
+    super(422, message, undefined, { reason: 'source_refused' });
     this.name = 'VideoSourceRefusedError';
   }
 }
@@ -67,7 +67,11 @@ export class VideoSourceRefusedError extends AppError {
  */
 export class VideoSourceFailedError extends AppError {
   constructor(message: string) {
-    super(502, message);
+    const timeout = /timed out/i.test(message);
+    super(timeout ? 504 : 502, message, undefined, {
+      reason: timeout ? 'source_timeout' : 'source_unavailable',
+      retryable: timeout,
+    });
     this.name = 'VideoSourceFailedError';
   }
 }

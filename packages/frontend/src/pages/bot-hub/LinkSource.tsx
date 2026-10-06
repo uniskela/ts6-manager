@@ -8,9 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
-import { usePlayUrl, useStartVideoStream } from '@/hooks/use-music-bots';
+import { usePlayUrl, useStartVideoStream, useBotMedia } from '@/hooks/use-music-bots';
+import { ApiErrorAlert } from '@/components/ApiErrorAlert';
 import { useVideoStartOptions } from '@/hooks/use-video-streaming';
-import { apiErrorMessage } from '@/lib/api-error';
 import { toastMediaStarted } from '@/lib/media-start-toast';
 import { cn } from '@/lib/utils';
 import {
@@ -30,11 +30,17 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [options, setOptions, optionsLoading, defaults] = useVideoStartOptions(serverConfigId);
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
+  const media = useBotMedia();
 
   const trimmed = input.trim();
   // Empty input keeps music selectable (default); only a non-URL value disables it.
   const allowMusic = !trimmed || musicPlayAllowed(input);
   const effectiveMode: LinkPlayMode = mode === 'music' && trimmed && !musicPlayAllowed(input) ? 'video' : mode;
+  const session = media.data?.find((b) => b.botId === botId)?.session;
+  const alreadyThisFile = effectiveMode === 'video'
+    && session?.kind === 'video'
+    && !!session.label
+    && session.label === trimmed;
   const busy = playUrl.isPending || startVideo.isPending;
   const error = effectiveMode === 'video' ? startVideo.error : playUrl.error;
   const canStart = trimmed.length > 0 && !busy && !(effectiveMode === 'video' && optionsLoading);
@@ -44,11 +50,11 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   }, [input, trimmed, mode]);
 
   useEffect(() => {
-    if (mode === 'music') startVideo.reset();
-    else playUrl.reset();
-    // Clear the other mode's error when the user switches Play as music / Stream as video.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only on mode change
-  }, [mode]);
+    startVideo.reset();
+    playUrl.reset();
+    // Drop leftover errors when the user changes mode or source text.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only on mode/source change
+  }, [mode, trimmed]);
 
   const onStart = () => {
     if (!canStart) return;
@@ -64,7 +70,11 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
     playUrl.reset();
     startVideo.mutate(
       { botId, ...request.body },
-      { onSuccess: () => toastMediaStarted('Video stream started') },
+      {
+        onSuccess: (data: { alreadyRunning?: boolean }) => {
+          toastMediaStarted(data?.alreadyRunning ? 'Already streaming' : 'Video stream started');
+        },
+      },
     );
   };
 
@@ -141,13 +151,16 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
       )}
 
       {error && (
-        <p role="alert" className="text-sm text-destructive">
-          {apiErrorMessage(error, effectiveMode === 'video' ? 'Failed to start stream' : 'Failed to play URL')}
-        </p>
+        <ApiErrorAlert
+          error={error}
+          fallback={effectiveMode === 'video' ? 'Failed to start stream' : 'Failed to play URL'}
+        />
       )}
 
       <Button type="button" className="h-11 w-full sm:w-auto" disabled={!canStart} onClick={onStart}>
-        {busy ? 'Starting…' : effectiveMode === 'video' ? 'Stream as video' : 'Play as music'}
+        {busy ? 'Starting…' : effectiveMode === 'video'
+          ? (alreadyThisFile ? 'Already streaming' : 'Stream as video')
+          : 'Play as music'}
       </Button>
     </div>
   );

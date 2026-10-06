@@ -912,7 +912,7 @@ musicBotRoutes.put('/:id/queue/move', async (req: Request, res: Response, next) 
 /** Allow http(s) URLs or a bare MUSIC_DIR filename (no path separators). */
 function assertVideoSource(source: unknown): string {
   if (typeof source !== 'string' || !source.trim()) {
-    throw new AppError(400, 'source is required');
+    throw new AppError(400, 'source is required', undefined, { reason: 'source_invalid' });
   }
   const trimmed = source.trim();
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
@@ -920,12 +920,14 @@ function assertVideoSource(source: unknown): string {
       // eslint-disable-next-line no-new
       new URL(trimmed);
     } catch {
-      throw new AppError(400, 'Invalid video source URL');
+      throw new AppError(400, 'Invalid video source URL', undefined, { reason: 'source_invalid' });
     }
     return trimmed;
   }
   if (trimmed.includes('/') || trimmed.includes('\\') || trimmed.includes('..') || trimmed.includes('\0')) {
-    throw new AppError(400, 'Local video source must be a filename under the music directory');
+    throw new AppError(400, 'Local video source must be a filename under the music directory', undefined, {
+      reason: 'source_invalid',
+    });
   }
   return trimmed;
 }
@@ -941,7 +943,7 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     if (!parsed.ok) throw new AppError(400, parsed.error);
     // Conflicts answer 409 before an audit row exists; only real starts are audited.
     manager.assertVideoCanStart(bot, parsed.options.replaceSessionIds);
-    await runMediaAudited(
+    const outcome = await runMediaAudited(
       req, bot, 'media.video.start',
       () => manager.startVideoStream(bot, safeSource, parsed.options),
       parsed.options.replaceSessionIds,
@@ -950,7 +952,13 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
       const prisma = req.app.locals.prisma;
       await saveBotVolume(prisma, bot.currentConfig.id, bot.currentConfig.volume);
     }
-    res.json({ success: true, status: bot.videoStreamStatus });
+    res.json({
+      success: true,
+      alreadyRunning: outcome && typeof outcome === 'object' && 'alreadyRunning' in outcome
+        ? outcome.alreadyRunning || undefined
+        : undefined,
+      status: bot.videoStreamStatus,
+    });
   } catch (err) { next(err); }
 });
 
@@ -1040,7 +1048,7 @@ musicBotRoutes.post('/:id/stream/webrtc/offer', async (req: Request, res: Respon
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
     const offer = await bot.getWebRtcOffer();
-    if (!offer) throw new AppError(400, 'No active video stream');
+    if (!offer) throw new AppError(409, 'No active stream', 'Start a video first.', { reason: 'stream_not_running' });
     res.json(offer);
   } catch (err) { next(err); }
 });

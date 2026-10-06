@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { VoiceBot } from './voice-bot.js';
 import { VoiceBotManager } from './voice-bot-manager.js';
 import { MediaSessionConflictError } from './media-session.js';
+import { AppError } from '../middleware/error-handler.js';
 import { BYTES_PER_FRAME } from './audio/pipeline.js';
 
 function makeBot(id = 7, name = 'Bot'): VoiceBot {
@@ -67,9 +68,20 @@ describe('single active media session (per bot)', () => {
     let release!: () => void;
     (bot as any).startVideoStreamClaimed = () => new Promise<void>((r) => { release = r; });
     const first = bot.startVideoStream('https://example.com/a.mp4');
-    await assert.rejects(bot.startVideoStream('https://example.com/b.mp4'), /already active/);
+    await assert.rejects(bot.startVideoStream('https://example.com/b.mp4'), (err: unknown) => {
+      assert.equal((err as AppError).statusCode, 409);
+      assert.equal((err as AppError).reason, 'stream_starting');
+      return true;
+    });
     release();
     await first;
+  });
+
+  it('treats a second start of the same source as already running', async () => {
+    const bot = makeBot();
+    fakeVideo(bot);
+    const outcome = await bot.startVideoStream('https://user:pw@iptv.example/live.m3u8');
+    assert.equal(outcome.alreadyRunning, true);
   });
 
   it('refuses music over video until the video session is confirmed', async () => {
@@ -335,7 +347,7 @@ describe('single video stream across bots', () => {
     assert.deepEqual(stops, ['replaced_by_video']);
     assert.equal(b.lastMusicStop?.reason, 'replaced_by_video');
     assert.equal(started, 1);
-    assert.deepEqual(replaced.map((s) => `${s.botName}:${s.kind}`), ['Alpha:video', 'Bravo:music']);
+    assert.deepEqual(replaced.replaced.map((s) => `${s.botName}:${s.kind}`), ['Alpha:video', 'Bravo:music']);
   });
 
   it('omits sessions that ended before the lock-held stop', async () => {
@@ -355,7 +367,7 @@ describe('single video stream across bots', () => {
     const replaced = await m.startVideoStream(b, 'https://example.com/v.mp4', {
       replaceSessionIds: [session.id],
     });
-    assert.deepEqual(replaced, []);
+    assert.deepEqual(replaced.replaced, []);
     assert.ok(infoCalls >= 2);
   });
 
