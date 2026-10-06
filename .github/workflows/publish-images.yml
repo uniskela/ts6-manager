@@ -392,6 +392,18 @@ jobs:
             echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; skipping Hub description update"
           fi
 
+      # Copy the rewriter from the workflow revision first. A workflow_dispatch
+      # recovery run can check out an older tag that does not contain the script.
+      - name: Checkout workflow revision
+        if: steps.hub.outputs.push_hub == '1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Keep Hub README rewrite script
+        if: steps.hub.outputs.push_hub == '1'
+        run: |
+          set -euo pipefail
+          cp scripts/ci/complete-relative-readme-urls.py "$RUNNER_TEMP/complete-relative-readme-urls.py"
+
       - name: Checkout release tag
         if: steps.hub.outputs.push_hub == '1'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -406,7 +418,7 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          python3 scripts/ci/complete-relative-readme-urls.py \
+          python3 "$RUNNER_TEMP/complete-relative-readme-urls.py" \
             README.md "$RUNNER_TEMP/dockerhub-readme.md" --ref "$TAG"
 
       - name: Docker Hub Description
