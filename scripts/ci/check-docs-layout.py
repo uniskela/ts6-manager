@@ -15,9 +15,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "docs" / "manifest.json"
 LINK = re.compile(r"\]\(([^)\s]+)")
 
-# Slugs already published at /docs/ts6-manager/latest/<slug>/.
-# api-errors is the public API guide that the overview already linked.
-PUBLISHED_SLUGS = {
+# Slugs already live at /docs/ts6-manager/latest/<slug>/. New public pages may add slugs.
+REQUIRED_SLUGS = {
     "readme",
     "index",
     "installation",
@@ -35,10 +34,10 @@ PUBLISHED_SLUGS = {
     "security",
     "teamspeak-compatibility",
     "architecture",
-    "api-errors",
     "development",
     "roadmap",
 }
+SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*(?:/[a-z0-9]+(?:-[a-z0-9]+)*)*")
 
 LINK_ROOTS = [
     ROOT / "docs",
@@ -95,17 +94,16 @@ def check_manifest(errors: list[str]) -> None:
                 errors.append("README.md must stay slug readme kind readme")
         elif not source.startswith("docs/public/") or not source.endswith(".md") or kind != "doc":
             errors.append(f"published guide must be docs/public/*.md kind doc: {source}")
-        elif "/public/" in slug:
-            errors.append(f"slug must not include public: {slug}")
+        elif not SLUG.fullmatch(slug) or "public" in slug.split("/"):
+            errors.append(f"slug must stay a public URL segment: {slug}")
 
     if len(slugs) != len(set(slugs)):
         errors.append("duplicate documentation slugs")
     if len(sources) != len(set(sources)):
         errors.append("duplicate documentation sources")
-    if set(slugs) != PUBLISHED_SLUGS:
-        missing = sorted(PUBLISHED_SLUGS - set(slugs))
-        extra = sorted(set(slugs) - PUBLISHED_SLUGS)
-        errors.append(f"slug set changed; missing={missing} extra={extra}")
+    missing = sorted(REQUIRED_SLUGS - set(slugs))
+    if missing:
+        errors.append(f"published slug removed: {missing}")
 
 
 def check_links(errors: list[str]) -> None:
@@ -128,6 +126,11 @@ def check_links(errors: list[str]) -> None:
                 continue
             if not resolved.exists():
                 errors.append(f"{path.relative_to(ROOT)} broken link: {target}")
+                continue
+            if path.is_relative_to(ROOT / "docs" / "public"):
+                private = ROOT / "docs" / "internal", ROOT / "docs" / "agents"
+                if any(resolved.is_relative_to(root) for root in private):
+                    errors.append(f"{path.relative_to(ROOT)} published page links to unpublished docs: {target}")
 
 
 def main() -> int:

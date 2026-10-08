@@ -33,7 +33,7 @@ Container startup still reconciles the schema with `prisma db push` as described
 
 After upgrading, open **Bot Hub → Open console** for playback. **Media Library** remains at `/media-bots` with five tabs, and custom replies move to **Bot Flows → Chat commands**. Existing music, playlists and saved credentials remain in the database. Playlists are now shared across all bots on their server, so `!playlist` can list more playlists than before. Old page links redirect to their new locations.
 
-Before merging the release PR, run the [1.10.0 smoke checklist](../internal/plans/164-1-10-0-rc-smoke.md) against the release candidate, including the AMD/VAAPI homelab checks.
+Before merging the release PR, run the [1.10.0 smoke checklist](https://github.com/uniskela/ts6-manager/blob/main/docs/internal/plans/164-1-10-0-rc-smoke.md) against the release candidate, including the AMD/VAAPI homelab checks.
 
 ## Pull and recreate
 
