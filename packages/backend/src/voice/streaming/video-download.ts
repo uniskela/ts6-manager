@@ -514,7 +514,7 @@ export async function downloadVideoForStream(
 
   if (!isYoutubeStreamHost(url)) {
     // Redirects and HLS segment URLs are checked by the sidecar's egress
-    // proxy, with the same localHosts allowance (see docs/video-streaming.md).
+    // proxy, with the same localHosts allowance (see docs/public/video-streaming.md).
     return { path: url, durationSec: null };
   }
 

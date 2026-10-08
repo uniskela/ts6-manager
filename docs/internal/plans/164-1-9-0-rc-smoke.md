@@ -32,7 +32,7 @@ Stream the same 720p on-demand source to a TeamSpeak client for each encoder. Fo
 
 ## 2. VAAPI (GPU host)
 
-Pass `/dev/dri` through as described in [Video streaming → Enabling VAAPI](../video-streaming.md#enabling-vaapi-intel--amd-gpus).
+Pass `/dev/dri` through as described in [Video streaming → Enabling VAAPI](../../public/video-streaming.md#enabling-vaapi-intel--amd-gpus).
 
 | # | Check | Expected |
 | --- | --- | --- |
@@ -139,4 +139,4 @@ Use at least one live HLS channel and, if available, one CMAF channel whose segm
 | 8 Long music | | | |
 | 9 Follow-up fixes | | | |
 
-Any **Fail** blocks the release PR unless the behavior is already documented as a known limitation in [Video streaming](../video-streaming.md) or the release notes.
+Any **Fail** blocks the release PR unless the behavior is already documented as a known limitation in [Video streaming](../../public/video-streaming.md) or the release notes.

@@ -8,7 +8,7 @@
 
 **Tech Stack:** React, TanStack Query, shadcn Dialog/Button/Badge, Playwright, existing `useIptvNetworkSettings` / `parseHostLines`.
 
-**Spec:** `docs/superpowers/specs/2026-10-01-iptv-local-hosts-header-ux-design.md`
+**Spec:** `docs/internal/superpowers/specs/2026-10-01-iptv-local-hosts-header-ux-design.md`
 
 ## Global Constraints
 

@@ -166,8 +166,8 @@ Schema changes use this repository’s **Prisma `db push` plus `SCHEMA_VERSION`*
 
 ### 10. Docs (when behavior is stable)
 
-- Update `docs/teamspeak-compatibility.md` with real endpoint/config/privacy/scoping from the fixture.
-- Update `docs/roadmap.md` **only after** behavior is stable.
+- Update `docs/public/teamspeak-compatibility.md` with real endpoint/config/privacy/scoping from the fixture.
+- Update `docs/public/roadmap.md` **only after** behavior is stable.
 - Do not claim unscoped metrics support.
 
 ## Implementation steps (post-fixture)

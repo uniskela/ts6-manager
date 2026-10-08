@@ -1,5 +1,5 @@
 # Windows-native AMF PR test: Docker TeamSpeak/backend/frontend + native Windows sidecar.
-# Start the native sidecar first; see docs/video-streaming.md#windows-amf-pr-test.
+# Start the native sidecar first; see docs/public/video-streaming.md#windows-amf-pr-test.
 # Run this file alone, not as an override of docker-compose.pr-test.yml.
 # HTTP 9800 and WebRTC UDP are owned by the native process, never published here.
 # All Docker host ports bind loopback; this is a same-host development harness.

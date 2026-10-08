@@ -69,7 +69,7 @@ Edit your **existing** `docker-compose.yml`, in the same folder. Docker Compose 
 
 4. Optional: remove the sidecar's published `9800:9800` port. The backend reaches the sidecar over the Docker network, and this fork does not publish it.
 
-Alternatively, start from this repository's [`docker-compose.yml`](../docker-compose.yml) and copy your values into it, keeping it in the same folder as your old one.
+Alternatively, start from this repository's [`docker-compose.yml`](../../docker-compose.yml) and copy your values into it, keeping it in the same folder as your old one.
 
 ## Start and check
 

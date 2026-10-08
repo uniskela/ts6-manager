@@ -17,7 +17,7 @@ Release images are published after a Release Please release is created. Ordinary
 
 The default deployment uses separate frontend, backend, and media-sidecar containers.
 
-1. Download [`docker-compose.yml`](../docker-compose.yml).
+1. Download [`docker-compose.yml`](../../docker-compose.yml).
 2. Create a `.env` file with at least:
 
 ~~~env

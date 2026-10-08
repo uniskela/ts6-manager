@@ -25,13 +25,13 @@ services:
       - SIDECAR_URL=http://127.0.0.1:9800
       - SIDECAR_PORT=9800
       # Optional browser WebRTC preview — set WEBRTC_NAT1TO1_IP / WEBRTC_BIND_IP to a
-      # reachable host IPv4 and uncomment the UDP mapping below (see docs/video-streaming.md).
+      # reachable host IPv4 and uncomment the UDP mapping below (see docs/public/video-streaming.md).
       # - WEBRTC_UDP_PORT=${WEBRTC_UDP_PORT:-10000}
       # - WEBRTC_NAT1TO1_IP=${WEBRTC_NAT1TO1_IP}
     volumes:
       - backend-data:/app/packages/backend/data
       - music-data:/data/music
-    # Optional: VAAPI hardware video encoding (Intel/AMD GPU). See docs/video-streaming.md.
+    # Optional: VAAPI hardware video encoding (Intel/AMD GPU). See docs/public/video-streaming.md.
     # devices:
     #   - /dev/dri:/dev/dri
     ports:

@@ -2,7 +2,7 @@
 
 Continuation of `clusterzx/ts6-manager` as `uniskela/ts6-manager` — **core-focused** (no Discord/SSO/full i18n absorption).
 
-Community bug reports and PRs that informed this work are listed in [CREDITS.md](../../CREDITS.md).
+Community bug reports and PRs that informed this work are listed in [CREDITS.md](../../../CREDITS.md).
 
 ## Implemented phases
 

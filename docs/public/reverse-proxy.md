@@ -4,7 +4,7 @@ TS6 Manager can run behind a reverse proxy such as the one managed by Coolify.
 
 ## Coolify starting point
 
-Use [`docker-compose.coolify.yml`](../docker-compose.coolify.yml) as the deployment starting point.
+Use [`docker-compose.coolify.yml`](../../docker-compose.coolify.yml) as the deployment starting point.
 
 Compared with the standard compose file:
 

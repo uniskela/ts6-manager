@@ -25,7 +25,7 @@
 # WEBRTC_NAT1TO1_IP to an IPv4 address that browser can reach.
 # Watching in the TeamSpeak client: the TeamSpeak client does not connect to
 # 127.0.0.1, even on this host. Set WEBRTC_BIND_IP=0.0.0.0 and
-# WEBRTC_NAT1TO1_IP=127.0.0.1,<Docker host LAN IPv4> (see docs/troubleshooting.md).
+# WEBRTC_NAT1TO1_IP=127.0.0.1,<Docker host LAN IPv4> (see docs/public/troubleshooting.md).
 # Manager-only (no TeamSpeak): use docker-compose.local.yml instead.
 #
 # Tear down:
@@ -137,7 +137,7 @@ services:
       MUSIC_DIR: /data/music
       VIDEO_QUEUE_SIZE: 8192
       AUDIO_QUEUE_SIZE: 16384
-      # Fixed UDP mux so the host can publish one WebRTC media port (see docs/video-streaming.md).
+      # Fixed UDP mux so the host can publish one WebRTC media port (see docs/public/video-streaming.md).
       WEBRTC_UDP_PORT: ${WEBRTC_UDP_PORT:-10000}
       WEBRTC_NAT1TO1_IP: ${WEBRTC_NAT1TO1_IP:-127.0.0.1}
     volumes:

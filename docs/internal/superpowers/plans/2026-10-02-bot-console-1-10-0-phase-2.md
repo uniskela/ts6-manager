@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript monorepo (pnpm 9): `packages/backend` (Express, Prisma/SQLite, `node:test` via `tsx --test`), `packages/frontend` (React 18, React Router 6, TanStack Query 5, Tailwind/shadcn, Playwright), `packages/common` (shared types).
 
-**Spec:** `docs/superpowers/specs/2026-10-02-bot-console-1-10-0-design.md` (sections 1, 2 and 4). Mockup: the private design canvas linked from #164.
+**Spec:** `docs/internal/superpowers/specs/2026-10-02-bot-console-1-10-0-design.md` (sections 1, 2 and 4). Mockup: the private design canvas linked from #164.
 
 ## Who builds what
 
@@ -22,7 +22,7 @@
 | 12 | IPTV country + language (migration, parser) | **Codex** | Medium | 10 |
 | 13 | Chat commands move to Bot Flows, built-in list, clash warnings | **Codex** | Medium | — |
 | 14 | Bot Hub becomes the bot list; Media Library 5 tabs; IPTV "Stream on…"; redirects | **Claude** | High | 8, 9, 10, 13 |
-| 15 | Docs, Playwright, `docs/plans/164-1-10-0-rc-smoke.md`, upgrade note | **Cursor** | Low | 14 |
+| 15 | Docs, Playwright, `docs/internal/plans/164-1-10-0-rc-smoke.md`, upgrade note | **Cursor** | Low | 14 |
 | 16 | R3: split `music-command-handler.ts` | **Codex** | High | phase 1 Tasks 4 and 5, Task 13 |
 | 17 | Bot avatars | **Codex** | High | 7 |
 
@@ -147,7 +147,7 @@ export function VideoOptions(props: { value: VideoStartOptions; onChange(v: Vide
 **Depends on:** 8, 9, 10, 13. Bot Hub gains New bot / edit / delete / start-stop / widget link (from `pages/media-bots/BotsTab.tsx` and `BotPlayerCard`); console header settings menu; sidebar label "Media Library"; Media Library tabs Library · Playlists · Radio stations · Requests · Streaming defaults; remove Bots, Queue, Video stream controls and Commands tabs; IPTV "Stream on…"; the spec's redirect table (Review Focus 5); `docs-screenshots` refresh.
 
 ### Task 15 (Cursor): `docs: 1.10.0 console docs, smoke checklist and upgrade note`
-**Depends on:** 14. Spec section 6 "Docs" in full, plus `docs/plans/164-1-10-0-rc-smoke.md` built from issue #271.
+**Depends on:** 14. Spec section 6 "Docs" in full, plus `docs/internal/plans/164-1-10-0-rc-smoke.md` built from issue #271.
 
 ### Task 16 (Codex): `refactor: split the chat command handler`
 **Depends on:** phase 1 Tasks 4 and 5, Task 13. Spec section 3 "R3". No behaviour change; existing chat tests unchanged and green.
