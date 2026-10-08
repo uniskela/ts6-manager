@@ -1,0 +1,35 @@
+name: Refresh Context7 Documentation
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - "README.md"
+      - "CHANGELOG.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Request Context7 library refresh
+        env:
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CONTEXT7_API_KEY}" ]]; then
+            echo "::error::Set the CONTEXT7_API_KEY repository Actions secret before running this workflow."
+            exit 1
+          fi
+
+          curl --fail-with-body --silent --show-error \
+            --retry 2 --connect-timeout 10 --max-time 60 \
+            --request POST "https://context7.com/api/v1/refresh" \
+            --header "Content-Type: application/json" \
+            --header "Authorization: Bearer ${CONTEXT7_API_KEY}" \
+            --data "$(printf '{"libraryName":"/%s"}' "${GITHUB_REPOSITORY}")"
