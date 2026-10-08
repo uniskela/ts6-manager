@@ -1,13 +1,12 @@
 name: Refresh Context7 Documentation
 
+# Called by Release Please only when a GitHub release is created.
+# workflow_dispatch is retained for manual refreshes between releases.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "docs/**"
-      - "README.md"
-      - "CHANGELOG.md"
+  workflow_call:
+    secrets:
+      CONTEXT7_API_KEY:
+        required: true
   workflow_dispatch:
 
 permissions:
