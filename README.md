@@ -16,7 +16,7 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-**Contents:** [Documentation](#documentation) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility-and-beta13-setup) · [Download progress](#download-progress) · [License](#license)
+**Contents:** [Documentation](#documentation) · [AI agent docs](#using-this-project-with-ai-coding-agents) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Tech Stack](#tech-stack) · [Quick Start (Docker)](#quick-start-docker) · [Development](#development) · [Environment Variables](#environment-variables) · [Sidecar / Video Streaming env](#environment-variables-sidecar--video-streaming) · [Music Bot Text Commands](#music-bot-text-commands) · [Requirements](#requirements) · [TeamSpeak compatibility](#teamspeak-compatibility-and-beta13-setup) · [Download progress](#download-progress) · [License](#license)
 
 ## Documentation
 
@@ -35,6 +35,13 @@ Start with:
 - [Video streaming](https://www.uniskela.com/docs/ts6-manager/latest/video-streaming/)
 - [Architecture](https://www.uniskela.com/docs/ts6-manager/latest/architecture/)
 - [Environment variables](https://www.uniskela.com/docs/ts6-manager/latest/environment-variables/)
+
+
+### Using this project with AI coding agents
+
+If you use Codex, Cursor, Claude Code, or another assistant with [Context7 MCP](https://context7.com/), you can ask it to consult TS6 Manager's documentation before changing deployment settings or integrations. Context7 is optional; you can always use the maintained docs directly.
+
+> Use Context7 MCP to resolve the official documentation library for `uniskela/ts6-manager` (expected ID: `/uniskela/ts6-manager`), then retrieve guidance for installation, configuration, upgrading, TeamSpeak compatibility, music/video bots, and troubleshooting. Match the guidance to the TS6 Manager version I'm using. If the library is still indexing or doesn't cover that version, check the [maintained documentation](https://www.uniskela.com/docs/ts6-manager/) and linked source files instead.
 
 ## Screenshots
 
