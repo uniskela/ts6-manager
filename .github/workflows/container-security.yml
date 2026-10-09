@@ -95,6 +95,22 @@ jobs:
             GIT_SHA=${{ github.sha }}
           pull: true
 
+      - name: Validate minimal frontend runtime
+        if: matrix.component == 'frontend'
+        shell: bash
+        run: |
+          set -euo pipefail
+          IMAGE="ts6-security-frontend:${{ github.sha }}"
+          # Resolve the Compose-only backend hostname for nginx -t.
+          docker run --rm --add-host backend:127.0.0.1 --entrypoint nginx "$IMAGE" -t
+          # Detect accidental reintroduction of the unused image-filter dependency.
+          docker run --rm --entrypoint sh "$IMAGE" -ec '
+            if apk info -e tiff >/dev/null 2>&1; then
+              echo "Unexpected tiff package in the frontend runtime" >&2
+              exit 1
+            fi
+          '
+
       - name: Validate pruned Node runtime
         if: matrix.component == 'backend' || matrix.component == 'all-in-one'
         shell: bash
@@ -154,9 +170,12 @@ jobs:
               test -s /tmp/runtime-smoke.db
             '
 
+      # trivy-action v0.36.0 defaults to Trivy v0.70.0. Pin the current
+      # scanner binary separately while keeping the action commit SHA pinned.
       - name: Record full vulnerability inventory
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: image
           image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
           scanners: vuln
@@ -170,6 +189,7 @@ jobs:
       - name: Show all high and critical findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: image
           image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
           scanners: vuln
@@ -191,6 +211,7 @@ jobs:
       - name: Gate on fixable high and critical findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
+          version: v0.75.0
           scan-type: image
           image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
           scanners: vuln
