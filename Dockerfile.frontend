@@ -12,11 +12,13 @@ RUN pnpm --filter @ts6/common run build
 RUN pnpm --filter @ts6/frontend run build
 
 # Production: serve with nginx
-FROM nginx:alpine AS production
+FROM nginx:alpine-slim AS production
 
-# Alpine fixes for Trivy HIGH: libexpat (CVE-2026-93990 → 2.8.5-r0+),
-# pcre2 (CVE-2026-103111 → 10.49-r0+)
-RUN apk upgrade --no-cache libexpat pcre2
+# The full nginx:alpine image includes the unused image-filter module and
+# libtiff dependency (CVE-2026-4775). The official slim image only installs
+# nginx and the runtime dependencies needed by this static SPA / API proxy.
+# Upgrade all installed Alpine packages for available security fixes.
+RUN apk upgrade --no-cache
 
 COPY --from=build /app/packages/frontend/dist /usr/share/nginx/html
 
