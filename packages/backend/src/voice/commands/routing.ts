@@ -6,6 +6,7 @@ import type { CommandContext } from './context.js';
 import { botOccupiesChannel, isBotSummonable } from './channel-ownership.js';
 import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
 import { channelCommandKey, claimChannelCommand } from './dedupe.js';
+import { checkMediaCommand, handleVoteSkip } from './media-access.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 
@@ -370,6 +371,8 @@ export async function onTextMessage(
 
   // Built-in commands
   if (MUSIC_COMMANDS.has(command)) {
+    if (!await checkMediaCommand(context, bot, userClid, command, args, data.invokeruid)) return;
+    if (bot.floodHoldActive) { bot.noteIgnoredCommand(); return; }
     console.log(`[MusicCmd] Bot ${botId}: !${command} ${args} (from clid=${userClid})`);
     try {
       switch (command) {
@@ -411,6 +414,9 @@ export async function onTextMessage(
         case 'skip':
         case 'next':
           await context.handleSkip(bot, userClid);
+          break;
+        case 'voteskip':
+          await handleVoteSkip(context, bot, userClid, data.invokeruid);
           break;
         case 'prev':
           await context.handlePrev(bot, userClid);

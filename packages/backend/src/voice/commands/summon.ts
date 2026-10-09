@@ -1,5 +1,6 @@
 import type { VoiceBot } from '../voice-bot.js';
 import type { CommandContext } from './context.js';
+import { checkMediaCommand } from './media-access.js';
 import { isBotSummonable } from './channel-ownership.js';
 import { hereActionKey, claimHereAction, shouldSpeakHereList } from './dedupe.js';
 
@@ -356,6 +357,7 @@ export async function handleHereCrossChannel(
   }
 
   const replyBot = candidates[0].bot;
+  if (!await checkMediaCommand(context, replyBot, userClid, 'here', args, data.invokeruid)) return;
   // Route replies through a summonable bot while tagging the command channel.
   context.activeReplyChannel.set(`${replyBot.currentConfig.id}:${userClid}`, channelId);
   try {

@@ -318,6 +318,11 @@ export class VoiceBot extends EventEmitter {
     return this._status;
   }
 
+  /** Changes for every playback start/stop, even when replaying the same queue item. */
+  get playbackToken(): object {
+    return this.playbackOwner;
+  }
+
   get nowPlaying(): QueueItem | null {
     return this._nowPlaying;
   }

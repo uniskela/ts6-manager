@@ -1,5 +1,5 @@
 import api from './client';
-import type { BotMediaOverview, StartVideoStreamRequest, VideoStreamStatus } from '@ts6/common';
+import type { BotMediaOverview, StartVideoStreamRequest, VideoStreamStatus, MediaCommandPermissions } from '@ts6/common';
 
 // === Music Bot API ===
 
@@ -168,6 +168,10 @@ export const radioStationsApi = {
 // === Custom chat commands (!name → reply) ===
 
 export const chatCommandsApi = {
+  permissions: (configId: number, sid: number): Promise<MediaCommandPermissions> =>
+    api.get(`/servers/${configId}/chat-commands/permissions/${sid}`).then((r) => r.data),
+  savePermissions: (configId: number, sid: number, policy: MediaCommandPermissions): Promise<MediaCommandPermissions> =>
+    api.put(`/servers/${configId}/chat-commands/permissions/${sid}`, policy).then((r) => r.data),
   list: (configId: number) => api.get(`/servers/${configId}/chat-commands`).then((r) => r.data),
   presets: (configId: number) =>
     api.get(`/servers/${configId}/chat-commands/presets`).then((r) => r.data),

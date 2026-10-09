@@ -244,7 +244,7 @@ test('adding and removing nodes are visible dirty edits without changing the sav
 
 const builtinCommands = [
   'help', 'commands', 'here', 'come', 'play', 'queue', 'add', 'playlist', 'pl', 'repeat', 'seek',
-  'remove', 'shuffle', 'stop', 'pause', 'skip', 'next', 'prev', 'vol', 'volume', 'np',
+  'remove', 'shuffle', 'stop', 'pause', 'skip', 'next', 'voteskip', 'prev', 'vol', 'volume', 'np',
   'nowplaying', 'radio', 'stream', 'stopstream', 'viewers', 'channels', 'tv', 'iptv', 'lyrics',
 ];
 
@@ -256,6 +256,7 @@ const commandServerFixtures = [
 async function mockChatCommandApis(page: import('@playwright/test').Page, initialName = 'rules') {
   let commands = [{ id: 1, name: initialName, response: 'Be kind', description: 'Server rules', enabled: true }];
   const requestedConfigIds: number[] = [];
+  let permissions = { playback: { mode: 'everyone' }, queue: { mode: 'everyone' }, video: { mode: 'everyone' } };
   const presets = [
     { name: 'rules', description: 'Server rules', response: 'Be kind' },
     { name: 'links', description: 'Useful links', response: 'https://example.test' },
@@ -271,6 +272,10 @@ async function mockChatCommandApis(page: import('@playwright/test').Page, initia
     if (!match) return route.fallback();
     requestedConfigIds.push(Number(match[1]));
     const suffix = match[2] || '';
+    if (suffix.startsWith('permissions/')) {
+      if (request.method() === 'PUT') permissions = request.postDataJSON();
+      return route.fulfill({ json: permissions });
+    }
     if (request.method() === 'GET' && suffix === 'presets') return route.fulfill({ json: presets });
     if (request.method() === 'GET') return route.fulfill({ json: commands });
     if (request.method() === 'POST' && suffix === 'seed-presets') return route.fulfill({ json: { created: 1, createdNames: ['links'] } });
@@ -332,7 +337,7 @@ test('Chat commands keeps server scope, custom CRUD, and presets usable', async 
   await page.goto('/bots?tab=commands');
   await expect(page.getByText('!rules', { exact: true })).toBeVisible();
   const chatCommandsPanel = page.locator('#bot-chat-commands-panel');
-  const serverPicker = chatCommandsPanel.getByRole('combobox');
+  const serverPicker = chatCommandsPanel.getByRole('combobox').filter({ hasText: /Primary server|Secondary server/ });
   await serverPicker.click();
   await page.getByRole('option', { name: 'Secondary server' }).click();
   await expect(serverPicker).toContainText('Secondary server');
@@ -350,6 +355,47 @@ test('Chat commands keeps server scope, custom CRUD, and presets usable', async 
   await page.getByRole('dialog').locator('textarea').fill('Updated links');
   await page.getByRole('dialog').getByRole('button', { name: 'Save', exact: true }).click();
   await expect(page.getByText('Updated links')).toBeVisible();
+});
+
+test('built-in permissions save several TS groups and allow removing unavailable saved groups', async ({ page, request }) => {
+  await signInAsAdmin(page, request);
+  await mockChatCommandApis(page);
+  await seedServerSelection(page);
+  let policy = {
+    playback: { mode: 'everyone' }, queue: { mode: 'everyone' },
+    video: { mode: 'server_groups', serverGroupIds: [99] },
+  };
+  const saved: unknown[] = [];
+  await page.route('**/api/servers/1/chat-commands/permissions/1', async (route) => {
+    if (route.request().method() === 'PUT') {
+      policy = route.request().postDataJSON();
+      saved.push(policy);
+    }
+    return route.fulfill({ json: policy });
+  });
+  await page.route('**/api/servers/1/vs/1/server-groups', async (route) => route.fulfill({ json: [
+    { sgid: '6', name: 'DJ' }, { sgid: '12', name: 'Moderator' },
+  ] }));
+  await page.goto('/bots?tab=commands');
+  const playback = page.getByRole('group', { name: 'Playback and music controls' });
+  await expect(playback.getByRole('combobox')).toContainText('Everyone');
+  await playback.getByRole('combobox').click();
+  await page.getByRole('option', { name: 'Selected TeamSpeak server groups' }).click();
+  await playback.getByRole('checkbox', { name: /DJ/ }).check();
+  await playback.getByRole('checkbox', { name: /Moderator/ }).check();
+  const video = page.getByRole('group', { name: 'Video and IPTV controls' });
+  await video.getByRole('checkbox', { name: /Unavailable group #99/ }).click();
+  await expect(video.getByRole('checkbox', { name: /Unavailable group #99/ })).toHaveCount(0);
+  await expect(video.getByText('Membership in any selected group grants access. No selected groups denies these controls to everyone.')).toBeVisible();
+  await page.getByRole('button', { name: 'Save permissions' }).click();
+  await expect.poll(() => saved).toEqual([{
+    playback: { mode: 'server_groups', serverGroupIds: [6, 12] },
+    queue: { mode: 'everyone' }, video: { mode: 'server_groups', serverGroupIds: [] },
+  }]);
+  await expect(page.getByRole('button', { name: 'Save permissions' })).toBeDisabled();
+  await page.reload();
+  await expect(playback.getByRole('checkbox', { name: /DJ/ })).toBeChecked();
+  await expect(playback.getByRole('checkbox', { name: /Moderator/ })).toBeChecked();
 });
 
 test('clash warnings update for custom replies, built-ins, and flow command triggers', async ({ page, request }) => {
