@@ -34,6 +34,12 @@ test('phone header keeps the connection and virtual server pickers visibly disti
       expect(connectionBox!.x + connectionBox!.width).toBeLessThanOrEqual(virtualBox!.x + 1);
       expect(await connection.locator('.truncate').evaluate((el) => el.clientWidth)).toBeGreaterThan(48);
       expect(await virtualServer.locator('.truncate').evaluate((el) => el.clientWidth)).toBeGreaterThan(48);
+      if (width === 640) {
+        await expect(connection).toContainText('Primary connection');
+        await expect(virtualServer).toContainText('Operations Voice');
+        expect(await connection.locator('.truncate').evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+        expect(await virtualServer.locator('.truncate').evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+      }
     });
   }
 
