@@ -4,11 +4,11 @@ import { useServers, useVirtualServers } from '@/hooks/use-servers';
 import { useServerStore } from '@/stores/server.store';
 import { Server } from 'lucide-react';
 
-/** Below `sm` the side labels are screen-reader-only, so the trigger carries a visible caption instead. */
+/** Below `md` the side labels are screen-reader-only, so the trigger carries a visible caption instead. */
 function TriggerValue({ caption, children }: { caption: string; children: ReactNode }) {
   return (
     <span className="!flex min-w-0 flex-1 flex-col items-start text-left leading-tight">
-      <span aria-hidden="true" className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground sm:hidden">
+      <span aria-hidden="true" className="text-[9px] font-medium uppercase tracking-wide text-muted-foreground md:hidden">
         {caption}
       </span>
       <span className="block w-full truncate">{children}</span>
@@ -51,7 +51,7 @@ export function ServerSelector() {
     <div className="flex min-w-0 flex-1 items-center gap-1.5 md:flex-none md:gap-2">
       <Server className="hidden h-4 w-4 shrink-0 text-muted-foreground lg:block" />
       <div className="flex min-w-0 flex-1 items-center gap-1 md:flex-none">
-      <span className="sr-only sm:not-sr-only text-[10px] uppercase tracking-wide text-muted-foreground">Connection</span>
+      <span className="sr-only md:not-sr-only text-[10px] uppercase tracking-wide text-muted-foreground">Connection</span>
       <Select
         value={selectedConfigId?.toString() || ''}
         onValueChange={(v) => setServer(parseInt(v))}
@@ -73,8 +73,8 @@ export function ServerSelector() {
 
       {selectedConnection && (
         <>
-          <span className="hidden text-xs text-muted-foreground sm:inline" aria-hidden="true">/</span>
-          <span className="sr-only sm:not-sr-only text-[10px] uppercase tracking-wide text-muted-foreground">Virtual server</span>
+          <span className="hidden text-xs text-muted-foreground md:inline" aria-hidden="true">/</span>
+          <span className="sr-only md:not-sr-only text-[10px] uppercase tracking-wide text-muted-foreground">Virtual server</span>
           <Select
             value={displaySid}
             onValueChange={(v) => setSid(parseInt(v))}
