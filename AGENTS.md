@@ -1,5 +1,15 @@
 # Agent notes (ts6-manager)
 
+## Documentation
+
+| Path | Audience |
+|------|----------|
+| `docs/public/` | Published guides. Pages and slugs are `docs/manifest.json`. |
+| `docs/internal/` | Implementation plans and maintainer notes. Not published. |
+| `docs/agents/` | Agent-only working notes. Not published. |
+
+Local setup is [Development](docs/public/development.md). Do not add `docs/internal/` or `docs/agents/` paths to the publication manifest. URL slugs stay stable (`/docs/ts6-manager/latest/<slug>/`).
+
 ## Releases (Release Please)
 
 This repo uses [Release Please](https://github.com/googleapis/release-please) on pushes to `main`.
@@ -90,7 +100,7 @@ Do this **after** the last intended pre-release PR has landed, because a subsequ
 
 ### Local JavaScript toolchain
 
-CI uses Node.js 20 and pnpm 9. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major.
+CI uses Node.js 20 and pnpm 9. Local verification should stay on pnpm 9 until the workspace is deliberately migrated to a newer pnpm major. Commands and container setup are in [Development](docs/public/development.md).
 
 ```bash
 corepack enable

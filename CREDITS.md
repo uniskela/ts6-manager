@@ -82,4 +82,4 @@ Earlier upstream merges that remain in this tree (already present on `main` befo
 
 ## Not absorbed (intentionally)
 
-Large product expansions from [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (Discord bridge, SAML SSO/MFA suite, full multi-language UI) and related requests remain out of scope for this core-focused fork. See [docs/plans/opinionated-fork-roadmap.md](docs/plans/opinionated-fork-roadmap.md).
+Large product expansions from [PR #76](https://github.com/clusterzx/ts6-manager/pull/76) (Discord bridge, SAML SSO/MFA suite, full multi-language UI) and related requests remain out of scope for this core-focused fork. See [docs/internal/plans/opinionated-fork-roadmap.md](docs/internal/plans/opinionated-fork-roadmap.md).

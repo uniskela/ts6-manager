@@ -235,4 +235,4 @@ Tracking does not restrict an explicitly configured generic Delete Channel actio
 - [Security](security.md) — application and deployment security
 - [Architecture](architecture.md) — package and service layout
 - [Roadmap](roadmap.md) — public fork direction
-- [CREDITS.md](../CREDITS.md) — upstream and fork attribution
+- [CREDITS.md](../../CREDITS.md) — upstream and fork attribution

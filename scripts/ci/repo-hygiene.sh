@@ -58,6 +58,11 @@ if ! python3 "$ROOT/scripts/ci/check-pnpm-overrides.py"; then
   fail=1
 fi
 
+echo "==> docs public/internal/agents layout"
+if ! python3 "$ROOT/scripts/ci/check-docs-layout.py"; then
+  fail=1
+fi
+
 echo "==> Obsolete top-level version: in docker-compose*.yml"
 mapfile -t compose_files < <(git ls-files 'docker-compose*.yml' | sort)
 if ((${#compose_files[@]} == 0)); then

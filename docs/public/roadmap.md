@@ -71,7 +71,7 @@ Merged on `main` for the upcoming 1.10.0 release; tracked in [#164](https://gith
 - Shared URL handling and the media page and chat-handler splits are merged. Streaming adds H.264 NVENC and an optional **Stream YouTube videos directly** switch; AMD homelab validation uses VAAPI.
 - Channel banner images can be uploaded to Manager and used without a public image host ([#287](https://github.com/uniskela/ts6-manager/pull/287)).
 
-Operator detail: [Media bots](music-bots.md), [Bot flows](bot-flows.md), [Video streaming](video-streaming.md), [upgrade backup note](upgrading.md#upgrading-to-1100) and the [release-candidate smoke checklist](plans/164-1-10-0-rc-smoke.md).
+Operator detail: [Media bots](music-bots.md), [Bot flows](bot-flows.md), [Video streaming](video-streaming.md), [upgrade backup note](upgrading.md#upgrading-to-1100) and the [release-candidate smoke checklist](https://github.com/uniskela/ts6-manager/blob/main/docs/internal/plans/164-1-10-0-rc-smoke.md).
 
 ## Follow-up direction
 
@@ -79,7 +79,7 @@ Planned work remains intentionally separated into dedicated changes.
 
 ### Observability and operations — v1.8
 
-Tracked in [#91](https://github.com/uniskela/ts6-manager/issues/91). Acceptance evidence: [`docs/plans/91-slice-6-acceptance.md`](plans/91-slice-6-acceptance.md).
+Tracked in [#91](https://github.com/uniskela/ts6-manager/issues/91). Acceptance evidence: [91-slice-6-acceptance.md](https://github.com/uniskela/ts6-manager/blob/main/docs/internal/plans/91-slice-6-acceptance.md).
 
 Shipped on `main`:
 

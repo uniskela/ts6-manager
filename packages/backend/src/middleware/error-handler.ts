@@ -93,7 +93,7 @@ export class TeamSpeakLogviewIoError extends AppError {
       'TeamSpeak log file unavailable',
       `TeamSpeak could not read the server logfile (error ${tsCode}: ${tsMessage}). `
         + 'This is usually a log directory permission, lock, or rotation issue on the TeamSpeak host — not a Manager connection failure. '
-        + 'Retry once after a few seconds, or check the TeamSpeak logs volume/permissions (see docs/troubleshooting.md).',
+        + 'Retry once after a few seconds, or check the TeamSpeak logs volume/permissions (see docs/public/troubleshooting.md).',
       { reason: 'ts_logview_io' },
     );
     this.name = 'TeamSpeakLogviewIoError';

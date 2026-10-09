@@ -52,7 +52,7 @@ services:
       # Must match the backend mount — backend pre-downloads videos here and
       # ffmpeg in this container reads them back by the same path.
       - music-data:/data/music
-    # Optional: VAAPI hardware video encoding (Intel/AMD GPU). See docs/video-streaming.md.
+    # Optional: VAAPI hardware video encoding (Intel/AMD GPU). See docs/public/video-streaming.md.
     # devices:
     #   - /dev/dri:/dev/dri
     # Port 9800 (sidecar HTTP) is intentionally NOT published — backend reaches

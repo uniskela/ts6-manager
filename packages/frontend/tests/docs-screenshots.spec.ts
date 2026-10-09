@@ -1,7 +1,7 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
 import { fileURLToPath } from 'node:url';
 
-const docsDirectory = fileURLToPath(new URL('../../../docs/', import.meta.url));
+const docsDirectory = fileURLToPath(new URL('../../../docs/public/', import.meta.url));
 const updateScreenshots = process.env.UPDATE_DOCS_SCREENSHOTS === '1';
 
 async function signIn(page: Page, request: APIRequestContext) {

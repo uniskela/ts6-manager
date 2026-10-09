@@ -293,14 +293,14 @@ PR 14 uses `feat:`, not `feat!:`: old URLs redirect and no API changes, so a `!`
 
 ## 6. Docs
 
-- `docs/music-bots.md`: Bot Hub and console, Media Library tabs, shared playlists.
-- `docs/bot-flows.md`: Chat commands tab, built-in list, clash warnings.
-- `docs/video-streaming.md` and the IPTV section: starting from the console; filename sources via the Link tab.
-- `docs/video-streaming.md` and `docs/music-bots.md`: auto-stop chat notices, the 1-minute video warning and the switch that turns them off.
-- `docs/roadmap.md`: 1.10.0 entry.
-- `docs/music-bots.md`: bot avatars, the default avatar, and the server-group file-upload permission they need.
-- `docs/upgrading.md`: back up the database before upgrading to 1.10.0 (SQLite migrations: IPTV country/language columns, `IptvChannelPick` and the `MusicBot` avatar columns).
-- New `docs/plans/164-1-10-0-rc-smoke.md`, run in the homelab before the release PR merges (VAAPI on the AMD GPU; NVENC if #238 lands).
+- `docs/public/music-bots.md`: Bot Hub and console, Media Library tabs, shared playlists.
+- `docs/public/bot-flows.md`: Chat commands tab, built-in list, clash warnings.
+- `docs/public/video-streaming.md` and the IPTV section: starting from the console; filename sources via the Link tab.
+- `docs/public/video-streaming.md` and `docs/public/music-bots.md`: auto-stop chat notices, the 1-minute video warning and the switch that turns them off.
+- `docs/public/roadmap.md`: 1.10.0 entry.
+- `docs/public/music-bots.md`: bot avatars, the default avatar, and the server-group file-upload permission they need.
+- `docs/public/upgrading.md`: back up the database before upgrading to 1.10.0 (SQLite migrations: IPTV country/language columns, `IptvChannelPick` and the `MusicBot` avatar columns).
+- New `docs/internal/plans/164-1-10-0-rc-smoke.md`, run in the homelab before the release PR merges (VAAPI on the AMD GPU; NVENC if #238 lands).
 
 ## Acceptance
 

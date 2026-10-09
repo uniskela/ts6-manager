@@ -8,7 +8,7 @@
 
 **Tech Stack:** TypeScript monorepo (pnpm workspaces): `packages/backend` (Express, Prisma on SQLite, `node:test` via `tsx --test`), `packages/frontend` (React, Vite, TanStack Query, Playwright), `packages/common` (shared types).
 
-**Spec:** `docs/superpowers/specs/2026-10-02-bot-console-1-10-0-design.md` (read sections 1, 2 "Backend changes", 3 and 4 first). Phase 2 (PRs 7–16) gets its own plan after these land.
+**Spec:** `docs/internal/superpowers/specs/2026-10-02-bot-console-1-10-0-design.md` (read sections 1, 2 "Backend changes", 3 and 4 first). Phase 2 (PRs 7–16) gets its own plan after these land.
 
 ## Global Constraints
 
@@ -123,7 +123,7 @@
 - [ ] **Step 2:** Run. Expected: FAIL.
 - [ ] **Step 3:** Implement the backend changes; update `usePlaylists` callers to pass the selected server (`useServerStore().selectedConfigId` or the dialog's chosen server).
 - [ ] **Step 4:** Run tests, `pnpm typecheck`, Playwright. Expected: PASS.
-- [ ] **Step 5:** Add one line to `docs/music-bots.md` (Playlists section): "Playlists are shared by every media bot on the same TeamSpeak server." Commit, push, open the PR. Body notes the one visible change: `!playlist` may list more playlists than before.
+- [ ] **Step 5:** Add one line to `docs/public/music-bots.md` (Playlists section): "Playlists are shared by every media bot on the same TeamSpeak server." Commit, push, open the PR. Body notes the one visible change: `!playlist` may list more playlists than before.
 
 ### Task 5 (PR 5): `feat: announce auto-stops in chat with a 1-minute video warning`
 
@@ -156,7 +156,7 @@
 - [ ] **Step 3:** Run both test files. Expected: FAIL.
 - [ ] **Step 4:** Implement. Radio is `this._isStreaming` music (set by `playStream`). In the channel-empty music branch, read the switch via `await this.loadVideoSettings()`; in the video branch use `this._videoSettings`. Add `_noViewerWarnTimer`, cleared in `clearNoViewerTimer`.
 - [ ] **Step 5:** Run tests, `pnpm typecheck`. Expected: PASS.
-- [ ] **Step 6:** Add the switch to `VideoStreamDefaultsCard`. Document it in `docs/video-streaming.md` (auto-stop section) and `docs/music-bots.md`. Run Playwright. Commit, push, open the PR.
+- [ ] **Step 6:** Add the switch to `VideoStreamDefaultsCard`. Document it in `docs/public/video-streaming.md` (auto-stop section) and `docs/public/music-bots.md`. Run Playwright. Commit, push, open the PR.
 
 ### Task 6 (PR 6): `refactor: shared NowPlaying component for Bot Hub cards`
 

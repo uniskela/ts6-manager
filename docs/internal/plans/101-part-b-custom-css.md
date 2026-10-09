@@ -51,7 +51,7 @@ Leave Part A’s design intact. Prefer reviewable commits in one Part B PR.
 | Settings / layout | `packages/frontend/src/pages/Settings.tsx`, `packages/frontend/src/layouts/AppLayout.tsx` |
 | New helpers | Focused custom-CSS runtime/helper and editor component under `packages/frontend/src/` |
 | Tests | Production Playwright coverage + fixture server |
-| Docs | Security / PWA / recovery documentation under `docs/` |
+| Docs | Security / PWA / recovery documentation under `docs/public/` |
 
 Exact filenames may shift slightly; keep injection out of the inline theme bootstrap.
 

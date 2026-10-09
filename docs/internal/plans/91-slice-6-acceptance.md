@@ -39,7 +39,7 @@ This document records **demonstrated** behavior only. It is not a deferred test 
 | A Backgrounds + motion + intensity | **Shipped** | [#122](https://github.com/uniskela/ts6-manager/pull/122) |
 | B Custom CSS + `?safe-ui=1` | **Shipped** | [#128](https://github.com/uniskela/ts6-manager/pull/128) |
 
-Docs: [server-management](../server-management.md) (Appearance), [security](../security.md#appearance-custom-css), [troubleshooting](../troubleshooting.md#appearance-custom-css-made-the-ui-unusable).
+Docs: [server-management](../../public/server-management.md) (Appearance), [security](../../public/security.md#appearance-custom-css), [troubleshooting](../../public/troubleshooting.md#appearance-custom-css-made-the-ui-unusable).
 
 ---
 
@@ -63,7 +63,7 @@ Plan scenarios from [`91-slice-6-ops-polish.md`](91-slice-6-ops-polish.md). Cove
 
 | Behavior | Evidence |
 | --- | --- |
-| Journal pagination resets with connection/SID; capture Unknown / stale / current | `packages/frontend/tests/unit/history-status-consistency.test.ts`; `docs/server-management.md` |
+| Journal pagination resets with connection/SID; capture Unknown / stale / current | `packages/frontend/tests/unit/history-status-consistency.test.ts`; `docs/public/server-management.md` |
 | Logs gated on confirmed VS context; failed refresh never claims “up to date” | Same unit file + `packages/frontend/tests/logs.spec.ts` |
 | Audit failed refresh keeps rows with interrupted label; Live suppressed | Unit coverage + operator docs on Journal / Audit |
 
@@ -78,7 +78,7 @@ Plan scenarios from [`91-slice-6-ops-polish.md`](91-slice-6-ops-polish.md). Cove
 | Pinned image | `docker-compose.pr-test.yml` → `teamspeaksystems/teamspeak6-server:6.0.0-beta13` |
 | Compat workflow default | `.github/workflows/ts6-compat.yml` default tag `6.0.0-beta13` |
 | Native metrics fixture | `packages/backend/src/ts-client/__fixtures__/ts6-beta13-metrics.txt` (+ headers / meta); parser tests in `metrics-parse.test.ts` |
-| Operator docs | [teamspeak-compatibility.md](../teamspeak-compatibility.md), [troubleshooting.md](../troubleshooting.md) |
+| Operator docs | [teamspeak-compatibility.md](../../public/teamspeak-compatibility.md), [troubleshooting.md](../../public/troubleshooting.md) |
 
 Live pr-test smoke (restricted key, missing SSH, metrics fallback, logs 2052, journal coexistence) remains an operator checklist on a beta13 stack; it is not re-executed by this documentation PR.
 

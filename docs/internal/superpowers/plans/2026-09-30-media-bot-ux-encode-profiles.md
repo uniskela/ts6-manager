@@ -266,7 +266,7 @@ git commit -m "feat: unify Media Bot Play into split-button with last-used"
 **Files:**
 - Create: `packages/frontend/src/lib/encode-profiles.ts` (mirror backend constants for UI)
 - Modify: `packages/frontend/src/components/video/VideoStreamDefaultsCard.tsx`
-- Modify: docs snippets in `docs/video-streaming.md` / `docs/environment-variables.md` for profile + cpuUsed
+- Modify: docs snippets in `docs/public/video-streaming.md` / `docs/public/environment-variables.md` for profile + cpuUsed
 
 - [ ] **Step 1: UI**
 
