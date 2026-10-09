@@ -24,6 +24,7 @@ test('phone header keeps the connection and virtual server pickers visibly disti
 
   // Captions stay inside the triggers until `md`, where the selects get fixed widths.
   // At `sm` (640) the old side labels crushed the connection value down to a few pixels.
+  // Closeout for #316: at 390px the Bot Hub Connection and Virtual Server header does not overlap.
   for (const width of [375, 390, 640]) {
     await test.step(`${width}px`, async () => {
       await page.setViewportSize({ width, height: 844 });
