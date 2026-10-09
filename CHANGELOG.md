@@ -2,6 +2,13 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.10.2](https://github.com/uniskela/ts6-manager/compare/v1.10.1...v1.10.2) (2026-10-09)
+
+
+### Bug Fixes
+
+* **ci:** repair docs dispatch and frontend Trivy security gate ([#390](https://github.com/uniskela/ts6-manager/issues/390)) ([4160244](https://github.com/uniskela/ts6-manager/commit/416024405d0f1b2baa41c9c98920b97a088348c1))
+
 ## [1.10.1](https://github.com/uniskela/ts6-manager/compare/v1.10.0...v1.10.1) (2026-10-06)
 
 
