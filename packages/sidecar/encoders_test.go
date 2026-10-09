@@ -91,6 +91,36 @@ func TestH264EncoderArgsRepeatParameterSets(t *testing.T) {
 	}
 }
 
+// h264_amf takes a -header_spacing of at most 1000 frames and fails to start
+// on a larger one, which drops the stream to software encoding. A GOP that
+// long keeps AMF running and leaves the headers to the sidecar's cache.
+func TestAmfHeaderSpacingStaysWithinWhatFFmpegAccepts(t *testing.T) {
+	amf, _ := lookupEncoder("h264_amf")
+	cases := []struct {
+		gop  string
+		want string // "" for no -header_spacing at all
+	}{
+		{"1", "-header_spacing 1"},
+		{"1000", "-header_spacing 1000"},
+		{"1001", ""},
+		{"3000", ""},
+		{"0", ""},
+	}
+	for _, tc := range cases {
+		t.Setenv("VIDEO_GOP", tc.gop)
+		args := strings.Join(encoderArgs(amf, "2500k", false, 0), " ")
+		if !strings.Contains(args, "-g "+tc.gop) {
+			t.Errorf("VIDEO_GOP=%s: GOP not passed on: %s", tc.gop, args)
+		}
+		switch {
+		case tc.want == "" && strings.Contains(args, "header_spacing"):
+			t.Errorf("VIDEO_GOP=%s: header_spacing must be left out: %s", tc.gop, args)
+		case tc.want != "" && !strings.Contains(args, tc.want+" "):
+			t.Errorf("VIDEO_GOP=%s: args missing %q: %s", tc.gop, tc.want, args)
+		}
+	}
+}
+
 func TestLibvpxHoldsBitrateWithMinrate(t *testing.T) {
 	for _, id := range []string{"vp8", "vp9"} {
 		spec, _ := lookupEncoder(id)

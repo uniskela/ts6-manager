@@ -108,8 +108,8 @@ func (c *h264ParamCache) observe(payload []byte) {
 // prefixBefore returns SPS/PPS RTP packets to write ahead of pkt when pkt is
 // about to open a peer's stream gate but does not already carry both sets.
 // Timestamps and payload type match pkt; sequence numbers are placeholders —
-// Peer.nextVideoRTP assigns per-peer sequences so a restart cannot collide
-// with SRTP anti-replay. Returns nil when reinjection is unnecessary or the
+// Peer.nextVideoRTP numbers them per peer so a restart cannot collide with
+// SRTP anti-replay. Returns nil when reinjection is unnecessary or the
 // cache is incomplete.
 func (c *h264ParamCache) prefixBefore(pkt *rtp.Packet) []*rtp.Packet {
 	hasSPS := h264PayloadHasNAL(pkt.Payload, 7)
