@@ -69,7 +69,7 @@ jobs:
           app-id: ${{ vars.DOCS_SYNC_APP_ID }}
           private-key: ${{ secrets.DOCS_SYNC_APP_PRIVATE_KEY }}
           owner: uniskela
-          repositories: .com
+          repositories: com
           permission-contents: write
       - name: Notify versioned documentation receiver
         env:
@@ -80,7 +80,7 @@ jobs:
         run: |
           jq -n --arg repository "$SOURCE_REPO" --arg sha "$SOURCE_SHA" --arg ref "refs/heads/main" --arg release "$RELEASE_TAG" \
             '{event_type:"docs-source-updated",client_payload:{repository:$repository,sha:$sha,ref:$ref,release:$release}}' > "$RUNNER_TEMP/docs-dispatch.json"
-          gh api --method POST repos/uniskela/.com/dispatches --input "$RUNNER_TEMP/docs-dispatch.json"
+          gh api --method POST repos/uniskela/com/dispatches --input "$RUNNER_TEMP/docs-dispatch.json"
 
   # Context7 docs indexing follows an actual Release Please release, not every push.
   refresh-context7:
