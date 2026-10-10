@@ -83,3 +83,20 @@ test('moving without shuffle keeps the current track playing', () => {
   assert.equal(queue.current?.title, 'b');
   assert.equal(queue.move(0, 1.5), false);
 });
+
+test('rewind keeps items and makes the current one upcoming again', () => {
+  const q = new PlayQueue<{ id: string }>();
+  q.addMany([{ id: 'a' }, { id: 'b' }]);
+  q.next();
+  assert.equal(q.current?.id, 'a');
+  q.rewind();
+  assert.equal(q.current, null);
+  assert.equal(q.index, -1);
+  assert.deepEqual(q.upcoming().map((i) => i.id), ['a', 'b']);
+});
+
+test('accepts a non-music item type', () => {
+  const q = new PlayQueue<{ id: string; source: string }>();
+  q.add({ id: 'v1', source: 'https://example.test/a' });
+  assert.equal(q.next()?.source, 'https://example.test/a');
+});

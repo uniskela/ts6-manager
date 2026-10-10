@@ -16,14 +16,14 @@ function moveEntry<T>(list: T[], from: number, to: number): void {
   list.splice(to, 0, entry);
 }
 
-export class PlayQueue {
-  private items: QueueItem[] = [];
+export class PlayQueue<T extends { id: string } = QueueItem> {
+  private items: T[] = [];
   private currentIndex = -1;
   private _shuffle = false;
   private _repeat: RepeatMode = "off";
   private shuffleOrder: number[] = [];
 
-  get current(): QueueItem | null {
+  get current(): T | null {
     if (this.currentIndex < 0 || this.currentIndex >= this.items.length) {
       return null;
     }
@@ -47,7 +47,7 @@ export class PlayQueue {
     return this._shuffle;
   }
 
-  getAll(): QueueItem[] {
+  getAll(): T[] {
     if (this._shuffle) {
       return this.shuffleOrder.map((i) => this.items[i]);
     }
@@ -55,7 +55,7 @@ export class PlayQueue {
   }
 
   /** Tracks after the current index in display order (shuffle-aware). */
-  upcoming(limit?: number): QueueItem[] {
+  upcoming(limit?: number): T[] {
     const all = this.getAll();
     const start = Math.max(this.currentIndex + 1, 0);
     return limit == null ? all.slice(start) : all.slice(start, start + limit);
@@ -65,7 +65,7 @@ export class PlayQueue {
     return Math.max(this.length - Math.max(this.currentIndex + 1, 0), 0);
   }
 
-  add(item: QueueItem): void {
+  add(item: T): void {
     this.items.push(item);
     if (this._shuffle) {
       // Insert among upcoming items so appending never changes the current track.
@@ -75,7 +75,7 @@ export class PlayQueue {
     }
   }
 
-  addMany(items: QueueItem[]): void {
+  addMany(items: T[]): void {
     for (const item of items) {
       this.add(item);
     }
@@ -116,7 +116,12 @@ export class PlayQueue {
     this.shuffleOrder = [];
   }
 
-  next(): QueueItem | null {
+  /** Keep every item and make the current one upcoming again. */
+  rewind(): void {
+    this.currentIndex = -1;
+  }
+
+  next(): T | null {
     if (this.items.length === 0) return null;
 
     // Track repeat is handled by VoiceBot directly — here we just advance
@@ -137,13 +142,13 @@ export class PlayQueue {
     return this.current;
   }
 
-  playAt(index: number): QueueItem | null {
+  playAt(index: number): T | null {
     if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return null;
     this.currentIndex = index;
     return this.current;
   }
 
-  previous(): QueueItem | null {
+  previous(): T | null {
     if (this.items.length === 0) return null;
 
     this.currentIndex--;
