@@ -35,6 +35,9 @@ const (
 	backendAMF   = "amf"
 )
 
+// amfMaxHeaderSpacing is the largest -header_spacing h264_amf accepts.
+const amfMaxHeaderSpacing = 1000
+
 // Browsers do not list Constrained High, so a browser answers an offer of
 // h264ConstrainedHighFmtp alone with no video codec at all. These are the
 // H.264 variants offered to a browser on top of it.
@@ -255,13 +258,18 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 		args = []string{"-c:v", "h264_vaapi", "-profile:v", "high", "-bf", "0"}
 	case "h264_amf":
 		// AMF distinguishes Constrained High from High, even without B-frames.
-		// Default header_spacing is off (SPS/PPS once at start). Match -g /
-		// IDR period so every IDR carries fresh parameter sets for late joiners.
 		args = []string{
 			"-c:v", "h264_amf",
 			"-profile:v", "constrained_high",
 			"-bf", "0",
-			"-header_spacing", gop,
+		}
+		// Default header_spacing is off (SPS/PPS once at start). Match -g /
+		// IDR period so every IDR carries fresh parameter sets for late joiners.
+		// FFmpeg rejects a spacing above amfMaxHeaderSpacing and the encoder
+		// then fails to start; a longer GOP goes without, and the sidecar puts
+		// its cached SPS/PPS in front of a late joiner's IDR instead.
+		if n, err := strconv.Atoi(gop); err == nil && n >= 1 && n <= amfMaxHeaderSpacing {
+			args = append(args, "-header_spacing", gop)
 		}
 	case "h264_nvenc":
 		args = []string{

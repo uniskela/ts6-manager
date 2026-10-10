@@ -579,10 +579,12 @@ type Peer struct {
 	// pendingICE holds candidates that arrived before the viewer's answer;
 	// SetAnswer flushes them. Guarded by mu.
 	pendingICE []webrtc.ICECandidateInit
-	// videoOutSeq is the next RTP sequence number to write on VideoTrack.
-	// Guarded by mu. Survives stream-gate resets so an H.264 SPS/PPS prefix
-	// cannot reuse a sequence SRTP already accepted from this peer.
+	// videoOutSeq is the RTP sequence number last written on VideoTrack and
+	// videoInSeq the stream's own number for that packet. Guarded by mu. They
+	// survive stream-gate resets so an H.264 SPS/PPS prefix cannot reuse a
+	// sequence SRTP already accepted from this peer.
 	videoOutSeq   uint16
+	videoInSeq    uint16
 	videoOutSeqOK bool
 }
 
@@ -814,67 +816,89 @@ func (s *Sidecar) readAudioRTP() {
 func (s *Sidecar) processVideoRTP() {
 	for q := range s.videoQueue {
 		s.waitToSend("video", q)
-		pkt := q.pkt
-		codec := s.currentCodec()
-		if codec == codecH264 {
-			s.h264Params.observe(pkt.Payload)
-		}
-
-		s.peersLock.RLock()
-		for _, peer := range s.peers {
-			peer.mu.Lock()
-			// A peer negotiated for another codec cannot decode this stream.
-			active := peer.Active && peer.Codec == codec
-			started := peer.Started
-			track := peer.VideoTrack
-			opening := false
-
-			if active && !started && isKeyframeStart(codec, pkt.Payload) {
-				peer.Started = true
-				started = true
-				opening = true
-				log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", peer.ID, codec, pkt.Timestamp)
-			}
-
-			peer.mu.Unlock()
-
-			if active && started && track != nil {
-				var batch []*rtp.Packet
-				if opening && codec == codecH264 {
-					prefix := s.h264Params.prefixBefore(pkt)
-					batch = append(batch, prefix...)
-					debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
-				}
-				batch = append(batch, pkt)
-				for _, p := range batch {
-					peer.mu.Lock()
-					out := peer.nextVideoRTP(p)
-					peer.mu.Unlock()
-					if out != nil {
-						_ = track.WriteRTP(out)
-					}
-				}
-			}
-		}
-		s.peersLock.RUnlock()
+		s.forwardVideoRTP(q.pkt)
 	}
 }
 
-// nextVideoRTP clones pkt with a per-peer sequence number. Caller holds p.mu.
-// The first packet keeps its sequence; later packets increment from the last
-// one actually written, including injected H.264 parameter-set prefixes.
-func (p *Peer) nextVideoRTP(pkt *rtp.Packet) *rtp.Packet {
+// forwardVideoRTP writes one video packet to every viewer whose stream gate is
+// open, and opens the gate of a waiting viewer when pkt starts a keyframe.
+func (s *Sidecar) forwardVideoRTP(pkt *rtp.Packet) {
+	codec := s.currentCodec()
+	if codec == codecH264 {
+		s.h264Params.observe(pkt.Payload)
+	}
+
+	s.peersLock.RLock()
+	defer s.peersLock.RUnlock()
+	for _, peer := range s.peers {
+		peer.mu.Lock()
+		// A peer negotiated for another codec cannot decode this stream.
+		active := peer.Active && peer.Codec == codec
+		started := peer.Started
+		track := peer.VideoTrack
+		opening := false
+
+		if active && !started && isKeyframeStart(codec, pkt.Payload) && peer.canSendMedia() {
+			peer.Started = true
+			started = true
+			opening = true
+			log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", peer.ID, codec, pkt.Timestamp)
+		}
+
+		peer.mu.Unlock()
+
+		if active && started && track != nil {
+			var batch []*rtp.Packet
+			if opening && codec == codecH264 {
+				prefix := s.h264Params.prefixBefore(pkt)
+				batch = append(batch, prefix...)
+				debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
+			}
+			batch = append(batch, pkt)
+			for _, p := range batch {
+				peer.mu.Lock()
+				out := peer.nextVideoRTP(p, opening)
+				peer.mu.Unlock()
+				if out != nil {
+					_ = track.WriteRTP(out)
+				}
+			}
+		}
+	}
+}
+
+// canSendMedia reports whether packets written to the peer's tracks are sent.
+// ICE connects first and the DTLS handshake follows; until that is done Pion
+// has no SRTP session and drops what is written without an error. A gate
+// opened in between would spend the viewer's keyframe, and any SPS/PPS put in
+// front of it, on nothing.
+func (p *Peer) canSendMedia() bool {
+	return p.PC != nil && p.PC.ConnectionState() == webrtc.PeerConnectionStateConnected
+}
+
+// nextVideoRTP clones pkt with this peer's sequence number. Caller holds p.mu.
+// The first packet keeps its sequence. follow numbers a packet straight after
+// the last one written: it is set for the packets that open the gate (injected
+// H.264 parameter sets and the keyframe), so that neither the injected packets
+// nor what the peer missed while its gate was closed show as a loss or a
+// replay. Every other packet keeps its distance from the one before it, so a
+// packet lost on the way to the sidecar stays a gap the viewer can see.
+func (p *Peer) nextVideoRTP(pkt *rtp.Packet, follow bool) *rtp.Packet {
 	out := cloneRTPPacket(pkt)
 	if out == nil {
 		return nil
 	}
-	if !p.videoOutSeqOK {
-		p.videoOutSeq = out.SequenceNumber
+	switch {
+	case !p.videoOutSeqOK:
+		p.videoOutSeq = pkt.SequenceNumber
 		p.videoOutSeqOK = true
-	} else {
+	case follow:
 		p.videoOutSeq++
-		out.SequenceNumber = p.videoOutSeq
+	default:
+		p.videoOutSeq += pkt.SequenceNumber - p.videoInSeq
 	}
+	p.videoInSeq = pkt.SequenceNumber
+	out.SequenceNumber = p.videoOutSeq
 	return out
 }
 

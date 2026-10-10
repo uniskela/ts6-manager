@@ -105,7 +105,7 @@ func TestH264LateJoinPrefixInjectsSPSAndPPSBeforeIDR(t *testing.T) {
 	peer := &Peer{videoOutSeq: 100, videoOutSeqOK: true}
 	var seqs []uint16
 	for _, p := range append(prefix, idr) {
-		out := peer.nextVideoRTP(p)
+		out := peer.nextVideoRTP(p, true)
 		seqs = append(seqs, out.SequenceNumber)
 	}
 	if seqs[0] != 101 || seqs[1] != 102 || seqs[2] != 103 {

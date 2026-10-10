@@ -237,6 +237,90 @@ func TestFFmpegRTPKeyframeGate(t *testing.T) {
 	}
 }
 
+// TestFFmpegH264RepeatsParameterSets checks, on libx264's actual RTP output,
+// that every IDR frame comes with its own SPS and PPS. A viewer joining late
+// starts at whichever IDR is next, so the first one having them is not enough.
+// The hardware H.264 encoders need their GPU and are not covered here.
+func TestFFmpegH264RepeatsParameterSets(t *testing.T) {
+	if os.Getenv("SIDECAR_FFMPEG_IT") != "1" {
+		t.Skip("set SIDECAR_FFMPEG_IT=1 to run against a real ffmpeg")
+	}
+	if _, err := exec.LookPath(getFfmpegPath()); err != nil {
+		t.Skip("ffmpeg not found")
+	}
+	t.Setenv("VIDEO_GOP", "15")
+	spec, _ := lookupEncoder("h264")
+	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	_ = conn.SetReadBuffer(4 * 1024 * 1024)
+
+	s := NewSidecar()
+	s.videoPort = conn.LocalAddr().(*net.UDPAddr).Port
+	args := s.buildFFmpegArgs(SourceRequest{Width: 640, Height: 360, Framerate: 30, Bitrate: "800k", Volume: 100}, spec, false)
+	joined := strings.Join(args, "\x00")
+	joined = strings.Replace(joined, "color=c=black:s=640x360:r=1", "testsrc2=s=640x360:r=30:d=3", 1)
+	args = strings.Split(joined, "\x00")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, getFfmpegPath(), append([]string{"-hide_banner", "-v", "error"}, args...)...)
+	out := &tailBuffer{}
+	cmd.Stderr = out
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+
+	// NAL types seen so far in the frame being read, keyed by its timestamp.
+	var frameTS uint32
+	var sps, pps, idr bool
+	idrFrames, bare := 0, 0
+	buf := make([]byte, 1500)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := conn.Read(buf)
+		if err != nil {
+			break
+		}
+		var pkt rtp.Packet
+		if pkt.Unmarshal(buf[:n]) != nil {
+			continue
+		}
+		if pkt.Timestamp != frameTS {
+			frameTS, sps, pps, idr = pkt.Timestamp, false, false, false
+		}
+		for _, nal := range h264NALTypes(pkt.Payload) {
+			switch nal {
+			case 7:
+				sps = true
+			case 8:
+				pps = true
+			case 5:
+				// Sliced threads split one IDR frame into several slices.
+				if idr {
+					continue
+				}
+				idr = true
+				idrFrames++
+				if !sps || !pps {
+					bare++
+				}
+			}
+		}
+	}
+	// Three seconds at 30 fps with a 15-frame GOP is six IDR frames.
+	if idrFrames < 4 {
+		t.Fatalf("only %d IDR frames in the RTP output; ffmpeg said: %s", idrFrames, out.summary())
+	}
+	if bare != 0 {
+		t.Fatalf("%d of %d IDR frames came without SPS and PPS ahead of them", bare, idrFrames)
+	}
+	t.Logf("%d IDR frames, each with SPS and PPS", idrFrames)
+}
+
 func TestFFmpegEncoderProbe(t *testing.T) {
 	if os.Getenv("SIDECAR_FFMPEG_IT") != "1" {
 		t.Skip("set SIDECAR_FFMPEG_IT=1 to run against a real ffmpeg")
