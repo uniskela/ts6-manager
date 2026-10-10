@@ -12,6 +12,36 @@ To stream a file already under `MUSIC_DIR`, enter its plain filename in **Link**
 
 Opening a console or following an IPTV link only selects a source; press **Stream** to start it.
 
+## Queue videos and playlists
+
+A bot can play several videos back to back on one stream.
+
+**Queue a video.** While a video is streaming on the bot, the button in **Link** reads **Queue as video**. It adds the source to **Up next** instead of replacing what is playing. The video that is already streaming keeps playing, and the queued ones follow it.
+
+**Queue a YouTube playlist.** Paste a playlist link, one with `list=` and no `v=`, and choose **Stream as video**. Every video is added in playlist order. If nothing is streaming, the first one starts. A link to a single video that also carries `&list=` adds that video only. One link adds up to 25 videos and the queue holds up to 100; the confirmation says *(first 25)* when a playlist was cut, and a full queue refuses new videos until you remove some.
+
+**What Up next shows.** While a video streams, **Up next** lists the queued videos. Drag a row to reorder it, press play on a row to switch to it now, or remove it. **Skip** moves to the next video and stops the stream after the last one. **Clear** empties the list and leaves the playing video alone. There is no shuffle or repeat for videos. If music is also queued on the bot, it waits as one line under the list with its own **Play queue**.
+
+**Moving to the next video.** When a video ends, the bot switches the running stream to the next one. Viewers stay connected and the quality, encoder and no-viewer timeout of the stream carry over. There is a short gap while the next video loads. A queue nobody watches still stops after the no-viewer timeout, because the countdown belongs to the stream and not to each video.
+
+Live sources never end by themselves, so a live entry plays until you press **Skip**. A video that cannot be played is skipped, and the bot says so in the channel: `Skipped "<title>": could not play it.` After three failures in a row the stream stops and the remaining videos stay queued.
+
+**What a stop does to the queue.**
+
+| The stream stops because | The queue |
+|---|---|
+| you pressed **Stop stream** | is cleared |
+| the last queued video ended | is empty |
+| nobody watched, or the channel was empty | is kept, with the interrupted video first |
+| music or another bot's stream replaced it | is kept |
+| the sidecar failed, the bot was stopped, or TeamSpeak disconnected | is kept |
+
+A kept queue shows *Up next (n) is kept. Nothing is streaming.* Press **Play queue** to start it again with the quality and encoder the session used before.
+
+**Restarts and disconnects.** The queue is saved in the database (table `VideoQueueEntry`, created by the startup schema step) and is still there after the backend restarts. Nothing starts by itself: press **Play queue**. A bot that loses its TeamSpeak connection while streaming now stops the stream with the reason *server disconnect* before it reconnects, and keeps the queue.
+
+Queueing is a console feature. In chat, `!stream` on a bot that is already streaming still switches the source at once.
+
 ## Supported inputs
 
 The streaming path can accept supported YouTube, Twitch, direct media URLs, local video files, and IPTV sources.

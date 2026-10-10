@@ -112,6 +112,8 @@ Continue runtime testing for long-track memory use, seek/repeat/queue behavior, 
 
 Continue validating quality presets, source compatibility, and sidecar/media transport behavior against current TeamSpeak and browser versions.
 
+Queued videos and YouTube playlist streaming ([#253](https://github.com/uniskela/ts6-manager/issues/253) Slice 3) are implemented for the next release: a bot plays queued videos back to back on one stream, and the queue survives a restart. Starting a kept queue stays a manual action; unattended resume belongs to the Auto-DJ slice. Operator detail: [Video streaming — Queue videos and playlists](video-streaming.md#queue-videos-and-playlists).
+
 ## Explicit scope boundaries
 
 The fork currently does not plan to adopt features that weaken the sidecar/encryption boundaries or turn TS6 Manager into a general container orchestrator.
