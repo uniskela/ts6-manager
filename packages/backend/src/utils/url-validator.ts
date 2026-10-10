@@ -10,52 +10,43 @@ const BLOCKED_HOSTNAMES = new Set([
 const CLOUD_METADATA_IPS = new Set([
   '169.254.169.254',  // AWS, GCP, Azure
   'fd00:ec2::254',    // AWS IPv6
+  '100.100.100.200',  // NOSONAR: Alibaba's fixed metadata endpoint belongs in the SSRF denylist.
 ]);
 
-/**
- * Check if an IP address is in a private/reserved range.
- */
-export function isPrivateIP(ip: string): boolean {
-  // IPv4
-  const parts = ip.split('.');
-  if (parts.length === 4) {
-    const [a, b] = parts.map(Number);
-    if (a === 10) return true;                           // 10.0.0.0/8
-    if (a === 172 && b >= 16 && b <= 31) return true;    // 172.16.0.0/12
-    if (a === 192 && b === 168) return true;              // 192.168.0.0/16
-    if (a === 127) return true;                           // 127.0.0.0/8
-    if (a === 169 && b === 254) return true;              // 169.254.0.0/16 (link-local)
-    if (a === 0) return true;                             // 0.0.0.0/8
-  }
+// BlockList compares address bytes, including compressed/expanded IPv6 and
+// IPv4-mapped IPv6, so alternate spellings cannot change the policy.
+const neverAllowedIPs = new BlockList();
+for (const ip of CLOUD_METADATA_IPS) {
+  neverAllowedIPs.addAddress(ip, isIP(ip) === 6 ? 'ipv6' : 'ipv4');
+}
+for (const [ip, prefix] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4]] as const) { // NOSONAR: Fixed reserved ranges define the SSRF denylist.
+  neverAllowedIPs.addSubnet(ip, prefix, 'ipv4');
+}
+neverAllowedIPs.addAddress('::', 'ipv6');
+neverAllowedIPs.addAddress('::1', 'ipv6');
+neverAllowedIPs.addSubnet('fe80::', 10, 'ipv6'); // NOSONAR: IPv6 link-local range is always denied.
+neverAllowedIPs.addSubnet('ff00::', 8, 'ipv6'); // NOSONAR: IPv6 multicast range is always denied.
 
-  // IPv6
-  const lower = ip.toLowerCase();
-  if (lower === '::1') return true;                       // loopback
-  if (lower.startsWith('fe80:')) return true;              // link-local
-  if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // unique local
-  if (lower.startsWith('::ffff:')) {                      // IPv4-mapped IPv6
-    const mapped = lower.slice(7);
-    return isPrivateIP(mapped);
-  }
+const localIPs = new BlockList();
+for (const [ip, prefix] of [['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['100.64.0.0', 10]] as const) { // NOSONAR: Fixed private/shared ranges require operator approval.
+  localIPs.addSubnet(ip, prefix, 'ipv4');
+}
+localIPs.addSubnet('fc00::', 7, 'ipv6'); // NOSONAR: IPv6 unique-local range requires operator approval.
 
-  return false;
+function inBlockList(blocks: BlockList, ip: string): boolean {
+  const addr = ip.replace(/^\[|\]$/g, '');
+  const family = isIP(addr);
+  return family !== 0 && blocks.check(addr, family === 6 ? 'ipv6' : 'ipv4');
 }
 
-/**
- * Private addresses no allowlist can open: loopback, link-local, "this
- * network" and cloud metadata. From inside a container, loopback is the
- * container itself, never the LAN device an operator means.
- */
+/** Private/reserved and shared-address-space addresses need operator approval. */
+export function isPrivateIP(ip: string): boolean {
+  return isNeverAllowedIP(ip) || inBlockList(localIPs, ip);
+}
+
+/** Known metadata, loopback, link-local, unspecified and multicast are always denied. */
 export function isNeverAllowedIP(ip: string): boolean {
-  const lower = ip.toLowerCase().replace(/^\[|\]$/g, '');
-  if (CLOUD_METADATA_IPS.has(lower)) return true;
-  if (lower.startsWith('::ffff:')) return isNeverAllowedIP(lower.slice(7));
-  const parts = lower.split('.');
-  if (parts.length === 4) {
-    const [a, b] = parts.map(Number);
-    return a === 127 || a === 0 || (a === 169 && b === 254);
-  }
-  return lower === '::1' || lower === '::' || lower.startsWith('fe80:');
+  return inBlockList(neverAllowedIPs, ip);
 }
 
 /**
@@ -169,22 +160,32 @@ export async function validateUrl(
   const allowlist = options.localAllowlist;
   const literal = hostname.replace(/^\[|\]$/g, '');
 
+  // Unconditional denial precedes operator LAN allowances.
+  if (isNeverAllowedIP(literal)) {
+    return { valid: false, error: 'Reserved or cloud metadata IP addresses are blocked' };
+  }
+
   // Check if hostname is a literal IP
   if (isPrivateIP(literal)) {
     if (allowlist?.permits(hostname, literal)) return { valid: true };
     return { valid: false, error: 'Private/reserved IP addresses are blocked' };
   }
 
-  // DNS resolution check (prevents DNS rebinding)
+  if (isIP(literal)) return { valid: true };
+
+  // Precheck every DNS answer. The sidecar pins and rechecks the address at
+  // connection time, including redirects and HLS requests.
   if (!options.skipDnsCheck) {
     try {
-      const { address } = await lookup(hostname);
-      if (isPrivateIP(address)) {
-        if (allowlist?.permits(hostname, address)) return { valid: true };
-        return { valid: false, error: `Hostname "${hostname}" resolves to a private IP (${address})` };
-      }
-      if (CLOUD_METADATA_IPS.has(address)) {
-        return { valid: false, error: `Hostname "${hostname}" resolves to a cloud metadata IP` };
+      const addresses = await lookup(hostname, { all: true });
+      if (addresses.length === 0) throw new Error('No DNS answers');
+      for (const { address } of addresses) {
+        if (isNeverAllowedIP(address)) {
+          return { valid: false, error: `Hostname "${hostname}" resolves to a reserved or cloud metadata IP` };
+        }
+        if (isPrivateIP(address) && !allowlist?.permits(hostname, address)) {
+          return { valid: false, error: `Hostname "${hostname}" resolves to a private IP (${address})` };
+        }
       }
     } catch {
       // Fail closed: unresolved hostnames must not bypass SSRF checks

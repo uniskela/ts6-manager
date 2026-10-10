@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"golang.org/x/net/dns/dnsmessage"
 )
 
 func TestEgressPolicyCheck(t *testing.T) {
@@ -46,6 +49,23 @@ func TestEgressPolicyCheck(t *testing.T) {
 		{"other private host", []string{"192.168.1.20"}, "x", "10.0.0.5", false},
 		{"allowlist cannot open loopback", []string{"127.0.0.1", "localhost"}, "localhost", "127.0.0.1", false},
 		{"allowlist cannot open metadata", []string{"169.254.0.0/16"}, "x", "169.254.169.254", false},
+		{"shared lower bound", nil, "x", "100.64.0.0", false},
+		{"shared upper bound", nil, "x", "100.127.255.255", false},
+		{"before shared range", nil, "x", "100.63.255.255", true},
+		{"after shared range", nil, "x", "100.128.0.0", true},
+		{"shared mapped", nil, "x", "::ffff:6440:1", false},
+		{"shared listed ip", []string{"100.64.0.10"}, "x", "100.64.0.10", true},
+		{"shared listed cidr", []string{"100.64.0.0/10"}, "x", "100.127.255.255", true},
+		{"shared listed host", []string{"media.lan"}, "media.lan", "100.64.0.10", true},
+		{"shared mapped listed", []string{"100.64.0.0/10"}, "x", "::ffff:6440:1", true},
+		{"shared other host", []string{"media.lan"}, "other.lan", "100.64.0.10", false},
+		{"metadata shared", nil, "x", "100.100.100.200", false},
+		{"metadata listed ip", []string{"100.100.100.200"}, "x", "100.100.100.200", false},
+		{"metadata listed cidr", []string{"100.64.0.0/10"}, "x", "100.100.100.200", false},
+		{"metadata listed host", []string{"media.lan"}, "media.lan", "100.100.100.200", false},
+		{"metadata mapped", []string{"100.64.0.0/10", "media.lan"}, "media.lan", "::ffff:6464:64c8", false},
+		{"metadata v6 listed", []string{"fd00::/16", "media.lan"}, "media.lan", "fd00:0ec2:0:0:0:0:0:0254", false},
+		{"private v6 listed", []string{"fd12::/16"}, "x", "fd12::1", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,6 +78,134 @@ func TestEgressPolicyCheck(t *testing.T) {
 				t.Fatalf("expected blocked, got %v", err)
 			}
 		})
+	}
+}
+
+// Use loopback DNS fixtures; no test connects to a real metadata or shared IP.
+// Later A lookups return only blocked addresses to detect an unpinned redial.
+func useEgressDNS(t *testing.T, answers []string) *atomic.Int32 {
+	t.Helper()
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var queries atomic.Int32
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		for {
+			n, addr, err := server.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			var req dnsmessage.Message
+			if err := req.Unpack(buf[:n]); err != nil {
+				t.Errorf("DNS query: %v", err)
+				continue
+			}
+			res := dnsmessage.Message{Header: dnsmessage.Header{ID: req.ID, Response: true, RecursionAvailable: true}, Questions: req.Questions}
+			for _, q := range req.Questions {
+				ips := answers
+				if q.Type == dnsmessage.TypeA && queries.Add(1) > 1 {
+					ips = []string{"100.100.100.200"}
+				}
+				res.Answers = append(res.Answers, egressDNSAnswers(q, ips)...)
+			}
+			packet, err := res.Pack()
+			if err != nil {
+				t.Errorf("DNS response: %v", err)
+				continue
+			}
+			if _, err := server.WriteTo(packet, addr); err != nil {
+				return
+			}
+		}
+	}()
+	previous := net.DefaultResolver
+	net.DefaultResolver = &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "udp", server.LocalAddr().String())
+	}}
+	t.Cleanup(func() { net.DefaultResolver = previous; server.Close(); <-done })
+	return &queries
+}
+
+func egressDNSAnswers(q dnsmessage.Question, ips []string) []dnsmessage.Resource {
+	var answers []dnsmessage.Resource
+	for _, raw := range ips {
+		ip := net.ParseIP(raw)
+		h := dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 0}
+		if ip4 := ip.To4(); ip4 != nil && q.Type == dnsmessage.TypeA {
+			h.Type = dnsmessage.TypeA
+			answers = append(answers, dnsmessage.Resource{Header: h, Body: &dnsmessage.AResource{A: [4]byte(ip4)}})
+		} else if ip.To4() == nil && q.Type == dnsmessage.TypeAAAA {
+			h.Type = dnsmessage.TypeAAAA
+			answers = append(answers, dnsmessage.Resource{Header: h, Body: &dnsmessage.AAAAResource{AAAA: [16]byte(ip.To16())}})
+		}
+	}
+	return answers
+}
+
+func TestEgressDialRejectsMetadataDNSWithAllowlist(t *testing.T) {
+	for _, ip := range []string{"100.100.100.200", "fd00:ec2::254", "::ffff:6464:64c8"} {
+		t.Run(ip, func(t *testing.T) {
+			useEgressDNS(t, []string{ip})
+			p := &egressPolicy{allow: parseHostAllowlist([]string{"media.example", "100.64.0.0/10", "fd00::/16"})}
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			conn, err := p.dial(ctx, "tcp", "media.example:80")
+			if conn != nil {
+				conn.Close()
+				t.Fatal("metadata DNS answer was dialed")
+			}
+			if !errors.Is(err, errEgressBlocked) {
+				t.Fatalf("expected blocked before dial, got %v", err)
+			}
+		})
+	}
+}
+
+func TestEgressDialPinsAllowedAnswerAmongBlockedDNSAnswers(t *testing.T) {
+	for _, ips := range [][]string{
+		{"100.100.100.200", "100.64.0.10", "127.0.0.1"},
+		{"127.0.0.1", "100.100.100.200", "fd00:ec2::254"},
+	} {
+		t.Run(strings.Join(ips, ","), func(t *testing.T) {
+			queries := useEgressDNS(t, ips)
+			srv := startServerOn(t, allowedTestIP, false, okHandler("pinned"))
+			_, port, _ := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			conn, err := testPolicy(allowedTestIP).dial(ctx, "tcp", net.JoinHostPort("media.example", port))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if !conn.RemoteAddr().(*net.TCPAddr).IP.Equal(allowedTestIP) {
+				t.Fatalf("connected to %v", conn.RemoteAddr())
+			}
+			if queries.Load() != 1 {
+				t.Fatalf("hostname was resolved again: %d A queries", queries.Load())
+			}
+		})
+	}
+}
+
+func TestEgressProxyRejectsMetadataRedirectWithAllowlist(t *testing.T) {
+	useEgressDNS(t, []string{"100.100.100.200"})
+	origin := startServerOn(t, allowedTestIP, false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://media.example/live.m3u8", http.StatusFound)
+	}))
+	policy := testPolicy(allowedTestIP)
+	policy.allow = parseHostAllowlist([]string{"media.example", "100.64.0.0/10"})
+	proxy := startTestProxy(t, policy)
+	resp, err := proxiedClient(proxy, true).Get(origin.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("redirect status %d, want 403", resp.StatusCode)
 	}
 }
 
@@ -353,13 +501,19 @@ func TestFFprobeThroughEgress(t *testing.T) {
 		switch r.URL.Path {
 		case "/redirect.m3u8":
 			http.Redirect(w, r, blocked.URL+"/index.m3u8", http.StatusFound)
-		case "/remote-segments.m3u8":
+		case "/metadata-redirect.m3u8":
+			http.Redirect(w, r, "http://media.example/index.m3u8", http.StatusFound)
+		case "/remote-segments.m3u8", "/metadata-segments.m3u8":
 			// The playlist is on the allowed host; its segments are not.
 			raw, _ := os.ReadFile(filepath.Join(dir, "index.m3u8"))
 			var b strings.Builder
 			for _, line := range strings.Split(string(raw), "\n") {
 				if strings.HasSuffix(line, ".ts") {
-					line = blocked.URL + "/" + line
+					if r.URL.Path == "/metadata-segments.m3u8" {
+						line = "http://media.example/" + line
+					} else {
+						line = blocked.URL + "/" + line
+					}
 				}
 				b.WriteString(line + "\n")
 			}
@@ -419,6 +573,27 @@ func TestFFprobeThroughEgress(t *testing.T) {
 			t.Fatal("segment host was reached")
 		}
 	})
+	for _, path := range []string{"/metadata-redirect.m3u8", "/metadata-segments.m3u8"} {
+		t.Run(path, func(t *testing.T) {
+			denials := &tailBuffer{}
+			previousLog := log.Writer()
+			log.SetOutput(denials)
+			t.Cleanup(func() { log.SetOutput(previousLog) })
+			queries := useEgressDNS(t, []string{"100.100.100.200"})
+			policy := testPolicy(allowedTestIP)
+			policy.allow = parseHostAllowlist([]string{"media.example", "100.64.0.0/10"})
+			if _, err := probeRemoteSource(context.Background(), origin.URL+path, policy); err == nil {
+				t.Fatal("probe accepted metadata media despite unconditional deny")
+			}
+			if queries.Load() == 0 {
+				t.Fatal("ffprobe did not request the secondary host through the proxy")
+			}
+			if !denials.contains("[Egress] Blocked connection: destination not allowed: media.example") {
+				t.Fatal("ffprobe failed without the proxy rejecting the metadata destination")
+			}
+		})
+	}
+
 	t.Run("segments and redirects go through the proxy", func(t *testing.T) {
 		// Same sources with both addresses permitted: they now load, so the
 		// blocked cases above failed because of the policy, not the setup.
