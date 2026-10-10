@@ -24,7 +24,7 @@ function findByName(bots: ChannelBot[], name: string): ChannelBot | undefined {
 /** Commands without arguments, where a bare bot name (`!next Bot 2`) can only be a target. */
 export const NO_ARG_COMMANDS: ReadonlySet<string> = new Set([
   'help', 'commands', 'stop', 'pause', 'skip', 'next', 'voteskip', 'prev',
-  'np', 'nowplaying', 'stopstream', 'viewers',
+  'np', 'nowplaying', 'stopstream', 'viewers', 'remote',
 ]);
 
 /**

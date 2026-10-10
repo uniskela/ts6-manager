@@ -14,11 +14,13 @@ import * as info from './info.js';
 import * as summon from './summon.js';
 import * as dedupe from './dedupe.js';
 import { findSongForQuery } from '../audio/youtube.js';
+import type { ListenerRemoteService } from '../listener-remote.js';
 
 /** Stable facade for voice and SSH chat commands. Implementations live in the command groups. */
 export class MusicCommandHandler {
   private registeredBots = new Set<number>();
   private eventBridge: EventBridge | null = null;
+  private listenerRemote: ListenerRemoteService | null = null;
   private flowCommandLookup: FlowCommandLookup | null = null;
   private eventBridgeListening = false;
   private botChannelConfig = new Map<number, BotChannelConfig>();
@@ -51,6 +53,7 @@ export class MusicCommandHandler {
       get voiceBotManager() { return handler.voiceBotManager; },
       get registeredBots() { return handler.registeredBots; },
       get eventBridge() { return handler.eventBridge; },
+      get listenerRemote() { return handler.listenerRemote; },
       set eventBridge(value) { handler.eventBridge = value; },
       get flowCommandLookup() { return handler.flowCommandLookup; },
       get eventBridgeListening() { return handler.eventBridgeListening; },
@@ -143,6 +146,10 @@ export class MusicCommandHandler {
     return routing.setEventBridge(this.context, bridge);
   }
 
+  setListenerRemote(service: ListenerRemoteService): void {
+    this.listenerRemote = service;
+  }
+
   refreshAllBotChannels(): Promise<void> {
     return channelOwnership.refreshAllBotChannels(this.context);
   }
@@ -200,6 +207,7 @@ export class MusicCommandHandler {
   }
 
   unregisterBot(botId: number): void {
+    this.listenerRemote?.revoke(botId);
     return channelOwnership.unregisterBot(this.context, botId);
   }
 

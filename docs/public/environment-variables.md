@@ -11,7 +11,8 @@
 | `JWT_ACCESS_EXPIRY` | `15m` | Access-token lifetime |
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh-token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | Allowed frontend/CORS origin |
-| `PUBLIC_URL` | — | Address TeamSpeak clients use to reach the manager (e.g. `https://ts6.example.com`); hosted channel banner links start with it. A **Public URL** saved in the UI overrides it |
+| `PUBLIC_URL` | — | Address TeamSpeak clients use to reach the manager (e.g. `https://ts6.example.com`); hosted channel banners and listener remote links start with it. A **Public URL** saved in the UI overrides it. Listener remote requires HTTPS (development loopback HTTP is allowed) |
+| `TRUST_PROXY` | unset (no forwarded-header trust) | Comma-separated trusted proxy IPs/CIDRs or Express subnet names, e.g. `loopback` for all-in-one nginx. Set only to the proxy chain that can reach the backend; see [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits) |
 | `MUSIC_DIR` | `/data/music` | Downloaded/local music directory |
 | `BOT_AUTO_STOP_EMPTY_SECONDS` | `300` | Stop music or video when the bot's channel stays empty this long; `0` disables (including bots created in the UI). A video stream with at least one TeamSpeak viewer is exempt; the no-viewer timeout still applies |
 | `SIDECAR_URL` | — | Optional media-sidecar URL, normally `http://ts6-sidecar:9800` in split Docker. For a native Windows sidecar with a Docker Desktop backend, use `http://host.docker.internal:9800`; otherwise use the Windows host's private address |

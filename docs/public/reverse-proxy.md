@@ -72,3 +72,43 @@ If the preview stays on “Connecting to stream…” and then reports an ICE fa
 ## TLS
 
 Terminate HTTPS at the reverse proxy unless you have a different deliberate architecture. Keep TeamSpeak Query and sidecar management endpoints restricted to trusted/internal networks.
+
+## Listener remote and client IP limits
+
+The listener remote backend generates private `!remote` links using **Settings
+→ Public URL**, falling back to `PUBLIC_URL`. Set an HTTPS URL reachable from
+listeners' phones. An optional path prefix is preserved; the proxy must strip
+that prefix consistently for both the frontend and `/api/` routes. Links never
+derive their origin from a request's `Host` or forwarded headers.
+
+The controller is a separate frontend task. Until that ships, the links target
+`/remote` but the backend endpoints can be integrated using the T05 contract
+at `docs/internal/listener-remote-api.md` in the source repository.
+
+Set `TRUST_PROXY` on the backend to **only** the IPs or subnets of your actual
+reverse proxies. It now defaults to no forwarded-header trust: without it,
+rate limits see the immediate proxy rather than individual listeners. For
+all-in-one nginx use `TRUST_PROXY=loopback`. For split Docker use the dedicated
+proxy network CIDR; if an outer proxy is present, also trust its address/CIDR
+so Express can walk the forwarded chain to the first untrusted client. Broad
+shared Docker networks are inappropriate when untrusted containers can connect
+to the backend. Pass the value through your backend service's environment.
+
+At the outermost proxy, **overwrite** `X-Forwarded-For` with `$remote_addr` and
+`X-Forwarded-Proto` with `$scheme`. Inner trusted proxies may append their
+observed address. Keep the backend private so callers cannot bypass that chain.
+Do not set proxy trust to `true` or a numeric hop count when paths can have
+different lengths. The configured Public URL and IP limits work independently
+of TLS termination at the proxy.
+
+Disable request-body and Authorization-header logging on this API. Link tokens
+are in URL fragments, consumed once by a POST; browsers must remove the
+fragment immediately. Do not cache `/api/listener-remote/` responses. Audit rows
+contain actions, bot/scope, outcomes and an identity fingerprint, never access
+credentials or pasted URLs.
+
+Run one backend replica: tokens, sessions and limits are bounded, process-local
+state and disappear on restart. Tokens last five minutes, sessions fifteen
+minutes absolutely. Leaving the bot channel or revocation invalidates access.
+Admins can revoke access through the documented API. No sidecar or database
+ports need publication for this feature.
