@@ -360,6 +360,26 @@ describe('video queue: controls', () => {
     assert.deepEqual(sources(state.upNext), [url(4)]);
   });
 
+  it('a finish reported while a skip is swapping does not skip the next video', async () => {
+    const h = harness();
+    await h.controller.enqueue(videos(3));
+    let release!: () => void;
+    h.bot.gate = () => new Promise<void>((resolve) => { release = resolve; });
+    const skip = h.controller.skip();
+    await new Promise((resolve) => setImmediate(resolve));
+    // The old clip runs out (end timer or encoder exit) while video 2 is still loading.
+    const finished = h.controller.onSourceFinished('source_ended', null);
+    const again = h.controller.onSourceFinished('source_ended', null);
+    h.bot.gate = null;
+    release();
+    await skip;
+    assert.equal(await finished, true);
+    assert.equal(await again, true);
+    assert.deepEqual(sources(h.bot.setCalls), [url(2)]);
+    assert.equal(h.controller.snapshot().current?.source, url(2));
+    assert.deepEqual(sources(h.controller.snapshot().upNext), [url(3)]);
+  });
+
   it('remove, move and playAt use upcoming indexes and never touch current', async () => {
     const h = harness();
     await h.controller.enqueue(videos(5));

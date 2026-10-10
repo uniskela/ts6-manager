@@ -82,6 +82,8 @@ export class VideoQueueController {
   private readonly lane = new PlayQueue<VideoQueueItem>();
   private options: VideoQueueSessionOptions | null = null;
   private failures = 0;
+  /** True while an advance is replacing the source on the running stream. */
+  private swapping = false;
   /** Every mutating operation is chained here so two never interleave. */
   private tail: Promise<void> = Promise.resolve();
 
@@ -218,8 +220,15 @@ export class VideoQueueController {
 
   /** True when the controller advanced and the caller must not stop the stream. */
   onSourceFinished(reason: MediaStopReason, _detail: string | null): Promise<boolean> {
+    // The report is about the video playing right now. By the time it reaches
+    // the front of the chain a skip or an earlier report may have moved on.
+    // While a swap is in flight the lane already points at the incoming video.
+    const finishedId = this.swapping ? undefined : this.lane.current?.id ?? null;
     return this.run(async () => {
       const current = this.lane.current;
+      if (finishedId === undefined || (finishedId !== null && current?.id !== finishedId)) {
+        return current !== null && this.deps.bot.videoStreaming;
+      }
       if (!current || this.lane.upcomingCount === 0) return false;
       if (reason === 'source_unreachable' || reason === 'encoder_failure') {
         this.noteFailure(current);
@@ -322,6 +331,15 @@ export class VideoQueueController {
    * The caller persists afterwards (giving up persists itself, before the stop).
    */
   private async advance(): Promise<AdvanceResult> {
+    this.swapping = true;
+    try {
+      return await this.swapToNext();
+    } finally {
+      this.swapping = false;
+    }
+  }
+
+  private async swapToNext(): Promise<AdvanceResult> {
     const { bot } = this.deps;
     if (this.lane.index === 0) this.lane.removeAt(0);
     while (this.lane.length > 0) {
