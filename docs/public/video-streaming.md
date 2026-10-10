@@ -62,7 +62,7 @@ If a hardware encoder cannot open the device or exits during startup, the sideca
 
 2. The sidecar and all-in-one images include Mesa's VAAPI driver (`mesa-va-drivers`, AMD and older Intel) and, on amd64, Intel's `intel-media-va-driver`. For the all-in-one image, pass `/dev/dri` to that container instead.
 3. Open *Streaming defaults* → **Check encoders** and confirm the VAAPI rows pass. Set `VAAPI_DEVICE` if your render node is not `/dev/dri/renderD128`.
-4. Optionally set `VIDEO_HW_DECODE=1` to decode on the GPU too.
+4. Optionally set `VIDEO_HW_DECODE=1` to decode on the GPU too. The decoded frames then stay on the GPU: they are scaled with `scale_vaapi` and go straight to the encoder, with no copy through system memory. That is the fast path: on an Intel Pentium Gold 8505 (UHD Graphics), 4K60 VP9 to 1080p ran at about 6× real time and 65 % sidecar CPU, against 3× and 384 % when decoding on the CPU (the default). A source the GPU cannot decode still streams; it is decoded on the CPU and uploaded. There is no padding on this path: a source that is not 16:9 keeps its own shape inside the preset (a 4:3 source as 1440×1080 at 1080p), and the TeamSpeak client draws the bars. `VIDEO_GPU_FILTERS=0` turns it off.
 
 ### Enabling NVENC (NVIDIA GPUs)
 

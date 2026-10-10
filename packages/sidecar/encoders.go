@@ -143,6 +143,22 @@ func hwDecodeEnabled() bool {
 	return os.Getenv("VIDEO_HW_DECODE") == "1"
 }
 
+// framesStayOnGPU reports whether frames decoded on the GPU stay in GPU memory
+// and are scaled there (gpuVideoFilter), instead of being copied back for the
+// CPU's fps, scale and pad filters and uploaded again for the encoder.
+//
+// VAAPI only, and only when the source is decoded on the GPU
+// (VIDEO_HW_DECODE=1). The copy is what makes GPU decoding slow today: on an
+// Intel Pentium Gold 8505 (UHD Graphics), 4K60 VP9 to 1080p30 h264_vaapi
+// ran at 1.13x real time and 165 % CPU with the copy, 6.1x and 62-70 % without
+// it. Decoding on the CPU (the default) was 3.0x at 384 %. AV1 is decoded on
+// the CPU here either way (FFmpeg 5.1 opens it with libdav1d); its frames are
+// uploaded by gpuVideoFilter. VIDEO_GPU_FILTERS=0 goes back to the copy.
+func framesStayOnGPU(spec EncoderSpec, withDecode bool) bool {
+	return spec.Backend == backendVAAPI && withDecode && hwDecodeEnabled() &&
+		os.Getenv("VIDEO_GPU_FILTERS") != "0"
+}
+
 // hwInitArgs are global ffmpeg options a hardware encoder needs before the
 // input: for VAAPI, the device that filters (hwupload) run on. When
 // VIDEO_HW_DECODE=1 they also turn on input decoding on the same GPU (VAAPI,
@@ -153,6 +169,9 @@ func hwInitArgs(spec EncoderSpec, withDecode bool) []string {
 	case backendVAAPI:
 		args := []string{"-init_hw_device", "vaapi=va:" + getVaapiDevice(), "-filter_hw_device", "va"}
 		if withDecode && hwDecodeEnabled() {
+			if framesStayOnGPU(spec, withDecode) {
+				args = append(args, "-hwaccel_output_format", "vaapi")
+			}
 			args = append(args, "-hwaccel", "vaapi", "-hwaccel_device", "va")
 		}
 		return args
@@ -165,6 +184,26 @@ func hwInitArgs(spec EncoderSpec, withDecode bool) []string {
 		}
 	}
 	return nil
+}
+
+// gpuVideoFilter is the video filter chain for frames that stay on the GPU
+// (framesStayOnGPU).
+//
+// format=nv12|vaapi,hwupload passes GPU frames through untouched and uploads
+// CPU ones, so a source the GPU cannot decode (ffmpeg then falls back to
+// software frames) still streams; so does AV1 decoded by libdav1d. fps works on
+// GPU frames as they are.
+//
+// There is no padding: FFmpeg 5.1 has no pad_vaapi, and overlay_vaapi places
+// the picture at a fixed position, which needs the source's size before the
+// stream starts. A source of another shape keeps its aspect ratio inside the
+// preset (a 4:3 source as 1440x1080 at 1080p), and the TeamSpeak client draws
+// the bars beside it.
+func gpuVideoFilter(fps, w, h int) string {
+	return fmt.Sprintf(
+		"fps=%d,format=nv12|vaapi,hwupload,scale_vaapi=w=%d:h=%d:force_original_aspect_ratio=decrease:force_divisible_by=2:format=nv12",
+		fps, w, h,
+	)
 }
 
 // uploadFilter ends the software filter chain with the frame format the
