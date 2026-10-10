@@ -71,9 +71,11 @@ func installFakeFFmpeg(t *testing.T, behaviour string) string {
 	}
 	dir := t.TempDir()
 	calls := filepath.Join(dir, "calls")
-	// One line per run: an argument can hold a line break (the HTTP headers
-	// option does).
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" | tr -d '\\r' | tr '\\n' ' ' >> '" + calls + "'\necho >> '" + calls + "'\n" + behaviour
+	// The script finds the log next to itself, so no path is written into it
+	// and the temp directory may hold any character. One line per run: an
+	// argument can hold a line break (the HTTP headers option does).
+	script := "#!/bin/sh\nlog=\"$(dirname \"$0\")/calls\"\n" +
+		"printf '%s\\n' \"$*\" | tr -d '\\r' | tr '\\n' ' ' >> \"$log\"\necho >> \"$log\"\n" + behaviour
 	bin := filepath.Join(dir, "ffmpeg")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
