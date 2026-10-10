@@ -21,9 +21,9 @@ import (
 // connection ffmpeg makes for a remote source goes through an egressProxy,
 // which checks the address it actually connects to:
 //
-//   - loopback, link-local (incl. cloud metadata), unspecified and multicast
+//   - loopback, link-local, known cloud metadata, unspecified and multicast
 //     addresses are never reachable;
-//   - private (LAN) addresses only when the source's admin-approved allowlist
+//   - private (LAN) and shared-address-space addresses only when the source's admin-approved allowlist
 //     lists them (IPTV sources on a local proxy);
 //   - public addresses are reachable.
 //
@@ -185,7 +185,11 @@ func (a *hostAllowlist) permits(host string, ip net.IP) bool {
 	return false
 }
 
-var awsMetadataV6 = net.ParseIP("fd00:ec2::254")
+var (
+	awsMetadataV6      = net.ParseIP("fd00:ec2::254")
+	alibabaMetadataV4  = net.ParseIP("100.100.100.200")
+	sharedAddressSpace = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+)
 
 // neverAllowedIP matches addresses no allowlist can open.
 func neverAllowedIP(ip net.IP) bool {
@@ -196,7 +200,7 @@ func neverAllowedIP(ip net.IP) bool {
 	}
 	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
 		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() ||
-		ip.Equal(awsMetadataV6)
+		ip.Equal(awsMetadataV6) || ip.Equal(alibabaMetadataV4)
 }
 
 // egressPolicy is one source's rules.
@@ -213,7 +217,7 @@ func (p *egressPolicy) check(host string, ip net.IP) error {
 	if neverAllowedIP(ip) {
 		return fmt.Errorf("%w: %s is a loopback, link-local or reserved address", errEgressBlocked, host)
 	}
-	if ip.IsPrivate() && !p.allow.permits(host, ip) {
+	if (ip.IsPrivate() || sharedAddressSpace.Contains(ip)) && !p.allow.permits(host, ip) {
 		return fmt.Errorf("%w: %s is a private address that is not an allowed local IPTV host", errEgressBlocked, host)
 	}
 	return nil

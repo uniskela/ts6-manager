@@ -293,13 +293,13 @@ Uploaded sources are stored as application assets on the backend data volume (no
 
 ### Playlists and channels on your local network
 
-For safety, ts6-manager refuses links to private addresses (`192.168.x.x`, `10.x.x.x` and so on), so a pasted link cannot make the server reach devices on your network. That also blocks an IPTV proxy running at home, such as Threadfin, xTeVe, TVHeadend or a router's IPTV service.
+For safety, ts6-manager refuses links to private addresses (`192.168.x.x`, `10.x.x.x` and so on) and shared addresses (`100.64.0.0/10`, including Tailscale addresses), so a pasted link cannot make the server reach devices on your network. That also blocks an IPTV proxy running at home, such as Threadfin, xTeVe, TVHeadend or a router's IPTV service, until an admin allows its host.
 
 Admins allow those hosts from the IPTV page header: **Local hosts** (administrators only) opens the allowlist dialog. The button shows a count when the list is not empty, and an empty playlist page hints at the same dialog. Enter one per line: an IP (`192.168.1.20`), a range (`192.168.1.0/24`) or a hostname (`threadfin.lan`).
 
 - The allowance covers IPTV only: playlist refreshes, channels started from the console's **IPTV** tab, and `!tv <name>`. With `!tv`, users pick a channel name from your playlist, never a URL.
 - Links typed in chat (`!stream`, `!play`), the console's **Link** tab and flow HTTP nodes stay blocked from private addresses.
-- Loopback (`127.0.0.1`), link-local and cloud metadata addresses can never be allowed. Inside a container, loopback is the container itself, so use the host's LAN address instead.
+- Loopback (`127.0.0.1`), link-local and cloud metadata addresses (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`) can never be allowed, even through a hostname or range. Inside a container, loopback is the container itself, so use the host's LAN address instead.
 - Each redirect of a playlist URL is checked again, so a playlist refresh cannot be redirected away from the allowed hosts.
 - Streams get the same rules at every step. The sidecar sends each connection its ffmpeg makes (redirects, HLS playlists and segments, https) through a local checking proxy, which refuses private addresses not on this list and always refuses loopback, link-local and metadata addresses. The *Auto* quality probe of a URL runs in the sidecar through the same checks. A refused connection appears in the sidecar log as `[Egress] Blocked connection` with the host name only.
 - The list is empty by default, and changing it is recorded in the audit log.
