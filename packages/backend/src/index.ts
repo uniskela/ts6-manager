@@ -6,6 +6,7 @@ import { ConnectionPool } from './ts-client/connection-pool.js';
 import { BotEngine } from './bot-engine/engine.js';
 import { VoiceBotManager } from './voice/voice-bot-manager.js';
 import { MusicCommandHandler } from './voice/music-command-handler.js';
+import { ListenerRemoteService } from './voice/listener-remote.js';
 import { config } from './config.js';
 import { setYtCookieFile } from './voice/audio/youtube.js';
 import { logYtDlpVersionInBackground } from './voice/audio/yt-dlp-diagnostics.js';
@@ -141,6 +142,10 @@ async function main() {
   // Wire Music Command Handler for text-based music bot control (!radio, !play, etc.)
   // Listens directly on each VoiceBot's TS3 connection (no SSH needed)
   const musicCommandHandler = new MusicCommandHandler(prisma, voiceBotManager);
+  const listenerRemote = new ListenerRemoteService();
+  app.locals.listenerRemote = listenerRemote;
+  app.locals.eventBridge = botEngine.getEventBridge();
+  musicCommandHandler.setListenerRemote(listenerRemote);
   musicCommandHandler.setEventBridge(botEngine.getEventBridge());
   botEngine.setMusicCommandHandler(musicCommandHandler);
   voiceBotManager.setMusicCommandHandler(musicCommandHandler);

@@ -1,4 +1,5 @@
 import { parseDownloadProgress, type ProgressUpdate } from './download-progress.js';
+import { getYtDlpPath } from './yt-dlp-path.js';
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -278,6 +279,7 @@ export async function fetchSpotifyPage(
     const res = await fetch(safeUrl.href, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
       redirect: "manual",
+      signal: AbortSignal.timeout(180_000),
     });
 
     if (res.status >= 300 && res.status < 400) {
@@ -308,11 +310,11 @@ function withMediaUrl(args: string[], url: string): string[] {
   return [...args, "--", url];
 }
 
-/** Run yt-dlp, preserving caller cancellation and bounding signal-driven requests. */
+/** Bound all downloader/playlist jobs, including listener requests without caller cancellation. */
 function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
-    const proc = spawn("yt-dlp", args, { shell: false, signal, timeout: signal ? 180_000 : undefined, killSignal: "SIGKILL" });
+    const proc = spawn(getYtDlpPath(), args, { shell: false, signal, timeout: 180_000, killSignal: "SIGKILL" });
     let stdout = "";
     let stderr = "";
     const pending = { stdout: '', stderr: '' };

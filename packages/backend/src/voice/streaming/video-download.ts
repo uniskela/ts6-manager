@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
+import { getYtDlpPath } from '../audio/yt-dlp-path.js';
 import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
 import { describeDuration } from './lifecycle.js';
 import { AppError } from '../../middleware/error-handler.js';
@@ -272,7 +273,7 @@ async function resolveWithYtDlp(
       '--',
       url,
     ];
-    const proc = spawn('yt-dlp', args, { shell: false });
+    const proc = spawn(getYtDlpPath(), args, { shell: false });
     let out = '';
     let err = '';
     proc.stdout.on('data', (chunk: Buffer) => { out += chunk.toString(); });
@@ -540,7 +541,7 @@ export async function downloadVideoForStream(
       url,
     ];
 
-    const proc = spawn('yt-dlp', args, { shell: false });
+    const proc = spawn(getYtDlpPath(), args, { shell: false });
     let stderr = '';
     let stdout = '';
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });

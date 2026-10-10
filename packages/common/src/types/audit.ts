@@ -63,6 +63,10 @@ export const ADMIN_AUDIT_ACTIONS = [
   'media.video.stop',
   'media.video.source_change',
   'media.session.switch',
+  'listener.remote.queue_add',
+  'listener.remote.issue',
+  'listener.remote.request',
+  'listener.remote.revoke',
 ] as const;
 
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];

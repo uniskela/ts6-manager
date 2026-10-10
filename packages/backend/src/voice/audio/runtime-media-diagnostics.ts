@@ -8,6 +8,7 @@
 import { spawn } from 'child_process';
 import { accessSync, constants as fsConstants } from 'fs';
 import { delimiter, isAbsolute, join } from 'path';
+import { getYtDlpPath } from './yt-dlp-path.js';
 import type {
   RuntimeMediaDiagnosticReport,
   RuntimeMediaOverall,
@@ -422,13 +423,24 @@ export async function diagnoseRuntimeMedia(
     stages.push(stageFromCommand(id, label, result, missingHint));
   };
 
-  await runBinary(
-    'yt-dlp',
-    'yt-dlp',
-    ['--version'],
-    'yt-dlp',
-    'yt-dlp was not found — pull or rebuild the TS6 Manager image to restore the bundled extractor',
-  );
+  let ytDlpCommand: string | undefined;
+  try {
+    ytDlpCommand = getYtDlpPath(env);
+  } catch {
+    stages.push({
+      id: 'yt-dlp', status: 'fail', code: 'misconfigured',
+      message: 'YT_DLP_PATH must be an absolute path to a trusted yt-dlp executable',
+    });
+  }
+  if (ytDlpCommand) {
+    await runBinary(
+      'yt-dlp',
+      ytDlpCommand,
+      ['--version'],
+      'yt-dlp',
+      'yt-dlp was not found — pull or rebuild the TS6 Manager image to restore the bundled extractor',
+    );
+  }
   await runBinary(
     'ffmpeg',
     'ffmpeg',

@@ -1,4 +1,4 @@
-import express, { type Express } from 'express';
+import express, { type Express, type ErrorRequestHandler } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -37,6 +37,7 @@ import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
 import { activityJournalRoutes } from './routes/activity-journal.routes.js';
+import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard } from './routes/listener-remote.routes.js';
 
 import { requireServerAccess } from './middleware/server-access.js';
 import { createRequire } from 'module';
@@ -47,11 +48,26 @@ const backendPkg = require('../package.json') as { version?: string };
 export function createApp(): Express {
   const app = express();
 
-  // Trust first proxy (nginx / Coolify reverse proxy)
-  app.set('trust proxy', 1);
+  // Explicit addresses/subnets prevent direct clients spoofing rate-limit IPs.
+  app.set('trust proxy', config.trustProxy);
 
   app.use(helmet());
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
+  // Parse remote requests separately so body-parser errors cannot echo token material.
+  const remoteLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many remote requests', code: 'rate_limited' },
+  });
+  // Keep the bounded guard first; it also enforces the stricter exchange quota.
+  app.use('/api/listener-remote', listenerRemoteIpGuard, remoteLimiter, listenerRemoteRoutes);
+  const remoteParseError: ErrorRequestHandler = (_err, _req, res, _next) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(400).json({ error: 'Invalid listener request.', code: 'invalid_request' });
+  };
+  app.use('/api/listener-remote', remoteParseError);
   app.use(express.json({ limit: '10mb' }));
 
   // Health check (includes version so deploys can verify backend image matches UI)
@@ -95,6 +111,7 @@ export function createApp(): Express {
 
   // Protected routes
   app.use('/api', authMiddleware);
+  app.use('/api/listener-remote-admin', listenerRemoteAdminRoutes);
   app.use('/api/servers', serverRoutes);
 
   // H9: Server access control on all :configId routes

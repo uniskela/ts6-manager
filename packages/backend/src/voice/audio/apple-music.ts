@@ -99,6 +99,7 @@ async function fetchAppleAllowlisted(
         Accept: "text/html,application/xhtml+xml,application/json",
       },
       redirect: "manual",
+      signal: AbortSignal.timeout(180_000),
     });
 
     if (res.status >= 300 && res.status < 400) {
@@ -127,6 +128,7 @@ async function itunesLookup(id: string, entity?: "song"): Promise<Record<string,
 
   const res = await fetch(url.href, {
     headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)", Accept: "application/json" },
+    signal: AbortSignal.timeout(180_000),
   });
   if (!res.ok) {
     throw new Error(`iTunes lookup failed: HTTP ${res.status}`);

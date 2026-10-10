@@ -7,8 +7,10 @@ import { botOccupiesChannel, isBotSummonable } from './channel-ownership.js';
 import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
 import { channelCommandKey, claimChannelCommand } from './dedupe.js';
 import { checkMediaCommand, handleVoteSkip } from './media-access.js';
+import { handleListenerRemote, revokeDepartedRemote } from './listener-remote.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
+const loggableMessage = (message: string) => /^\s*!remote(?:\s|$)/i.test(message) ? '!remote [redacted]' : message;
 
 /**
  * Channel a ServerQuery text event belongs to.
@@ -60,6 +62,7 @@ export function setEventBridge(context: CommandContext, bridge: EventBridge): vo
   if (!context.eventBridgeListening) {
     context.eventBridgeListening = true;
     bridge.on('tsEvent', (configId, sid, eventName, data) => {
+      revokeDepartedRemote(context, configId, sid, eventName, data);
       // Park the main SSH helper in the human's channel (no second Query login).
       // Never follow a music voice bot — that abandons cross-channel humans.
       if (
@@ -88,7 +91,7 @@ export function setEventBridge(context: CommandContext, bridge: EventBridge): vo
         bridge.getMainHelperChannelId(configId, sid),
       );
       if (channelId <= 0) {
-        const preview = (data.msg || '').slice(0, 40);
+        const preview = loggableMessage(data.msg || '').slice(0, 40);
         console.log(
           `[MusicCmd] SSH textmessage ignored (no helper channel) ` +
             `(config=${configId} sid=${sid} msg=${JSON.stringify(preview)})`,
@@ -97,7 +100,7 @@ export function setEventBridge(context: CommandContext, bridge: EventBridge): vo
       }
       console.log(
         `[MusicCmd] SSH textmessage config=${configId} sid=${sid} ` +
-          `cid=${channelId} clid=${data.invokerid || '?'} msg=${JSON.stringify((data.msg || '').slice(0, 60))}`,
+          `cid=${channelId} clid=${data.invokerid || '?'} msg=${JSON.stringify(loggableMessage(data.msg || '').slice(0, 60))}`,
       );
       context.onCrossChannelTextMessage(configId, sid, channelId, data).catch(
         (err) => {
@@ -120,6 +123,18 @@ export function registerBot(context: CommandContext, botId: number, bot: VoiceBo
   }
   context.registeredBots.add(botId);
 
+  bot.on('command', (command) => {
+    const cfg = context.botChannelConfig.get(botId);
+    if (!cfg) return;
+    for (const data of command.groups ?? [command.params]) {
+      revokeDepartedRemote(context, cfg.serverConfigId, cfg.virtualServerId, command.name, data);
+    }
+  });
+  bot.on('disconnected', () => context.listenerRemote?.revoke(botId));
+  bot.on('statusChange', (status) => {
+    if (status === 'stopped' || status === 'error') context.listenerRemote?.revoke(botId);
+  });
+
   bot.on('textMessage', (data: Record<string, string>) => {
     void (async () => {
       let replyCid = bot.getCurrentChannelId();
@@ -141,7 +156,7 @@ export function registerBot(context: CommandContext, botId: number, bot: VoiceBo
       console.log(
         `[MusicCmd] Voice textmessage bot=${botId} clid=${data.invokerid || '?'} ` +
           `homeCid=${bot.getCurrentChannelId()} replyCid=${replyCid || 0} ` +
-          `msg=${JSON.stringify((data.msg || '').slice(0, 60))}`,
+          `msg=${JSON.stringify(loggableMessage(data.msg || '').slice(0, 60))}`,
       );
       await context.onTextMessage(
         botId,
@@ -215,7 +230,7 @@ export async function onCrossChannelTextMessage(
     if (fallback.size === 0) {
       console.warn(
         `[MusicCmd] Cross-channel text in cid=${channelId} but no bots mapped ` +
-          `(config=${configId} sid=${sid}); msg=${JSON.stringify((data.msg || '').slice(0, 40))}`,
+          `(config=${configId} sid=${sid}); msg=${JSON.stringify(loggableMessage(data.msg || '').slice(0, 40))}`,
       );
       return;
     }
@@ -368,6 +383,12 @@ export async function onTextMessage(
 
   // Ignore messages from ourselves (the bot)
   if (userClid === bot.ts3ClientId) return;
+
+  // Remote issuance has a private-only failure path, including lookup/service failures.
+  if (command === 'remote') {
+    await handleListenerRemote(context, botId, bot, userClid, data.invokeruid);
+    return;
+  }
 
   // Built-in commands
   if (MUSIC_COMMANDS.has(command)) {

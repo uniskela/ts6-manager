@@ -51,10 +51,10 @@ describe("parseFlatSearchOutput", () => {
 describe("searchYouTubeMusic", () => {
   it("executes the Songs search and maps actual yt-dlp stdout", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "ts6-song-search-"));
-    const previousPath = process.env.PATH;
+    const previousYtDlpPath = process.env.YT_DLP_PATH;
     try {
       const executable = path.join(directory, "yt-dlp");
-      await writeFile(executable, `#!/usr/bin/env node
+      await writeFile(executable, `#!${process.execPath}
 const assert = require('node:assert/strict');
 const args = process.argv.slice(2);
 assert.equal(args.at(-2), '--');
@@ -66,15 +66,15 @@ console.log(JSON.stringify({ id: 'fJ9rUzIMcZQ', title: 'Bohemian Rhapsody', arti
 console.log('not json');
 `);
       await chmod(executable, 0o755);
-      process.env.PATH = `${directory}${path.delimiter}${previousPath ?? ""}`;
+      process.env.YT_DLP_PATH = executable;
       const found = await findSongForQuery("  bohemian rhapsody  ");
       assert.equal(found?.id, "fJ9rUzIMcZQ");
       assert.equal(found?.source, "youtube-music");
       assert.equal(found?.artist, "Queen");
       assert.equal(found?.duration, 355);
     } finally {
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
+      if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;
+      else process.env.YT_DLP_PATH = previousYtDlpPath;
       await rm(directory, { recursive: true, force: true });
     }
   });

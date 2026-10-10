@@ -5,6 +5,7 @@ import type { QueueItem } from '../playlist/queue.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import type { findSongForQuery } from '../audio/youtube.js';
 import type { ChatMediaRequest } from './queue.js';
+import type { ListenerRemoteService } from '../listener-remote.js';
 
 /** Whether a running flow answers this raw chat line from the base or dedicated listener. */
 export type FlowCommandLookup = (
@@ -160,6 +161,7 @@ export interface CommandContext extends CommandMethods {
   voiceBotManager: VoiceBotManager;
   registeredBots: Set<number>;
   eventBridge: EventBridge | null;
+  readonly listenerRemote: ListenerRemoteService | null;
   readonly flowCommandLookup: FlowCommandLookup | null;
   eventBridgeListening: boolean;
   botChannelConfig: Map<number, BotChannelConfig>;

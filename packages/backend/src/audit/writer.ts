@@ -281,7 +281,7 @@ export function actorFromRequest(user: { id: number; username: string } | undefi
 export async function runRemoteAudited<T>(
   prisma: PrismaClient,
   input: BaseEventInput,
-  dispatch: () => Promise<T>,
+  dispatch: () => T | Promise<T>,
   options?: {
     resolveTargetId?: (result: T) => string | number | null | undefined;
     /**

@@ -7,11 +7,11 @@ import { downloadYouTube } from './youtube.js';
 
 test('download pipeline emits structured subprocess progress and ignores abandoned partial cache', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ts6-progress-'));
-  const previousPath = process.env.PATH;
+  const previousYtDlpPath = process.env.YT_DLP_PATH;
   const updates: any[] = [];
   try {
     const executable = path.join(dir, 'yt-dlp');
-    await writeFile(executable, `#!/usr/bin/env node
+    await writeFile(executable, `#!${process.execPath}
 const fs = require('node:fs');
 const path = require('node:path');
 const args = process.argv.slice(2);
@@ -30,7 +30,7 @@ if (args.includes('--dump-json')) {
 }
 `);
     await chmod(executable, 0o755);
-    process.env.PATH = `${dir}${path.delimiter}${previousPath}`;
+    process.env.YT_DLP_PATH = executable;
     await writeFile(path.join(dir, 'abcdefghijk.webm.part'), 'unfinished');
     const result = await downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, p => updates.push(p));
     assert.equal(path.extname(result.filePath), '.opus');
@@ -39,7 +39,8 @@ if (args.includes('--dump-json')) {
     const cached = await downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, () => assert.fail('cached file should not download'));
     assert.equal(cached.filePath, result.filePath);
   } finally {
-    process.env.PATH = previousPath;
+    if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;
+    else process.env.YT_DLP_PATH = previousYtDlpPath;
     await rm(dir, { recursive: true, force: true });
   }
 });

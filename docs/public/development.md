@@ -16,6 +16,8 @@ pnpm dev
 
 The backend runs on port 3001 and the Vite frontend runs on port 5173 by default.
 
+For native backend media playback, install yt-dlp and set `YT_DLP_PATH` to its absolute executable path if it is outside `/usr/local/bin/yt-dlp`. See [Environment variables](environment-variables.md) for executable directory requirements.
+
 ## Useful workspace commands
 
 | Command | Purpose |

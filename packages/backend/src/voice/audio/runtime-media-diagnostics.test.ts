@@ -9,7 +9,7 @@ import {
 describe('diagnoseRuntimeMedia', () => {
   it('returns ok when all injected probes pass', async () => {
     const report = await diagnoseRuntimeMedia({
-      env: { SIDECAR_URL: 'http://sidecar:9800' },
+      env: { SIDECAR_URL: 'http://sidecar:9800', YT_DLP_PATH: '/trusted/tools/yt-dlp' },
       probeCommand: async (command) => ({ ok: true, version: `${command}-1.0` }),
       probeSidecarHealth: async () => ({ status: 'healthy' }),
       binaryExists: () => true,
@@ -19,7 +19,7 @@ describe('diagnoseRuntimeMedia', () => {
     assert.equal(report.meta.sidecarMode, 'url');
     assert.equal(report.stages.length, 4);
     assert.ok(report.stages.every((s) => s.status === 'ok'));
-    assert.equal(report.stages.find((s) => s.id === 'yt-dlp')?.version, 'yt-dlp-1.0');
+    assert.equal(report.stages.find((s) => s.id === 'yt-dlp')?.version, '/trusted/tools/yt-dlp-1.0');
     assert.ok(Date.parse(report.checkedAt));
   });
 
@@ -46,6 +46,29 @@ describe('diagnoseRuntimeMedia', () => {
     assert.equal(report.meta.sidecarMode, 'local');
     assert.equal(report.stages.find((s) => s.id === 'yt-dlp')?.code, 'binary_missing');
     assert.equal(report.stages.find((s) => s.id === 'sidecar')?.code, 'binary_missing');
+  });
+
+  it('reports an invalid yt-dlp path without probing it or discarding other stages', async () => {
+    for (const YT_DLP_PATH of ['yt-dlp', './yt-dlp', '']) {
+      const commands: string[] = [];
+      const report = await diagnoseRuntimeMedia({
+        env: { SIDECAR_URL: 'http://sidecar:9800', YT_DLP_PATH },
+        probeCommand: command => {
+          commands.push(command);
+          return Promise.resolve({ ok: true, version: '1.0' });
+        },
+        probeSidecarHealth: () => Promise.resolve({ status: 'healthy' }),
+      });
+
+      assert.equal(report.overall, 'partial');
+      assert.equal(report.stages.length, 4);
+      assert.deepEqual(report.stages.find(stage => stage.id === 'yt-dlp'), {
+        id: 'yt-dlp', status: 'fail', code: 'misconfigured',
+        message: 'YT_DLP_PATH must be an absolute path to a trusted yt-dlp executable',
+      });
+      assert.deepEqual(commands, ['ffmpeg', 'ffprobe']);
+      assert.ok(report.stages.filter(stage => stage.id !== 'yt-dlp').every(stage => stage.status === 'ok'));
+    }
   });
 
   it('skips local sidecar listening when binary exists but health fails', async () => {
