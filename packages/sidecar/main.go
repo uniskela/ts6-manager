@@ -189,6 +189,11 @@ func debugf(format string, args ...any) {
 	}
 }
 
+// quoteErr keeps a viewer-controlled parser error on one log record.
+func quoteErr(err error) string {
+	return strconv.Quote(err.Error())
+}
+
 // NTP epoch offset: seconds between 1900-01-01 and 1970-01-01
 const ntpEpochOffset = 2208988800
 
@@ -1280,7 +1285,7 @@ func (s *Sidecar) SetAnswer(id, sdp string) error {
 	peer.pendingICE = nil
 	for _, c := range pending {
 		if err := peer.PC.AddICECandidate(c); err != nil {
-			log.Printf("[API] Dropping early ICE candidate for peer %s: %v", id, err)
+			log.Printf("[API] Dropping early ICE candidate for peer %s: %s", id, quoteErr(err))
 		}
 	}
 	if len(pending) > 0 {
@@ -1885,6 +1890,45 @@ func (s *Sidecar) Stop() {
 	s.stopICEMedia()
 }
 
+func (s *Sidecar) postPeerAnswer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID  string `json:"id"`
+		SDP string `json:"sdp"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+	debugf("[API] Setting answer for peer: %s (%d bytes)", req.ID, len(req.SDP))
+
+	if err := s.SetAnswer(req.ID, req.SDP); err != nil {
+		log.Printf("[API] SetAnswer error: %s", quoteErr(err))
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+func (s *Sidecar) postPeerICE(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID            string `json:"id"`
+		Candidate     string `json:"candidate"`
+		SDPMid        string `json:"sdpMid"`
+		SDPMLineIndex uint16 `json:"sdpMLineIndex"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), 400)
+		return
+	}
+
+	if err := s.AddICECandidate(req.ID, req.Candidate, req.SDPMid, req.SDPMLineIndex); err != nil {
+		log.Printf("[API] AddICE error: %s", quoteErr(err))
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
 func requireSidecarAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		secret := os.Getenv("SIDECAR_SECRET")
@@ -1956,44 +2000,8 @@ func main() {
 		json.NewEncoder(w).Encode(map[string]string{"sdp": sdp})
 	}))
 
-	mux.HandleFunc("POST /peer/answer", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID  string `json:"id"`
-			SDP string `json:"sdp"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-		debugf("[API] Setting answer for peer: %s (%d bytes)", req.ID, len(req.SDP))
-
-		if err := sidecar.SetAnswer(req.ID, req.SDP); err != nil {
-			log.Printf("[API] SetAnswer error: %v", err)
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	}))
-
-	mux.HandleFunc("POST /peer/ice", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
-		var req struct {
-			ID            string `json:"id"`
-			Candidate     string `json:"candidate"`
-			SDPMid        string `json:"sdpMid"`
-			SDPMLineIndex uint16 `json:"sdpMLineIndex"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, err.Error(), 400)
-			return
-		}
-
-		if err := sidecar.AddICECandidate(req.ID, req.Candidate, req.SDPMid, req.SDPMLineIndex); err != nil {
-			log.Printf("[API] AddICE error: %v", err)
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
-	}))
+	mux.HandleFunc("POST /peer/answer", requireSidecarAuth(sidecar.postPeerAnswer))
+	mux.HandleFunc("POST /peer/ice", requireSidecarAuth(sidecar.postPeerICE))
 
 	mux.HandleFunc("POST /peer/close", requireSidecarAuth(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
