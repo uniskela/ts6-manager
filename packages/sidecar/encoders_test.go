@@ -462,6 +462,7 @@ func TestProbeCommandLineQuotes(t *testing.T) {
 // copy back to system memory and upload again.
 func TestVaapiDecodedFramesStayOnTheGPU(t *testing.T) {
 	t.Setenv("VIDEO_HW_DECODE", "1")
+	t.Setenv("VIDEO_GPU_FILTERS", "") // the default: on
 	s := NewSidecar()
 	spec, _ := lookupEncoder("h264_vaapi")
 	args := strings.Join(s.buildFFmpegArgs(SourceRequest{Source: "https://example.com/v.webm", AudioSource: "https://example.com/a.webm", Width: 1920, Height: 1080, Framerate: 30}, spec, false), " ")
@@ -493,6 +494,7 @@ func TestFramesStayOnTheGPUOnlyWithVaapiDecoding(t *testing.T) {
 	nvenc, _ := lookupEncoder("h264_nvenc")
 	sw, _ := lookupEncoder("h264")
 
+	t.Setenv("VIDEO_GPU_FILTERS", "") // the default: on
 	t.Setenv("VIDEO_HW_DECODE", "")
 	if framesStayOnGPU(vaapi, true) {
 		t.Error("without VIDEO_HW_DECODE=1 the source is decoded on the CPU")
