@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -574,6 +575,10 @@ func TestFFprobeThroughEgress(t *testing.T) {
 	})
 	for _, path := range []string{"/metadata-redirect.m3u8", "/metadata-segments.m3u8"} {
 		t.Run(path, func(t *testing.T) {
+			denials := &tailBuffer{}
+			previousLog := log.Writer()
+			log.SetOutput(denials)
+			t.Cleanup(func() { log.SetOutput(previousLog) })
 			queries := useEgressDNS(t, []string{"100.100.100.200"})
 			policy := testPolicy(allowedTestIP)
 			policy.allow = parseHostAllowlist([]string{"media.example", "100.64.0.0/10"})
@@ -582,6 +587,9 @@ func TestFFprobeThroughEgress(t *testing.T) {
 			}
 			if queries.Load() == 0 {
 				t.Fatal("ffprobe did not request the secondary host through the proxy")
+			}
+			if !denials.contains("[Egress] Blocked connection: destination not allowed: media.example") {
+				t.Fatal("ffprobe failed without the proxy rejecting the metadata destination")
 			}
 		})
 	}
