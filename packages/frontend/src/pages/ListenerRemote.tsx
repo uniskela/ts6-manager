@@ -26,13 +26,13 @@ import {
   type RemoteState,
 } from '@/lib/listener-remote';
 
-type Phase = { kind: 'opening' } | { kind: 'need-link' } | { kind: 'ended'; message: string } | { kind: 'ready' };
+type Phase = { kind: 'opening' } | { kind: 'need-link' } | { kind: 'ended'; message: string } | { kind: 'ready'; nonce: number };
 
 const STATUS_LABEL: Record<string, string> = { playing: 'Playing', paused: 'Paused', connected: 'Connected' };
 
 function initialPhase(): Phase {
   if (remoteLaunchToken()) return { kind: 'opening' };
-  if (remoteSession()) return { kind: 'ready' };
+  if (remoteSession()) return { kind: 'ready', nonce: 0 };
   return { kind: 'need-link' };
 }
 
@@ -64,8 +64,8 @@ export default function ListenerRemote() {
 
   useEffect(() => {
     const token = remoteLaunchToken();
-    if (generation === 0 && remoteSession()) {
-      setPhase({ kind: 'ready' });
+    if (!token && generation === 0 && remoteSession()) {
+      setPhase({ kind: 'ready', nonce: 0 });
       return;
     }
     if (!token) {
@@ -73,10 +73,16 @@ export default function ListenerRemote() {
       return;
     }
     let alive = true;
-    setPhase({ kind: 'opening' });
+    if (!remoteSession()) setPhase({ kind: 'opening' });
     void exchangeRemoteToken(token).then(
-      () => { if (alive) setPhase({ kind: 'ready' }); },
-      (error: unknown) => { if (alive) setPhase({ kind: 'ended', message: remoteErrorMessage(error) }); },
+      () => {
+        if (!alive) return;
+        setPhase((current) => ({ kind: 'ready', nonce: current.kind === 'ready' ? current.nonce + 1 : 1 }));
+      },
+      (error: unknown) => {
+        if (!alive || remoteSession()) return;
+        setPhase({ kind: 'ended', message: remoteErrorMessage(error) });
+      },
     );
     return () => { alive = false; };
   }, [generation]);
@@ -84,7 +90,7 @@ export default function ListenerRemote() {
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-3 py-4" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
       {phase.kind === 'ready'
-        ? <RemoteController onEnded={(message) => setPhase({ kind: 'ended', message })} />
+        ? <RemoteController key={phase.nonce} onEnded={(message) => setPhase({ kind: 'ended', message })} />
         : <Gate phase={phase} />}
     </main>
   );

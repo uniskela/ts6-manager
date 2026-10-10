@@ -88,7 +88,6 @@ test('opens a phone remote from a fragment token', async ({ page }) => {
   await page.getByLabel('Media URL').fill('https://example.com/track.mp3');
   await page.getByRole('button', { name: 'Request URL' }).click();
   await expect(page.getByRole('button', { name: 'Adding…' })).toBeDisabled();
-  await page.getByRole('button', { name: 'Adding…' }).click({ force: true });
   releaseUrl();
   await expect(page.getByText('Added the link to the queue.')).toBeVisible();
   expect(urlCalls).toBe(1);

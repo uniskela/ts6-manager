@@ -164,4 +164,49 @@ describe('listener remote client', () => {
     const songs = await loadRemoteLibrary('paper', 2);
     assert.equal(songs.songs[0].id, 9);
   });
+
+  it('keeps a live session when a later exchange is rejected', async () => {
+    await exchangeRemoteToken(token);
+    const other = 'u'.repeat(43);
+    let posts = 0;
+    globalThis.fetch = (async () => {
+      posts += 1;
+      return json({ error: 'Listener access is invalid or expired.', code: 'invalid_access' }, 401);
+    }) as typeof fetch;
+    await assert.rejects(() => exchangeRemoteToken(other), (error: unknown) => error instanceof RemoteHttpError && error.status === 401);
+    await assert.rejects(() => exchangeRemoteToken(other));
+    assert.equal(posts, 1);
+    assert.equal(remoteSession()?.session, session);
+  });
+
+  it('retries a transient exchange instead of replaying the rejection', async () => {
+    let attempts = 0;
+    globalThis.fetch = (async () => {
+      attempts += 1;
+      if (attempts === 1) return json({ error: 'Listener remote is unavailable.', code: 'unavailable' }, 503);
+      return json({ session, expiresAt: future, botId: 12 });
+    }) as typeof fetch;
+    await assert.rejects(() => exchangeRemoteToken(token));
+    assert.equal(remoteSession(), null);
+    assert.deepEqual(await exchangeRemoteToken(token), { session, expiresAt: future, botId: 12 });
+    assert.equal(attempts, 2);
+  });
+
+  it('does not let an older exchange replace a newer session', async () => {
+    const first = 'a'.repeat(43);
+    const second = 'b'.repeat(43);
+    const waiting: Array<{ token: string; release(response: Response): void }> = [];
+    globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const posted = JSON.parse(String(init?.body)) as { token: string };
+      return new Promise<Response>((resolve) => waiting.push({ token: posted.token, release: resolve }));
+    }) as typeof fetch;
+    const older = exchangeRemoteToken(first);
+    const newer = exchangeRemoteToken(second);
+    assert.equal(waiting.length, 2);
+    waiting.find((item) => item.token === second)?.release(json({ session: second, expiresAt: future, botId: 2 }));
+    assert.equal((await newer).botId, 2);
+    waiting.find((item) => item.token === first)?.release(json({ session: first, expiresAt: future, botId: 1 }));
+    await older;
+    assert.equal(remoteSession()?.session, second);
+  });
 });

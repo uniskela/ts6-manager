@@ -28,6 +28,8 @@ const unavailable = () => new RemoteHttpError(503, 'unavailable', 'Listener remo
 
 let current: RemoteSession | null = null;
 const exchanges = new Map<string, Promise<RemoteSession>>();
+let exchangeGeneration = 0;
+let rememberedGeneration = 0;
 let mutationTail: Promise<void> = Promise.resolve();
 
 export function remoteSession(): RemoteSession | null {
@@ -42,6 +44,8 @@ export function clearRemoteSession(): void {
 export function resetRemoteClientForTests(): void {
   current = null;
   exchanges.clear();
+  exchangeGeneration = 0;
+  rememberedGeneration = 0;
   mutationTail = Promise.resolve();
 }
 
@@ -85,14 +89,14 @@ function remember(session: RemoteSession): RemoteSession {
   return session;
 }
 
-async function readBody(res: Response): Promise<unknown> {
+async function readBody(res: Response, auth: boolean): Promise<unknown> {
   const text = await res.text();
   let body: unknown = null;
   if (text) {
     try { body = JSON.parse(text); } catch { body = null; }
   }
   if (!res.ok) {
-    if (res.status === 401) clearRemoteSession();
+    if (auth && res.status === 401) clearRemoteSession();
     const record = body && typeof body === 'object' ? body as { error?: unknown; code?: unknown } : {};
     const code = typeof record.code === 'string' ? record.code : 'unavailable';
     const message = typeof record.error === 'string' && record.error.length > 0 && record.error.length <= 200
@@ -122,7 +126,7 @@ async function remoteFetch(path: string, init: RequestInit, auth: boolean): Prom
   } catch {
     throw unavailable();
   }
-  return readBody(res);
+  return readBody(res, auth);
 }
 
 function parseSession(body: unknown): RemoteSession {
@@ -197,9 +201,18 @@ export function exchangeRemoteToken(token: string): Promise<RemoteSession> {
   if (!SESSION.test(token)) return Promise.reject(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.'));
   const existing = exchanges.get(token);
   if (existing) return existing;
+  const generation = ++exchangeGeneration;
   const pending = remoteFetch('/exchange', { method: 'POST', body: JSON.stringify({ token }) }, false)
     .then(parseSession)
-    .then(remember);
+    .then((session) => {
+      // A newer success wins. A failed later attempt must not drop an older success.
+      if (generation < rememberedGeneration) return session;
+      rememberedGeneration = generation;
+      return remember(session);
+    });
+  pending.catch((error: unknown) => {
+    if (!(error instanceof RemoteHttpError) || error.status >= 500) exchanges.delete(token);
+  });
   exchanges.set(token, pending);
   return pending;
 }
