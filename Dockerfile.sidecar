@@ -3,7 +3,11 @@ WORKDIR /src
 COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
 RUN go mod download
 COPY packages/sidecar/*.go ./
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /sidecar .
+# The backend compares this with its own version (docs/public/native-sidecar.md).
+COPY version.txt /tmp/version.txt
+RUN CGO_ENABLED=0 go build \
+      -ldflags="-s -w -X main.version=$(tr -d '[:space:]' < /tmp/version.txt)" \
+      -o /sidecar .
 
 FROM debian:bookworm-slim
 # mesa-va-drivers (all arches) and intel-media-va-driver (amd64) back optional

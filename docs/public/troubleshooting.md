@@ -89,7 +89,8 @@ For a split-stack deployment verify:
 - `SIDECAR_URL` points to the sidecar service;
 - backend and sidecar use the same `SIDECAR_SECRET`;
 - both containers share the same media volume path; and
-- sidecar port 9800 is reachable internally without being exposed publicly.
+- sidecar port 9800 is reachable internally without being exposed publicly;
+- a [native sidecar](native-sidecar.md#version-compatibility) is the same release as the backend. The Runtime / media strip shows its version and says when it differs.
 
 In the UI, use **Refresh** on the Runtime / media strip beside Video, IPTV, or Settings → YouTube. That runs a bounded on-demand probe (yt-dlp, ffmpeg, ffprobe, sidecar). Music bot status polling does not run these probes.
 

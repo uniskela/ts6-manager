@@ -141,7 +141,7 @@ Compare two to four entities from the same permission layer in a read-only table
 - M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](https://www.uniskela.com/docs/ts6-manager/latest/video-streaming/)); channel browsing, filtering, and music-bot streaming
 - In-browser preview with WebRTC playback
 - A/V synchronization via RTCP Sender Reports
-- Runs as a Docker sidecar container alongside the backend
+- Runs as a Docker sidecar container alongside the backend; optional [native binaries](docs/public/native-sidecar.md) are published with each release for host GPU encoders
 
 ### Bot Flow Engine
 - Visual flow editor with drag-and-drop nodes, dynamic canvas extents, rounded orthogonal routes, and labelled True/False branches
@@ -401,6 +401,7 @@ Defaults below are the **sidecar code defaults**. Compose files may intentionall
 | `SYNC_MAX_DELAY_MS` | `1000` | The most one track is held back to meet the other, and how long the first track waits for the other to start |
 | `AUDIO_DELAY_MS` | `0` | Optional manual audio delay; normally leave at `0` with adaptive pacing |
 | `SIDECAR_DEBUG_LOGS` | `0` | Set to `1` to enable verbose high-frequency runtime logs |
+| `SIDECAR_HOST` | unset | Address the sidecar HTTP API listens on. Unset listens on all interfaces (Docker). Set it for a [native sidecar](docs/public/native-sidecar.md). |
 | `VIDEO_RTP_READ_BUFFER` | `4194304` | Requested UDP socket read buffer for video RTP |
 | `AUDIO_RTP_READ_BUFFER` | `1048576` | Requested UDP socket read buffer for audio RTP |
 | `VIDEO_WIDTH` | `1280` | Default output width when not supplied by the API |

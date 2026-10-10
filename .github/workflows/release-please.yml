@@ -5,7 +5,8 @@ name: Release Please
 # Release Please creates the immutable vX.Y.Z tag + GitHub Release, and this
 # workflow publishes GHCR images, and the Docker Hub mirror when both
 # DOCKERHUB_USERNAME and DOCKERHUB_TOKEN are set (GITHUB_TOKEN tag pushes
-# do not retrigger publish-images.yml on their own).
+# do not retrigger publish-images.yml on their own). It also attaches the
+# native media sidecar archives to that release.
 on:
   push:
     branches: [main]
@@ -46,6 +47,15 @@ jobs:
       tag: ${{ needs.release-please.outputs.tag_name }}
     secrets: inherit
 
+  # Native media sidecar archives, attached to the same GitHub Release.
+  publish-sidecar-binaries:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/publish-sidecar-binaries.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
 
   notify-docs:
     needs: release-please

@@ -1,0 +1,99 @@
+name: Publish native sidecar binaries
+
+on:
+  # Release Please calls this reusable workflow only after it creates an
+  # immutable vX.Y.Z release tag, so the binaries always come from that tag.
+  workflow_call:
+    inputs:
+      tag:
+        description: Immutable release tag created by Release Please (vX.Y.Z).
+        required: true
+        type: string
+
+  # Manual recovery path for rebuilding the assets of an existing release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to rebuild and re-upload
+        required: true
+        type: string
+
+concurrency:
+  group: sidecar-binaries-${{ inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-upload:
+    name: Build and attach sidecar binaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      # Upload assets to the existing GitHub Release.
+      contents: write
+
+    steps:
+      - name: Validate release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a vX.Y.Z tag, got: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Checkout release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+
+      # The backend reports the version in version.txt; a binary stamped with
+      # anything else would be flagged as a mismatch by every backend.
+      - name: Check tag matches version.txt
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          SOURCE_VERSION="$(tr -d '[:space:]' < version.txt)"
+          if [[ "${TAG#v}" != "$SOURCE_VERSION" ]]; then
+            echo "Tag $TAG does not match version.txt ($SOURCE_VERSION)" >&2
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/sidecar/go.mod
+          cache-dependency-path: packages/sidecar/go.sum
+
+      - name: Build archives
+        env:
+          TAG: ${{ inputs.tag }}
+        run: ./scripts/sidecar/build-release.sh "${TAG#v}" "$RUNNER_TEMP/sidecar"
+
+      - name: Check the Linux binary reports the release version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          cd "$RUNNER_TEMP/sidecar"
+          sha256sum --check SHA256SUMS
+          tar -xzf "ts6-media-sidecar_${VERSION}_linux_amd64.tar.gz"
+          REPORTED="$("./ts6-media-sidecar_${VERSION}_linux_amd64/ts6-media-sidecar" --version)"
+          echo "$REPORTED"
+          [[ "$REPORTED" == "ts6-media-sidecar ${VERSION} linux/amd64" ]]
+          rm -rf "ts6-media-sidecar_${VERSION}_linux_amd64"
+
+      - name: Upload to the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/sidecar"
+          gh release upload "$TAG" ./*.tar.gz ./*.zip SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --clobber
