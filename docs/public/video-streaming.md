@@ -93,7 +93,7 @@ The output must include `h264_amf`. AV1/HEVC AMF encoders may also be present, b
 
 Native Windows production deployments currently build the sidecar from source. TODO: publish automated Windows release artifacts separately. This is the normal cross-platform media sidecar; AMF is one runtime capability.
 
-Build the sidecar from the same checkout/release as the backend, using Go 1.25 or newer. From the repository root:
+Build the sidecar from the same checkout/release as the backend, using Go 1.26.9 or newer. From the repository root:
 
 ```powershell
 New-Item -ItemType Directory -Force .\bin | Out-Null
