@@ -5,7 +5,7 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
 import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus, type VideoStreamStartOptions } from './voice-bot.js';
-import type { MediaSessionInfo } from '@ts6/common';
+import type { MediaSessionInfo, MediaStopInfo } from '@ts6/common';
 import { MediaSessionConflictError } from './media-session.js';
 import { generateIdentity, generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
 import type { QueueItem } from './playlist/queue.js';
@@ -16,6 +16,10 @@ import { loadMaxVideoDuration, loadVideoStreamingSettings, loadYoutubeDirectStre
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
 import { parseAutoStopEmptySeconds } from './streaming/lifecycle.js';
+import { VideoQueueController, type VideoQueueItem, type VideoQueueSessionOptions } from './streaming/video-queue.js';
+import { createVideoQueueStore } from './streaming/video-queue-store.js';
+
+type SavedVideoQueue = { items: VideoQueueItem[]; options: VideoQueueSessionOptions | null };
 
 const PROGRESS_INTERVAL_MS = 1000;
 const MAX_RECONNECT_ATTEMPTS = 10;
@@ -40,6 +44,8 @@ export class VoiceBotManager extends EventEmitter {
   /** In-flight security-level-23 identity jobs keyed by bot id (create returns before these finish). */
   private identityJobs = new Map<number, Promise<void>>();
   private musicCmdHandler: MusicCommandHandler | null = null;
+  /** Each bot's video lane (queued videos), kept for the bot's lifetime. */
+  private videoQueues = new Map<number, VideoQueueController>();
 
   constructor(
     private prisma: PrismaClient,
@@ -103,7 +109,7 @@ export class VoiceBotManager extends EventEmitter {
         autoStopEmptySeconds: parsedAutoStop,
       };
 
-      const bot = this.createBotInstance(config);
+      const bot = this.createBotInstance(config, await this.loadVideoQueue(dbBot.id));
       this.bots.set(dbBot.id, bot);
       this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 
@@ -115,7 +121,19 @@ export class VoiceBotManager extends EventEmitter {
     }
   }
 
-  private createBotInstance(config: VoiceBotConfig): VoiceBot {
+  /** A saved lane comes back as kept items; nothing starts until an admin plays it. */
+  private async loadVideoQueue(botId: number): Promise<SavedVideoQueue | undefined> {
+    try {
+      return await createVideoQueueStore(this.prisma, botId).load();
+    } catch (err: any) {
+      console.error(`[VoiceBotManager] Could not load the video queue for bot ${botId}: ${err?.message || err}`);
+      return undefined;
+    }
+  }
+
+  private createBotInstance(config: VoiceBotConfig, savedVideoQueue?: SavedVideoQueue): VoiceBot {
+    // The bot's config needs the queue's hook and the queue needs the bot.
+    let videoQueue: VideoQueueController | undefined;
     // Streaming defaults are read when a stream starts, so admin changes apply
     // to the next stream without restarting bots.
     const bot = new VoiceBot({
@@ -124,7 +142,20 @@ export class VoiceBotManager extends EventEmitter {
         ?? (() => loadVideoStreamingSettings(this.prisma, config.serverConfigId)),
       loadYoutubeDirectStream: config.loadYoutubeDirectStream
         ?? (() => loadYoutubeDirectStream(this.prisma)),
+      videoSourceFinished: async (reason, detail) => videoQueue?.onSourceFinished(reason, detail) ?? false,
     });
+
+    videoQueue = new VideoQueueController(
+      {
+        bot,
+        start: (source, options) => this.startVideoStream(bot, source, options),
+        store: createVideoQueueStore(this.prisma, config.id),
+        onChange: (state) => this.broadcast('music:bot:videoQueueChanged', { botId: config.id, state }),
+      },
+      savedVideoQueue,
+    );
+    this.videoQueues.set(config.id, videoQueue);
+    const queue = videoQueue;
 
     bot.on('statusChange', (status: VoiceBotStatus) => {
       this.broadcast('music:bot:status', { botId: config.id, status });
@@ -198,7 +229,16 @@ export class VoiceBotManager extends EventEmitter {
       });
     });
 
-    bot.on('disconnected', () => {
+    bot.on('disconnected', async () => {
+      // A stream cannot outlive the connection: release the sidecar source and
+      // timers before reconnecting. The video queue keeps its items.
+      if (bot.videoStreaming) {
+        try {
+          await bot.stopVideoStream('server_disconnect', 'Disconnected from the TeamSpeak server');
+        } catch (err: any) {
+          console.error(`[VoiceBotManager] Bot ${config.id}: could not stop the video stream after a disconnect: ${err?.message || err}`);
+        }
+      }
       if (!bot.manuallyStopped) {
         console.log(`[VoiceBotManager] Bot ${config.id}: unexpected disconnect, scheduling reconnect`);
         this.scheduleReconnect(config.id);
@@ -215,8 +255,11 @@ export class VoiceBotManager extends EventEmitter {
       this.broadcast('music:bot:videoStreamStarted', { botId: config.id, ...data });
     });
 
-    bot.on('videoStreamStopped', (lastStop?: { reason: string; at: number; detail: string | null } | null) => {
+    bot.on('videoStreamStopped', (lastStop?: MediaStopInfo | null) => {
       this.broadcast('music:bot:videoStreamStopped', { botId: config.id, lastStop: lastStop ?? null });
+      queue.onStreamStopped(lastStop ?? null).catch((err: Error) => {
+        console.error(`[VoiceBotManager] Bot ${config.id}: video queue stop handling failed: ${err.message}`);
+      });
     });
 
     bot.on('videoViewerJoined', (viewer: any) => {
@@ -452,6 +495,10 @@ export class VoiceBotManager extends EventEmitter {
     return this.bots.get(id);
   }
 
+  getVideoQueue(botId: number): VideoQueueController | undefined {
+    return this.videoQueues.get(botId);
+  }
+
   async removeBot(id: number): Promise<void> {
     this.clearReconnect(id);
     this.stopProgressBroadcast(id);
@@ -468,6 +515,12 @@ export class VoiceBotManager extends EventEmitter {
       bot.ensureDisconnected();
       this.bots.delete(id);
       this.botServerConfigIds.delete(id);
+    }
+    this.videoQueues.delete(id);
+    try {
+      await createVideoQueueStore(this.prisma, id).delete();
+    } catch (err: any) {
+      console.warn(`[VoiceBotManager] Could not delete the video queue of bot ${id}: ${err?.message || err}`);
     }
     await this.prisma.musicBot.delete({ where: { id } });
   }

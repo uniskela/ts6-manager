@@ -252,6 +252,21 @@ model IptvPlaylist {
   channelPicks IptvChannelPick[]
 }
 
+/// A bot's queued videos (#253). Rows are rewritten together after each change.
+model VideoQueueEntry {
+  id          String   @id
+  musicBotId  Int
+  position    Int
+  source      String
+  title       String
+  durationSec Int?
+  sourceMode  String   @default("auto")
+  addedBy     String?
+  createdAt   DateTime @default(now())
+
+  @@index([musicBotId, position])
+}
+
 model IptvChannelPick {
   serverConfigId Int
   playlistId Int
