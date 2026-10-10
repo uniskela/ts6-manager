@@ -136,6 +136,12 @@ export interface MusicStartOptions {
   replaceSessionIds?: string[];
 }
 
+/** One log record for a viewer-controlled signaling error. */
+function quoteLog(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return JSON.stringify(message);
+}
+
 export class VoiceBot extends EventEmitter {
   private client: Ts3Client;
   private pipeline: AudioPipeline;
@@ -2702,7 +2708,7 @@ export class VoiceBot extends EventEmitter {
           try {
             await this.sidecarHttp.setAnswer(String(msg.clid), msg.sdp);
           } catch (err: any) {
-            console.error(`[VoiceBot ${this.config.id}] setAnswer error (clid=${msg.clid}): ${err.message}`);
+            console.error(`[VoiceBot ${this.config.id}] setAnswer error (clid=${msg.clid}): ${quoteLog(err)}`);
           }
         }
         break;
@@ -2716,7 +2722,7 @@ export class VoiceBot extends EventEmitter {
               msg.sdpMlineIndex ?? 0
             );
           } catch (err: any) {
-            console.error(`[VoiceBot ${this.config.id}] addIceCandidate error (clid=${msg.clid}): ${err.message}`);
+            console.error(`[VoiceBot ${this.config.id}] addIceCandidate error (clid=${msg.clid}): ${quoteLog(err)}`);
           }
         }
         break;
