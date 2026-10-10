@@ -48,6 +48,29 @@ describe('diagnoseRuntimeMedia', () => {
     assert.equal(report.stages.find((s) => s.id === 'sidecar')?.code, 'binary_missing');
   });
 
+  it('reports an invalid yt-dlp path without probing it or discarding other stages', async () => {
+    for (const YT_DLP_PATH of ['yt-dlp', './yt-dlp', '']) {
+      const commands: string[] = [];
+      const report = await diagnoseRuntimeMedia({
+        env: { SIDECAR_URL: 'http://sidecar:9800', YT_DLP_PATH },
+        probeCommand: command => {
+          commands.push(command);
+          return Promise.resolve({ ok: true, version: '1.0' });
+        },
+        probeSidecarHealth: () => Promise.resolve({ status: 'healthy' }),
+      });
+
+      assert.equal(report.overall, 'partial');
+      assert.equal(report.stages.length, 4);
+      assert.deepEqual(report.stages.find(stage => stage.id === 'yt-dlp'), {
+        id: 'yt-dlp', status: 'fail', code: 'misconfigured',
+        message: 'YT_DLP_PATH must be an absolute path to a trusted yt-dlp executable',
+      });
+      assert.deepEqual(commands, ['ffmpeg', 'ffprobe']);
+      assert.ok(report.stages.filter(stage => stage.id !== 'yt-dlp').every(stage => stage.status === 'ok'));
+    }
+  });
+
   it('skips local sidecar listening when binary exists but health fails', async () => {
     const report = await diagnoseRuntimeMedia({
       env: { SIDECAR_BINARY_PATH: '/usr/local/bin/sidecar' },
