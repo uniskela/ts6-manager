@@ -7,7 +7,7 @@ import {
   type VideoQueueStore,
 } from './video-queue.js';
 
-const SOURCE_MODES: readonly VideoSourceModeRequest[] = ['auto', 'live', 'vod', 'file'];
+const SOURCE_MODES: ReadonlySet<string> = new Set<VideoSourceModeRequest>(['auto', 'live', 'vod', 'file']);
 
 export function videoQueueOptionsKey(botId: number): string {
   return `video_queue_options:${botId}`;
@@ -68,9 +68,7 @@ export function createVideoQueueStore(prisma: PrismaClient, botId: number): Vide
         source: row.source,
         title: row.title,
         ...(row.durationSec != null ? { durationSec: row.durationSec } : {}),
-        sourceMode: SOURCE_MODES.includes(row.sourceMode as VideoSourceModeRequest)
-          ? (row.sourceMode as VideoSourceModeRequest)
-          : 'auto',
+        sourceMode: SOURCE_MODES.has(row.sourceMode) ? (row.sourceMode as VideoSourceModeRequest) : 'auto',
         ...(row.addedBy ? { addedBy: row.addedBy } : {}),
       }));
       return { items, options: parseOptions(setting?.value) };

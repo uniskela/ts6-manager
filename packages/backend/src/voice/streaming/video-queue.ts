@@ -6,7 +6,7 @@
  * viewers, quality and the no-viewer countdown carry over.
  */
 
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import type {
   MediaStopInfo,
   MediaStopReason,
@@ -144,7 +144,7 @@ export class VideoQueueController {
       try {
         await this.deps.start(added[0].source, { ...options, sourceMode: added[0].sourceMode });
       } catch (err) {
-        for (let i = 0; i < added.length; i++) this.lane.removeAt(0);
+        added.forEach(() => this.lane.removeAt(0));
         this.lane.rewind();
         this.options = previousOptions;
         throw err;
