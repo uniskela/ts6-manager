@@ -94,6 +94,12 @@ export interface VoiceBotConfig {
    * to the next stream.
    */
   loadYoutubeDirectStream?: () => Promise<boolean>;
+  /**
+   * Asked when a video source finishes on its own (end of a clip, encoder
+   * exit). Resolving `true` means the caller took over, for example by
+   * switching to the next queued video, and the stream must stay up.
+   */
+  videoSourceFinished?: (reason: MediaStopReason, detail: string | null) => Promise<boolean>;
 }
 
 /** Per-stream overrides; anything omitted uses the admin defaults. */
@@ -619,8 +625,22 @@ export class VoiceBot extends EventEmitter {
     this._videoEndTimer = setTimeout(() => {
       this._videoEndTimer = null;
       console.log(`[VoiceBot ${this.config.id}] Video ended, auto-stopping`);
-      this.stopVideoStream('source_ended', 'Video reached its end').catch((err) => this.emit('error', err));
+      this.handleVideoSourceFinished('source_ended', 'Video reached its end').catch((err) => this.emit('error', err));
     }, (durationSec + 2) * 1000);
+  }
+
+  /** A source finished on its own: let the hook take over, otherwise stop as usual. */
+  private async handleVideoSourceFinished(reason: MediaStopReason, detail: string | null): Promise<void> {
+    if (!this._videoStreaming || this._videoStopping) return;
+    let handled = false;
+    if (this.config.videoSourceFinished) {
+      try {
+        handled = await this.config.videoSourceFinished(reason, detail);
+      } catch (err) {
+        console.error(`[VoiceBot ${this.config.id}] videoSourceFinished hook failed:`, err);
+      }
+    }
+    if (!handled) await this.stopVideoStream(reason, detail);
   }
 
   /**
@@ -1826,8 +1846,8 @@ export class VoiceBot extends EventEmitter {
           loop: this._videoLoop,
           exitError: stats.encoder.exitError ?? null,
         });
-        console.warn(`[VoiceBot ${this.config.id}] Encoder exited (${exit.reason}); stopping stream`);
-        await this.stopVideoStream(exit.reason, exit.detail);
+        console.warn(`[VoiceBot ${this.config.id}] Encoder exited (${exit.reason})`);
+        await this.handleVideoSourceFinished(exit.reason, exit.detail);
         return;
       }
 
