@@ -32,6 +32,7 @@ FROM node:20-slim AS production
 ARG GIT_SHA=
 COPY .yt-dlp-version /tmp/yt-dlp-version
 COPY .deno-version /tmp/deno-version
+COPY .deno-checksums /tmp/deno-checksums
 COPY docker-commands/install-deno.sh /tmp/install-deno.sh
 # Sidecar connectivity is deployment-specific. Compose files that run a sidecar
 # set SIDECAR_URL and SIDECAR_SECRET explicitly; standalone/local backend images
