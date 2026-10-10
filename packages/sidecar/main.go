@@ -1329,6 +1329,10 @@ type SourceRequest struct {
 	AllowedHosts []string
 	// CpuUsed overrides VIDEO_CPU_USED / VIDEO_VP9_CPU_USED when > 0.
 	CpuUsed int
+	// SilentAudio adds a silent input in place of the source's audio. Set by
+	// the sidecar itself when the source turns out to have none
+	// (restartWithSilenceIfNoAudio), never by a request.
+	SilentAudio bool
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -1379,6 +1383,25 @@ func (t *tailBuffer) Write(p []byte) (int, error) {
 	}
 	return len(p), nil
 }
+
+// contains reports whether the end of ffmpeg's stderr contains text.
+func (t *tailBuffer) contains(text string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.Contains(string(t.buf), text)
+}
+
+// noAudioTrack reports whether ffmpeg stopped because the audio output had
+// nothing to take: the source has no audio track. The audio output may only
+// take audio (-vn), so ffmpeg 5.1 then exits with this error.
+func noAudioTrack(t *tailBuffer) bool {
+	return t.contains("does not contain any stream")
+}
+
+// silentAudioInput stands in for the audio of a source that has none, so the
+// audio RTP output always has something to send. Read at the source's pace
+// (-re), or it would be generated as fast as ffmpeg can.
+var silentAudioInput = []string{"-re", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"}
 
 // summary summarizes the end of ffmpeg's stderr for a status reason: the
 // last two lines (the final one is often a generic wrapper), URLs redacted.
@@ -1481,6 +1504,10 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			}
 			args = append(args, "-i", input)
 		}
+		if req.SilentAudio {
+			args = append(args, silentAudioInput...)
+			audioMap = fmt.Sprintf("%d:a:0", len(inputs))
+		}
 	} else {
 		args = append(args, "-re", "-f", "lavfi", "-i", fmt.Sprintf("color=c=black:s=%dx%d:r=1", w, h))
 	}
@@ -1523,6 +1550,12 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 
 		args = append(args,
 			"-map", audioMap,
+			// Audio only. Without this, a source with no audio track left
+			// the optional map above matching nothing, and ffmpeg picked a
+			// stream for this output itself: the video, encoded a second time
+			// (as MPEG-4) into the audio RTP port. Now ffmpeg stops at once
+			// instead, and the stream starts again with silence.
+			"-vn", "-sn", "-dn",
 		)
 
 		audioFilters := []string{}
@@ -1601,7 +1634,10 @@ func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64, health *healthTr
 func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 	s.ffmpegLock.Lock()
 	defer s.ffmpegLock.Unlock()
+	return s.startFFmpegLocked(req)
+}
 
+func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 	var err error
 	req.Source, err = resolveSource(req.Source)
 	if err != nil {
@@ -1693,12 +1729,24 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 			return s.encoderSession(), fmt.Errorf("start ffmpeg: %w", err)
 		}
 
+		if req.Source != "" && !req.SilentAudio {
+			go s.restartWithSilenceIfNoAudio(req, gen, done, tail)
+		}
+
 		if !spec.Hardware {
 			return s.encoderSession(), nil
 		}
 
 		select {
 		case <-done:
+			if req.Source != "" && !req.SilentAudio && noAudioTrack(tail) {
+				// Not the hardware encoder's fault: start it again with
+				// silence for the missing audio track.
+				s.ffmpeg = nil
+				log.Printf("[FFmpeg] The source has no audio track; starting again with silence")
+				req.SilentAudio = true
+				continue
+			}
 			reason := tail.summary()
 			if reason == "" {
 				reason = "hardware encoder exited during startup"
@@ -1717,6 +1765,27 @@ func (s *Sidecar) StartFFmpeg(req SourceRequest) (EncoderSession, error) {
 		case <-time.After(hwVerifyWindow()):
 			return s.encoderSession(), nil
 		}
+	}
+}
+
+// restartWithSilenceIfNoAudio starts the stream again with a silent audio
+// input when the ffmpeg of generation gen stopped because the source has no
+// audio track. Only if nothing has moved on since: a stop, a new source and
+// the hardware check in startFFmpegLocked all start a new generation.
+func (s *Sidecar) restartWithSilenceIfNoAudio(req SourceRequest, gen uint64, done <-chan struct{}, tail *tailBuffer) {
+	<-done
+	if !noAudioTrack(tail) {
+		return
+	}
+	s.ffmpegLock.Lock()
+	defer s.ffmpegLock.Unlock()
+	if atomic.LoadUint64(&s.ffmpegGen) != gen {
+		return
+	}
+	log.Printf("[FFmpeg] The source has no audio track; starting again with silence")
+	req.SilentAudio = true
+	if _, err := s.startFFmpegLocked(req); err != nil {
+		log.Printf("[FFmpeg] Restart with silence failed: %v", err)
 	}
 }
 
