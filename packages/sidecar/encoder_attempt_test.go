@@ -3,7 +3,6 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -115,21 +114,8 @@ func TestAfterHardwareFailureWithoutLowPowerToFlip(t *testing.T) {
 // the returned log file.
 func failingHardwareFFmpeg(t *testing.T) string {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("needs a POSIX shell")
-	}
-	dir := t.TempDir()
-	calls := filepath.Join(dir, "calls")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" | tr -d '\\r' | tr '\\n' ' ' >> " + calls + "\necho >> " + calls + "\n" +
-		"case \"$*\" in *_vaapi*) echo 'Failed to initialise VAAPI connection' >&2; exit 1 ;; esac\n" +
-		"exec sleep 30\n"
-	bin := filepath.Join(dir, "ffmpeg")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("FFMPEG_PATH", bin)
-	t.Setenv("SIDECAR_EGRESS_PROXY", "off")
-	return calls
+	return installFakeFFmpeg(t, "case \"$*\" in *_vaapi*) echo 'Failed to initialise VAAPI connection' >&2; exit 1 ;; esac\n"+
+		"exec sleep 30\n")
 }
 
 // StartFFmpeg answers only once the fallback has settled, and reports it.
