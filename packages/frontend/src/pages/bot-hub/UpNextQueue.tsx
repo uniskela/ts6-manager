@@ -15,13 +15,23 @@ import {
 } from '@/hooks/use-music-bots';
 import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
-import { absoluteIndex, moveUpNext, rowKeys, upNext } from './console-queue';
+import { absoluteIndex, droppedMove, moveUpNext, rowKeys, upNext } from './console-queue';
 
 const NEXT_REPEAT: Record<RepeatMode, RepeatMode> = { off: 'track', track: 'queue', queue: 'off' };
 const REPEAT_LABEL: Record<RepeatMode, string> = { off: 'Repeat: off', track: 'Repeat: track', queue: 'Repeat: queue' };
 
-function Row({ rowKey, item, onPlay, onRemove, disabled, dragDisabled }: {
-  rowKey: string; item: QueueItemInfo; onPlay(): void; onRemove(): void; disabled: boolean; dragDisabled: boolean;
+/** Pointer, touch and keyboard dragging for an Up next list, shared by the music and video lanes. */
+export function useUpNextSensors() {
+  return useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+}
+
+/** One draggable Up next row, shared by the music and video lanes. */
+export function Row({ rowKey, item, onPlay, onRemove, disabled, dragDisabled }: {
+  rowKey: string; item: Pick<QueueItemInfo, 'title' | 'artist'>; onPlay(): void; onRemove(): void; disabled: boolean; dragDisabled: boolean;
 }) {
   const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: rowKey, disabled: dragDisabled,
@@ -54,13 +64,15 @@ function Row({ rowKey, item, onPlay, onRemove, disabled, dragDisabled }: {
  * The bot's queue after the playing track. Positions in this list are
  * converted to absolute queue indexes for every API call.
  */
-export function UpNextQueue({ botId, state, keptFor, loadError }: {
+export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = false }: {
   botId: number;
   state: PlaybackState | undefined;
   /** The last state request failed; shown instead of an empty queue when there is no state yet. */
   loadError: unknown;
   /** Set while radio or a video plays: the queue waits and can be resumed. */
   keptFor: 'radio' | 'video' | null;
+  /** The video lane owns Up next: show this queue as its one-line kept strip only. */
+  stripOnly?: boolean;
 }) {
   const move = useMoveQueueItem();
   const remove = useRemoveFromQueue();
@@ -82,20 +94,14 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
   const currentIndex = state?.currentIndex ?? -1;
   const busy = move.isPending || remove.isPending || playFrom.isPending;
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useUpNextSensors();
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     // One move at a time: a second drop would send indexes from the unsaved order.
-    if (move.isPending || !over || active.id === over.id) return;
-    const from = keys.indexOf(String(active.id));
-    const to = keys.indexOf(String(over.id));
-    if (from < 0 || to < 0) return;
-    setLocalItems(moveUpNext(items, from, to));
-    move.mutate({ botId, from: absoluteIndex(currentIndex, from), to: absoluteIndex(currentIndex, to) });
+    const moved = move.isPending ? null : droppedMove(keys, active.id, over?.id);
+    if (!moved) return;
+    setLocalItems(moveUpNext(items, moved.from, moved.to));
+    move.mutate({ botId, from: absoluteIndex(currentIndex, moved.from), to: absoluteIndex(currentIndex, moved.to) });
   };
 
   const repeat = state?.repeat ?? 'off';
@@ -104,6 +110,19 @@ export function UpNextQueue({ botId, state, keptFor, loadError }: {
   // just noise there. A non-empty one stays so it can be resumed; a load
   // error always shows.
   if (keptFor && !loadError && (!state || items.length === 0)) return null;
+
+  if (stripOnly) {
+    if (items.length === 0) return null;
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">
+        <span>{items.length === 1 ? '1 queued song is kept.' : `${items.length} queued songs are kept.`}</span>
+        <Button variant="outline" size="sm" className="h-9" disabled={busy} aria-label="Play music queue"
+          onClick={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, 0) })}>
+          Play queue
+        </Button>
+      </div>
+    );
+  }
 
   if (!state) {
     return (

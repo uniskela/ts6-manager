@@ -29,7 +29,7 @@ Each **Play something** tab has a **+** link to the matching manage page: **Add 
 
 If the bot is offline, the console offers **Start bot** before showing its sources. When a start conflicts with an active media session, **Replace what is playing?** lists what will stop. Choose **Keep playing** to cancel or **Stop and switch** to replace it.
 
-Radio and video keep the music queue. **Play queue** resumes the upcoming songs, with the replacement prompt when needed; while radio or video plays and nothing is queued, **Up next** is hidden. Radio shows the station and live status rather than track progress or skip controls. Music controls include pause/resume, skip and volume; **Up next** also provides **Shuffle** and repeat modes.
+Radio and video keep the music queue. **Play queue** resumes the upcoming songs, with the replacement prompt when needed; while radio plays and nothing is queued, **Up next** is hidden. While a video streams, **Up next** lists the bot's queued videos and a waiting music queue is shown as one line below it; see [Queue videos and playlists](video-streaming.md#queue-videos-and-playlists). Radio shows the station and live status rather than track progress or skip controls. Music controls include pause/resume, skip and volume; **Up next** also provides **Shuffle** and repeat modes.
 
 ## Media Library
 

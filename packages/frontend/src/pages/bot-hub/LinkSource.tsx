@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
-import { usePlayUrl, useStartVideoStream, useBotMedia } from '@/hooks/use-music-bots';
+import { usePlayUrl, useStartVideoStream, useBotMedia, useQueueVideo } from '@/hooks/use-music-bots';
 import { ApiErrorAlert } from '@/components/ApiErrorAlert';
 import { useVideoStartOptions } from '@/hooks/use-video-streaming';
 import { toastMediaStarted } from '@/lib/media-start-toast';
@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import {
   buildLinkStartRequest,
   musicPlayAllowed,
+  queuedVideoToast,
   type LinkPlayMode,
 } from './link-request';
 import { AddMediaLink } from './AddMediaLink';
@@ -24,12 +25,20 @@ import type { ConsoleSourceContext } from './SourcePicker';
 const LINK_LABEL = 'YouTube, Twitch, direct link, or a file already in the music folder';
 const FOLDER_HINT = 'Music-folder files play from the Music tab.';
 
+/** Wording for the start button and its error, by what a press will do. */
+function linkAction(mode: LinkPlayMode, videoStreaming: boolean): { label: string; failed: string } {
+  if (mode !== 'video') return { label: 'Play as music', failed: 'Failed to play URL' };
+  if (videoStreaming) return { label: 'Queue as video', failed: 'Failed to queue the video' };
+  return { label: 'Stream as video', failed: 'Failed to start stream' };
+}
+
 export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<LinkPlayMode>('music');
   const [options, setOptions, optionsLoading, defaults] = useVideoStartOptions(serverConfigId);
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
+  const queueVideo = useQueueVideo();
   const media = useBotMedia();
 
   const trimmed = input.trim();
@@ -37,13 +46,13 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const allowMusic = !trimmed || musicPlayAllowed(input);
   const effectiveMode: LinkPlayMode = mode === 'music' && trimmed && !musicPlayAllowed(input) ? 'video' : mode;
   const session = media.data?.find((b) => b.botId === botId)?.session;
-  const alreadyThisFile = effectiveMode === 'video'
-    && session?.kind === 'video'
-    && !!session.label
-    && session.label === trimmed;
-  const busy = playUrl.isPending || startVideo.isPending;
-  const error = effectiveMode === 'video' ? startVideo.error : playUrl.error;
+  // With a video already streaming on this bot, another video is queued behind it.
+  const videoStreaming = session?.kind === 'video';
+  const busy = playUrl.isPending || startVideo.isPending || queueVideo.isPending;
+  const error = effectiveMode === 'video' ? startVideo.error ?? queueVideo.error : playUrl.error;
   const canStart = trimmed.length > 0 && !busy && !(effectiveMode === 'video' && optionsLoading);
+  const action = linkAction(effectiveMode, videoStreaming);
+  const busyLabel = queueVideo.isPending && videoStreaming ? 'Adding…' : 'Starting…';
 
   useEffect(() => {
     if (trimmed && !musicPlayAllowed(input) && mode === 'music') setMode('video');
@@ -51,6 +60,7 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
 
   useEffect(() => {
     startVideo.reset();
+    queueVideo.reset();
     playUrl.reset();
     // Drop leftover errors when the user changes mode or source text.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only on mode/source change
@@ -58,7 +68,17 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
 
   const onStart = () => {
     if (!canStart) return;
-    const request = buildLinkStartRequest(input, effectiveMode, options);
+    const request = buildLinkStartRequest(input, effectiveMode, options, videoStreaming);
+    if (request.endpoint === 'stream/queue') {
+      playUrl.reset();
+      startVideo.reset();
+      queueVideo.mutate(
+        { botId, ...request.body },
+        { onSuccess: (data) => toastMediaStarted(queuedVideoToast(data)) },
+      );
+      return;
+    }
+    queueVideo.reset();
     if (request.endpoint === 'play-url') {
       startVideo.reset();
       playUrl.mutate(
@@ -153,14 +173,12 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
       {error && (
         <ApiErrorAlert
           error={error}
-          fallback={effectiveMode === 'video' ? 'Failed to start stream' : 'Failed to play URL'}
+          fallback={action.failed}
         />
       )}
 
       <Button type="button" className="h-11 w-full sm:w-auto" disabled={!canStart} onClick={onStart}>
-        {busy ? 'Starting…' : effectiveMode === 'video'
-          ? (alreadyThisFile ? 'Already streaming' : 'Stream as video')
-          : 'Play as music'}
+        {busy ? busyLabel : action.label}
       </Button>
     </div>
   );

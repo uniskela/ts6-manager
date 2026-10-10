@@ -4,7 +4,7 @@
  * play-now routes take absolute queue indexes.
  */
 
-import type { PlaybackState, QueueItemInfo } from '@ts6/common';
+import type { PlaybackState, QueueItemInfo, VideoQueueItemInfo } from '@ts6/common';
 
 /** Tracks after the playing one (the whole queue before anything has played). */
 export function upNext(state: Pick<PlaybackState, 'queue' | 'currentIndex'>): QueueItemInfo[] {
@@ -35,4 +35,43 @@ export function rowKeys(items: Pick<QueueItemInfo, 'id'>[]): string[] {
     seen.set(id, n + 1);
     return `${id}#${n}`;
   });
+}
+
+/** The Up next positions a finished drag moved a row between, or null when nothing moved. */
+export function droppedMove(
+  keys: string[], activeId: string | number, overId: string | number | undefined,
+): { from: number; to: number } | null {
+  if (overId === undefined || activeId === overId) return null;
+  const from = keys.indexOf(String(activeId));
+  const to = keys.indexOf(String(overId));
+  return from < 0 || to < 0 ? null : { from, to };
+}
+
+export type UpNextLane = 'music' | 'video';
+
+/**
+ * Which queue Up next shows. A bot plays music or video, never both: the video
+ * lane leads while a video streams, and on an idle bot when only videos wait.
+ */
+export function activeLane(input: {
+  sessionKind: 'music' | 'video' | null;
+  musicLive: boolean;
+  musicUpNext: number;
+  videoUpNext: number;
+}): UpNextLane {
+  if (input.sessionKind === 'video') return 'video';
+  if (input.sessionKind === null && input.videoUpNext > 0 && input.musicUpNext === 0) return 'video';
+  return 'music';
+}
+
+/** Second line of a queued video: `Live`, or its host when the title is not already that. */
+export function videoRowDetail(item: Pick<VideoQueueItemInfo, 'title' | 'source' | 'sourceMode'>): string | undefined {
+  if (item.sourceMode === 'live') return 'Live';
+  if (!/^https?:\/\//i.test(item.source)) return undefined;
+  try {
+    const host = new URL(item.source).hostname;
+    return host && host !== item.title ? host : undefined;
+  } catch {
+    return undefined;
+  }
 }

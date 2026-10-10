@@ -6,7 +6,7 @@
 
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Bot } from 'lucide-react';
-import type { PlaybackState } from '@ts6/common';
+import type { BotMediaOverview, PlaybackState } from '@ts6/common';
 import { NowPlaying } from '@/components/media/NowPlaying';
 import { StreamSourceSwitch } from '@/components/video/StreamSourceSwitch';
 import { StreamViewers } from '@/components/video/StreamViewers';
@@ -15,7 +15,7 @@ import { PageHeader } from '@/components/shared/PageHeader';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useBotMedia, useMusicBotState } from '@/hooks/use-music-bots';
+import { useBotMedia, useMusicBotState, useVideoQueue } from '@/hooks/use-music-bots';
 import { apiErrorMessage } from '@/lib/api-error';
 import { hubTone } from '@/lib/bot-hub';
 import { useEffect, useState } from 'react';
@@ -25,6 +25,8 @@ import { RadioSource } from './RadioSource';
 import { IptvSource } from './IptvSource';
 import { SourcePicker, type ConsoleSourceTab } from './SourcePicker';
 import { UpNextQueue } from './UpNextQueue';
+import { VideoUpNext } from './VideoUpNext';
+import { activeLane, upNext } from './console-queue';
 import { BotSettingsMenu } from './BotSettingsMenu';
 import { BotAvatar } from '@/components/shared/BotAvatar';
 
@@ -56,6 +58,36 @@ function useNow(): number {
   return now;
 }
 
+/** What the music queue is waiting behind, if anything. */
+function musicKeptFor(bot: BotMediaOverview): 'radio' | 'video' | null {
+  if (bot.music?.live) return 'radio';
+  return bot.session?.kind === 'video' ? 'video' : null;
+}
+
+/** Up next for an online bot: one lane owns it; the other, when it holds items, waits as a one-line strip. */
+function UpNextLanes({ bot }: { bot: BotMediaOverview }) {
+  const stateQuery = useMusicBotState(bot.botId);
+  const state = stateQuery.data as PlaybackState | undefined;
+  const videoQueueQuery = useVideoQueue(bot.botId);
+  const videoQueue = videoQueueQuery.data;
+  const lane = activeLane({
+    sessionKind: bot.session?.kind ?? null,
+    musicLive: !!bot.music?.live,
+    musicUpNext: state ? upNext(state).length : 0,
+    videoUpNext: videoQueue?.upNext.length ?? 0,
+  });
+  const musicQueue = (
+    <UpNextQueue botId={bot.botId} state={state} keptFor={musicKeptFor(bot)} stripOnly={lane === 'video'}
+      loadError={stateQuery.isError ? stateQuery.error : null} />
+  );
+  const videoLane = (
+    <VideoUpNext botId={bot.botId} state={videoQueue} streaming={bot.session?.kind === 'video'}
+      stripOnly={lane === 'music'}
+      loadError={lane === 'video' && videoQueueQuery.isError ? videoQueueQuery.error : null} />
+  );
+  return lane === 'video' ? <>{videoLane}{musicQueue}</> : <>{musicQueue}{videoLane}</>;
+}
+
 /** Render one bot's playback state, queue, and source tabs. */
 export default function BotConsole() {
   const botId = Number(useParams().botId);
@@ -66,8 +98,6 @@ export default function BotConsole() {
   const bot = (media.data ?? []).find((b) => b.botId === botId);
   const tone = bot ? hubTone(bot) : 'offline';
   const online = !!bot && tone !== 'offline';
-  const stateQuery = useMusicBotState(online ? botId : null);
-  const state = stateQuery.data as PlaybackState | undefined;
 
   if (media.isLoading) return <PageLoader />;
   if (media.isError) {
@@ -81,7 +111,6 @@ export default function BotConsole() {
     );
   }
 
-  const keptFor = bot.music?.live ? 'radio' : bot.session?.kind === 'video' ? 'video' : null;
   const connection = CONNECTION_BADGE[bot.status] ?? CONNECTION_BADGE.connected;
 
   return (
@@ -106,10 +135,7 @@ export default function BotConsole() {
             bot={bot}
             now={now}
             variant="full"
-            footer={online ? (
-              <UpNextQueue botId={bot.botId} state={state} keptFor={keptFor}
-                loadError={stateQuery.isError ? stateQuery.error : null} />
-            ) : undefined}
+            footer={online ? <UpNextLanes bot={bot} /> : undefined}
           />
           {tone === 'live' && <StreamSourceSwitch botId={bot.botId} />}
           {tone === 'live' && <StreamViewers botId={bot.botId} now={now} />}
