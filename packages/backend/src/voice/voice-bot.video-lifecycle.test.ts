@@ -1102,3 +1102,109 @@ describe('video source probe', () => {
     }
   });
 });
+
+describe('video source finished hook', () => {
+  beforeEach(() => {
+    mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1_000_000 });
+  });
+  afterEach(() => {
+    mock.timers.reset();
+    mock.restoreAll();
+  });
+
+  type Hook = NonNullable<ConstructorParameters<typeof VoiceBot>[0]['videoSourceFinished']>;
+
+  function hookedBot(hook: Hook) {
+    const calls: Array<[string, string | null]> = [];
+    const bot = new VoiceBot({
+      id: 7,
+      serverConfigId: 1,
+      name: 'test',
+      serverHost: '127.0.0.1',
+      serverPort: 9987,
+      nickname: 'Bot',
+      volume: 50,
+      videoSourceFinished: (reason, detail) => {
+        calls.push([reason, detail]);
+        return hook(reason, detail);
+      },
+    });
+    const { b } = fakeStreaming(bot, 0);
+    const stops: unknown[] = [];
+    bot.on('videoStreamStopped', (info) => stops.push(info));
+    return { bot, b, calls, stops };
+  }
+
+  /** Let pending promises settle and the stop's own short timers run. */
+  async function settle() {
+    for (let i = 0; i < 5; i++) {
+      await new Promise((resolve) => setImmediate(resolve));
+      mock.timers.tick(1_000);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+
+  it('end timer asks the hook and does not stop when it advances', async () => {
+    const { bot, b, calls, stops } = hookedBot(async () => true);
+    b.scheduleVideoEndStop(10);
+    mock.timers.tick(12_000);
+    await settle();
+    assert.deepEqual(calls, [['source_ended', 'Video reached its end']]);
+    assert.equal(bot.videoStreaming, true);
+    assert.equal(stops.length, 0);
+  });
+
+  it('end timer stops as before when the hook declines', async () => {
+    const { bot, b, calls } = hookedBot(async () => false);
+    b.scheduleVideoEndStop(10);
+    mock.timers.tick(12_000);
+    await settle();
+    assert.equal(calls.length, 1);
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.videoStreamStatus.lastStop?.reason, 'source_ended');
+    assert.equal(bot.videoStreamStatus.lastStop?.detail, 'Video reached its end');
+  });
+
+  it('encoder exit asks the hook with the classified reason', async () => {
+    const { bot, b, calls, stops } = hookedBot(async () => true);
+    b._videoSourceMode = 'vod';
+    b.sidecarHttp.getStats = async () => ({ encoder: { state: 'exited', exitError: '<source> Server returned 404 Not Found' } });
+    const poll = bot.pollVideoHealth();
+    await settle();
+    await poll;
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][0], 'source_unreachable');
+    assert.match(calls[0][1] ?? '', /404/);
+    assert.equal(bot.videoStreaming, true);
+    assert.equal(stops.length, 0);
+  });
+
+  it('a throwing hook falls back to the normal stop', async () => {
+    mock.method(console, 'error', () => {});
+    const { bot, b } = hookedBot(async () => {
+      throw new Error('queue broke');
+    });
+    b.scheduleVideoEndStop(10);
+    mock.timers.tick(12_000);
+    await settle();
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.videoStreamStatus.lastStop?.reason, 'source_ended');
+  });
+
+  it('a finish that arrives while the stream is stopping does not ask the hook', async () => {
+    const { b, calls } = hookedBot(async () => true);
+    b._videoStopping = true;
+    await b.handleVideoSourceFinished('source_ended', 'Video reached its end');
+    assert.equal(calls.length, 0);
+  });
+
+  it('no hook behaves as before', async () => {
+    const bot = makeBot();
+    const { b } = fakeStreaming(bot, 0);
+    b.scheduleVideoEndStop(10);
+    mock.timers.tick(12_000);
+    await settle();
+    assert.equal(bot.videoStreaming, false);
+    assert.equal(bot.videoStreamStatus.lastStop?.reason, 'source_ended');
+  });
+});

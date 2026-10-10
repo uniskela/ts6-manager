@@ -447,3 +447,30 @@ export interface StartVideoStreamRequest {
 export interface SetVideoSourceRequest {
   source: string;
 }
+
+/** One video waiting in (or playing from) a bot's video queue. */
+export interface VideoQueueItemInfo {
+  id: string;
+  /** The address the user gave: a watch URL or a music-folder filename. */
+  source: string;
+  title: string;
+  durationSec?: number;
+  sourceMode: VideoSourceModeRequest;
+  addedBy?: string;
+}
+
+export interface VideoQueueState {
+  current: VideoQueueItemInfo | null;
+  upNext: VideoQueueItemInfo[];
+  /** True when items are waiting and no queued stream is running. */
+  kept: boolean;
+}
+
+export interface QueueVideoResponse {
+  success: true;
+  queued: number;
+  started: boolean;
+  playlistTitle?: string;
+  truncated?: boolean;
+  state: VideoQueueState;
+}

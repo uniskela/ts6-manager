@@ -12,6 +12,7 @@ import { playerWidgetToken } from './widget-public.routes.js';
 import { parseStreamStartOptions } from '../voice/streaming/start-options.js';
 import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
+import { createVideoQueueRoutes } from './video-queue.routes.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
 import {
   invalidatePlaylistExpansion,
@@ -54,7 +55,7 @@ const volumeSaveTails = new Map<number, Promise<void>>();
  * in-memory level is set in request order, but concurrent database writes can
  * complete in any order; queueing keeps the newest level as the last write.
  */
-function saveBotVolume(prisma: any, id: number, volume: number): Promise<void> {
+export function saveBotVolume(prisma: any, id: number, volume: number): Promise<void> {
   const prev = volumeSaveTails.get(id) ?? Promise.resolve();
   const next = prev
     .catch(() => { /* the earlier request reported its own failure */ })
@@ -911,7 +912,7 @@ musicBotRoutes.put('/:id/queue/move', async (req: Request, res: Response, next) 
 // === Video Streaming ===
 
 /** Allow http(s) URLs or a bare MUSIC_DIR filename (no path separators). */
-function assertVideoSource(source: unknown): string {
+export function assertVideoSource(source: unknown): string {
   if (typeof source !== 'string' || !source.trim()) {
     throw new AppError(400, 'source is required', undefined, { reason: 'source_invalid' });
   }
@@ -932,6 +933,9 @@ function assertVideoSource(source: unknown): string {
   }
   return trimmed;
 }
+
+// /:id/stream/queue — queued videos and YouTube playlists
+musicBotRoutes.use('/:id/stream/queue', createVideoQueueRoutes());
 
 // POST /:id/stream/start — Start video stream
 musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, next) => {

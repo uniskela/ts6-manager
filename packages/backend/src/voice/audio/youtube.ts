@@ -796,7 +796,13 @@ export function mapYtDlpInfoJson(
 export async function expandYouTubeToWatchUrls(
   url: string,
   cap = 25,
-): Promise<{ type: "video" | "playlist"; urls: string[]; title?: string }> {
+): Promise<{
+  type: "video" | "playlist";
+  urls: string[];
+  title?: string;
+  /** Per-entry details from the playlist probe, in the order of `urls`. */
+  items?: Array<{ url: string; title?: string; durationSec?: number }>;
+}> {
   const parsed = parseYouTubeUrl(url);
 
   // Expand only bare playlist URLs. A video with &list= plays that video only.
@@ -806,10 +812,16 @@ export async function expandYouTubeToWatchUrls(
     try {
       const info = await getYouTubeUrlInfo(url);
       if (info.items.length > 0) {
+        const items = info.items.slice(0, cap).map((item) => ({
+          url: `https://www.youtube.com/watch?v=${item.id}`,
+          title: item.title || undefined,
+          durationSec: item.duration > 0 ? item.duration : undefined,
+        }));
         return {
           type: info.type,
           title: info.title,
-          urls: info.items.slice(0, cap).map((item) => `https://www.youtube.com/watch?v=${item.id}`),
+          urls: items.map((item) => item.url),
+          items,
         };
       }
     } catch {
