@@ -1,0 +1,4 @@
+# SHA-256 of the denoland/deno release zips for the version in .deno-version.
+# Update this file in the same change as .deno-version.
+x86_64 c6527f24f4b16031d3ae4fa9f658d5f11534c8d84ce7dc8502420280919c3490
+aarch64 c832298b1ad4422481334855f6003e0f54145762c5a134f20a489511d2f65bbf

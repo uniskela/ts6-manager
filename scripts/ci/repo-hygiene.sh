@@ -49,6 +49,11 @@ if [[ "$fail" -eq 0 ]]; then
   echo "OK: shell -n passed for ${#shell_scripts[@]} script(s)"
 fi
 
+echo "==> Deno install verifies pinned checksum"
+if ! sh "$ROOT/docker-commands/install-deno.test.sh"; then
+  fail=1
+fi
+
 echo "==> pnpm lockfile overrides match package.json"
 if ! command -v python3 >/dev/null 2>&1; then
   echo "python3 is required for pnpm overrides check" >&2

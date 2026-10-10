@@ -39,6 +39,7 @@ FROM node:20-slim AS production
 ARG GIT_SHA=
 COPY .yt-dlp-version /tmp/yt-dlp-version
 COPY .deno-version /tmp/deno-version
+COPY .deno-checksums /tmp/deno-checksums
 COPY docker-commands/install-deno.sh /tmp/install-deno.sh
 ENV NODE_ENV=production \
     SIDECAR_URL=http://127.0.0.1:9800 \
