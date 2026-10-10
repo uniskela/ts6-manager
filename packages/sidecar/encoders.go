@@ -148,8 +148,9 @@ func hwDecodeEnabled() bool {
 // (VIDEO_HW_DECODE=1). The copy is what makes GPU decoding slow today: on an
 // Intel Pentium Gold 8505 (UHD Graphics), 4K60 VP9 to 1080p30 h264_vaapi
 // ran at 1.13x real time and 165 % CPU with the copy, 6.1x and 62-70 % without
-// it; AV1 0.8x / 139 % and 4.9x / 40 %. Decoding on the CPU (the default) was
-// 3.0x at 384 % and 2.5x at 466 %. VIDEO_GPU_FILTERS=0 goes back to the copy.
+// it. Decoding on the CPU (the default) was 3.0x at 384 %. AV1 is decoded on
+// the CPU here either way (FFmpeg 5.1 opens it with libdav1d); its frames are
+// uploaded by gpuVideoFilter. VIDEO_GPU_FILTERS=0 goes back to the copy.
 func framesStayOnGPU(spec EncoderSpec, withDecode bool) bool {
 	return spec.Backend == backendVAAPI && withDecode && hwDecodeEnabled() &&
 		os.Getenv("VIDEO_GPU_FILTERS") != "0"
