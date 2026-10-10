@@ -1,7 +1,7 @@
 # Single image: nginx (SPA + API proxy) + Node backend + Go sidecar
 # Adapted from upstream PR #64 by @joaobosconff (clusterzx/ts6-manager)
 
-FROM golang:1.25-bookworm AS sidecar-build
+FROM golang:1.26-bookworm AS sidecar-build
 WORKDIR /src
 COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
 RUN go mod download
