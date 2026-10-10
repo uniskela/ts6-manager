@@ -2,6 +2,11 @@ import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import {
+  loadMediaCommandPermissions,
+  parseMediaCommandPermissions,
+  saveMediaCommandPermissions,
+} from '../voice/media-command-permissions.js';
+import {
   CHAT_COMMAND_PRESETS,
   isReservedChatCommandName,
   normalizeChatCommandName,
@@ -13,6 +18,32 @@ chatCommandRoutes.use(requireRole('admin'));
 
 const MAX_RESPONSE_LEN = 900;
 const MAX_DESCRIPTION_LEN = 120;
+
+function permissionScope(req: Request): { configId: number; sid: number } {
+  const configId = Number(req.params.configId);
+  const sid = Number(req.params.sid);
+  if (!Number.isSafeInteger(configId) || configId <= 0 || !Number.isSafeInteger(sid) || sid <= 0) {
+    throw new AppError(400, 'A valid server connection and virtual server are required');
+  }
+  return { configId, sid };
+}
+
+// Policy scope includes the virtual server: TS server group IDs are local to each SID.
+chatCommandRoutes.get('/permissions/:sid', async (req: Request, res: Response, next) => {
+  try {
+    const { configId, sid } = permissionScope(req);
+    res.json(await loadMediaCommandPermissions(req.app.locals.prisma, configId, sid));
+  } catch (err) { next(err); }
+});
+
+chatCommandRoutes.put('/permissions/:sid', async (req: Request, res: Response, next) => {
+  try {
+    const { configId, sid } = permissionScope(req);
+    const policy = parseMediaCommandPermissions(req.body);
+    if (!policy) throw new AppError(400, 'Supply playback, queue and video access: everyone or server_groups with positive serverGroupIds');
+    res.json(await saveMediaCommandPermissions(req.app.locals.prisma, configId, sid, policy));
+  } catch (err) { next(err); }
+});
 
 function validateCommandPayload(body: {
   name?: unknown;

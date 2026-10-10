@@ -9,7 +9,7 @@ function fixture(status = 'connected') {
   const played: any[] = [];
   const seeks: number[] = [];
   const playlists = [{ id: 3, name: 'Rock' }, { id: 4, name: 'Rock live' }];
-  const prisma = { playlist: {
+  const prisma = { appSetting: { findUnique: async () => null }, playlist: {
     findMany: async ({ where }: any) => {
       assert.deepEqual(where.OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
       return playlists;
@@ -20,6 +20,7 @@ function fixture(status = 'connected') {
     },
   } } as any;
   const handler = new MusicCommandHandler(prisma, {} as any) as any;
+  handler.botChannelConfig.set(1, { serverConfigId: 9, virtualServerId: 1 });
   handler.reply = (_bot: unknown, _id: number, message: string) => replies.push(message);
   const bot = { currentConfig: { id: 1, serverConfigId: 9 }, ts3ClientId: 42,
     queue: new PlayQueue(), status, nowPlaying: null, canSeek: true,

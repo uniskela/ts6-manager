@@ -1,6 +1,25 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { chatCommandsApi } from '../api/music.api';
-import type { CreateChatCommandRequest, UpdateChatCommandRequest } from '@ts6/common';
+import type { CreateChatCommandRequest, UpdateChatCommandRequest, MediaCommandPermissions } from '@ts6/common';
+
+export function useMediaCommandPermissions(configId: number | null, sid: number | null) {
+  return useQuery({
+    queryKey: ['media-command-permissions', configId, sid],
+    queryFn: () => chatCommandsApi.permissions(configId!, sid!),
+    enabled: !!configId && !!sid,
+    refetchOnWindowFocus: false,
+  });
+}
+
+export function useSaveMediaCommandPermissions() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ configId, sid, policy }: { configId: number; sid: number; policy: MediaCommandPermissions }) =>
+      chatCommandsApi.savePermissions(configId, sid, policy),
+    onSuccess: (policy, { configId, sid }) =>
+      qc.setQueryData(['media-command-permissions', configId, sid], policy),
+  });
+}
 
 export function useChatCommands(configId: number | null) {
   return useQuery({

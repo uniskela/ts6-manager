@@ -107,6 +107,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!stop`** — Stop playback and clear the music queue, including a playlist still expanding in the background. **Stop media** on a Bot Hub card does the same.
 - **`!pause`** — Toggle pause/resume
 - **`!skip` / `!next`** — Advance the queue
+- **`!voteskip`** — Vote to skip the current track; more than half of human listeners in the bot channel must vote. Bots do not count, each identity votes once, and changing tracks resets votes
 - **`!prev`** — Previous track
 - **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV.
 - **`!np` / `!nowplaying`** — Show the current track
@@ -119,6 +120,8 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!lyrics [artist - title]`** — Show/search lyrics
 
 Custom chat commands are configured in **Bot Flows → Chat commands**, alongside the built-in list and clash warnings. See [Bot Flows](bot-flows.md).
+
+Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. **Everyone** is the default after upgrading. Help and read-only information stay accessible; human listeners can still use `!voteskip`. Denied controls receive a short private reply with a cooldown.
 
 ### Several bots in one channel
 

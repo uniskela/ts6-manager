@@ -45,6 +45,14 @@ Open **Bot Flows → Chat commands** (`/bots?tab=commands`) to add, edit, enable
 
 The read-only **Built-in commands** list shows names already handled by media bots: playback and queue controls such as `!play`, `!playlist`, `!queue` and `!stop`, radio and streaming commands such as `!radio`, `!stream` and `!tv`, and help commands. See [Media bots — Channel text commands](music-bots.md#channel-text-commands) for usage.
 
+**Built-in command permissions** controls who may change playback, queue/playlists, and video/IPTV. Each group defaults to **Everyone**, including existing installations after upgrading. Choose **Selected TeamSpeak server groups** and select one or more groups to restrict access. Membership in any selected group grants access; selecting no groups denies that command group to everyone. Saved groups that no longer exist appear as unavailable and can be removed.
+
+Permissions use the server connection and virtual server selected in the main server picker. TeamSpeak group IDs belong to that virtual server; settings are shared by its media bots. These controls apply to built-in media chat commands. Custom replies and flow triggers retain their existing behavior.
+
+Help and information commands remain available, including the read-only forms of commands such as `!queue` and `!vol`. A denied control sends a short private reply; repeated denials are throttled. Restricted commands require a resolved TeamSpeak identity and server-group membership.
+
+`!voteskip` lets human listeners in the bot's current channel vote to skip the current track even when direct skip is restricted. More than half of human listeners must vote; bots and ServerQuery clients do not count. Each identity gets one vote, and votes reset when the track changes.
+
 **Command name clashes** warns when a name is used by more than one source: a custom reply, a flow command trigger or a built-in command. Comparison ignores case, surrounding spaces and leading `!` characters, so `!Play` clashes with `play`. The flow editor also shows **Command name clash** beside a conflicting command trigger. Rename the custom reply or trigger to avoid overlap; the warning does not block saving or change command routing.
 
 Old `/media-bots?tab=commands` and `/music-bots?tab=commands` links redirect here.

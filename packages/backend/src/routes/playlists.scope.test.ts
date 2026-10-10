@@ -108,6 +108,7 @@ describe('chat playlist scope', () => {
       { id: 4, name: 'Server ten other bot', serverConfigId: 10, musicBotId: 100 },
     ];
     const prisma = {
+      appSetting: { findUnique: async () => null },
       playlist: {
         findMany: async ({ where }: any) => {
           return playlists.filter((playlist) => matchesWhere(playlist, where));
@@ -121,6 +122,7 @@ describe('chat playlist scope', () => {
       },
     } as any;
     const handler = new MusicCommandHandler(prisma, {} as any) as any;
+    handler.botChannelConfig.set(1, { serverConfigId, virtualServerId: 1 });
     handler.reply = (_bot: unknown, _id: number, message: string) => replies.push(message);
     const bot = {
       currentConfig: { id: 1, serverConfigId },

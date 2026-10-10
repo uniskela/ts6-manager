@@ -458,3 +458,28 @@ describe('music session end', () => {
     assert.notEqual(bot.musicSessionInfo()!.id, first.id, 'later music is a new session');
   });
 });
+
+it('playback token resets votes on play/replay/stop but survives pause/resume/seek', async () => {
+  const bot = makeBot();
+  const runtime = bot as any;
+  runtime.ensurePlayableFile = async () => '/fake.ogg';
+  runtime.pipeline.toPcmFileStream = async () => ({ stdout: new PassThrough(), process: new EventEmitter(), kill: () => {} });
+  const item = { id: 'same', title: 'Track', source: 'local' as const, filePath: '/fake.ogg', duration: 100 };
+  const idle = bot.playbackToken;
+  try {
+    await bot.play(item);
+    const first = bot.playbackToken;
+    assert.notEqual(first, idle);
+    bot.pause();
+    assert.equal(bot.playbackToken, first);
+    bot.resume();
+    assert.equal(bot.playbackToken, first);
+    await bot.seek(25);
+    assert.equal(bot.playbackToken, first);
+    await bot.play(item);
+    assert.notEqual(bot.playbackToken, first, 'replay of the identical item starts a fresh vote');
+    const replay = bot.playbackToken;
+    bot.stopAudio();
+    assert.notEqual(bot.playbackToken, replay);
+  } finally { bot.stopAudio(); }
+});
