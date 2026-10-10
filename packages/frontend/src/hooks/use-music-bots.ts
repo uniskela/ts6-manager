@@ -337,6 +337,66 @@ export function useKickVideoViewer() {
   });
 }
 
+// === Video queue ===
+
+export function useVideoQueue(botId: number | null) {
+  return useQuery({
+    queryKey: ['video-queue', botId],
+    queryFn: () => musicBotsApi.videoQueue(botId!),
+    enabled: !!botId,
+    refetchInterval: 2000,
+  });
+}
+
+/** Every video queue change shows in Up next and can start or stop a stream. */
+function useVideoQueueMutation<TVariables extends { botId: number }, TData>(
+  mutationFn: (variables: TVariables) => Promise<TData>,
+) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn,
+    onSettled: (_data, _error, { botId }) => {
+      qc.invalidateQueries({ queryKey: ['video-queue', botId] });
+      qc.invalidateQueries({ queryKey: ['bot-media'] });
+    },
+  });
+}
+
+export function useQueueVideo() {
+  return useVideoQueueMutation(({ botId, ...request }: { botId: number } & StartVideoStreamRequest) =>
+    musicBotsApi.queueVideo(botId, request));
+}
+
+export function usePlayVideoQueue() {
+  return useVideoQueueMutation(({ botId, ...request }: { botId: number } & Partial<StartVideoStreamRequest>) =>
+    musicBotsApi.playVideoQueue(botId, request));
+}
+
+export function useSkipVideo() {
+  return useVideoQueueMutation(({ botId }: { botId: number }) => musicBotsApi.skipVideo(botId));
+}
+
+export function usePlayQueuedVideo() {
+  return useVideoQueueMutation(
+    ({ botId, index, ...request }: { botId: number; index: number } & Partial<StartVideoStreamRequest>) =>
+      musicBotsApi.playQueuedVideo(botId, index, request),
+  );
+}
+
+export function useRemoveQueuedVideo() {
+  return useVideoQueueMutation(({ botId, index }: { botId: number; index: number }) =>
+    musicBotsApi.removeQueuedVideo(botId, index));
+}
+
+export function useMoveQueuedVideo() {
+  return useVideoQueueMutation(({ botId, from, to }: { botId: number; from: number; to: number }) =>
+    musicBotsApi.moveQueuedVideo(botId, from, to));
+}
+
+export function useClearVideoQueue() {
+  return useVideoQueueMutation(({ botId }: { botId: number }) => musicBotsApi.clearVideoQueue(botId));
+}
+
 // === Bot hub ===
 
 export function useBotMedia() {

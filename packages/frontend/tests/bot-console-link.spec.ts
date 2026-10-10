@@ -199,3 +199,44 @@ test('unexpected 500 is generic and clears after a successful retry and mode cha
   await page.getByRole('button', { name: 'Stream as video' }).click();
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
+
+test('with a video streaming, the Link tab queues the next video', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  const calls = await mockConsole(page);
+  const now = Date.now();
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: [{
+    ...media(now)[0],
+    status: 'connected',
+    session: { id: 'v', kind: 'video', state: 'active', botId: 1, botName: 'Aurora Radio', startedAt: now - 30_000, label: 'www.youtube.com' },
+    music: null,
+    video: {
+      streaming: true, streamId: 's', preset: '1080p', framerate: 30, bitrate: '4500k', startedAt: now - 30_000,
+      viewerCount: 1,
+      quality: { requested: 'auto', actual: '1080p', width: 1920, height: 1080, sourceWidth: 1920, sourceHeight: 1080, note: null },
+      encoder: { requested: 'auto', selected: 'vp8', active: 'vp8', codec: 'vp8', hardware: false, fallbackReason: null, note: null },
+      noViewer: { timeoutSec: 300, stopAt: null }, lastStop: null,
+    },
+  }] }));
+  await page.route('**/api/music-bots/1/stream/status', (r) => r.fulfill({ json: { streaming: true, viewerCount: 1, viewers: [] } }));
+  const empty = { current: null, upNext: [], kept: false };
+  await page.route('**/api/music-bots/1/stream/queue', async (r) => {
+    if (r.request().method() !== 'POST') return r.fulfill({ json: empty });
+    calls.push({ method: 'POST', url: r.request().url(), body: r.request().postDataJSON() });
+    await r.fulfill({ json: { success: true, queued: 1, started: false, state: empty } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+
+  await page.getByRole('tab', { name: 'Link' }).click();
+  await page.getByLabel('YouTube, Twitch, direct link, or a file already in the music folder')
+    .fill('https://youtu.be/dQw4w9WgXcQ');
+  await page.getByRole('radio', { name: 'Stream as video' }).check();
+  await page.getByRole('button', { name: 'Queue as video' }).click();
+
+  await expect.poll(() => calls.find((c) => c.url.endsWith('/stream/queue'))?.body).toEqual({
+    source: 'https://youtu.be/dQw4w9WgXcQ',
+    sourceMode: 'auto',
+  });
+  expect(calls.some((c) => c.url.includes('/stream/start'))).toBe(false);
+  await expect(page.getByText('Added to Up next')).toBeVisible();
+});

@@ -1,5 +1,12 @@
 import api from './client';
-import type { BotMediaOverview, StartVideoStreamRequest, VideoStreamStatus, MediaCommandPermissions } from '@ts6/common';
+import type {
+  BotMediaOverview,
+  MediaCommandPermissions,
+  QueueVideoResponse,
+  StartVideoStreamRequest,
+  VideoQueueState,
+  VideoStreamStatus,
+} from '@ts6/common';
 
 // === Music Bot API ===
 
@@ -66,6 +73,24 @@ export const musicBotsApi = {
   startStream: (id: number, request: StartVideoStreamRequest) =>
     api.post(`/music-bots/${id}/stream/start`, request, { timeout: 120000 }).then((r) => r.data),
   stopStream: (id: number) => api.post(`/music-bots/${id}/stream/stop`).then((r) => r.data),
+
+  // Video queue. Adding or playing can start a stream (and expand a playlist),
+  // so those share the long start timeout; so does a skip, which loads the next video.
+  videoQueue: (id: number): Promise<VideoQueueState> =>
+    api.get(`/music-bots/${id}/stream/queue`).then((r) => r.data),
+  queueVideo: (id: number, body: StartVideoStreamRequest): Promise<QueueVideoResponse> =>
+    api.post(`/music-bots/${id}/stream/queue`, body, { timeout: 120000 }).then((r) => r.data),
+  playVideoQueue: (id: number, body: Partial<StartVideoStreamRequest> = {}) =>
+    api.post(`/music-bots/${id}/stream/queue/play`, body, { timeout: 120000 }).then((r) => r.data),
+  skipVideo: (id: number) =>
+    api.post(`/music-bots/${id}/stream/queue/skip`, undefined, { timeout: 120000 }).then((r) => r.data),
+  playQueuedVideo: (id: number, index: number, body: Partial<StartVideoStreamRequest> = {}) =>
+    api.post(`/music-bots/${id}/stream/queue/${index}/play`, body, { timeout: 120000 }).then((r) => r.data),
+  removeQueuedVideo: (id: number, index: number) =>
+    api.delete(`/music-bots/${id}/stream/queue/${index}`).then((r) => r.data),
+  moveQueuedVideo: (id: number, from: number, to: number) =>
+    api.put(`/music-bots/${id}/stream/queue/move`, { from, to }).then((r) => r.data),
+  clearVideoQueue: (id: number) => api.delete(`/music-bots/${id}/stream/queue`).then((r) => r.data),
   setStreamSource: (id: number, source: string, volume?: number) =>
     api.post(`/music-bots/${id}/stream/source`, { source, volume }, { timeout: 120000 }).then((r) => r.data),
   setStreamVolume: (id: number, volume: number) =>

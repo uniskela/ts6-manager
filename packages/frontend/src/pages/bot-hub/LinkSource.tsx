@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { VideoOptions } from '@/components/video/VideoOptions';
-import { usePlayUrl, useStartVideoStream, useBotMedia } from '@/hooks/use-music-bots';
+import { usePlayUrl, useStartVideoStream, useBotMedia, useQueueVideo } from '@/hooks/use-music-bots';
 import { ApiErrorAlert } from '@/components/ApiErrorAlert';
 import { useVideoStartOptions } from '@/hooks/use-video-streaming';
 import { toastMediaStarted } from '@/lib/media-start-toast';
@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import {
   buildLinkStartRequest,
   musicPlayAllowed,
+  queuedVideoToast,
   type LinkPlayMode,
 } from './link-request';
 import { AddMediaLink } from './AddMediaLink';
@@ -30,6 +31,7 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [options, setOptions, optionsLoading, defaults] = useVideoStartOptions(serverConfigId);
   const playUrl = usePlayUrl();
   const startVideo = useStartVideoStream();
+  const queueVideo = useQueueVideo();
   const media = useBotMedia();
 
   const trimmed = input.trim();
@@ -37,12 +39,10 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const allowMusic = !trimmed || musicPlayAllowed(input);
   const effectiveMode: LinkPlayMode = mode === 'music' && trimmed && !musicPlayAllowed(input) ? 'video' : mode;
   const session = media.data?.find((b) => b.botId === botId)?.session;
-  const alreadyThisFile = effectiveMode === 'video'
-    && session?.kind === 'video'
-    && !!session.label
-    && session.label === trimmed;
-  const busy = playUrl.isPending || startVideo.isPending;
-  const error = effectiveMode === 'video' ? startVideo.error : playUrl.error;
+  // With a video already streaming on this bot, another video is queued behind it.
+  const videoStreaming = session?.kind === 'video';
+  const busy = playUrl.isPending || startVideo.isPending || queueVideo.isPending;
+  const error = effectiveMode === 'video' ? startVideo.error ?? queueVideo.error : playUrl.error;
   const canStart = trimmed.length > 0 && !busy && !(effectiveMode === 'video' && optionsLoading);
 
   useEffect(() => {
@@ -51,6 +51,7 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
 
   useEffect(() => {
     startVideo.reset();
+    queueVideo.reset();
     playUrl.reset();
     // Drop leftover errors when the user changes mode or source text.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: only on mode/source change
@@ -58,7 +59,17 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
 
   const onStart = () => {
     if (!canStart) return;
-    const request = buildLinkStartRequest(input, effectiveMode, options);
+    const request = buildLinkStartRequest(input, effectiveMode, options, videoStreaming);
+    if (request.endpoint === 'stream/queue') {
+      playUrl.reset();
+      startVideo.reset();
+      queueVideo.mutate(
+        { botId, ...request.body },
+        { onSuccess: (data) => toastMediaStarted(queuedVideoToast(data)) },
+      );
+      return;
+    }
+    queueVideo.reset();
     if (request.endpoint === 'play-url') {
       startVideo.reset();
       playUrl.mutate(
@@ -153,13 +164,14 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
       {error && (
         <ApiErrorAlert
           error={error}
-          fallback={effectiveMode === 'video' ? 'Failed to start stream' : 'Failed to play URL'}
+          fallback={effectiveMode !== 'video' ? 'Failed to play URL'
+            : videoStreaming ? 'Failed to queue the video' : 'Failed to start stream'}
         />
       )}
 
       <Button type="button" className="h-11 w-full sm:w-auto" disabled={!canStart} onClick={onStart}>
-        {busy ? 'Starting…' : effectiveMode === 'video'
-          ? (alreadyThisFile ? 'Already streaming' : 'Stream as video')
+        {busy ? (queueVideo.isPending && videoStreaming ? 'Adding…' : 'Starting…') : effectiveMode === 'video'
+          ? (videoStreaming ? 'Queue as video' : 'Stream as video')
           : 'Play as music'}
       </Button>
     </div>
