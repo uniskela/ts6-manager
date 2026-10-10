@@ -78,8 +78,9 @@ export class VoiceBotManager extends EventEmitter {
     });
 
     console.log(`[VoiceBotManager] Loading ${dbBots.length} music bot(s)...`);
+    const savedVideoQueues = await Promise.all(dbBots.map((dbBot) => this.loadVideoQueue(dbBot.id)));
 
-    for (const dbBot of dbBots) {
+    for (const [i, dbBot] of dbBots.entries()) {
       let identity: IdentityData | undefined;
       if (dbBot.identityData) {
         // H8: Decrypt identity data before parsing
@@ -109,7 +110,7 @@ export class VoiceBotManager extends EventEmitter {
         autoStopEmptySeconds: parsedAutoStop,
       };
 
-      const bot = this.createBotInstance(config, await this.loadVideoQueue(dbBot.id));
+      const bot = this.createBotInstance(config, savedVideoQueues[i]);
       this.bots.set(dbBot.id, bot);
       this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 

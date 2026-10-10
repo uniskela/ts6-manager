@@ -241,6 +241,19 @@ describe('video queue: a source finishes', () => {
     assert.deepEqual(h.bot.messages, ['Skipped "Video 1": could not play it.']);
   });
 
+  it('a last video that fails is dropped instead of kept', async () => {
+    for (const reason of ['source_unreachable', 'encoder_failure'] as const) {
+      const h = harness();
+      await h.controller.enqueue(videos(1));
+      assert.equal(await h.controller.onSourceFinished(reason, 'HTTP 404'), false, reason);
+      assert.deepEqual(h.bot.messages, ['Skipped "Video 1": could not play it.'], reason);
+      assert.equal(h.bot.setCalls.length, 0, reason);
+      await h.streamStopped(reason);
+      assert.deepEqual(h.controller.snapshot(), { current: null, upNext: [], kept: false }, reason);
+      assert.deepEqual(h.saves.at(-1)?.items, [], reason);
+    }
+  });
+
   it('other reasons are not handled', async () => {
     const h = harness();
     await h.controller.enqueue(videos(2));

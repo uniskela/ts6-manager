@@ -397,6 +397,6 @@ describe('stream/queue: managing', () => {
   it('audit rows never carry the source', async () => {
     const app = await streaming(2);
     assert.ok(app.calls.audits.length >= 2);
-    assert.equal(JSON.stringify(app.calls.audits).includes('youtube.com'), false);
+    assert.doesNotMatch(JSON.stringify(app.calls.audits), /watch\?v=|https?:/);
   });
 });

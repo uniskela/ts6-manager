@@ -230,8 +230,19 @@ export class VideoQueueController {
       if (finishedId === undefined || (finishedId !== null && current?.id !== finishedId)) {
         return current !== null && this.deps.bot.videoStreaming;
       }
-      if (!current || this.lane.upcomingCount === 0) return false;
-      if (reason === 'source_unreachable' || reason === 'encoder_failure') {
+      if (!current) return false;
+      const failed = reason === 'source_unreachable' || reason === 'encoder_failure';
+      if (this.lane.upcomingCount === 0) {
+        if (!failed) return false;
+        // The last video failed: drop it so a kept queue does not retry it,
+        // and let the normal stop run with the bot's own reason.
+        this.noteFailure(current);
+        this.lane.removeAt(0);
+        this.lane.rewind();
+        await this.persist();
+        return false;
+      }
+      if (failed) {
         this.noteFailure(current);
         if (this.failures >= VIDEO_QUEUE_FAILURE_LIMIT) {
           this.lane.removeAt(0);
