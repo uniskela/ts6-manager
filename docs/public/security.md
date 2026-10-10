@@ -48,6 +48,8 @@ The sidecar mutating API is authenticated with `SIDECAR_SECRET`.
 
 The standard compose file keeps sidecar port 9800 internal. The all-in-one image keeps it on loopback. Do not expose it publicly.
 
+`/health` is unauthenticated and reports the sidecar's version and platform, and the secret is sent over plain HTTP. An optional [native sidecar](native-sidecar.md#network-and-security) therefore needs the same isolation Docker provides by default: bind it with `SIDECAR_HOST`, firewall TCP 9800 to the backend, and keep the path on a trusted or encrypted network.
+
 ## Runtime image hardening
 
 Production Node images omit npm, npx, pnpm, Corepack, and esbuild build tooling.

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd daemon for the TS6 Manager native media sidecar.
+
+    sudo install -m 0755 ts6-media-sidecar /usr/local/bin/ts6-media-sidecar
+    sudo install -d -m 0750 /usr/local/etc/ts6-media-sidecar
+    sudo install -m 0600 sidecar.env.example /usr/local/etc/ts6-media-sidecar/sidecar.env
+    sudo nano /usr/local/etc/ts6-media-sidecar/sidecar.env
+    sudo install -m 0644 com.uniskela.ts6-media-sidecar.plist /Library/LaunchDaemons/
+    sudo launchctl bootstrap system /Library/LaunchDaemons/com.uniskela.ts6-media-sidecar.plist
+
+  launchd has no environment file, so a shell loads sidecar.env and then
+  replaces itself with the sidecar. The daemon runs as root unless you add a
+  UserName key; that account must be able to read sidecar.env and the media.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.uniskela.ts6-media-sidecar</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>set -a; . /usr/local/etc/ts6-media-sidecar/sidecar.env; exec /usr/local/bin/ts6-media-sidecar</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>5</integer>
+  <key>StandardOutPath</key>
+  <string>/var/log/ts6-media-sidecar.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/ts6-media-sidecar.log</string>
+</dict>
+</plist>

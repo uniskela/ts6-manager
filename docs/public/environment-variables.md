@@ -49,7 +49,8 @@ The values below are code defaults. Compose files may override them.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SIDECAR_PORT` | `9800` | Sidecar HTTP port; the native process listens on all interfaces, so restrict access to trusted backend hosts using the host firewall |
+| `SIDECAR_PORT` | `9800` | Sidecar HTTP port. Restrict access to trusted backend hosts using the host firewall |
+| `SIDECAR_HOST` | unset | Address the sidecar HTTP API listens on. Unset listens on all interfaces, which the Docker images rely on. For a [native sidecar](native-sidecar.md), set the one address the backend reaches (`127.0.0.1` when both run on the same host outside Docker) |
 | `SIDECAR_SECRET` | — | Shared backend/sidecar secret |
 | `WEBRTC_UDP_PORT` | unset | When set (for example `10000`), bind a shared IPv4 ICE UDP mux on that port so Docker can publish one host UDP mapping for browser WebRTC preview. Leave unset to keep ephemeral ICE ports (Docker host browsers usually cannot reach them). |
 | `WEBRTC_NAT1TO1_IP` | unset | Comma-separated **IPv4** addresses advertised as ICE **host** candidates (replaces container-private addresses). This is what the **browser** must be able to reach. IPv6 is rejected — the mux binds `udp4` only. Pair with `WEBRTC_UDP_PORT` and a published UDP mapping. `docker-compose.pr-test.yml` defaults to `127.0.0.1` for **same-host** browsers only. For LAN/Tailscale clients use that reachable IPv4; for a public-NAT browser use the public IPv4 (and forward UDP to the host). Do not advertise `127.0.0.1` to remote clients. The same addresses are offered to **TeamSpeak viewers**, and the TeamSpeak client does not connect to `127.0.0.1` even on the Docker host: to watch in TeamSpeak, add the host's LAN or Tailscale IPv4 (for example `127.0.0.1,192.168.1.20`) and publish the port on it. |

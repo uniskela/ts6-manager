@@ -7,6 +7,7 @@
 
 import { spawn } from 'child_process';
 import { accessSync, constants as fsConstants } from 'fs';
+import { createRequire } from 'module';
 import { delimiter, isAbsolute, join } from 'path';
 import type {
   RuntimeMediaDiagnosticReport,
@@ -15,6 +16,10 @@ import type {
   RuntimeMediaStageId,
   RuntimeMediaStageResult,
 } from '@ts6/common';
+import { checkSidecarVersion } from '../streaming/sidecar-version.js';
+
+const require = createRequire(import.meta.url);
+const backendPkg = require('../../../package.json') as { version?: string };
 
 export const RUNTIME_MEDIA_STAGE_IDS: readonly RuntimeMediaStageId[] = [
   'yt-dlp',
@@ -37,7 +42,9 @@ export interface DiagnoseRuntimeMediaOptions {
   /** Injected for tests. */
   env?: NodeJS.ProcessEnv;
   /** Injected for tests — replaces SidecarClient.getHealth. */
-  probeSidecarHealth?: (baseUrl: string, timeoutMs: number) => Promise<{ status?: string }>;
+  probeSidecarHealth?: (baseUrl: string, timeoutMs: number) => Promise<SidecarHealthProbe>;
+  /** Injected for tests — defaults to this backend's package version. */
+  backendVersion?: string;
   /** Injected for tests — replaces spawn version probes. */
   probeCommand?: (
     command: string,
@@ -46,6 +53,13 @@ export interface DiagnoseRuntimeMediaOptions {
   ) => Promise<CommandProbeResult>;
   /** Injected for tests — PATH / absolute binary existence. */
   binaryExists?: (command: string, env: NodeJS.ProcessEnv) => boolean;
+}
+
+/** The fields of the sidecar's GET /health this module reads. */
+export interface SidecarHealthProbe {
+  status?: string;
+  /** Release the sidecar was built from; absent before 1.11. */
+  version?: string;
 }
 
 export type CommandProbeResult =
@@ -163,7 +177,7 @@ export function probeCommandVersion(
 async function defaultProbeSidecarHealth(
   baseUrl: string,
   timeoutMs: number,
-): Promise<{ status?: string }> {
+): Promise<SidecarHealthProbe> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -177,7 +191,7 @@ async function defaultProbeSidecarHealth(
     const text = await res.text();
     if (!text) return { status: 'ok' };
     try {
-      return JSON.parse(text) as { status?: string };
+      return JSON.parse(text) as SidecarHealthProbe;
     } catch {
       return { status: 'ok' };
     }
@@ -277,11 +291,30 @@ export function binaryExistsOnPath(command: string, env: NodeJS.ProcessEnv = pro
   return false;
 }
 
+/**
+ * Message, version and code for a sidecar that answered /health. A version
+ * that differs from the backend's stays `ok` (the stream may still work) but
+ * is called out, since only same-release pairs are supported.
+ */
+function sidecarReachableFields(
+  reachable: string,
+  backendVersion: string | undefined,
+  health: SidecarHealthProbe,
+): Pick<RuntimeMediaStageResult, 'message' | 'version' | 'code'> {
+  const check = checkSidecarVersion(backendVersion, health.version);
+  return {
+    message: check.note ? `${reachable}, but ${check.note}` : reachable,
+    version: check.label,
+    code: check.state === 'mismatch' ? 'version_mismatch' : 'ok',
+  };
+}
+
 async function probeSidecarStage(
   options: Required<Pick<DiagnoseRuntimeMediaOptions, 'sidecarTimeoutMs'>> & {
     env: NodeJS.ProcessEnv;
     probeSidecarHealth: NonNullable<DiagnoseRuntimeMediaOptions['probeSidecarHealth']>;
     binaryExists: NonNullable<DiagnoseRuntimeMediaOptions['binaryExists']>;
+    backendVersion: string | undefined;
     remainingMs: () => number;
   },
 ): Promise<{ stage: RuntimeMediaStageResult; mode: RuntimeMediaSidecarMode }> {
@@ -308,9 +341,7 @@ async function probeSidecarStage(
         stage: {
           id: 'sidecar',
           status: 'ok',
-          message: 'Sidecar health endpoint reachable',
-          version: health.status || 'ok',
-          code: 'ok',
+          ...sidecarReachableFields('Sidecar health endpoint reachable', options.backendVersion, health),
         },
       };
     } catch (err: any) {
@@ -362,9 +393,7 @@ async function probeSidecarStage(
       stage: {
         id: 'sidecar',
         status: 'ok',
-        message: 'Local sidecar is listening',
-        version: health.status || 'ok',
-        code: 'ok',
+        ...sidecarReachableFields('Local sidecar is listening', options.backendVersion, health),
       },
     };
   } catch {
@@ -448,6 +477,7 @@ export async function diagnoseRuntimeMedia(
     env,
     binaryExists,
     probeSidecarHealth,
+    backendVersion: options.backendVersion ?? backendPkg.version,
     sidecarTimeoutMs,
     remainingMs,
   });

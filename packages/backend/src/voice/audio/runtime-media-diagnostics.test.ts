@@ -23,6 +23,38 @@ describe('diagnoseRuntimeMedia', () => {
     assert.ok(Date.parse(report.checkedAt));
   });
 
+  it('reports the sidecar version and flags a release mismatch', async () => {
+    const run = (version: string | undefined, env: NodeJS.ProcessEnv) =>
+      diagnoseRuntimeMedia({
+        env,
+        backendVersion: '1.11.0',
+        probeCommand: async (command) => ({ ok: true, version: `${command}-1.0` }),
+        probeSidecarHealth: async () => ({ status: 'ok', version }),
+        binaryExists: () => true,
+      }).then((report) => report.stages.find((s) => s.id === 'sidecar'));
+
+    const matching = await run('1.11.0', { SIDECAR_URL: 'http://sidecar:9800' });
+    assert.equal(matching?.status, 'ok');
+    assert.equal(matching?.code, 'ok');
+    assert.equal(matching?.version, '1.11.0');
+    assert.equal(matching?.message, 'Sidecar health endpoint reachable');
+
+    const older = await run('1.10.2', { SIDECAR_URL: 'http://sidecar:9800' });
+    assert.equal(older?.status, 'ok');
+    assert.equal(older?.code, 'version_mismatch');
+    assert.equal(older?.version, '1.10.2');
+    assert.match(older?.message ?? '', /sidecar 1\.10\.2 does not match backend 1\.11\.0/);
+
+    const unversioned = await run(undefined, { SIDECAR_URL: 'http://sidecar:9800' });
+    assert.equal(unversioned?.code, 'ok');
+    assert.equal(unversioned?.version, 'unversioned');
+    assert.match(unversioned?.message ?? '', /older than 1\.11/);
+
+    const local = await run('1.10.2', { SIDECAR_BINARY_PATH: '/usr/local/bin/sidecar' });
+    assert.equal(local?.code, 'version_mismatch');
+    assert.match(local?.message ?? '', /^Local sidecar is listening, but /);
+  });
+
   it('marks missing binaries as fail without hanging', async () => {
     const started = Date.now();
     const report = await diagnoseRuntimeMedia({

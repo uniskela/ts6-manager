@@ -129,3 +129,11 @@ jobs:
 
       - name: Vet
         run: go vet ./...
+
+      # Compile every native release target so a platform-specific break is
+      # caught here, not when a release is tagged. No archives are produced.
+      - name: Cross-compile native release targets
+        working-directory: .
+        env:
+          SIDECAR_SKIP_ARCHIVE: "1"
+        run: ./scripts/sidecar/build-release.sh 0.0.0-pr "$RUNNER_TEMP/sidecar"

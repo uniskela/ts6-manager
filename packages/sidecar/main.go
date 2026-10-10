@@ -1827,6 +1827,10 @@ func requireSidecarAuth(next http.HandlerFunc) http.HandlerFunc {
 }
 
 func main() {
+	if printVersionIfRequested(os.Args, os.Stdout) {
+		return
+	}
+
 	port := 9800
 	if p := os.Getenv("SIDECAR_PORT"); p != "" {
 		if v, err := strconv.Atoi(p); err == nil {
@@ -2051,11 +2055,15 @@ func main() {
 		json.NewEncoder(w).Encode(sidecar.GetStats())
 	}))
 
+	build := buildInfo()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"status":    "ok",
 			"videoPort": sidecar.videoPort,
 			"audioPort": sidecar.audioPort,
+			"version":   build["version"],
+			"os":        build["os"],
+			"arch":      build["arch"],
 		})
 	})
 
@@ -2068,8 +2076,9 @@ func main() {
 		os.Exit(0)
 	}()
 
-	log.Printf("[Sidecar] HTTP API listening on :%d", port)
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux); err != nil {
+	addr := httpListenAddr(port)
+	log.Printf("[Sidecar] %s (%s/%s) HTTP API listening on %s", build["version"], build["os"], build["arch"], addr)
+	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("HTTP server error: %v", err)
 	}
 }

@@ -84,6 +84,13 @@
       "kind": "doc"
     },
     {
+      "source": "docs/public/native-sidecar.md",
+      "slug": "native-sidecar",
+      "title": "Native media sidecar",
+      "group": "Deploy & operate",
+      "kind": "doc"
+    },
+    {
       "source": "docs/public/reverse-proxy.md",
       "slug": "reverse-proxy",
       "title": "Reverse proxy",
