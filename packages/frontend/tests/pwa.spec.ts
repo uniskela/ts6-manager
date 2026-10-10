@@ -2,8 +2,8 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from '@
 import { readFileSync, readdirSync } from 'node:fs';
 import { canHandleRequest, isAppNavigation } from '../pwa/cache-policy';
 
-const routes = ['/dashboard', '/channels', '/clients', '/permissions', '/server-groups', '/channel-groups', '/media-bots', '/bots', '/bots/1', '/files', '/settings', '/login', '/setup'];
-const privatePaths = ['/api', '/api/health', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me', '/api/setup/status', '/api/servers/1/clients', '/api/servers/1/files', '/api/servers/1/tokens', '/api/servers/1/bans', '/api/music-bots', '/api/bots/1/logs', '/api/iptv/playlists/upload', '/api/iptv/playlists/1/replace', '/ws', '/ws/live'];
+const routes = ['/dashboard', '/channels', '/clients', '/permissions', '/server-groups', '/channel-groups', '/media-bots', '/bots', '/bots/1', '/files', '/settings', '/login', '/setup', '/remote'];
+const privatePaths = ['/api', '/api/health', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me', '/api/setup/status', '/api/servers/1/clients', '/api/servers/1/files', '/api/servers/1/tokens', '/api/servers/1/bans', '/api/music-bots', '/api/bots/1/logs', '/api/iptv/playlists/upload', '/api/iptv/playlists/1/replace', '/api/listener-remote', '/api/listener-remote/exchange', '/api/listener-remote/state', '/ws', '/ws/live'];
 const baseThemes = ['light', 'dark', 'black'] as const;
 const accents = ['cyan', 'violet', 'red', 'blue', 'emerald', 'amber'] as const;
 
@@ -84,7 +84,7 @@ test('request policy denies private, cross-origin, authenticated and mutating re
   for (const req of [new Request('https://cdn.example.test/assets/app.js'), new Request(origin + '/assets/app.js', { headers: { Authorization: 'Bearer test' } }), new Request(origin + '/settings', { method: 'POST' })]) {
     expect(canHandleRequest(req, new URL(req.url), origin)).toBe(false);
   }
-  for (const path of routes) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(true);
+  for (const path of [...routes, '/', '/remote/', '/bots/1/']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(true);
   for (const path of ['/api/auth', '/ws', '/widget/private-token', '/unknown', '/settings-extra']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(false);
 });
 

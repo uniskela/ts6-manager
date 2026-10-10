@@ -1,8 +1,7 @@
 # Listener remote API — T04 / T05 contract
 
-This is the Slice 2 backend contract for roadmap #253. T05 can implement the
-phone controller against it. It depends on the merged Slice 1 (PR #393). This PR does not
-provide a React controller.
+This is the Slice 2 contract for roadmap #253. The phone UI is the frontend
+`/remote` route and uses this API. It depends on the merged Slice 1 (PR #393).
 
 ## Browser lifecycle
 

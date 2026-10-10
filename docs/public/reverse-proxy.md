@@ -81,9 +81,9 @@ listeners' phones. An optional path prefix is preserved; the proxy must strip
 that prefix consistently for both the frontend and `/api/` routes. Links never
 derive their origin from a request's `Host` or forwarded headers.
 
-The controller is a separate frontend task. Until that ships, the links target
-`/remote` but the backend endpoints can be integrated using the T05 contract
-at `docs/internal/listener-remote-api.md` in the source repository.
+Links open `/remote`. That page reads the fragment once, removes it, and exchanges
+it for a short-lived session. The API contract is `docs/internal/listener-remote-api.md`
+in the source repository.
 
 Set `TRUST_PROXY` on the backend to **only** the IPs or subnets of your actual
 reverse proxies. It now defaults to no forwarded-header trust: without it,
