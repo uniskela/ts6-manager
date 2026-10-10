@@ -63,6 +63,10 @@ for target in "${TARGETS[@]}"; do
     linux) cp "$SRC/packaging/linux/"* "$dir/" ;;
     darwin) cp "$SRC/packaging/macos/"* "$dir/" ;;
     windows) cp "$SRC/packaging/windows/"* "$dir/" ;;
+    *)
+      echo "no packaging files for $goos" >&2
+      exit 1
+      ;;
   esac
 
   if [[ "$goos" == "windows" ]]; then

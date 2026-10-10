@@ -7,7 +7,7 @@
 
 import { spawn } from 'child_process';
 import { accessSync, constants as fsConstants } from 'fs';
-import { createRequire } from 'module';
+import { createRequire } from 'node:module';
 import { delimiter, isAbsolute, join } from 'path';
 import { getYtDlpPath } from './yt-dlp-path.js';
 import type {
