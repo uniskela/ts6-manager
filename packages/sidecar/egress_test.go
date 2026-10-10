@@ -109,17 +109,7 @@ func useEgressDNS(t *testing.T, answers []string) *atomic.Int32 {
 				if q.Type == dnsmessage.TypeA && queries.Add(1) > 1 {
 					ips = []string{"100.100.100.200"}
 				}
-				for _, raw := range ips {
-					ip := net.ParseIP(raw)
-					h := dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 0}
-					if ip4 := ip.To4(); ip4 != nil && q.Type == dnsmessage.TypeA {
-						h.Type = dnsmessage.TypeA
-						res.Answers = append(res.Answers, dnsmessage.Resource{Header: h, Body: &dnsmessage.AResource{A: [4]byte(ip4)}})
-					} else if ip.To4() == nil && q.Type == dnsmessage.TypeAAAA {
-						h.Type = dnsmessage.TypeAAAA
-						res.Answers = append(res.Answers, dnsmessage.Resource{Header: h, Body: &dnsmessage.AAAAResource{AAAA: [16]byte(ip.To16())}})
-					}
-				}
+				res.Answers = append(res.Answers, egressDNSAnswers(q, ips)...)
 			}
 			packet, err := res.Pack()
 			if err != nil {
@@ -137,6 +127,22 @@ func useEgressDNS(t *testing.T, answers []string) *atomic.Int32 {
 	}}
 	t.Cleanup(func() { net.DefaultResolver = previous; server.Close(); <-done })
 	return &queries
+}
+
+func egressDNSAnswers(q dnsmessage.Question, ips []string) []dnsmessage.Resource {
+	var answers []dnsmessage.Resource
+	for _, raw := range ips {
+		ip := net.ParseIP(raw)
+		h := dnsmessage.ResourceHeader{Name: q.Name, Class: dnsmessage.ClassINET, TTL: 0}
+		if ip4 := ip.To4(); ip4 != nil && q.Type == dnsmessage.TypeA {
+			h.Type = dnsmessage.TypeA
+			answers = append(answers, dnsmessage.Resource{Header: h, Body: &dnsmessage.AResource{A: [4]byte(ip4)}})
+		} else if ip.To4() == nil && q.Type == dnsmessage.TypeAAAA {
+			h.Type = dnsmessage.TypeAAAA
+			answers = append(answers, dnsmessage.Resource{Header: h, Body: &dnsmessage.AAAAResource{AAAA: [16]byte(ip.To16())}})
+		}
+	}
+	return answers
 }
 
 func TestEgressDialRejectsMetadataDNSWithAllowlist(t *testing.T) {

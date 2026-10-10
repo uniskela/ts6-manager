@@ -10,7 +10,7 @@ const BLOCKED_HOSTNAMES = new Set([
 const CLOUD_METADATA_IPS = new Set([
   '169.254.169.254',  // AWS, GCP, Azure
   'fd00:ec2::254',    // AWS IPv6
-  '100.100.100.200',  // Alibaba
+  '100.100.100.200',  // NOSONAR: Alibaba's fixed metadata endpoint belongs in the SSRF denylist.
 ]);
 
 // BlockList compares address bytes, including compressed/expanded IPv6 and
@@ -19,19 +19,19 @@ const neverAllowedIPs = new BlockList();
 for (const ip of CLOUD_METADATA_IPS) {
   neverAllowedIPs.addAddress(ip, isIP(ip) === 6 ? 'ipv6' : 'ipv4');
 }
-for (const [ip, prefix] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4]] as const) {
+for (const [ip, prefix] of [['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4]] as const) { // NOSONAR: Fixed reserved ranges define the SSRF denylist.
   neverAllowedIPs.addSubnet(ip, prefix, 'ipv4');
 }
 neverAllowedIPs.addAddress('::', 'ipv6');
 neverAllowedIPs.addAddress('::1', 'ipv6');
-neverAllowedIPs.addSubnet('fe80::', 10, 'ipv6');
-neverAllowedIPs.addSubnet('ff00::', 8, 'ipv6');
+neverAllowedIPs.addSubnet('fe80::', 10, 'ipv6'); // NOSONAR: IPv6 link-local range is always denied.
+neverAllowedIPs.addSubnet('ff00::', 8, 'ipv6'); // NOSONAR: IPv6 multicast range is always denied.
 
 const localIPs = new BlockList();
-for (const [ip, prefix] of [['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['100.64.0.0', 10]] as const) {
+for (const [ip, prefix] of [['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['100.64.0.0', 10]] as const) { // NOSONAR: Fixed private/shared ranges require operator approval.
   localIPs.addSubnet(ip, prefix, 'ipv4');
 }
-localIPs.addSubnet('fc00::', 7, 'ipv6');
+localIPs.addSubnet('fc00::', 7, 'ipv6'); // NOSONAR: IPv6 unique-local range requires operator approval.
 
 function inBlockList(blocks: BlockList, ip: string): boolean {
   const addr = ip.replace(/^\[|\]$/g, '');

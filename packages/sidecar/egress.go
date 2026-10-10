@@ -103,7 +103,7 @@ func probeRemoteSource(ctx context.Context, source string, policy *egressPolicy)
 		"-of", "json",
 		source,
 	)
-	cmd := exec.CommandContext(ctx, getFfprobePath(), args...)
+	cmd := exec.CommandContext(ctx, getFfprobePath(), args...) // NOSONAR: HTTP(S) source is one argument, cannot start with a flag, and no shell is used.
 	cmd.Env = env
 	var stdout bytes.Buffer
 	stderr := &tailBuffer{}
@@ -186,8 +186,8 @@ func (a *hostAllowlist) permits(host string, ip net.IP) bool {
 }
 
 var (
-	awsMetadataV6      = net.ParseIP("fd00:ec2::254")
-	alibabaMetadataV4  = net.ParseIP("100.100.100.200")
+	awsMetadataV6      = net.ParseIP("fd00:ec2::254")   // NOSONAR: Fixed AWS metadata endpoint is always denied.
+	alibabaMetadataV4  = net.ParseIP("100.100.100.200") // NOSONAR: Fixed Alibaba metadata endpoint is always denied.
 	sharedAddressSpace = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
 )
 
