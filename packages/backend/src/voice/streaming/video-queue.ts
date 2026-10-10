@@ -175,7 +175,8 @@ export class VideoQueueController {
     });
   }
 
-  playAt(upNextIndex: number): Promise<void> {
+  /** `options` apply only when this starts a new stream (nothing is streaming). */
+  playAt(upNextIndex: number, options?: VideoStreamStartOptions): Promise<void> {
     return this.run(async () => {
       const position = this.lanePosition(upNextIndex);
       if (position === null) throw noPosition();
@@ -184,7 +185,7 @@ export class VideoQueueController {
       if (this.deps.bot.videoStreaming) {
         await this.advanceOrStop();
       } else {
-        await this.startFirst();
+        await this.startFirst(options);
       }
     });
   }
@@ -294,11 +295,12 @@ export class VideoQueueController {
   private async startFirst(options?: VideoStreamStartOptions): Promise<void> {
     const item = this.lane.playAt(0);
     if (!item) return;
-    const given = toVideoQueueSessionOptions(options);
-    if (given) this.options = given;
+    // The session's remembered options, with anything the caller gave laid over them.
+    const merged: VideoStreamStartOptions = { ...this.options, ...options };
+    this.options = toVideoQueueSessionOptions(merged);
     this.failures = 0;
     try {
-      await this.deps.start(item.source, { ...(options ?? this.options ?? {}), sourceMode: item.sourceMode });
+      await this.deps.start(item.source, { ...merged, sourceMode: item.sourceMode });
     } catch (err) {
       this.lane.rewind();
       await this.persist();

@@ -326,6 +326,32 @@ describe('video queue: controls', () => {
     assert.equal(state.kept, false);
   });
 
+  it('playQueue lays new options over the stored ones', async () => {
+    const h = harness();
+    await h.controller.enqueue(videos(2), { preset: '720p', framerate: 30 });
+    await h.streamStopped('no_viewers');
+    const replaceSessionIds = ['22222222-2222-4222-8222-222222222222'];
+    await h.controller.playQueue({ framerate: 60, replaceSessionIds });
+    assert.equal(h.starts[1].options.preset, '720p');
+    assert.equal(h.starts[1].options.framerate, 60);
+    assert.deepEqual(h.starts[1].options.replaceSessionIds, replaceSessionIds);
+    assert.deepEqual(h.saves.at(-1)?.options, { preset: '720p', framerate: 60 });
+  });
+
+  it('playAt on a kept queue starts that video with the given options', async () => {
+    const h = harness();
+    await h.controller.enqueue(videos(3), { preset: '720p' });
+    await h.streamStopped('no_viewers');
+    const replaceSessionIds = ['22222222-2222-4222-8222-222222222222'];
+    await h.controller.playAt(2, { replaceSessionIds });
+    assert.equal(h.starts[1].source, url(3));
+    assert.equal(h.starts[1].options.preset, '720p');
+    assert.deepEqual(h.starts[1].options.replaceSessionIds, replaceSessionIds);
+    const state = h.controller.snapshot();
+    assert.equal(state.current?.source, url(3));
+    assert.deepEqual(sources(state.upNext), [url(1), url(2)]);
+  });
+
   it('skip advances, and stops when nothing is upcoming', async () => {
     const h = harness();
     await h.controller.enqueue(videos(2));
