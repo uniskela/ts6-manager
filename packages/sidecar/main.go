@@ -1496,6 +1496,10 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			"fps=%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,%s",
 			fps, w, h, w, h, uploadFilter(spec),
 		)
+		if framesStayOnGPU(spec, true) {
+			vf = gpuVideoFilter(fps, w, h)
+			log.Printf("[FFmpeg] Frames stay on the GPU: vaapi decode, scale_vaapi, %s", spec.FFmpeg)
+		}
 		args = append(args,
 			"-map", "0:v:0",
 			"-vf", vf,
