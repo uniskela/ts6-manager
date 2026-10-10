@@ -5,9 +5,11 @@ import { syncBuiltinESMExports } from 'node:module';
 import { test, mock } from 'node:test';
 import { fetchYouTubeVideoMeta, fetchSpotifyPage } from './youtube.js';
 import { resolveAppleMusicTracks } from './apple-music.js';
+import { isAbsolute } from 'node:path';
 
 test('shared downloader bounds callers without an AbortSignal', async () => {
-  const spawn = mock.method(childProcess, 'spawn', (_command: string, _args: unknown, options: { timeout: number; killSignal: string }) => {
+  const spawn = mock.method(childProcess, 'spawn', (command: string, _args: unknown, options: { timeout: number; killSignal: string }) => {
+    assert.ok(isAbsolute(command));
     assert.equal(options.timeout, 180_000);
     assert.equal(options.killSignal, 'SIGKILL');
     const proc = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });

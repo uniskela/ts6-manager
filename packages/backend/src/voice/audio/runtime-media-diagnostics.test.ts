@@ -9,7 +9,7 @@ import {
 describe('diagnoseRuntimeMedia', () => {
   it('returns ok when all injected probes pass', async () => {
     const report = await diagnoseRuntimeMedia({
-      env: { SIDECAR_URL: 'http://sidecar:9800' },
+      env: { SIDECAR_URL: 'http://sidecar:9800', YT_DLP_PATH: '/trusted/tools/yt-dlp' },
       probeCommand: async (command) => ({ ok: true, version: `${command}-1.0` }),
       probeSidecarHealth: async () => ({ status: 'healthy' }),
       binaryExists: () => true,
@@ -19,7 +19,7 @@ describe('diagnoseRuntimeMedia', () => {
     assert.equal(report.meta.sidecarMode, 'url');
     assert.equal(report.stages.length, 4);
     assert.ok(report.stages.every((s) => s.status === 'ok'));
-    assert.equal(report.stages.find((s) => s.id === 'yt-dlp')?.version, 'yt-dlp-1.0');
+    assert.equal(report.stages.find((s) => s.id === 'yt-dlp')?.version, '/trusted/tools/yt-dlp-1.0');
     assert.ok(Date.parse(report.checkedAt));
   });
 

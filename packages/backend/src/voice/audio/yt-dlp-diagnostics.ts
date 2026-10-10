@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { getYtDlpPath } from './yt-dlp-path.js';
 
 /**
  * Best-effort yt-dlp version diagnostic (non-fatal).
@@ -8,7 +9,7 @@ import { spawn } from 'child_process';
  */
 export function logYtDlpVersionInBackground(): void {
   try {
-    const proc = spawn('yt-dlp', ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(getYtDlpPath(), ['--version'], { shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
 
     proc.stdout.on('data', (chunk: Buffer) => { out += chunk.toString(); });

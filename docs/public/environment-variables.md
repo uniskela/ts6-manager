@@ -19,6 +19,7 @@
 | `SIDECAR_SECRET` | — | Shared bearer secret; required with `SIDECAR_URL` in production |
 | `SIDECAR_BINARY_PATH` | — | Optional sidecar binary path for non-standard deployments |
 | `YT_COOKIE_FILE` | — | Optional Netscape-format yt-dlp cookie file |
+| `YT_DLP_PATH` | `/usr/local/bin/yt-dlp` | Absolute path to the yt-dlp executable used by music, video and diagnostics. For a nonstandard or native install, set the full executable path (e.g. `/usr/bin/yt-dlp` or `C:\Tools\yt-dlp.exe`). Use an administrator-controlled directory that untrusted users cannot write; inherited `PATH` is not used to locate yt-dlp |
 | `TS_ALLOW_SELF_SIGNED` | `false` | Allow self-signed TeamSpeak WebQuery TLS certificates |
 
 ### Video streaming defaults

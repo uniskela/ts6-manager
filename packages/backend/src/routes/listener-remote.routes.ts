@@ -64,7 +64,7 @@ function bearer(req: Request): string {
 function botFor(req: Request, binding: ListenerRemoteBinding) {
   const manager = req.app.locals.voiceBotManager as VoiceBotManager | undefined;
   const bot = manager?.getBot(binding.botId);
-  if (!bot || bot.currentConfig.serverConfigId !== binding.serverConfigId
+  if (bot?.currentConfig.serverConfigId !== binding.serverConfigId
     || bot.getCurrentChannelId() !== binding.channelId
     || !['connected', 'playing', 'paused'].includes(bot.status)) return null;
   return bot;
@@ -78,7 +78,7 @@ async function liveIdentity(req: Request, binding: ListenerRemoteBinding) {
   const row = await req.app.locals.prisma.musicBot.findUnique({
     where: { id: binding.botId }, select: { serverConfigId: true, virtualServerId: true },
   });
-  if (!row || row.serverConfigId !== binding.serverConfigId || row.virtualServerId !== binding.virtualServerId) return null;
+  if (row?.serverConfigId !== binding.serverConfigId || row.virtualServerId !== binding.virtualServerId) return null;
   const query = (cmd: string) => bridge.executeCommand(binding.serverConfigId, binding.virtualServerId, cmd);
   const identity = await resolveMediaIdentity(query, binding.clid, binding.uid);
   if (!identity) return null;
@@ -206,7 +206,7 @@ listenerRemoteRoutes.post('/requests', endpoint(async (req, res) => {
       const deps: MediaUrlPipelineDeps = req.app.locals.mediaUrlPipelineDeps ?? defaultMediaUrlDeps();
       let resolved: QueueItem | undefined;
       await runMediaUrlPipeline(deps, {
-        play: async () => { fail(503, 'unavailable', 'Listener remote is unavailable.'); },
+        play: () => Promise.reject(new ListenerRemoteError(503, 'unavailable', 'Listener remote is unavailable.')),
         enqueue: item => { resolved = item; }, isIdle: () => false,
       }, { url, enqueueOnly: true, cap: 1 });
       if (!resolved) fail(503, 'unavailable', 'Listener remote is unavailable.');
@@ -235,6 +235,6 @@ listenerRemoteAdminRoutes.post('/bots/:botId/revoke', endpoint(async (req, res) 
     actor: actorFromRequest(req.user), action: 'listener.remote.revoke',
     connectionId: row.serverConfigId, virtualServerId: row.virtualServerId,
     target: { type: 'music_bot', id: botId },
-  }, async () => service(req).revoke(botId, uid));
+  }, () => service(req).revoke(botId, uid));
   res.json({ revoked });
 }));

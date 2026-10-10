@@ -1,4 +1,5 @@
 import { parseDownloadProgress, type ProgressUpdate } from './download-progress.js';
+import { getYtDlpPath } from './yt-dlp-path.js';
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -313,7 +314,7 @@ function withMediaUrl(args: string[], url: string): string[] {
 function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
-    const proc = spawn("yt-dlp", args, { shell: false, signal, timeout: 180_000, killSignal: "SIGKILL" });
+    const proc = spawn(getYtDlpPath(), args, { shell: false, signal, timeout: 180_000, killSignal: "SIGKILL" });
     let stdout = "";
     let stderr = "";
     const pending = { stdout: '', stderr: '' };

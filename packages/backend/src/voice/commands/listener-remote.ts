@@ -82,7 +82,7 @@ export async function handleListenerRemote(
       actor: { id: 0, username: `listener:${createHash('sha256').update(identity.uid).digest('hex')}` },
       action: 'listener.remote.issue', connectionId: configId, virtualServerId: sid,
       target: { type: 'music_bot', id: botId },
-    }, async () => {
+    }, () => {
       // The pending audit write yields: invalidate a leave/rejoin or bot move in that gap.
       if (state.value !== revision || bot.getCurrentChannelId() !== channelId || !connected(bot)) {
         throw new AppError(401, 'Listener remote access expired');
