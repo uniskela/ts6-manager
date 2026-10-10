@@ -516,6 +516,8 @@ const server = createServer(async (req, res) => {
       : url.pathname === '/api/music-bots/media' && allowTestAuth ? (docsScenario ? docsBotMedia : [])
       : url.pathname === '/api/music-bots' && allowTestAuth ? (docsScenario ? docsMusicBots : [])
       : url.pathname === '/api/music-bots/7/state' && allowTestAuth && docsScenario ? docsPlaybackState
+      // Every bot has a video queue; specs that need items in it mock this route.
+      : /^\/api\/music-bots\/\d+\/stream\/queue$/.test(url.pathname) && allowTestAuth ? { current: null, upNext: [], kept: false }
       : url.pathname === '/api/bots' && allowTestAuth ? bots
       : /^\/api\/bots\/(\d+)$/.test(url.pathname) && allowTestAuth
         ? (() => {
