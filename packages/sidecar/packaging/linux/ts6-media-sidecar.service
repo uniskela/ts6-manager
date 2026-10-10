@@ -1,0 +1,45 @@
+# systemd unit for the TS6 Manager native media sidecar.
+#
+#   sudo install -m 0755 ts6-media-sidecar /usr/local/bin/ts6-media-sidecar
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin ts6-sidecar
+#   sudo install -d -m 0750 /etc/ts6-media-sidecar
+#   sudo install -m 0600 sidecar.env.example /etc/ts6-media-sidecar/sidecar.env
+#   sudoedit /etc/ts6-media-sidecar/sidecar.env
+#   sudo install -m 0644 ts6-media-sidecar.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ts6-media-sidecar
+[Unit]
+Description=TS6 Manager media sidecar
+Documentation=https://github.com/uniskela/ts6-manager/blob/main/docs/public/native-sidecar.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ts6-sidecar
+Group=ts6-sidecar
+# systemd reads this file as root before dropping privileges, so it can stay
+# root-owned with mode 0600.
+EnvironmentFile=/etc/ts6-media-sidecar/sidecar.env
+ExecStart=/usr/local/bin/ts6-media-sidecar
+Restart=on-failure
+RestartSec=3
+
+# VAAPI opens /dev/dri/renderD*, which belongs to the render group (video on
+# some distributions). Uncomment the groups that exist on this host.
+#SupplementaryGroups=render video
+
+NoNewPrivileges=true
+ProtectSystem=strict
+# Media under /home, /root or /run/user is hidden by ProtectHome. Keep
+# MUSIC_DIR elsewhere (for example /srv/ts6/music) or set ProtectHome=read-only.
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+# GPU encoders need device nodes, so PrivateDevices stays off.
+
+[Install]
+WantedBy=multi-user.target

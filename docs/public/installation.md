@@ -58,6 +58,10 @@ Open `http://localhost:3000` unless you changed `HOST_PORT`.
 
 Only nginx is published by default. Backend and sidecar HTTP remain internal to the container. Optional WebRTC UDP publish is documented in `docker-compose.all-in-one.yml`.
 
+## Optional native media sidecar
+
+Docker is the supported way to run TS6 Manager. When the sidecar needs a host GPU encoder that a container cannot use, such as AMD AMF on Windows, each release also provides native sidecar binaries. See [Native media sidecar](native-sidecar.md).
+
 ## Build from source
 
 For Home Screen or desktop app installation after deployment, see [Install TS6 Manager as an app](pwa.md). PWA installation requires HTTPS (except on localhost).

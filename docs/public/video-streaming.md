@@ -91,13 +91,13 @@ ffmpeg -hide_banner -encoders | Select-String "amf"
 
 The output must include `h264_amf`. AV1/HEVC AMF encoders may also be present, but TS6 Manager currently selects only H.264 AMF. The capability check performs a real small encode; an encoder appearing in this list alone does not prove the driver can initialize it.
 
-Native Windows production deployments currently build the sidecar from source. TODO: publish automated Windows release artifacts separately. This is the normal cross-platform media sidecar; AMF is one runtime capability.
+From 1.11.0, each GitHub Release includes a Windows sidecar archive built from that release's tag, so AMF no longer requires building the sidecar. Downloads, version matching, background operation and the security requirements are in [Native media sidecar](native-sidecar.md). This is the normal cross-platform media sidecar; AMF is one runtime capability.
 
 #### Breaking change for source builds
 
 The minimum Go toolchain version for sidecar source builds has increased from Go 1.25 to Go 1.26.9. Native Windows source builds require Go 1.26.9 or newer; upgrade your Go toolchain before following the build steps below.
 
-Build the sidecar from the same checkout/release as the backend, using Go 1.26.9 or newer. From the repository root:
+The rest of this section builds from source, which is what the PR-test setup below uses. Build from the same checkout/release as the backend, using Go 1.26.9 or newer. From the repository root:
 
 ```powershell
 New-Item -ItemType Directory -Force .\bin | Out-Null
@@ -132,7 +132,7 @@ $env:WEBRTC_NAT1TO1_IP = "127.0.0.1" # Browser preview on this Windows host only
 
 For TeamSpeak viewers, or browsers on another machine, replace the advertised IP with the Windows host's **reachable LAN or Tailscale IPv4** before starting the sidecar. You may advertise both `127.0.0.1` and that IPv4 as a comma-separated list. The TeamSpeak client does not use loopback even on the same machine. `WEBRTC_UDP_PORT` is owned by the native process; it requires no Docker mapping, and the Docker-only `WEBRTC_BIND_IP` setting does not apply.
 
-Set the backend's `SIDECAR_URL` to the Windows host's private HTTP address. A Docker Desktop backend on the same Windows machine uses `http://host.docker.internal:9800`; a backend on another machine uses a reachable private LAN/Tailscale address instead. Keep the HTTP API private and trusted: the native HTTP listener and fixed UDP mux listen on all interfaces. Windows Firewall must allow TCP `9800` **only from the backend's trusted address/network** (including the Docker Desktop path when used), and UDP `10000` from intended viewers. Do not expose TCP `9800` to the public Internet; its mutating endpoints require the shared bearer secret, but health/status endpoints are not a substitute for network isolation. Use a private encrypted network or HTTPS reverse proxy when the backend is across machines. Do not disable the firewall to troubleshoot connectivity.
+Set the backend's `SIDECAR_URL` to the Windows host's private HTTP address. A Docker Desktop backend on the same Windows machine uses `http://host.docker.internal:9800`; a backend on another machine uses a reachable private LAN/Tailscale address instead. Keep the HTTP API private and trusted: the fixed UDP mux listens on all interfaces, and so does the native HTTP listener unless `SIDECAR_HOST` names one address. Windows Firewall must allow TCP `9800` **only from the backend's trusted address/network** (including the Docker Desktop path when used), and UDP `10000` from intended viewers. Do not expose TCP `9800` to the public Internet; its mutating endpoints require the shared bearer secret, but health/status endpoints are not a substitute for network isolation. Use a private encrypted network or HTTPS reverse proxy when the backend is across machines. Do not disable the firewall to troubleshoot connectivity.
 
 Local video files and downloaded clips must be accessible to both processes. Mount the Windows media directory into the backend at its `MUSIC_DIR` (for example `/data/music`) and set the sidecar's `MUSIC_DIR` to the Windows path to those **same files**. The backend sends a portable `music://filename` reference for local sources under its music root; the sidecar resolves it under its own root and rejects traversal. Existing absolute paths remain supported for deployments sharing one path, and HTTP/HTTPS media URLs are unchanged. A shared directory is still required: the reference does not transfer file contents.
 
