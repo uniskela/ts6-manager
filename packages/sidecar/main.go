@@ -190,8 +190,11 @@ func debugf(format string, args ...any) {
 }
 
 // quoteErr keeps a viewer-controlled parser error on one log record.
+// ReplaceAll of both newline characters is the sanitizer Sonar recognizes;
+// Quote also escapes the other control characters.
 func quoteErr(err error) string {
-	return strconv.Quote(err.Error())
+	quoted := strconv.Quote(err.Error())
+	return strings.ReplaceAll(strings.ReplaceAll(quoted, "\n", "_"), "\r", "_")
 }
 
 // NTP epoch offset: seconds between 1900-01-01 and 1970-01-01
