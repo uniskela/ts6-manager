@@ -32,12 +32,14 @@ env:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   build-and-push:
     name: Build ${{ matrix.component }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       # Fail the matrix if any component fails so we never promote a mixed :latest set.
       fail-fast: true
@@ -159,6 +161,9 @@ jobs:
   build-all-in-one:
     name: Build all-in-one
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Validate release tag
         env:
@@ -264,6 +269,8 @@ jobs:
     name: Promote ${{ matrix.component }}:latest
     needs: build-and-push
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
     strategy:
       fail-fast: true
       matrix:
@@ -322,6 +329,8 @@ jobs:
     name: Promote all-in-one:latest
     needs: build-all-in-one
     runs-on: ubuntu-latest
+    permissions:
+      packages: write
     steps:
       - name: Detect Docker Hub credentials
         id: hub
