@@ -25,6 +25,13 @@ import type { ConsoleSourceContext } from './SourcePicker';
 const LINK_LABEL = 'YouTube, Twitch, direct link, or a file already in the music folder';
 const FOLDER_HINT = 'Music-folder files play from the Music tab.';
 
+/** Wording for the start button and its error, by what a press will do. */
+function linkAction(mode: LinkPlayMode, videoStreaming: boolean): { label: string; failed: string } {
+  if (mode !== 'video') return { label: 'Play as music', failed: 'Failed to play URL' };
+  if (videoStreaming) return { label: 'Queue as video', failed: 'Failed to queue the video' };
+  return { label: 'Stream as video', failed: 'Failed to start stream' };
+}
+
 export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const [input, setInput] = useState('');
   const [mode, setMode] = useState<LinkPlayMode>('music');
@@ -44,6 +51,8 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
   const busy = playUrl.isPending || startVideo.isPending || queueVideo.isPending;
   const error = effectiveMode === 'video' ? startVideo.error ?? queueVideo.error : playUrl.error;
   const canStart = trimmed.length > 0 && !busy && !(effectiveMode === 'video' && optionsLoading);
+  const action = linkAction(effectiveMode, videoStreaming);
+  const busyLabel = queueVideo.isPending && videoStreaming ? 'Adding…' : 'Starting…';
 
   useEffect(() => {
     if (trimmed && !musicPlayAllowed(input) && mode === 'music') setMode('video');
@@ -164,15 +173,12 @@ export function LinkSource({ botId, serverConfigId }: ConsoleSourceContext) {
       {error && (
         <ApiErrorAlert
           error={error}
-          fallback={effectiveMode !== 'video' ? 'Failed to play URL'
-            : videoStreaming ? 'Failed to queue the video' : 'Failed to start stream'}
+          fallback={action.failed}
         />
       )}
 
       <Button type="button" className="h-11 w-full sm:w-auto" disabled={!canStart} onClick={onStart}>
-        {busy ? (queueVideo.isPending && videoStreaming ? 'Adding…' : 'Starting…') : effectiveMode === 'video'
-          ? (videoStreaming ? 'Queue as video' : 'Stream as video')
-          : 'Play as music'}
+        {busy ? busyLabel : action.label}
       </Button>
     </div>
   );

@@ -6,7 +6,7 @@
 
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Bot } from 'lucide-react';
-import type { PlaybackState } from '@ts6/common';
+import type { BotMediaOverview, PlaybackState } from '@ts6/common';
 import { NowPlaying } from '@/components/media/NowPlaying';
 import { StreamSourceSwitch } from '@/components/video/StreamSourceSwitch';
 import { StreamViewers } from '@/components/video/StreamViewers';
@@ -58,6 +58,36 @@ function useNow(): number {
   return now;
 }
 
+/** What the music queue is waiting behind, if anything. */
+function musicKeptFor(bot: BotMediaOverview): 'radio' | 'video' | null {
+  if (bot.music?.live) return 'radio';
+  return bot.session?.kind === 'video' ? 'video' : null;
+}
+
+/** Up next for an online bot: one lane owns it; the other, when it holds items, waits as a one-line strip. */
+function UpNextLanes({ bot }: { bot: BotMediaOverview }) {
+  const stateQuery = useMusicBotState(bot.botId);
+  const state = stateQuery.data as PlaybackState | undefined;
+  const videoQueueQuery = useVideoQueue(bot.botId);
+  const videoQueue = videoQueueQuery.data;
+  const lane = activeLane({
+    sessionKind: bot.session?.kind ?? null,
+    musicLive: !!bot.music?.live,
+    musicUpNext: state ? upNext(state).length : 0,
+    videoUpNext: videoQueue?.upNext.length ?? 0,
+  });
+  const musicQueue = (
+    <UpNextQueue botId={bot.botId} state={state} keptFor={musicKeptFor(bot)} stripOnly={lane === 'video'}
+      loadError={stateQuery.isError ? stateQuery.error : null} />
+  );
+  const videoLane = (
+    <VideoUpNext botId={bot.botId} state={videoQueue} streaming={bot.session?.kind === 'video'}
+      stripOnly={lane === 'music'}
+      loadError={lane === 'video' && videoQueueQuery.isError ? videoQueueQuery.error : null} />
+  );
+  return lane === 'video' ? <>{videoLane}{musicQueue}</> : <>{musicQueue}{videoLane}</>;
+}
+
 /** Render one bot's playback state, queue, and source tabs. */
 export default function BotConsole() {
   const botId = Number(useParams().botId);
@@ -68,9 +98,6 @@ export default function BotConsole() {
   const bot = (media.data ?? []).find((b) => b.botId === botId);
   const tone = bot ? hubTone(bot) : 'offline';
   const online = !!bot && tone !== 'offline';
-  const stateQuery = useMusicBotState(online ? botId : null);
-  const state = stateQuery.data as PlaybackState | undefined;
-  const videoQueueQuery = useVideoQueue(online ? botId : null);
 
   if (media.isLoading) return <PageLoader />;
   if (media.isError) {
@@ -84,25 +111,7 @@ export default function BotConsole() {
     );
   }
 
-  const keptFor = bot.music?.live ? 'radio' : bot.session?.kind === 'video' ? 'video' : null;
   const connection = CONNECTION_BADGE[bot.status] ?? CONNECTION_BADGE.connected;
-  const videoQueue = videoQueueQuery.data;
-  const videoStreaming = bot.session?.kind === 'video';
-  // One lane owns Up next; the other, when it holds items, waits as a one-line strip.
-  const lane = activeLane({
-    sessionKind: bot.session?.kind ?? null,
-    musicLive: !!bot.music?.live,
-    musicUpNext: state ? upNext(state).length : 0,
-    videoUpNext: videoQueue?.upNext.length ?? 0,
-  });
-  const musicQueue = (
-    <UpNextQueue botId={bot.botId} state={state} keptFor={keptFor} stripOnly={lane === 'video'}
-      loadError={stateQuery.isError ? stateQuery.error : null} />
-  );
-  const videoLane = (
-    <VideoUpNext botId={bot.botId} state={videoQueue} streaming={videoStreaming} stripOnly={lane === 'music'}
-      loadError={lane === 'video' && videoQueueQuery.isError ? videoQueueQuery.error : null} />
-  );
 
   return (
     <div className="space-y-4">
@@ -126,7 +135,7 @@ export default function BotConsole() {
             bot={bot}
             now={now}
             variant="full"
-            footer={online ? (lane === 'video' ? <>{videoLane}{musicQueue}</> : <>{musicQueue}{videoLane}</>) : undefined}
+            footer={online ? <UpNextLanes bot={bot} /> : undefined}
           />
           {tone === 'live' && <StreamSourceSwitch botId={bot.botId} />}
           {tone === 'live' && <StreamViewers botId={bot.botId} now={now} />}

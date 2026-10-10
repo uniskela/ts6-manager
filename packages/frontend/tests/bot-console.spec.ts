@@ -13,6 +13,20 @@ async function signIn(page: Page, request: APIRequestContext) {
 
 const noStop = { lastMusicStop: null, lastVideoStop: null };
 
+/** Pick up the Up next row called `title` with the keyboard and drop it one place down. */
+async function moveDownWithKeyboard(page: Page, title: string, ownKey: string, nextKey: string) {
+  const handle = page.getByRole('button', { name: `Drag to reorder ${title}` });
+  await handle.scrollIntoViewIfNeeded();
+  await handle.focus();
+  // Each key waits for dnd-kit's live-region announcement of the step before it.
+  const live = page.locator('[id^="DndLiveRegion"]');
+  await page.keyboard.press('Space');
+  await expect(live).toContainText(`over droppable area ${ownKey}`);
+  await page.keyboard.press('ArrowDown');
+  await expect(live).toContainText(`over droppable area ${nextKey}`);
+  await page.keyboard.press('Space');
+}
+
 function media(now: number) {
   return [
     {
@@ -108,16 +122,7 @@ test('keyboard reorder and remove send absolute queue indexes', async ({ page, r
 
   // Move "Third Song" (Up next 0 → absolute 2) down one place (absolute 3).
   await expect(page.getByRole('list', { name: 'Up next' }).getByRole('listitem')).toHaveCount(3);
-  const handle = page.getByRole('button', { name: 'Drag to reorder Third Song' });
-  await handle.scrollIntoViewIfNeeded();
-  await handle.focus();
-  // Each key waits for dnd-kit's live-region announcement of the step before it.
-  const live = page.locator('[id^="DndLiveRegion"]');
-  await page.keyboard.press('Space');
-  await expect(live).toContainText('over droppable area t3#0');
-  await page.keyboard.press('ArrowDown');
-  await expect(live).toContainText('over droppable area t4#0');
-  await page.keyboard.press('Space');
+  await moveDownWithKeyboard(page, 'Third Song', 't3#0', 't4#0');
   await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body).toEqual({ from: 2, to: 3 });
 
   // Remove "Fifth Song" (Up next 2 → absolute 4).
@@ -331,15 +336,7 @@ test('keyboard reorder sends upcoming indexes', async ({ page, request }) => {
   await page.goto('/bot-hub/1');
   await expect(page.getByRole('list', { name: 'Up next' }).getByRole('listitem')).toHaveCount(3);
 
-  const handle = page.getByRole('button', { name: 'Drag to reorder First short' });
-  await handle.scrollIntoViewIfNeeded();
-  await handle.focus();
-  const live = page.locator('[id^="DndLiveRegion"]');
-  await page.keyboard.press('Space');
-  await expect(live).toContainText('over droppable area v1#0');
-  await page.keyboard.press('ArrowDown');
-  await expect(live).toContainText('over droppable area v2#0');
-  await page.keyboard.press('Space');
+  await moveDownWithKeyboard(page, 'First short', 'v1#0', 'v2#0');
   await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body).toEqual({ from: 0, to: 1 });
   expect(calls.find((c) => c.method === 'PUT')?.url).toMatch(/\/stream\/queue\/move$/);
 });

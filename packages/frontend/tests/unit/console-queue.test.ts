@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { QueueItemInfo } from '@ts6/common';
-import { absoluteIndex, activeLane, moveUpNext, rowKeys, upNext, videoRowDetail } from '../../src/pages/bot-hub/console-queue';
+import { absoluteIndex, activeLane, droppedMove, moveUpNext, rowKeys, upNext, videoRowDetail } from '../../src/pages/bot-hub/console-queue';
 
 const item = (id: string): QueueItemInfo => ({ id, title: `Song ${id}`, source: 'local' });
 const queue = ['a', 'b', 'c', 'd', 'e'].map(item);
@@ -91,5 +91,21 @@ describe('console queue: video row detail', () => {
   it('shows nothing when the title already is the host, or for a file', () => {
     assert.equal(row({ title: 'www.youtube.com' }), undefined);
     assert.equal(row({ title: 'clip.mp4', source: 'clip.mp4' }), undefined);
+  });
+});
+
+describe('console queue: dropped rows', () => {
+  const keys = ['a#0', 'b#0', 'c#0'];
+
+  it('reports the positions a drop moved between', () => {
+    assert.deepEqual(droppedMove(keys, 'a#0', 'c#0'), { from: 0, to: 2 });
+    assert.deepEqual(droppedMove(keys, 'c#0', 'b#0'), { from: 2, to: 1 });
+  });
+
+  it('is null when nothing moved or a row is unknown', () => {
+    assert.equal(droppedMove(keys, 'a#0', 'a#0'), null);
+    assert.equal(droppedMove(keys, 'a#0', undefined), null);
+    assert.equal(droppedMove(keys, 'a#0', 'z#0'), null);
+    assert.equal(droppedMove(keys, 'z#0', 'a#0'), null);
   });
 });

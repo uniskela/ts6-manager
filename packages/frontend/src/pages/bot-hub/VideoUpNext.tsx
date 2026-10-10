@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  DndContext, KeyboardSensor, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors,
-  type DragEndEvent,
-} from '@dnd-kit/core';
-import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { DndContext, closestCenter, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { SkipForward, Trash2 } from 'lucide-react';
 import type { VideoQueueItemInfo, VideoQueueState } from '@ts6/common';
 import { Button } from '@/components/ui/button';
@@ -11,10 +8,40 @@ import {
   useClearVideoQueue, useMoveQueuedVideo, usePlayQueuedVideo, usePlayVideoQueue, useRemoveQueuedVideo, useSkipVideo,
 } from '@/hooks/use-music-bots';
 import { apiErrorMessage } from '@/lib/api-error';
-import { moveUpNext, rowKeys, videoRowDetail } from './console-queue';
-import { Row } from './UpNextQueue';
+import { droppedMove, moveUpNext, rowKeys, videoRowDetail } from './console-queue';
+import { Row, useUpNextSensors } from './UpNextQueue';
 
 const NO_ITEMS: VideoQueueItemInfo[] = [];
+
+/** The dashed strip for a video queue that is waiting, with its Play queue button. */
+function KeptStrip({ text, label, disabled, starting, onPlay }: {
+  text: string; label?: string; disabled: boolean; starting: boolean; onPlay(): void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">
+      <span>{text}</span>
+      <Button variant="outline" size="sm" className="h-9" disabled={disabled} aria-label={label} onClick={onPlay}>
+        {starting ? 'Starting…' : 'Play queue'}
+      </Button>
+    </div>
+  );
+}
+
+/** Up next before the video queue has loaded, or when it could not be. */
+function QueueNotLoaded({ loadError }: { loadError: unknown }) {
+  return (
+    <section aria-labelledby="up-next" className="space-y-3 border-t pt-4">
+      <h2 id="up-next" className="text-sm font-semibold">Up next</h2>
+      {loadError ? (
+        <p role="alert" className="text-sm text-destructive">
+          Could not load the video queue. {apiErrorMessage(loadError, 'Try again in a moment.')}
+        </p>
+      ) : (
+        <p className="text-sm text-muted-foreground">Loading the queue…</p>
+      )}
+    </section>
+  );
+}
 
 /**
  * The bot's queued videos. Positions in this list are the upcoming indexes the
@@ -49,50 +76,28 @@ export function VideoUpNext({ botId, state, streaming, loadError, stripOnly = fa
   const busy = move.isPending || remove.isPending || clear.isPending || starting;
   const failed = [skip, playAt, playQueue, move, remove, clear].find((m) => m.isError)?.error;
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useUpNextSensors();
+  const startQueue = () => playQueue.mutate({ botId });
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     // One move at a time: a second drop would send indexes from the unsaved order.
-    if (move.isPending || !over || active.id === over.id) return;
-    const from = keys.indexOf(String(active.id));
-    const to = keys.indexOf(String(over.id));
-    if (from < 0 || to < 0) return;
-    setLocalItems(moveUpNext(items, from, to));
-    move.mutate({ botId, from, to });
+    const moved = move.isPending ? null : droppedMove(keys, active.id, over?.id);
+    if (!moved) return;
+    setLocalItems(moveUpNext(items, moved.from, moved.to));
+    move.mutate({ botId, ...moved });
   };
 
   if (stripOnly) {
     if (items.length === 0) return null;
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">
-        <span>{items.length === 1 ? '1 queued video is kept.' : `${items.length} queued videos are kept.`}</span>
-        <Button variant="outline" size="sm" className="h-9" disabled={busy} aria-label="Play video queue"
-          onClick={() => playQueue.mutate({ botId })}>
-          {playQueue.isPending ? 'Starting…' : 'Play queue'}
-        </Button>
-      </div>
+      <KeptStrip text={items.length === 1 ? '1 queued video is kept.' : `${items.length} queued videos are kept.`}
+        label="Play video queue" disabled={busy} starting={playQueue.isPending} onPlay={startQueue} />
     );
   }
 
   if (!state) {
     // Nothing to manage on an idle bot until the queue has loaded.
-    if (!streaming && !loadError) return null;
-    return (
-      <section aria-labelledby="up-next" className="space-y-3 border-t pt-4">
-        <h2 id="up-next" className="text-sm font-semibold">Up next</h2>
-        {loadError ? (
-          <p role="alert" className="text-sm text-destructive">
-            Could not load the video queue. {apiErrorMessage(loadError, 'Try again in a moment.')}
-          </p>
-        ) : (
-          <p className="text-sm text-muted-foreground">Loading the queue…</p>
-        )}
-      </section>
-    );
+    return streaming || loadError ? <QueueNotLoaded loadError={loadError} /> : null;
   }
 
   if (!streaming && items.length === 0) return null;
@@ -128,12 +133,8 @@ export function VideoUpNext({ botId, state, streaming, loadError, stripOnly = fa
       )}
 
       {state.kept && items.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">
-          <span>Up next ({items.length}) is kept. Nothing is streaming.</span>
-          <Button variant="outline" size="sm" className="h-9" disabled={busy} onClick={() => playQueue.mutate({ botId })}>
-            {playQueue.isPending ? 'Starting…' : 'Play queue'}
-          </Button>
-        </div>
+        <KeptStrip text={`Up next (${items.length}) is kept. Nothing is streaming.`}
+          disabled={busy} starting={playQueue.isPending} onPlay={startQueue} />
       )}
 
       {items.length === 0 ? (

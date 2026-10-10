@@ -71,5 +71,6 @@ export function queuedVideoToast(
   }
   const count = `Queued ${res.queued} ${res.queued === 1 ? 'video' : 'videos'}`;
   const from = res.playlistTitle ? ` from ${res.playlistTitle}` : '';
-  return `${count}${from}${res.truncated ? ` (first ${res.queued})` : ''}`;
+  const cut = res.truncated ? ` (first ${res.queued})` : '';
+  return `${count}${from}${cut}`;
 }

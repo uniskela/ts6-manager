@@ -37,6 +37,16 @@ export function rowKeys(items: Pick<QueueItemInfo, 'id'>[]): string[] {
   });
 }
 
+/** The Up next positions a finished drag moved a row between, or null when nothing moved. */
+export function droppedMove(
+  keys: string[], activeId: string | number, overId: string | number | undefined,
+): { from: number; to: number } | null {
+  if (overId === undefined || activeId === overId) return null;
+  const from = keys.indexOf(String(activeId));
+  const to = keys.indexOf(String(overId));
+  return from < 0 || to < 0 ? null : { from, to };
+}
+
 export type UpNextLane = 'music' | 'video';
 
 /**

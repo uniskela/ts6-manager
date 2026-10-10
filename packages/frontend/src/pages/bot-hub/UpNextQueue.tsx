@@ -15,10 +15,19 @@ import {
 } from '@/hooks/use-music-bots';
 import { apiErrorMessage } from '@/lib/api-error';
 import { cn } from '@/lib/utils';
-import { absoluteIndex, moveUpNext, rowKeys, upNext } from './console-queue';
+import { absoluteIndex, droppedMove, moveUpNext, rowKeys, upNext } from './console-queue';
 
 const NEXT_REPEAT: Record<RepeatMode, RepeatMode> = { off: 'track', track: 'queue', queue: 'off' };
 const REPEAT_LABEL: Record<RepeatMode, string> = { off: 'Repeat: off', track: 'Repeat: track', queue: 'Repeat: queue' };
+
+/** Pointer, touch and keyboard dragging for an Up next list, shared by the music and video lanes. */
+export function useUpNextSensors() {
+  return useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+}
 
 /** One draggable Up next row, shared by the music and video lanes. */
 export function Row({ rowKey, item, onPlay, onRemove, disabled, dragDisabled }: {
@@ -85,20 +94,14 @@ export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = fals
   const currentIndex = state?.currentIndex ?? -1;
   const busy = move.isPending || remove.isPending || playFrom.isPending;
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
+  const sensors = useUpNextSensors();
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     // One move at a time: a second drop would send indexes from the unsaved order.
-    if (move.isPending || !over || active.id === over.id) return;
-    const from = keys.indexOf(String(active.id));
-    const to = keys.indexOf(String(over.id));
-    if (from < 0 || to < 0) return;
-    setLocalItems(moveUpNext(items, from, to));
-    move.mutate({ botId, from: absoluteIndex(currentIndex, from), to: absoluteIndex(currentIndex, to) });
+    const moved = move.isPending ? null : droppedMove(keys, active.id, over?.id);
+    if (!moved) return;
+    setLocalItems(moveUpNext(items, moved.from, moved.to));
+    move.mutate({ botId, from: absoluteIndex(currentIndex, moved.from), to: absoluteIndex(currentIndex, moved.to) });
   };
 
   const repeat = state?.repeat ?? 'off';
