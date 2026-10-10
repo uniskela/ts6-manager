@@ -189,12 +189,15 @@ func debugf(format string, args ...any) {
 	}
 }
 
-// quoteErr keeps a viewer-controlled parser error on one log record.
-// ReplaceAll of both newline characters is the sanitizer Sonar recognizes;
-// Quote also escapes the other control characters.
-func quoteErr(err error) string {
-	quoted := strconv.Quote(err.Error())
+// quoteLog keeps one log record. Nested newline replacement is what Sonar
+// treats as sanitizing; Quote also escapes other control characters.
+func quoteLog(s string) string {
+	quoted := strconv.Quote(s)
 	return strings.ReplaceAll(strings.ReplaceAll(quoted, "\n", "_"), "\r", "_")
+}
+
+func quoteErr(err error) string {
+	return quoteLog(err.Error())
 }
 
 // NTP epoch offset: seconds between 1900-01-01 and 1970-01-01
@@ -1288,7 +1291,7 @@ func (s *Sidecar) SetAnswer(id, sdp string) error {
 	peer.pendingICE = nil
 	for _, c := range pending {
 		if err := peer.PC.AddICECandidate(c); err != nil {
-			log.Printf("[API] Dropping early ICE candidate for peer %s: %s", id, quoteErr(err))
+			log.Printf("[API] Dropping early ICE candidate for peer %s: %s", quoteLog(id), quoteErr(err))
 		}
 	}
 	if len(pending) > 0 {
