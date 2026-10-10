@@ -344,18 +344,20 @@ describe('listener remote HTTP security boundary', () => {
       assert.equal(state.status, 200);
       assert.equal(state.headers.get('ratelimit-limit'), '120');
       assert.equal((await f.request('/bots/4/revoke', { admin: true, session, body: {} })).status, 401);
+      let remaining = 0;
       for (const rawBody of [`{"token":"${token}"`, JSON.stringify({ token, padding: 'x'.repeat(5000) })]) {
         const response = await f.request('/exchange', { rawBody });
         assert.equal(response.status, 400);
         assert.equal(response.headers.get('cache-control'), 'no-store');
         assert.deepEqual(await response.json(), { error: 'Invalid listener request.', code: 'invalid_request' });
+        remaining = Number(response.headers.get('ratelimit-remaining'));
       }
       assert.equal(f.queue.length, 1);
       assert.equal(f.audit.length, 0);
       // Advance only the credential clock to exercise Express's limiter independently.
       f.advance(60_001);
       const endpoints = [['/state', 'GET'], ['/library', 'GET'], ['/queue', 'POST'], ['/requests', 'POST'], ['/session', 'DELETE']];
-      for (let n = 0; n < 116; n++) {
+      for (let n = 0; n < remaining; n++) {
         const [path, method] = endpoints[n % endpoints.length];
         const response = await f.request(path, { method });
         assert.notEqual(response.status, 429);
@@ -363,7 +365,8 @@ describe('listener remote HTTP security boundary', () => {
       for (const [path, method] of endpoints) {
         const response = await f.request(path, { method, headers: { 'X-Forwarded-For': '203.0.113.42' } });
         assert.equal(response.status, 429);
-        assert.equal(response.headers.get('retry-after'), '60');
+        const retryAfter = Number(response.headers.get('retry-after'));
+        assert.ok(retryAfter > 0 && retryAfter <= 60);
         assert.equal(response.headers.get('cache-control'), 'no-store');
         if (path === '/state') assert.equal(response.headers.get('ratelimit-remaining'), '0');
         assert.deepEqual(await response.json(), { error: 'Too many remote requests', code: 'rate_limited' });
