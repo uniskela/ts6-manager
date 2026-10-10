@@ -184,9 +184,9 @@ The sidecar never assumes an encoder exists. **Check encoders** (Media Library â
 |---|---|---|
 | Windows | H.264 AMF (AMD), H.264 NVENC (NVIDIA) | VP8, VP9, H.264 |
 | Linux | H.264 / VP8 / VP9 VAAPI (Intel, AMD), H.264 NVENC (NVIDIA) | VP8, VP9, H.264 |
-| macOS | None yet. H.264 VideoToolbox is planned as a separate change | VP8, VP9, H.264 |
+| macOS | H.264 VideoToolbox (Apple Silicon, and Intel Macs with a hardware H.264 encoder) | VP8, VP9, H.264 |
 
-Only codecs the TeamSpeak client renders are selectable. HEVC and AV1 are not offered even when FFmpeg lists them.
+Encoders that cannot exist on the host's operating system are skipped without running FFmpeg: VAAPI off Linux, VideoToolbox off macOS. Only codecs the TeamSpeak client renders are selectable. HEVC and AV1 are not offered even when FFmpeg lists them.
 
 Setup for each encoder is under [Video streaming â†’ Encoders](video-streaming.md#encoders). For a native sidecar the Docker-specific steps (device passthrough, the NVIDIA compose override) do not apply; the host driver and an FFmpeg build with that encoder are what matter.
 
@@ -203,6 +203,8 @@ Release archives are compiled for every platform in the table above, and CI runs
 | Windows x64, AMF | Not verified on AMD hardware by the project, including TeamSpeak playback and late joins ([#361](https://github.com/uniskela/ts6-manager/issues/361)) |
 | Windows x64, NVENC | Not verified |
 | macOS Intel and Apple Silicon, software encoders | Compiled only. Not run on macOS |
+| macOS, H.264 VideoToolbox | Unit-tested arguments only. Not run on Apple hardware; TeamSpeak playback unconfirmed |
+| VideoToolbox from a launchd daemon (no user session) | Not verified |
 | systemd unit, launchd plist, Windows scheduled task | Written from each platform's documentation. Not exercised on real hosts |
 | Windows task with `-Trigger Startup` and a GPU encoder | Not verified |
 | Docker Desktop backend reaching a native sidecar | Described for Windows in [Video streaming](video-streaming.md#amd-amf-windows). Not verified on macOS |

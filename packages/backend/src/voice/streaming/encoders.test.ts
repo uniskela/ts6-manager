@@ -20,7 +20,7 @@ function resolveStartEncoder(
 }
 
 function caps(available: string[], devicePresent = true): VideoEncoderCapabilities {
-  const ids = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc', 'h264_amf'] as const;
+  const ids = ['vp8', 'vp9', 'h264', 'vp8_vaapi', 'vp9_vaapi', 'h264_vaapi', 'h264_nvenc', 'h264_amf', 'h264_videotoolbox'] as const;
   return {
     checkedAt: new Date(0).toISOString(),
     vaapiDevice: '/dev/dri/renderD128',
@@ -82,6 +82,19 @@ describe('selectEncoder', () => {
     assert.equal(isHardwareEncoder('h264_amf'), true);
     assert.equal(normalizeEncoderRequest('h264_amf', 'auto'), 'h264_amf');
     assert.equal(encoderDisplayName('h264_amf'), 'H.264 (AMF)');
+  });
+
+  it('uses VideoToolbox when it is the hardware encoder that passes', () => {
+    const mac = caps(['vp8', 'vp9', 'h264', 'h264_videotoolbox'], false);
+    assert.deepEqual(selectEncoder('auto', true, mac), { selected: 'h264_videotoolbox', note: null });
+    assert.deepEqual(selectEncoder('auto', false, mac), { selected: 'vp8', note: null });
+    assert.deepEqual(selectEncoder('h264_videotoolbox', false, null), { selected: 'h264_videotoolbox', note: null });
+    assert.equal(ENCODER_CODEC.h264_videotoolbox, 'h264');
+    assert.equal(isHardwareEncoder('h264_videotoolbox'), true);
+    assert.equal(normalizeEncoderRequest('h264_videotoolbox', 'auto'), 'h264_videotoolbox');
+    assert.equal(encoderDisplayName('h264_videotoolbox'), 'H.264 (VideoToolbox)');
+    // Software H.264 is not mistaken for hardware by the suffix checks.
+    assert.equal(isHardwareEncoder('h264'), false);
   });
 
   it('keeps VAAPI and NVENC ahead of AMF when several probes pass', () => {
