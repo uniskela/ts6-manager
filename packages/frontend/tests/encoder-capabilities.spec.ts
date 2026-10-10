@@ -66,7 +66,7 @@ test('every encoder check row offers its ffmpeg output', async ({ page, request 
   await expect(page.getByText(/AMF is available when the sidecar runs natively on Windows/)).toBeVisible();
 
   await page.getByRole('button', { name: 'Advanced quality settings' }).click();
-  await expect(page.getByText('Auto prefers hardware (VAAPI, NVENC or AMF) when a test encode succeeds')).toBeVisible();
+  await expect(page.getByText('Auto prefers hardware (VAAPI, NVENC, AMF or VideoToolbox) when a test encode succeeds')).toBeVisible();
   await page.getByLabel('Default encoder', { exact: true }).click();
   await expect(page.getByRole('option', { name: 'H.264 (AMF)', exact: true })).toBeVisible();
 });

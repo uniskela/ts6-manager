@@ -129,7 +129,7 @@ func TestLibvpxHoldsBitrateWithMinrate(t *testing.T) {
 			t.Errorf("%s needs -minrate to hold its bitrate: %s", id, args)
 		}
 	}
-	for _, id := range []string{"h264", "vp9_vaapi", "h264_vaapi", "h264_nvenc", "h264_amf"} {
+	for _, id := range []string{"h264", "vp9_vaapi", "h264_vaapi", "h264_nvenc", "h264_amf", "h264_videotoolbox"} {
 		spec, _ := lookupEncoder(id)
 		if args := strings.Join(encoderArgs(spec, "5500k", false, 0), " "); strings.Contains(args, "-minrate") {
 			t.Errorf("%s holds -maxrate on its own and must not get -minrate: %s", id, args)
@@ -262,7 +262,7 @@ func TestSummarizeFFmpegErrorRedactsURLs(t *testing.T) {
 // a 1500-byte MTU and is fragmented on the way to the viewer.
 func TestVideoRTPPacketsFitTheMTU(t *testing.T) {
 	s := NewSidecar()
-	for _, key := range []string{"vp8", "vp9", "h264", "h264_vaapi", "h264_nvenc", "h264_amf"} {
+	for _, key := range []string{"vp8", "vp9", "h264", "h264_vaapi", "h264_nvenc", "h264_amf", "h264_videotoolbox"} {
 		spec, ok := lookupEncoder(key)
 		if !ok {
 			t.Fatalf("no %s encoder", key)
@@ -350,7 +350,7 @@ func TestHardwareEncodersNameTheirBackend(t *testing.T) {
 		switch {
 		case !spec.Hardware && spec.Backend != "":
 			t.Errorf("software encoder %s has backend %q", spec.ID, spec.Backend)
-		case spec.Hardware && spec.Backend != backendVAAPI && spec.Backend != backendNVENC && spec.Backend != backendAMF:
+		case spec.Hardware && spec.Backend != backendVAAPI && spec.Backend != backendNVENC && spec.Backend != backendAMF && spec.Backend != backendVideoToolbox:
 			t.Errorf("hardware encoder %s has backend %q", spec.ID, spec.Backend)
 		}
 	}

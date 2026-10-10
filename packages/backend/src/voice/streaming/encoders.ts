@@ -21,22 +21,30 @@ export const ENCODER_CODEC: Record<VideoEncoderId, VideoCodec> = {
   h264_vaapi: 'h264',
   h264_nvenc: 'h264',
   h264_amf: 'h264',
+  h264_videotoolbox: 'h264',
 };
 
 /**
  * Hardware preference order for `auto`: H.264 (Constrained High) has the widest
- * VAAPI encode support, and is the supported codec for NVENC and AMF; VP8 VAAPI
- * exists only on some older Intel generations. A host normally has one backend,
+ * VAAPI encode support, and is the supported codec for NVENC, AMF and
+ * VideoToolbox; VP8 VAAPI exists only on some older Intel generations. A host normally has one backend,
  * so the order between backends only matters where several pass their probes.
  */
-export const AUTO_HARDWARE_ORDER: readonly VideoEncoderId[] = ['h264_vaapi', 'h264_nvenc', 'h264_amf', 'vp9_vaapi', 'vp8_vaapi'];
+export const AUTO_HARDWARE_ORDER: readonly VideoEncoderId[] = [
+  'h264_vaapi',
+  'h264_nvenc',
+  'h264_amf',
+  'h264_videotoolbox',
+  'vp9_vaapi',
+  'vp8_vaapi',
+];
 
 export function isEncoderId(value: unknown): value is VideoEncoderId {
   return typeof value === 'string' && (VIDEO_ENCODER_IDS as readonly string[]).includes(value);
 }
 
 export function isHardwareEncoder(id: VideoEncoderId): boolean {
-  return id.endsWith('_vaapi') || id.endsWith('_nvenc') || id.endsWith('_amf');
+  return id.endsWith('_vaapi') || id.endsWith('_nvenc') || id.endsWith('_amf') || id.endsWith('_videotoolbox');
 }
 
 export function normalizeEncoderRequest(value: unknown, fallback: VideoEncoderRequest): VideoEncoderRequest {
@@ -81,6 +89,7 @@ const ENCODER_NAMES: Record<VideoEncoderId, string> = {
   h264_vaapi: 'H.264 (VAAPI)',
   h264_nvenc: 'H.264 (NVENC)',
   h264_amf: 'H.264 (AMF)',
+  h264_videotoolbox: 'H.264 (VideoToolbox)',
 };
 
 export function encoderDisplayName(id: VideoEncoderId): string {

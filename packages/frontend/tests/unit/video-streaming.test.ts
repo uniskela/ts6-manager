@@ -67,6 +67,10 @@ describe('video streaming labels', () => {
 
   it('offers AMF in encoder selections', () => {
     assert.deepEqual(ENCODER_OPTIONS.find((o) => o.value === 'h264_amf'), { value: 'h264_amf', label: 'H.264 (AMF)' });
+    assert.deepEqual(ENCODER_OPTIONS.find((o) => o.value === 'h264_videotoolbox'), {
+      value: 'h264_videotoolbox',
+      label: 'H.264 (VideoToolbox)',
+    });
   });
 
   it('labels Auto by whether hardware preference is on', () => {

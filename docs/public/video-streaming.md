@@ -45,8 +45,11 @@ Streaming defaults also offer **Performance / Balanced / Quality** profiles (def
 | VP8 / VP9 / H.264 (VAAPI) | same | GPU encode through VAAPI; H.264 uses Constrained High as well |
 | H.264 (NVENC) | H.264 | GPU encode on NVIDIA; Constrained High. NVIDIA has no VP8 or VP9 encoder |
 | H.264 (AMF) | H.264 | AMD GPU encode with a native Windows sidecar and AMF-enabled FFmpeg; explicitly requests Constrained High (`-profile:v constrained_high`) with no B frames for TeamSpeak |
+| H.264 (VideoToolbox) | H.264 | Apple hardware encode with a [native macOS sidecar](native-sidecar.md); High profile with no B frames. Not yet verified on Apple hardware |
 
-**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, H.264 on AMF, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
+**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, H.264 on AMF, H.264 on VideoToolbox, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
+
+An encoder that cannot exist on the sidecar's operating system is not test-encoded at all: VAAPI is checked only on Linux and VideoToolbox only on macOS. **Check encoders** shows those rows as unavailable with that reason. NVENC and AMF are test-encoded everywhere.
 
 If a hardware encoder cannot open the device or exits during startup, the sidecar restarts with the software encoder **of the same codec** (so connected viewers keep working) and the stream panel shows the fallback and its reason. Use **Check encoders** under *Streaming defaults* to run the test encodes on demand; routine status polling never runs them.
 
@@ -143,6 +146,18 @@ Invoke-RestMethod http://localhost:9800/health
 # For the PR-test container; adapt the container name for your deployment:
 docker exec ts6-pr-backend curl -fsS http://host.docker.internal:9800/health
 ```
+
+### Apple VideoToolbox (macOS)
+
+VideoToolbox is available when the media sidecar runs **natively on macOS**. A Linux container cannot use it, so the Docker sidecar always shows the row as unavailable. Install the sidecar as described in [Native media sidecar](native-sidecar.md) and use an FFmpeg build that includes `h264_videotoolbox` (Homebrew's does):
+
+```bash
+ffmpeg -hide_banner -encoders | grep videotoolbox
+```
+
+Open *Streaming defaults* → **Check encoders** and confirm **H.264 (VideoToolbox)** passes, then select it or enable *Auto prefers hardware*. The sidecar requests High profile with no B frames and low-latency rate control, and passes `-allow_sw 0` so FFmpeg fails rather than quietly encoding on the CPU. On a Mac without a hardware H.264 encoder the test encode therefore fails, and a stream that asked for VideoToolbox falls back to H.264 software (`libx264`). `VIDEO_HW_DECODE` does not apply to VideoToolbox. HEVC and ProRes VideoToolbox encoders are not offered.
+
+This encoder has been checked by unit tests only. It has **not** been run on Apple Silicon or Intel Mac hardware, and TeamSpeak playback of its output is unconfirmed. If viewers see a black picture with VideoToolbox, switch to H.264 (software) and report it.
 
 ### Windows AMF PR-test
 

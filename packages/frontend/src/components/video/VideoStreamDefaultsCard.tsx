@@ -309,7 +309,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
                     onCheckedChange={(v) => set('preferHardware', v)}
                   />
                   <Label htmlFor="prefer-hardware" className="text-sm font-normal">
-                    Auto prefers hardware (VAAPI, NVENC or AMF) when a test encode succeeds
+                    Auto prefers hardware (VAAPI, NVENC, AMF or VideoToolbox) when a test encode succeeds
                   </Label>
                 </div>
                 <p className="text-xs text-muted-foreground">{autoEncoderPreferenceHint(draft.preferHardware)}</p>
@@ -347,7 +347,7 @@ export function VideoStreamDefaultsCard({ server }: VideoStreamDefaultsCardProps
             <div>
               <p className="text-sm font-medium">Encoder capabilities</p>
               <p className="text-xs text-muted-foreground">
-                Runs short test encodes on the media sidecar. VAAPI requires <code>/dev/dri</code>; NVENC requires an NVIDIA driver and, in Docker, the NVIDIA container runtime. AMF is available when the sidecar runs natively on Windows with an AMF-enabled FFmpeg build and a compatible AMD GPU/driver.
+                Runs short test encodes on the media sidecar. VAAPI requires <code>/dev/dri</code>; NVENC requires an NVIDIA driver and, in Docker, the NVIDIA container runtime. AMF is available when the sidecar runs natively on Windows with an AMF-enabled FFmpeg build and a compatible AMD GPU/driver. VideoToolbox is available when the sidecar runs natively on macOS.
               </p>
             </div>
             <Button
