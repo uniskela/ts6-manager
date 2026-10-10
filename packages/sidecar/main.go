@@ -831,40 +831,52 @@ func (s *Sidecar) forwardVideoRTP(pkt *rtp.Packet) {
 	s.peersLock.RLock()
 	defer s.peersLock.RUnlock()
 	for _, peer := range s.peers {
-		peer.mu.Lock()
-		// A peer negotiated for another codec cannot decode this stream.
-		active := peer.Active && peer.Codec == codec
-		started := peer.Started
-		track := peer.VideoTrack
-		opening := false
-
-		if active && !started && isKeyframeStart(codec, pkt.Payload) && peer.canSendMedia() {
-			peer.Started = true
-			started = true
-			opening = true
-			log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", peer.ID, codec, pkt.Timestamp)
+		track, opening := peer.videoGate(codec, pkt)
+		if track == nil {
+			continue
 		}
-
-		peer.mu.Unlock()
-
-		if active && started && track != nil {
-			var batch []*rtp.Packet
-			if opening && codec == codecH264 {
-				prefix := s.h264Params.prefixBefore(pkt)
-				batch = append(batch, prefix...)
-				debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
-			}
-			batch = append(batch, pkt)
-			for _, p := range batch {
-				peer.mu.Lock()
-				out := peer.nextVideoRTP(p, opening)
-				peer.mu.Unlock()
-				if out != nil {
-					_ = track.WriteRTP(out)
-				}
+		for _, p := range s.videoBatch(peer, codec, pkt, opening) {
+			peer.mu.Lock()
+			out := peer.nextVideoRTP(p, opening)
+			peer.mu.Unlock()
+			if out != nil {
+				_ = track.WriteRTP(out)
 			}
 		}
 	}
+}
+
+// videoGate returns the track pkt goes out on, or nil when the peer is not
+// sent it: its gate is closed, or it has no video track. A waiting peer's gate
+// opens when pkt starts a keyframe and media can be sent; opening reports
+// that pkt is the one that opened it.
+func (p *Peer) videoGate(codec string, pkt *rtp.Packet) (track *webrtc.TrackLocalStaticRTP, opening bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// A peer negotiated for another codec cannot decode this stream.
+	if !p.Active || p.Codec != codec {
+		return nil, false
+	}
+	if !p.Started {
+		if !isKeyframeStart(codec, pkt.Payload) || !p.canSendMedia() {
+			return nil, false
+		}
+		p.Started = true
+		opening = true
+		log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", p.ID, codec, pkt.Timestamp)
+	}
+	return p.VideoTrack, opening
+}
+
+// videoBatch returns the packets to write to peer for pkt: pkt itself, with
+// the H.264 parameter sets in front of it when it opens the peer's gate.
+func (s *Sidecar) videoBatch(peer *Peer, codec string, pkt *rtp.Packet, opening bool) []*rtp.Packet {
+	if !opening || codec != codecH264 {
+		return []*rtp.Packet{pkt}
+	}
+	prefix := s.h264Params.prefixBefore(pkt)
+	debugf("[Peer %s] h264 gate open: %s", peer.ID, h264GateOpenInfo(pkt.Payload, len(prefix)))
+	return append(prefix, pkt)
 }
 
 // canSendMedia reports whether packets written to the peer's tracks are sent.
@@ -1686,114 +1698,172 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 	s.drainRTPQueues()
 	s.resetPeerStreamState()
 
-	// One proxy per source, kept across the hardware-fallback relaunches below.
-	if isRemoteSource(req.Source) && egressEnabled() {
-		proxy, err := startEgressProxy(&egressPolicy{allow: parseHostAllowlist(req.AllowedHosts)})
-		if err != nil {
-			return EncoderSession{}, fmt.Errorf("start egress proxy: %w", err)
-		}
-		s.egress = proxy
+	if err := s.startEgressLocked(req); err != nil {
+		return EncoderSession{}, err
 	}
 
 	s.source = req.Source
 	s.streamCodec.Store(requested.Codec)
 
-	spec := requested
-	fallbackReason := ""
-	lowPower := os.Getenv("VAAPI_LOW_POWER") == "1"
-	// When the capability cache already probed this encoder, lowPower is known.
-	// Otherwise allow one flip of lowPower before software fallback (matches probeOneEncoder).
-	probe, capsKnown := s.caps.peek().find(spec.ID)
-	// Only VAAPI has a low-power mode to flip.
-	triedLowPowerToggle := spec.Backend != backendVAAPI || capsKnown
-	if spec.Hardware {
-		if capsKnown {
-			if !probe.Available {
-				fallbackReason = probe.Error
-				if fallbackReason == "" {
-					fallbackReason = "hardware encoder unavailable"
-				}
-				spec = softwareEncoderFor(spec.Codec)
-			} else {
-				lowPower = probe.LowPower
-			}
-		} else if spec.Backend == backendVAAPI && !vaapiDevicePresent() {
-			fallbackReason = "VAAPI device not present"
-			spec = softwareEncoderFor(spec.Codec)
-		}
-	}
-
+	attempt := s.firstEncoderAttempt(requested)
 	for {
-		gen := atomic.AddUint64(&s.ffmpegGen, 1)
-		now := time.Now().UTC()
-		s.statusMu.Lock()
-		s.encoder = EncoderSession{
-			Requested:      requested.ID,
-			Active:         spec.ID,
-			Codec:          spec.Codec,
-			Hardware:       spec.Hardware,
-			FallbackReason: fallbackReason,
-			State:          "running",
-			StartedAt:      &now,
-			gen:            gen,
-		}
-		s.statusMu.Unlock()
-
-		args := s.buildFFmpegArgs(req, spec, lowPower)
-		mode := resolveSourceMode(req.Mode, req.Source)
-		health := newHealthTracker(mode, nil)
-		atomic.StoreUint64(&s.rtpVideoDrops, 0)
-		atomic.StoreUint64(&s.rtpAudioDrops, 0)
-		s.statusMu.Lock()
-		s.health = health
-		s.statusMu.Unlock()
-		log.Printf("[FFmpeg] Starting: encoder=%s mode=%s video=:%d audio=:%d", spec.ID, mode, s.videoPort, s.audioPort)
-		done, tail, err := s.launchFFmpegLocked(args, gen, health)
+		gen, done, tail, err := s.launchAttemptLocked(req, requested, attempt)
 		if err != nil {
-			log.Printf("[FFmpeg] Start error: %v", err)
-			s.statusMu.Lock()
-			s.encoder.State = "exited"
-			s.encoder.ExitError = err.Error()
-			s.statusMu.Unlock()
-			return s.encoderSession(), fmt.Errorf("start ffmpeg: %w", err)
+			return s.encoderSession(), err
 		}
 
-		if req.Source != "" && !req.SilentAudio {
+		if mayLackAudio(req) {
 			go s.restartWithSilenceIfNoAudio(req, gen, done, tail)
 		}
 
-		if !spec.Hardware {
+		if !attempt.spec.Hardware || survivedStartup(done) {
 			return s.encoderSession(), nil
 		}
 
-		select {
-		case <-done:
-			if req.Source != "" && !req.SilentAudio && noAudioTrack(tail) {
-				// Not the hardware encoder's fault: start it again with
-				// silence for the missing audio track.
-				s.ffmpeg = nil
-				log.Printf("[FFmpeg] The source has no audio track; starting again with silence")
-				req.SilentAudio = true
-				continue
-			}
-			reason := tail.summary()
-			if reason == "" {
-				reason = "hardware encoder exited during startup"
-			}
-			s.ffmpeg = nil
-			if !triedLowPowerToggle {
-				triedLowPowerToggle = true
-				lowPower = !lowPower
-				log.Printf("[FFmpeg] %s failed (%s); retrying with low_power=%v", spec.ID, reason, lowPower)
-				continue
-			}
-			log.Printf("[FFmpeg] %s failed (%s); falling back to software", spec.ID, reason)
-			fallbackReason = reason
-			spec = softwareEncoderFor(spec.Codec)
+		s.ffmpeg = nil
+		if mayLackAudio(req) && noAudioTrack(tail) {
+			// Not the hardware encoder's fault: start it again with
+			// silence for the missing audio track.
+			log.Printf("[FFmpeg] The source has no audio track; starting again with silence")
+			req.SilentAudio = true
 			continue
-		case <-time.After(hwVerifyWindow()):
-			return s.encoderSession(), nil
 		}
+		attempt = attempt.afterHardwareFailure(tail.summary())
+	}
+}
+
+// startEgressLocked starts the egress proxy a remote source is read through.
+// One proxy per source, kept across the hardware-fallback relaunches.
+func (s *Sidecar) startEgressLocked(req SourceRequest) error {
+	if !isRemoteSource(req.Source) || !egressEnabled() {
+		return nil
+	}
+	proxy, err := startEgressProxy(&egressPolicy{allow: parseHostAllowlist(req.AllowedHosts)})
+	if err != nil {
+		return fmt.Errorf("start egress proxy: %w", err)
+	}
+	s.egress = proxy
+	return nil
+}
+
+// encoderAttempt is what one launch of ffmpeg in startFFmpegLocked encodes
+// with. A hardware encoder that exits during startup changes it for the next
+// launch (afterHardwareFailure).
+type encoderAttempt struct {
+	spec     EncoderSpec
+	lowPower bool
+	// fallbackReason is why spec is not the requested encoder ("" when it is).
+	fallbackReason string
+	// triedLowPowerToggle is set once no flip of lowPower is left to try
+	// before the software fallback.
+	triedLowPowerToggle bool
+}
+
+// firstEncoderAttempt picks the encoder for the first launch: the requested
+// one, or its software encoder when the hardware is already known to be
+// unavailable.
+func (s *Sidecar) firstEncoderAttempt(requested EncoderSpec) encoderAttempt {
+	// When the capability cache already probed this encoder, lowPower is known.
+	// Otherwise allow one flip of lowPower before software fallback (matches probeOneEncoder).
+	probe, capsKnown := s.caps.peek().find(requested.ID)
+	a := encoderAttempt{
+		spec:     requested,
+		lowPower: os.Getenv("VAAPI_LOW_POWER") == "1",
+		// Only VAAPI has a low-power mode to flip.
+		triedLowPowerToggle: requested.Backend != backendVAAPI || capsKnown,
+	}
+	if !requested.Hardware {
+		return a
+	}
+	switch {
+	case capsKnown && probe.Available:
+		a.lowPower = probe.LowPower
+	case capsKnown:
+		a.fallbackReason = probe.Error
+		if a.fallbackReason == "" {
+			a.fallbackReason = "hardware encoder unavailable"
+		}
+		a.spec = softwareEncoderFor(requested.Codec)
+	case requested.Backend == backendVAAPI && !vaapiDevicePresent():
+		a.fallbackReason = "VAAPI device not present"
+		a.spec = softwareEncoderFor(requested.Codec)
+	}
+	return a
+}
+
+// afterHardwareFailure returns the attempt that follows a hardware encoder
+// exiting during startup with reason: the other low-power mode once, then the
+// software encoder of the same codec.
+func (a encoderAttempt) afterHardwareFailure(reason string) encoderAttempt {
+	if reason == "" {
+		reason = "hardware encoder exited during startup"
+	}
+	if !a.triedLowPowerToggle {
+		a.triedLowPowerToggle = true
+		a.lowPower = !a.lowPower
+		log.Printf("[FFmpeg] %s failed (%s); retrying with low_power=%v", a.spec.ID, reason, a.lowPower)
+		return a
+	}
+	log.Printf("[FFmpeg] %s failed (%s); falling back to software", a.spec.ID, reason)
+	a.fallbackReason = reason
+	a.spec = softwareEncoderFor(a.spec.Codec)
+	return a
+}
+
+// launchAttemptLocked starts a new ffmpeg generation for one attempt and
+// publishes it as the running encoder session. It returns the generation, a
+// channel closed when that ffmpeg exits, and the end of its stderr.
+func (s *Sidecar) launchAttemptLocked(req SourceRequest, requested EncoderSpec, a encoderAttempt) (uint64, <-chan struct{}, *tailBuffer, error) {
+	gen := atomic.AddUint64(&s.ffmpegGen, 1)
+	now := time.Now().UTC()
+	s.statusMu.Lock()
+	s.encoder = EncoderSession{
+		Requested:      requested.ID,
+		Active:         a.spec.ID,
+		Codec:          a.spec.Codec,
+		Hardware:       a.spec.Hardware,
+		FallbackReason: a.fallbackReason,
+		State:          "running",
+		StartedAt:      &now,
+		gen:            gen,
+	}
+	s.statusMu.Unlock()
+
+	args := s.buildFFmpegArgs(req, a.spec, a.lowPower)
+	mode := resolveSourceMode(req.Mode, req.Source)
+	health := newHealthTracker(mode, nil)
+	atomic.StoreUint64(&s.rtpVideoDrops, 0)
+	atomic.StoreUint64(&s.rtpAudioDrops, 0)
+	s.statusMu.Lock()
+	s.health = health
+	s.statusMu.Unlock()
+	log.Printf("[FFmpeg] Starting: encoder=%s mode=%s video=:%d audio=:%d", a.spec.ID, mode, s.videoPort, s.audioPort)
+	done, tail, err := s.launchFFmpegLocked(args, gen, health)
+	if err != nil {
+		log.Printf("[FFmpeg] Start error: %v", err)
+		s.statusMu.Lock()
+		s.encoder.State = "exited"
+		s.encoder.ExitError = err.Error()
+		s.statusMu.Unlock()
+		return gen, nil, nil, fmt.Errorf("start ffmpeg: %w", err)
+	}
+	return gen, done, tail, nil
+}
+
+// mayLackAudio reports whether req reads the audio of a source that has not
+// yet been given a silent input in its place.
+func mayLackAudio(req SourceRequest) bool {
+	return req.Source != "" && !req.SilentAudio
+}
+
+// survivedStartup waits hwVerifyWindow and reports whether the ffmpeg behind
+// done was still running at the end of it.
+func survivedStartup(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return false
+	case <-time.After(hwVerifyWindow()):
+		return true
 	}
 }
 
