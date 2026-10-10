@@ -21,10 +21,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Docker Compose
-        uses: docker/setup-compose-action@v2
+        uses: docker/setup-compose-action@54042514f505b273907334ae2b9cdbb9a0213c1a # v2.4.0
+
+      - name: Test release workflow boundaries
+        run: |
+          python3 -m venv "$RUNNER_TEMP/workflow-tests"
+          "$RUNNER_TEMP/workflow-tests/bin/pip" install --disable-pip-version-check PyYAML==6.0.3
+          "$RUNNER_TEMP/workflow-tests/bin/python" scripts/ci/test_release_workflows.py
 
       - name: Run repo hygiene checks
         run: ./scripts/ci/repo-hygiene.sh
