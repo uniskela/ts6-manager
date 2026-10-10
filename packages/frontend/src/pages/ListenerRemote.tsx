@@ -67,9 +67,7 @@ export default function ListenerRemote() {
   useEffect(() => {
     const token = remoteLaunchToken();
     if (!token) {
-      setPhase((current) => (remoteSession()
-        ? (current.kind === 'ready' ? current : { kind: 'ready', nonce: 0 })
-        : { kind: 'need-link' }));
+      setPhase(phaseWithoutToken);
       return;
     }
     let alive = true;
@@ -96,11 +94,21 @@ export default function ListenerRemote() {
   );
 }
 
-function Gate({ phase }: { phase: Exclude<Phase, { kind: 'ready' }> }) {
+function phaseWithoutToken(current: Phase): Phase {
+  if (!remoteSession()) return { kind: 'need-link' };
+  if (current.kind === 'ready') return current;
+  return { kind: 'ready', nonce: 0 };
+}
+
+function StatusNote({ children }: { readonly children: string }) {
+  return <output className="block text-sm text-muted-foreground">{children}</output>;
+}
+
+function Gate({ phase }: { readonly phase: Exclude<Phase, { kind: 'ready' }> }) {
   return (
     <div className="space-y-3">
       <h1 className="text-lg font-semibold">Listener remote</h1>
-      {phase.kind === 'opening' && <p role="status" className="text-sm text-muted-foreground">Opening your remote…</p>}
+      {phase.kind === 'opening' && <StatusNote>Opening your remote…</StatusNote>}
       {phase.kind === 'need-link' && (
         <p className="text-sm text-muted-foreground">Type !remote in the bot's channel. The bot sends a private link to this page.</p>
       )}
@@ -114,7 +122,7 @@ function Gate({ phase }: { phase: Exclude<Phase, { kind: 'ready' }> }) {
   );
 }
 
-function RemoteController({ onEnded }: { onEnded(message: string): void }) {
+function RemoteController({ onEnded }: { readonly onEnded: (message: string) => void }) {
   const [state, setState] = useState<RemoteState | null>(null);
   const [stateError, setStateError] = useState<string | null>(null);
   const [loadingState, setLoadingState] = useState(true);
@@ -192,7 +200,11 @@ function RemoteController({ onEnded }: { onEnded(message: string): void }) {
   );
 }
 
-function NowPlaying({ state, loading, error }: { state: RemoteState | null; loading: boolean; error: string | null }) {
+function NowPlaying({ state, loading, error }: {
+  readonly state: RemoteState | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+}) {
   const track = state?.nowPlaying ?? null;
   const summary = playbackSummary(track, state?.bot.status ?? 'connected');
   return (
@@ -200,61 +212,55 @@ function NowPlaying({ state, loading, error }: { state: RemoteState | null; load
       <CardContent className="space-y-3 p-4">
         <h2 id="now-playing" className="text-base font-semibold">Now playing</h2>
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        {loading && !state ? (
-          <p role="status" className="text-sm text-muted-foreground">Loading the remote…</p>
-        ) : !track ? (
-          state || !error ? <p className="text-sm text-muted-foreground">Nothing is playing.</p> : null
-        ) : (
-          <div className="space-y-3">
-            <div className="flex items-center gap-3">
-              <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Music className="h-6 w-6" aria-hidden="true" />
-              </div>
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold">{track.title}</p>
-                {track.artist && <p className="truncate text-sm text-muted-foreground">{track.artist}</p>}
-              </div>
-            </div>
-            <div
-              className={`h-1.5 rounded-full ${summary.playing ? 'animate-pulse bg-primary/70' : 'bg-muted'}`}
-              role="progressbar"
-              aria-label="Playback progress"
-              aria-valuetext={summary.label}
-            />
-            <div className="flex justify-between font-mono text-xs tabular-nums text-muted-foreground">
-              <span>{summary.playing ? 'Playing' : state?.bot.status === 'paused' ? 'Paused' : 'Connected'}</span>
-              <span>{summary.length ?? 'Live'}</span>
-            </div>
-          </div>
-        )}
+        <NowPlayingBody state={state} loading={loading} error={error} track={track} summary={summary} />
       </CardContent>
     </Card>
   );
 }
 
-function UpNext({ state, loading }: { state: RemoteState | null; loading: boolean }) {
+function NowPlayingBody({ state, loading, error, track, summary }: {
+  readonly state: RemoteState | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+  readonly track: RemoteState['nowPlaying'];
+  readonly summary: ReturnType<typeof playbackSummary>;
+}) {
+  if (loading && !state) return <StatusNote>Loading the remote…</StatusNote>;
+  if (!track) {
+    if (state || !error) return <p className="text-sm text-muted-foreground">Nothing is playing.</p>;
+    return null;
+  }
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-3">
+        <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Music className="h-6 w-6" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <p className="truncate text-base font-semibold">{track.title}</p>
+          {track.artist && <p className="truncate text-sm text-muted-foreground">{track.artist}</p>}
+        </div>
+      </div>
+      <progress
+        className={`h-1.5 w-full ${summary.playing ? 'animate-pulse accent-primary' : ''}`}
+        aria-label="Playback progress"
+        aria-valuetext={summary.label}
+      />
+      <div className="flex justify-between font-mono text-xs tabular-nums text-muted-foreground">
+        <span>{summary.state}</span>
+        <span>{summary.length ?? 'Live'}</span>
+      </div>
+    </div>
+  );
+}
+
+function UpNext({ state, loading }: { readonly state: RemoteState | null; readonly loading: boolean }) {
   const items = state?.upNext ?? [];
   const count = state?.upNextCount ?? items.length;
   return (
     <section aria-labelledby="up-next" className="space-y-2">
       <h2 id="up-next" className="text-sm font-semibold">Up next{state ? ` (${count})` : ''}</h2>
-      {!state ? (
-        loading ? <p role="status" className="text-sm text-muted-foreground">Loading the queue…</p> : null
-      ) : items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing is queued.</p>
-      ) : (
-        <ol aria-label="Up next" className="max-h-64 space-y-1.5 overflow-y-auto">
-          {items.map((item) => (
-            <li key={item.id} className="flex items-center gap-2 rounded-md border bg-card p-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{item.title}</p>
-                {item.artist && <p className="truncate text-xs text-muted-foreground">{item.artist}</p>}
-              </div>
-              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{formatTrackLength(item.duration) ?? ''}</span>
-            </li>
-          ))}
-        </ol>
-      )}
+      <UpNextItems state={state} loading={loading} items={items} />
       {state && count > items.length && (
         <p className="text-xs text-muted-foreground">Showing {items.length} of {count}.</p>
       )}
@@ -262,7 +268,36 @@ function UpNext({ state, loading }: { state: RemoteState | null; loading: boolea
   );
 }
 
-function Library({ canAdd, expire, refresh }: { canAdd: boolean; expire(error: unknown): boolean; refresh(): Promise<void> }) {
+function UpNextItems({ state, loading, items }: {
+  readonly state: RemoteState | null;
+  readonly loading: boolean;
+  readonly items: RemoteState['upNext'];
+}) {
+  if (!state) {
+    if (!loading) return null;
+    return <StatusNote>Loading the queue…</StatusNote>;
+  }
+  if (items.length === 0) return <p className="text-sm text-muted-foreground">Nothing is queued.</p>;
+  return (
+    <ol aria-label="Up next" className="max-h-64 space-y-1.5 overflow-y-auto">
+      {items.map((item) => (
+        <li key={item.id} className="flex items-center gap-2 rounded-md border bg-card p-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{item.title}</p>
+            {item.artist && <p className="truncate text-xs text-muted-foreground">{item.artist}</p>}
+          </div>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{formatTrackLength(item.duration) ?? ''}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function Library({ canAdd, expire, refresh }: {
+  readonly canAdd: boolean;
+  readonly expire: (error: unknown) => boolean;
+  readonly refresh: () => Promise<void>;
+}) {
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -329,30 +364,8 @@ function Library({ canAdd, expire, refresh }: { canAdd: boolean; expire(error: u
         />
       </form>
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
-      {loading && !library ? (
-        <p role="status" className="text-sm text-muted-foreground">Searching the library…</p>
-      ) : songs.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{page > 1 ? 'No more songs.' : 'No songs found.'}</p>
-      ) : (
-        <ul aria-label="Songs" className="space-y-1.5">
-          {songs.map((song) => (
-            <li key={song.id} className="flex items-center gap-2 rounded-md border bg-card p-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{song.title}</p>
-                {song.artist && <p className="truncate text-xs text-muted-foreground">{song.artist}</p>}
-              </div>
-              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{formatTrackLength(song.duration) ?? ''}</span>
-              {canAdd && (
-                <Button type="button" variant="outline" size="icon" className="h-11 w-11" disabled={busy}
-                  aria-label={`Add ${song.title} to the queue`} onClick={() => add(song)}>
-                  <Plus aria-hidden="true" />
-                </Button>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
+      {notice && <StatusNote>{notice}</StatusNote>}
+      <LibrarySongs songs={songs} page={page} loading={loading} library={library} canAdd={canAdd} busy={busy} add={add} />
       {(page > 1 || songs.length >= 25) && (
         <div className="flex gap-2">
           {page > 1 && (
@@ -371,7 +384,45 @@ function Library({ canAdd, expire, refresh }: { canAdd: boolean; expire(error: u
   );
 }
 
-function UrlRequest({ expire, refresh }: { expire(error: unknown): boolean; refresh(): Promise<void> }) {
+function LibrarySongs({ songs, page, loading, library, canAdd, busy, add }: {
+  readonly songs: RemoteSong[];
+  readonly page: number;
+  readonly loading: boolean;
+  readonly library: RemoteLibrary | null;
+  readonly canAdd: boolean;
+  readonly busy: boolean;
+  readonly add: (song: RemoteSong) => void;
+}) {
+  if (loading && !library) return <StatusNote>Searching the library…</StatusNote>;
+  if (songs.length === 0) {
+    const empty = page > 1 ? 'No more songs.' : 'No songs found.';
+    return <p className="text-sm text-muted-foreground">{empty}</p>;
+  }
+  return (
+    <ul aria-label="Songs" className="space-y-1.5">
+      {songs.map((song) => (
+        <li key={song.id} className="flex items-center gap-2 rounded-md border bg-card p-2">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{song.title}</p>
+            {song.artist && <p className="truncate text-xs text-muted-foreground">{song.artist}</p>}
+          </div>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{formatTrackLength(song.duration) ?? ''}</span>
+          {canAdd && (
+            <Button type="button" variant="outline" size="icon" className="h-11 w-11" disabled={busy}
+              aria-label={`Add ${song.title} to the queue`} onClick={() => add(song)}>
+              <Plus aria-hidden="true" />
+            </Button>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function UrlRequest({ expire, refresh }: {
+  readonly expire: (error: unknown) => boolean;
+  readonly refresh: () => Promise<void>;
+}) {
   const [url, setUrl] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -416,7 +467,7 @@ function UrlRequest({ expire, refresh }: { expire(error: unknown): boolean; refr
         onChange={(event) => setUrl(event.target.value)}
       />
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {notice && <p role="status" className="text-sm text-muted-foreground">{notice}</p>}
+      {notice && <StatusNote>{notice}</StatusNote>}
       <Button type="submit" className="h-11 w-full sm:w-auto" disabled={busy || url.trim().length === 0}>
         {busy ? 'Adding…' : 'Request URL'}
       </Button>

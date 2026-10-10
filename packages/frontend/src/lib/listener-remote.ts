@@ -84,13 +84,20 @@ export function formatTrackLength(seconds: number | null | undefined): string | 
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 }
 
+function statusWord(status: string): string {
+  if (status === 'playing') return 'Playing';
+  if (status === 'paused') return 'Paused';
+  return 'Connected';
+}
+
 /** T04 state has duration, not an elapsed position. */
-export function playbackSummary(track: RemoteTrack | null, status: string): { label: string; playing: boolean; length: string | null } {
+export function playbackSummary(track: RemoteTrack | null, status: string): { label: string; playing: boolean; length: string | null; state: string } {
   const length = formatTrackLength(track?.duration);
   const playing = status === 'playing';
-  const state = playing ? 'Playing' : status === 'paused' ? 'Paused' : 'Connected';
-  if (!track) return { label: 'Nothing is playing', playing: false, length: null };
-  return { label: length ? `${state} · ${length}` : state, playing, length };
+  const state = statusWord(status);
+  if (!track) return { label: 'Nothing is playing', playing: false, length: null, state };
+  const label = length ? `${state} · ${length}` : state;
+  return { label, playing, length, state };
 }
 
 export function remoteMediaUrlError(value: string): string | null {
@@ -162,8 +169,8 @@ function parseTrack(value: unknown): RemoteTrack {
   if (!value || typeof value !== 'object') throw unavailable();
   const row = value as Record<string, unknown>;
   if (typeof row.id !== 'string' || typeof row.title !== 'string') throw unavailable();
-  const artist = row.artist == null ? null : row.artist;
-  const duration = row.duration == null ? null : row.duration;
+  const artist = row.artist ?? null;
+  const duration = row.duration ?? null;
   if (artist != null && typeof artist !== 'string') throw unavailable();
   if (duration != null && typeof duration !== 'number') throw unavailable();
   return { id: row.id, title: row.title, artist, duration };
@@ -210,8 +217,8 @@ function parseSong(value: unknown): RemoteSong {
   const row = value as Record<string, unknown>;
   if (typeof row.id !== 'number' || !Number.isSafeInteger(row.id) || row.id <= 0) throw unavailable();
   if (typeof row.title !== 'string') throw unavailable();
-  const artist = row.artist == null ? null : row.artist;
-  const duration = row.duration == null ? null : row.duration;
+  const artist = row.artist ?? null;
+  const duration = row.duration ?? null;
   if (artist != null && typeof artist !== 'string') throw unavailable();
   if (duration != null && typeof duration !== 'number') throw unavailable();
   return { id: row.id, title: row.title, artist, duration };
