@@ -1,5 +1,5 @@
 // Keep navigation explicit: unknown/backend paths must never receive app HTML.
-const appRoute = /^\/(?:dashboard|servers|channels|clients|server-groups|channel-groups|permissions|bans|tokens|files|complaints|messages|logs|instance|music-requests|bots(?:\/[^/]+)?|media-bots|music-bots|iptv|settings|login|setup)?\/?$/;
+const appRoute = /^\/(?:dashboard|servers|channels|clients|server-groups|channel-groups|permissions|bans|tokens|files|complaints|messages|logs|instance|music-requests|bots(?:\/[^/]+)?|media-bots|music-bots|iptv|settings|login|setup|remote)?\/?$/;
 
 export function canHandleRequest(request: Request, url: URL, origin: string): boolean {
   return request.method === 'GET'
