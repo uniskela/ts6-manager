@@ -184,7 +184,7 @@ interface VideoQueueState {
 }
 ```
 
-`VideoQueueItemInfo` carries `id`, `title`, `durationSec`, `live` and `addedBy`. The raw `source` is included, as `videoStreamStatus.source` already is for the same audience. `POST /:id/stream/stop` keeps its route and now also clears the lane.
+`VideoQueueItemInfo` carries `id`, `title`, `durationSec`, `sourceMode` and `addedBy`. The raw `source` is included, as `videoStreamStatus.source` already is for the same audience. `POST /:id/stream/stop` keeps its route and now also clears the lane.
 
 Queue changes broadcast `music:bot:videoQueueChanged` so open consoles refresh.
 
