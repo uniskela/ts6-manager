@@ -1393,9 +1393,10 @@ func (t *tailBuffer) contains(text string) bool {
 
 // noAudioTrack reports whether ffmpeg stopped because the audio output had
 // nothing to take: the source has no audio track. The audio output may only
-// take audio (-vn), so ffmpeg 5.1 then exits with this error.
+// take audio (-vn), so ffmpeg 5.1 then exits with this error. The audio
+// output is always #1: the video output comes first.
 func noAudioTrack(t *tailBuffer) bool {
-	return t.contains("does not contain any stream")
+	return t.contains("Output file #1 does not contain any stream")
 }
 
 // silentAudioInput stands in for the audio of a source that has none, so the
@@ -1771,7 +1772,9 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 // restartWithSilenceIfNoAudio starts the stream again with a silent audio
 // input when the ffmpeg of generation gen stopped because the source has no
 // audio track. Only if nothing has moved on since: a stop, a new source and
-// the hardware check in startFFmpegLocked all start a new generation.
+// the hardware check in startFFmpegLocked all start a new generation. That
+// check holds ffmpegLock until it returns, so this waits for it and then
+// sees its generation.
 func (s *Sidecar) restartWithSilenceIfNoAudio(req SourceRequest, gen uint64, done <-chan struct{}, tail *tailBuffer) {
 	<-done
 	if !noAudioTrack(tail) {

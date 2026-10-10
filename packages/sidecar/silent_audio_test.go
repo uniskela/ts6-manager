@@ -40,10 +40,15 @@ func TestNoAudioTrackIsRecognised(t *testing.T) {
 	if !noAudioTrack(tail) {
 		t.Error("a source without audio must be recognised")
 	}
-	other := &tailBuffer{}
-	_, _ = other.Write([]byte("Server returned 403 Forbidden (access denied)\n"))
-	if noAudioTrack(other) {
-		t.Error("another failure must not be taken for a missing audio track")
+	for _, out := range []string{
+		"Server returned 403 Forbidden (access denied)\n",
+		"Output file #0 does not contain any stream\n",
+	} {
+		other := &tailBuffer{}
+		_, _ = other.Write([]byte(out))
+		if noAudioTrack(other) {
+			t.Errorf("another failure must not be taken for a missing audio track: %q", out)
+		}
 	}
 }
 
