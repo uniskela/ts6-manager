@@ -147,7 +147,8 @@ test('shows an empty remote, a load error, and the link prompt', async ({ page }
 
   let stateStatus = 503;
   let stateBody: unknown = { error: 'Listener remote is unavailable.', code: 'unavailable' };
-  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  let exchangeSession = session;
+  await page.route(remote('/exchange'), (route) => fulfill(route, { session: exchangeSession, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
   await page.route(remote('/state'), (route) => fulfill(route, stateBody, stateStatus));
   await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, { songs: [], page: 1, pageSize: 25 }));
   await page.goto(`/remote#token=${token}`);
@@ -156,6 +157,7 @@ test('shows an empty remote, a load error, and the link prompt', async ({ page }
 
   stateStatus = 200;
   stateBody = { ...playing, nowPlaying: null, upNext: [], upNextCount: 0 };
+  exchangeSession = 'v'.repeat(43);
   await page.goto(`/remote#token=${'u'.repeat(43)}`);
   await expect(page.getByText('Nothing is playing.')).toBeVisible();
   await expect(page.getByText('Nothing is queued.')).toBeVisible();

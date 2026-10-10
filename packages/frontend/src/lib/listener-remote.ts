@@ -32,6 +32,26 @@ let exchangeGeneration = 0;
 let rememberedGeneration = 0;
 let mutationTail: Promise<void> = Promise.resolve();
 
+export type RemotePhase =
+  | { kind: 'opening' }
+  | { kind: 'need-link' }
+  | { kind: 'ended'; message: string }
+  | { kind: 'ready'; nonce: number };
+
+/** Stay on the current controller when the session string did not change. */
+export function settleRemoteExchange(
+  current: RemotePhase,
+  before: string | null,
+  after: string | null,
+  error: string | null,
+): RemotePhase {
+  if (after && (error || (current.kind === 'ready' && before === after))) {
+    return current.kind === 'ready' ? current : { kind: 'ready', nonce: 0 };
+  }
+  if (!after) return { kind: 'ended', message: error ?? 'Remote access is invalid or expired' };
+  return { kind: 'ready', nonce: current.kind === 'ready' ? current.nonce + 1 : 1 };
+}
+
 export function remoteSession(): RemoteSession | null {
   if (current && Date.parse(current.expiresAt) <= Date.now()) current = null;
   return current;

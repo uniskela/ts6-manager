@@ -20,19 +20,21 @@ import {
   remoteMediaUrlError,
   remoteSession,
   requestRemoteUrl,
+  settleRemoteExchange,
   shouldPollRemote,
   type RemoteLibrary,
+  type RemotePhase,
   type RemoteSong,
   type RemoteState,
 } from '@/lib/listener-remote';
 
-type Phase = { kind: 'opening' } | { kind: 'need-link' } | { kind: 'ended'; message: string } | { kind: 'ready'; nonce: number };
+type Phase = RemotePhase;
 
 const STATUS_LABEL: Record<string, string> = { playing: 'Playing', paused: 'Paused', connected: 'Connected' };
 
 function initialPhase(): Phase {
-  if (remoteLaunchToken()) return { kind: 'opening' };
   if (remoteSession()) return { kind: 'ready', nonce: 0 };
+  if (remoteLaunchToken()) return { kind: 'opening' };
   return { kind: 'need-link' };
 }
 
@@ -64,25 +66,23 @@ export default function ListenerRemote() {
 
   useEffect(() => {
     const token = remoteLaunchToken();
-    if (!token && generation === 0 && remoteSession()) {
-      setPhase({ kind: 'ready', nonce: 0 });
-      return;
-    }
     if (!token) {
-      setPhase({ kind: 'need-link' });
+      setPhase((current) => (remoteSession()
+        ? (current.kind === 'ready' ? current : { kind: 'ready', nonce: 0 })
+        : { kind: 'need-link' }));
       return;
     }
     let alive = true;
-    if (!remoteSession()) setPhase({ kind: 'opening' });
+    const before = remoteSession()?.session ?? null;
+    if (!before) setPhase({ kind: 'opening' });
+    const settle = (error: string | null) => {
+      if (!alive) return;
+      const after = remoteSession()?.session ?? null;
+      setPhase((current) => settleRemoteExchange(current, before, after, error));
+    };
     void exchangeRemoteToken(token).then(
-      () => {
-        if (!alive) return;
-        setPhase((current) => ({ kind: 'ready', nonce: current.kind === 'ready' ? current.nonce + 1 : 1 }));
-      },
-      (error: unknown) => {
-        if (!alive || remoteSession()) return;
-        setPhase({ kind: 'ended', message: remoteErrorMessage(error) });
-      },
+      () => settle(null),
+      (error: unknown) => settle(remoteErrorMessage(error)),
     );
     return () => { alive = false; };
   }, [generation]);

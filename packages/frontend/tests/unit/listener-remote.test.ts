@@ -18,6 +18,7 @@ import {
   remoteSession,
   requestRemoteUrl,
   resetRemoteClientForTests,
+  settleRemoteExchange,
   shouldPollRemote,
 } from '../../src/lib/listener-remote';
 
@@ -203,10 +204,26 @@ describe('listener remote client', () => {
     const older = exchangeRemoteToken(first);
     const newer = exchangeRemoteToken(second);
     assert.equal(waiting.length, 2);
-    waiting.find((item) => item.token === second)?.release(json({ session: second, expiresAt: future, botId: 2 }));
+    const newerRequest = waiting.find((item) => item.token === second);
+    const olderRequest = waiting.find((item) => item.token === first);
+    assert.ok(newerRequest);
+    assert.ok(olderRequest);
+    newerRequest.release(json({ session: second, expiresAt: future, botId: 2 }));
     assert.equal((await newer).botId, 2);
-    waiting.find((item) => item.token === first)?.release(json({ session: first, expiresAt: future, botId: 1 }));
+    olderRequest.release(json({ session: first, expiresAt: future, botId: 1 }));
     await older;
     assert.equal(remoteSession()?.session, second);
+  });
+
+  it('keeps a live remote when a later exchange fails or repeats the same session', () => {
+    const ready = { kind: 'ready' as const, nonce: 3 };
+    const opening = { kind: 'opening' as const };
+    assert.deepEqual(settleRemoteExchange(opening, session, session, 'Remote access is invalid or expired'), { kind: 'ready', nonce: 0 });
+    assert.equal(settleRemoteExchange(ready, session, session, 'Remote access is invalid or expired'), ready);
+    assert.deepEqual(settleRemoteExchange(opening, null, null, 'Listener remote is unavailable.'), { kind: 'ended', message: 'Listener remote is unavailable.' });
+    assert.equal(settleRemoteExchange(ready, session, session, null), ready);
+    assert.deepEqual(settleRemoteExchange(ready, session, 'b'.repeat(43), null), { kind: 'ready', nonce: 4 });
+    assert.deepEqual(settleRemoteExchange(opening, null, session, null), { kind: 'ready', nonce: 1 });
+    assert.deepEqual(settleRemoteExchange(opening, null, null, null), { kind: 'ended', message: 'Remote access is invalid or expired' });
   });
 });
