@@ -101,6 +101,8 @@ per token hash, sixty authentications per session hash (queue mutations check
 again at insertion), five URL resolutions per session, 120 requests per IP,
 and ten exchanges per IP. Both credential and rate stores are capped at 10,000
 entries and fail closed when full. Queue insertion is capped at 500 items.
+The app also applies the standard Express IP limiter after the bounded guard,
+before JSON parsing and authentication on every public remote endpoint.
 URL resolution permits one pending job per bot and four across the remote
 service. Provider fetches and yt-dlp processes each have a three-minute timeout;
 the normal shared downloader now bounds calls without an explicit signal too.

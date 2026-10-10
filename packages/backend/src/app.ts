@@ -37,7 +37,7 @@ import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
 import { activityJournalRoutes } from './routes/activity-journal.routes.js';
-import { listenerRemoteRoutes, listenerRemoteAdminRoutes } from './routes/listener-remote.routes.js';
+import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard } from './routes/listener-remote.routes.js';
 
 import { requireServerAccess } from './middleware/server-access.js';
 import { createRequire } from 'module';
@@ -54,7 +54,15 @@ export function createApp(): Express {
   app.use(helmet());
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
   // Parse remote requests separately so body-parser errors cannot echo token material.
-  app.use('/api/listener-remote', listenerRemoteRoutes);
+  const remoteLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 120,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many remote requests', code: 'rate_limited' },
+  });
+  // Keep the bounded guard first; it also enforces the stricter exchange quota.
+  app.use('/api/listener-remote', listenerRemoteIpGuard, remoteLimiter, listenerRemoteRoutes);
   const remoteParseError: ErrorRequestHandler = (_err, _req, res, _next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.status(400).json({ error: 'Invalid listener request.', code: 'invalid_request' });

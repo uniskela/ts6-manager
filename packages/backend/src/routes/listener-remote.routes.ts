@@ -1,4 +1,4 @@
-import { Router, json, type Request, type Response } from 'express';
+import { Router, json, type Request, type Response, type RequestHandler } from 'express';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { requireRole } from '../middleware/rbac.js';
@@ -40,7 +40,7 @@ function endpoint(fn: (req: Request, res: Response) => Promise<void>) {
   };
 }
 
-listenerRemoteRoutes.use((req, res, next) => {
+export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   try {
@@ -52,7 +52,7 @@ listenerRemoteRoutes.use((req, res, next) => {
       res.status(err.status).json({ error: err.message, code: err.code });
     } else res.status(503).json({ error: 'Listener remote is unavailable.', code: 'unavailable' });
   }
-});
+};
 listenerRemoteRoutes.use(json({ limit: '4kb' }));
 
 function bearer(req: Request): string {

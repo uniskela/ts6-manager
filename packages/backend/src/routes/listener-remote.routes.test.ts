@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import express from 'express';
-import { listenerRemoteAdminRoutes, listenerRemoteRoutes } from './listener-remote.routes.js';
+import { listenerRemoteAdminRoutes, listenerRemoteRoutes, listenerRemoteIpGuard } from './listener-remote.routes.js';
 import { ListenerRemoteService } from '../voice/listener-remote.js';
 import { defaultMediaCommandPermissions } from '../voice/media-command-permissions.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
@@ -94,13 +95,13 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     expandYouTube: async () => null,
     downloadTrack: async () => { downloads++; return item; },
   };
-  if (!fullApp) app.use('/api/listener-remote', listenerRemoteRoutes);
+  if (!fullApp) app.use('/api/listener-remote', listenerRemoteIpGuard, listenerRemoteRoutes);
   if (!fullApp) app.use('/api/listener-remote-admin', (req, _res, next) => {
     if (role) (req as any).user = { id: 1, username: 'administrator', role };
     next();
   }, listenerRemoteAdminRoutes);
   const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>(resolve => server.once('listening', resolve));
+  await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}/api`;
@@ -339,7 +340,9 @@ describe('listener remote HTTP security boundary', () => {
     try {
       f = await fixture(undefined, true);
       const { session, token } = await f.exchange();
-      assert.equal((await f.request('/state', { session })).status, 200);
+      const state = await f.request('/state', { session });
+      assert.equal(state.status, 200);
+      assert.equal(state.headers.get('ratelimit-limit'), '120');
       assert.equal((await f.request('/bots/4/revoke', { admin: true, session, body: {} })).status, 401);
       for (const rawBody of [`{"token":"${token}"`, JSON.stringify({ token, padding: 'x'.repeat(5000) })]) {
         const response = await f.request('/exchange', { rawBody });
@@ -349,6 +352,22 @@ describe('listener remote HTTP security boundary', () => {
       }
       assert.equal(f.queue.length, 1);
       assert.equal(f.audit.length, 0);
+      // Advance only the credential clock to exercise Express's limiter independently.
+      f.advance(60_001);
+      const endpoints = [['/state', 'GET'], ['/library', 'GET'], ['/queue', 'POST'], ['/requests', 'POST'], ['/session', 'DELETE']];
+      for (let n = 0; n < 116; n++) {
+        const [path, method] = endpoints[n % endpoints.length];
+        const response = await f.request(path, { method });
+        assert.notEqual(response.status, 429);
+      }
+      for (const [path, method] of endpoints) {
+        const response = await f.request(path, { method, headers: { 'X-Forwarded-For': '203.0.113.42' } });
+        assert.equal(response.status, 429);
+        assert.equal(response.headers.get('retry-after'), '60');
+        assert.equal(response.headers.get('cache-control'), 'no-store');
+        if (path === '/state') assert.equal(response.headers.get('ratelimit-remaining'), '0');
+        assert.deepEqual(await response.json(), { error: 'Too many remote requests', code: 'rate_limited' });
+      }
     } finally {
       await f?.close();
       if (previousMusicDir === undefined) delete process.env.MUSIC_DIR;
