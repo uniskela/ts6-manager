@@ -6,7 +6,6 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -14,8 +13,9 @@ import (
 func captureLog(t *testing.T) *bytes.Buffer {
 	t.Helper()
 	var buf bytes.Buffer
+	previous := log.Writer()
 	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	t.Cleanup(func() { log.SetOutput(previous) })
 	return &buf
 }
 
@@ -90,8 +90,8 @@ func TestImmediateICEErrorStaysOneLogRecord(t *testing.T) {
 		"id": id, "candidate": "candidate:bad\r\n" + marker + "\n\x1b",
 		"sdpMid": "0", "sdpMLineIndex": 0,
 	})
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "internal_error" {
+		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
 	oneRecord(t, buf.String(), marker)
 	if err := s.AddICECandidate(id, hostCandidate(50022), "0", 0); err != nil {
@@ -121,8 +121,8 @@ func TestSDPErrorLogStaysOneRecord(t *testing.T) {
 
 	buf := captureLog(t)
 	rec := postJSON(t, s.postPeerAnswer, map[string]string{"id": id, "sdp": sdp})
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusInternalServerError || strings.TrimSpace(rec.Body.String()) != "internal_error" {
+		t.Fatalf("status %d body %q", rec.Code, rec.Body.String())
 	}
 	out := buf.String()
 	if strings.Contains(out, "\r") || strings.Contains(out, "\x1b") {

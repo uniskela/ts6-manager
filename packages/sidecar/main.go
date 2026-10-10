@@ -1909,7 +1909,7 @@ func (s *Sidecar) postPeerAnswer(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.SetAnswer(req.ID, req.SDP); err != nil {
 		log.Printf("[API] SetAnswer error: %s", quoteErr(err))
-		http.Error(w, err.Error(), 500)
+		http.Error(w, "internal_error", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -1929,7 +1929,7 @@ func (s *Sidecar) postPeerICE(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.AddICECandidate(req.ID, req.Candidate, req.SDPMid, req.SDPMLineIndex); err != nil {
 		log.Printf("[API] AddICE error: %s", quoteErr(err))
-		http.Error(w, err.Error(), 500)
+		http.Error(w, "internal_error", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
