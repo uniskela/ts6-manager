@@ -2,6 +2,29 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.11.0](https://github.com/uniskela/ts6-manager/compare/v1.10.2...v1.11.0) (2026-10-10)
+
+
+### Features
+
+* add secure listener remote backend API ([#398](https://github.com/uniskela/ts6-manager/issues/398)) ([e6fbe35](https://github.com/uniskela/ts6-manager/commit/e6fbe355a6f26be235e1e74ce6b0089c9884426e))
+* add shared media command permissions and vote-skip ([#393](https://github.com/uniskela/ts6-manager/issues/393)) ([0efbfd2](https://github.com/uniskela/ts6-manager/commit/0efbfd243f604a87f314e2e2d32b9204cecab188))
+* add the phone listener remote page ([#406](https://github.com/uniskela/ts6-manager/issues/406)) ([68e8666](https://github.com/uniskela/ts6-manager/commit/68e86665c9ec486d883ea6cc5f65d9726898045a))
+* **console:** video Up next and Queue as video ([#405](https://github.com/uniskela/ts6-manager/issues/405)) ([14a86b5](https://github.com/uniskela/ts6-manager/commit/14a86b5a69b94254e7ae6fbdb121bf9cd9b74fe9))
+* **sidecar:** keep VAAPI-decoded frames on the GPU ([#396](https://github.com/uniskela/ts6-manager/issues/396)) ([69eeff8](https://github.com/uniskela/ts6-manager/commit/69eeff83eeb1c26ff686259ddf9bafbd25f65cbb))
+* **sidecar:** publish native media sidecar binaries with each release ([#253](https://github.com/uniskela/ts6-manager/issues/253) Slice 6) ([#399](https://github.com/uniskela/ts6-manager/issues/399)) ([e7769a9](https://github.com/uniskela/ts6-manager/commit/e7769a9f8c71cd925b0c0e917a7b086bbd4d5b88))
+* **video:** queue videos and YouTube playlists on a running stream ([#404](https://github.com/uniskela/ts6-manager/issues/404)) ([6e826da](https://github.com/uniskela/ts6-manager/commit/6e826da002afb977d3abb927701b08c535ba4a79))
+
+
+### Bug Fixes
+
+* block cloud metadata bypasses in media egress ([#408](https://github.com/uniskela/ts6-manager/issues/408)) ([ce07b6a](https://github.com/uniskela/ts6-manager/commit/ce07b6ad4a4233ae124d42639a6518696915a3e4))
+* **sidecar:** build with Go 1.26.9 and golang.org/x/net 0.61.0 ([#401](https://github.com/uniskela/ts6-manager/issues/401)) ([83b2b80](https://github.com/uniskela/ts6-manager/commit/83b2b8053cebb3fd0b1324edb429c0e09f422b77))
+* **sidecar:** hold a viewer's video gate until DTLS is up and keep packet loss visible ([#394](https://github.com/uniskela/ts6-manager/issues/394)) ([3ecae0b](https://github.com/uniskela/ts6-manager/commit/3ecae0b48980c42d60887bc87c9e3674d7bf470a))
+* **sidecar:** quote viewer signaling errors in logs ([#409](https://github.com/uniskela/ts6-manager/issues/409)) ([d1eb540](https://github.com/uniskela/ts6-manager/commit/d1eb54042cd946c1fb5389d697f90959f377c8eb))
+* **sidecar:** stream sources without an audio track, with silence ([#397](https://github.com/uniskela/ts6-manager/issues/397)) ([2585a69](https://github.com/uniskela/ts6-manager/commit/2585a6983c2f1ab57192d159cab010ebaa97ac01))
+* **ui:** keep connection pickers readable below the desktop header ([#392](https://github.com/uniskela/ts6-manager/issues/392)) ([0efbbef](https://github.com/uniskela/ts6-manager/commit/0efbbefbe26e9375687da80f0cf5d8d9152dfd1a))
+
 ## [1.10.2](https://github.com/uniskela/ts6-manager/compare/v1.10.1...v1.10.2) (2026-10-09)
 
 
