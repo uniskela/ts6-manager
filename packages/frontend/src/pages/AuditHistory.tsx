@@ -91,6 +91,8 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'music_bot.automation_update': 'Update bot automation',
   'channel_banner.upload': 'Upload channel banner',
   'channel_banner.delete': 'Delete channel banner',
+  'server_icon.upload': 'Upload server icon',
+  'server_icon.delete': 'Delete server icon',
   'settings.public_url_update': 'Update public URL',
 };
 
@@ -121,6 +123,7 @@ const TARGET_TYPE_LABELS: Record<string, string> = {
   settings: 'Settings',
   music_bot: 'Music bot',
   channel_banner: 'Channel banner',
+  server_icon: 'Server icon',
 };
 
 const AUDIT_GRID =

@@ -16,6 +16,7 @@ import { permissionRoutes } from './routes/permissions.routes.js';
 import { banRoutes } from './routes/bans.routes.js';
 import { tokenRoutes } from './routes/tokens.routes.js';
 import { fileRoutes } from './routes/files.routes.js';
+import { iconRoutes } from './routes/icons.routes.js';
 import { complaintRoutes } from './routes/complaints.routes.js';
 import { messageRoutes } from './routes/messages.routes.js';
 import { logRoutes } from './routes/logs.routes.js';
@@ -125,6 +126,7 @@ export function createApp(): Express {
   app.use('/api/servers/:configId/vs/:sid/bans', serverAccess, banRoutes);
   app.use('/api/servers/:configId/vs/:sid/tokens', serverAccess, tokenRoutes);
   app.use('/api/servers/:configId/vs/:sid/files', serverAccess, fileRoutes);
+  app.use('/api/servers/:configId/vs/:sid/icons', serverAccess, iconRoutes);
   app.use('/api/servers/:configId/vs/:sid/complaints', serverAccess, complaintRoutes);
   app.use('/api/servers/:configId/vs/:sid/messages', serverAccess, messageRoutes);
   app.use('/api/servers/:configId/vs/:sid/logs', serverAccess, logRoutes);

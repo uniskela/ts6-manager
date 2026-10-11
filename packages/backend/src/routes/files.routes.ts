@@ -66,7 +66,7 @@ function demoFileCommand(command: string, params: Record<string, string>): Recor
   return [];
 }
 
-async function sshExecute(
+export async function sshExecute(
   req: Request,
   command: string,
   params: Record<string, string>,
@@ -169,7 +169,7 @@ function sshDisconnectRetryAfterSeconds(req: Request): number {
   return 15;
 }
 
-function mapFileMutationError(err: unknown, actionHint: string, req?: Request): unknown {
+export function mapFileMutationError(err: unknown, actionHint: string, req?: Request): unknown {
   if (err instanceof TSApiError && isTeamSpeakPermissionError(err)) {
     return new TeamSpeakPermissionError(err.code, err.message, actionHint);
   }

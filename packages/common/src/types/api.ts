@@ -494,6 +494,22 @@ export interface ActivityJournalHistoryResponse {
   nextCursor: string | null;
 }
 
+// === Server icons ===
+
+export interface ServerIcon {
+  /** Unsigned CRC32 of the image; the value channels and groups store as their icon id. */
+  id: number;
+  size: number;
+  uploadedAt: string | null;
+}
+
+export interface ServerIconList {
+  maxBytes: number;
+  /** True when the server holds more icons than the list returns. */
+  truncated: boolean;
+  icons: ServerIcon[];
+}
+
 // === Hosted channel banners ===
 
 export interface HostedChannelBanner {

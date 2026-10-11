@@ -57,6 +57,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'music_bot.automation_update',
   'channel_banner.upload',
   'channel_banner.delete',
+  'server_icon.upload',
+  'server_icon.delete',
   'settings.public_url_update',
   'media.music.start',
   'media.music.stop',
@@ -115,6 +117,7 @@ export const ADMIN_AUDIT_TARGET_TYPES = [
   'settings',
   'music_bot',
   'channel_banner',
+  'server_icon',
 ] as const;
 
 export type AdminAuditTargetType = (typeof ADMIN_AUDIT_TARGET_TYPES)[number];

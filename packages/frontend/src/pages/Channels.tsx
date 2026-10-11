@@ -27,6 +27,7 @@ import { formatNumber } from '@/lib/formatting';
 import { Hash, Plus, Trash2, Pencil, ChevronRight, ChevronDown, Users, Lock, Volume2, Loader2, MicOff, VolumeX, Clock3, Terminal, MoveRight } from 'lucide-react';
 import { ClientAvatar } from '@/components/shared/ClientAvatar';
 import { HostedBannerPicker } from '@/components/channels/HostedBannerPicker';
+import { ServerIconPicker } from '@/components/channels/ServerIconPicker';
 import { toast } from 'sonner';
 import { useVirtualServers } from '@/hooks/use-servers';
 
@@ -795,16 +796,21 @@ export default function Channels() {
                 />
               </div>
               <div>
-                <Label className="text-xs">Icon ID</Label>
+                <Label className="text-xs">Icon</Label>
                 <Input
                   className="font-mono-data"
                   value={editForm.channel_icon_id}
                   onChange={(e) => setEditForm({ ...editForm, channel_icon_id: e.target.value })}
                   placeholder="0 = no icon"
+                  aria-label="Icon ID"
                 />
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  Numeric icon ID already uploaded on the server. Use <span className="font-mono">0</span> to clear.
+                  The number TeamSpeak uses for the chosen icon; picking an icon below fills it in. <span className="font-mono">0</span> means no icon.
                 </p>
+                <ServerIconPicker
+                  value={(Number.parseInt(editForm.channel_icon_id, 10) || 0) >>> 0}
+                  onSelect={(id) => setEditForm((form) => ({ ...form, channel_icon_id: String(id) }))}
+                />
               </div>
               <div>
                 <Label className="text-xs">Banner image URL</Label>
