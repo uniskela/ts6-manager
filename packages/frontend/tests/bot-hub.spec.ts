@@ -61,10 +61,18 @@ function summaries() {
 
 test('Bot Hub saves per-bot Auto-DJ settings with server-scoped sources and 24/7 presence', async ({ page, request }) => {
   const saves: unknown[] = [];
+  let finishLoading!: () => void;
+  const loading = new Promise<void>(resolve => { finishLoading = resolve; });
+  let finishSaving!: () => void;
+  const saving = new Promise<void>(resolve => { finishSaving = resolve; });
   await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
-  await page.route('**/api/music-bots/3', (r) => r.fulfill({ json: { ...summaries()[2], automationSettings: DEFAULT_BOT_AUTOMATION_SETTINGS } }));
-  await page.route('**/api/music-bots/3/automation', (r) => {
+  await page.route('**/api/music-bots/3', async (r) => {
+    await loading;
+    return r.fulfill({ json: { ...summaries()[2], automationSettings: DEFAULT_BOT_AUTOMATION_SETTINGS } });
+  });
+  await page.route('**/api/music-bots/3/automation', async (r) => {
     saves.push(r.request().postDataJSON());
+    await saving;
     return r.fulfill({ json: r.request().postDataJSON() });
   });
   await page.route('**/api/playlists?serverConfigId=1', (r) => r.fulfill({ json: [
@@ -81,6 +89,8 @@ test('Bot Hub saves per-bot Auto-DJ settings with server-scoped sources and 24/7
   await page.getByRole('button', { name: 'Settings for Backup Bot' }).click();
   await page.getByRole('menuitem', { name: 'Auto-DJ & 24/7' }).click();
   const dialog = page.getByRole('dialog', { name: 'Auto-DJ & 24/7: Backup Bot' });
+  await expect(dialog.getByRole('status')).toHaveText('Loading settings…');
+  finishLoading();
   await expect(dialog.getByText('Enable Auto-start in Edit bot to restore this bot after a Manager restart.')).toBeVisible();
   await dialog.getByRole('switch', { name: 'Enable Auto-DJ' }).check();
   await expect(dialog.getByRole('button', { name: 'Save automation' })).toBeDisabled();
@@ -97,9 +107,11 @@ test('Bot Hub saves per-bot Auto-DJ settings with server-scoped sources and 24/7
   await expect(dialog.getByRole('button', { name: 'Save automation' })).toBeDisabled();
   await dialog.getByLabel('Maximum retry delay (seconds)').fill('3600');
   await dialog.getByRole('button', { name: 'Save automation' }).click();
+  await expect(dialog.getByRole('status')).toHaveText('Saving automation settings…');
   await expect.poll(() => saves.length).toBe(1);
   expect(saves[0]).toEqual({ enabled: true, source: { kind: 'playlist', id: 10 }, requireListeners: true,
     quietPeriodSeconds: 0, retryBaseSeconds: 60, retryMaxSeconds: 3600, stayInChannel: true });
+  finishSaving();
   await expect(dialog).toBeHidden();
 });
 

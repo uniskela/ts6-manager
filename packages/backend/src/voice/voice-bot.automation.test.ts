@@ -60,6 +60,25 @@ function fixture(live = false) {
 }
 
 describe('VoiceBot Auto-DJ integration', () => {
+  for (const live of [false, true]) for (const stop of [false, true]) {
+    it(`${live ? 'radio' : 'file'} replacement cannot undo a newer ${stop ? 'Stop' : 'play'} during video cleanup`, async t => {
+      const f = fixture(); t.after(() => f.close());
+      f.controller.dispose();
+      const cleanup = deferred<void>();
+      f.runtime._videoStreaming = true;
+      f.runtime.replaceVideoWithMusic = async () => { await cleanup.promise; return null; };
+      const pending = live ? f.bot.playStream(radio) : f.bot.play(human);
+      await tick();
+      f.runtime._videoStreaming = false;
+      if (stop) f.bot.stopAudio();
+      else await f.bot.play({ ...human, id: 'newer' });
+      cleanup.resolve();
+      await pending;
+      assert.equal(f.bot.nowPlaying?.id ?? null, stop ? null : 'newer');
+      assert.equal(f.streams.length, stop ? 0 : 1);
+    });
+  }
+
   it('Previous releases fallback ownership and resumes Auto-DJ when no human history exists', async t => {
     const f = fixture(); t.after(() => f.close());
     await f.controller.reconcile();
@@ -215,15 +234,17 @@ describe('VoiceBot Auto-DJ integration', () => {
     assert.equal(f.bot.nowPlaying?.id, human.id, 'human playback is allowed during the quiet period');
   });
 
-  it('manual Stop on owned playback retains the manual reason rather than the automation cancellation reason', async t => {
-    const f = fixture(); t.after(() => f.close());
-    await f.controller.reconcile();
-    f.bot.clearPlayback();
-    await f.controller.reconcile();
-    assert.equal(f.bot.lastMusicStop?.reason, 'manual');
-    assert.equal(f.bot.nowPlaying, null);
-    assert.ok(f.controller.state.quietUntil > Date.now());
-  });
+  for (const live of [false, true]) for (const method of ['clearPlayback', 'stopAudio'] as const) {
+    it(`manual ${method} on automated ${live ? 'radio' : 'file'} retains the manual reason`, async t => {
+      const f = fixture(live); t.after(() => f.close());
+      await f.controller.reconcile();
+      f.bot[method]();
+      await f.controller.reconcile();
+      assert.equal(f.bot.lastMusicStop?.reason, 'manual');
+      assert.equal(f.bot.nowPlaying, null);
+      assert.ok(f.controller.state.quietUntil > Date.now());
+    });
+  }
 
   it('radio pause and resume retains automation ownership and backoff state', async t => {
     const f = fixture(true); t.after(() => f.close());

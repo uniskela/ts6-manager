@@ -868,6 +868,7 @@ export class VoiceBot extends EventEmitter {
 
   async restart(): Promise<void> {
     await this.stop();
+    const connectionEpoch = this.connectionEpoch;
     await new Promise<void>((resolve) => {
       const check = () => {
         if (this._status === 'stopped') resolve();
@@ -875,7 +876,7 @@ export class VoiceBot extends EventEmitter {
       };
       setTimeout(check, 600);
     });
-    await this.start();
+    if (connectionEpoch === this.connectionEpoch) await this.start();
   }
 
   /** Returns sessions actually replaced (this bot's video) when starting music. */
@@ -885,11 +886,13 @@ export class VoiceBot extends EventEmitter {
     }
     if (options.automation && !options.automation()) return [];
     if (!options.automation) this.automation?.requestQueued();
+    const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
       const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
       if (session) replaced.push(session);
     }
+    if (intent !== this.playbackOwner) return replaced;
     this.beginMusicSession();
 
     this.stopIcyPolling();
@@ -1197,11 +1200,13 @@ export class VoiceBot extends EventEmitter {
     }
     if (options.automation && !options.automation()) return [];
     if (!options.automation) this.automation?.requestQueued();
+    const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
       const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
       if (session) replaced.push(session);
     }
+    if (intent !== this.playbackOwner) return replaced;
     this.beginMusicSession();
 
     this.stopIcyPolling();

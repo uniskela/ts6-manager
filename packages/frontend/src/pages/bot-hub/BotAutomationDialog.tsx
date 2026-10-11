@@ -11,9 +11,16 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 
-export function BotAutomationDialog({ botId, botName, onClose }: {
+function validAutomationSettings(settings: BotAutomationSettings): boolean {
+  return (!settings.enabled || !!settings.source) &&
+    Number.isSafeInteger(settings.quietPeriodSeconds) && settings.quietPeriodSeconds >= 0 && settings.quietPeriodSeconds <= 86400 &&
+    Number.isSafeInteger(settings.retryBaseSeconds) && settings.retryBaseSeconds >= 1 && settings.retryBaseSeconds <= 3600 &&
+    Number.isSafeInteger(settings.retryMaxSeconds) && settings.retryMaxSeconds >= settings.retryBaseSeconds && settings.retryMaxSeconds <= 86400;
+}
+
+export function BotAutomationDialog({ botId, botName, onClose }: Readonly<{
   botId: number; botName: string; onClose: () => void;
-}) {
+}>) {
   const qc = useQueryClient();
   const bot = useQuery<MusicBotDetail>({ queryKey: ['music-bot', botId], queryFn: () => musicBotsApi.get(botId) });
   const [settings, setSettings] = useState<BotAutomationSettings>({ ...DEFAULT_BOT_AUTOMATION_SETTINGS });
@@ -41,10 +48,7 @@ export function BotAutomationDialog({ botId, botName, onClose }: {
       onClose();
     },
   });
-  const valid = (!settings.enabled || !!settings.source) &&
-    Number.isSafeInteger(settings.quietPeriodSeconds) && settings.quietPeriodSeconds >= 0 && settings.quietPeriodSeconds <= 86400 &&
-    Number.isSafeInteger(settings.retryBaseSeconds) && settings.retryBaseSeconds >= 1 && settings.retryBaseSeconds <= 3600 &&
-    Number.isSafeInteger(settings.retryMaxSeconds) && settings.retryMaxSeconds >= settings.retryBaseSeconds && settings.retryMaxSeconds <= 86400;
+  const valid = validAutomationSettings(settings);
   const sourceValue = settings.source ? `${settings.source.kind}:${settings.source.id}` : '';
   const playlistChoices = (playlists.data ?? []).filter((p) => p.serverConfigId == null || p.serverConfigId === serverId);
   const radioChoices = (radio.data ?? []).filter((r) => r.serverConfigId === serverId);
@@ -59,7 +63,9 @@ export function BotAutomationDialog({ botId, botName, onClose }: {
           <DialogTitle>Auto-DJ &amp; 24/7: {botName}</DialogTitle>
           <DialogDescription>Fill an empty request queue from a saved source. Human requests take priority.</DialogDescription>
         </DialogHeader>
-        {bot.isError ? <p role="alert" className="text-sm text-destructive">{apiErrorMessage(bot.error, 'Could not load settings')}</p> : !loaded ? <p>Loading settings…</p> : (
+        {bot.isError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(bot.error, 'Could not load settings')}</p>}
+        {!bot.isError && !loaded && <p role="status">Loading settings…</p>}
+        {!bot.isError && loaded && (
           <form className="space-y-4" onSubmit={(event) => { event.preventDefault(); if (valid) save.mutate(); }}>
             <fieldset className="space-y-4" disabled={save.isPending}>
               <div className="flex items-center justify-between gap-3">
@@ -97,19 +103,19 @@ export function BotAutomationDialog({ botId, botName, onClose }: {
               <div className="space-y-1.5">
                 <Label htmlFor="automation-quiet">Quiet period after manual Stop (seconds)</Label>
                 <Input id="automation-quiet" type="number" min={0} max={86400} step={1} value={Number.isFinite(settings.quietPeriodSeconds) ? settings.quietPeriodSeconds : ''}
-                  onChange={(e) => setSettings({ ...settings, quietPeriodSeconds: e.target.value === '' ? NaN : Number(e.target.value) })} />
+                  onChange={(e) => setSettings({ ...settings, quietPeriodSeconds: e.target.value === '' ? Number.NaN : Number(e.target.value) })} />
                 <p className="text-xs text-muted-foreground">Auto-DJ waits this long after Stop. A human request can play immediately.</p>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label htmlFor="automation-retry">First retry delay (seconds)</Label>
                   <Input id="automation-retry" type="number" min={1} max={3600} step={1} value={Number.isFinite(settings.retryBaseSeconds) ? settings.retryBaseSeconds : ''}
-                    onChange={(e) => setSettings({ ...settings, retryBaseSeconds: e.target.value === '' ? NaN : Number(e.target.value) })} />
+                    onChange={(e) => setSettings({ ...settings, retryBaseSeconds: e.target.value === '' ? Number.NaN : Number(e.target.value) })} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="automation-retry-max">Maximum retry delay (seconds)</Label>
                   <Input id="automation-retry-max" type="number" min={settings.retryBaseSeconds || 1} max={86400} step={1} value={Number.isFinite(settings.retryMaxSeconds) ? settings.retryMaxSeconds : ''}
-                    onChange={(e) => setSettings({ ...settings, retryMaxSeconds: e.target.value === '' ? NaN : Number(e.target.value) })} />
+                    onChange={(e) => setSettings({ ...settings, retryMaxSeconds: e.target.value === '' ? Number.NaN : Number(e.target.value) })} />
                 </div>
               </div>
               <p className="text-xs text-muted-foreground">Broken sources retry with increasing delays, up to the maximum.</p>
@@ -121,6 +127,7 @@ export function BotAutomationDialog({ botId, botName, onClose }: {
               {!bot.data?.autoStart && <p className="rounded-md bg-muted p-3 text-xs">Enable Auto-start in Edit bot to restore this bot after a Manager restart.</p>}
             </fieldset>
             {save.isError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(save.error, 'Could not save automation settings')}</p>}
+            {save.isPending && <p role="status" className="text-sm text-muted-foreground">Saving automation settings…</p>}
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" disabled={save.isPending} onClick={onClose}>Cancel</Button>
               <Button type="submit" disabled={!valid || save.isPending}>{save.isPending ? 'Saving…' : 'Save automation'}</Button>

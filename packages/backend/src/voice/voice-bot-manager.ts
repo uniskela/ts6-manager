@@ -5,7 +5,8 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
 import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus, type VideoStreamStartOptions } from './voice-bot.js';
-import type { MediaSessionInfo, MediaStopInfo } from '@ts6/common';
+import type { BotAutomationSettings, MediaSessionInfo, MediaStopInfo } from '@ts6/common';
+import { AppError } from '../middleware/error-handler.js';
 import { MediaSessionConflictError } from './media-session.js';
 import { generateIdentity, generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
 import type { QueueItem } from './playlist/queue.js';
@@ -20,7 +21,6 @@ import { VideoQueueController, type VideoQueueItem, type VideoQueueSessionOption
 import { createVideoQueueStore } from './streaming/video-queue-store.js';
 import { AutomationController, type AutomationRuntimeState } from './automation-controller.js';
 import { readAutomationSettings } from './automation-settings.js';
-import type { BotAutomationSettings } from '@ts6/common';
 
 type SavedVideoQueue = { items: VideoQueueItem[]; options: VideoQueueSessionOptions | null };
 
@@ -162,7 +162,9 @@ export class VoiceBotManager extends EventEmitter {
     const queue = videoQueue;
 
     let runtime: Partial<AutomationRuntimeState> = {};
-    try { runtime = state ? JSON.parse(state) ?? {} : {}; } catch { /* invalid state starts with safe defaults */ }
+    try { runtime = state ? JSON.parse(state) ?? {} : {}; } catch {
+      console.warn(`[VoiceBotManager] Bot ${config.id}: Invalid automation state; using safe defaults`);
+    }
     bot.automation = new AutomationController({
       settings: readAutomationSettings(settings), state: runtime,
       snapshot: () => ({
@@ -646,10 +648,13 @@ export class VoiceBotManager extends EventEmitter {
 
   async homeBot(id: number): Promise<void> {
     const bot = this.bots.get(id);
-    if (!bot) throw new Error(`Music bot ${id} not found`);
+    if (!bot) throw new AppError(404, 'Music bot not found');
+    if (!['connected', 'playing', 'paused'].includes(bot.status)) throw new AppError(409, 'Bot is not connected');
     this.clearReconnect(id);
     bot.automation?.suspendPresence();
     await bot.automation?.flush();
+    if (this.bots.get(id) !== bot) throw new AppError(404, 'Music bot not found');
+    if (bot.manuallyStopped || bot.status === 'stopped' || bot.status === 'error') return;
     await bot.restart();
   }
 

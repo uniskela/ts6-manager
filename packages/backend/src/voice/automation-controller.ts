@@ -53,7 +53,7 @@ function key(settings: BotAutomationSettings): string | null {
 /** Owns fallback playback only. The human request queue remains owned by VoiceBot. */
 export class AutomationController {
   private settings: BotAutomationSettings;
-  private runtime: AutomationRuntimeState;
+  private readonly runtime: AutomationRuntimeState;
   private readonly clock: AutomationClock;
   private generation = 0;
   private owned = false;

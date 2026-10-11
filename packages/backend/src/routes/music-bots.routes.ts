@@ -427,7 +427,6 @@ musicBotRoutes.post('/:id/home', async (req: Request, res: Response, next) => {
     const id = Number(req.params.id);
     if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, 'Invalid bot ID');
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    if (!manager.getBot(id)) throw new AppError(404, 'Music bot not found');
     invalidatePlaylistExpansion(id);
     invalidateChatPlaylistExpansion(id);
     await manager.homeBot(id);
@@ -466,6 +465,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
       throw new AppError(400, 'Bot is not connected');
     }
 
+    const generation = invalidatePlaylistExpansion(id);
     const song = await prisma.song.findUnique({ where: { id: parseInt(songId) } });
     if (!song) throw new AppError(404, 'Song not found');
 
@@ -480,6 +480,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
     };
 
     await runMediaAudited(req, bot, 'media.music.start', async () => {
+      if (playlistExpansionGeneration(id) !== generation) return [];
       // Select and start together after the audit wait, before queue notifications advance.
       bot.queue.add(queueItem);
       bot.queue.playAt(bot.queue.length - 1);
@@ -823,11 +824,13 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
   try {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
-    const bot = manager.getBot(parseInt(req.params.id as string));
+    const id = parseInt(req.params.id as string);
+    const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
     const replaceSessionIds = parseReplaceSessionIds(req.body);
 
     const { playlistId, clearFirst, autoplay } = req.body;
+    const generation = invalidatePlaylistExpansion(id);
     const playlist = await prisma.playlist.findUnique({
       where: { id: parseInt(playlistId) },
       include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
@@ -859,6 +862,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     if (shouldAutoplay && items.length > 0) {
       try {
         await runMediaAudited(req, bot, 'media.music.start', async () => {
+          if (playlistExpansionGeneration(id) !== generation) return [];
           const item = bot.queue.playAt(loadQueue());
           if (!item) return [];
           return item.streamUrl ? bot.playStream(item, { replaceSessionIds }) : bot.play(item, { replaceSessionIds });
@@ -867,7 +871,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
         playError = err.message || String(err);
         console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
       }
-    } else {
+    } else if (playlistExpansionGeneration(id) === generation) {
       loadQueue();
     }
 

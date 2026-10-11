@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { once } from 'node:events';
 import express from 'express';
 import { DEFAULT_BOT_AUTOMATION_SETTINGS } from '@ts6/common';
 import { musicBotRoutes } from './music-bots.routes.js';
@@ -37,7 +38,7 @@ async function fixture(role = 'admin', loaded = true) {
   };
   app.use('/api/music-bots', musicBotRoutes); app.use(errorHandler);
   const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((resolve) => server.once('listening', resolve));
+  await once(server, 'listening');
   const url = `http://127.0.0.1:${(server.address() as any).port}/api/music-bots`;
   return {
     bot: () => bot, sources, audit, calls, prisma, manager: app.locals.voiceBotManager,
@@ -136,8 +137,8 @@ test('a failed settings write leaves runtime settings alone', async () => {
   } finally { await f.close(); }
 });
 
-for (const playlist of [false, true]) {
-  test(`audited ${playlist ? 'playlist' : 'song'} start keeps Auto-DJ playing until dispatch and does not advance past the selected song`, async () => {
+for (const playlist of [false, true]) for (const cancel of ['none', 'stop', 'newer']) {
+  test(`audited ${playlist ? 'playlist' : 'song'} start respects ${cancel} during the audit wait`, async () => {
     const f = await fixture();
     const bot = new VoiceBot({ id: 7, serverConfigId: 3, name: 'DJ', nickname: 'DJ',
       serverHost: '127.0.0.1', serverPort: 9987, volume: 50 });
@@ -151,6 +152,7 @@ for (const playlist of [false, true]) {
     voice.automation = {
       configuration: { enabled: true },
       requestQueued() { if (owned) { owned = false; bot.clearPlayback('channel_empty'); } },
+      manualStop() {},
       reconcile: async () => {},
     };
     voice.play = async (item: QueueItem) => {
@@ -161,13 +163,17 @@ for (const playlist of [false, true]) {
     };
     f.manager.getBot = () => bot;
     const songs = [1, 2, 3].map(id => ({ id, title: `Song ${id}`, source: 'local', filePath: `/${id}.mp3` }));
-    f.prisma.song = { findUnique: async () => songs[0] };
+    f.prisma.song = { findUnique: async ({ where }: any) => songs.find(song => song.id === where.id) };
     f.prisma.playlist.findUnique = async () => ({ songs: songs.map(song => ({ song })) });
     let release!: () => void, entered!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     const started = new Promise<void>(resolve => { entered = resolve; });
     const create = f.prisma.adminAuditEvent.create;
-    f.prisma.adminAuditEvent.create = async (args: unknown) => { entered(); await gate; return create(args); };
+    let firstAudit = true;
+    f.prisma.adminAuditEvent.create = async (args: unknown) => {
+      if (firstAudit) { firstAudit = false; entered(); await gate; }
+      return create(args);
+    };
     try {
       const pending = playlist
         ? f.post('/queue/playlist', { playlistId: 5, clearFirst: true, autoplay: true })
@@ -177,12 +183,18 @@ for (const playlist of [false, true]) {
       assert.equal(bot.nowPlaying?.id, 'auto', 'the audit wait must not preempt playback');
       assert.equal(bot.queue.length, 0, 'the audit wait must not enqueue unaudited playback');
       assert.deepEqual(played, []);
+      if (cancel !== 'none') {
+        const response = cancel === 'stop'
+          ? await f.post('/stop-playback', {})
+          : await f.post('/play', { songId: 2 });
+        assert.equal(response.status, 200);
+      }
       release();
       assert.equal((await pending).status, 200);
       await new Promise<void>(resolve => setImmediate(resolve));
-      assert.deepEqual(played, ['1']);
-      assert.equal(bot.queue.current?.id, '1');
-      assert.equal(bot.queue.upcomingCount, playlist ? 2 : 0);
+      assert.deepEqual(played, cancel === 'none' ? ['1'] : cancel === 'stop' ? [] : ['2']);
+      assert.equal(bot.queue.current?.id ?? null, cancel === 'none' ? '1' : cancel === 'stop' ? null : '2');
+      assert.equal(bot.queue.upcomingCount, playlist && cancel === 'none' ? 2 : 0);
     } finally { release(); await f.close(); }
   });
 }

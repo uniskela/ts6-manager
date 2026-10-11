@@ -41,7 +41,9 @@ export function parseAutomationSettings(raw: unknown): BotAutomationSettings {
 /** Old rows and corrupt checkpoints cannot enable automation by accident. */
 export function readAutomationSettings(raw: string | null | undefined): BotAutomationSettings {
   if (raw) {
-    try { return parseAutomationSettings(JSON.parse(raw)); } catch { /* fail closed */ }
+    try { return parseAutomationSettings(JSON.parse(raw)); } catch {
+      console.warn('[Auto-DJ] Invalid saved automation settings; using disabled defaults');
+    }
   }
   return { ...DEFAULT_BOT_AUTOMATION_SETTINGS };
 }

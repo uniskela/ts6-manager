@@ -43,6 +43,41 @@ function fixture() {
 }
 
 describe('VoiceBotManager Auto-DJ integration', () => {
+  it('Home rejects stopped and missing bots without joining the server', async t => {
+    const f = fixture(); t.after(() => f.close());
+    const bot = f.create(1);
+    await assert.rejects(f.manager.homeBot(1), (error: any) => error.statusCode === 409);
+    await assert.rejects(f.manager.homeBot(99), (error: any) => error.statusCode === 404);
+    assert.equal(bot.status, 'stopped');
+    assert.equal(f.starts.length, 0);
+  });
+
+  it('Stop during Home restart prevents its delayed reconnect', async t => {
+    const f = fixture(); t.after(() => f.close());
+    const bot = f.create(1);
+    await f.manager.startBot(1);
+    const home = f.manager.homeBot(1);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    await f.manager.stopBot(1);
+    await home;
+    assert.equal(bot.status, 'stopped');
+    assert.equal(f.starts.length, 1);
+  });
+
+  it('Home reports a deletion during its state write as not found', async t => {
+    const f = fixture(); t.after(() => f.close());
+    const bot = f.create(1); t.after(() => bot.stop());
+    await f.manager.startBot(1);
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    bot.automation!.flush = () => gate;
+    const home = f.manager.homeBot(1);
+    f.runtime.bots.delete(1);
+    release();
+    await assert.rejects(home, (error: any) => error.statusCode === 404);
+    assert.equal(f.starts.length, 1);
+  });
+
   it('reconnect uses the saved persistent channel and manual Home/Leave suppression uses configured home', async t => {
     const f = fixture(); t.after(() => f.close());
     const bot = f.create(1, { channelId: 42 });

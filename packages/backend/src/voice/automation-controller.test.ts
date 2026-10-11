@@ -131,7 +131,8 @@ describe('AutomationController', () => {
       if (current()) f.played.push(item.id);
     };
     const running = f.controller.reconcile();
-    while (!entered) await Promise.resolve();
+    for (let attempt = 0; !entered && attempt < 20; attempt++) await Promise.resolve();
+    assert.equal(entered, true);
     f.controller.manualStop();
     preparing.resolve();
     await running;
