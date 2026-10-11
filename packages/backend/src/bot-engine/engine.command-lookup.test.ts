@@ -127,3 +127,22 @@ test('support cooldown follows requester UID across reconnects and permits other
   assert.deepEqual(executed, ['ada', 'bob', 'ada']);
   await new Promise<void>((resolve) => setImmediate(resolve));
 });
+
+test('a concurrency-rejected command can retry without consuming its cooldown', async () => {
+  const { engine } = fixture(undefined, 'support');
+  const flow = engine.flows.get(1);
+  flow.triggerNodes[0].data.cooldownSeconds = 60;
+  const counts = { active: 20 };
+  engine.executionCounts.set(1, counts);
+  let executions = 0;
+  engine.flowRunner.execute = async () => { executions++; };
+  const execute = (BotEngine.prototype as any).executeFlow.bind(engine);
+  const event = { clid: '7', client_unique_identifier: 'ada' };
+  execute(flow, 'command', 'command', event);
+  assert.equal(executions, 0);
+  counts.active--;
+  execute(flow, 'command', 'command', event);
+  assert.equal(executions, 1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(counts.active, 19);
+});

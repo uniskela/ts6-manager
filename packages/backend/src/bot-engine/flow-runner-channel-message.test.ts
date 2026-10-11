@@ -8,6 +8,7 @@ function context(sid = 1) {
 
 test('overlapping flow announcements serialize move, send, and restore', async () => {
   const runner = new FlowRunner({} as any, {} as any, { clients: new Set() } as any) as any;
+  const signal = new AbortController().signal;
   let channel = '2';
   const delivered: Array<[string, string]> = [];
   let releaseFirst!: () => void;
@@ -24,9 +25,9 @@ test('overlapping flow announcements serialize move, send, and restore', async (
       if (command === 'sendtextmessage') delivered.push([channel, params.msg]);
     },
   };
-  const first = runner.executeMessage({ targetMode: 2, target: '12', message: 'A' }, context(), client);
+  const first = runner.executeMessage({ targetMode: 2, target: '12', message: 'A' }, context(), client, signal);
   await moved;
-  const second = runner.executeMessage({ targetMode: 2, target: '13', message: 'B' }, context(), client);
+  const second = runner.executeMessage({ targetMode: 2, target: '13', message: 'B' }, context(), client, signal);
   try {
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(channel, '12');
@@ -40,6 +41,7 @@ test('overlapping flow announcements serialize move, send, and restore', async (
 
 test('failed channel sends restore the helper and release the next announcement', async () => {
   const runner = new FlowRunner({} as any, {} as any, { clients: new Set() } as any) as any;
+  const signal = new AbortController().signal;
   let channel = '2';
   const delivered: string[] = [];
   const client = {
@@ -52,9 +54,9 @@ test('failed channel sends restore the helper and release the next announcement'
       }
     },
   };
-  await assert.rejects(runner.executeMessage({ targetMode: 2, target: '12', message: 'A' }, context(), client), /send denied/);
+  await assert.rejects(runner.executeMessage({ targetMode: 2, target: '12', message: 'A' }, context(), client, signal), /send denied/);
   assert.equal(channel, '2');
-  await runner.executeMessage({ targetMode: 2, target: '13', message: 'B' }, context(), client);
+  await runner.executeMessage({ targetMode: 2, target: '13', message: 'B' }, context(), client, signal);
   assert.deepEqual(delivered, ['13']);
   assert.equal(channel, '2');
 });
@@ -65,6 +67,27 @@ test('an unidentified query client cannot fall back to posting in the wrong chan
   await assert.rejects(runner.executeMessage({ targetMode: 2, target: '12', message: 'A' }, context(), {
     execute: async () => [],
     executePost: async (_sid: number, command: string) => { posted.push(command); },
-  }), /requires the query client/);
+  }, new AbortController().signal), /requires the query client/);
   assert.deepEqual(posted, []);
 });
+
+for (const cancelDuring of ['whoami', 'clientmove']) {
+  test(`cancellation during ${cancelDuring} skips the send and restores any move`, async () => {
+    const runner = new FlowRunner({} as any, {} as any, { clients: new Set() } as any) as any;
+    const controller = new AbortController();
+    const calls: string[] = [];
+    const client = {
+      execute: async () => {
+        if (cancelDuring === 'whoami') controller.abort();
+        return [{ client_id: '1', client_channel_id: '2' }];
+      },
+      executePost: async (_sid: number, command: string, params: any) => {
+        calls.push(`${command}:${params.cid}`);
+        if (cancelDuring === command) controller.abort();
+      },
+    };
+    await assert.rejects(runner.executeMessage({ targetMode: 2, target: '12', message: 'A' },
+      context(), client, controller.signal), { name: 'AbortError' });
+    assert.deepEqual(calls, cancelDuring === 'whoami' ? [] : ['clientmove:12', 'clientmove:2']);
+  });
+}

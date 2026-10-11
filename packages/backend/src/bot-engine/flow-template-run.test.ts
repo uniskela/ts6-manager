@@ -318,6 +318,66 @@ test('cancelling a flow clears its pending reminder and records cancellation', {
   }
 });
 
+test('cancelling a queued announcement skips delivery and preserves serialization', { timeout: 5000 }, async () => {
+  let channel = '2';
+  const calls: string[] = [];
+  const statuses: Array<[number, string]> = [];
+  let releaseFirst!: () => void;
+  const held = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let entered!: () => void;
+  const sending = new Promise<void>((resolve) => { entered = resolve; });
+  const client = {
+    execute: async () => {
+      calls.push('whoami');
+      return [{ client_id: '1', client_channel_id: channel }];
+    },
+    executePost: async (_sid: number, command: string, params: any) => {
+      if (command === 'clientmove') { channel = params.cid; calls.push(`move:${channel}`); }
+      if (command === 'sendtextmessage') {
+        calls.push(`send:${channel}`);
+        if (channel === '12') { entered(); await held; }
+      }
+      return [];
+    },
+  };
+  const runner = new FlowRunner({
+    ...prisma,
+    botExecution: {
+      create: async ({ data }: any) => ({ id: data.flowId }),
+      update: async ({ where, data }: any) => { statuses.push([where.id, data.status]); return {}; },
+    },
+  } as any, { getClient: () => client } as any, { clients: new Set() } as any);
+  const begin = (id: number, target: string) => {
+    const flowData = templateFlow('scheduled-announcement', { audience: 'channel', channelId: target, message: 'Notice' });
+    return runner.execute({ id, name: 'Announcement', serverConfigId: 1, virtualServerId: 1, flowData },
+      triggerId(flowData, 'cron'), 'cron', {}, 'UTC');
+  };
+  const first = begin(1, '12');
+  const pending = [first];
+  try {
+    await sending;
+    const second = begin(2, '13');
+    pending.push(second);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    runner.cancelFlow(2);
+    await second;
+    assert.deepEqual(statuses, [[2, 'cancelled']]);
+    const third = begin(3, '14');
+    pending.push(third);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ['whoami', 'move:12', 'send:12']);
+    releaseFirst();
+    await Promise.all(pending);
+    assert.deepEqual(calls, ['whoami', 'move:12', 'send:12', 'move:2', 'whoami', 'move:14', 'send:14', 'move:2']);
+    assert.deepEqual(statuses, [[2, 'cancelled'], [1, 'completed'], [3, 'completed']]);
+    assert.equal(channel, '2');
+  } finally {
+    runner.cancelAll();
+    releaseFirst();
+    await Promise.all(pending);
+  }
+});
+
 test('scheduled announcement posts the dated message to the server or one channel', async () => {
   const calls: Array<{ command: string; params?: Record<string, unknown> }> = [];
   const client = {

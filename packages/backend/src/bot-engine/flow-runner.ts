@@ -221,7 +221,7 @@ export class FlowRunner {
       }
 
       case 'action': {
-        await this.executeAction(node, ctx, client);
+        await this.executeAction(node, ctx, client, signal);
         const edges = this.getOutgoingEdges(node.id, flowDef);
         for (const edge of edges) {
           const target = this.findNode(edge.target, flowDef);
@@ -338,18 +338,20 @@ export class FlowRunner {
     node: FlowNode,
     ctx: ExecutionContext,
     client: WebQueryClient,
+    signal: AbortSignal,
   ): Promise<void> {
     const data = node.data as any;
     const actionType = data.actionType as string;
 
     await this.log(ctx, node, 'info', `Executing action: ${actionType}`);
+    signal.throwIfAborted();
 
     try {
       switch (actionType) {
         case 'kick': await this.executeKick(data as KickActionData, ctx, client); break;
         case 'ban': await this.executeBan(data as BanActionData, ctx, client); break;
         case 'move': await this.executeMove(data as MoveActionData, ctx, client); break;
-        case 'message': await this.executeMessage(data as MessageActionData, ctx, client); break;
+        case 'message': await this.executeMessage(data as MessageActionData, ctx, client, signal); break;
         case 'poke': await this.executePoke(data as PokeActionData, ctx, client); break;
         case 'channelCreate': await this.executeChannelCreate(data as ChannelCreateActionData, ctx, client); break;
         case 'groupAddClient': await this.executeGroupAddClient(data as GroupAddClientActionData, ctx, client); break;
@@ -413,9 +415,10 @@ export class FlowRunner {
     await client.executePost(ctx.sid, 'clientmove', { clid, cid });
   }
 
-  private async executeMessage(data: MessageActionData, ctx: ExecutionContext, client: WebQueryClient): Promise<void> {
+  private async executeMessage(data: MessageActionData, ctx: ExecutionContext, client: WebQueryClient, signal: AbortSignal): Promise<void> {
     const msg = await ctx.resolveTemplate(data.message);
     const target = data.target ? await ctx.resolveTemplate(data.target) : ctx.eventData.clid;
+    signal.throwIfAborted();
 
     if (data.targetMode === 2) {
       // Serialize the whole move/send/restore sequence, including current-channel sends.
@@ -425,18 +428,32 @@ export class FlowRunner {
       const gate = new Promise<void>((resolve) => { release = resolve; });
       const next = previous.then(() => gate);
       this.channelMessageChains.set(key, next);
-      await previous;
+      // A cancelled waiter must retain its place until the predecessor settles.
+      void next.then(() => {
+        if (this.channelMessageChains.get(key) === next) this.channelMessageChains.delete(key);
+      });
       try {
+        await new Promise<void>((resolve, reject) => {
+          const onAbort = () => reject(signal.reason);
+          signal.addEventListener('abort', onAbort, { once: true });
+          previous.then(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          });
+        });
+        signal.throwIfAborted();
         if (!target) {
           await client.executePost(ctx.sid, 'sendtextmessage', { targetmode: 2, msg });
           return;
         }
         const whoami = await client.execute(ctx.sid, 'whoami');
+        signal.throwIfAborted();
         const myClid = whoami?.[0]?.client_id;
         const myCid = whoami?.[0]?.client_channel_id;
         if (!myClid || !myCid) throw new Error('Channel message requires the query client and original channel IDs');
         await client.executePost(ctx.sid, 'clientmove', { clid: myClid, cid: target });
         try {
+          signal.throwIfAborted();
           await client.executePost(ctx.sid, 'sendtextmessage', { targetmode: 2, msg });
         } finally {
           if (String(myCid) !== String(target)) {
@@ -445,7 +462,6 @@ export class FlowRunner {
         }
       } finally {
         release();
-        if (this.channelMessageChains.get(key) === next) this.channelMessageChains.delete(key);
       }
       return;
     }
@@ -456,6 +472,7 @@ export class FlowRunner {
       // shortcut: UID verification and client-ID delivery are not atomic; require UID-addressed delivery for sensitive messages.
     }
 
+    signal.throwIfAborted();
     await client.executePost(ctx.sid, 'sendtextmessage', {
       targetmode: data.targetMode,
       target,

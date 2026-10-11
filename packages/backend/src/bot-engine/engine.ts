@@ -821,6 +821,13 @@ export class BotEngine {
   private executeFlow(flow: LoadedFlow, triggerNodeId: string, triggerType: string, eventData: Record<string, string>): void {
     console.log(`[BotEngine] Executing flow ${flow.id} ('${flow.name}') triggered by ${triggerType}`);
 
+    // Reject saturated flows before consuming the requester's cooldown.
+    const counts = this.executionCounts.get(flow.id) ?? { active: 0 };
+    if (counts.active >= MAX_CONCURRENT_PER_FLOW) {
+      console.warn(`[BotEngine] Flow ${flow.id} rate limited (${counts.active} concurrent executions)`);
+      return;
+    }
+
     const triggerNode = flow.flowData.nodes.find(n => n.id === triggerNodeId);
     const triggerData = triggerNode?.data as any;
     if (triggerType === 'command' && triggerData?.cooldownSeconds > 0) {
@@ -835,12 +842,6 @@ export class BotEngine {
       this.commandCooldowns.set(key, now + triggerData.cooldownSeconds * 1000);
     }
 
-    // Rate limiting
-    const counts = this.executionCounts.get(flow.id) ?? { active: 0 };
-    if (counts.active >= MAX_CONCURRENT_PER_FLOW) {
-      console.warn(`[BotEngine] Flow ${flow.id} rate limited (${counts.active} concurrent executions)`);
-      return;
-    }
     counts.active++;
     this.executionCounts.set(flow.id, counts);
 

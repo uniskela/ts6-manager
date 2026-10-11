@@ -1538,7 +1538,7 @@ export default function BotEditor() {
                       ) : (
                         <>
                           <Label htmlFor="delay-ms" className="text-[10px] text-muted-foreground">Delay (ms)</Label>
-                          <Input id="delay-ms" type="number" className="h-7 text-xs mt-1 font-mono-data" placeholder="5000" value={selectedNodeData.config.delayMs || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, delayMs: parseInt(e.target.value) || 0 } } : n))} />
+                          <Input id="delay-ms" type="number" className="h-7 text-xs mt-1 font-mono-data" placeholder="5000" value={selectedNodeData.config.delayMs || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, delayMs: Number.parseInt(e.target.value) || 0 } } : n))} />
                         </>
                       )}
                     </div>
