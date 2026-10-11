@@ -4,7 +4,12 @@ import type { AddressInfo } from 'node:net';
 
 const { createApp } = await import('./app.js');
 const server = createApp().listen(0, '127.0.0.1');
-await new Promise(resolve => server.once('listening', resolve));
+await new Promise<void>((resolve, reject) => {
+  const onError = (err: Error) => { server.off('listening', onListening); reject(err); };
+  const onListening = () => { server.off('error', onError); resolve(); };
+  server.once('error', onError);
+  server.once('listening', onListening);
+});
 const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
 async function login(xff?: string): Promise<number> {

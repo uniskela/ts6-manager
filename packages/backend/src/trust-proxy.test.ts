@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
@@ -13,15 +13,20 @@ const backendDir = resolve(here, '..');
 const repoDir = resolve(here, '../../..');
 
 function runFixture(scenario: string, trustProxy?: string): Record<string, number> {
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test', DATABASE_URL: 'file:./data/trust-proxy-test.db', MUSIC_DIR: mkdtempSync(resolve(tmpdir(), 'ts6-trust-proxy-')) };
+  const musicDir = mkdtempSync(resolve(tmpdir(), 'ts6-trust-proxy-'));
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test', DATABASE_URL: 'file:./data/trust-proxy-test.db', MUSIC_DIR: musicDir };
   delete env.TRUST_PROXY;
   if (trustProxy !== undefined) env.TRUST_PROXY = trustProxy;
-  const result = spawnSync(process.execPath, ['--import', 'tsx', resolve(here, 'trust-proxy.fixture.ts'), scenario], {
-    cwd: backendDir, env, encoding: 'utf8', timeout: 60_000,
-  });
-  const line = result.stdout.split('\n').find(l => l.startsWith('RESULT '));
-  assert.ok(line, `fixture failed: ${result.stderr.slice(-500)}`);
-  return JSON.parse(line.slice('RESULT '.length));
+  try {
+    const result = spawnSync(process.execPath, ['--import', 'tsx', resolve(here, 'trust-proxy.fixture.ts'), scenario], {
+      cwd: backendDir, env, encoding: 'utf8', timeout: 60_000,
+    });
+    const line = result.stdout.split('\n').find(l => l.startsWith('RESULT '));
+    assert.ok(line, `fixture failed: ${result.stderr.slice(-500)}`);
+    return JSON.parse(line.slice('RESULT '.length));
+  } finally {
+    rmSync(musicDir, { recursive: true, force: true });
+  }
 }
 
 /** Evaluate the TRUST_PROXY default line of an image entrypoint with a given inherited env. */
