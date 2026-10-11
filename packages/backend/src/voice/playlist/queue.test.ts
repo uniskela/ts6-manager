@@ -258,3 +258,13 @@ test('rejected start on an empty queue leaves it empty and idle', () => {
     assert.equal(q.next(), next);
   }
 });
+
+test('starting the same item twice never loops when its cleanup runs', () => {
+  const q = seeded(false);
+  const item = { id: 'again' };
+  const first = q.addForPlayback(item);
+  const second = q.addForPlayback(item);
+  first();
+  second();
+  assert.ok(!q.getAll().includes(item));
+});

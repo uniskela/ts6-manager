@@ -102,7 +102,9 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
       // entry; walk back to the last track still queued.
       let base = this.displaced.get(item);
       let target = base?.previous;
-      while (base && target && !this.getAll().includes(target)) {
+      const seen = new Set<T>();
+      while (base && target && !this.getAll().includes(target) && !seen.has(target)) {
+        seen.add(target);
         base = this.displaced.get(target);
         target = base?.previous;
       }
@@ -112,7 +114,9 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
         this.exhausted = base.exhausted;
         return;
       }
-      this.currentIndex = this.getAll().indexOf(target);
+      const targetIndex = this.getAll().indexOf(target);
+      if (targetIndex < 0) return;
+      this.currentIndex = targetIndex;
       this.exhausted = base.exhausted;
     };
   }
