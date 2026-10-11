@@ -82,7 +82,7 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
       {data && showUrlForm && (
         <div className="space-y-1">
           <p className="text-[10px] text-muted-foreground">
-            Public URL TeamSpeak clients use to reach this manager. Links to hosted banners start with it.
+            Address of this manager as TeamSpeak clients reach it, not an image link. Links to hosted banners start with it.
           </p>
           <div className="flex gap-2">
             <Input aria-label="Public URL" className="h-8 text-xs" value={urlDraft} placeholder="https://ts6.example.com"

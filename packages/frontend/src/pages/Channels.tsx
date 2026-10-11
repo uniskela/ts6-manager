@@ -391,6 +391,8 @@ export default function Channels() {
   const [deleteTarget, setDeleteTarget] = useState<{ cid: number; name: string } | null>(null);
   const [editTarget, setEditTarget] = useState<ChannelNode | null>(null);
   const [editForm, setEditForm] = useState<EditChannelForm>(EMPTY_EDIT_FORM);
+  // The form as loaded from the server; saving sends only the fields that differ.
+  const [editLoaded, setEditLoaded] = useState<EditChannelForm>(EMPTY_EDIT_FORM);
   const [editLoading, setEditLoading] = useState(false);
   const [newName, setNewName] = useState('');
   const [draggedCid, setDraggedCid] = useState<number | null>(null);
@@ -492,7 +494,7 @@ export default function Channels() {
 
   const handleEditOpen = async (node: ChannelNode) => {
     setEditTarget(node);
-    setEditForm({
+    const fromList: EditChannelForm = {
       channel_name: node.channel_name,
       channel_topic: node.channel_topic || '',
       channel_password: '',
@@ -500,7 +502,9 @@ export default function Channels() {
       channel_icon_id: String(node.channel_icon_id || 0),
       channel_banner_gfx_url: node.channel_banner_gfx_url || '',
       channel_banner_mode: String(node.channel_banner_mode || 0),
-    });
+    };
+    setEditForm(fromList);
+    setEditLoaded(fromList);
     if (!selectedConfigId || !selectedSid) return;
 
     setEditLoading(true);
@@ -508,7 +512,7 @@ export default function Channels() {
       const info = await channelsApi.get(selectedConfigId, selectedSid, node.cid);
       const ch = Array.isArray(info) ? info[0] : info;
       if (!ch) return;
-      setEditForm({
+      const fromInfo: EditChannelForm = {
         channel_name: ch.channel_name || node.channel_name,
         channel_topic: ch.channel_topic || '',
         channel_password: '',
@@ -516,7 +520,9 @@ export default function Channels() {
         channel_icon_id: String(ch.channel_icon_id ?? node.channel_icon_id ?? 0),
         channel_banner_gfx_url: ch.channel_banner_gfx_url || '',
         channel_banner_mode: String(ch.channel_banner_mode ?? 0),
-      });
+      };
+      setEditForm(fromInfo);
+      setEditLoaded(fromInfo);
     } catch {
       toast.error('Failed to load full channel details');
     } finally {
@@ -526,19 +532,22 @@ export default function Channels() {
 
   const handleEditSave = () => {
     if (!editTarget || !editForm.channel_name.trim()) return;
-    const data: Record<string, string | number> = {
-      channel_name: editForm.channel_name,
-      channel_topic: editForm.channel_topic,
-      channel_description: editForm.channel_description,
-      channel_banner_gfx_url: editForm.channel_banner_gfx_url,
-      channel_banner_mode: parseInt(editForm.channel_banner_mode, 10) || 0,
-    };
+    // TeamSpeak rejects the whole channeledit when any one property is refused,
+    // so send only what changed instead of every field in the dialog.
+    const data: Record<string, string | number> = {};
+    if (editForm.channel_name !== editLoaded.channel_name) data.channel_name = editForm.channel_name;
+    if (editForm.channel_topic !== editLoaded.channel_topic) data.channel_topic = editForm.channel_topic;
+    if (editForm.channel_description !== editLoaded.channel_description) data.channel_description = editForm.channel_description;
+    const bannerUrl = editForm.channel_banner_gfx_url.trim();
+    if (bannerUrl !== editLoaded.channel_banner_gfx_url) data.channel_banner_gfx_url = bannerUrl;
+    if (editForm.channel_banner_mode !== editLoaded.channel_banner_mode) data.channel_banner_mode = parseInt(editForm.channel_banner_mode, 10) || 0;
     const iconId = parseInt(editForm.channel_icon_id, 10);
-    if (Number.isFinite(iconId)) data.channel_icon_id = iconId;
+    if (Number.isFinite(iconId) && editForm.channel_icon_id !== editLoaded.channel_icon_id) data.channel_icon_id = iconId;
     if (editForm.channel_password) data.channel_password = editForm.channel_password;
+    if (Object.keys(data).length === 0) { setEditTarget(null); return; }
     editChannel.mutate({ cid: editTarget.cid, data }, {
       onSuccess: () => { toast.success('Channel updated'); setEditTarget(null); },
-      onError: () => toast.error('Failed to update channel'),
+      onError: (error) => toast.error(apiErrorMessage(error, 'Failed to update channel')),
     });
   };
 

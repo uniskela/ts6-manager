@@ -58,8 +58,9 @@ test('uploading a banner selects its public link and saving sends it as the chan
   await dialog.getByRole('button', { name: 'Use this hosted banner' }).click();
   await expect(dialog.getByPlaceholder('https://… or ts3image://…')).toHaveValue(`https://ts.example.com/api/banners/${existing}`);
   await dialog.getByRole('button', { name: 'Save' }).click();
-  await expect.poll(() => calls.filter((c) => c.method === 'PUT').map((c) => JSON.parse(c.body ?? '{}').channel_banner_gfx_url))
-    .toContain(`https://ts.example.com/api/banners/${existing}`);
+  // Only the changed field goes to TeamSpeak; untouched ones are not resent.
+  await expect.poll(() => calls.filter((c) => c.method === 'PUT').map((c) => JSON.parse(c.body ?? '{}')))
+    .toEqual([{ channel_banner_gfx_url: `https://ts.example.com/api/banners/${existing}` }]);
 });
 
 test('without a public URL the picker asks for one before banners can be chosen', async ({ page, request }) => {

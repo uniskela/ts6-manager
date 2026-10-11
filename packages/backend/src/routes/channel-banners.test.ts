@@ -104,7 +104,7 @@ test('public URL validation', () => {
   assert.deepEqual(parsePublicUrl('https://ts.example.com/'), { ok: true, value: 'https://ts.example.com' });
   assert.deepEqual(parsePublicUrl(' http://10.0.0.5:3000 '), { ok: true, value: 'http://10.0.0.5:3000' });
   assert.deepEqual(parsePublicUrl(''), { ok: true, value: null });
-  for (const bad of ['ts.example.com', 'ftp://x', 'javascript:alert(1)', 'https://u:p@x', 'https://x/?a=1', 'https://x/#y', 42]) {
+  for (const bad of ['ts.example.com', 'ftp://x', 'javascript:alert(1)', 'https://u:p@x', 'https://x/?a=1', 'https://x/#y', 'https://cdn.example.com/hero/a.jpg', 'https://x/banner.PNG', 42]) {
     assert.equal(parsePublicUrl(bad).ok, false, String(bad));
   }
 });
