@@ -226,20 +226,7 @@ func TestProbeEncodersReportsEveryEncoderOnEachSystem(t *testing.T) {
 		"darwin":  {"libvpx", "libvpx-vp9", "libx264", "h264_nvenc", "h264_videotoolbox"},
 	} {
 		setHostOS(t, goos)
-		ran := make(chan string, len(encoderOrder)*2)
-		caps := probeEncoders(func(ctx context.Context, args []string) (string, error) {
-			for i, a := range args {
-				if a == "-c:v" {
-					ran <- args[i+1]
-				}
-			}
-			return "", nil
-		})
-		close(ran)
-		got := map[string]int{}
-		for enc := range ran {
-			got[enc]++
-		}
+		caps, got := probeEncodersCountingRuns()
 		if len(got) != len(wantRun) {
 			t.Errorf("%s: test encodes ran for %v, want %v", goos, got, wantRun)
 		}
@@ -248,16 +235,43 @@ func TestProbeEncodersReportsEveryEncoderOnEachSystem(t *testing.T) {
 				t.Errorf("%s: want one test encode of %s, got %d (%v)", goos, enc, got[enc], got)
 			}
 		}
-		if len(caps.Encoders) != len(encoderOrder) {
-			t.Fatalf("%s: %d rows for %d encoders", goos, len(caps.Encoders), len(encoderOrder))
+		checkOneRowPerEncoder(t, goos, caps)
+	}
+}
+
+// probeEncodersCountingRuns probes every encoder with an ffmpeg that always
+// succeeds, and returns how often each ffmpeg encoder was test-encoded.
+func probeEncodersCountingRuns() (*EncoderCapabilities, map[string]int) {
+	ran := make(chan string, len(encoderOrder)*2)
+	caps := probeEncoders(func(ctx context.Context, args []string) (string, error) {
+		for i, a := range args {
+			if a == "-c:v" {
+				ran <- args[i+1]
+			}
 		}
-		for i, row := range caps.Encoders {
-			if row.ID != encoderOrder[i].ID {
-				t.Errorf("%s: row %d is %s, want %s", goos, i, row.ID, encoderOrder[i].ID)
-			}
-			if !row.Available && row.Error == "" {
-				t.Errorf("%s: unavailable %s has no reason", goos, row.ID)
-			}
+		return "", nil
+	})
+	close(ran)
+	got := map[string]int{}
+	for enc := range ran {
+		got[enc]++
+	}
+	return caps, got
+}
+
+// checkOneRowPerEncoder checks that caps has a row for every registered
+// encoder, in registry order, and that an unavailable one says why.
+func checkOneRowPerEncoder(t *testing.T, goos string, caps *EncoderCapabilities) {
+	t.Helper()
+	if len(caps.Encoders) != len(encoderOrder) {
+		t.Fatalf("%s: %d rows for %d encoders", goos, len(caps.Encoders), len(encoderOrder))
+	}
+	for i, row := range caps.Encoders {
+		if row.ID != encoderOrder[i].ID {
+			t.Errorf("%s: row %d is %s, want %s", goos, i, row.ID, encoderOrder[i].ID)
+		}
+		if !row.Available && row.Error == "" {
+			t.Errorf("%s: unavailable %s has no reason", goos, row.ID)
 		}
 	}
 }
