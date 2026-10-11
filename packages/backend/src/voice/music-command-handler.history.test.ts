@@ -304,7 +304,13 @@ test('rejected startup removes only its own queue entry even with duplicate IDs 
     f.bot.nowPlaying = newer;
     release();
     await replay;
-    assert.deepEqual(f.bot.queue.getAll(), removed ? [newer] : [older, newer], `shuffle=${shuffle}, removed=${removed}`);
+    // Shuffle decides where `newer` lands among upcoming tracks, so only the order
+    // without shuffle is fixed; with shuffle the exact members must still match.
+    const expected = removed ? [newer] : [older, newer];
+    const queued = f.bot.queue.getAll();
+    assert.equal(queued.length, expected.length, `shuffle=${shuffle}, removed=${removed}`);
+    if (shuffle) for (const item of expected) assert.equal(queued.filter((entry: unknown) => entry === item).length, 1);
+    else assert.deepEqual(queued, expected, `shuffle=${shuffle}, removed=${removed}`);
     assert.equal(f.bot.queue.current, newer);
     assert.deepEqual(f.saved, []);
     assert.deepEqual(f.replies, []);
