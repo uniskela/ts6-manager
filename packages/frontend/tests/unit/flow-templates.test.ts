@@ -71,6 +71,7 @@ describe('flow template graphs', () => {
     const command = flow.nodes.find((node) => node.type === 'trigger_command');
     const created = flow.nodes.find((node) => node.type === 'action_channelCreate');
     assert.equal(command?.config.command, '!support');
+    assert.equal(command?.config.cooldownSeconds, 60);
     assert.equal(created?.config.trackTempChannel, true);
     assert.equal(created?.config.cpid, '19');
     assert.equal(flow.nodes.find((node) => node.type === 'action_pokeGroup')?.config.groupId, '6');

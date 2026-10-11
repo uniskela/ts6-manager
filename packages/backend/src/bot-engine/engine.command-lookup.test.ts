@@ -106,3 +106,24 @@ test('an old execution cannot release slots belonging to a reloaded flow', async
   await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(replacement.active, 0);
 });
+
+test('support cooldown follows requester UID across reconnects and permits other requesters', async (t) => {
+  const { engine } = fixture(undefined, 'support');
+  const flow = engine.flows.get(1);
+  flow.triggerNodes[0].data.cooldownSeconds = 60;
+  const executed: string[] = [];
+  engine.flowRunner.execute = async (_flow: unknown, _node: unknown, _type: unknown, event: any) => {
+    executed.push(event.client_unique_identifier);
+  };
+  const execute = (BotEngine.prototype as any).executeFlow.bind(engine);
+  t.mock.timers.enable({ apis: ['Date'], now: 1000 });
+  execute(flow, 'command', 'command', { clid: '7', client_unique_identifier: 'ada' });
+  execute(flow, 'command', 'command', { clid: '8', client_unique_identifier: 'ada' });
+  execute(flow, 'command', 'command', { clid: '9', client_unique_identifier: 'bob' });
+  execute(flow, 'command', 'command', { clid: '10' });
+  assert.deepEqual(executed, ['ada', 'bob']);
+  t.mock.timers.setTime(61_000);
+  execute(flow, 'command', 'command', { clid: '8', client_unique_identifier: 'ada' });
+  assert.deepEqual(executed, ['ada', 'bob', 'ada']);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+});

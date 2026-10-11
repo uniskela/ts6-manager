@@ -60,6 +60,7 @@ export interface CommandTriggerData {
   commandName: string;
   description?: string;
   channelId?: string;
+  cooldownSeconds?: number;
 }
 
 // --- Action Types ---

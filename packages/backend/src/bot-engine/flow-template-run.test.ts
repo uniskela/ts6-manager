@@ -4,6 +4,7 @@ import { BOT_TEMPLATES } from '../../../frontend/src/data/bot-templates.ts';
 import { REMINDER_DELAY_CAP_MS, parseDurationMs } from './delay-limit.ts';
 import { normalizeFlowData } from './engine.ts';
 import { FlowRunner } from './flow-runner.ts';
+import { TSApiError } from '../middleware/error-handler.ts';
 
 const prisma = {
   botExecution: {
@@ -29,7 +30,7 @@ function triggerId(flowData: ReturnType<typeof templateFlow>, triggerType: strin
   return node.id;
 }
 
-async function run(id: string, config: Record<string, string>, triggerType: string, event: Record<string, string>, client: any) {
+async function run(id: string, config: Record<string, string>, triggerType: string, event: Record<string, string>, client: any, database = prisma) {
   const flowData = templateFlow(id, config);
   const waits: number[] = [];
   const original = globalThis.setTimeout;
@@ -38,7 +39,7 @@ async function run(id: string, config: Record<string, string>, triggerType: stri
     return original(cb as () => void, 0, ...(args as []));
   }) as typeof setTimeout;
   try {
-    const runner = new FlowRunner(prisma as any, { getClient: () => client } as any, { clients: new Set() } as any);
+    const runner = new FlowRunner(database as any, { getClient: () => client } as any, { clients: new Set() } as any);
     await runner.execute({
       id: 1,
       name: id,
@@ -177,7 +178,7 @@ test('reminder without text never waits or sends a message', async () => {
   }
 });
 
-test('reminder never delivers to a reused client id or an offline requester', async () => {
+test('reminder skips a known reused client id or an offline requester', async () => {
   for (const connectedUid of ['another-uid', null]) {
     const calls: string[] = [];
     const waits = await run('timed-reminder', {}, 'command', {
@@ -199,6 +200,83 @@ test('reminder with no stable requester identity never waits or sends a message'
   });
   assert.deepEqual(waits, []);
   assert.deepEqual(calls, []);
+});
+
+test('disconnected-client query errors skip reminders while permission errors fail the run', async () => {
+  for (const [eventUid, error, expectedStatus] of [
+    ['', new TSApiError(512, 'invalid clientID'), 'completed'],
+    ['requester-uid', new TSApiError(512, 'invalid clientID'), 'completed'],
+    ['requester-uid', new TSApiError(2568, 'insufficient client permissions'), 'failed'],
+  ] as const) {
+    const statuses: string[] = [];
+    const sent: string[] = [];
+    await run('timed-reminder', {}, 'command', {
+      clid: '8', command_args: '10m note', client_unique_identifier: eventUid,
+    }, {
+      execute: async () => { throw error; },
+      executePost: async (_sid: number, command: string) => { sent.push(command); return []; },
+    }, {
+      ...prisma,
+      botExecution: {
+        ...prisma.botExecution,
+        update: async ({ data }: any) => { statuses.push(data.status); return {}; },
+      },
+    } as any);
+    assert.deepEqual(sent, []);
+    assert.deepEqual(statuses, [expectedStatus]);
+  }
+});
+
+test('reminder rechecks identity immediately before delivery after message preparation', async () => {
+  let queries = 0;
+  const sent: string[] = [];
+  await run('timed-reminder', {}, 'command', {
+    clid: '8', command_args: '10m note', client_unique_identifier: 'requester-uid',
+  }, {
+    execute: async () => [{ client_unique_identifier: ++queries === 1 ? 'requester-uid' : 'other-uid' }],
+    executePost: async (_sid: number, command: string) => { sent.push(command); return []; },
+  });
+  assert.equal(queries, 2);
+  assert.deepEqual(sent, []);
+});
+
+test('one requester can hold only three reminder slots and cancellation releases them', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const flowData = templateFlow('timed-reminder', {});
+  const warnings: string[] = [];
+  let started = 0;
+  const runner = new FlowRunner({
+    ...prisma,
+    botExecutionLog: { create: async ({ data }: any) => {
+      if (data.message.startsWith('Delaying')) started++;
+      if (data.level === 'warn') warnings.push(data.message);
+      return {};
+    } },
+  } as any, { getClient: () => ({ execute: async () => [], executePost: async () => [] }) } as any, { clients: new Set() } as any);
+  const begin = (uid: string) => runner.execute({
+    id: 1, name: 'Reminder', serverConfigId: 1, virtualServerId: 1, flowData,
+  }, triggerId(flowData, 'command'), 'command', {
+    clid: '8', command_args: '1d note', client_unique_identifier: uid,
+  });
+  const pending = [begin('ada'), begin('ada'), begin('ada')];
+  try {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(started, 3);
+    await begin('ada');
+    assert.equal(started, 3);
+    assert.match(warnings.at(-1) ?? '', /3 pending reminders/);
+    pending.push(begin('bob'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(started, 4);
+    runner.cancelFlow(1);
+    await Promise.all(pending);
+    pending.push(begin('ada'));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(started, 5);
+  } finally {
+    runner.cancelAll();
+    await Promise.all(pending);
+  }
 });
 
 test('cancelling a flow clears its pending reminder and records cancellation', { timeout: 5000 }, async () => {

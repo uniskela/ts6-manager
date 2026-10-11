@@ -201,7 +201,7 @@ Execution status and logs are persisted so admins can inspect recent runs and no
 4. Action: poke the configured staff server group
 5. Schedule: the existing temporary-channel cleanup deletes the ticket channel once it is empty
 
-Import the **Support Ticket** template and set the parent channel and staff group. A command with no topic does not create a channel.
+Import the **Support Ticket** template and set the parent channel and staff group. A command with no topic does not create a channel. The command trigger permits one request per requester UID every 60 seconds; its in-memory cooldown also applies after reconnecting with a new client ID.
 
 ### Timed reminder
 
@@ -210,7 +210,9 @@ Import the **Support Ticket** template and set the parent channel and staff grou
 3. Delay: wait for the duration in the command (`30s`, `10m`, `2h`, or `1d`). Longer values wait 24 hours
 4. Action: private message to the requester with the text after the duration
 
-The template has no channel or group fields. An invalid duration or missing reminder text does not send the message. The backend checks the requester's identity before delivery so a reused client ID cannot receive their reminder; an offline requester receives nothing. Pending reminders are held in memory and do not survive a backend restart. Disabling or reloading the flow cancels pending waits. Like other flows, this template allows up to 20 concurrent executions; further requests are ignored while those slots are occupied.
+The template has no channel or group fields. An invalid duration or missing reminder text does not send the message. Each requester UID may have at most three pending reminders per flow, within the flow's 20 concurrent executions; requests beyond these limits are ignored. Pending reminders are held in memory and do not survive a backend restart. Disabling or reloading the flow cancels pending waits.
+
+The backend makes a best-effort UID check after the wait and immediately before sending, skipping known disconnected or changed recipients. TeamSpeak addresses private chat messages by a session client ID; verification and delivery are separate commands, so disconnects and client-ID reuse can still race with delivery. Avoid sensitive reminder text when that risk is unacceptable.
 
 ### Scheduled announcement
 

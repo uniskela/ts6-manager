@@ -2,7 +2,8 @@ import { Parser } from 'expr-eval-fork';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 
 function dropFirstWord(value: unknown): string {
-  return String(value ?? '').trim().replace(/^\S+(?:\s+|$)/, '').trim();
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  return String(value).trim().replace(/^\S+(?:\s+|$)/, '').trim();
 }
 
 function resolveDotPath(obj: any, path: string): any {

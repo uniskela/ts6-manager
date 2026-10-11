@@ -350,7 +350,7 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       const n1 = nid(), n2 = nid(), n3 = nid(), n4 = nid(), n5 = nid(), n6 = nid(), n7 = nid();
       return {
         nodes: [
-          makeNode(n1, 'trigger_command', 'Support Command', { command: '!support' }, 60, 80),
+          makeNode(n1, 'trigger_command', 'Support Command', { command: '!support', cooldownSeconds: 60 }, 60, 80),
           makeNode(n2, 'condition', 'Has Topic?', { expression: 'event.command_args != 0' }, 300, 80),
           makeNode(n3, 'action_channelCreate', 'Create Ticket Channel', {
             trackTempChannel: true,

@@ -16,3 +16,9 @@ test('UTC announcement placeholders use UTC on a host in another timezone', asyn
     else process.env.TZ = originalTimezone;
   }
 });
+
+test('dropFirst does not turn structured values into reminder text', async () => {
+  const ctx = new ExecutionContext({ botVariable: { findMany: async () => [] } } as any, 1, 1, 1, 1, 'command', {});
+  ctx.setTemp('object', { text: 'note' });
+  assert.equal(await ctx.evaluateCondition('length(dropFirst(temp.object)) == 0'), true);
+});

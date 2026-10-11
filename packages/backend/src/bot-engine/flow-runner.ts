@@ -21,6 +21,7 @@ import { webQueryChannelEditPacer } from './channel-edit-pacer.js';
 import crypto from 'crypto';
 import { createOwnedTempChannel, cleanupOwnedTempChannels } from './temp-channel-ownership.js';
 import { MAX_DELAY_MS, parseDurationMs, REMINDER_DELAY_CAP_MS } from './delay-limit.js';
+import { TSApiError } from '../middleware/error-handler.js';
 
 const MAX_NODE_VISITS = 100;
 
@@ -34,6 +35,8 @@ interface FlowInfo {
 
 export class FlowRunner {
   private activeRuns = new Map<number, Set<AbortController>>();
+  private pendingReminders = new Map<string, number>();
+  private channelMessageChains = new Map<string, Promise<void>>();
   private voiceBotManager: VoiceBotManager | null = null;
   /** Optional EventBridge/Query readiness probe (injected by BotEngine). */
   private channelEditReadyCheck: ((configId: number, sid: number) => boolean) | null = null;
@@ -228,58 +231,73 @@ export class FlowRunner {
       }
 
       case 'delay': {
-        const delayData = node.data as DelayNodeData;
-        let delayMs: number;
-        let requesterUid: string | undefined;
-        if (delayData.delayFromCommand) {
-          const token = String(ctx.eventData.command_args ?? '').trim().split(/\s+/)[0] ?? '';
-          const requested = parseDurationMs(token);
-          if (requested == null) {
-            await this.log(ctx, node, 'warn', 'Reminder delay is missing or invalid');
-            break;
+        let reminderKey: string | undefined;
+        try {
+          const delayData = node.data as DelayNodeData;
+          let delayMs: number;
+          let requesterUid: string | undefined;
+          if (delayData.delayFromCommand) {
+            const token = String(ctx.eventData.command_args ?? '').trim().split(/\s+/)[0] ?? '';
+            const requested = parseDurationMs(token);
+            if (requested == null) {
+              await this.log(ctx, node, 'warn', 'Reminder delay is missing or invalid');
+              break;
+            }
+            delayMs = Math.min(requested, REMINDER_DELAY_CAP_MS);
+            // Keep a stable identity for best-effort checks after the wait.
+            requesterUid = ctx.eventData.client_unique_identifier;
+            if (!requesterUid && ctx.eventData.clid) {
+              requesterUid = await this.getReminderRequesterUid(ctx, client);
+            }
+            if (!ctx.eventData.clid || !requesterUid) {
+              await this.log(ctx, node, 'warn', 'Reminder requester identity is unavailable');
+              break;
+            }
+            const key = `${ctx.flowId}:${requesterUid}`;
+            const pending = this.pendingReminders.get(key) ?? 0;
+            if (pending >= 3) {
+              await this.log(ctx, node, 'warn', 'Requester already has 3 pending reminders');
+              break;
+            }
+            reminderKey = key;
+            this.pendingReminders.set(key, pending + 1);
+          } else {
+            delayMs = Math.min(delayData.delayMs, MAX_DELAY_MS);
           }
-          delayMs = Math.min(requested, REMINDER_DELAY_CAP_MS);
-          // Client IDs may be reused after a disconnect. Keep the requester's
-          // stable identity and verify it before continuing the delayed flow.
-          requesterUid = ctx.eventData.client_unique_identifier;
-          if (!requesterUid && ctx.eventData.clid) {
-            const info = await client.execute(ctx.sid, 'clientinfo', { clid: ctx.eventData.clid });
-            requesterUid = info?.[0]?.client_unique_identifier;
-          }
-          if (!ctx.eventData.clid || !requesterUid) {
-            await this.log(ctx, node, 'warn', 'Reminder requester identity is unavailable');
-            break;
-          }
-        } else {
-          delayMs = Math.min(delayData.delayMs, MAX_DELAY_MS);
-        }
-        await this.log(ctx, node, 'info', `Delaying ${delayMs}ms`);
-        await new Promise<void>((resolve, reject) => {
+          await this.log(ctx, node, 'info', `Delaying ${delayMs}ms`);
+          await new Promise<void>((resolve, reject) => {
+            signal.throwIfAborted();
+            const onAbort = () => {
+              clearTimeout(timer);
+              reject(signal.reason);
+            };
+            const timer = setTimeout(() => {
+              signal.removeEventListener('abort', onAbort);
+              resolve();
+            }, delayMs);
+            signal.addEventListener('abort', onAbort, { once: true });
+          });
           signal.throwIfAborted();
-          const onAbort = () => {
-            clearTimeout(timer);
-            reject(signal.reason);
-          };
-          const timer = setTimeout(() => {
-            signal.removeEventListener('abort', onAbort);
-            resolve();
-          }, delayMs);
-          signal.addEventListener('abort', onAbort, { once: true });
-        });
-        signal.throwIfAborted();
-        if (requesterUid) {
-          const info = await client.execute(ctx.sid, 'clientinfo', { clid: ctx.eventData.clid });
-          if (info?.[0]?.client_unique_identifier !== requesterUid) {
-            await this.log(ctx, node, 'warn', 'Reminder requester is no longer connected; skipping delivery');
-            break;
+          if (requesterUid) {
+            if (await this.getReminderRequesterUid(ctx, client) !== requesterUid) {
+              await this.log(ctx, node, 'warn', 'Reminder requester is no longer connected; skipping delivery');
+              break;
+            }
+            ctx.setTemp('reminderRequesterUid', requesterUid);
+          }
+          const edges = this.getOutgoingEdges(node.id, flowDef);
+          for (const edge of edges) {
+            const target = this.findNode(edge.target, flowDef);
+            if (target) await visitNode(target);
+          }
+          break;
+        } finally {
+          if (reminderKey) {
+            const remaining = (this.pendingReminders.get(reminderKey) ?? 1) - 1;
+            if (remaining) this.pendingReminders.set(reminderKey, remaining);
+            else this.pendingReminders.delete(reminderKey);
           }
         }
-        const edges = this.getOutgoingEdges(node.id, flowDef);
-        for (const edge of edges) {
-          const target = this.findNode(edge.target, flowDef);
-          if (target) await visitNode(target);
-        }
-        break;
       }
 
       case 'variable': {
@@ -399,21 +417,43 @@ export class FlowRunner {
     const msg = await ctx.resolveTemplate(data.message);
     const target = data.target ? await ctx.resolveTemplate(data.target) : ctx.eventData.clid;
 
-    // TS3 channel messages always go to the query client's current channel.
-    // If a specific channel is targeted, move the query client there first, then move back.
-    if (data.targetMode === 2 && target) {
-      const whoami = await client.execute(ctx.sid, 'whoami');
-      const myClid = whoami?.[0]?.client_id;
-      const myCid = whoami?.[0]?.client_channel_id;
-      if (myClid) {
-        await client.executePost(ctx.sid, 'clientmove', { clid: myClid, cid: target });
-        await client.executePost(ctx.sid, 'sendtextmessage', { targetmode: 2, msg });
-        // Move back to original channel
-        if (myCid && String(myCid) !== String(target)) {
-          await client.executePost(ctx.sid, 'clientmove', { clid: myClid, cid: myCid });
+    if (data.targetMode === 2) {
+      // Serialize the whole move/send/restore sequence, including current-channel sends.
+      const key = `${ctx.configId}:${ctx.sid}`;
+      const previous = this.channelMessageChains.get(key) ?? Promise.resolve();
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const next = previous.then(() => gate);
+      this.channelMessageChains.set(key, next);
+      await previous;
+      try {
+        if (!target) {
+          await client.executePost(ctx.sid, 'sendtextmessage', { targetmode: 2, msg });
+          return;
         }
-        return;
+        const whoami = await client.execute(ctx.sid, 'whoami');
+        const myClid = whoami?.[0]?.client_id;
+        const myCid = whoami?.[0]?.client_channel_id;
+        if (!myClid || !myCid) throw new Error('Channel message requires the query client and original channel IDs');
+        await client.executePost(ctx.sid, 'clientmove', { clid: myClid, cid: target });
+        try {
+          await client.executePost(ctx.sid, 'sendtextmessage', { targetmode: 2, msg });
+        } finally {
+          if (String(myCid) !== String(target)) {
+            await client.executePost(ctx.sid, 'clientmove', { clid: myClid, cid: myCid });
+          }
+        }
+      } finally {
+        release();
+        if (this.channelMessageChains.get(key) === next) this.channelMessageChains.delete(key);
       }
+      return;
+    }
+
+    const reminderUid = ctx.getTemp('reminderRequesterUid');
+    if (data.targetMode === 1 && reminderUid) {
+      if (target !== ctx.eventData.clid || await this.getReminderRequesterUid(ctx, client) !== reminderUid) return;
+      // shortcut: UID verification and client-ID delivery are not atomic; require UID-addressed delivery for sensitive messages.
     }
 
     await client.executePost(ctx.sid, 'sendtextmessage', {
@@ -421,6 +461,16 @@ export class FlowRunner {
       target,
       msg,
     });
+  }
+
+  private async getReminderRequesterUid(ctx: ExecutionContext, client: WebQueryClient): Promise<string | undefined> {
+    try {
+      const info = await client.execute(ctx.sid, 'clientinfo', { clid: ctx.eventData.clid });
+      return info?.[0]?.client_unique_identifier;
+    } catch (err) {
+      if (err instanceof TSApiError && (err.code === 512 || /invalid client\s?id/i.test(err.message))) return undefined;
+      throw err;
+    }
   }
 
   private async executePoke(data: PokeActionData, ctx: ExecutionContext, client: WebQueryClient): Promise<void> {

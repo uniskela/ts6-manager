@@ -95,7 +95,7 @@ export function normalizeFlowData(raw: any): FlowDefinition {
       const cmd = config.command || '';
       const prefix = cmd.startsWith('!') ? '!' : config.commandPrefix || '!';
       const name = cmd.startsWith('!') ? cmd.substring(1) : cmd;
-      data = { triggerType: 'command', label, commandPrefix: prefix, commandName: name, channelId: config.channelId ? String(config.channelId) : undefined, };
+      data = { triggerType: 'command', label, commandPrefix: prefix, commandName: name, channelId: config.channelId ? String(config.channelId) : undefined, cooldownSeconds: Number(config.cooldownSeconds) || undefined };
     } else if (nodeType === 'action_kick') {
       type = 'action';
       data = { actionType: 'kick', label, reasonId: parseInt(config.reasonid) || 5, reasonMsg: config.reason || '' };
@@ -282,6 +282,7 @@ export class BotEngine {
   private cronJobs: CronEntry[] = [];
   private webhookEntries: WebhookEntry[] = [];
   private executionCounts: Map<number, { active: number }> = new Map();
+  private commandCooldowns = new Map<string, number>();
   private running: boolean = false;
   private musicCommandHandler: MusicCommandHandler | null = null;
   /** Stable listener so stop() does not wipe journal/music tsEvent subscribers. */
@@ -820,6 +821,20 @@ export class BotEngine {
   private executeFlow(flow: LoadedFlow, triggerNodeId: string, triggerType: string, eventData: Record<string, string>): void {
     console.log(`[BotEngine] Executing flow ${flow.id} ('${flow.name}') triggered by ${triggerType}`);
 
+    const triggerNode = flow.flowData.nodes.find(n => n.id === triggerNodeId);
+    const triggerData = triggerNode?.data as any;
+    if (triggerType === 'command' && triggerData?.cooldownSeconds > 0) {
+      const uid = eventData.client_unique_identifier;
+      if (!uid) return;
+      const now = Date.now();
+      for (const [key, expires] of this.commandCooldowns) {
+        if (expires <= now) this.commandCooldowns.delete(key);
+      }
+      const key = `${flow.id}:${triggerNodeId}:${uid}`;
+      if (this.commandCooldowns.has(key)) return;
+      this.commandCooldowns.set(key, now + triggerData.cooldownSeconds * 1000);
+    }
+
     // Rate limiting
     const counts = this.executionCounts.get(flow.id) ?? { active: 0 };
     if (counts.active >= MAX_CONCURRENT_PER_FLOW) {
@@ -830,8 +845,6 @@ export class BotEngine {
     this.executionCounts.set(flow.id, counts);
 
     // Extract timezone from the trigger node (if cron trigger has one)
-    const triggerNode = flow.flowData.nodes.find(n => n.id === triggerNodeId);
-    const triggerData = triggerNode?.data as any;
     const timezone = triggerData?.timezone as string | undefined;
 
     this.flowRunner.execute(flow, triggerNodeId, triggerType, eventData, timezone)
