@@ -2092,7 +2092,7 @@ export class VoiceBot extends EventEmitter {
     try {
       await this.sendSourceToSidecar(sourcePath, loop, target, mode, audioPath, startAt);
     } catch (err) {
-      ctl.reject(Date.now());
+      ctl.rejectFailedStart(decision, Date.now());
       // The sidecar stops the old encode before it starts the new one, so a
       // failed start can leave nothing running. Go back to what was working.
       try {

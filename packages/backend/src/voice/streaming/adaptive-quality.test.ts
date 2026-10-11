@@ -187,6 +187,37 @@ describe('adaptive Auto quality', () => {
     assert.equal(ctl.observe(slow(90), 160_000)?.to, '720p');
   });
 
+  it('backs off when the encoder does not start at the higher preset', () => {
+    const ctl = new AdaptiveQualityController('1080p');
+    ctl.commit(ctl.observe(slow(30), 0)!, 0);
+    const { recoveryMs, maxRecoveryMs } = ADAPTIVE_QUALITY_TUNING;
+    // Encoding is always healthy at 720p, but every start at 1080p fails.
+    const attempts: number[] = [];
+    for (let now = POLL_MS; now <= 4 * 3_600_000; now += POLL_MS) {
+      const decision = ctl.observe(OK, now);
+      if (!decision) continue;
+      assert.equal(decision.to, '1080p');
+      attempts.push(now);
+      ctl.rejectFailedStart(decision, now);
+    }
+    assert.equal(ctl.current, '720p');
+    const gaps = attempts.slice(1).map((at, i) => at - attempts[i]);
+    gaps.forEach((gap, i) => {
+      const window = Math.min(recoveryMs * 2 ** (i + 1), maxRecoveryMs);
+      assert.ok(gap >= window && gap <= window + 2 * POLL_MS, `attempt ${i + 2} came ${gap} ms after the last`);
+    });
+    assert.ok(attempts.length >= 5 && attempts.length <= 12, `${attempts.length} attempts in four hours`);
+  });
+
+  it('does not count a failed step down against later step-ups', () => {
+    const ctl = new AdaptiveQualityController('1080p');
+    ctl.rejectFailedStart(ctl.observe(slow(30), 0)!, 0);
+    ctl.commit(ctl.observe(slow(90), 60_000)!, 60_000);
+    let up: number | null = null;
+    for (let now = 70_000; up == null && now < 600_000; now += POLL_MS) if (ctl.observe(OK, now)) up = now;
+    assert.ok(up != null && up - 70_000 <= ADAPTIVE_QUALITY_TUNING.recoveryMs, 'the base recovery window applies');
+  });
+
   it('has nowhere to go when Auto started at the lowest preset', () => {
     const ctl = new AdaptiveQualityController('480p');
     assert.deepEqual(simulate(ctl, () => '480p', 600_000), []);

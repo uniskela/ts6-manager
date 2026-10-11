@@ -144,6 +144,15 @@ export class AdaptiveQualityController {
     this.healthySince = null;
   }
 
+  /**
+   * The encoder did not start at the decision's preset. A step up that fails
+   * this way counts like one that overloaded: the next attempt waits longer.
+   */
+  rejectFailedStart(decision: QualityDecision, nowMs: number): void {
+    if (decision.direction === 'up') this.failedUpgrades++;
+    this.reject(nowMs);
+  }
+
   /** The encoder restarted for another reason (volume): earlier healthy samples no longer count. */
   noteRestart(): void {
     this.healthySince = null;

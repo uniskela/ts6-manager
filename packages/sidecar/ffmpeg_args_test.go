@@ -126,6 +126,9 @@ func TestExtraFFmpegArgsOverrideAndReject(t *testing.T) {
 }
 
 func TestStartAtSeeksOnDemandInputsOnly(t *testing.T) {
+	// The assertions read exact argument order; keep host settings out of it.
+	t.Setenv("FFMPEG_EXTRA_INPUT_ARGS", "")
+	t.Setenv("FFMPEG_HTTP_PERSISTENT", "")
 	vod := ffmpegArgLine(SourceRequest{Source: "https://x/clip.mp4", Mode: modeVOD, StartAtSecs: 754.25})
 	if !strings.Contains(vod, "-re -ss 754.250 -i https://x/clip.mp4") {
 		t.Fatalf("vod must resume at the offset: %s", vod)

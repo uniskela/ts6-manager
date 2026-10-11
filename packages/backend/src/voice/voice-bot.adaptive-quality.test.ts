@@ -192,6 +192,35 @@ describe('adaptive Auto quality on a running stream', () => {
     assert.equal(bot.videoStreamStatus.quality?.actual, '720p');
   });
 
+  it('waits longer before each retry when the encoder will not start at the higher preset', async () => {
+    const { bot, sidecar, sources, poll } = streamingBot('auto', '1080p', 'live');
+    await poll(overloaded());
+    assert.deepEqual(sources.map((s) => s.height), [720]);
+
+    // Healthy at 720p from here on, but every start at 1080p fails.
+    const attempts: number[] = [];
+    for (let i = 0; i < 6 * 60 * 2; i++) {
+      sidecar.failSources = 1;
+      const before = sources.length;
+      await poll(health());
+      if (sources.length > before) {
+        assert.deepEqual(
+          sources.slice(before).map((s) => [s.height, !!s.failed]),
+          [[1080, true], [720, false]],
+          'a failed start goes back to 720p',
+        );
+        attempts.push(Date.now());
+      }
+    }
+    assert.equal(bot.videoStreaming, true);
+    assert.equal(bot.videoStreamStatus.quality?.actual, '720p');
+    const gaps = attempts.slice(1).map((at, i) => at - attempts[i]);
+    assert.ok(gaps.length >= 3, `${attempts.length} attempts in two hours`);
+    assert.ok(gaps[0] >= 240_000, `second attempt after ${gaps[0]} ms`);
+    assert.ok(gaps[1] >= 480_000, `third attempt after ${gaps[1]} ms`);
+    assert.ok(attempts.length <= 8, 'not a retry every two minutes');
+  });
+
   it('stops with a truthful reason when the encoder will not restart at all', async () => {
     const { bot, sidecar, sources, poll } = streamingBot('auto', '1080p', 'live');
     sidecar.failSources = 2;
