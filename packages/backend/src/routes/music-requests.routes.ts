@@ -15,6 +15,7 @@ import {
   markMusicRequestUnavailable,
   musicRequestListWhere,
   pruneMusicRequests,
+  pruneOrphanMusicRequests,
   recordMusicRequest,
   replayReference,
 } from '../voice/music-request-history.js';
@@ -29,6 +30,7 @@ musicRequestRoutes.get('/', async (req: Request, res: Response, next: NextFuncti
     if (botId !== undefined && (typeof req.query.botId !== 'string' || !Number.isSafeInteger(botId) || botId <= 0)) return res.status(400).json({ error: 'Invalid bot id' });
 
     await pruneMusicRequests(req.app.locals.prisma, configId, 0);
+    await pruneOrphanMusicRequests(req.app.locals.prisma, configId);
 
     const requests = await req.app.locals.prisma.musicRequest.findMany({
       where: musicRequestListWhere(configId, botId),
@@ -59,7 +61,7 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
 
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(botId);
-    if (!bot || bot.currentConfig.serverConfigId !== configId) throw new AppError(404, 'Music bot not found');
+    if (bot?.currentConfig.serverConfigId !== configId) throw new AppError(404, 'Music bot not found');
 
     const serverPort = bot.currentConfig.serverPort;
     const assertCurrentBot = () => {

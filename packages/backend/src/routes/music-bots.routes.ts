@@ -14,7 +14,7 @@ import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
 import { createVideoQueueRoutes } from './video-queue.routes.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
-import { canonicalRequestReference, recordMusicRequest } from '../voice/music-request-history.js';
+import { recordMusicRequests } from '../voice/music-request-history.js';
 import {
   invalidatePlaylistExpansion,
   playlistExpansionGeneration,
@@ -85,13 +85,11 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
   }
 }
 
-async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem): Promise<void> {
-  const ref = canonicalRequestReference(item);
+async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem | QueueItem[]): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
-  if (!ref || !serverConfigId) return;
+  if (!serverConfigId) return;
   try {
-    await recordMusicRequest(req.app.locals.prisma, { serverConfigId, musicBotId: bot.currentConfig.id,
-      title: item.title, artist: item.artist, duration: item.duration, ...ref });
+    await recordMusicRequests(req.app.locals.prisma, { serverConfigId, musicBotId: bot.currentConfig.id }, Array.isArray(item) ? item : [item]);
   } catch {
     console.error('[music-bots.routes] Failed to save music request history');
   }
@@ -524,7 +522,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
           },
           isIdle: () => {
             const live = manager.getBot(id);
-            return Boolean(isCurrent() && live && live.status === 'connected' && !live.nowPlaying);
+            return Boolean(isCurrent() && live?.status === 'connected' && !live.nowPlaying);
           },
           isCancelled: () => !isCurrent(),
         },
@@ -808,7 +806,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       }
     }
 
-    for (const item of items) await saveRequestHistory(req, bot, item);
+    await saveRequestHistory(req, bot, items);
     res.json({ success: true, queueLength: bot.queue.length, playError });
   } catch (err) { next(err); }
 });

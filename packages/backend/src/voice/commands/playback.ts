@@ -14,8 +14,15 @@ export async function handleRadio(
   userClid: number,
   args: string,
 ): Promise<void> {
+  const request = args ? beginChatMediaRequest(botId) : undefined;
+  const serverConfigId = bot.currentConfig.serverConfigId;
+  const virtualServerId = context.virtualServerIdForBot(botId);
+  const isCurrent = () => !request?.isCancelled() && context.voiceBotManager.getBot(botId) === bot
+    && bot.currentConfig.serverConfigId === serverConfigId
+    && context.virtualServerIdForBot(botId) === virtualServerId;
   // Get serverConfigId for this bot from DB
   const dbBot = await context.prisma.musicBot.findUnique({ where: { id: botId }, select: { serverConfigId: true } });
+  if (!isCurrent()) return;
   if (!dbBot) {
     context.reply(bot, userClid, 'Bot config not found.');
     return;
@@ -25,6 +32,7 @@ export async function handleRadio(
     where: { serverConfigId: dbBot.serverConfigId },
     orderBy: { name: 'asc' },
   });
+  if (!isCurrent()) return;
 
   if (stations.length === 0) {
     context.reply(bot, userClid, 'No radio stations configured.');
@@ -57,6 +65,7 @@ export async function handleRadio(
   }
 
   await context.joinChannelForCommand(botId, bot, userClid);
+  if (!isCurrent()) return;
 
   const queueItem: QueueItem = {
     id: `radio_${station.id}`,
@@ -68,6 +77,7 @@ export async function handleRadio(
   };
 
   await bot.playStream(queueItem, context.chatMusicSwitch(bot));
+  if (!isCurrent() || bot.nowPlaying !== queueItem) return;
   context.saveMusicRequest(bot, queueItem);
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }

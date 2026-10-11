@@ -495,7 +495,7 @@ export class MusicCommandHandler {
     return info.handleViewers(this.context, bot, userClid);
   }
 
-  private saveMusicRequest(bot: VoiceBot, item: QueueItem): void {
+  private saveMusicRequest(bot: VoiceBot, item: QueueItem | QueueItem[]): void {
     return queue.saveMusicRequest(this.context, bot, item);
   }
 }

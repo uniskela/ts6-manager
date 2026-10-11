@@ -13,6 +13,7 @@ const {
   markMusicRequestUnavailable,
   musicRequestListWhere,
   recordMusicRequest,
+  recordMusicRequests,
   pruneMusicRequests,
   replayReference,
 } = await import('./music-request-history.js');
@@ -123,4 +124,23 @@ test('temporary DNS failures keep replay retryable instead of declaring the sour
   await assert.rejects(replayReference({ url: 'https://example.test/track', source: 'url' }, {
     validateUrl: async () => ({ valid: false, error: 'Hostname "example.test" could not be resolved' }),
   }), (error: any) => error.statusCode === 503 && error.retryable === true);
+});
+
+test('playlist history writes share one transaction and one retention read', async () => {
+  const writes: any[] = [];
+  let transactions = 0, retentionReads = 0;
+  const tx = { musicRequest: {
+    upsert: async (args: any) => { writes.push(args); },
+    findMany: async () => { retentionReads++; return []; },
+  } };
+  const db: any = { $transaction: async (fn: any) => { transactions++; await fn(tx); } };
+  await recordMusicRequests(db, { serverConfigId: 1, musicBotId: 4 }, [
+    { id: 'a', title: 'First', source: 'local', filePath: 'first.ogg' },
+    { id: 'b', title: 'Second', source: 'radio', filePath: '', streamUrl: 'https://8.8.8.8/radio' },
+    { id: 'c', title: 'No reference', source: 'youtube', filePath: '' },
+  ]);
+  assert.equal(transactions, 1);
+  assert.equal(retentionReads, 1);
+  assert.deepEqual(writes.map(args => args.create.url), ['first.ogg', 'https://8.8.8.8/radio']);
+  assert.equal(writes[0].create.requestedAt, writes[1].create.requestedAt);
 });

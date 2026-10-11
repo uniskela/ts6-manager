@@ -38,7 +38,8 @@ function fixture(rows = [row(1)], status = 'connected', policy: object | null = 
   const bot: any = {
     currentConfig: { id: 1, serverConfigId: 9 }, ts3ClientId: 42, queue: new PlayQueue(), status,
     getCurrentChannelId: () => 5, assertMusicCanStart: () => {},
-    play: async (item: any) => { played.push(item); }, playStream: async (item: any) => { played.push(item); },
+    play: async (item: any) => { bot.nowPlaying = item; played.push(item); },
+    playStream: async (item: any) => { bot.nowPlaying = item; played.push(item); },
   };
   const manager: any = { getBot: () => bot };
   const handler: any = new MusicCommandHandler(prisma, manager);
@@ -46,7 +47,7 @@ function fixture(rows = [row(1)], status = 'connected', policy: object | null = 
   handler.reply = async (_bot: unknown, _id: number, message: string) => { replies.push(message); };
   handler.joinChannelForCommand = async () => { moves++; };
   handler.chatMusicSwitch = () => ({ replaceSessionIds: ['own-video'] });
-  handler.saveMusicRequest = (_bot: unknown, item: unknown) => { saved.push(item); };
+  handler.saveMusicRequest = (_bot: unknown, item: unknown) => { saved.push(...(Array.isArray(item) ? item : [item])); };
   handler.enqueueMediaUrl = async (_id: number, _bot: unknown, _clid: number, url: string) => { enqueued.push(url); };
   const command = (msg: string) => handler.onTextMessage(1, bot, { invokerid: '2', msg });
   return { command, bot, handler, manager, prisma, replies, enqueued, played, saved, marked, queries, moves: () => moves };
@@ -142,6 +143,10 @@ test('local and radio replays use normal start guards and queue while playing or
     f.bot.assertMusicCanStart = (ids: string[]) => { assert.deepEqual(ids, ['own-video']); guarded++; };
     await f.command('!again');
     assert.equal(f.bot.queue.length, 1);
+    assert.equal(f.bot.queue.getAll()[0].source, source);
+    assert.equal(f.bot.queue.getAll()[0].title, 'Request 1');
+    if (source === 'radio') assert.equal(f.bot.queue.getAll()[0].streamUrl, 'https://8.8.8.8/radio');
+    else assert.equal(f.bot.queue.getAll()[0].filePath, path.join(musicDir, 'track.ogg'));
     assert.equal(f.played.length, status === 'connected' ? 1 : 0);
     assert.equal(guarded, status === 'connected' ? 1 : 0);
     assert.equal(f.saved.length, 1);
@@ -185,5 +190,53 @@ test('stop, bot replacement and server changes discard a pending history replay'
     await replay;
     assert.deepEqual(f.enqueued, [], change);
     assert.equal(f.moves(), 0, change);
+  }
+});
+
+test('unavailable replies are discarded when the bot changes during the history update', async () => {
+  for (const change of ['stop', 'replace', 'server', 'virtual-server']) {
+    const f = fixture([row(1, { source: 'local', url: 'missing.ogg' })]);
+    let release!: () => void;
+    f.prisma.musicRequest.update = () => new Promise<void>(done => { release = done; });
+    const replay = f.command('!again');
+    await new Promise(done => setImmediate(done));
+    assert.ok(release);
+    if (change === 'stop') {
+      f.bot.stopAudio = () => {};
+      await f.command('!stop');
+    } else if (change === 'replace') f.manager.getBot = () => ({ ...f.bot });
+    else if (change === 'server') f.bot.currentConfig.serverConfigId = 10;
+    else f.handler.botChannelConfig.get(1).virtualServerId = 3;
+    const replies = [...f.replies];
+    release();
+    await replay;
+    assert.deepEqual(f.replies, replies, change);
+  }
+});
+
+test('radio and again do not record or announce playback superseded during startup', async () => {
+  for (const command of ['!radio 3', '!again']) for (const change of ['stop', 'replace', 'server', 'virtual-server', 'new-play']) {
+    const f = fixture([row(1, { source: 'radio', url: 'https://8.8.8.8/radio' })]);
+    f.prisma.radioStation = { findMany: async () => [{ id: 3, name: 'Station', url: 'https://8.8.8.8/radio' }] };
+    let release!: () => void;
+    f.bot.playStream = (item: unknown) => {
+      f.bot.nowPlaying = item;
+      return new Promise<void>(done => { release = done; });
+    };
+    const playback = f.command(command);
+    await new Promise(done => setImmediate(done));
+    assert.ok(release, command);
+    if (change === 'stop') {
+      f.bot.stopAudio = () => { f.bot.nowPlaying = null; };
+      await f.command('!stop');
+    } else if (change === 'replace') f.manager.getBot = () => ({ ...f.bot });
+    else if (change === 'server') f.bot.currentConfig.serverConfigId = 10;
+    else if (change === 'virtual-server') f.handler.botChannelConfig.get(1).virtualServerId = 3;
+    else f.bot.nowPlaying = { id: 'newer', title: 'Newer playback' };
+    const replies = [...f.replies];
+    release();
+    await playback;
+    assert.deepEqual(f.saved, [], `${command}: ${change}`);
+    assert.deepEqual(f.replies, replies, `${command}: ${change}`);
   }
 });

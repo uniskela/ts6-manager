@@ -26,6 +26,37 @@ function fakeMusic(bot: VoiceBot) {
   b._nowPlaying = { id: '1', title: 'Neon Skyline', source: 'local', filePath: '/x.mp3' };
 }
 
+describe('stale radio startup', () => {
+  for (const outcome of ['opened', 'failed']) for (const newer of [false, true]) {
+    it(`discards an ${outcome} stream after ${newer ? 'replacement' : 'stop'}`, async () => {
+      const bot = makeBot();
+      const b = bot as any;
+      b.startIcyPolling = () => {};
+      b.updateNowPlayingNickname = () => {};
+      let resolve!: (stream: unknown) => void;
+      let reject!: (error: Error) => void;
+      let killed = 0;
+      b.pipeline.toPcmStream = () => new Promise((done, fail) => { resolve = done; reject = fail; });
+      const startup = bot.playStream({ id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/radio' });
+      assert.ok(resolve);
+      bot.clearPlayback();
+      if (newer) fakeMusic(bot);
+      const token = bot.playbackToken;
+      const current = bot.nowPlaying;
+      if (outcome === 'opened') resolve({ kill: () => { killed++; } });
+      else reject(new Error('old stream failed'));
+      await startup;
+      assert.equal(killed, outcome === 'opened' ? 1 : 0);
+      assert.equal(bot.playbackToken, token);
+      assert.equal(bot.nowPlaying, current);
+      assert.equal(bot.status, newer ? 'playing' : 'connected');
+      assert.equal(b.streamKill, null);
+      assert.equal(b.playbackTimer, null);
+      bot.clearPlayback();
+    });
+  }
+});
+
 function fakeVideo(bot: VoiceBot) {
   const b = bot as any;
   b._videoStreaming = true;

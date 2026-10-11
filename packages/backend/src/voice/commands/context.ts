@@ -154,7 +154,7 @@ export interface CommandMethods {
   handleTv(bot: VoiceBot, userClid: number, args: string): Promise<void>;
   handleLyrics(bot: VoiceBot, userClid: number, args: string): Promise<void>;
   handleViewers(bot: VoiceBot, userClid: number): void;
-  saveMusicRequest(bot: VoiceBot, item: QueueItem): void;
+  saveMusicRequest(bot: VoiceBot, item: QueueItem | QueueItem[]): void;
 }
 
 /** Shared state of one handler; cooldown claims remain shared across handlers in dedupe.ts. */

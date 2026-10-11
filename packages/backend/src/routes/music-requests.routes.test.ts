@@ -28,8 +28,9 @@ function appFor(options: {
   conflict?: boolean;
   failHistoryUpdate?: boolean;
   download?: (url: string) => Promise<unknown>;
-} = {}): { app: Express; played: string[]; updates: unknown[] } {
+} = {}) {
   const played: string[] = [];
+  const queued: any[] = [];
   const updates: unknown[] = [];
   const rows = options.rows ?? [{
     id: 7, title: 'Display title', url: storedUrl, source: 'youtube', status: 'available',
@@ -53,7 +54,7 @@ function appFor(options: {
       }]);
     },
     currentConfig: { id: 3, serverConfigId: options.serverConfigId === undefined ? 1 : options.serverConfigId },
-    queue: { add: () => {}, playAt: () => {}, length: 0 },
+    queue: { add: (item: unknown) => { queued.push(item); }, playAt: () => {}, length: 0 },
     play: async (item: { filePath: string }) => { played.push(item.filePath); },
     playStream: async () => {},
   };
@@ -68,6 +69,8 @@ function appFor(options: {
       getBot: () => bot,
     };
     req.app.locals.prisma = {
+      $executeRaw: async () => 0,
+      $transaction: async (fn: any) => fn(req.app.locals.prisma),
       musicRequest: {
         findMany: async ({ skip, select, where }: any) => {
           const filtered = rows.filter(row => row.serverConfigId === where.serverConfigId
@@ -89,7 +92,7 @@ function appFor(options: {
   });
   app.use('/api/servers/:configId/music-requests', requireServerAccess(), musicRequestRoutes);
   app.use(errorHandler);
-  return { app, played, updates };
+  return { app, played, queued, updates };
 }
 
 async function request(app: Express, method: string, url: string, body?: unknown) {
@@ -110,7 +113,7 @@ async function request(app: Express, method: string, url: string, body?: unknown
 
 test('history lists source, time and status and replays the stored URL', async () => {
   const seen: string[] = [];
-  const { app } = appFor({
+  const { app, queued } = appFor({
     download: async (url) => {
       seen.push(url);
       return {
@@ -131,6 +134,9 @@ test('history lists source, time and status and replays the stored URL', async (
   const played = await request(app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3, enqueue: true });
   assert.equal(played.status, 200);
   assert.deepEqual(seen, [storedUrl]);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].sourceUrl, storedUrl);
+  assert.equal(queued[0].title, 'Track');
   assert.equal(JSON.stringify(seen).includes('Display title'), false);
 });
 
@@ -200,13 +206,16 @@ test('deleted remote sources fail cleanly and history-write failures reach the e
 });
 
 test('replay preserves explicit media-session replacement and permits enqueue without replacement', async () => {
-  const { app, played } = appFor({ conflict: true });
+  const { app, played, queued } = appFor({ conflict: true });
   const conflict = await request(app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
   assert.equal(conflict.status, 409);
   assert.equal(conflict.body.reason, 'media_session_conflict');
   assert.equal(played.length, 0);
+  assert.equal(queued.length, 0);
   assert.equal((await request(app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3, enqueue: true })).status, 200);
   assert.equal(played.length, 0);
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].sourceUrl, storedUrl);
   assert.equal((await request(app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3, replaceSessionIds: ['11111111-1111-4111-8111-111111111111'] })).status, 200);
   assert.equal(played.length, 1);
 });

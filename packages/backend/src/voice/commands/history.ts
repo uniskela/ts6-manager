@@ -9,8 +9,8 @@ import { beginChatMediaRequest, enqueueMediaItem } from './queue.js';
 // Metadata is untrusted and must not add chat markup, links, or extra lines.
 function historyText(value: string, limit: number): string {
   return value.replace(/\s+/g, ' ').replace(/[\u0000-\u001f\u007f]/g, '').slice(0, limit)
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/\[/g, '&#91;').replace(/\]/g, '&#93;').replace(/([\\*_`~|()])/g, '\\$1');
+    .replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+    .replaceAll('[', '&#91;').replaceAll(']', '&#93;').replace(/([\\*_`~|()])/g, String.raw`\$1`);
 }
 
 export async function handleHistory(
@@ -48,7 +48,7 @@ export async function handleAgain(
     && context.virtualServerIdForBot(botId) === virtualServerId;
   const config = await context.prisma.musicBot.findUnique({ where: { id: botId }, select: { serverConfigId: true, virtualServerId: true } });
   if (!isCurrent()) return;
-  if (config?.serverConfigId !== serverConfigId || config.virtualServerId !== virtualServerId) {
+  if (config?.serverConfigId !== serverConfigId || config?.virtualServerId !== virtualServerId) {
     await context.reply(bot, userClid, 'Bot config not found.'); return;
   }
   const row = await context.prisma.musicRequest.findFirst({
@@ -61,7 +61,8 @@ export async function handleAgain(
   if (!isCurrent()) return;
   if (!ref.ok) {
     await markMusicRequestUnavailable(context.prisma, row.id);
-    await context.reply(bot, userClid, MEDIA_UNAVAILABLE); return;
+    if (isCurrent()) await context.reply(bot, userClid, MEDIA_UNAVAILABLE);
+    return;
   }
   try {
     if (ref.kind === 'url') {
@@ -73,8 +74,8 @@ export async function handleAgain(
     const item = ref.kind === 'local'
       ? { id: `history_${row.id}`, title: row.title, artist: row.artist ?? undefined, duration: row.duration ?? undefined, source: 'local' as const, filePath: ref.filePath }
       : { id: `history_${row.id}`, title: row.title, artist: row.artist ?? undefined, source: 'radio' as const, filePath: '', streamUrl: ref.url };
-    const queued = await enqueueMediaItem(context, bot, item);
-    if (isCurrent()) await context.reply(bot, userClid, `${queued ? 'Queued' : 'Now playing'}: ${historyText(row.title, 70)}`);
+    const queued = await enqueueMediaItem(context, bot, item, isCurrent);
+    if (queued !== null && isCurrent()) await context.reply(bot, userClid, `${queued ? 'Queued' : 'Now playing'}: ${historyText(row.title, 70)}`);
   } catch (error) {
     if (!isCurrent()) return;
     if (!isUnavailableMusicRequestError(error)) throw error;

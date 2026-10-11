@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { PrismaClient } from '../../generated/prisma/index.js';
-import { musicRequestListWhere, recordMusicRequest } from './music-request-history.js';
+import { musicRequestListWhere, recordMusicRequest, recordMusicRequests, pruneOrphanMusicRequests } from './music-request-history.js';
 
 const prismaCli = fileURLToPath(new URL('../../node_modules/prisma/build/index.js', import.meta.url));
 const currentSchema = fileURLToPath(new URL('../../prisma/schema.prisma', import.meta.url));
@@ -51,6 +51,26 @@ test('schema upgrade and a new client preserve legacy history and bounded per-bo
     assert.equal(history.some(row => row.url === 'https://example.test/first'), false);
     assert.equal(history.filter(row => row.musicBotId === 4).every(row => row.artist === 'Artist' && row.duration === 42), true);
     assert.equal(await db.musicRequest.count({ where: { musicBotId: 8 } }), 1);
+
+    await db.musicBot.createMany({ data: [{ id: 4, serverConfigId: 1, name: 'Live' }, { id: 8, serverConfigId: 1, name: 'Deleted' }] });
+    await recordMusicRequests(db, { serverConfigId: 1, musicBotId: 4 }, [
+      { id: '1', title: 'Bulk old', source: 'local', filePath: 'old.ogg' },
+      { id: '2', title: 'Bulk first', source: 'local', filePath: 'first.ogg' },
+      { id: '3', title: 'Bulk second', source: 'local', filePath: 'second.ogg' },
+      { id: '4', title: 'Updated metadata', artist: 'New artist', source: 'local', filePath: 'second.ogg' },
+    ], 2);
+    const batch = await db.musicRequest.findMany({ where: { musicBotId: 4 } });
+    assert.deepEqual(batch.map(row => row.title).sort(), ['Bulk first', 'Updated metadata']);
+    assert.equal(batch.find(row => row.url === 'second.ogg')?.artist, 'New artist');
+
+    await db.tsServerConfig.create({ data: { id: 2, name: 'Other', host: 'other.test', apiKey: 'unused' } });
+    await recordMusicRequest(db, { ...input, serverConfigId: 2, musicBotId: 99, url: 'https://example.test/other' });
+    await db.musicBot.delete({ where: { id: 8 } });
+    await pruneOrphanMusicRequests(db, 1);
+    assert.equal(await db.musicRequest.count({ where: { serverConfigId: 1, musicBotId: 8 } }), 0);
+    assert.equal(await db.musicRequest.count({ where: { serverConfigId: 1, musicBotId: 4 } }), 2);
+    assert.equal(await db.musicRequest.count({ where: { serverConfigId: 1, musicBotId: 0 } }), 1);
+    assert.equal(await db.musicRequest.count({ where: { serverConfigId: 2 } }), 1);
   } finally {
     await db.$disconnect();
     await rm(root, { recursive: true, force: true });

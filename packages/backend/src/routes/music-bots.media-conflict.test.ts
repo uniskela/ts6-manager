@@ -61,6 +61,7 @@ describe('music routes keep the media-session conflict contract', () => {
       assertMusicCanStart: () => { asserted++; throw new MediaSessionConflictError('music', [VIDEO]); },
     };
     const prisma = {
+      $transaction: async (fn: any) => fn(prisma),
       musicRequest: {
         upsert: async (args: any) => { recorded.push(args.create); },
         findMany: async () => [],

@@ -1161,6 +1161,7 @@ export class VoiceBot extends EventEmitter {
     this.stopPlayback();
     this._nowPlaying = item;
     this._isStreaming = true;
+    const owner = this.playbackOwner;
     this._status = 'playing';
     this.streamStartTime = Date.now();
     this.emit('statusChange', this._status);
@@ -1170,6 +1171,10 @@ export class VoiceBot extends EventEmitter {
 
     try {
       const stream = await this.pipeline.toPcmStream(item.streamUrl);
+      if (owner !== this.playbackOwner) {
+        stream.kill();
+        return replaced;
+      }
       this.streamKill = stream.kill;
       this.streamChunks = [];
       this.streamChunksSize = 0;
@@ -1252,6 +1257,7 @@ export class VoiceBot extends EventEmitter {
       this.startAutoStopTimer();
     } catch (err) {
       // A failed start must not leave ICY polling running for a dead stream.
+      if (owner !== this.playbackOwner) return replaced;
       this.stopIcyPolling();
       this._isStreaming = false;
       this.streamKill = null;

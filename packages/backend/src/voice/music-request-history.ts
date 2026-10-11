@@ -1,4 +1,5 @@
 import type { QueueItem } from './playlist/queue.js';
+import type { PrismaClient } from '../../generated/prisma/index.js';
 import { resolvePathUnderMusicDir } from './streaming/video-download.js';
 import { validateUrl } from '../utils/url-validator.js';
 import { AppError } from '../middleware/error-handler.js';
@@ -63,9 +64,16 @@ export async function recordMusicRequest(
   input: { serverConfigId: number; musicBotId: number; title: string; url: string; source: string; artist?: string; duration?: number },
   limit = MUSIC_REQUEST_HISTORY_LIMIT,
 ): Promise<void> {
-  const requestedAt = new Date();
+  await db.musicRequest.upsert(requestUpsert(input, new Date()));
+  await pruneMusicRequests(db, input.serverConfigId, input.musicBotId, limit);
+}
+
+function requestUpsert(
+  input: { serverConfigId: number; musicBotId: number; title: string; url: string; source: string; artist?: string; duration?: number },
+  requestedAt: Date,
+) {
   const title = input.title || 'Unknown Title';
-  await db.musicRequest.upsert({
+  return {
     where: {
       serverConfigId_musicBotId_url: {
         serverConfigId: input.serverConfigId,
@@ -85,8 +93,35 @@ export async function recordMusicRequest(
       status: 'available',
       requestedAt,
     },
+  };
+}
+
+/** A playlist shares one write transaction and one retention pass. */
+export async function recordMusicRequests(
+  db: Pick<PrismaClient, '$transaction'>,
+  scope: { serverConfigId: number; musicBotId: number },
+  items: QueueItem[],
+  limit = MUSIC_REQUEST_HISTORY_LIMIT,
+): Promise<void> {
+  const requestedAt = new Date();
+  const writes = items.flatMap(item => {
+    const ref = canonicalRequestReference(item);
+    return ref ? [requestUpsert({ ...scope, ...ref, title: item.title, artist: item.artist, duration: item.duration }, requestedAt)] : [];
   });
-  await pruneMusicRequests(db, input.serverConfigId, input.musicBotId, limit);
+  if (!writes.length) return;
+  await db.$transaction(async tx => {
+    await Promise.all(writes.map(args => tx.musicRequest.upsert(args)));
+    await pruneMusicRequests(tx, scope.serverConfigId, scope.musicBotId, limit);
+  });
+}
+
+/** Legacy rows have no bot; remove only scoped history of bots that no longer exist. */
+export async function pruneOrphanMusicRequests(db: Pick<PrismaClient, '$executeRaw'>, serverConfigId: number): Promise<void> {
+  await db.$executeRaw`DELETE FROM "MusicRequest"
+    WHERE "serverConfigId" = ${serverConfigId} AND "musicBotId" > 0
+    AND NOT EXISTS (SELECT 1 FROM "MusicBot"
+      WHERE "MusicBot"."id" = "MusicRequest"."musicBotId"
+        AND "MusicBot"."serverConfigId" = "MusicRequest"."serverConfigId")`;
 }
 
 export async function pruneMusicRequests(
@@ -113,8 +148,10 @@ export function markMusicRequestUnavailable(db: MusicRequestHistoryDb, id: numbe
 }
 
 export function isUnavailableMusicRequestError(error: unknown): boolean {
-  return error instanceof Error && !/^(?:yt-dlp|ffmpeg|ffprobe) not found|ENOENT/i.test(error.message)
-    && /(?:video|media|track|song|file|source).*(?:unavailable|removed|deleted|not found)|(?:unavailable|removed|deleted) (?:video|media|track|song)|HTTP (?:Error )?(?:404|410)|private video/i.test(error.message);
+  if (!(error instanceof Error) || /^(?:yt-dlp|ffmpeg|ffprobe) not found/i.test(error.message) || /ENOENT/i.test(error.message)) return false;
+  return /(?:video|media|track|song|file|source).*(?:unavailable|removed|deleted|not found)/i.test(error.message)
+    || /(?:unavailable|removed|deleted) (?:video|media|track|song)/i.test(error.message)
+    || /HTTP (?:Error )?(?:404|410)|private video/i.test(error.message);
 }
 
 export async function replayReference(
