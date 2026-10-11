@@ -427,6 +427,10 @@ type EncoderCapabilities struct {
 	VaapiDevicePresent bool                 `json:"vaapiDevicePresent"`
 	HwDecode           bool                 `json:"hwDecode"`
 	Encoders           []EncoderProbeResult `json:"encoders"`
+	// AV1HwDecode is whether FFmpeg decodes AV1 on a GPU here (any entry of
+	// AV1Decode). Streams use it only with VIDEO_HW_DECODE=1.
+	AV1HwDecode bool             `json:"av1HwDecode"`
+	AV1Decode   []AV1DecodeProbe `json:"av1Decode"`
 }
 
 func (c *EncoderCapabilities) find(id string) (EncoderProbeResult, bool) {
@@ -603,6 +607,7 @@ type capabilityCache struct {
 	list      ffmpegEncoderList
 	listPath  string
 	listAsked bool
+	av1  av1DecodeCache
 }
 
 func (c *capabilityCache) runner() probeRunner {
@@ -636,9 +641,21 @@ func (c *capabilityCache) get(refresh bool) *EncoderCapabilities {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.caps == nil || refresh {
-		c.caps = probeEncodersIn(c.runner(), c.encoderListLocked(refresh))
+		run := c.runner()
+		caps := probeEncodersIn(run, c.encoderListLocked(refresh))
+		caps.AV1Decode = c.av1.probeAll(run, caps, refresh)
+		for _, r := range caps.AV1Decode {
+			caps.AV1HwDecode = caps.AV1HwDecode || r.Available
+		}
+		c.caps = caps
 	}
 	return c.caps
+}
+
+// av1Decode is the cached AV1 test decode for hwaccel and device, run on first
+// use.
+func (c *capabilityCache) av1Decode(hwaccel, device string) AV1DecodeProbe {
+	return c.av1.get(c.runner(), hwaccel, device, false)
 }
 
 func (c *capabilityCache) peek() *EncoderCapabilities {

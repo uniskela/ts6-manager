@@ -1381,6 +1381,15 @@ type SourceRequest struct {
 	// the sidecar itself when the source turns out to have none
 	// (restartWithSilenceIfNoAudio), never by a request.
 	SilentAudio bool
+	// VideoCodec is the codec family of the source's video when the backend
+	// knows it (av1, vp9, h264; "" = unknown). See av1GPUDecoder.
+	VideoCodec string
+	// av1Hwaccel forces FFmpeg's own AV1 decoder on the video input, decoding
+	// on this hwaccel. Set per launch from encoderAttempt, never by a request.
+	av1Hwaccel string
+	// av1FallbackReason starts an AV1 source on libdav1d because the GPU
+	// failed to decode it (restartOnLibdav1dIfAV1Fails). Never set by a request.
+	av1FallbackReason string
 	// StartAtSecs resumes an on-demand source at this offset, so a restart for
 	// a quality change does not replay it from the beginning. Ignored for live.
 	StartAtSecs float64
@@ -1408,7 +1417,13 @@ type EncoderSession struct {
 	State          string     `json:"state"`
 	ExitError      string     `json:"exitError,omitempty"`
 	StartedAt      *time.Time `json:"startedAt,omitempty"`
-	gen            uint64
+	// Decoder names the video decoder for an AV1 source: "av1 (vaapi)" or
+	// "av1 (cuda)" on the GPU, "libdav1d" on the CPU. Empty for other sources.
+	Decoder string `json:"decoder,omitempty"`
+	// DecoderFallbackReason is why an AV1 source that started on the GPU
+	// decoder was started again on libdav1d.
+	DecoderFallbackReason string `json:"decoderFallbackReason,omitempty"`
+	gen                   uint64
 }
 
 // streamHealth reports encode speed and drops for the current run (nil when idle).
@@ -1569,6 +1584,11 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			// from the offset once, then loops from its start.
 			if mode != modeLive && req.StartAtSecs > 0 {
 				args = append(args, "-ss", strconv.FormatFloat(req.StartAtSecs, 'f', 3, 64))
+			}
+			// Like the hardware decoder, FFmpeg's own AV1 decoder is for the
+			// video input only.
+			if input == source && req.av1Hwaccel != "" && spec.Hardware && hwDecodeEnabled() {
+				args = append(args, "-c:v", "av1")
 			}
 			args = append(args, "-i", input)
 		}
@@ -1737,6 +1757,15 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 	s.streamCodec.Store(requested.Codec)
 
 	attempt := s.firstEncoderAttempt(requested)
+	if req.av1FallbackReason != "" {
+		attempt.av1Source = true
+		attempt.decoderFallbackReason = req.av1FallbackReason
+	} else {
+		attempt.av1Hwaccel, attempt.av1Source = s.av1GPUDecoder(req, attempt.spec)
+	}
+	if attempt.av1Hwaccel != "" {
+		log.Printf("[FFmpeg] AV1 source: decoding on the GPU (%s)", attempt.av1Hwaccel)
+	}
 	for {
 		gen, done, tail, err := s.launchAttemptLocked(req, requested, attempt)
 		if err != nil {
@@ -1746,9 +1775,23 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 		if mayLackAudio(req) {
 			go s.restartWithSilenceIfNoAudio(req, gen, done, tail)
 		}
+		if attempt.av1Hwaccel != "" {
+			go s.restartOnLibdav1dIfAV1Fails(req, attempt.av1Hwaccel, gen, done, tail)
+		}
 
-		if !attempt.spec.Hardware || survivedStartup(done) {
+		if !attempt.spec.Hardware {
 			return s.encoderSession(), nil
+		}
+		if survivedStartup(done) {
+			if attempt.av1Hwaccel == "" || !av1DecodeFailed(tail) {
+				return s.encoderSession(), nil
+			}
+			// FFmpeg's own AV1 decoder can keep running while the GPU
+			// fails every frame: stop it, and go on as if it had exited.
+			if s.ffmpeg != nil && s.ffmpeg.Process != nil {
+				s.ffmpeg.Process.Kill()
+			}
+			<-done
 		}
 
 		s.ffmpeg = nil
@@ -1788,6 +1831,12 @@ type encoderAttempt struct {
 	// triedLowPowerToggle is set once no flip of lowPower is left to try
 	// before the software fallback.
 	triedLowPowerToggle bool
+	// av1Hwaccel is the GPU FFmpeg's own AV1 decoder runs on ("" = FFmpeg's
+	// default decoder); av1Source is set for an AV1 source either way.
+	av1Hwaccel string
+	av1Source  bool
+	// decoderFallbackReason is why the AV1 source no longer decodes on the GPU.
+	decoderFallbackReason string
 }
 
 // firstEncoderAttempt picks the encoder for the first launch: the requested
@@ -1835,11 +1884,20 @@ func (s *Sidecar) firstEncoderAttempt(requested EncoderSpec) encoderAttempt {
 }
 
 // afterHardwareFailure returns the attempt that follows a hardware encoder
-// exiting during startup with reason: the other low-power mode once, then the
-// software encoder of the same codec.
+// exiting during startup with reason. With FFmpeg's own AV1 decoder forced,
+// the same encoder again on libdav1d first: the test decode passed, but the
+// GPU may still not decode this source (another profile, a driver fault).
+// Then the other low-power mode once, then the software encoder of the same
+// codec.
 func (a encoderAttempt) afterHardwareFailure(reason string) encoderAttempt {
 	if reason == "" {
 		reason = "hardware encoder exited during startup"
+	}
+	if a.av1Hwaccel != "" {
+		log.Printf("[FFmpeg] AV1 did not decode on the GPU (%s): %s; starting again on the CPU decoder (libdav1d)", a.av1Hwaccel, reason)
+		a.av1Hwaccel = ""
+		a.decoderFallbackReason = reason
+		return a
 	}
 	if !a.triedLowPowerToggle {
 		a.triedLowPowerToggle = true
@@ -1861,17 +1919,20 @@ func (s *Sidecar) launchAttemptLocked(req SourceRequest, requested EncoderSpec, 
 	now := time.Now().UTC()
 	s.statusMu.Lock()
 	s.encoder = EncoderSession{
-		Requested:      requested.ID,
-		Active:         a.spec.ID,
-		Codec:          a.spec.Codec,
-		Hardware:       a.spec.Hardware,
-		FallbackReason: a.fallbackReason,
-		State:          "running",
-		StartedAt:      &now,
-		gen:            gen,
+		Requested:             requested.ID,
+		Active:                a.spec.ID,
+		Codec:                 a.spec.Codec,
+		Hardware:              a.spec.Hardware,
+		FallbackReason:        a.fallbackReason,
+		Decoder:               decoderLabel(a),
+		DecoderFallbackReason: a.decoderFallbackReason,
+		State:                 "running",
+		StartedAt:             &now,
+		gen:                   gen,
 	}
 	s.statusMu.Unlock()
 
+	req.av1Hwaccel = a.av1Hwaccel
 	args := s.buildFFmpegArgs(req, a.spec, a.lowPower)
 	mode := resolveSourceMode(req.Mode, req.Source)
 	startAt := 0.0
@@ -2151,6 +2212,9 @@ func main() {
 			CpuUsed int `json:"cpuUsed"`
 			// StartAtSecs resumes an on-demand source at this offset.
 			StartAtSecs float64 `json:"startAtSecs"`
+			// VideoCodec is the source's video codec when the backend knows it
+			// (av1, vp9, h264); empty when it does not.
+			VideoCodec string `json:"videoCodec"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -2161,6 +2225,10 @@ func main() {
 			return
 		}
 		if err := validAudioSource(req.Source, req.AudioSource); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if err := validVideoCodec(req.VideoCodec); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
@@ -2198,6 +2266,7 @@ func main() {
 			AllowedHosts: req.AllowedHosts,
 			CpuUsed:      req.CpuUsed,
 			StartAtSecs:  clampStartAt(req.StartAtSecs),
+			VideoCodec:   req.VideoCodec,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)

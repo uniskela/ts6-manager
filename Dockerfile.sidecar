@@ -2,7 +2,7 @@ FROM golang:1.26-bookworm AS build
 WORKDIR /src
 COPY packages/sidecar/go.mod packages/sidecar/go.sum ./
 RUN go mod download
-COPY packages/sidecar/*.go ./
+COPY packages/sidecar/*.go packages/sidecar/av1_probe.ivf ./
 # The backend compares this with its own version (docs/public/native-sidecar.md).
 COPY version.txt /tmp/version.txt
 RUN CGO_ENABLED=0 go build \
@@ -13,10 +13,25 @@ FROM debian:bookworm-slim
 # mesa-va-drivers (all arches) and intel-media-va-driver (amd64) back optional
 # VAAPI encoders when /dev/dri is passed through (see docs/video-streaming.md).
 # Software encoding is unaffected when no device is mapped.
-RUN apt-get update && \
+# The Intel driver is Debian's free build by default. INTEL_VAAPI_DRIVER=nonfree
+# installs intel-media-va-driver-non-free from Debian's non-free component
+# instead, which many Intel GPUs need to decode AV1 (see "AV1 decoding" in
+# docs/public/video-streaming.md). Any other value fails the build, and so does
+# a non-free component that could not be enabled.
+ARG INTEL_VAAPI_DRIVER=free
+RUN case "$INTEL_VAAPI_DRIVER" in \
+      free) INTEL_VAAPI_PACKAGE=intel-media-va-driver ;; \
+      nonfree) INTEL_VAAPI_PACKAGE=intel-media-va-driver-non-free ;; \
+      *) echo "INTEL_VAAPI_DRIVER must be free or nonfree, not '$INTEL_VAAPI_DRIVER'" >&2; exit 1 ;; \
+    esac && \
+    if [ "$(dpkg --print-architecture)" = "amd64" ] && [ "$INTEL_VAAPI_DRIVER" = "nonfree" ]; then \
+      sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources && \
+      grep -q '^Components: main non-free$' /etc/apt/sources.list.d/debian.sources; \
+    fi && \
+    apt-get update && \
     apt-get upgrade -y && \
     VAAPI_PACKAGES="mesa-va-drivers" && \
-    if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="$VAAPI_PACKAGES intel-media-va-driver"; fi && \
+    if [ "$(dpkg --print-architecture)" = "amd64" ]; then VAAPI_PACKAGES="$VAAPI_PACKAGES $INTEL_VAAPI_PACKAGE"; fi && \
     apt-get install -y --no-install-recommends ffmpeg ca-certificates $VAAPI_PACKAGES && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 COPY --from=build /sidecar /usr/local/bin/sidecar
