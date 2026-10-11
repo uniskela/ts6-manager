@@ -20,9 +20,9 @@ import { ALLOWED_WEBQUERY_COMMANDS } from './command-whitelist.js';
 import { webQueryChannelEditPacer } from './channel-edit-pacer.js';
 import crypto from 'crypto';
 import { createOwnedTempChannel, cleanupOwnedTempChannels } from './temp-channel-ownership.js';
+import { MAX_DELAY_MS, parseDurationMs, REMINDER_DELAY_CAP_MS } from './delay-limit.js';
 
 const MAX_NODE_VISITS = 100;
-const MAX_DELAY_MS = 300000; // 5 minutes
 
 interface FlowInfo {
   id: number;
@@ -33,6 +33,7 @@ interface FlowInfo {
 }
 
 export class FlowRunner {
+  private activeRuns = new Map<number, Set<AbortController>>();
   private voiceBotManager: VoiceBotManager | null = null;
   /** Optional EventBridge/Query readiness probe (injected by BotEngine). */
   private channelEditReadyCheck: ((configId: number, sid: number) => boolean) | null = null;
@@ -51,12 +52,40 @@ export class FlowRunner {
     this.channelEditReadyCheck = check;
   }
 
+  cancelFlow(flowId: number): void {
+    for (const controller of this.activeRuns.get(flowId) ?? []) controller.abort();
+  }
+
+  cancelAll(): void {
+    for (const flowId of this.activeRuns.keys()) this.cancelFlow(flowId);
+  }
+
   async execute(
     flow: FlowInfo,
     triggerNodeId: string,
     triggerType: string,
     eventData: Record<string, string>,
     timezone?: string,
+  ): Promise<void> {
+    const controller = new AbortController();
+    const runs = this.activeRuns.get(flow.id) ?? new Set<AbortController>();
+    this.activeRuns.set(flow.id, runs);
+    runs.add(controller);
+    try {
+      await this.executeRun(flow, triggerNodeId, triggerType, eventData, timezone, controller.signal);
+    } finally {
+      runs.delete(controller);
+      if (runs.size === 0) this.activeRuns.delete(flow.id);
+    }
+  }
+
+  private async executeRun(
+    flow: FlowInfo,
+    triggerNodeId: string,
+    triggerType: string,
+    eventData: Record<string, string>,
+    timezone: string | undefined,
+    signal: AbortSignal,
   ): Promise<void> {
     const execution = await this.prisma.botExecution.create({
       data: {
@@ -99,14 +128,16 @@ export class FlowRunner {
 
       let nodeVisits = 0;
       const visitNode = async (node: FlowNode): Promise<void> => {
+        signal.throwIfAborted();
         nodeVisits++;
         if (nodeVisits > MAX_NODE_VISITS) {
           throw new Error(`Max node visits (${MAX_NODE_VISITS}) exceeded — possible infinite loop`);
         }
-        await this.processNode(node, flow.flowData, ctx, client, visitNode);
+        await this.processNode(node, flow.flowData, ctx, client, visitNode, signal);
       };
 
       await visitNode(triggerNode);
+      signal.throwIfAborted();
 
       await this.prisma.botExecution.update({
         where: { id: execution.id },
@@ -120,6 +151,16 @@ export class FlowRunner {
         serverConfigId: flow.serverConfigId,
       });
     } catch (err: any) {
+      if (signal.aborted) {
+        await this.prisma.botExecution.update({
+          where: { id: execution.id },
+          data: { status: 'cancelled', endedAt: new Date() },
+        });
+        this.broadcast('bot:execution:complete', {
+          flowId: flow.id, executionId: execution.id, status: 'cancelled', serverConfigId: flow.serverConfigId,
+        });
+        return;
+      }
       await this.log(ctx, null, 'error', `Flow execution failed: ${err.message}`);
 
       await this.prisma.botExecution.update({
@@ -142,6 +183,7 @@ export class FlowRunner {
     ctx: ExecutionContext,
     client: WebQueryClient,
     visitNode: (node: FlowNode) => Promise<void>,
+    signal: AbortSignal,
   ): Promise<void> {
     await this.log(ctx, node, 'debug', `Processing node '${node.data.label}' (type=${node.type})`);
 
@@ -187,9 +229,51 @@ export class FlowRunner {
 
       case 'delay': {
         const delayData = node.data as DelayNodeData;
-        const delayMs = Math.min(delayData.delayMs, MAX_DELAY_MS);
+        let delayMs: number;
+        let requesterUid: string | undefined;
+        if (delayData.delayFromCommand) {
+          const token = String(ctx.eventData.command_args ?? '').trim().split(/\s+/)[0] ?? '';
+          const requested = parseDurationMs(token);
+          if (requested == null) {
+            await this.log(ctx, node, 'warn', 'Reminder delay is missing or invalid');
+            break;
+          }
+          delayMs = Math.min(requested, REMINDER_DELAY_CAP_MS);
+          // Client IDs may be reused after a disconnect. Keep the requester's
+          // stable identity and verify it before continuing the delayed flow.
+          requesterUid = ctx.eventData.client_unique_identifier;
+          if (!requesterUid && ctx.eventData.clid) {
+            const info = await client.execute(ctx.sid, 'clientinfo', { clid: ctx.eventData.clid });
+            requesterUid = info?.[0]?.client_unique_identifier;
+          }
+          if (!ctx.eventData.clid || !requesterUid) {
+            await this.log(ctx, node, 'warn', 'Reminder requester identity is unavailable');
+            break;
+          }
+        } else {
+          delayMs = Math.min(delayData.delayMs, MAX_DELAY_MS);
+        }
         await this.log(ctx, node, 'info', `Delaying ${delayMs}ms`);
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await new Promise<void>((resolve, reject) => {
+          signal.throwIfAborted();
+          const onAbort = () => {
+            clearTimeout(timer);
+            reject(signal.reason);
+          };
+          const timer = setTimeout(() => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          }, delayMs);
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+        signal.throwIfAborted();
+        if (requesterUid) {
+          const info = await client.execute(ctx.sid, 'clientinfo', { clid: ctx.eventData.clid });
+          if (info?.[0]?.client_unique_identifier !== requesterUid) {
+            await this.log(ctx, node, 'warn', 'Reminder requester is no longer connected; skipping delivery');
+            break;
+          }
+        }
         const edges = this.getOutgoingEdges(node.id, flowDef);
         for (const edge of edges) {
           const target = this.findNode(edge.target, flowDef);

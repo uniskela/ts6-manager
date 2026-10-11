@@ -151,7 +151,7 @@ Templates support these namespaces:
 - `{{time.hours}}`, `{{time.time}}`, `{{time.date}}`, etc. — timezone-aware time values
 - `{{exec.flowId}}`, `{{exec.executionId}}`, `{{exec.configId}}`, `{{exec.sid}}`, `{{exec.triggerType}}` — execution metadata
 
-Nested JSON access is supported for applicable event/temp values. Template filters currently include `uptime`, `round`, and `floor`, for example:
+Nested JSON access is supported for applicable event/temp values. Template filters currently include `uptime`, `round`, `floor`, and `dropFirst` (everything after the first word), for example:
 
 ```text
 {{event.client_idle_time|uptime}}
@@ -162,7 +162,7 @@ Nested JSON access is supported for applicable event/temp values. Template filte
 
 ## Delays and execution limits
 
-Delay nodes are capped by the backend at **5 minutes per delay node**. The flow runner also caps node visits at **100 per execution** to stop accidental infinite traversal/loops.
+Delay nodes are capped by the backend at **5 minutes per delay node**. The timed reminder template is the exception: it reads a duration from `!remind` (`30s`, `10m`, `2h`, `1d`) and will not wait longer than **24 hours**, so a run cannot sit for days. The flow runner also caps node visits at **100 per execution** to stop accidental infinite traversal/loops.
 
 Execution status and logs are persisted so admins can inspect recent runs and node-level messages from the UI/API.
 
@@ -192,6 +192,32 @@ Execution status and logs are persisted so admins can inspect recent runs and no
 
 1. Trigger: suitable client/channel event or schedule
 2. Action: temporary-channel cleanup using the configured parent/protected channel IDs
+
+### Support ticket
+
+1. Trigger: chat command `!support` plus a topic
+2. Action: create a tracked semi-permanent channel under the configured parent, named for the requester, with the topic on the channel
+3. Action: move the requester into that channel
+4. Action: poke the configured staff server group
+5. Schedule: the existing temporary-channel cleanup deletes the ticket channel once it is empty
+
+Import the **Support Ticket** template and set the parent channel and staff group. A command with no topic does not create a channel.
+
+### Timed reminder
+
+1. Trigger: chat command `!remind 10m <text>`
+2. Condition: the command includes both a duration and reminder text
+3. Delay: wait for the duration in the command (`30s`, `10m`, `2h`, or `1d`). Longer values wait 24 hours
+4. Action: private message to the requester with the text after the duration
+
+The template has no channel or group fields. An invalid duration or missing reminder text does not send the message. The backend checks the requester's identity before delivery so a reused client ID cannot receive their reminder; an offline requester receives nothing. Pending reminders are held in memory and do not survive a backend restart. Disabling or reloading the flow cancels pending waits. Like other flows, this template allows up to 20 concurrent executions; further requests are ignored while those slots are occupied.
+
+### Scheduled announcement
+
+1. Trigger: cron schedule (daily, hourly, or Monday morning) with a timezone
+2. Action: post the configured message to the whole server or one channel
+
+The default message is `Announcement {{time.date}}`. Import the **Scheduled Announcement** template, keep or edit that placeholder, and pick a channel only when the audience is a single channel.
 
 ### Chat command bot
 

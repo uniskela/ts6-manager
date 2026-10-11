@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { BOT_TEMPLATES, TEMPLATE_CATEGORIES, type BotTemplate } from '@/data/bot-templates';
+import { BOT_TEMPLATES, TEMPLATE_CATEGORIES, templateConfigError, type BotTemplate } from '@/data/bot-templates';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,16 +42,14 @@ export function TemplateGallery({ open, onOpenChange, onSelect }: TemplateGaller
     setConfig(defaults);
   };
 
+  const configError = selected ? templateConfigError(selected, config) : null;
+
   const handleCreate = () => {
-    if (!selected) return;
+    if (!selected || configError) return;
     const flowData = selected.flowDataFactory(config);
     onSelect(selected.name, selected.description, flowData);
     handleClose(false);
   };
-
-  const isValid = selected
-    ? selected.configFields.filter(f => f.required).every(f => config[f.key]?.trim())
-    : false;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -128,7 +126,7 @@ export function TemplateGallery({ open, onOpenChange, onSelect }: TemplateGaller
                   <div className="space-y-3">
                     {selected.configFields.map((field) => (
                       <div key={field.key}>
-                        <Label className="text-[10px] text-muted-foreground">
+                        <Label htmlFor={`template-${field.key}`} className="text-[10px] text-muted-foreground">
                           {field.label} {field.required && <span className="text-destructive">*</span>}
                         </Label>
                         {field.type === 'select' ? (
@@ -136,7 +134,7 @@ export function TemplateGallery({ open, onOpenChange, onSelect }: TemplateGaller
                             value={config[field.key] || field.defaultValue || ''}
                             onValueChange={(v) => setConfig(prev => ({ ...prev, [field.key]: v }))}
                           >
-                            <SelectTrigger className="h-7 text-xs mt-1"><SelectValue /></SelectTrigger>
+                            <SelectTrigger id={`template-${field.key}`} className="h-7 text-xs mt-1"><SelectValue /></SelectTrigger>
                             <SelectContent>
                               {field.options?.map(opt => (
                                 <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
@@ -145,6 +143,7 @@ export function TemplateGallery({ open, onOpenChange, onSelect }: TemplateGaller
                           </Select>
                         ) : (
                           <Input
+                            id={`template-${field.key}`}
                             type={field.type === 'number' ? 'number' : 'text'}
                             className="h-7 text-xs mt-1 font-mono-data"
                             placeholder={field.placeholder}
@@ -160,9 +159,10 @@ export function TemplateGallery({ open, onOpenChange, onSelect }: TemplateGaller
             </div>
 
             <div className="p-6 pt-2">
+              {configError && <p role="alert" className="text-[10px] text-destructive mb-2">{configError}</p>}
               <DialogFooter>
                 <Button variant="outline" size="sm" onClick={handleBack}>Back</Button>
-                <Button size="sm" onClick={handleCreate} disabled={selected.configFields.length > 0 && !isValid}>
+                <Button size="sm" onClick={handleCreate} disabled={!!configError}>
                   Create Bot
                 </Button>
               </DialogFooter>

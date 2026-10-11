@@ -200,6 +200,7 @@ export function PlaceholderReference({ open, onOpenChange }: Props) {
               <P code="uptime" desc="Converts seconds to readable uptime" example='{{temp.server.virtualserver_uptime|uptime}} → "5d 3h 42m"' />
               <P code="round" desc="Rounds to nearest integer" example='{{temp.value|round}} → "42"' />
               <P code="floor" desc="Rounds down to integer" example='{{temp.value|floor}} → "41"' />
+              <P code="dropFirst" desc="Text after the first word" example='{{event.command_args|dropFirst}}' />
             </TabsContent>
 
             {/* ========== FUNCTIONS ========== */}
@@ -214,6 +215,7 @@ export function PlaceholderReference({ open, onOpenChange }: Props) {
               <P code="upper(str)" desc="Convert to uppercase" />
               <P code="length(str)" desc="String length" example="length(event.msg) > 100" />
               <P code="split(str, sep, idx)" desc="Split string and get element at index" example="split(event.command_args, ' ', 0)" />
+              <P code="dropFirst(str)" desc="Text after the first word" example="length(dropFirst(event.command_args)) > 0" />
 
               <SectionHeader>Condition Examples</SectionHeader>
               <div className="text-xs text-muted-foreground space-y-1 mt-1">

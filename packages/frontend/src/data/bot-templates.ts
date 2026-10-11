@@ -1,4 +1,4 @@
-import { Clock, Users, Shield, Globe, Zap, MessageSquare, Moon, Timer, Megaphone, Award, FolderPlus, Eye, Webhook, Sparkles } from 'lucide-react';
+import { AlarmClock, Bell, CalendarClock, Clock, Users, Shield, Globe, Zap, MessageSquare, Moon, Timer, Megaphone, Award, FolderPlus, Eye, Webhook, Sparkles } from 'lucide-react';
 
 export interface TemplateConfigField {
   key: string;
@@ -17,12 +17,28 @@ export interface BotTemplate {
   category: 'info-channels' | 'moderation' | 'automation' | 'integration';
   icon: React.ElementType;
   configFields: TemplateConfigField[];
+  /** Extra checks beyond non-empty required fields (numeric ids, conditional channel). */
+  validateConfig?: (config: Record<string, string>) => string | null;
   flowDataFactory: (config: Record<string, string>) => { nodes: any[]; edges: any[] };
 }
 
+export function templateConfigError(template: BotTemplate, config: Record<string, string>): string | null {
+  for (const field of template.configFields) {
+    if (field.required && !String(config[field.key] ?? '').trim()) return `${field.label} is required`;
+  }
+  return template.validateConfig?.(config) ?? null;
+}
+
+function requireNumericId(value: string | undefined, label: string): string | null {
+  if (!/^[1-9]\d*$/.test((value ?? '').trim())) return `${label} must be a numeric id`;
+  return null;
+}
+
+const ANNOUNCEMENT_SCHEDULES = ['0 9 * * *', '0 * * * *', '0 9 * * 1'] as const;
+
 let _id = 0;
 const nid = () => `tpl_${++_id}`;
-const eid = () => `tpl_e${_id}`;
+const eid = () => `tpl_e${++_id}`;
 
 function resetIds() { _id = 0; }
 
@@ -317,6 +333,127 @@ export const BOT_TEMPLATES: BotTemplate[] = [
       };
     },
   },
+  {
+    id: 'support-ticket',
+    name: 'Support Ticket',
+    description: 'On !support <topic>, creates a tracked temporary channel, moves the user into it, and pokes a staff group. Empty tracked channels are removed by the existing cleanup.',
+    category: 'automation',
+    icon: Bell,
+    configFields: [
+      { key: 'parentChannelId', label: 'Parent Channel ID', type: 'number', placeholder: '19', required: true },
+      { key: 'staffGroupId', label: 'Staff Group ID', type: 'number', placeholder: '6', required: true },
+    ],
+    validateConfig: (cfg) => requireNumericId(cfg.parentChannelId, 'Parent Channel ID')
+      || requireNumericId(cfg.staffGroupId, 'Staff Group ID'),
+    flowDataFactory: (cfg) => {
+      resetIds();
+      const n1 = nid(), n2 = nid(), n3 = nid(), n4 = nid(), n5 = nid(), n6 = nid(), n7 = nid();
+      return {
+        nodes: [
+          makeNode(n1, 'trigger_command', 'Support Command', { command: '!support' }, 60, 80),
+          makeNode(n2, 'condition', 'Has Topic?', { expression: 'event.command_args != 0' }, 300, 80),
+          makeNode(n3, 'action_channelCreate', 'Create Ticket Channel', {
+            trackTempChannel: true,
+            channel_name: 'Support: {{event.client_nickname}}',
+            channel_topic: '{{event.command_args}}',
+            cpid: String(cfg.parentChannelId),
+            channel_flag_semi_permanent: '1',
+          }, 540, 40),
+          makeNode(n4, 'action_move', 'Move Requester', { cid: '{{temp.lastCreatedChannelId}}' }, 780, 40),
+          makeNode(n5, 'action_pokeGroup', 'Poke Staff', {
+            groupId: cfg.staffGroupId,
+            message: 'Support ticket from {{event.client_nickname}}: {{event.command_args}}',
+          }, 1020, 40),
+          makeNode(n6, 'trigger_cron', 'Cleanup Timer', { cron: '* * * * *' }, 60, 220),
+          makeNode(n7, 'action_tempChannelCleanup', 'Delete Empty Tickets', {
+            parentChannelId: String(cfg.parentChannelId),
+            protectedChannelIds: cfg.parentChannelId,
+          }, 300, 220),
+        ],
+        edges: [
+          makeEdge(eid(), n1, n2),
+          makeEdge(eid(), n2, n3, 'true', 'in'),
+          makeEdge(eid(), n3, n4),
+          makeEdge(eid(), n4, n5),
+          makeEdge(eid(), n6, n7),
+        ],
+      };
+    },
+  },
+  {
+    id: 'timed-reminder',
+    name: 'Timed Reminder',
+    description: 'On !remind 10m <text>, privately messages the requester after that delay. Waits longer than 24 hours are capped so a run cannot wait for days.',
+    category: 'automation',
+    icon: AlarmClock,
+    configFields: [],
+    flowDataFactory: () => {
+      resetIds();
+      const n1 = nid(), n2 = nid(), n3 = nid(), n4 = nid();
+      return {
+        nodes: [
+          makeNode(n1, 'trigger_command', 'Remind Command', { command: '!remind' }, 60, 80),
+          makeNode(n2, 'condition', 'Has Reminder Text?', { expression: 'length(dropFirst(event.command_args)) > 0' }, 300, 80),
+          makeNode(n3, 'delay', 'Wait', { delayFromCommand: true }, 540, 40),
+          makeNode(n4, 'action_message', 'Private Reminder', { targetMode: 'client', message: '{{event.command_args|dropFirst}}' }, 780, 40),
+        ],
+        edges: [
+          makeEdge(eid(), n1, n2),
+          makeEdge(eid(), n2, n3, 'true', 'in'),
+          makeEdge(eid(), n3, n4),
+        ],
+      };
+    },
+  },
+  {
+    id: 'scheduled-announcement',
+    name: 'Scheduled Announcement',
+    description: 'Posts a message to one channel or the whole server on a schedule. Use {{time.date}} where the date should appear.',
+    category: 'automation',
+    icon: CalendarClock,
+    configFields: [
+      { key: 'message', label: 'Message', type: 'text', placeholder: 'Announcement {{time.date}}', defaultValue: 'Announcement {{time.date}}', required: true },
+      { key: 'cron', label: 'Schedule', type: 'select', defaultValue: '0 9 * * *', required: true, options: [
+        { label: 'Daily at 09:00', value: '0 9 * * *' },
+        { label: 'Hourly', value: '0 * * * *' },
+        { label: 'Mondays at 09:00', value: '0 9 * * 1' },
+      ] },
+      { key: 'timezone', label: 'Timezone', type: 'select', defaultValue: 'UTC', options: [
+        { label: 'UTC', value: 'UTC' },
+        { label: 'Europe/Berlin (CET/CEST)', value: 'Europe/Berlin' },
+        { label: 'Europe/London (GMT/BST)', value: 'Europe/London' },
+        { label: 'America/New_York (EST/EDT)', value: 'America/New_York' },
+      ] },
+      { key: 'audience', label: 'Audience', type: 'select', defaultValue: 'server', options: [
+        { label: 'Whole server', value: 'server' },
+        { label: 'One channel', value: 'channel' },
+      ] },
+      { key: 'channelId', label: 'Channel ID', type: 'number', placeholder: '12' },
+    ],
+    validateConfig: (cfg) => {
+      if (!ANNOUNCEMENT_SCHEDULES.includes((cfg.cron || '0 9 * * *').trim() as typeof ANNOUNCEMENT_SCHEDULES[number])) {
+        return 'Choose a schedule';
+      }
+      if ((cfg.audience || 'server') === 'channel') return requireNumericId(cfg.channelId, 'Channel ID');
+      return null;
+    },
+    flowDataFactory: (cfg) => {
+      resetIds();
+      const n1 = nid(), n2 = nid();
+      const channel = cfg.audience === 'channel';
+      return {
+        nodes: [
+          makeNode(n1, 'trigger_cron', 'Announcement Schedule', { cron: cfg.cron || '0 9 * * *', timezone: cfg.timezone || 'UTC' }, 60, 80),
+          makeNode(n2, 'action_message', 'Announce', {
+            targetMode: channel ? 'channel' : 'server',
+            ...(channel ? { target: cfg.channelId } : {}),
+            message: cfg.message || 'Announcement {{time.date}}',
+          }, 320, 80),
+        ],
+        edges: [makeEdge(eid(), n1, n2)],
+      };
+    },
+  },
 
   // ===== MODERATION =====
   {
@@ -544,6 +681,6 @@ export const BOT_TEMPLATES: BotTemplate[] = [
 export const TEMPLATE_CATEGORIES = [
   { id: 'info-channels', label: 'Info Channels', description: 'Dynamic channel names with live data' },
   { id: 'moderation', label: 'Moderation', description: 'Automated moderation and protection' },
-  { id: 'automation', label: 'Automation', description: 'Welcome messages, temp channels, ranking' },
+  { id: 'automation', label: 'Automation', description: 'Welcome messages, tickets, reminders, announcements' },
   { id: 'integration', label: 'Integration', description: 'External APIs and webhooks' },
 ] as const;

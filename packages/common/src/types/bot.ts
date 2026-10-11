@@ -241,6 +241,8 @@ export interface DelayNodeData {
   nodeType: 'delay';
   label: string;
   delayMs: number;
+  /** Read a duration such as 10m from the first command argument. */
+  delayFromCommand?: boolean;
 }
 
 // --- Variable ---

@@ -1,6 +1,10 @@
 import { Parser } from 'expr-eval-fork';
 import type { PrismaClient } from '../../generated/prisma/index.js';
 
+function dropFirstWord(value: unknown): string {
+  return String(value ?? '').trim().replace(/^\S+(?:\s+|$)/, '').trim();
+}
+
 function resolveDotPath(obj: any, path: string): any {
   const parts = path.split('.');
   let current = obj;
@@ -15,11 +19,11 @@ function getTimeValues(timezone?: string): Record<string, string | number> {
   const now = new Date();
   const pad = (n: number) => String(n).padStart(2, '0');
 
-  if (timezone && timezone !== 'UTC') {
+  if (timezone) {
     try {
       const fmt = (opts: Intl.DateTimeFormatOptions) =>
         new Intl.DateTimeFormat('en-US', { ...opts, timeZone: timezone }).format(now);
-      const hours = Number(fmt({ hour: 'numeric', hour12: false }));
+      const hours = Number(fmt({ hour: 'numeric', hourCycle: 'h23' }));
       const minutes = Number(fmt({ minute: 'numeric' }));
       const seconds = Number(fmt({ second: 'numeric' }));
       const day = Number(fmt({ day: 'numeric' }));
@@ -82,6 +86,7 @@ export class ExecutionContext {
     this.exprParser.functions.lower = (str: string) => String(str).toLowerCase();
     this.exprParser.functions.upper = (str: string) => String(str).toUpperCase();
     this.exprParser.functions.length = (str: string) => String(str).length;
+    this.exprParser.functions.dropFirst = dropFirstWord;
     this.exprParser.functions.split = (str: string, sep: string, index: number) => {
       const parts = String(str).split(String(sep));
       return parts[index] ?? '';
@@ -103,6 +108,7 @@ export class ExecutionContext {
       }
       case 'round': return String(Math.round(parseFloat(value) || 0));
       case 'floor': return String(Math.floor(parseFloat(value) || 0));
+      case 'dropFirst': return dropFirstWord(value);
       default: return value;
     }
   }

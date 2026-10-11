@@ -1530,8 +1530,14 @@ export default function BotEditor() {
 
                   {selectedNodeData.type === 'delay' && (
                     <div>
-                      <Label className="text-[10px] text-muted-foreground">Delay (ms)</Label>
-                      <Input type="number" className="h-7 text-xs mt-1 font-mono-data" placeholder="5000" value={selectedNodeData.config.delayMs || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, delayMs: parseInt(e.target.value) || 0 } } : n))} />
+                      {selectedNodeData.config.delayFromCommand ? (
+                        <p className="text-xs text-muted-foreground">Waits for the first command argument, such as 10m or 2h, up to 24 hours. The requester must stay connected.</p>
+                      ) : (
+                        <>
+                          <Label className="text-[10px] text-muted-foreground">Delay (ms)</Label>
+                          <Input type="number" className="h-7 text-xs mt-1 font-mono-data" placeholder="5000" value={selectedNodeData.config.delayMs || ''} onChange={(e) => setNodes((prev) => prev.map((n) => n.id === selectedNode ? { ...n, config: { ...n.config, delayMs: parseInt(e.target.value) || 0 } } : n))} />
+                        </>
+                      )}
                     </div>
                   )}
 
