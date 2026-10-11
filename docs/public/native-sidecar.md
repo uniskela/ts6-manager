@@ -184,11 +184,31 @@ The sidecar never assumes an encoder exists. **Check encoders** (Media Library �
 |---|---|---|
 | Windows | H.264 AMF (AMD), H.264 NVENC (NVIDIA) | VP8, VP9, H.264 |
 | Linux | H.264 / VP8 / VP9 VAAPI (Intel, AMD), H.264 NVENC (NVIDIA) | VP8, VP9, H.264 |
-| macOS | None yet. H.264 VideoToolbox is planned as a separate change | VP8, VP9, H.264 |
+| macOS | H.264 VideoToolbox (Apple Silicon, and Intel Macs with a hardware H.264 encoder). **Not verified on Apple hardware**, see [below](#videotoolbox-on-macos) | VP8, VP9, H.264 |
 
 Only codecs the TeamSpeak client renders are selectable. HEVC and AV1 are not offered even when FFmpeg lists them.
 
+An encoder the host's operating system cannot have is not test-encoded: VideoToolbox anywhere but macOS, and AMF on macOS. **Check encoders** lists it as unavailable with that reason, and a stream that asks for it starts on software H.264. What a Linux or Windows sidecar reports for VAAPI, NVENC and AMF is unchanged.
+
 Setup for each encoder is under [Video streaming → Encoders](video-streaming.md#encoders). For a native sidecar the Docker-specific steps (device passthrough, the NVIDIA compose override) do not apply; the host driver and an FFmpeg build with that encoder are what matter.
+
+### VideoToolbox on macOS
+
+> **Not verified on Apple hardware.** The project has not run H.264 VideoToolbox on any Mac, Intel or Apple Silicon. Its FFmpeg arguments, the capability check and the fallback to software H.264 are covered by unit tests on Linux only. Whether a real TeamSpeak client or the browser preview plays its output, and whether a viewer who joins a running stream gets a picture, is **unverified**. Use it as a test feature until someone has confirmed it, and keep H.264 (software) as the encoder to return to.
+
+If you have a Mac, these are the checks that are still open. Results are welcome on [#253](https://github.com/uniskela/ts6-manager/issues/253).
+
+1. `ffmpeg -hide_banner -encoders | grep videotoolbox` lists `h264_videotoolbox` for the FFmpeg in `FFMPEG_PATH`.
+2. **Check encoders** shows **H.264 (VideoToolbox)** as available. If it does not, open **ffmpeg output** on that row and keep the text.
+3. Start a stream with **H.264 (VideoToolbox)** selected. The stream panel shows `H.264 (VideoToolbox)`, with no `→ H.264 (software)` after it.
+4. A TeamSpeak client in the channel shows the picture, with sound, within a few seconds. A black picture with working sound is the failure to look for.
+5. The browser preview in the web UI shows the same stream.
+6. A second TeamSpeak client that opens the stream a minute after it started gets a picture too (late join).
+7. With quality on **Auto**, the stream keeps playing through an automatic quality change, and also when you pick another preset by hand.
+8. Activity Monitor shows `ffmpeg` at a low CPU share compared with H.264 (software) at the same preset, which is the sign that the hardware encoder is in use.
+9. When the sidecar runs from the launchd daemon rather than a terminal, steps 2 to 4 give the same result.
+
+Please include the Mac model, the macOS version and `ffmpeg -version` in a report.
 
 ## What has and has not been verified
 
@@ -203,6 +223,8 @@ Release archives are compiled for every platform in the table above, and CI runs
 | Windows x64, AMF | Not verified on AMD hardware by the project, including TeamSpeak playback and late joins ([#361](https://github.com/uniskela/ts6-manager/issues/361)) |
 | Windows x64, NVENC | Not verified |
 | macOS Intel and Apple Silicon, software encoders | Compiled only. Not run on macOS |
+| macOS Intel and Apple Silicon, H.264 VideoToolbox | **Not verified.** Arguments, capability check and software fallback are unit-tested on Linux. Never run on Apple hardware; TeamSpeak playback, browser preview and late joins are unconfirmed ([checklist](#videotoolbox-on-macos)) |
+| VideoToolbox from the launchd daemon (no user session) | Not verified |
 | systemd unit, launchd plist, Windows scheduled task | Written from each platform's documentation. Not exercised on real hosts |
 | Windows task with `-Trigger Startup` and a GPU encoder | Not verified |
 | Docker Desktop backend reaching a native sidecar | Described for Windows in [Video streaming](video-streaming.md#amd-amf-windows). Not verified on macOS |

@@ -31,8 +31,8 @@ These seed the **Streaming defaults** shown to admins on the Video Stream tab. A
 |---|---|---|
 | `VIDEO_NO_VIEWER_TIMEOUT_SECONDS` | `300` | Stop a video stream no TeamSpeak client has open for this long; `0` disables. Separate from the channel-empty stop (`BOT_AUTO_STOP_EMPTY_SECONDS`) |
 | `VIDEO_AUTO_MAX_PRESET` | `1080p` | Highest preset **Auto** quality may pick (`720p`–`2160p`); Balanced profile default |
-| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi`, `h264_nvenc`, `h264_amf` |
-| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first hardware encoder (VAAPI / NVENC / AMF) that passes the sidecar test encode |
+| `VIDEO_ENCODER` | `auto` | Default encoder: `auto`, `vp8`, `vp9`, `h264`, `vp8_vaapi`, `vp9_vaapi`, `h264_vaapi`, `h264_nvenc`, `h264_amf`, `h264_videotoolbox` (native macOS sidecar only; not yet verified on Apple hardware) |
+| `VIDEO_PREFER_HARDWARE` | `false` | Let `auto` use the first hardware encoder (VAAPI / NVENC / AMF / VideoToolbox) that passes the sidecar test encode |
 | `VIDEO_MAX_BITRATE_KBPS` | `4500` | Clamp every stream bitrate (kbps); `0` = no clamp. Balanced profile default is `4500` |
 | `VIDEO_ENCODE_PROFILE` | `balanced` | `performance`, `balanced`, `quality`, or `custom` — expands into Auto max, bitrate clamp, and encode speed |
 | `VIDEO_CPU_USED` | `4` | Default libvpx `-cpu-used` when no admin profile/cpuUsed is stored (higher = faster) |
@@ -89,8 +89,8 @@ The values below are code defaults. Compose files may override them.
 | `VIDEO_NVENC_PRESET` | `p4` | NVENC preset for `h264_nvenc` (`p1` fastest … `p7` best quality) |
 | `VAAPI_DEVICE` | `/dev/dri/renderD128` | Render node used by VAAPI encoders |
 | `VAAPI_LOW_POWER` | `0` | Try the low-power (VDEnc) entrypoint first; the capability probe also retries it automatically |
-| `VAAPI_VERIFY_MS` | `1500` | How long a hardware encoder must survive startup before the sidecar trusts it (otherwise it falls back to software) |
-| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`, or `-hwaccel cuda` with NVENC); ffmpeg falls back to software decode for unsupported codecs. AMF currently uses software decode and uploads NV12 frames from system memory; this setting does not enable AMF hardware decode. With VAAPI, the decoded frames also stay on the GPU and are scaled there (`scale_vaapi`), see `VIDEO_GPU_FILTERS` |
+| `VAAPI_VERIFY_MS` | `1500` | How long a hardware encoder must survive startup before the sidecar trusts it (otherwise it falls back to software). Despite the name it applies to every hardware encoder: VAAPI, NVENC, AMF and VideoToolbox |
+| `VIDEO_HW_DECODE` | `0` | Set to `1` to also decode the source on the GPU (`-hwaccel vaapi`, or `-hwaccel cuda` with NVENC); ffmpeg falls back to software decode for unsupported codecs. AMF currently uses software decode and uploads NV12 frames from system memory; this setting does not enable AMF hardware decode. VideoToolbox also decodes in software and ignores this setting. With VAAPI, the decoded frames also stay on the GPU and are scaled there (`scale_vaapi`), see `VIDEO_GPU_FILTERS` |
 | `VIDEO_GPU_FILTERS` | on | With VAAPI and `VIDEO_HW_DECODE=1`, keep the decoded frames in GPU memory and scale them with `scale_vaapi` instead of copying them back for the CPU filters. `0` copies them back (the behaviour before). Has no effect without `VIDEO_HW_DECODE=1` |
 
 For a native Windows sidecar, set `WEBRTC_UDP_PORT` directly in the Windows process (typically `10000`) and advertise a Windows LAN/Tailscale IPv4 reachable by viewers via `WEBRTC_NAT1TO1_IP`. There is no Docker UDP publication and `WEBRTC_BIND_IP` has no effect on the native process. Permit the HTTP TCP port only from the backend, and the WebRTC UDP port from intended viewers; do not expose the HTTP API publicly. See [AMD AMF (Windows)](video-streaming.md#amd-amf-windows) for supported production deployment and the separate PR-test setup.

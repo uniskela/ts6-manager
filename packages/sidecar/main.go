@@ -1806,7 +1806,12 @@ func (s *Sidecar) firstEncoderAttempt(requested EncoderSpec) encoderAttempt {
 	if !requested.Hardware {
 		return a
 	}
-	switch {
+	switch reason := backendUnsupportedReason(requested.Backend); {
+	case reason != "":
+		// Not on this operating system: there is nothing to launch and wait
+		// for, whether or not the capability check has run yet.
+		a.fallbackReason = reason
+		a.spec = softwareEncoderFor(requested.Codec)
 	case capsKnown && probe.Available:
 		a.lowPower = probe.LowPower
 	case capsKnown:

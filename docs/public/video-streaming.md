@@ -76,8 +76,11 @@ Streaming defaults also offer **Performance / Balanced / Quality** profiles (def
 | VP8 / VP9 / H.264 (VAAPI) | same | GPU encode through VAAPI; H.264 uses Constrained High as well |
 | H.264 (NVENC) | H.264 | GPU encode on NVIDIA; Constrained High. NVIDIA has no VP8 or VP9 encoder |
 | H.264 (AMF) | H.264 | AMD GPU encode with a native Windows sidecar and AMF-enabled FFmpeg; explicitly requests Constrained High (`-profile:v constrained_high`) with no B frames for TeamSpeak |
+| H.264 (VideoToolbox) | H.264 | Apple hardware encode with a [native macOS sidecar](native-sidecar.md); High profile with no B frames. **Not yet verified on Apple hardware**, see [Apple VideoToolbox (macOS)](#apple-videotoolbox-macos) |
 
-**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, H.264 on AMF, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
+**Auto** uses software VP8, unless *Auto prefers hardware* is enabled: then it uses the first hardware encoder (H.264 on VAAPI, H.264 on NVENC, H.264 on AMF, H.264 on VideoToolbox, then VP9 and VP8 on VAAPI) that passed the sidecar's test encode.
+
+VideoToolbox is test-encoded only when the sidecar runs on macOS, and AMF is not test-encoded there. On any other system **Check encoders** shows the VideoToolbox row as unavailable with the reason "VideoToolbox is only available on macOS", without running FFmpeg. VAAPI, NVENC and AMF are checked on Linux and Windows exactly as before.
 
 If a hardware encoder cannot open the device or exits during startup, the sidecar restarts with the software encoder **of the same codec** (so connected viewers keep working) and the stream panel shows the fallback and its reason. Use **Check encoders** under *Streaming defaults* to run the test encodes on demand; routine status polling never runs them.
 
@@ -174,6 +177,25 @@ Invoke-RestMethod http://localhost:9800/health
 # For the PR-test container; adapt the container name for your deployment:
 docker exec ts6-pr-backend curl -fsS http://host.docker.internal:9800/health
 ```
+
+### Apple VideoToolbox (macOS)
+
+> **Not verified on Apple hardware.** This encoder has been checked by unit tests only. It has not been run on an Intel or Apple Silicon Mac, and playback of its output in a TeamSpeak client and in the browser preview is unconfirmed. If viewers get a black picture, switch to H.264 (software) and report it. The open checks are listed under [Native media sidecar → VideoToolbox on macOS](native-sidecar.md#videotoolbox-on-macos).
+
+VideoToolbox is available when the media sidecar runs **natively on macOS**. A Linux container cannot use it, so the Docker sidecar always shows the row as unavailable. Install the sidecar as described in [Native media sidecar](native-sidecar.md) and use an FFmpeg build that includes `h264_videotoolbox` (Homebrew's does):
+
+```bash
+ffmpeg -hide_banner -encoders | grep videotoolbox
+```
+
+Open *Streaming defaults* → **Check encoders** and confirm **H.264 (VideoToolbox)** passes, then select it or enable *Auto prefers hardware*.
+
+- **Profile.** The sidecar requests High profile with no B frames (`-profile:v high -bf 0`), the same as for libx264, VAAPI and NVENC, and viewers are offered Constrained High as for every H.264 encoder.
+- **Hardware only.** `-allow_sw 0` makes FFmpeg fail instead of encoding on the CPU. On a Mac without a hardware H.264 encoder the test encode therefore fails.
+- **Fallback.** If the test encode failed, or the encoder exits while a stream starts, the stream runs on H.264 software (`libx264`) and the stream panel shows the reason. This also applies each time **Auto** quality restarts the encoder at another preset. A restart tries VideoToolbox again unless **Check encoders** has already found it unavailable.
+- **Late joiners.** FFmpeg's VideoToolbox encoder puts SPS and PPS in front of every keyframe when it writes RTP, so no extra option is set. A keyframe that arrives without them is still covered: the sidecar puts the parameter sets it last saw in the stream in front of a late joiner's first keyframe, as it does for the other H.264 encoders. That needs them in the stream at least once. This is how FFmpeg's source reads; it has not been observed on a Mac.
+- **Decoding.** The source is decoded and scaled on the CPU. `VIDEO_HW_DECODE` and `VIDEO_GPU_FILTERS` do not apply to VideoToolbox.
+- HEVC and ProRes VideoToolbox encoders are not offered.
 
 ### Windows AMF PR-test
 

@@ -96,6 +96,16 @@ describe('video streaming settings', () => {
     assert.equal(parseServerOverrides({ defaultEncoder: 'h264_amf' }).defaultEncoder, 'h264_amf');
   });
 
+  it('accepts VideoToolbox in env defaults, stored settings, updates and server overrides', () => {
+    const id = 'h264_videotoolbox';
+    assert.equal(videoStreamingDefaults({ VIDEO_ENCODER: id }).defaultEncoder, id);
+    assert.equal(parseVideoStreamingSettings(new Map([[VIDEO_DEFAULT_ENCODER_KEY, id]])).defaultEncoder, id);
+    const update = parseVideoStreamingUpdate({ defaultEncoder: id });
+    assert.ok(update.ok);
+    assert.equal(update.rows.find((r) => r.key === VIDEO_DEFAULT_ENCODER_KEY)?.value, id);
+    assert.equal(parseServerOverrides({ defaultEncoder: id }).defaultEncoder, id);
+  });
+
   it('marks custom when Advanced knobs diverge from a named profile', () => {
     const settings = parseVideoStreamingSettings(
       new Map([

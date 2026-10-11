@@ -4,6 +4,10 @@ This archive holds the optional native build of the TS6 Manager media sidecar.
 Docker remains the recommended way to run TS6 Manager; use this build when the
 sidecar needs the host's GPU encoders (AMF, NVENC, VAAPI, VideoToolbox).
 
+H.264 VideoToolbox on macOS has not been verified on Apple hardware. Run
+**Check encoders** before relying on it; the documentation below lists what is
+still to be tested.
+
 The binary must come from the same release as the backend it serves. Check it
 with `ts6-media-sidecar --version`.
 

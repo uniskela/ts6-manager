@@ -36,6 +36,7 @@ export const ENCODER_LABELS: Record<VideoEncoderId, string> = {
   h264_vaapi: 'H.264 (VAAPI)',
   h264_nvenc: 'H.264 (NVENC)',
   h264_amf: 'H.264 (AMF)',
+  h264_videotoolbox: 'H.264 (VideoToolbox)',
 };
 
 export const ENCODER_OPTIONS: ReadonlyArray<{ value: VideoEncoderRequest; label: string }> = [
@@ -51,7 +52,7 @@ export function autoEncoderPreferenceLabel(preferHardware: boolean): string {
 /** Short helper for Video options / Streaming defaults. */
 export function autoEncoderPreferenceHint(preferHardware: boolean): string {
   return preferHardware
-    ? 'Auto picks the first working hardware encoder (VAAPI, NVENC, or AMF), then falls back to VP8 software. Per-stream Auto uses this same preference.'
+    ? 'Auto picks the first working hardware encoder (VAAPI, NVENC, AMF, or VideoToolbox), then falls back to VP8 software. Per-stream Auto uses this same preference.'
     : 'Auto uses VP8 software unless "Auto prefers hardware" is enabled in Streaming defaults. Per-stream Auto inherits that setting.';
 }
 
