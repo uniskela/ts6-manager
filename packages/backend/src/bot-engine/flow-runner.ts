@@ -439,7 +439,7 @@ export class FlowRunner {
           previous.then(() => {
             signal.removeEventListener('abort', onAbort);
             resolve();
-          });
+          }).catch(reject);
         });
         signal.throwIfAborted();
         if (!target) {
