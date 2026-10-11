@@ -3,6 +3,10 @@ set -e
 export SIDECAR_URL="${SIDECAR_URL:-http://127.0.0.1:9800}"
 SP="${SIDECAR_PORT:-9800}"
 
+# nginx runs in this container and reaches the backend over loopback, so trusting
+# exactly loopback is precise. An explicit TRUST_PROXY (including "none") wins.
+export TRUST_PROXY="${TRUST_PROXY:-loopback}"
+
 i=0
 while [ "$i" -lt 60 ]; do
   if nc -z 127.0.0.1 "$SP" 2>/dev/null; then
