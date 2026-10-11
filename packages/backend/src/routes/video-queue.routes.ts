@@ -105,10 +105,15 @@ export function createVideoQueueRoutes(deps: { expandYouTube?: typeof expandYouT
       const willStart = !bot.videoStreaming;
       const replaceSessionIds = willStart ? options.replaceSessionIds ?? [] : [];
       if (willStart) manager.assertVideoCanStart(bot, replaceSessionIds);
+      // The stream can start or stop between the check above and this add's turn
+      // in the queue, so the queue reports what it actually did and the audit row
+      // is corrected to match.
+      let didStart: boolean | undefined;
       const result = await runMediaAudited(
         req, bot, willStart ? 'media.video.start' : 'media.video.queue_add',
-        () => queue.enqueue(items, options),
+        () => queue.enqueue(items, options, (started) => { didStart = started; }),
         replaceSessionIds,
+        () => (didStart === undefined ? undefined : didStart ? 'media.video.start' : 'media.video.queue_add'),
       );
       if (result.started && options.volume != null) {
         await saveBotVolume(req.app.locals.prisma, bot.currentConfig.id, bot.currentConfig.volume);

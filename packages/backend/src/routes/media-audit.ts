@@ -40,6 +40,8 @@ export async function runMediaAudited<T>(
   action: MediaAction,
   dispatch: () => Promise<T>,
   replaceSessionIds: string[] = [],
+  /** For a dispatch whose kind is only known once it runs: the action it actually performed. */
+  resolveAction?: () => MediaAction | undefined,
 ): Promise<T> {
   const isStart = action === 'media.music.start' || action === 'media.video.start';
   const isSwitch = isStart && replaceSessionIds.length > 0;
@@ -63,7 +65,12 @@ export async function runMediaAudited<T>(
         target: { type: 'music_bot', id: bot.id },
       },
       dispatch,
-      isSwitch ? { relatedAfter: () => replacedSessionRows(manager, actor, replaced) } : undefined,
+      isSwitch || resolveAction
+        ? {
+          ...(isSwitch ? { relatedAfter: () => replacedSessionRows(manager, actor, replaced) } : {}),
+          ...(resolveAction && !isSwitch ? { resolveAction } : {}),
+        }
+        : undefined,
     );
   } finally {
     manager?.off('mediaSessionReplaced', onReplaced);
