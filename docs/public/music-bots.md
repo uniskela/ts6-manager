@@ -85,7 +85,7 @@ Choosing **None** clears the avatar and asks TeamSpeak to delete the uploaded fi
 
 History stays in the existing database across restarts. Repeated requests update the same source's time for that bot. By default, the newest 100 unique requests are kept per bot and connection; set `MUSIC_REQUEST_HISTORY_LIMIT` in the backend process environment to a positive integer (maximum 1,000) to change the limit. For Docker, pass it in the backend service's `environment`. Oldest rows are trimmed as requests are saved. Older server-wide history remains visible to bots on that connection and is trimmed when history is read. The timestamp is the request time, including queued items, rather than proof of completed playback. History does not retain requester identities or expose raw URLs or local paths to the UI.
 
-Replay uses the stored media reference through the normal validation and permission checks. Missing files, removed sources, or references rejected by current URL policy show **Unavailable**. Chat `!again` can retry a reference after it becomes available again. A [listener remote](#listener-remote) session cannot open administrator history or replay.
+Replay uses the stored media reference through the normal validation and permission checks. Missing files, removed sources, or references rejected by current URL policy show **Unavailable**. Chat `!again` can retry a reference after it becomes available again. A [listener remote](#listener-remote) session cannot open administrator history or replay, but what it adds is recorded in the history.
 
 ## Sources
 
@@ -179,7 +179,7 @@ What you can do on the page:
 - search the server's song library by title or artist and add a song with the **+** button; and
 - paste a link and choose **Request URL** to add it. A link to a playlist adds only its first track.
 
-The queue holds at most 500 items. If nothing is playing when you add something, your request starts; otherwise it joins the end of the queue and does not interrupt what is playing.
+The queue holds at most 500 items. If the bot is connected and idle, what you add starts playing at once, whether or not Auto-DJ is on. If music is playing or paused, it joins the end of **Up next**. If the bot is streaming video, it joins the music queue and does not start by itself. The remote never interrupts or replaces what is playing. Songs and links added from the remote are recorded in the bot's [request history](#requests).
 
 What you cannot do: pause, skip, stop, seek, change the volume, reorder or clear the queue, or use any admin function. For those, use chat commands (`!skip`, `!voteskip` and so on) or ask an admin.
 
