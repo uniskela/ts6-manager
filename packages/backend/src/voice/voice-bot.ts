@@ -7,6 +7,7 @@ import type { Readable } from 'stream';
 import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, buildSendTextCommands, isConnectionRefusal } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME, isRemoteInput } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
+import { createQueueChangeHook } from './queue-change-hook.js';
 import type { AutomationController } from './automation-controller.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
@@ -291,18 +292,15 @@ export class VoiceBot extends EventEmitter {
     this._videoStreamVolume = config.videoStreamVolume ?? config.volume;
     this.client = new Ts3Client();
     this.pipeline = new AudioPipeline();
-    this.queue = new PlayQueue((added) => {
-      const preempted = added && this.automation?.configuration.enabled;
-      if (added) this.automation?.requestQueued();
-      // Let the caller select/start its item before advancing a plain queue insertion.
-      queueMicrotask(() => {
-        if (preempted && this._status === 'connected' && !this.nowPlaying && !this.videoSessionInfo()) {
-          const next = this.queue.next();
-          if (next) this.play(next).catch(err => this.emit('error', err));
-        }
-        void this.automation?.reconcile();
-      });
-    });
+    this.queue = new PlayQueue(createQueueChangeHook({
+      automation: () => this.automation,
+      isConnected: () => this._status === 'connected',
+      nowPlaying: () => this.nowPlaying,
+      hasVideoSession: () => Boolean(this.videoSessionInfo()),
+      next: () => this.queue.next(),
+      play: item => this.play(item),
+      emitError: err => this.emit('error', err),
+    }));
 
     this.client.on('error', (err) => {
       this._status = 'error';

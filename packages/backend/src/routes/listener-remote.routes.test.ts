@@ -11,6 +11,7 @@ import { ListenerRemoteService } from '../voice/listener-remote.js';
 import { defaultMediaCommandPermissions } from '../voice/media-command-permissions.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { MediaSessionConflictError } from '../voice/media-session.js';
+import { createQueueChangeHook } from '../voice/queue-change-hook.js';
 
 const binding = { botId: 4, serverConfigId: 2, virtualServerId: 3, channelId: 8, clid: 9, uid: 'listener-secret-identity' };
 const mediaUrl = 'https://8.8.8.8/media?id=secret-request';
@@ -566,20 +567,24 @@ describe('listener remote playback start', () => {
 
   it('starts exactly once when Auto-DJ is enabled and the bot is idle', async () => using(async f => {
     idle(f);
-    // Mirror the VoiceBot queue hook: with Auto-DJ on, an insertion also asks the idle bot to advance.
-    f.bot.queue = new PlayQueue(added => {
-      queueMicrotask(() => {
-        if (added && f.state.botStatus === 'connected' && !f.bot.nowPlaying) {
-          const next = f.bot.queue.next();
-          if (next) void f.bot.play(next);
-        }
-      });
-    });
+    // The production VoiceBot queue hook, wired to the bot double, with Auto-DJ enabled.
+    let reconciles = 0;
+    const automation = { configuration: { enabled: true }, requestQueued() {}, reconcile: async () => { reconciles++; } };
+    f.bot.queue = new PlayQueue(createQueueChangeHook({
+      automation: () => automation,
+      isConnected: () => f.state.botStatus === 'connected',
+      nowPlaying: () => f.bot.nowPlaying,
+      hasVideoSession: () => Boolean(f.state.video),
+      next: () => f.bot.queue.next(),
+      play: next => f.bot.play(next),
+      emitError: err => { throw err; },
+    }));
     const { session } = await f.exchange();
     assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(f.plays.length, 1);
     assert.equal(f.state.botStatus, 'playing');
     assert.equal(f.bot.queue.length, 1);
+    assert.ok(reconciles > 0);
   }));
 });
