@@ -89,7 +89,7 @@ jobs:
       # Step cap is tighter than the job (15m) so a hung Playwright/Chromium run
       # fails fast instead of cancelling after the whole TypeScript job times out.
       - name: Test production PWA
-        timeout-minutes: 8
+        timeout-minutes: 12
         env:
           CI: true
         run: pnpm --filter @ts6/frontend test

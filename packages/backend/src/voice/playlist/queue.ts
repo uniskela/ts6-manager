@@ -85,6 +85,21 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     }
   }
 
+  /** Select a new request; cleanup restores the cursor only while that request owns it. */
+  addForPlayback(item: T): () => void {
+    const previous = this.getAll()[this.currentIndex];
+    const exhausted = this.exhausted;
+    this.add(item);
+    this.playAt(this.getAll().indexOf(item));
+    return () => {
+      const index = this.getAll().indexOf(item);
+      const restore = this.current === item;
+      if (!this.removeAt(index) || !restore) return;
+      this.currentIndex = previous ? this.getAll().indexOf(previous) : -1;
+      this.exhausted = exhausted;
+    };
+  }
+
   remove(id: string): boolean {
     const index = this.getAll().findIndex(item => item.id === id);
     return this.removeAt(index);

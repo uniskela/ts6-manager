@@ -115,20 +115,16 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
     let started = false;
     await runMediaAudited(req, bot, 'media.music.start', async () => {
       assertCurrentBot();
-      bot.queue.add(item);
-      bot.queue.playAt(bot.queue.length - 1);
+      const cleanup = bot.queue.addForPlayback(item);
       try {
         if (ref.kind === 'radio') await bot.playStream(item, { replaceSessionIds });
         else await bot.play(item, { replaceSessionIds });
         started = bot.nowPlaying === item;
       } finally {
-        if (!started) {
-          const index = bot.queue.getAll().indexOf(item);
-          if (index >= 0) bot.queue.removeAt(index);
-        }
+        if (!started) cleanup();
       }
     }, replaceSessionIds);
-    if (started) await recordReplay();
+    if (started && bot.nowPlaying === item) await recordReplay();
     res.json({ success: true, queued: 1 });
 
     async function recordReplay() {

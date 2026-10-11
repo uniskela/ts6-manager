@@ -8,7 +8,7 @@ import { errorHandler } from '../middleware/error-handler.js';
 import { VoiceBot } from '../voice/voice-bot.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
 
-async function fixture(role = 'admin', loaded = true) {
+async function fixture(role = 'admin', loaded = true, received?: () => void) {
   let bot = { id: 7, serverConfigId: 3, automationSettings: null as string | null, automationState: '{"quietUntil":999}', identityData: 'private' };
   const audit: any[] = [], calls: unknown[] = [];
   const history: string[] = [];
@@ -34,7 +34,7 @@ async function fixture(role = 'admin', loaded = true) {
     },
   };
   const app = express(); app.use(express.json());
-  app.use((req, _res, next) => { (req as any).user = { id: 1, username: 'admin', role }; next(); });
+  app.use((req, _res, next) => { received?.(); (req as any).user = { id: 1, username: 'admin', role }; next(); });
   app.locals.prisma = prisma;
   app.locals.voiceBotManager = {
     listBots: () => [],
@@ -142,6 +142,29 @@ test('a failed settings write leaves runtime settings alone', async () => {
   } finally { await f.close(); }
 });
 
+test('slow source validation cannot let an older automation save overwrite a newer edit', async () => {
+  let entered!: () => void, release!: () => void, receivedSecond!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const arrived = new Promise<void>(resolve => { receivedSecond = resolve; });
+  let requests = 0;
+  const f = await fixture('admin', true, () => { if (++requests === 2) receivedSecond(); });
+  f.prisma.playlist.findUnique = async () => { entered(); await gate; return f.sources.playlist; };
+  const older = { ...DEFAULT_BOT_AUTOMATION_SETTINGS, enabled: true, source: { kind: 'playlist', id: 5 } };
+  const newer = { ...DEFAULT_BOT_AUTOMATION_SETTINGS, quietPeriodSeconds: 120 };
+  const first = f.send(older);
+  try {
+    await started;
+    const second = f.send(newer);
+    await arrived;
+    await new Promise<void>(resolve => setImmediate(resolve));
+    release();
+    assert.equal((await first).status, 200); assert.equal((await second).status, 200);
+    assert.deepEqual(f.calls, ['save', older, 'save', newer]);
+    assert.deepEqual(JSON.parse(f.bot().automationSettings!), newer);
+  } finally { release(); await first; await f.close(); }
+});
+
 for (const playlist of [false, true]) for (const cancel of ['none', 'stop', 'newer']) {
   test(`audited ${playlist ? 'playlist' : 'song'} start respects ${cancel} during the audit wait`, async () => {
     const f = await fixture();
@@ -212,7 +235,9 @@ test('failed HTTP song startup removes only its own queue entry and saves no his
     serverHost: '127.0.0.1', serverPort: 9987, volume: 50 });
   (bot as any)._status = 'connected';
   const kept: QueueItem = { id: '1', title: 'Kept', source: 'local', filePath: '/kept.mp3' };
-  bot.queue.add(kept);
+  const pending = [1, 2].map(id => ({ ...kept, title: `Pending ${id}` }));
+  bot.queue.addMany([kept, ...pending]);
+  bot.queue.playAt(0);
   f.manager.getBot = () => bot;
   f.prisma.song = { findUnique: async () => ({ id: 1, title: 'Failed', source: 'local', filePath: '/failed.mp3' }) };
   bot.play = async item => {
@@ -222,7 +247,9 @@ test('failed HTTP song startup removes only its own queue entry and saves no his
   };
   try {
     assert.equal((await f.post('/play', { songId: 1 })).status, 500);
-    assert.deepEqual(bot.queue.getAll(), [kept]);
+    assert.deepEqual(bot.queue.getAll(), [kept, ...pending]);
+    assert.equal(bot.queue.current, kept);
+    assert.equal(bot.queue.next(), pending[0]);
     assert.deepEqual(f.history, []);
   } finally { await f.close(); }
 });

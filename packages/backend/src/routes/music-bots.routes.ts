@@ -282,30 +282,32 @@ musicBotRoutes.get('/:id', async (req: Request, res: Response, next) => {
 musicBotRoutes.put('/:id/automation', async (req, res, next) => {
   try {
     const settings = parseAutomationSettings(req.body);
-    const existing = await avatarBot(req);
-    const prisma = req.app.locals.prisma;
-    if (settings.source?.kind === 'playlist') {
-      const playlist = await prisma.playlist.findUnique({
-        where: { id: settings.source.id }, include: { musicBot: { select: { serverConfigId: true } } },
+    // Serialize validation too, so a slow source lookup cannot reorder overlapping edits.
+    await serializeBotSettings(Number(req.params.id), async () => {
+      const existing = await avatarBot(req);
+      const prisma = req.app.locals.prisma;
+      if (settings.source?.kind === 'playlist') {
+        const playlist = await prisma.playlist.findUnique({
+          where: { id: settings.source.id }, include: { musicBot: { select: { serverConfigId: true } } },
+        });
+        if (!playlist || (playlist.serverConfigId != null && playlist.serverConfigId !== existing.serverConfigId) ||
+            (playlist.musicBot && playlist.musicBot.serverConfigId !== existing.serverConfigId)) {
+          throw new AppError(400, 'Choose a playlist shared with this bot’s server');
+        }
+      } else if (settings.source?.kind === 'radio') {
+        const station = await prisma.radioStation.findUnique({ where: { id: settings.source.id } });
+        if (!station || station.serverConfigId !== existing.serverConfigId) {
+          throw new AppError(400, 'Choose a radio station from this bot’s server');
+        }
+      }
+      await runRemoteAudited(prisma, {
+        actor: actorFromRequest(req.user), action: 'music_bot.automation_update', connectionId: existing.serverConfigId,
+        target: { type: 'music_bot', id: existing.id },
+      }, async () => {
+        await prisma.musicBot.update({ where: { id: existing.id }, data: { automationSettings: JSON.stringify(settings) } });
+        await req.app.locals.voiceBotManager.getBot(existing.id)?.automation.configure(settings);
       });
-      if (!playlist || (playlist.serverConfigId != null && playlist.serverConfigId !== existing.serverConfigId) ||
-          (playlist.musicBot && playlist.musicBot.serverConfigId !== existing.serverConfigId)) {
-        throw new AppError(400, 'Choose a playlist shared with this bot’s server');
-      }
-    } else if (settings.source?.kind === 'radio') {
-      const station = await prisma.radioStation.findUnique({ where: { id: settings.source.id } });
-      if (!station || station.serverConfigId !== existing.serverConfigId) {
-        throw new AppError(400, 'Choose a radio station from this bot’s server');
-      }
-    }
-    // Serialize saves and runtime application so overlapping edits keep the newest settings.
-    await serializeBotSettings(existing.id, () => runRemoteAudited(prisma, {
-      actor: actorFromRequest(req.user), action: 'music_bot.automation_update', connectionId: existing.serverConfigId,
-      target: { type: 'music_bot', id: existing.id },
-    }, async () => {
-      await prisma.musicBot.update({ where: { id: existing.id }, data: { automationSettings: JSON.stringify(settings) } });
-      await req.app.locals.voiceBotManager.getBot(existing.id)?.automation.configure(settings);
-    }));
+    });
     res.json(settings);
   } catch (error) { next(error); }
 });
@@ -493,8 +495,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
     await runMediaAudited(req, bot, 'media.music.start', async () => {
       if (playlistExpansionGeneration(id) !== generation) return [];
       // Select and start together after the audit wait, before queue notifications advance.
-      bot.queue.add(queueItem);
-      bot.queue.playAt(bot.queue.length - 1);
+      const cleanup = bot.queue.addForPlayback(queueItem);
       let started = false;
       try {
         const replaced = await bot.play(queueItem, { replaceSessionIds });
@@ -502,10 +503,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
         if (started) await saveRequestHistory(req, bot, queueItem);
         return replaced;
       } finally {
-        if (!started) {
-          const index = bot.queue.getAll().indexOf(queueItem);
-          if (index >= 0) bot.queue.removeAt(index);
-        }
+        if (!started) cleanup();
       }
     }, replaceSessionIds);
 

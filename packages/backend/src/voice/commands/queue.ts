@@ -42,22 +42,18 @@ export async function enqueueMediaItem(context: CommandContext, bot: VoiceBot, i
   const queued = bot.status === 'playing' || bot.status === 'paused';
   const options = queued ? undefined : context.chatMusicSwitch(bot);
   if (options) bot.assertMusicCanStart(options.replaceSessionIds);
-  bot.queue.add(item);
   if (!queued) {
-    bot.queue.playAt(bot.queue.length - 1);
+    const cleanup = bot.queue.addForPlayback(item);
     let started = false;
     try {
       if (item.streamUrl) await bot.playStream(item, options);
       else await bot.play(item, options);
       started = isCurrent() && bot.nowPlaying === item;
     } finally {
-      if (!started) {
-        const index = bot.queue.getAll().indexOf(item);
-        if (index >= 0) bot.queue.removeAt(index);
-      }
+      if (!started) cleanup();
     }
     if (!started) return null;
-  }
+  } else bot.queue.add(item);
   context.saveMusicRequest(bot, item);
   return queued;
 }

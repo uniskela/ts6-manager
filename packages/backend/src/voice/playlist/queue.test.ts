@@ -100,3 +100,49 @@ test('accepts a non-music item type', () => {
   q.add({ id: 'v1', source: 'https://example.test/a' });
   assert.equal(q.next()?.source, 'https://example.test/a');
 });
+
+for (const shuffle of [false, true]) {
+  test(`failed startup restores pending tracks with duplicate IDs, shuffle=${shuffle}`, () => {
+    const q = new PlayQueue<{ id: string; title: string }>();
+    q.addMany(['Playing', 'Pending 1', 'Pending 2'].map(title => ({ id: 'same', title })));
+    q.playAt(0);
+    q.setShuffle(shuffle);
+    const previous = q.current, pending = q.upcoming();
+    const failed = { id: 'same', title: 'Failed' };
+    const cleanup = q.addForPlayback(failed);
+    assert.equal(q.current, failed);
+    cleanup();
+    assert.equal(q.current, previous);
+    assert.deepEqual(q.upcoming(), pending);
+    assert.equal(q.next(), pending[0]);
+  });
+}
+
+test('late startup cleanup preserves a newer selection and a cleared queue', () => {
+  for (const cleared of [false, true]) {
+    const q = new PlayQueue<{ id: string }>();
+    q.add({ id: 'old' });
+    q.playAt(0);
+    const cleanup = q.addForPlayback({ id: 'failed' });
+    if (cleared) q.clear();
+    const newer = { id: 'newer' };
+    q.addForPlayback(newer);
+    cleanup();
+    assert.equal(q.current, newer);
+    assert.deepEqual(q.getAll().map(item => item.id), cleared ? ['newer'] : ['old', 'newer']);
+  }
+});
+
+test('failed startup preserves an unstarted or exhausted queue position', () => {
+  for (const exhausted of [false, true]) {
+    const q = new PlayQueue<{ id: string }>();
+    const old = { id: 'old' }, pending = { id: 'pending' };
+    q.add(old);
+    if (exhausted) { q.next(); q.next(); }
+    const cleanup = q.addForPlayback({ id: 'failed' });
+    q.add(pending);
+    cleanup();
+    assert.equal(q.current, null);
+    assert.equal(q.next(), exhausted ? pending : old);
+  }
+});

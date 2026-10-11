@@ -28,6 +28,7 @@ function appFor(options: {
   allowServerAccess?: boolean;
   conflict?: boolean;
   failHistoryUpdate?: boolean;
+  finishAudit?: () => Promise<void>;
   download?: (url: string) => Promise<unknown>;
 } = {}) {
   const played: string[] = [];
@@ -91,7 +92,10 @@ function appFor(options: {
         deleteMany: async () => ({ count: 0 }),
       },
       userServerAccess: { findUnique: async () => options.allowServerAccess ? { userId: 1, serverConfigId: 1 } : null },
-      adminAuditEvent: { create: async () => ({ id: 'audit' }), updateMany: async () => ({ count: 1 }) },
+      adminAuditEvent: { create: async () => ({ id: 'audit' }), updateMany: async () => {
+        await options.finishAudit?.();
+        return { count: 1 };
+      } },
     };
     next();
   });
@@ -239,7 +243,9 @@ for (const source of ['local', 'radio']) {
     const f = appFor({ rows: [{ id: 7, title: 'Failed', url: source === 'local' ? file : 'https://8.8.8.8/radio',
       source, status: 'available', serverConfigId: 1, musicBotId: 3 }] });
     const kept = { id: 'history_7', title: 'Kept', source: 'local' as const, filePath: '/kept.mp3' };
-    f.bot.queue.add(kept);
+    const pending = [1, 2].map(id => ({ ...kept, title: `Pending ${id}` }));
+    f.bot.queue.addMany([kept, ...pending]);
+    f.bot.queue.playAt(0);
     const reject = async (item: any) => {
       assert.ok(f.bot.queue.getAll().includes(item));
       assert.equal(f.bot.queue.current, item);
@@ -249,9 +255,32 @@ for (const source of ['local', 'radio']) {
     f.bot.playStream = reject;
     try {
       assert.equal((await request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 })).status, 500);
-      assert.deepEqual(f.bot.queue.getAll(), [kept]);
+      assert.deepEqual(f.bot.queue.getAll(), [kept, ...pending]);
+      assert.equal(f.bot.queue.current, kept);
+      assert.equal(f.bot.queue.next(), pending[0]);
       assert.deepEqual(f.recorded, []);
       assert.deepEqual(f.updates, []);
     } finally { if (source === 'local') await rm(path.join(musicRoot, file), { force: true }); }
+  });
+}
+
+for (const change of ['stop', 'replace', 'none']) {
+  test(`replay history respects ${change} while the audit completion is pending`, async () => {
+    let entered!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const f = appFor({ rows: [{ id: 7, title: 'Radio', url: 'https://8.8.8.8/radio', source: 'radio',
+      status: 'available', serverConfigId: 1, musicBotId: 3 }],
+      finishAudit: async () => { entered(); await gate; } });
+    const replay = request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
+    try {
+      await started;
+      assert.equal(f.bot.nowPlaying, f.bot.queue.current);
+      assert.equal(f.bot.nowPlaying.title, 'Radio');
+      if (change !== 'none') f.bot.nowPlaying = change === 'stop' ? null : { id: 'newer', title: 'Newer' };
+      release();
+      assert.equal((await replay).status, 200);
+      assert.equal(f.recorded.length, change === 'none' ? 1 : 0);
+    } finally { release(); await replay; }
   });
 }
