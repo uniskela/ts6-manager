@@ -231,6 +231,7 @@ describe('listener remote client', () => {
 
 describe('listener remote token capture install', () => {
   const realWindow = (globalThis as any).window;
+  const realEvent = (globalThis as any).Event;
   let listeners: Map<string, Set<() => void>>;
 
   beforeEach(() => {
@@ -251,6 +252,7 @@ describe('listener remote token capture install', () => {
   afterEach(() => {
     resetRemoteLaunchForTests();
     (globalThis as any).window = realWindow;
+    (globalThis as any).Event = realEvent;
   });
 
   const count = () => listeners.get('hashchange')?.size ?? 0;
