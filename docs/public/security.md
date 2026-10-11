@@ -25,7 +25,7 @@ WebSocket connections require application authentication and are scoped to the s
 
 ## Listener remote
 
-The `!remote` chat command gives a listener in a media bot's channel a private, one-time link to a small web page where they can see the queue and add music. It does not sign anyone in to the manager. The link is valid for 5 minutes and works once; the session it opens lasts 15 minutes in total and ends early if the listener leaves the channel. Only hashes of the credentials are kept in memory, and a backend restart ends every session. Pasted links go through the same outbound-request checks as other media URLs, without the IPTV local-hosts exception. It needs an HTTPS Public URL and, behind a reverse proxy, `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
+The `!remote` chat command gives a listener in a media bot's channel a private, one-time link to a small web page where they can see the queue and add music. It does not sign anyone in to the manager. The link is valid for 5 minutes and works once; the session it opens lasts 15 minutes in total and ends early if the listener leaves the channel. Only hashes of the credentials are kept in memory, and a backend restart ends every session. Pasted links go through the same outbound-request checks as other media URLs, without the IPTV local-hosts exception. It needs an HTTPS Public URL and, behind an outer reverse proxy, a matching `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
 
 ## Outbound requests
 

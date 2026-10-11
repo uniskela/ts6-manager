@@ -87,14 +87,21 @@ Links open `/remote`. That page reads the fragment once, removes it, and exchang
 it for a short-lived session. The API contract is `docs/internal/listener-remote-api.md`
 in the source repository.
 
-Set `TRUST_PROXY` on the backend to **only** the IPs or subnets of your actual
-reverse proxies. It now defaults to no forwarded-header trust: without it,
-rate limits see the immediate proxy rather than individual listeners. For
-all-in-one nginx use `TRUST_PROXY=loopback`. For split Docker use the dedicated
-proxy network CIDR; if an outer proxy is present, also trust its address/CIDR
-so Express can walk the forwarded chain to the first untrusted client. Broad
-shared Docker networks are inappropriate when untrusted containers can connect
-to the backend. Pass the value through your backend service's environment.
+`TRUST_PROXY` tells the backend which proxies may report a client's address in `X-Forwarded-For`. Without it, rate limits see the immediate proxy rather than individual listeners. The bundled images set a default, and a value you set always replaces it:
+
+| Deployment | Default |
+|---|---|
+| All-in-one image | `loopback` (its bundled nginx) |
+| Split backend image | `uniquelocal` (10/8, 172.16/12, 192.168/16, fc00::/7) |
+| Backend run outside these images | nothing trusted |
+
+Stock installs need no action. Set `TRUST_PROXY` to **only** the IPs or subnets of your actual reverse proxies when:
+
+- the all-in-one image sits behind an outer proxy: `TRUST_PROXY=loopback,<outer proxy IP/CIDR>`;
+- the split image has an outer proxy on a public address, or you want to narrow the private-range default to the frontend container's address or the compose subnet (advisable when untrusted containers share the network). An outer proxy on a private address is already covered; and
+- you run the backend yourself, outside the images.
+
+Accepted values are comma-separated IPs or CIDRs and the Express names `loopback`, `linklocal` and `uniquelocal`. `none` (also `false`, `off`, `no`) trusts nothing. `true` and numeric hop counts are rejected at startup, because they let a direct caller pick its own rate-limit address. An empty value counts as unset. The backend logs `Trusted proxies: …` at startup and warns once if `X-Forwarded-For` arrives while nothing is trusted. Pass the value through your backend service's environment. Keep port 3001 unpublished: on the split image, a peer on the private network that reaches the backend directly can choose its own rate-limit bucket.
 
 At the outermost proxy, **overwrite** `X-Forwarded-For` with `$remote_addr` and
 `X-Forwarded-Proto` with `$scheme`. Inner trusted proxies may append their

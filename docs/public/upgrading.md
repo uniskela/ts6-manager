@@ -55,9 +55,21 @@ The startup script stops on the first error (`set -e`). If the schema step fails
 
 #### Reverse proxy: set `TRUST_PROXY`
 
-**Breaking change for deployments behind a reverse proxy.** Before 1.11.0 the backend always trusted the first proxy in front of it. From 1.11.0 it trusts none unless `TRUST_PROXY` is set. Behind a reverse proxy without that variable, the backend sees every visitor as the proxy's own address, so the login rate limit (15 attempts per 15 minutes) and the listener remote limits are shared by all users instead of applying per person. One person mistyping a password can lock everyone else out of signing in for a while.
+Before 1.11.0 the backend always trusted "one hop" in front of it. That setting is gone. The backend now trusts only the proxies named in `TRUST_PROXY`, and the bundled images set a default for it:
 
-If you run behind nginx, Traefik, Caddy or another proxy, set `TRUST_PROXY` to only the address or subnet of your proxy. The recommended values for the all-in-one image and for split Docker are in [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits), and the variable is listed in [Environment variables](environment-variables.md). Direct access with no proxy needs nothing.
+- the **all-in-one** image trusts `loopback`, which is its own bundled nginx;
+- the **split** backend image trusts `uniquelocal`, the private address ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7), which covers the frontend container on the compose network; and
+- a backend run **outside these images** (plain `node`, a development setup) trusts nothing.
+
+**Stock all-in-one and split Docker installs need no action.** Set `TRUST_PROXY` yourself only if:
+
+- you run the all-in-one image behind an outer reverse proxy: use `TRUST_PROXY=loopback,<outer proxy IP or CIDR>`;
+- you run the backend outside the stock images behind a proxy; or
+- your proxy has a public address (the split default does not cover it).
+
+Without the right value, the backend sees every visitor as the proxy's address, so the login rate limit (15 attempts per 15 minutes) and the listener remote limits are shared by everyone: one person mistyping a password can lock everyone else out of signing in for a while. The backend logs the setting it uses at startup (`Trusted proxies: …`) and warns once if an `X-Forwarded-For` header arrives while nothing is trusted.
+
+For the split image, anything on the same private network that connects straight to the backend can choose its own rate-limit bucket, so keep port 3001 unpublished. A value you set always replaces the image default; `none` trusts nothing, and `true` or a number of hops is refused at startup. Recommended values and the accepted syntax are in [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits), and the variable is listed in [Environment variables](environment-variables.md).
 
 #### Defaults after upgrading
 
