@@ -362,10 +362,15 @@ export function parsePublicUrl(raw: unknown): PublicUrlUpdate {
   if (url.username || url.password) return { ok: false, error: 'publicUrl must not contain credentials' };
   if (url.search || url.hash) return { ok: false, error: 'publicUrl must not contain a query or fragment' };
   // An image link pasted here would be prefixed to every hosted banner link.
-  if (/\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(url.pathname)) {
+  // Check the path as it will be saved (trailing slashes removed), including its percent-decoded form.
+  const path = url.pathname.replace(/\/+$/, '');
+  let decodedPath = path;
+  try { decodedPath = decodeURIComponent(path); } catch { /* keep the raw path */ }
+  const imagePath = /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i;
+  if (imagePath.test(path) || imagePath.test(decodedPath)) {
     return { ok: false, error: 'publicUrl is the address of this manager, not an image link. Put an image link in Banner image URL instead' };
   }
-  return { ok: true, value: `${url.origin}${url.pathname.replace(/\/+$/, '')}` };
+  return { ok: true, value: `${url.origin}${path}` };
 }
 
 /** Saved setting first, then the PUBLIC_URL environment variable; null when neither is valid. */

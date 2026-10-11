@@ -101,6 +101,8 @@ func TestFFmpegPortableMusicSource(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Stop()
+	// On macOS the fallback reason would be the platform's, not the probe's.
+	setHostOS(t, "windows")
 	spec, _ := lookupEncoder("h264_amf")
 	s.caps.caps = &EncoderCapabilities{Encoders: []EncoderProbeResult{{EncoderSpec: spec, Error: "AMF unavailable"}}}
 	session, err := s.StartFFmpeg(SourceRequest{Source: "music://.stream-123.mp4", Encoder: "h264_amf", Loop: true, Volume: 100})

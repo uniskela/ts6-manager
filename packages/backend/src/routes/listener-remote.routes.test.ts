@@ -10,6 +10,8 @@ import { listenerRemoteAdminRoutes, listenerRemoteRoutes, listenerRemoteIpGuard 
 import { ListenerRemoteService } from '../voice/listener-remote.js';
 import { defaultMediaCommandPermissions } from '../voice/media-command-permissions.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
+import { MediaSessionConflictError } from '../voice/media-session.js';
+import { createQueueChangeHook } from '../voice/queue-change-hook.js';
 
 const binding = { botId: 4, serverConfigId: 2, virtualServerId: 3, channelId: 8, clid: 9, uid: 'listener-secret-identity' };
 const mediaUrl = 'https://8.8.8.8/media?id=secret-request';
@@ -34,18 +36,39 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     policy: null as string | null, botChannel: binding.channelId,
     botServer: binding.serverConfigId, databaseServer: binding.serverConfigId,
     virtualServer: binding.virtualServerId, botStatus: 'playing',
-    missingSong: false, failAudit: false,
+    missingSong: false, failAudit: false, failHistory: false,
+    video: null as { id: string; state: string } | null,
+    playGate: null as (() => Promise<void>) | null, playError: false,
   };
+  const history: unknown[] = [];
+  const plays: { item: QueueItem; options: unknown; stream: boolean }[] = [];
   const audit: Record<string, unknown>[] = [];
   const songQueries: unknown[] = [];
   const settingQueries: unknown[] = [];
   let downloads = 0;
+  const start = async (started: QueueItem, options: unknown, stream: boolean) => {
+    plays.push({ item: started, options, stream });
+    if (state.botStatus !== 'connected') return;
+    state.botStatus = 'playing';
+    bot.nowPlaying = started;
+    await state.playGate?.();
+    // A bot that stopped or disconnected while starting no longer plays the item.
+    if (state.botStatus !== 'playing') bot.nowPlaying = null;
+    if (state.playError) { bot.nowPlaying = null; state.botStatus = 'connected'; throw new Error('playback-credential-must-not-leak'); }
+  };
   const bot = {
-    currentConfig: { serverConfigId: binding.serverConfigId, name: 'Music bot', password: 'bot-secret' },
+    currentConfig: { id: binding.botId, serverConfigId: binding.serverConfigId, name: 'Music bot', password: 'bot-secret' },
     ts3ClientId: 99,
     get status() { return state.botStatus; },
     getCurrentChannelId: () => state.botChannel,
-    nowPlaying: item, queue,
+    nowPlaying: item as QueueItem | null, queue,
+    videoSessionInfo: () => state.video as any,
+    assertMusicCanStart(ids: string[] | undefined) {
+      const video = state.video;
+      if (video && !ids?.includes(video.id)) throw new MediaSessionConflictError('music', [video as any]);
+    },
+    play: (started: QueueItem, options?: unknown) => start(started, options, false),
+    playStream: (started: QueueItem, options?: unknown) => start(started, options, true),
   };
   Object.defineProperty(bot.currentConfig, 'serverConfigId', { get: () => state.botServer });
   const app = fullApp ? (await import('../app.js')).createApp() : express();
@@ -68,6 +91,13 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
       return state.policy === null ? null : { value: state.policy };
     } },
     musicBot: { findUnique: async () => ({ serverConfigId: state.databaseServer, virtualServerId: state.virtualServer }) },
+    $transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+      if (state.failHistory) throw Object.assign(new Error('history-credential-must-not-leak'), { code: 'P2002' });
+      return fn({ musicRequest: {
+        upsert: async (args: unknown) => { history.push(args); return {}; },
+        findMany: async () => [], deleteMany: async () => ({ count: 0 }),
+      } });
+    },
     song: {
       findMany: async (query: unknown) => {
         songQueries.push(query);
@@ -121,7 +151,7 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     return { ...data, token: issued.token };
   };
   return {
-    remote, request, exchange, queue, app, state, audit, songQueries, settingQueries,
+    remote, request, exchange, queue, app, state, audit, songQueries, settingQueries, bot, history, plays,
     get downloads() { return downloads; }, advance: (ms: number) => { now += ms; },
     close: () => new Promise<void>((resolve, reject) => {
       server.close(err => err ? reject(err) : resolve());
@@ -420,5 +450,141 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 503);
     f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => item;
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
+  }));
+});
+
+describe('listener remote playback start', () => {
+  const idle = (f: Awaited<ReturnType<typeof fixture>>) => { f.state.botStatus = 'connected'; f.bot.nowPlaying = null; };
+  const routes = [
+    ['library add', '/queue', { songId: 11 }],
+    ['URL request', '/requests', { url: mediaUrl }],
+  ] as const;
+
+  for (const [label, path, body] of routes) {
+    it(`starts playback for an idle bot with Auto-DJ disabled (${label}) and records history`, async () => using(async f => {
+      idle(f);
+      const { session } = await f.exchange();
+      assert.equal((await f.request(path, { session, body })).status, 200);
+      assert.equal(f.plays.length, 1);
+      assert.equal(f.plays[0].item, f.bot.nowPlaying);
+      // A listener never confirms a replacement of another media session.
+      assert.deepEqual(f.plays[0].options, { replaceSessionIds: [] });
+      assert.equal(f.state.botStatus, 'playing');
+      assert.equal(f.queue.current, f.bot.nowPlaying);
+      assert.equal(f.queue.length, 2);
+      assert.equal(f.history.length, 1);
+      assert.equal((f.history[0] as any).create.musicBotId, binding.botId);
+      assert.equal((f.history[0] as any).create.url, mediaUrl);
+      assert.ok(f.audit.some(row => (row.data as any)?.outcome === 'success'));
+    }));
+
+    it(`appends without touching the current track while playing (${label})`, async () => using(async f => {
+      const { session } = await f.exchange();
+      assert.equal((await f.request(path, { session, body })).status, 200);
+      assert.equal(f.plays.length, 0);
+      assert.equal(f.bot.nowPlaying, item);
+      assert.equal(f.queue.length, 2);
+      assert.equal(f.history.length, 1);
+    }));
+
+    it(`appends without starting while paused (${label})`, async () => using(async f => {
+      f.state.botStatus = 'paused';
+      const { session } = await f.exchange();
+      assert.equal((await f.request(path, { session, body })).status, 200);
+      assert.equal(f.plays.length, 0);
+      assert.equal(f.state.botStatus, 'paused');
+      assert.equal(f.bot.nowPlaying, item);
+      assert.equal(f.queue.length, 2);
+    }));
+
+    it(`never replaces an active video stream; the item is appended (${label})`, async () => using(async f => {
+      idle(f);
+      f.state.video = { id: 'video-1', state: 'playing' };
+      const { session } = await f.exchange();
+      assert.equal((await f.request(path, { session, body })).status, 200);
+      assert.equal(f.plays.length, 0);
+      assert.equal(f.bot.nowPlaying, null);
+      assert.equal(f.queue.length, 2);
+      assert.equal(f.state.video?.id, 'video-1');
+    }));
+
+    it(`does not fail the request when history cannot be written (${label})`, async () => using(async f => {
+      idle(f);
+      f.state.failHistory = true;
+      const { session } = await f.exchange();
+      assert.equal((await f.request(path, { session, body })).status, 200);
+      assert.equal(f.plays.length, 1);
+      assert.equal(f.history.length, 0);
+    }));
+
+    it(`starts nothing and queues nothing when the session ends while resolving (${label})`, async () => {
+      for (const change of ['revoke', 'departure', 'stopped', 'disconnected', 'moved'] as const) await using(async f => {
+        idle(f);
+        const { session } = await f.exchange();
+        const started = deferred<void>();
+        const gate = deferred<void>();
+        // Hold the request inside resolution: the URL path blocks in the downloader, the library path in the lookup.
+        f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { started.resolve(); await gate.promise; return item; };
+        const find = f.app.locals.prisma.song.findFirst;
+        f.app.locals.prisma.song.findFirst = async (query: unknown) => { started.resolve(); await gate.promise; return find(query); };
+        const pending = f.request(path, { session, body });
+        await started.promise;
+        if (change === 'revoke') f.remote.revoke(binding.botId, binding.uid);
+        if (change === 'departure') f.state.channelId = 10;
+        if (change === 'stopped') f.state.botStatus = 'stopped';
+        if (change === 'disconnected') f.state.botStatus = 'disconnected';
+        if (change === 'moved') f.state.botChannel = 10;
+        gate.resolve();
+        assert.equal((await pending).status, 401, change);
+        assert.equal(f.plays.length, 0, change);
+        assert.equal(f.queue.length, 1, change);
+        assert.equal(f.history.length, 0, change);
+        assert.ok(!f.audit.some(row => (row.data as any)?.outcome === 'success'));
+      });
+    });
+
+    it(`leaves nothing stranded when the bot stops, moves or fails while playback starts (${label})`, async () => {
+      for (const change of ['disconnected', 'moved', 'error'] as const) await using(async f => {
+        idle(f);
+        const { session } = await f.exchange();
+        f.state.playGate = async () => {
+          if (change === 'disconnected') f.state.botStatus = 'disconnected';
+          if (change === 'moved') { f.state.botChannel = 10; f.state.botStatus = 'playing'; }
+          if (change === 'error') f.state.playError = true;
+        };
+        const response = await f.request(path, { session, body });
+        assert.equal(response.status, 503, change);
+        assert.deepEqual(await response.json(), { error: 'Listener remote is unavailable.', code: 'unavailable' });
+        assert.equal(f.plays.length, 1, change);
+        // The queue is restored to its state before the request: no phantom "playing" entry.
+        assert.equal(f.queue.length, 1, change);
+        assert.notEqual(f.queue.current?.id, '11', change);
+        assert.equal(f.history.length, 0, change);
+        assert.ok(!f.audit.some(row => (row.data as any)?.outcome === 'success'));
+      });
+    });
+  }
+
+  it('starts exactly once when Auto-DJ is enabled and the bot is idle', async () => using(async f => {
+    idle(f);
+    // The production VoiceBot queue hook, wired to the bot double, with Auto-DJ enabled.
+    let reconciles = 0;
+    const automation = { configuration: { enabled: true }, requestQueued() {}, reconcile: async () => { reconciles++; } };
+    f.bot.queue = new PlayQueue(createQueueChangeHook({
+      automation: () => automation,
+      isConnected: () => f.state.botStatus === 'connected',
+      nowPlaying: () => f.bot.nowPlaying,
+      hasVideoSession: () => Boolean(f.state.video),
+      next: () => f.bot.queue.next(),
+      play: next => f.bot.play(next),
+      emitError: err => { throw err; },
+    }));
+    const { session } = await f.exchange();
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.plays.length, 1);
+    assert.equal(f.state.botStatus, 'playing');
+    assert.equal(f.bot.queue.length, 1);
+    assert.ok(reconciles > 0);
   }));
 });

@@ -28,11 +28,13 @@ const h264ConstrainedHighFmtp = "level-asymmetry-allowed=1;packetization-mode=1;
 
 // GPU backends a hardware encoder can run on. VAAPI (Intel, AMD) opens a DRM
 // render node and takes frames uploaded to it; NVENC (NVIDIA) and AMF (AMD,
-// native Windows) open the GPU through driver libraries and take system-memory frames.
+// native Windows) open the GPU through driver libraries and take system-memory
+// frames, as does VideoToolbox (Apple, native macOS) through the OS framework.
 const (
-	backendVAAPI = "vaapi"
-	backendNVENC = "nvenc"
-	backendAMF   = "amf"
+	backendVAAPI        = "vaapi"
+	backendNVENC        = "nvenc"
+	backendAMF          = "amf"
+	backendVideoToolbox = "videotoolbox"
 )
 
 // amfMaxHeaderSpacing is the largest -header_spacing h264_amf accepts.
@@ -92,6 +94,7 @@ var encoderOrder = []EncoderSpec{
 	{ID: "h264_vaapi", Codec: codecH264, FFmpeg: "h264_vaapi", Hardware: true, Backend: backendVAAPI},
 	{ID: "h264_nvenc", Codec: codecH264, FFmpeg: "h264_nvenc", Hardware: true, Backend: backendNVENC},
 	{ID: "h264_amf", Codec: codecH264, FFmpeg: "h264_amf", Hardware: true, Backend: backendAMF},
+	{ID: "h264_videotoolbox", Codec: codecH264, FFmpeg: "h264_videotoolbox", Hardware: true, Backend: backendVideoToolbox},
 }
 
 func lookupEncoder(id string) (EncoderSpec, bool) {
@@ -212,8 +215,9 @@ func uploadFilter(spec EncoderSpec) string {
 	switch spec.Backend {
 	case backendVAAPI:
 		return "format=nv12,hwupload"
-	case backendNVENC, backendAMF:
-		// NVENC and AMF upload system-memory frames themselves, without hwupload.
+	case backendNVENC, backendAMF, backendVideoToolbox:
+		// NVENC, AMF and VideoToolbox upload system-memory frames themselves,
+		// without hwupload.
 		// The 4:2:0 format is not optional: handed anything else, h264_nvenc
 		// switches to High 4:4:4 Predictive and ignores -profile:v, a profile
 		// the TeamSpeak client cannot decode.
@@ -310,6 +314,28 @@ func encoderArgs(spec EncoderSpec, vBitrate string, lowPower bool, cpuUsed int) 
 		if n, err := strconv.Atoi(gop); err == nil && n >= 1 && n <= amfMaxHeaderSpacing {
 			args = append(args, "-header_spacing", gop)
 		}
+	case "h264_videotoolbox":
+		args = []string{
+			"-c:v", "h264_videotoolbox",
+			// Constrained High, as for the other H.264 encoders: High without
+			// frame reordering, which is what -bf 0 turns off here.
+			"-profile:v", "high",
+			"-bf", "0",
+			// Low-latency rate control for a live stream.
+			"-realtime", "1",
+			// Hardware only (FFmpeg's default, stated so it does not depend on
+			// the build). Allowed to, VideoToolbox encodes on the CPU where it
+			// has no hardware encoder; failing instead lets the sidecar fall
+			// back to libx264 and report it.
+			"-allow_sw", "0",
+		}
+		// No option for repeating SPS/PPS: FFmpeg's videotoolboxenc puts them
+		// in front of every keyframe whenever the muxer does not ask for
+		// global headers, and the RTP muxer does not. An IDR that comes without
+		// them still reaches a late joiner behind the sidecar's cached SPS/PPS,
+		// as for AMF with a long GOP; that cache is filled from the stream, so
+		// it needs them in-band at least once. Read from FFmpeg's source, not
+		// observed on a Mac.
 	case "h264_nvenc":
 		args = []string{
 			"-c:v", "h264_nvenc",
@@ -351,7 +377,8 @@ type EncoderProbeResult struct {
 	Detail string `json:"detail,omitempty"`
 	// Attempts are the test encodes run, in order, so the UI can show the
 	// exact ffmpeg command and what it printed. Empty when the probe was
-	// skipped without running ffmpeg (e.g. no VAAPI device).
+	// skipped without running ffmpeg (no VAAPI device, or a backend this
+	// operating system does not have).
 	Attempts []EncoderProbeAttempt `json:"attempts,omitempty"`
 	// Skipped is why ffmpeg was not run at all; empty when it ran.
 	Skipped string `json:"skipped,omitempty"`
@@ -442,6 +469,11 @@ func encoderProbeArgs(spec EncoderSpec, lowPower bool) []string {
 
 func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) EncoderProbeResult {
 	res := EncoderProbeResult{EncoderSpec: spec}
+	if reason := backendUnsupportedReason(spec.Backend); reason != "" {
+		res.Error = reason
+		res.Skipped = reason
+		return res
+	}
 	if spec.Backend == backendVAAPI && !devicePresent {
 		res.Error = "VAAPI device not present"
 		res.Skipped = fmt.Sprintf("VAAPI device %s not present", getVaapiDevice())

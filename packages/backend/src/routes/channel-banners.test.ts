@@ -109,6 +109,19 @@ test('public URL validation', () => {
   }
 });
 
+test('public URL rejects image links however the trailing path is written', () => {
+  for (const bad of [
+    'https://x/banner.png/', 'https://x/banner.png//', 'https://x/banner.PNG/', 'https://x/a/b.jpeg///',
+    'https://x/banner%2Epng', 'https://x/banner.p%6Eg/', 'https://x/banner.png/.', 'https://x/img/../banner.webp/',
+  ]) {
+    assert.equal(parsePublicUrl(bad).ok, false, bad);
+  }
+  assert.deepEqual(parsePublicUrl('https://x/ts6/'), { ok: true, value: 'https://x/ts6' });
+  assert.deepEqual(parsePublicUrl('https://x/ts6//'), { ok: true, value: 'https://x/ts6' });
+  assert.deepEqual(parsePublicUrl('https://x/png/'), { ok: true, value: 'https://x/png' });
+  assert.deepEqual(parsePublicUrl('https://x/manager.png.d/'), { ok: true, value: 'https://x/manager.png.d' });
+});
+
 test('non-images, oversized files and multiple files are rejected before saving', async () => {
   const f = await fixture();
   try {

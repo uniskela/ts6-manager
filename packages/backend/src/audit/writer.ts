@@ -141,6 +141,8 @@ export async function completeRemoteAttempt(
     outcome: Exclude<AdminAuditOutcome, 'pending'>;
     resultCode: AdminAuditResultCode;
     targetId?: string | number | null;
+    /** Corrects the action the attempt began with when the dispatch did something else. */
+    action?: AdminAuditAction;
   },
 ): Promise<void> {
   const outcome = assertOutcome(completion.outcome);
@@ -155,6 +157,7 @@ export async function completeRemoteAttempt(
   if (completion.targetId !== undefined) {
     data.targetId = normalizeTargetId(completion.targetId);
   }
+  if (completion.action !== undefined) data.action = completion.action;
   await prisma.adminAuditEvent.updateMany({
     where: { operationId, outcome: 'pending' },
     data,
@@ -291,6 +294,12 @@ export async function runRemoteAudited<T>(
      * operationId; best-effort like completion.
      */
     relatedAfter?: () => BaseEventInput[];
+    /**
+     * The action the dispatch actually performed, read once it returns or
+     * throws. Only for a dispatch whose kind is decided after the attempt began
+     * (e.g. a queue add that turns out to start or not start a stream).
+     */
+    resolveAction?: () => AdminAuditAction | undefined;
   },
 ): Promise<T> {
   const attempt = await beginRemoteAttempt(prisma, input);
@@ -318,6 +327,7 @@ export async function runRemoteAudited<T>(
         outcome: 'success',
         resultCode: 'ok',
         targetId: options?.resolveTargetId ? options.resolveTargetId(result) : undefined,
+        action: options?.resolveAction?.(),
       });
     } catch {
       // Dispatch already succeeded — leave pending for stale resolution; do not fail the request.
@@ -326,7 +336,7 @@ export async function runRemoteAudited<T>(
     return result;
   } catch (err) {
     try {
-      await completeRemoteAttempt(prisma, attempt.operationId, classifyRemoteError(err));
+      await completeRemoteAttempt(prisma, attempt.operationId, { ...classifyRemoteError(err), action: options?.resolveAction?.() });
     } catch {
       // Leave pending; retention will mark unknown.
     }

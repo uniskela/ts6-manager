@@ -111,7 +111,16 @@ export class VideoQueueController {
     return Math.max(VIDEO_QUEUE_MAX - this.lane.length, 0);
   }
 
-  enqueue(items: NewVideoQueueItem[], options?: VideoStreamStartOptions): Promise<{ queued: number; started: boolean }> {
+  /**
+   * `onDecided` reports, from inside the queue's turn, whether this add starts a
+   * stream (true) or joins a running one (false). A caller that sampled the bot
+   * earlier uses it to learn what actually happened.
+   */
+  enqueue(
+    items: NewVideoQueueItem[],
+    options?: VideoStreamStartOptions,
+    onDecided?: (willStart: boolean) => void,
+  ): Promise<{ queued: number; started: boolean }> {
     return this.run(async () => {
       const streaming = this.deps.bot.videoStreaming;
       const adopted = streaming && this.lane.current === null ? this.deps.bot.videoStreamStatus.source : null;
@@ -119,6 +128,7 @@ export class VideoQueueController {
       if (room <= 0) throw new VideoQueueFullError();
       const added = items.slice(0, room).map((item) => ({ ...item, id: this.newId() }));
       if (added.length === 0) return { queued: 0, started: false };
+      onDecided?.(!streaming);
 
       if (streaming) {
         if (adopted) {

@@ -24,6 +24,7 @@ function buildApp(opts: { initial?: VideoQueueItem[]; expand?: Expand; conflict?
     stops: [] as string[],
     asserted: [] as string[][],
     audits: [] as Array<Record<string, any>>,
+    auditUpdates: [] as Array<Record<string, any>>,
     volumeSaves: [] as unknown[],
     expands: [] as Array<{ url: string; cap: number | undefined }>,
   };
@@ -83,7 +84,10 @@ function buildApp(opts: { initial?: VideoQueueItem[]; expand?: Expand; conflict?
     Object.assign(req.app.locals, {
       voiceBotManager: manager,
       prisma: {
-        adminAuditEvent: { create: async ({ data }: any) => { calls.audits.push(data); return {}; } },
+        adminAuditEvent: {
+          create: async ({ data }: any) => { calls.audits.push(data); return {}; },
+          updateMany: async ({ data }: any) => { calls.auditUpdates.push(data); return { count: 1 }; },
+        },
         musicBot: { update: async (args: unknown) => { calls.volumeSaves.push(args); } },
       },
     });
@@ -130,6 +134,64 @@ const playlistOf = (count: number): Expand => async (_url, cap) => ({
 });
 
 const sources = (items: Array<{ source: string }>) => items.map((i) => i.source);
+
+/** The action an audit row ends up with: the one it was begun with unless completion corrected it. */
+const recordedAction = (calls: { audits: Array<Record<string, any>>; auditUpdates: Array<Record<string, any>> }) =>
+  calls.auditUpdates.at(-1)?.action ?? calls.audits.at(-1)?.action;
+
+describe('stream/queue: audit action when a stop races the add', () => {
+  it('records a start when the stream stopped after the route looked, so the add began one', async () => {
+    const app = buildApp();
+    app.bot.videoStreaming = true;
+    app.bot.source = watch(1);
+    const enqueue = app.controller.enqueue.bind(app.controller);
+    app.controller.enqueue = (...args) => {
+      app.bot.videoStreaming = false; // a stop lands between the route's check and the queue's turn
+      app.bot.source = null;
+      return enqueue(...args);
+    };
+    const res = await app.request('POST', '/3/stream/queue', { source: watch(2) });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.started, true);
+    assert.equal(recordedAction(app.calls), 'media.video.start');
+  });
+
+  it('corrects a switch to a queue add when another start won the race', async () => {
+    const app = buildApp();
+    const enqueue = app.controller.enqueue.bind(app.controller);
+    app.controller.enqueue = (...args) => {
+      app.bot.videoStreaming = true;
+      app.bot.source = watch(1);
+      return enqueue(...args);
+    };
+    const res = await app.request('POST', '/3/stream/queue', { source: watch(2), replaceSessionIds: [OTHER_VIDEO.id] });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.started, false);
+    assert.equal(app.calls.audits.at(-1)?.action, 'media.session.switch');
+    assert.equal(recordedAction(app.calls), 'media.video.queue_add');
+  });
+
+  it('keeps the switch label when the add really started a stream', async () => {
+    const app = buildApp();
+    const res = await app.request('POST', '/3/stream/queue', { source: watch(2), replaceSessionIds: [OTHER_VIDEO.id] });
+    assert.equal(res.body.started, true);
+    assert.equal(recordedAction(app.calls), 'media.session.switch');
+  });
+
+  it('records a queue add when a stream began after the route looked', async () => {
+    const app = buildApp();
+    const enqueue = app.controller.enqueue.bind(app.controller);
+    app.controller.enqueue = (...args) => {
+      app.bot.videoStreaming = true; // another start won the race
+      app.bot.source = watch(1);
+      return enqueue(...args);
+    };
+    const res = await app.request('POST', '/3/stream/queue', { source: watch(2) });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.started, false);
+    assert.equal(recordedAction(app.calls), 'media.video.queue_add');
+  });
+});
 
 describe('stream/queue: adding', () => {
   it('queues a video while one is streaming', async () => {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   captureRemoteLaunchToken,
+  installRemoteTokenCapture,
   remoteLaunchToken,
   resetRemoteLaunchForTests,
   takeHashToken,
@@ -225,5 +226,55 @@ describe('listener remote client', () => {
     assert.deepEqual(settleRemoteExchange(ready, session, 'b'.repeat(43), null), { kind: 'ready', nonce: 4 });
     assert.deepEqual(settleRemoteExchange(opening, null, session, null), { kind: 'ready', nonce: 1 });
     assert.deepEqual(settleRemoteExchange(opening, null, null, null), { kind: 'ended', message: 'Remote access is invalid or expired' });
+  });
+});
+
+describe('listener remote token capture install', () => {
+  const realWindow = (globalThis as any).window;
+  const realEvent = (globalThis as any).Event;
+  let listeners: Map<string, Set<() => void>>;
+
+  beforeEach(() => {
+    resetRemoteLaunchForTests();
+    listeners = new Map();
+    (globalThis as any).window = {
+      location: { pathname: '/other', search: '', hash: '' },
+      history: { replaceState() {} },
+      addEventListener: (type: string, fn: () => void) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(fn);
+      },
+      removeEventListener: (type: string, fn: () => void) => { listeners.get(type)?.delete(fn); },
+      dispatchEvent: () => true,
+    };
+    (globalThis as any).Event = class { constructor(public type: string) {} };
+  });
+  afterEach(() => {
+    resetRemoteLaunchForTests();
+    (globalThis as any).window = realWindow;
+    (globalThis as any).Event = realEvent;
+  });
+
+  const count = () => listeners.get('hashchange')?.size ?? 0;
+
+  it('installs one hashchange listener however many times it is called', () => {
+    installRemoteTokenCapture();
+    installRemoteTokenCapture();
+    assert.equal(count(), 1);
+  });
+
+  it('returns a disposer that removes the listener and allows a fresh install', () => {
+    const dispose = installRemoteTokenCapture();
+    dispose();
+    assert.equal(count(), 0);
+    installRemoteTokenCapture();
+    assert.equal(count(), 1);
+  });
+
+  it('does not stack listeners when the test reset runs between installs', () => {
+    installRemoteTokenCapture();
+    resetRemoteLaunchForTests();
+    installRemoteTokenCapture();
+    assert.equal(count(), 1);
   });
 });

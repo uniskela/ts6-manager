@@ -36,24 +36,42 @@ export function invalidateChatPlaylistExpansion(botId: number): void {
   chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
 }
 
+/**
+ * Start a resolved item when the bot is idle, otherwise append it to the queue.
+ * Returns true when appended behind current music, false when it started, and
+ * null when it did not start (the queue is restored). `options` carries the
+ * caller's decision about replacing an active video; it is only used when the
+ * bot is idle.
+ */
+export async function startOrAppendMediaItem(
+  bot: VoiceBot,
+  item: QueueItem,
+  isCurrent: () => boolean,
+  options: { replaceSessionIds: string[] } | undefined,
+): Promise<boolean | null> {
+  if (bot.status === 'playing' || bot.status === 'paused') {
+    bot.queue.add(item);
+    return true;
+  }
+  if (options) bot.assertMusicCanStart(options.replaceSessionIds);
+  const cleanup = bot.queue.addForPlayback(item);
+  let started = false;
+  try {
+    if (item.streamUrl) await bot.playStream(item, options);
+    else await bot.play(item, options);
+    started = isCurrent() && bot.nowPlaying === item;
+  } finally {
+    if (!started) cleanup();
+  }
+  return started ? false : null;
+}
+
 /** Append a resolved request, starting it only when music is idle. */
 export async function enqueueMediaItem(context: CommandContext, bot: VoiceBot, item: QueueItem, isCurrent: () => boolean): Promise<boolean | null> {
   if (!['connected', 'playing', 'paused'].includes(bot.status)) throw new Error('Bot is not connected');
-  const queued = bot.status === 'playing' || bot.status === 'paused';
-  const options = queued ? undefined : context.chatMusicSwitch(bot);
-  if (options) bot.assertMusicCanStart(options.replaceSessionIds);
-  if (!queued) {
-    const cleanup = bot.queue.addForPlayback(item);
-    let started = false;
-    try {
-      if (item.streamUrl) await bot.playStream(item, options);
-      else await bot.play(item, options);
-      started = isCurrent() && bot.nowPlaying === item;
-    } finally {
-      if (!started) cleanup();
-    }
-    if (!started) return null;
-  } else bot.queue.add(item);
+  const idle = bot.status === 'connected';
+  const queued = await startOrAppendMediaItem(bot, item, isCurrent, idle ? context.chatMusicSwitch(bot) : undefined);
+  if (queued === null) return null;
   context.saveMusicRequest(bot, item);
   return queued;
 }

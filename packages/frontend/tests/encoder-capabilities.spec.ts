@@ -24,6 +24,11 @@ const caps = {
       id: 'h264_amf', codec: 'h264', hardware: true, available: true,
       attempts: [{ command: cmd('h264_amf'), ok: true, result: 'exit 0' }],
     },
+    // As a Linux or Windows sidecar reports it: skipped, ffmpeg not run.
+    {
+      id: 'h264_videotoolbox', codec: 'h264', hardware: true, available: false,
+      error: 'VideoToolbox is only available on macOS', skipped: 'VideoToolbox is only available on macOS',
+    },
   ],
 };
 
@@ -65,8 +70,13 @@ test('every encoder check row offers its ffmpeg output', async ({ page, request 
   await expect(row('H.264 (AMF)')).toContainText('exit 0');
   await expect(page.getByText(/AMF is available when the sidecar runs natively on Windows/)).toBeVisible();
 
+  await row('H.264 (VideoToolbox)').locator('summary').click();
+  await expect(row('H.264 (VideoToolbox)')).toContainText('ffmpeg was not run: VideoToolbox is only available on macOS.');
+  await expect(page.getByText(/VideoToolbox is available when the sidecar runs natively on macOS/)).toBeVisible();
+
   await page.getByRole('button', { name: 'Advanced quality settings' }).click();
-  await expect(page.getByText('Auto prefers hardware (VAAPI, NVENC or AMF) when a test encode succeeds')).toBeVisible();
+  await expect(page.getByText('Auto prefers hardware (VAAPI, NVENC, AMF or VideoToolbox) when a test encode succeeds')).toBeVisible();
   await page.getByLabel('Default encoder', { exact: true }).click();
   await expect(page.getByRole('option', { name: 'H.264 (AMF)', exact: true })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'H.264 (VideoToolbox)', exact: true })).toBeVisible();
 });

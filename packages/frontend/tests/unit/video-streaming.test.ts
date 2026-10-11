@@ -104,6 +104,18 @@ describe('video streaming labels', () => {
 
   it('offers AMF in encoder selections', () => {
     assert.deepEqual(ENCODER_OPTIONS.find((o) => o.value === 'h264_amf'), { value: 'h264_amf', label: 'H.264 (AMF)' });
+    assert.deepEqual(ENCODER_OPTIONS.find((o) => o.value === 'h264_videotoolbox'), {
+      value: 'h264_videotoolbox',
+      label: 'H.264 (VideoToolbox)',
+    });
+    assert.equal(
+      encoderLabel({
+        codec: 'h264', hardware: false, fallbackReason: 'cannot create compression session', note: null,
+        requested: 'h264_videotoolbox', selected: 'h264_videotoolbox', active: 'h264',
+      }),
+      'H.264 (VideoToolbox) → H.264 (software)',
+    );
+    assert.match(autoEncoderPreferenceHint(true), /VideoToolbox/);
   });
 
   it('labels Auto by whether hardware preference is on', () => {

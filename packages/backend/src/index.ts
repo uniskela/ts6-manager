@@ -8,6 +8,7 @@ import { VoiceBotManager } from './voice/voice-bot-manager.js';
 import { MusicCommandHandler } from './voice/music-command-handler.js';
 import { ListenerRemoteService } from './voice/listener-remote.js';
 import { config } from './config.js';
+import { describeTrustProxy } from './trust-proxy.js';
 import { setYtCookieFile } from './voice/audio/youtube.js';
 import { logYtDlpVersionInBackground } from './voice/audio/yt-dlp-diagnostics.js';
 import jwt from 'jsonwebtoken';
@@ -163,6 +164,7 @@ async function main() {
     console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);
     console.log(`[TS6 WebUI] WebSocket available at ws://localhost:${config.port}/ws`);
     console.log(`[TS6 WebUI] Environment: ${config.nodeEnv}`);
+    console.log(`[TS6 WebUI] Trusted proxies: ${describeTrustProxy(config.trustProxy)}`);
   });
 
   // Graceful shutdown

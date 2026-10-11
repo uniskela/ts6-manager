@@ -160,3 +160,111 @@ test('failed startup preserves an unstarted or exhausted queue position', () => 
     assert.equal(q.next(), exhausted ? pending : old);
   }
 });
+
+// Deterministic coverage for rejected starts: Math.random is pinned so every
+// shuffle insertion slot is exercised instead of whichever one a run happens to draw.
+const RANDOM_DRAWS = [0, 0.34, 0.67, 0.999];
+type Entry = { id: string };
+
+function snapshot(q: PlayQueue<Entry>) {
+  return {
+    all: q.getAll(), current: q.current, index: q.index, upcoming: q.upcoming(), length: q.length,
+  };
+}
+
+function withRandom(value: number, run: () => void) {
+  const original = Math.random;
+  Math.random = () => value;
+  try { run(); } finally { Math.random = original; }
+}
+
+function seeded(shuffle: boolean) {
+  const q = new PlayQueue<Entry>();
+  for (const id of ['a', 'b', 'c', 'd']) q.add({ id });
+  q.setShuffle(shuffle);
+  q.playAt(1);
+  return q;
+}
+
+test('rejected start removes only its own entry and leaves current, order and cursor unchanged', () => {
+  for (const shuffle of [false, true]) for (const draw of RANDOM_DRAWS) {
+    withRandom(draw, () => {
+      const q = seeded(shuffle);
+      const before = snapshot(q);
+      // Same id as a queued entry: only the exact object may be removed.
+      const failed = { id: before.all[3].id };
+      const cleanup = q.addForPlayback(failed);
+      assert.equal(q.current, failed);
+      cleanup();
+      assert.deepEqual(snapshot(q), before, `shuffle=${shuffle} draw=${draw}`);
+      cleanup();
+      assert.deepEqual(snapshot(q), before, 'cleanup is idempotent');
+    });
+  }
+});
+
+test('rejected start keeps repeat modes and the next track intact', () => {
+  for (const repeat of ['off', 'track', 'queue'] as const) for (const draw of RANDOM_DRAWS) {
+    withRandom(draw, () => {
+      const q = seeded(true);
+      q.setRepeat(repeat);
+      const before = snapshot(q);
+      q.addForPlayback({ id: 'failed' })();
+      assert.deepEqual(snapshot(q), before);
+      assert.equal(q.next(), before.upcoming[0]);
+    });
+  }
+});
+
+test('first of two overlapping starts is rejected: the second keeps the cursor', () => {
+  for (const shuffle of [false, true]) for (const draw of RANDOM_DRAWS) {
+    withRandom(draw, () => {
+      const q = seeded(shuffle);
+      const before = snapshot(q);
+      const first = { id: 'first' }, second = { id: 'second' };
+      const cleanFirst = q.addForPlayback(first);
+      q.addForPlayback(second);
+      cleanFirst();
+      assert.equal(q.current, second);
+      assert.ok(!q.getAll().includes(first));
+      assert.deepEqual(q.getAll().filter(item => item !== second), before.all);
+    });
+  }
+});
+
+test('both overlapping starts are rejected: the original track and order come back', () => {
+  for (const shuffle of [false, true]) for (const draw of RANDOM_DRAWS) {
+    for (const order of ['first-then-second', 'second-then-first']) {
+      withRandom(draw, () => {
+        const q = seeded(shuffle);
+        const before = snapshot(q);
+        const cleanFirst = q.addForPlayback({ id: 'first' });
+        const cleanSecond = q.addForPlayback({ id: 'second' });
+        if (order === 'first-then-second') { cleanFirst(); cleanSecond(); } else { cleanSecond(); cleanFirst(); }
+        assert.deepEqual(snapshot(q), before, `${order} shuffle=${shuffle} draw=${draw}`);
+      });
+    }
+  }
+});
+
+test('rejected start on an empty queue leaves it empty and idle', () => {
+  for (const shuffle of [false, true]) {
+    const q = new PlayQueue<Entry>();
+    q.setShuffle(shuffle);
+    q.addForPlayback({ id: 'failed' })();
+    assert.deepEqual(snapshot(q), { all: [], current: null, index: -1, upcoming: [], length: 0 });
+    const next = { id: 'next' };
+    q.add(next);
+    assert.equal(q.next(), next);
+  }
+});
+
+test('starting the same item twice never loops when its cleanup runs', () => {
+  const q = seeded(false);
+  const item = { id: 'again' };
+  const first = q.addForPlayback(item);
+  const second = q.addForPlayback(item);
+  first();
+  second();
+  assert.ok(!q.getAll().includes(item));
+});

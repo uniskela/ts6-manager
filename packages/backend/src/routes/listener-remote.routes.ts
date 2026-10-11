@@ -11,6 +11,9 @@ import { validateUrl } from '../utils/url-validator.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import type { EventBridge } from '../bot-engine/event-bridge.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
+import { startOrAppendMediaItem } from '../voice/commands/queue.js';
+import { MediaSessionConflictError } from '../voice/media-session.js';
+import { musicHistoryErrorCode, recordMusicRequests } from '../voice/music-request-history.js';
 
 export const listenerRemoteRoutes: Router = Router();
 export const listenerRemoteAdminRoutes: Router = Router();
@@ -168,8 +171,38 @@ async function append(req: Request, binding: ListenerRemoteBinding, resolveItem:
     const item = await resolveItem();
     const { bot } = await authorized(req, 'add', 'request');
     if (bot.queue.length >= 500) fail(429, 'rate_limited', 'The queue is full.');
-    bot.queue.add(item);
+    // Conservative: a listener may only start music on an idle bot. Anything
+    // already playing or paused is never touched, and an active video stream is
+    // never replaced (no replaceSessionIds, unlike a chat !play); the item is
+    // appended instead. There is no await between the final authorization above
+    // and the queue mutation, so a revoked listener cannot start playback.
+    let queued: boolean | null;
+    if (bot.status === 'connected' && bot.videoSessionInfo()) {
+      bot.queue.add(item);
+      queued = true;
+    } else {
+      try {
+        queued = await startOrAppendMediaItem(bot, item, () => botFor(req, binding) === bot, { replaceSessionIds: [] });
+      } catch (err) {
+        if (!(err instanceof MediaSessionConflictError)) throw err;
+        bot.queue.add(item);
+        queued = true;
+      }
+    }
+    if (queued === null) fail(503, 'unavailable', 'Listener remote is unavailable.');
+    await saveRequestHistory(req, bot, item);
   });
+}
+
+/** History is best effort: a database failure must not fail an accepted request. */
+async function saveRequestHistory(req: Request, bot: NonNullable<ReturnType<typeof botFor>>, item: QueueItem): Promise<void> {
+  const serverConfigId = bot.currentConfig.serverConfigId;
+  if (!serverConfigId) return;
+  try {
+    await recordMusicRequests(req.app.locals.prisma, { serverConfigId, musicBotId: bot.currentConfig.id }, [item]);
+  } catch (error) {
+    console.error('[listener-remote] Failed to save music request history (%s)', musicHistoryErrorCode(error));
+  }
 }
 
 listenerRemoteRoutes.post('/queue', endpoint(async (req, res) => {

@@ -23,6 +23,8 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
   private _shuffle = false;
   private _repeat: RepeatMode = "off";
   private shuffleOrder: number[] = [];
+  /** What each in-flight start displaced, so a later start can fall back past a start that was already rejected. */
+  private readonly displaced = new WeakMap<object, { previous: T | undefined; exhausted: boolean }>();
 
   constructor(private readonly onChange?: (added: boolean) => void) {}
 
@@ -88,7 +90,7 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
   /** Select a new request; cleanup restores the cursor only while that request owns it. */
   addForPlayback(item: T): () => void {
     const previous = this.getAll()[this.currentIndex];
-    const exhausted = this.exhausted;
+    this.displaced.set(item, { previous, exhausted: this.exhausted });
     this.add(item);
     this.playAt(this.getAll().indexOf(item));
     return () => {
@@ -96,15 +98,26 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
       if (index < 0) return;
       const restore = this.current === item;
       if (!this.removeAt(index) || !restore) return;
-      if (!previous) {
+      // A start that overlapped an earlier, already rejected start displaced that
+      // entry; walk back to the last track still queued.
+      let base = this.displaced.get(item);
+      let target = base?.previous;
+      const seen = new Set<T>();
+      while (base && target && !this.getAll().includes(target) && !seen.has(target)) {
+        seen.add(target);
+        base = this.displaced.get(target);
+        target = base?.previous;
+      }
+      if (!base) return;
+      if (!target) {
         this.currentIndex = -1;
-        this.exhausted = exhausted;
+        this.exhausted = base.exhausted;
         return;
       }
-      const previousIndex = this.getAll().indexOf(previous);
-      if (previousIndex < 0) return;
-      this.currentIndex = previousIndex;
-      this.exhausted = exhausted;
+      const targetIndex = this.getAll().indexOf(target);
+      if (targetIndex < 0) return;
+      this.currentIndex = targetIndex;
+      this.exhausted = base.exhausted;
     };
   }
 
