@@ -148,10 +148,13 @@ function stageCheck(
 function checkFromProbe(
   id: string,
   label: string,
-  result: CommandProbeResult,
+  result: CommandProbeResult | undefined,
   okMessage: string,
   remediation: string,
 ): MediaDiagnosticCheck {
+  if (!result) {
+    return skipped(id, label, 'Skipped — overall diagnostic deadline reached');
+  }
   if (result.ok) {
     return {
       id,
@@ -180,11 +183,11 @@ async function boundedProbe(
   probe: DiagnoseRuntimeMediaOptions['probeCommand'],
   command: string,
   args: string[],
-): Promise<CommandProbeResult> {
+): Promise<CommandProbeResult | undefined> {
   const run = probe ?? probeCommandVersion;
   const budget = Math.min(timeoutMs, Math.max(0, remainingMs()));
   if (budget < 200) {
-    return { ok: false, code: 'timeout', message: 'Skipped — overall diagnostic deadline reached' };
+    return undefined;
   }
   return run(command, args, budget);
 }
@@ -351,7 +354,7 @@ export async function diagnoseMediaAdmin(
     'Deno is available for yt-dlp YouTube challenge solving (--js-runtimes deno).',
     `Deno could not run. YouTube playback can fail the n challenge. ${IMAGE_REMEDIATION}`,
   );
-  if (!denoProbe.ok && denoProbe.code === 'binary_missing') denoCheck.status = 'warning';
+  if (denoProbe && !denoProbe.ok && denoProbe.code === 'binary_missing') denoCheck.status = 'warning';
   checks.push(denoCheck);
 
   const tools: Record<string, string> = { ffmpeg: 'ffmpeg', ffprobe: 'ffprobe', deno: 'deno' };

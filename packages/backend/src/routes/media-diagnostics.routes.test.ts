@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { once } from 'node:events';
 import express from 'express';
 import type { MediaAdminDiagnosticReport } from '@ts6/common';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -20,7 +21,7 @@ function appFor(role: 'admin' | 'viewer', diagnose?: () => Promise<MediaAdminDia
 
 async function listen(app: express.Express): Promise<{ base: string; close: () => Promise<void> }> {
   const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((resolve) => server.once('listening', resolve));
+  await once(server, 'listening');
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('no port');
   return {

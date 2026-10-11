@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createServer } from 'node:http';
+import { once } from 'node:events';
 import type { VideoEncoderCapabilities } from '@ts6/common';
 import { diagnoseMediaAdmin, MEDIA_ADMIN_TIMEOUT_MS, probeMusicOpus } from './media-admin-diagnostics.js';
 
@@ -135,6 +136,51 @@ describe('diagnoseMediaAdmin', () => {
     assert.ok(MEDIA_ADMIN_TIMEOUT_MS >= 5_000);
   });
 
+  it('marks unstarted follow-up probes as skipped when the deadline is exhausted', async (t) => {
+    let now = Date.now();
+    t.mock.method(Date, 'now', () => now);
+    const commands: string[] = [];
+    const report = await diagnoseMediaAdmin({
+      env: { SIDECAR_URL: 'http://sidecar:9800' },
+      probeCommand: async (command, args) => {
+        commands.push(`${command} ${args.join(' ')}`);
+        return passingProbe(command);
+      },
+      probeSidecarHealth: async () => {
+        now += MEDIA_ADMIN_TIMEOUT_MS;
+        return { status: 'ok' };
+      },
+      probeOpus: () => ({ ok: true }),
+      loadEncoders: async () => {
+        assert.fail('Encoder probe must not run after the deadline');
+      },
+    });
+
+    assert.equal(commands.length, 3);
+    for (const id of ['ffmpeg-smoke', 'yt-dlp-extractors', 'deno']) {
+      const check = report.checks.find((item) => item.id === id);
+      assert.equal(check?.status, 'skipped');
+      assert.match(check?.message || '', /overall diagnostic deadline reached/);
+      assert.equal(check?.remediation, undefined);
+      assert.equal(report.warnings.some((line) => line.startsWith(`${check?.label}:`)), false);
+    }
+  });
+
+  it('keeps a probe that actually ran and timed out marked as failed', async () => {
+    const report = await diagnoseMediaAdmin({
+      env: { SIDECAR_URL: 'http://sidecar:9800' },
+      probeCommand: async (command, args) => args.includes('lavfi')
+        ? { ok: false, code: 'timeout', message: 'ffmpeg did not respond within 2000ms' }
+        : passingProbe(command),
+      probeSidecarHealth: async () => ({ status: 'ok' }),
+      probeOpus: () => ({ ok: true }),
+      loadEncoders: async () => encoders,
+    });
+    const check = report.checks.find((item) => item.id === 'ffmpeg-smoke');
+    assert.equal(check?.status, 'fail');
+    assert.match(check?.message || '', /did not respond/);
+  });
+
   it('reports unhealthy sidecars and skips encoder probes', async () => {
     let encoderCalls = 0;
     const report = await diagnoseMediaAdmin({
@@ -171,7 +217,7 @@ describe('diagnoseMediaAdmin', () => {
   it('does not mark a malformed HTTP health response as healthy', async () => {
     const server = createServer((_req, res) => res.end('<html>wrong service</html>'));
     server.listen(0, '127.0.0.1');
-    await new Promise<void>(resolve => server.once('listening', resolve));
+    await once(server, 'listening');
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
     let encoderCalls = 0;
@@ -211,7 +257,7 @@ describe('diagnoseMediaAdmin', () => {
 });
 
 describe('probeMusicOpus', () => {
-  it('encodes one silent frame', () => {
+  it('encodes one silent frame with bundled opusscript (no FFmpeg)', () => {
     const result = probeMusicOpus();
     assert.equal(result.ok, true);
   });
