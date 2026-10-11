@@ -429,17 +429,24 @@ export class FlowRunner {
       const next = previous.then(() => gate);
       this.channelMessageChains.set(key, next);
       // A cancelled waiter must retain its place until the predecessor settles.
-      void next.then(() => {
+      void next.finally(() => {
         if (this.channelMessageChains.get(key) === next) this.channelMessageChains.delete(key);
-      });
+      }).catch(() => {});
       try {
         await new Promise<void>((resolve, reject) => {
-          const onAbort = () => reject(signal.reason);
-          signal.addEventListener('abort', onAbort, { once: true });
+          const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            reject(signal.reason);
+          };
+          signal.addEventListener('abort', onAbort);
           previous.then(() => {
             signal.removeEventListener('abort', onAbort);
-            resolve();
-          }).catch(reject);
+            if (signal.aborted) reject(signal.reason);
+            else resolve();
+          }, (err) => {
+            signal.removeEventListener('abort', onAbort);
+            reject(err);
+          });
         });
         signal.throwIfAborted();
         if (!target) {
@@ -469,7 +476,7 @@ export class FlowRunner {
     const reminderUid = ctx.getTemp('reminderRequesterUid');
     if (data.targetMode === 1 && reminderUid) {
       if (target !== ctx.eventData.clid || await this.getReminderRequesterUid(ctx, client) !== reminderUid) return;
-      // shortcut: UID verification and client-ID delivery are not atomic; require UID-addressed delivery for sensitive messages.
+      // sendtextmessage can only target a session clid. This check skips a known mismatch; a reuse before the send can still receive it.
     }
 
     signal.throwIfAborted();

@@ -61,6 +61,42 @@ test('failed channel sends restore the helper and release the next announcement'
   assert.equal(channel, '2');
 });
 
+test('a rejected announcement queue drops its abort listener and stays usable', async () => {
+  const runner = new FlowRunner({} as any, {} as any, { clients: new Set() } as any) as any;
+  const failed = Promise.reject(new Error('queue broken'));
+  await assert.rejects(failed);
+  runner.channelMessageChains.set('1:1', failed);
+  const controller = new AbortController();
+  let added = 0;
+  let removed = 0;
+  const signal = controller.signal;
+  const add = signal.addEventListener.bind(signal);
+  const remove = signal.removeEventListener.bind(signal);
+  signal.addEventListener = ((type: string, listener: any, options?: any) => {
+    if (type === 'abort') added++;
+    return add(type, listener, options);
+  }) as typeof signal.addEventListener;
+  signal.removeEventListener = ((type: string, listener: any, options?: any) => {
+    if (type === 'abort') removed++;
+    return remove(type, listener, options);
+  }) as typeof signal.removeEventListener;
+  const posted: string[] = [];
+  const client = {
+    execute: async () => [{ client_id: '1', client_channel_id: '2' }],
+    executePost: async (_sid: number, command: string, params: any) => {
+      if (command === 'sendtextmessage') posted.push(params.msg);
+    },
+  };
+  await assert.rejects(runner.executeMessage(
+    { targetMode: 2, target: '12', message: 'A' }, context(), client, signal,
+  ), /queue broken/);
+  assert.equal(added, 1);
+  assert.equal(removed, 1);
+  assert.equal(runner.channelMessageChains.has('1:1'), false);
+  await runner.executeMessage({ targetMode: 2, target: '13', message: 'B' }, context(), client, new AbortController().signal);
+  assert.deepEqual(posted, ['B']);
+});
+
 test('an unidentified query client cannot fall back to posting in the wrong channel', async () => {
   const runner = new FlowRunner({} as any, {} as any, { clients: new Set() } as any) as any;
   const posted: string[] = [];
