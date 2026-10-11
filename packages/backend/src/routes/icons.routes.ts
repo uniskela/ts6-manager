@@ -158,6 +158,8 @@ iconRoutes.post('/', requireRole('admin'), (req, res, next) => {
       });
       const target = await transferTarget(req, start);
       await uploadTransfer(target.host, target.port, target.ftkey, image);
+      // An upload overwrites whatever held this id (CRC32 ids can collide), so a cached preview may be stale.
+      previewCache.delete(cacheKey(req, id));
     }));
     const body: ServerIcon = { id, size: image.length, uploadedAt: new Date().toISOString() };
     res.status(201).json(body);

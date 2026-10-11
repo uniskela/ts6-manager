@@ -178,3 +178,14 @@ test('the demo connection lists icons but refuses transfers with a clear message
     assert.equal((await fetch(`${f.base}/${pngId}`)).status, 400);
   } finally { await f.close(); }
 });
+
+test('an upload that overwrites an icon id replaces its cached preview', async () => {
+  const f = await fixture();
+  try {
+    const older = Buffer.concat([png.subarray(0, 16), Buffer.from('older-bytes')]);
+    f.files.set(`icon_${pngId}`, older);
+    assert.deepEqual(Buffer.from(await (await fetch(`${f.base}/${pngId}`)).arrayBuffer()), older);
+    assert.equal((await fetch(f.base, { method: 'POST', body: form() })).status, 201);
+    assert.deepEqual(Buffer.from(await (await fetch(`${f.base}/${pngId}`)).arrayBuffer()), png);
+  } finally { await f.close(); }
+});
