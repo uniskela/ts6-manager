@@ -75,9 +75,11 @@ Terminate HTTPS at the reverse proxy unless you have a different deliberate arch
 
 ## Listener remote and client IP limits
 
-The listener remote backend generates private `!remote` links using **Settings
-→ Public URL**, falling back to `PUBLIC_URL`. Set an HTTPS URL reachable from
-listeners' phones. An optional path prefix is preserved; the proxy must strip
+The listener remote backend generates private `!remote` links using the saved
+**Public URL of this manager** (set in a channel's edit dialog, under the hosted
+banner upload), falling back to `PUBLIC_URL`. Setting `PUBLIC_URL` is the simplest
+route. Use an HTTPS URL reachable from listeners' phones. What listeners and
+admins see is described in [Media bots — Listener remote](music-bots.md#listener-remote). An optional path prefix is preserved; the proxy must strip
 that prefix consistently for both the frontend and `/api/` routes. Links never
 derive their origin from a request's `Host` or forwarded headers.
 

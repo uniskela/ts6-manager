@@ -425,6 +425,8 @@ When a music bot is connected to a configured command channel, users there can c
 - **`!commands`** - List enabled custom chat commands
 - **`!play <url>`** - Play YouTube, Spotify, or Apple Music media
 - **`!play`** - Resume paused playback
+- **`!history`** - Show this bot's 10 most recent requests
+- **`!again [id]`** - Replay a stored request by ID, or the latest one
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** - Show or manage the queue using one-based positions
 - **`!add <url>`** - Alias for `!queue <url>`
 - **`!playlist [name-or-id]` / `!pl <name-or-id>`** - List or append a saved playlist; an idle connected bot resumes queue order
@@ -435,6 +437,8 @@ When a music bot is connected to a configured command channel, users there can c
 - **`!stop`** - Stop playback
 - **`!pause`** - Toggle pause/resume
 - **`!skip` / `!next`** - Next track in queue
+- **`!voteskip`** - Vote to skip the current track; more than half of human listeners in the bot channel must vote
+- **`!remote [bot name]`** - Get a private one-time link to a phone listener remote
 - **`!prev`** - Previous track
 - **`!vol [0-100]` / `!volume [0-100]`** - Show or set volume for music, radio, video, and IPTV
 - **`!np` / `!nowplaying`** - Show the current track

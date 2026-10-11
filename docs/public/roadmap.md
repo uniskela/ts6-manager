@@ -60,7 +60,7 @@ Operator detail: [Media bots — Bot Hub](music-bots.md#bot-hub) and [Video stre
 
 ### Bot console and shared media — v1.10.0
 
-Merged on `main` for the upcoming 1.10.0 release; tracked in [#164](https://github.com/uniskela/ts6-manager/issues/164) and [#196](https://github.com/uniskela/ts6-manager/issues/196).
+Published in [v1.10.0](https://github.com/uniskela/ts6-manager/releases/tag/v1.10.0); tracked in [#164](https://github.com/uniskela/ts6-manager/issues/164) and [#196](https://github.com/uniskela/ts6-manager/issues/196).
 
 - **Bot Hub** is the bot list, with **Open console** for each bot. The console combines **Now playing**, **Up next** with mouse, touch and keyboard queue reordering, and **Music · Link · Radio · IPTV** sources. Each source tab links to the matching Media Library or IPTV page ([#294](https://github.com/uniskela/ts6-manager/pull/294)).
 - **Media Library** keeps **Library · Playlists · Radio stations · Requests · Streaming defaults**. Playlists are shared by all bots on a server; radio stations can be edited and filtered by mood in the console.
@@ -72,6 +72,20 @@ Merged on `main` for the upcoming 1.10.0 release; tracked in [#164](https://gith
 - Channel banner images can be uploaded to Manager and used without a public image host ([#287](https://github.com/uniskela/ts6-manager/pull/287)).
 
 Operator detail: [Media bots](music-bots.md), [Bot flows](bot-flows.md), [Video streaming](video-streaming.md), [upgrade backup note](upgrading.md#upgrading-to-1100) and the [release-candidate smoke checklist](https://github.com/uniskela/ts6-manager/blob/main/docs/internal/plans/164-1-10-0-rc-smoke.md).
+
+### Listener remote, Auto-DJ and queued video — v1.11.0
+
+Merged on `main` for the upcoming 1.11.0 release; tracked in [#253](https://github.com/uniskela/ts6-manager/issues/253). Upgrade notes: [Upgrading to 1.11.0](upgrading.md#upgrading-to-1110).
+
+- **Built-in command permissions and `!voteskip`**: playback, queue and video commands can be limited to selected TeamSpeak server groups; listeners can vote to skip when direct skip is restricted ([#393](https://github.com/uniskela/ts6-manager/pull/393)). See [Bot flows](bot-flows.md#chat-commands).
+- **Listener remote**: `!remote` sends a private one-time link to a phone page where a listener sees now playing and up next, searches the library and adds a song or link ([#398](https://github.com/uniskela/ts6-manager/pull/398), [#406](https://github.com/uniskela/ts6-manager/pull/406)). See [Media bots — Listener remote](music-bots.md#listener-remote).
+- **Queued video**: a bot plays queued videos and YouTube playlists back to back on one stream, and the queue survives a restart ([#404](https://github.com/uniskela/ts6-manager/pull/404), [#405](https://github.com/uniskela/ts6-manager/pull/405)). Starting a kept queue stays a manual action. See [Video streaming — Queue videos and playlists](video-streaming.md#queue-videos-and-playlists).
+- **Auto-DJ and 24/7 presence** per bot ([#412](https://github.com/uniskela/ts6-manager/pull/412)). See [Media bots](music-bots.md#auto-dj-and-247-presence).
+- **Request history and replay**: per-bot history, `!history`, `!again` and one-click replay ([#413](https://github.com/uniskela/ts6-manager/pull/413)). See [Media bots — Requests](music-bots.md#requests).
+- **Admin media diagnostics** at **System → Diagnostics** ([#415](https://github.com/uniskela/ts6-manager/pull/415)).
+- **Adaptive Auto quality**: an Auto stream steps down one preset when encoding stays below realtime and back up after a steady recovery, never above the preset Auto started at. It reads encoder health only; TeamSpeak and the sidecar expose no viewer connection feedback to adapt to ([#418](https://github.com/uniskela/ts6-manager/pull/418)). See [Video streaming — Adaptive Auto quality](video-streaming.md#adaptive-auto-quality).
+- **Native sidecar archives** are attached to each release ([#399](https://github.com/uniskela/ts6-manager/pull/399)). See [Native media sidecar](native-sidecar.md).
+- New flow templates for support tickets, reminders and announcements ([#414](https://github.com/uniskela/ts6-manager/pull/414)), and server icons can be picked, uploaded and deleted in the channel edit dialog ([#417](https://github.com/uniskela/ts6-manager/pull/417)).
 
 ## Follow-up direction
 
@@ -112,9 +126,7 @@ Continue runtime testing for long-track memory use, seek/repeat/queue behavior, 
 
 Continue validating quality presets, source compatibility, and sidecar/media transport behavior against current TeamSpeak and browser versions.
 
-Queued videos and YouTube playlist streaming ([#253](https://github.com/uniskela/ts6-manager/issues/253) Slice 3) are implemented for the next release: a bot plays queued videos back to back on one stream, and the queue survives a restart. Starting a kept queue stays a manual action; unattended resume belongs to the Auto-DJ slice. Operator detail: [Video streaming — Queue videos and playlists](video-streaming.md#queue-videos-and-playlists).
-
-Adaptive Auto quality ([#253](https://github.com/uniskela/ts6-manager/issues/253) Slice 5) is implemented for the next release: an Auto stream steps down one preset when encoding stays below realtime and back up after a steady recovery, never above the preset Auto started at. It reads encoder health only; TeamSpeak and the sidecar expose no viewer connection feedback to adapt to. Operator detail: [Video streaming — Adaptive Auto quality](video-streaming.md#adaptive-auto-quality).
+Shipped streaming work is listed under v1.11.0 above.
 
 ## Explicit scope boundaries
 

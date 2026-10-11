@@ -37,7 +37,7 @@ Open **Bot settings → Auto-DJ & 24/7** on a Bot Hub card or in its console. Ex
 
 Auto-DJ fills idle time only when neither request queue has upcoming items and no human media is playing or paused. A new music request immediately interrupts automated music or live radio. Automated tracks stay outside the request queue, so request shuffle and repeat controls keep their normal meaning. A kept video queue waits for **Play queue** and blocks Auto-DJ.
 
-**Require a human listener** suspends automated playback when the last human leaves, excluding managed media bots and Query clients. It resumes when a listener returns. With this rule off, automated audio continues in an empty channel; ordinary human playback and video retain their existing auto-stop policies.
+**Require a human listener** (off by default) suspends automated playback when the last human leaves, excluding managed media bots and Query clients. It resumes when a listener returns. With this rule off, automated audio continues in an empty channel; ordinary human playback and video retain their existing auto-stop policies.
 
 Manual **Stop** or **Clear queue** starts the saved quiet period (five minutes by default). Requests can still play during that period. Broken sources retry with exponential backoff, starting at 30 seconds and capped at 30 minutes by default. Short radio dropouts count as failures. Quiet periods, retry deadlines and playlist position survive a Manager restart.
 
@@ -85,7 +85,7 @@ Choosing **None** clears the avatar and asks TeamSpeak to delete the uploaded fi
 
 History stays in the existing database across restarts. Repeated requests update the same source's time for that bot. By default, the newest 100 unique requests are kept per bot and connection; set `MUSIC_REQUEST_HISTORY_LIMIT` in the backend process environment to a positive integer (maximum 1,000) to change the limit. For Docker, pass it in the backend service's `environment`. Oldest rows are trimmed as requests are saved. Older server-wide history remains visible to bots on that connection and is trimmed when history is read. The timestamp is the request time, including queued items, rather than proof of completed playback. History does not retain requester identities or expose raw URLs or local paths to the UI.
 
-Replay uses the stored media reference through the normal validation and permission checks. Missing files, removed sources, or references rejected by current URL policy show **Unavailable**. Chat `!again` can retry a reference after it becomes available again. The listener remote keeps its existing library and URL-request actions; its token does not grant access to administrator history or replay endpoints.
+Replay uses the stored media reference through the normal validation and permission checks. Missing files, removed sources, or references rejected by current URL policy show **Unavailable**. Chat `!again` can retry a reference after it becomes available again. A [listener remote](#listener-remote) session cannot open administrator history or replay.
 
 ## Sources
 
@@ -126,6 +126,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!pause`** — Toggle pause/resume
 - **`!skip` / `!next`** — Advance the queue
 - **`!voteskip`** — Vote to skip the current track; more than half of human listeners in the bot channel must vote. Bots do not count, each identity votes once, and changing tracks resets votes
+- **`!remote [bot name]`** — Get a private, one-time link to a phone-friendly [listener remote](#listener-remote) for the bot in your channel
 - **`!prev`** — Previous track
 - **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV.
 - **`!np` / `!nowplaying`** — Show the current track
@@ -139,7 +140,7 @@ When a bot is connected to a configured command channel, users in that channel c
 
 Custom chat commands are configured in **Bot Flows → Chat commands**, alongside the built-in list and clash warnings. See [Bot Flows](bot-flows.md).
 
-Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. **Everyone** is the default after upgrading. Help and read-only information stay accessible; human listeners can still use `!voteskip`. Denied controls receive a short private reply with a cooldown.
+Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. **Everyone** is the default after upgrading. Help and read-only information stay accessible, including `!history`; human listeners can still use `!voteskip`, and `!remote` is never restricted (what the remote can do follows the same permissions, see below). `!again` counts as a playback command. [Bot flows — Chat commands](bot-flows.md#chat-commands) lists which group each command belongs to. Denied controls receive a short private reply with a cooldown.
 
 ### Several bots in one channel
 
@@ -162,6 +163,68 @@ Seeded presets start **disabled**. Edit the placeholder Markdown, then enable. `
 
 A `!command` that is not built in, not an enabled custom command and not a Bot Flow command trigger gets a short **Unknown command** reply pointing to `!help` and `!commands`, with a "Did you mean…" hint for near-miss typos such as `!plya`.
 
+## Listener remote
+
+The listener remote lets someone who is listening in the bot's channel see what is playing and add music from their phone, without typing chat commands. It is for listeners, not administrators.
+
+### For listeners
+
+1. Join the channel the bot is in and type `!remote` (or `!remote Bot 2` to pick a bot when several share the channel; see [Several bots in one channel](#several-bots-in-one-channel)).
+2. The bot answers in a **private message** with a link: `Your private one-time listener remote link: https://…/remote#token=…`. Open it on your phone or computer. Do not share it.
+3. The page shows **Now playing**, **Up next**, a **Library** search box and a **Media URL** box. It refreshes every five seconds while the page is visible.
+
+What you can do on the page:
+
+- see the current track and the queue (the first 50 upcoming tracks, with a count of the rest);
+- search the server's song library by title or artist and add a song with the **+** button; and
+- paste a link and choose **Request URL** to add it. A link to a playlist adds only its first track.
+
+The queue holds at most 500 items. If nothing is playing when you add something, your request starts; otherwise it joins the end of the queue and does not interrupt what is playing.
+
+What you cannot do: pause, skip, stop, seek, change the volume, reorder or clear the queue, or use any admin function. For those, use chat commands (`!skip`, `!voteskip` and so on) or ask an admin.
+
+**Permissions.** Actions follow the same **Who can use this?** settings as chat (**Bot Flows → Chat commands → Built-in command permissions**). Seeing the queue and searching the library are always available to a verified listener. **Add** buttons and the **Media URL** box appear only when you are allowed to use the **Queue and playlist changes** group, just as for `!queue <url>`. If an admin changes that setting while your page is open, the next add attempt is refused with `You are not allowed to use this command.` and the page updates.
+
+**How long it lasts.**
+
+| What | Lifetime |
+|------|----------|
+| The link | Valid for 5 minutes and works once. Opening it a second time fails. |
+| Your session | 15 minutes from the moment you open the link, no matter how much you use it. Activity does not extend it. |
+
+When the session ends, the page says the access is invalid or expired. Type `!remote` in the channel again to get a new link. The page keeps the session only in the browser's memory, so reloading or closing it also means asking for a new link.
+
+**What ends a session early:**
+
+- you leave the bot's channel or are moved out of it;
+- the bot moves to another channel or disconnects;
+- an administrator revokes access;
+- you type `!remote` again (the new link replaces the earlier link and session for that bot); and
+- the Manager backend restarts.
+
+**Rate limits** are per minute and keep the page usable for everyone: you can request about three links per minute for a bot, paste at most five links per minute in one session, and only one pasted link per bot is resolved at a time. The page shows `Too many remote requests` or `A media request is already pending.` when you hit a limit; wait a minute and try again.
+
+**What you may see in chat** when asking for a link. All of these arrive as private messages:
+
+| Reply | Meaning |
+|-------|---------|
+| `Listener remote needs a verified listener in the bot channel.` | You are not in the bot's channel, the bot is not connected, or TeamSpeak could not confirm who you are. Join the channel and try again. |
+| `Listener remote is unavailable: an admin must configure Public URL.` | No Public URL is set. Tell an admin. |
+| `Listener remote requires an HTTPS Public URL.` | The Public URL is not HTTPS. Tell an admin. |
+| `Listener remote is unavailable right now. Try again shortly.` | A temporary error, or you asked for links too often. Wait a moment. |
+
+Asking again within a couple of seconds is ignored, and nothing is sent while the bot is holding back chat because of TeamSpeak flood protection.
+
+### For administrators
+
+- **Set an HTTPS Public URL.** The link starts with the manager's Public URL. Setting the `PUBLIC_URL` environment variable is the simplest way. The same address can be saved in the UI: there is no Settings page for it, only the **Public URL of this manager** field under the hosted banner upload in a channel's edit dialog (it appears once a banner has been uploaded, or through **Change** when one is set). A saved value wins over the variable. It must be reachable from listeners' phones. A plain `http://localhost` address is accepted only outside production, for development. Links are never built from the request's `Host` header.
+- **Put it behind a reverse proxy and set `TRUST_PROXY`.** The remote's rate limits are per client address, so the backend must see real client addresses. Without `TRUST_PROXY`, every listener appears to come from the proxy and shares one limit. See [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits) for the recommended values and for what to turn off in proxy logs.
+- **Run one backend.** Links, sessions and limits live in memory; a restart ends every session.
+- **Revoke access.** An administrator can end all remote sessions for a bot, or one listener's, with `POST /api/listener-remote-admin/bots/<bot id>/revoke` using the normal admin sign-in. Pass `{"uid": "<TeamSpeak unique ID>"}` to revoke one person and omit it to revoke everyone; the response is `{"revoked": <count>}`. There is no button for this in the web UI yet.
+- **Audit.** Issuing a link, adding a song or link, and revoking are recorded in the audit history with an anonymous fingerprint for listeners, never the link, session or pasted URL.
+
+The remote cannot reach any other part of the manager: its session does not authenticate administrator pages or APIs.
+
 ## Download progress
 
 Explicit library downloads run as bounded background jobs and can expose:
@@ -181,6 +244,6 @@ Production containers do not self-update yt-dlp.
 
 The tool is installed at image build time and validated alongside FFmpeg, Node, and Deno. Deno (pinned in `.deno-version`) is the only yt-dlp JavaScript runtime configured for YouTube challenge solving (`--js-runtimes deno`). Image Node remains 20 for the Nest backend and is not an EJS fallback. To update the bundled extractor or Deno, pull a newer TS6 Manager image and recreate the container, or rebuild from a fresh image build.
 
-Administrators can confirm the currently bundled yt-dlp (and related media tools) with the demand-driven Runtime / media check on Settings → YouTube or Media Library → Library. That check is not part of live bot status polling.
+Administrators can confirm the currently bundled yt-dlp (and related media tools) with the demand-driven Runtime / media check on Settings → YouTube or Media Library → Library. That check is not part of live bot status polling. For a fuller report (tool versions and paths, a short test decode and encode, yt-dlp extractors, Deno and sidecar health), administrators can open **System → Diagnostics**; it runs when the page opens and again only on **Refresh**. See [Video streaming — Troubleshooting](video-streaming.md).
 
 A public-video smoke test is intentionally not a release gate because media availability, rate limits, and regional restrictions are external to the project.

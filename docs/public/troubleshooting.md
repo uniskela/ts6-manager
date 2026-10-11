@@ -118,13 +118,18 @@ Confirm:
 
 Do not discard the persistent volume as a first troubleshooting step.
 
+## `!remote` does not send a link, or the link stops working
+
+The bot replies privately, so check the listener's private chats. `Listener remote is unavailable: an admin must configure Public URL.` and `Listener remote requires an HTTPS Public URL.` mean `PUBLIC_URL` is missing or not HTTPS. `Listener remote needs a verified listener in the bot channel.` means the person is not in the bot's channel. A link works once and only for 5 minutes; a session ends after 15 minutes, when its owner leaves the channel, or when the backend restarts. In each case type `!remote` again. If listeners hit `Too many remote requests` right away, or sign-in attempts block everyone at once, the backend is probably behind a reverse proxy without `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote).
+
 ## Reverse-proxy login or live-update problems
 
 Check:
 
 - the public frontend origin matches `FRONTEND_URL`;
 - WebSocket upgrades are supported by the reverse proxy (see [Reverse proxy](reverse-proxy.md) for a full NGINX example); and
-- the public domain routes to the frontend/nginx service, not directly to the internal sidecar.
+- the public domain routes to the frontend/nginx service, not directly to the internal sidecar; and
+- `TRUST_PROXY` lists your proxy, otherwise every user shares one sign-in rate limit (see [Upgrading to 1.11.0](upgrading.md#reverse-proxy-set-trust_proxy)).
 
 ## Browser preview stuck on “Connecting to stream…”
 

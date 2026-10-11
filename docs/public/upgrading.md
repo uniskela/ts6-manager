@@ -35,6 +35,38 @@ After upgrading, open **Bot Hub → Open console** for playback. **Media Library
 
 Before merging the release PR, run the [1.10.0 smoke checklist](https://github.com/uniskela/ts6-manager/blob/main/docs/internal/plans/164-1-10-0-rc-smoke.md) against the release candidate, including the AMD/VAAPI homelab checks.
 
+### Upgrading to 1.11.0
+
+This section covers upgrading from 1.10.2. Skip it if you are installing fresh.
+
+**Back up the database before starting the 1.11.0 backend.** Stop the backend, then copy its persistent data volume: `ts6webui.db`, any SQLite journal or WAL files next to it, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until you have checked the upgrade.
+
+**Rolling back needs both the old image tag and the matching database backup.** The 1.11.0 schema adds tables and columns that a 1.10.x image does not know about. On start, the 1.10.x image would have to drop them to make the database match its own schema, and Prisma refuses to drop columns or tables that hold data unless data loss is accepted. The startup script does not accept it. Restore the backup instead of pointing an old image at a 1.11.0 database.
+
+The SQLite schema changes since 1.10.2 are:
+
+- **`VideoQueueEntry`** (new table): each bot's queued videos, kept in order so the queue survives a restart. The SQL reference is `packages/backend/prisma/migrations/20261010000000_video_queue/migration.sql`.
+- **`MusicBot` automation columns**: `automationSettings` and `automationState`, which hold the Auto-DJ and 24/7 settings and their saved timers. A missing value means disabled, so existing bots start with automation off. The SQL reference is `packages/backend/prisma/migrations/20261010010000_bot_automation/migration.sql`.
+- **`MusicRequest` history columns**: `artist`, `duration`, `source` (default `url`), `status` (default `available`) and `musicBotId`. Rows recorded before history was kept per bot get `musicBotId` 0, and bots on that server connection still show them. The uniqueness rule changes from (server connection, URL) to (server connection, bot, URL), and an index on (server connection, request time) is added. No reference SQL file exists for this change; it is applied from the Prisma schema only.
+
+Container startup applies these automatically with `prisma db push`, as described under [Database schema](#database-schema), and records schema version `2026.10.10-music-request-history`. No manual migration step is needed. The maintainers tried the upgrade once on a scratch copy of a 1.10.2 SQLite database that held server, bot and request rows: it finished without error, kept every row and filled the new columns with their defaults. That is one test database, not a guarantee for yours, which is why the backup comes first.
+
+The startup script stops on the first error (`set -e`). If the schema step fails, the backend never starts. The container exits, and with `restart: unless-stopped` it restarts and fails again, so the symptom is a restart loop with the last `[schema]` log line being `Running: prisma db push`. Read the lines above it, restore your backup if the database was changed by hand, and see [Troubleshooting](troubleshooting.md#databaseschema-problems-after-upgrade).
+
+#### Reverse proxy: set `TRUST_PROXY`
+
+Before 1.11.0 the backend always trusted the first proxy in front of it. From 1.11.0 it trusts none unless `TRUST_PROXY` is set. Behind a reverse proxy without that variable, the backend sees every visitor as the proxy's own address, so the login rate limit (15 attempts per 15 minutes) and the listener remote limits are shared by all users instead of applying per person. One person mistyping a password can lock everyone else out of signing in for a while.
+
+If you run behind nginx, Traefik, Caddy or another proxy, set `TRUST_PROXY` to only the address or subnet of your proxy. The recommended values for the all-in-one image and for split Docker are in [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits), and the variable is listed in [Environment variables](environment-variables.md). Direct access with no proxy needs nothing.
+
+#### Defaults after upgrading
+
+- **Media command permissions** for playback, queue and video commands default to **Everyone**, as before. Restrict them under **Bot Flows → Chat commands** if you want to. See [Bot flows](bot-flows.md#chat-commands).
+- **Auto-DJ and 24/7 presence are off** for existing bots. Turn them on per bot under **Bot settings → Auto-DJ & 24/7**. See [Media bots](music-bots.md#auto-dj-and-247-presence).
+- **Video and TeamSpeak disconnects**: a bot that loses its TeamSpeak connection while streaming video now stops the stream and keeps the video queue. Press **Play queue** after it reconnects. See [Video streaming](video-streaming.md#queue-videos-and-playlists).
+- **Listener remote** (`!remote`) needs an HTTPS **Public URL** before it works. Set `PUBLIC_URL` (or save the address in the **Public URL of this manager** field under the hosted banner upload in a channel's edit dialog). See [Listener remote](music-bots.md#listener-remote).
+- **Native sidecar**: archives for Windows, Linux and macOS are attached to each release. A native sidecar from 1.10.x reports no version and shows as `unversioned`, which is not supported alongside a 1.11.0 backend. Replace it with the 1.11.0 archive; see [Native media sidecar](native-sidecar.md#version-compatibility). Docker sidecars update with the image tag.
+
 ## Pull and recreate
 
 For the split stack:
