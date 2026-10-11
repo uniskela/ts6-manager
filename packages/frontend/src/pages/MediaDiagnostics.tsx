@@ -151,6 +151,25 @@ export default function MediaDiagnostics() {
                   })}
                 </ul>
               )}
+              {report.encoders.av1Decode && (
+                <div className="space-y-1 pt-2 text-sm">
+                  <p className="font-medium">AV1 decoding</p>
+                  <p className="text-muted-foreground">{report.encoders.av1Decode.message}</p>
+                  {report.encoders.av1Decode.items.length > 0 && (
+                    <ul className="space-y-1">
+                      {report.encoders.av1Decode.items.map((item) => (
+                        <li key={item.hwaccel} className="flex flex-wrap items-baseline gap-2">
+                          <Badge variant={badgeVariant(item.available ? 'ok' : 'skipped')}>
+                            {item.available ? 'Decodes' : 'No'}
+                          </Badge>
+                          <span className="font-medium">{item.hwaccel}</span>
+                          {item.detail && <span className="text-muted-foreground">{item.detail}</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 

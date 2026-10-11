@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import type { VideoEncoderCapabilities } from '@ts6/common';
-import { diagnoseMediaAdmin, MEDIA_ADMIN_TIMEOUT_MS, probeMusicOpus } from './media-admin-diagnostics.js';
+import { av1DecodeSummary, diagnoseMediaAdmin, MEDIA_ADMIN_TIMEOUT_MS, probeMusicOpus } from './media-admin-diagnostics.js';
 
 const encoders: VideoEncoderCapabilities = {
   checkedAt: '2026-01-01T00:00:00.000Z',
@@ -51,6 +51,7 @@ describe('diagnoseMediaAdmin', () => {
     assert.equal(report.checks.find((check) => check.id === 'deno')?.status, 'ok');
     assert.equal(report.encoders.items.find((item) => item.id === 'vp8')?.available, true);
     assert.equal(report.encoders.items.find((item) => item.id === 'h264_nvenc')?.available, false);
+    assert.equal(report.encoders.av1Decode?.decodesOn, 'unknown');
     assert.equal(JSON.stringify(report).includes('should-not-leak'), false);
     assert.equal(JSON.stringify(report).includes('SIDECAR_SECRET'), false);
     assert.ok(commands.some((line) => line.startsWith('ffmpeg -hide_banner')));
@@ -274,6 +275,37 @@ describe('diagnoseMediaAdmin', () => {
     assert.equal(commands.filter((command) => command === '/trusted/media tools/yt-dlp ').length, 2);
     assert.equal(report.checks.find((check) => check.id === 'yt-dlp')?.path, '/trusted/media tools/yt-dlp ');
     assert.ok(commands.includes('deno'));
+  });
+});
+
+describe('av1DecodeSummary', () => {
+  const vaapi = { hwaccel: 'vaapi' as const, device: '/dev/dri/renderD128', available: true };
+
+  it('says AV1 decodes on the GPU only when a test decode passed and hardware decoding is on', () => {
+    const r = av1DecodeSummary({ ...encoders, hwDecode: true, av1HwDecode: true, av1Decode: [vaapi] });
+    assert.equal(r.decodesOn, 'gpu');
+    assert.match(r.message, /decode on the GPU \(vaapi\)/);
+    assert.deepEqual(r.items, [{ hwaccel: 'vaapi', available: true }]);
+  });
+
+  it('points at VIDEO_HW_DECODE when the GPU could decode AV1 but streams decode on the CPU', () => {
+    const r = av1DecodeSummary({ ...encoders, hwDecode: false, av1HwDecode: true, av1Decode: [vaapi] });
+    assert.equal(r.decodesOn, 'cpu');
+    assert.match(r.message, /VIDEO_HW_DECODE is off/);
+  });
+
+  it("keeps the failed test decode's reason and points Intel users at the driver choice", () => {
+    const failed = { ...vaapi, available: false, error: 'internal decoding error (signal: segmentation fault)' };
+    const r = av1DecodeSummary({ ...encoders, hwDecode: true, av1HwDecode: false, av1Decode: [failed] });
+    assert.equal(r.decodesOn, 'cpu');
+    assert.match(r.message, /libdav1d/);
+    assert.match(r.message, /INTEL_VAAPI_DRIVER/);
+    assert.equal(r.items[0]?.detail, 'internal decoding error (signal: segmentation fault)');
+  });
+
+  it('says so when there was no GPU to test, or the sidecar is too old to report it', () => {
+    assert.match(av1DecodeSummary({ ...encoders, av1HwDecode: false, av1Decode: [] }).message, /No GPU to test/);
+    assert.equal(av1DecodeSummary(encoders).decodesOn, 'unknown');
   });
 });
 

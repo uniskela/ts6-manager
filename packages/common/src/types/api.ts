@@ -162,6 +162,23 @@ export interface MediaDiagnosticEncoders {
   message: string;
   checkedAt?: string;
   items: MediaDiagnosticEncoderRow[];
+  /** Where AV1 sources decode; absent when the encoder report was not loaded. */
+  av1Decode?: MediaDiagnosticAV1Decode;
+}
+
+/** AV1 decoding, from the sidecar's AV1 test decodes (GET /encoders, sidecar 1.11+). Informational: no status. */
+export interface MediaDiagnosticAV1Decode {
+  /** `gpu`: AV1 sources decode on a GPU; `cpu`: on the CPU (libdav1d); `unknown`: the sidecar does not report it. */
+  decodesOn: 'gpu' | 'cpu' | 'unknown';
+  message: string;
+  items: MediaDiagnosticAV1DecodeRow[];
+}
+
+export interface MediaDiagnosticAV1DecodeRow {
+  /** `vaapi` or `cuda`. */
+  hwaccel: string;
+  available: boolean;
+  detail?: string;
 }
 
 export interface MediaAdminDiagnosticReport {

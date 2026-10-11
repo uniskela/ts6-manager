@@ -4,6 +4,7 @@ import {
   YOUTUBE_VIDEO_FORMAT_SORT,
   durationFilterSkipMessage,
   parseYoutubeResolve,
+  videoCodecFamily,
   youtubeVideoFormatArgs,
   ytDlpErrorReason,
 } from './video-download.js';
@@ -93,7 +94,17 @@ describe('parseYoutubeResolve', () => {
       durationSec: 2700,
       live: false,
       resolution: { width: 3840, height: 2160 },
+      videoCodec: 'vp9',
     });
+  });
+
+  it("names the chosen video format's codec, so the sidecar can decode AV1 on the GPU", () => {
+    const av1 = { ...pair, requested_formats: [{ ...pair.requested_formats[0], vcodec: 'av01.0.12M.08' }, pair.requested_formats[1]] };
+    assert.equal(parseYoutubeResolve(av1).videoCodec, 'av1');
+    assert.equal(
+      parseYoutubeResolve({ url: 'https://manifest.example/x.m3u8', vcodec: 'avc1.64002A' }).videoCodec,
+      'h264',
+    );
   });
 
   it('finds the video whichever order the pair is listed in', () => {
@@ -139,6 +150,21 @@ describe('parseYoutubeResolve', () => {
       () => parseYoutubeResolve({ requested_formats: [{ vcodec: 'vp9', acodec: 'none', url: 'ftp://x/v' }] }),
       /playable YouTube stream URL/,
     );
+  });
+});
+
+describe('videoCodecFamily', () => {
+  it("maps yt-dlp's codec strings to the families the sidecar accepts", () => {
+    assert.equal(videoCodecFamily('av01.0.08M.08'), 'av1');
+    assert.equal(videoCodecFamily('vp09.00.50.08'), 'vp9');
+    assert.equal(videoCodecFamily('vp9'), 'vp9');
+    assert.equal(videoCodecFamily('avc1.640028'), 'h264');
+  });
+
+  it('leaves anything else unknown', () => {
+    for (const v of ['none', 'hev1.1.6.L150.90', 'vp8', '', undefined, 42]) {
+      assert.equal(videoCodecFamily(v), undefined, String(v));
+    }
   });
 });
 

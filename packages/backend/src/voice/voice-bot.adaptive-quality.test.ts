@@ -150,6 +150,25 @@ describe('adaptive Auto quality on a running stream', () => {
     assert.deepEqual(ended, ['source_ended']);
   });
 
+  it("restarts with the re-resolved source's audio input and video codec, and shows an AV1 decoder fallback", async () => {
+    const { b, sources, poll } = streamingBot('auto', '1080p', 'live');
+    b.resolveRunningSource = async () => ({
+      sourcePath: 'https://rr.example/v', audioPath: 'https://rr.example/a', videoCodec: 'av1', loop: false,
+    });
+    b.sidecarHttp.setSource = async (_s: string, options: Record<string, unknown>) => {
+      sources.push(options);
+      return {
+        requested: 'h264_vaapi', active: 'h264_vaapi', codec: 'h264', hardware: true, state: 'running',
+        decoder: 'libdav1d', decoderFallbackReason: 'Failed to get HW surface format',
+      };
+    };
+    await poll(overloaded());
+    assert.equal(sources[0].audioSource, 'https://rr.example/a');
+    assert.equal(sources[0].videoCodec, 'av1');
+    assert.equal(b._videoEncoder.decoder, 'libdav1d');
+    assert.equal(b._videoEncoder.decoderFallbackReason, 'Failed to get HW surface format');
+  });
+
   it('wraps the position of a looped local file', async () => {
     const { b, sources, poll } = streamingBot('auto', '1080p', 'file');
     b._videoSource = '/data/music/background.mp4';

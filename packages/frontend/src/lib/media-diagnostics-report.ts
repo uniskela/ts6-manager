@@ -35,6 +35,13 @@ export function formatMediaDiagnosticReport(report: MediaAdminDiagnosticReport):
     const state = item.available ? 'available' : `unavailable${detail}`;
     return `- ${item.id} (${item.codec}, ${kind}): ${state}`;
   });
+  const av1 = report.encoders.av1Decode;
+  const av1Lines = av1
+    ? [
+      `AV1 decoding: ${av1.message}`,
+      ...av1.items.map((item) => `- ${item.hwaccel}: ${item.available ? 'decodes AV1' : `does not decode AV1${item.detail ? ` — ${item.detail}` : ''}`}`),
+    ]
+    : [];
   const warnings = report.warnings.length ? report.warnings.map((warning) => `- ${warning}`) : ['- none'];
   return redactDiagnosticText([
     'TS6 Manager media diagnostics',
@@ -52,6 +59,7 @@ export function formatMediaDiagnosticReport(report: MediaAdminDiagnosticReport):
     '',
     `Encoders: [${mediaDiagnosticStatusWord(report.encoders.status)}] ${report.encoders.message}`,
     ...(encoders.length ? encoders : ['- not loaded']),
+    ...av1Lines,
     '',
     'Warnings:',
     ...warnings,

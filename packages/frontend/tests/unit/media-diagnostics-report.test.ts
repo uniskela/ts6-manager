@@ -74,6 +74,19 @@ describe('media diagnostic report', () => {
     assert.match(text, /\[redacted/);
   });
 
+  it('copies where AV1 decodes, with the failed test decode', () => {
+    const report = sample();
+    report.encoders.av1Decode = {
+      decodesOn: 'cpu',
+      message: 'The GPU does not decode AV1. AV1 sources decode on the CPU (libdav1d).',
+      items: [{ hwaccel: 'vaapi', available: false, detail: 'internal decoding error' }],
+    };
+    const text = formatMediaDiagnosticReport(report);
+    assert.match(text, /AV1 decoding: The GPU does not decode AV1\./);
+    assert.match(text, /- vaapi: does not decode AV1 — internal decoding error/);
+    assert.equal(formatMediaDiagnosticReport(sample()).includes('AV1 decoding'), false);
+  });
+
   it('redacts cookie headers and api keys', () => {
     const text = redactDiagnosticText('Cookie: session=abc api_key=zzz Authorization: Bearer abc.def');
     assert.equal(text.includes('session=abc'), false);

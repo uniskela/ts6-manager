@@ -10,6 +10,7 @@
 
 import type {
   MediaAdminDiagnosticReport,
+  MediaDiagnosticAV1Decode,
   MediaDiagnosticCheck,
   MediaDiagnosticEncoders,
   MediaDiagnosticSidecar,
@@ -207,7 +208,43 @@ function encoderSummary(caps: VideoEncoderCapabilities): MediaDiagnosticEncoders
       : 'Sidecar answered, but no software encoder is available.',
     checkedAt: caps.checkedAt,
     items,
+    av1Decode: av1DecodeSummary(caps),
   };
+}
+
+/**
+ * Where AV1 sources decode. AV1 decodes on the GPU only when a test decode on
+ * that GPU passed and VIDEO_HW_DECODE=1; otherwise libdav1d decodes it on the
+ * CPU, which always works.
+ */
+export function av1DecodeSummary(caps: VideoEncoderCapabilities): MediaDiagnosticAV1Decode {
+  if (!Array.isArray(caps.av1Decode)) {
+    return { decodesOn: 'unknown', message: 'The sidecar does not report AV1 decoding (sidecars before 1.11).', items: [] };
+  }
+  const items = caps.av1Decode.map((probe) => ({
+    hwaccel: probe.hwaccel,
+    available: probe.available,
+    ...(!probe.available && probe.error ? { detail: clip(probe.error, 160) } : {}),
+  }));
+  const cpu = 'AV1 sources decode on the CPU (libdav1d).';
+  if (items.length === 0) {
+    return { decodesOn: 'cpu', message: `No GPU to test. ${cpu}`, items };
+  }
+  const passed = items.filter((item) => item.available).map((item) => item.hwaccel);
+  if (passed.length === 0) {
+    const intel = items.some((item) => item.hwaccel === 'vaapi')
+      ? ' On many Intel GPUs the free Debian VA-API driver cannot decode AV1; see INTEL_VAAPI_DRIVER in the video streaming guide.'
+      : '';
+    return { decodesOn: 'cpu', message: `The GPU does not decode AV1. ${cpu}${intel}`, items };
+  }
+  if (!caps.hwDecode) {
+    return {
+      decodesOn: 'cpu',
+      message: `The GPU decodes AV1 (${passed.join(', ')}), but VIDEO_HW_DECODE is off. ${cpu}`,
+      items,
+    };
+  }
+  return { decodesOn: 'gpu', message: `AV1 sources decode on the GPU (${passed.join(', ')}).`, items };
 }
 
 function overallOf(report: Pick<MediaAdminDiagnosticReport, 'checks' | 'sidecar' | 'encoders'>): MediaAdminDiagnosticReport['overall'] {

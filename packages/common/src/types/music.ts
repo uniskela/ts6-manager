@@ -404,6 +404,13 @@ export interface VideoStreamEncoderInfo {
   codec: VideoCodec;
   hardware: boolean;
   fallbackReason: string | null;
+  /**
+   * Video decoder of an AV1 source: "av1 (vaapi)" or "av1 (cuda)" on the GPU,
+   * "libdav1d" on the CPU. Null or absent for other sources.
+   */
+  decoder?: string | null;
+  /** Why an AV1 source that started on the GPU decoder fell back to libdav1d. */
+  decoderFallbackReason?: string | null;
   note: string | null;
 }
 
@@ -492,6 +499,19 @@ export interface VideoEncoderCapabilities {
   vaapiDevicePresent: boolean;
   hwDecode: boolean;
   encoders: VideoEncoderCapability[];
+  /** Whether FFmpeg decodes AV1 on a GPU here; used only with VIDEO_HW_DECODE=1 (sidecar 1.11+). */
+  av1HwDecode?: boolean;
+  /** One AV1 test decode per GPU found (sidecar 1.11+). */
+  av1Decode?: VideoAV1DecodeProbe[];
+}
+
+/** One AV1 test decode on a GPU (FFmpeg's own AV1 decoder on that hwaccel). */
+export interface VideoAV1DecodeProbe {
+  hwaccel: 'vaapi' | 'cuda';
+  device?: string;
+  available: boolean;
+  error?: string;
+  command?: string;
 }
 
 export interface VideoViewerInfo {

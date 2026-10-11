@@ -5,7 +5,7 @@
 
 import type { VideoCodec, VideoEncoderCapabilities, VideoEncoderId, VideoSourceMode } from '@ts6/common';
 import path from 'node:path';
-import { resolvePathUnderMusicDir } from './video-download.js';
+import { resolvePathUnderMusicDir, type SourceVideoCodec } from './video-download.js';
 
 /** Encoder the sidecar reports running after POST /source. */
 export interface SidecarEncoderSession {
@@ -14,6 +14,10 @@ export interface SidecarEncoderSession {
   codec: VideoCodec;
   hardware: boolean;
   fallbackReason?: string;
+  /** Video decoder of an AV1 source: "av1 (vaapi)", "av1 (cuda)" or "libdav1d" (sidecar 1.11+). */
+  decoder?: string;
+  /** Why an AV1 source that started on the GPU decoder fell back to libdav1d. */
+  decoderFallbackReason?: string;
   state: string;
   exitError?: string;
 }
@@ -35,6 +39,8 @@ export interface SidecarSourceOptions {
   audioSource?: string;
   /** Resume an on-demand source at this offset (sidecar 1.11+; ignored for live). */
   startAtSecs?: number;
+  /** The source's video codec when known (YouTube direct), so the sidecar can decode AV1 on the GPU. */
+  videoCodec?: SourceVideoCodec;
 }
 
 /** Encode health from GET /stats (sidecar 1.9+; absent on older sidecars). */

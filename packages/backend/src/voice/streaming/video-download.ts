@@ -229,6 +229,28 @@ export interface DownloadedStreamVideo {
   audioPath?: string;
   /** The chosen format's picture size when the extractor reports it, so Auto quality needs no probe. */
   resolution?: { width: number; height: number };
+  /**
+   * The chosen format's video codec when the extractor reports it (YouTube
+   * direct). The sidecar decodes AV1 on the GPU only when it knows the source
+   * is AV1; it reads local files itself.
+   */
+  videoCodec?: SourceVideoCodec;
+}
+
+/** Video codec families the sidecar's POST /source accepts as `videoCodec`. */
+export type SourceVideoCodec = 'av1' | 'vp9' | 'h264';
+
+/**
+ * The codec family of a yt-dlp `vcodec` ("av01.0.08M.08", "vp09.00.50.08",
+ * "vp9", "avc1.640028"), or undefined for anything else.
+ */
+export function videoCodecFamily(vcodec: unknown): SourceVideoCodec | undefined {
+  if (typeof vcodec !== 'string') return undefined;
+  const v = vcodec.trim().toLowerCase();
+  if (v === 'av1' || v.startsWith('av01')) return 'av1';
+  if (v === 'vp9' || v.startsWith('vp09')) return 'vp9';
+  if (v === 'h264' || v.startsWith('avc1') || v.startsWith('avc3')) return 'h264';
+  return undefined;
 }
 
 /**
@@ -385,12 +407,14 @@ export function parseYoutubeResolve(data: Record<string, unknown>): DownloadedSt
   const video = formats.find((f) => f.vcodec !== 'none' && mediaUrl(f.url));
   const audio = formats.find((f) => f !== video && f.acodec !== 'none' && mediaUrl(f.url));
   if (video && audio) {
+    const videoCodec = videoCodecFamily(video.vcodec);
     return {
       path: mediaUrl(video.url),
       audioPath: mediaUrl(audio.url),
       durationSec,
       live: isLive,
       resolution: pictureSize(video) ?? pictureSize(data),
+      ...(videoCodec ? { videoCodec } : {}),
     };
   }
 
@@ -398,7 +422,8 @@ export function parseYoutubeResolve(data: Record<string, unknown>): DownloadedSt
   if (!combined) {
     throw new VideoSourceFailedError('yt-dlp did not return a playable YouTube stream URL');
   }
-  return { path: combined, durationSec, live: isLive, resolution: pictureSize(data) };
+  const videoCodec = videoCodecFamily(data.vcodec);
+  return { path: combined, durationSec, live: isLive, resolution: pictureSize(data), ...(videoCodec ? { videoCodec } : {}) };
 }
 
 /**
