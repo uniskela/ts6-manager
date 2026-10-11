@@ -50,6 +50,7 @@ async function setup(page: Page, request: APIRequestContext, initialPublicUrl: s
 test('uploading a banner selects its public link and saving sends it as the channel banner', async ({ page, request }) => {
   const { calls, dialog } = await setup(page, request, 'https://ts.example.com');
   await expect(dialog.getByText('https://ts.example.com', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('Public URL of this manager', { exact: true })).toHaveCount(0);
   await dialog.getByLabel('Upload banner').setInputFiles({ name: 'backrooms.png', mimeType: 'image/png', buffer: png });
   const link = `https://ts.example.com/api/banners/${uploaded}`;
   await expect(dialog.getByPlaceholder('https://… or ts3image://…')).toHaveValue(link);

@@ -37,7 +37,8 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
 
   const data = banners.data;
   const publicUrl = data?.publicUrl ?? null;
-  const showUrlForm = !!data && (editingUrl !== null || !publicUrl);
+  // The address only matters once there is an uploaded image to link to.
+  const showUrlForm = !!data && (editingUrl !== null || (!publicUrl && data.banners.length > 0));
   const urlDraft = editingUrl ?? suggestedPublicUrl();
   const maxMb = data ? Math.round(data.maxBytes / (1024 * 1024)) : 5;
 
@@ -56,7 +57,10 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
   return (
     <section aria-label="Hosted banners" className="mt-2 space-y-2 rounded-md border p-2">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-xs font-medium">Hosted banners</p>
+        <div>
+          <p className="text-xs font-medium">Hosted banners</p>
+          <p className="text-[10px] text-muted-foreground">Or upload an image to this manager and click it to use it as the banner.</p>
+        </div>
         <input ref={input} type="file" accept="image/png,image/jpeg,image/gif,image/webp" aria-label="Upload banner"
           className="hidden" disabled={upload.isPending} onChange={(e) => {
             const file = e.target.files?.[0];
@@ -81,8 +85,9 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
 
       {data && showUrlForm && (
         <div className="space-y-1">
+          <p className="text-xs font-medium">Public URL of this manager</p>
           <p className="text-[10px] text-muted-foreground">
-            Address of this manager as TeamSpeak clients reach it, not an image link. Links to hosted banners start with it.
+            Where TeamSpeak clients reach this manager, so they can load uploaded images. This is not an image link.
             {data.publicUrlSource === 'setting' && ' Save it empty to clear the saved address.'}
           </p>
           <div className="flex gap-2">
@@ -96,7 +101,7 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
       )}
       {data && !showUrlForm && publicUrl && (
         <p className="text-[10px] text-muted-foreground">
-          Links use <span className="font-mono break-all">{publicUrl}</span>
+          Uploaded images are served from <span className="font-mono break-all">{publicUrl}</span>
           {data.publicUrlSource === 'env' && ' (PUBLIC_URL)'}.{' '}
           <button type="button" className="underline underline-offset-2" onClick={() => setEditingUrl(publicUrl)}>Change</button>
         </p>
@@ -110,7 +115,7 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
               <li key={banner.name} className="relative">
                 <button type="button" disabled={!banner.url} aria-pressed={selected}
                   aria-label={selected ? 'Selected hosted banner' : 'Use this hosted banner'}
-                  title={banner.url ? 'Use this banner' : 'Save a public URL first'}
+                  title={banner.url ? 'Use this banner' : 'Save the public URL of this manager first'}
                   onClick={() => banner.url && onSelect(banner.url)}
                   className={cn('block w-full overflow-hidden rounded border bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60',
                     selected ? 'ring-2 ring-primary' : 'hover:border-primary/60')}>

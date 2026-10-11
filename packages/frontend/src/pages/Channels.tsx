@@ -823,7 +823,7 @@ export default function Channels() {
                   placeholder="https://… or ts3image://…"
                 />
                 <p className="text-[10px] text-muted-foreground mt-1">
-                  TS6 channel banner. External HTTPS URL, a <span className="font-mono">ts3image://</span> link to a file on this server, or a banner hosted below.
+                  The image TS6 shows for this channel. Paste any image link (<span className="font-mono">https://</span> or <span className="font-mono">ts3image://</span>), or pick an uploaded image below to fill this in.
                 </p>
                 <HostedBannerPicker
                   value={editForm.channel_banner_gfx_url}
