@@ -9,8 +9,10 @@ import { crc32 } from '../utils/ts-file-transfer.js';
 const png = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from('icon-bytes')]);
 const pngId = crc32(png);
 
+let nextConfigId = 1000;
+
 /** Minimal TeamSpeak stand-in: ft* query commands plus the file-transfer port. */
-async function fixture(role = 'admin', refuse?: { status: string; msg: string }) {
+async function fixture(role = 'admin', refuse?: { status: string; msg: string }, isDemo = false) {
   const files = new Map<string, Buffer>();
   const commands: string[] = [];
   const transfers = new Map<string, { kind: 'up' | 'down'; name: string; size: number }>();
@@ -61,7 +63,7 @@ async function fixture(role = 'admin', refuse?: { status: string; msg: string })
   };
   const rows: any[] = [];
   const prisma: any = {
-    tsServerConfig: { findUnique: async () => ({ isDemo: false, host: '127.0.0.1' }) },
+    tsServerConfig: { findUnique: async () => ({ isDemo, host: '127.0.0.1' }) },
     adminAuditEvent: {
       create: async ({ data }: any) => { rows.push(data); return { id: 'event' }; },
       updateMany: async ({ where, data }: any) => { for (const row of rows) if (row.operationId === where.operationId) Object.assign(row, data); return { count: 1 }; },
@@ -73,7 +75,7 @@ async function fixture(role = 'admin', refuse?: { status: string; msg: string })
   app.locals.prisma = prisma;
   app.locals.botEngine = { getEventBridge: () => bridge };
   // A fresh connection id per fixture keeps the module-level preview cache from leaking between tests.
-  const configId = 1000 + Math.floor(Math.random() * 1e6);
+  const configId = nextConfigId++;
   app.use('/api/servers/:configId/vs/:sid/icons', iconRoutes);
   app.use(errorHandler);
   const server = app.listen(0); await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -163,5 +165,16 @@ test('uploading and deleting icons are admin only; viewers can still list', asyn
     assert.equal((await fetch(`${f.base}/${pngId}`, { method: 'DELETE' })).status, 403);
     assert.equal((await fetch(f.base)).status, 200);
     assert.equal(f.rows.length, 0);
+  } finally { await f.close(); }
+});
+
+test('the demo connection lists icons but refuses transfers with a clear message', async () => {
+  const f = await fixture('admin', undefined, true);
+  try {
+    assert.equal((await fetch(f.base)).status, 200);
+    const res = await fetch(f.base, { method: 'POST', body: form() });
+    assert.equal(res.status, 400);
+    assert.match((await res.json()).error, /demo connection/);
+    assert.equal((await fetch(`${f.base}/${pngId}`)).status, 400);
   } finally { await f.close(); }
 });

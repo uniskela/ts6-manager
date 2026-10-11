@@ -4,6 +4,13 @@ const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const existing = 111111;
 const uploaded = 222222;
 
+async function signIn(page: Page) {
+  await page.goto('/login');
+  await page.getByLabel('Username').fill('admin');
+  await page.getByLabel('Password', { exact: true }).fill('test-password');
+  await Promise.all([page.waitForURL('/dashboard', { timeout: 15_000 }), page.getByRole('button', { name: 'Sign In' }).click()]);
+}
+
 async function setup(page: Page, request: APIRequestContext, listStatus = 200) {
   let ids = [existing];
   const calls: { method: string; url: string; body: string | null }[] = [];
@@ -18,20 +25,13 @@ async function setup(page: Page, request: APIRequestContext, listStatus = 200) {
     return r.fulfill({ json: { maxBytes: 256 * 1024, truncated: false, icons: ids.map((id) => ({ id, size: png.length, uploadedAt: '2026-10-03T00:00:00.000Z' })) } });
   });
   await page.route('**/api/channel-banners**', (r) => r.fulfill({ json: { publicUrl: 'https://ts.example.com', publicUrlSource: 'setting', maxBytes: 5 * 1024 * 1024, maxCount: 100, banners: [] } }));
-  await page.route(/\/api\/servers\/\d+\/vs\/\d+\/channels\/\d+$/, async (r) => {
+  await page.route(/\/api\/servers\/\d+\/vs\/\d+\/channels\/\d+$/, (r) => {
     if (r.request().method() !== 'PUT') return r.fallback();
     calls.push({ method: 'PUT', url: r.request().url(), body: r.request().postData() });
-    await r.fulfill({ json: { success: true } });
+    return r.fulfill({ json: { success: true } });
   });
-  await request.post('/__test/reset');
-  await request.post('/__test/dashboard?scenario=normal');
-  await request.post('/__test/channels?scenario=normal');
-  await request.post('/__test/auth?on&role=admin');
-  await page.goto('/login');
-  await page.getByLabel('Username').fill('admin');
-  await page.getByLabel('Password', { exact: true }).fill('test-password');
-  await page.getByRole('button', { name: 'Sign In' }).click();
-  await expect(page).toHaveURL('/dashboard', { timeout: 15_000 });
+  for (const path of ['reset', 'dashboard?scenario=normal', 'channels?scenario=normal', 'auth?on&role=admin']) await request.post(`/__test/${path}`);
+  await signIn(page);
   await page.goto('/channels');
   await page.getByRole('button', { name: 'Edit Support' }).click();
   const dialog = page.getByRole('dialog');

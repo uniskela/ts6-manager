@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 import { Ban, ImageOff, Loader2, Trash2, Upload } from 'lucide-react';
 import { toast } from 'sonner';
 
-function IconImage({ id }: { id: number }) {
+function IconImage({ id }: Readonly<{ id: number }>) {
   const { url, failed } = useServerIconImage(id);
   if (url) return <img src={url} alt="" className="h-6 w-6 object-contain" />;
   if (failed) return <ImageOff className="h-4 w-4 text-muted-foreground" />;
@@ -19,7 +19,7 @@ function IconImage({ id }: { id: number }) {
  * Icons stored on the TeamSpeak server: upload one, pick one, or remove one.
  * `value` is the icon id (0 = no icon) the channel stores.
  */
-export function ServerIconPicker({ value, onSelect }: { value: number; onSelect: (id: number) => void }) {
+export function ServerIconPicker({ value, onSelect }: Readonly<{ value: number; onSelect: (id: number) => void }>) {
   const input = useRef<HTMLInputElement>(null);
   const icons = useServerIcons(true);
   const upload = useUploadServerIcon();

@@ -796,13 +796,13 @@ export default function Channels() {
                 />
               </div>
               <div>
-                <Label className="text-xs">Icon</Label>
+                <Label htmlFor="channel-icon-id" className="text-xs">Icon ID</Label>
                 <Input
                   className="font-mono-data"
                   value={editForm.channel_icon_id}
                   onChange={(e) => setEditForm({ ...editForm, channel_icon_id: e.target.value })}
+                  id="channel-icon-id"
                   placeholder="0 = no icon"
-                  aria-label="Icon ID"
                 />
                 <p className="text-[10px] text-muted-foreground mt-1">
                   The number TeamSpeak uses for the chosen icon; picking an icon below fills it in. <span className="font-mono">0</span> means no icon.

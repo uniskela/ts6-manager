@@ -5,6 +5,7 @@
  * connection plus TeamSpeak's file-transfer port.
  */
 
+import { randomInt } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import multer from 'multer';
 import type { ServerIcon, ServerIconList } from '@ts6/common';
@@ -21,8 +22,8 @@ const ICON_FILE = /^icon_(\d{1,10})$/;
 
 export const iconRoutes: Router = Router({ mergeParams: true });
 
-const getConfigId = (req: Request) => parseInt(String(req.params.configId), 10);
-const getSid = (req: Request) => parseInt(String(req.params.sid), 10);
+const getConfigId = (req: Request) => Number.parseInt(String(req.params.configId), 10);
+const getSid = (req: Request) => Number.parseInt(String(req.params.sid), 10);
 
 /** Icon ids are unsigned CRC32 values; TeamSpeak sometimes reports them signed. */
 export function parseIconId(raw: unknown): number | null {
@@ -61,14 +62,16 @@ function queued<T>(req: Request, task: () => Promise<T>): Promise<T> {
 }
 
 async function transferTarget(req: Request, start: Record<string, string> | undefined): Promise<{ host: string; port: number; ftkey: string }> {
+  const server = await req.app.locals.prisma.tsServerConfig.findUnique({ where: { id: getConfigId(req) }, select: { host: true, isDemo: true } });
+  // The demo connection simulates file listings only; there is no transfer port behind it.
+  if (server?.isDemo) throw new AppError(400, 'Icon previews and uploads are not available on the demo connection');
   if (start?.status && start.status !== '0') throw new TSApiError(Number(start.status), start.msg || 'file transfer refused');
   if (!start?.ftkey) throw new AppError(502, 'TeamSpeak did not start the icon transfer');
-  const server = await req.app.locals.prisma.tsServerConfig.findUnique({ where: { id: getConfigId(req) }, select: { host: true } });
   if (!server?.host) throw new AppError(404, 'Server connection not found');
   return { host: server.host, port: Number(start.port) || DEFAULT_TRANSFER_PORT, ftkey: start.ftkey };
 }
 
-const transferId = () => String(Math.floor(Math.random() * 65534) + 1);
+const transferId = () => String(randomInt(1, 65535));
 
 function mapIconError(err: unknown, purpose: 'browse' | 'changes', req: Request): unknown {
   if (purpose === 'changes') return mapFileMutationError(err, 'managing icons', req);
@@ -156,7 +159,6 @@ iconRoutes.post('/', requireRole('admin'), (req, res, next) => {
       const target = await transferTarget(req, start);
       await uploadTransfer(target.host, target.port, target.ftkey, image);
     }));
-    cachePreview(cacheKey(req, id), image);
     const body: ServerIcon = { id, size: image.length, uploadedAt: new Date().toISOString() };
     res.status(201).json(body);
   } catch (err) { next(mapIconError(err, 'changes', req)); }
@@ -171,8 +173,11 @@ iconRoutes.delete('/:id', requireRole('admin'), async (req: Request, res: Respon
     await runRemoteAudited(req.app.locals.prisma, {
       actor: actorFromRequest(req.user), action: 'server_icon.delete', connectionId: getConfigId(req), virtualServerId: sid,
       target: { type: 'server_icon', id: String(id) },
-    }, () => sshExecute(req, 'ftdeletefile', { cid: '0', cpw: '', name: `/icon_${id}` }));
-    previewCache.delete(cacheKey(req, id));
+    }, () => queued(req, async () => {
+      // Queued behind any running preview download, so one cannot re-cache the icon after it is gone.
+      try { await sshExecute(req, 'ftdeletefile', { cid: '0', cpw: '', name: `/icon_${id}` }); }
+      finally { previewCache.delete(cacheKey(req, id)); }
+    }));
     res.json({ success: true });
   } catch (err) { next(mapIconError(err, 'changes', req)); }
 });
