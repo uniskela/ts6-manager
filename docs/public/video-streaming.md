@@ -115,6 +115,38 @@ An encoder that the sidecar's FFmpeg was not built with is not launched at all. 
 
 NVENC encodes H.264 only. The preset is `p4` with the low-latency tune; `VIDEO_NVENC_PRESET` changes the preset. When the host has no NVIDIA GPU or container runtime, **Check encoders** shows **NVIDIA GPU/runtime not present** on that row instead of ffmpeg's generic parameter hint. A summarized ffmpeg error stays under **ffmpeg output**.
 
+### AV1 decoding on the GPU
+
+FFmpeg 5.1 decodes AV1 with libdav1d, a software decoder that ignores `-hwaccel`, so AV1 sources decode on the CPU even with `VIDEO_HW_DECODE=1`. YouTube downloads prefer VP9 (`-S res,fps,vcodec:vp9`), which does decode on the GPU, so AV1 only comes up when a video's best format exists in AV1 alone.
+
+FFmpeg's own AV1 decoder does use the GPU, but it has no software path: on a GPU without AV1 decoding the stream would not start. So the sidecar uses it only when all of these hold:
+
+- `VIDEO_HW_DECODE=1` and a VAAPI or NVENC encoder (AMF and VideoToolbox decode on the CPU);
+- the source is known to be AV1: the sidecar reads local files (downloaded videos) with ffprobe, and the backend passes the codec yt-dlp chose for a YouTube stream in direct mode. IPTV and other links are not checked and decode as before;
+- a test decode on that GPU passed. The sidecar decodes a small embedded AV1 sample once per GPU and keeps the result. A crash, a timeout or any failed frame counts as not supported.
+
+If a stream with the GPU decoder still exits during startup, or fails to decode frames in its first 15 seconds (an AV1 profile the GPU cannot decode, such as 4:4:4, keeps FFmpeg running without a picture), the sidecar starts it again on libdav1d with the same encoder, and the stream panel shows **AV1 GPU decoding failed, decoding on the CPU** with ffmpeg's reason. Only a failure after that falls back the encoder as usual. **System → Diagnostics** shows the test decode for each GPU under **Encoders → AV1 decoding**.
+
+NVIDIA needs nothing extra: with NVENC on an RTX 5080, a 4K60 AV1 stream took about 50 % sidecar CPU with the GPU decoder, against 200 % on libdav1d.
+
+**Intel and the non-free driver.** The images ship Debian's free `intel-media-va-driver`. On many Intel GPUs it lists AV1 decoding but cannot do it: on an Alder Lake GPU every frame fails with "internal decoding error", and FFmpeg exits or crashes ([Debian #1087837](https://bugs.debian.org/1087837), [intel/media-driver#1921](https://github.com/intel/media-driver/issues/1921)). The test decode catches that, and AV1 decodes on the CPU. Intel's non-free build of the same driver decodes AV1 on those GPUs: on an Intel Pentium Gold 8505 (UHD Graphics), 4K60 AV1 to 1080p30 `h264_vaapi` ran at 5.1× real time and 36 % CPU with it, against 2.4× and about 400 % on libdav1d, and a stream at real time took about 20 % sidecar CPU instead of 300 %. To use it, build the image yourself:
+
+```bash
+docker build -f Dockerfile.sidecar --build-arg INTEL_VAAPI_DRIVER=nonfree -t ts6-manager-sidecar:intel-nonfree .
+docker build -f Dockerfile.all-in-one --build-arg INTEL_VAAPI_DRIVER=nonfree -t ts6-manager:intel-nonfree .
+```
+
+What that changes:
+
+- It installs `intel-media-va-driver-non-free` from Debian's `non-free` component instead of `intel-media-va-driver`. Both are the same driver release; the non-free build keeps the pre-built GPU kernels Intel ships without their source, which the free build removes.
+- The driver's licence is MIT either way. Debian files the package under `non-free` because of those kernels, so the image then contains GPU code without source.
+- Debian's security team does not support `non-free` ([security FAQ](https://www.debian.org/security/faq)): a security fix for this package comes only if its maintainer provides one.
+- It replaces the free driver for everything on an Intel GPU, so VAAPI encoding also runs on it.
+- The sidecar image grows by about 35 MB.
+- AMD (`mesa-va-drivers`) and NVIDIA (the host's driver) need no change and are not affected. The argument only matters on amd64; any value other than `free` or `nonfree` fails the build.
+
+A [native sidecar](native-sidecar.md) uses the host's FFmpeg and VA-API or NVIDIA driver instead, and the same test decode decides.
+
 ### AMD AMF (Windows)
 
 AMF is a supported production encoder when the media sidecar runs **natively on Windows**, with a compatible AMD GPU/driver and an AMF-enabled Windows FFmpeg build. The Linux Docker sidecar cannot use Windows AMF directly. VAAPI requires `/dev/dri`; NVENC needs a working NVIDIA driver (and NVIDIA container runtime when containerized); AMF needs neither. Windows-native NVENC and software encoders remain available when that FFmpeg build and hardware support them. On hosts without AMF, its test encode fails normally and Auto can choose another encoder.

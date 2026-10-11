@@ -192,6 +192,8 @@ An encoder the host's operating system cannot have is not test-encoded: VideoToo
 
 Setup for each encoder is under [Video streaming → Encoders](video-streaming.md#encoders). For a native sidecar the Docker-specific steps (device passthrough, the NVIDIA compose override) do not apply; the host driver and an FFmpeg build with that encoder are what matter.
 
+The same goes for [AV1 decoding on the GPU](video-streaming.md#av1-decoding-on-the-gpu) (`VIDEO_HW_DECODE=1`): the sidecar's test decode runs with the host's FFmpeg and driver, so `INTEL_VAAPI_DRIVER` does not apply. On many Intel GPUs that needs Intel's non-free media driver on the host. The user running the sidecar needs access to the render node (the `render` group, see the systemd unit), or the test decode fails and AV1 decodes on the CPU.
+
 ### VideoToolbox on macOS
 
 > **Not verified on Apple hardware.** The project has not run H.264 VideoToolbox on any Mac, Intel or Apple Silicon. Its FFmpeg arguments, the capability check and the fallback to software H.264 are covered by unit tests on Linux only. Whether a real TeamSpeak client or the browser preview plays its output, and whether a viewer who joins a running stream gets a picture, is **unverified**. Use it as a test feature until someone has confirmed it, and keep H.264 (software) as the encoder to return to.
@@ -217,7 +219,8 @@ Release archives are compiled for every platform in the table above, and CI runs
 | Combination | Status |
 |---|---|
 | Linux x64, software encoders | Tested in CI |
-| Linux x64 native, VAAPI or NVENC | Not verified natively. The same encoder code runs in the Docker sidecar |
+| Linux x64 native, VAAPI | Verified on an Intel Pentium Gold 8505 (UHD Graphics): Debian 12, FFmpeg 5.1.9, Intel's non-free media driver 24.2.4, run with the `render` group. H.264 and VP9 VAAPI pass **Check encoders**, and a 4K60 AV1 source streams decoded on the GPU. Without access to the render node the VAAPI rows fail and streams fall back to software, as expected. VAAPI on AMD not verified natively |
+| Linux x64 native, NVENC | Not verified natively. The same encoder code runs in the Docker sidecar |
 | Linux ARM64, any encoder | Compiled only. Not run on ARM hardware |
 | Windows x64, software encoders | Verified once, on Windows 11 with a sidecar built from source: VP8 and H.264 software played in TeamSpeak 6 and the browser preview, including late joins ([#361](https://github.com/uniskela/ts6-manager/issues/361)). The release archive itself has not been run |
 | Windows x64, AMF | Verified on one machine (AMD Radeon RX 9060 XT, Windows 11, FFmpeg 9.0.1) with a sidecar built from source: H.264 AMF used the GPU encoder and played in TeamSpeak 6 and the browser preview, including late joins and reconnects ([#361](https://github.com/uniskela/ts6-manager/issues/361)). Not verified with the release archive, or on other AMD GPUs and drivers |
