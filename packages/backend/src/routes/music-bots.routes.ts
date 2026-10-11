@@ -495,9 +495,18 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
       // Select and start together after the audit wait, before queue notifications advance.
       bot.queue.add(queueItem);
       bot.queue.playAt(bot.queue.length - 1);
-      const replaced = await bot.play(queueItem, { replaceSessionIds });
-      if (bot.nowPlaying === queueItem) await saveRequestHistory(req, bot, queueItem);
-      return replaced;
+      let started = false;
+      try {
+        const replaced = await bot.play(queueItem, { replaceSessionIds });
+        started = bot.nowPlaying === queueItem;
+        if (started) await saveRequestHistory(req, bot, queueItem);
+        return replaced;
+      } finally {
+        if (!started) {
+          const index = bot.queue.getAll().indexOf(queueItem);
+          if (index >= 0) bot.queue.removeAt(index);
+        }
+      }
     }, replaceSessionIds);
 
     res.json({ success: true });

@@ -205,3 +205,24 @@ for (const playlist of [false, true]) for (const cancel of ['none', 'stop', 'new
     } finally { release(); await f.close(); }
   });
 }
+
+test('failed HTTP song startup removes only its own queue entry and saves no history', async () => {
+  const f = await fixture();
+  const bot = new VoiceBot({ id: 7, serverConfigId: 3, name: 'DJ', nickname: 'DJ',
+    serverHost: '127.0.0.1', serverPort: 9987, volume: 50 });
+  (bot as any)._status = 'connected';
+  const kept: QueueItem = { id: '1', title: 'Kept', source: 'local', filePath: '/kept.mp3' };
+  bot.queue.add(kept);
+  f.manager.getBot = () => bot;
+  f.prisma.song = { findUnique: async () => ({ id: 1, title: 'Failed', source: 'local', filePath: '/failed.mp3' }) };
+  bot.play = async item => {
+    assert.ok(bot.queue.getAll().includes(item));
+    assert.equal(bot.queue.current, item);
+    throw new Error('Startup rejected');
+  };
+  try {
+    assert.equal((await f.post('/play', { songId: 1 })).status, 500);
+    assert.deepEqual(bot.queue.getAll(), [kept]);
+    assert.deepEqual(f.history, []);
+  } finally { await f.close(); }
+});

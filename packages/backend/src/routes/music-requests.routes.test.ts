@@ -7,6 +7,7 @@ import express, { type Express } from 'express';
 import { errorHandler, AppError } from '../middleware/error-handler.js';
 import { requireServerAccess } from '../middleware/server-access.js';
 import { MediaSessionConflictError } from '../voice/media-session.js';
+import { PlayQueue } from '../voice/playlist/queue.js';
 const musicRoot = await mkdtemp(path.join(tmpdir(), 'ts6-replay-'));
 const previousMusicDir = process.env.MUSIC_DIR;
 process.env.MUSIC_DIR = musicRoot;
@@ -32,6 +33,7 @@ function appFor(options: {
   const played: string[] = [];
   const queued: any[] = [];
   const updates: unknown[] = [];
+  const recorded: unknown[] = [];
   const rows = options.rows ?? [{
     id: 7, title: 'Display title', url: storedUrl, source: 'youtube', status: 'available',
     serverConfigId: 1, musicBotId: 3, requestedAt: new Date('2026-10-10T00:00:00.000Z'),
@@ -48,16 +50,19 @@ function appFor(options: {
     }),
   };
   const bot = {
+    nowPlaying: null as any,
     id: 3, status: 'connected', assertMusicCanStart: (ids: string[]) => {
       if (options.conflict && !ids?.includes('11111111-1111-4111-8111-111111111111')) throw new MediaSessionConflictError('music', [{
         id: '11111111-1111-4111-8111-111111111111', kind: 'video', state: 'active', botId: 3, botName: 'Cinema', startedAt: 0,
       }]);
     },
     currentConfig: { id: 3, serverConfigId: options.serverConfigId === undefined ? 1 : options.serverConfigId },
-    queue: { add: (item: unknown) => { queued.push(item); }, playAt: () => {}, length: 0 },
-    play: async (item: { filePath: string }) => { played.push(item.filePath); },
-    playStream: async () => {},
+    queue: new PlayQueue(),
+    play: async (item: { filePath: string }) => { played.push(item.filePath); bot.nowPlaying = item; },
+    playStream: async (item: unknown) => { bot.nowPlaying = item; },
   };
+  const add = bot.queue.add.bind(bot.queue);
+  bot.queue.add = item => { queued.push(item); add(item); };
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -82,7 +87,7 @@ function appFor(options: {
         findFirst: async ({ where }: { where: { id: number; serverConfigId: number } }) =>
           rows.find((row) => row.id === where.id && row.serverConfigId === where.serverConfigId) ?? null,
         update: async (args: unknown) => { if (options.failHistoryUpdate) throw new AppError(503, 'History storage unavailable'); updates.push(args); },
-        upsert: async () => ({}),
+        upsert: async (args: unknown) => { recorded.push(args); return {}; },
         deleteMany: async () => ({ count: 0 }),
       },
       userServerAccess: { findUnique: async () => options.allowServerAccess ? { userId: 1, serverConfigId: 1 } : null },
@@ -92,7 +97,7 @@ function appFor(options: {
   });
   app.use('/api/servers/:configId/music-requests', requireServerAccess(), musicRequestRoutes);
   app.use(errorHandler);
-  return { app, played, queued, updates };
+  return { app, played, queued, updates, bot, recorded };
 }
 
 async function request(app: Express, method: string, url: string, body?: unknown) {
@@ -226,3 +231,27 @@ test('temporary resolver failures keep the stored source available for retry', a
   assert.equal(result.status, 502);
   assert.deepEqual(updates, []);
 });
+
+for (const source of ['local', 'radio']) {
+  test(`failed ${source} replay startup removes only its own queue entry and keeps history available`, async () => {
+    const file = 'failed.mp3';
+    if (source === 'local') await writeFile(path.join(musicRoot, file), 'audio');
+    const f = appFor({ rows: [{ id: 7, title: 'Failed', url: source === 'local' ? file : 'https://8.8.8.8/radio',
+      source, status: 'available', serverConfigId: 1, musicBotId: 3 }] });
+    const kept = { id: 'history_7', title: 'Kept', source: 'local' as const, filePath: '/kept.mp3' };
+    f.bot.queue.add(kept);
+    const reject = async (item: any) => {
+      assert.ok(f.bot.queue.getAll().includes(item));
+      assert.equal(f.bot.queue.current, item);
+      throw new Error('Startup rejected');
+    };
+    f.bot.play = reject;
+    f.bot.playStream = reject;
+    try {
+      assert.equal((await request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 })).status, 500);
+      assert.deepEqual(f.bot.queue.getAll(), [kept]);
+      assert.deepEqual(f.recorded, []);
+      assert.deepEqual(f.updates, []);
+    } finally { if (source === 'local') await rm(path.join(musicRoot, file), { force: true }); }
+  });
+}
