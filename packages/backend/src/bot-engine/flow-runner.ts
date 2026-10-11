@@ -429,9 +429,11 @@ export class FlowRunner {
       const next = previous.then(() => gate);
       this.channelMessageChains.set(key, next);
       // A cancelled waiter must retain its place until the predecessor settles.
-      void next.finally(() => {
+      // The predecessor rejection is already delivered to the waiter below.
+      const dropChain = () => {
         if (this.channelMessageChains.get(key) === next) this.channelMessageChains.delete(key);
-      }).catch(() => {});
+      };
+      void next.then(dropChain, dropChain);
       try {
         await new Promise<void>((resolve, reject) => {
           const onAbort = () => {
