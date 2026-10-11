@@ -93,9 +93,17 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     this.playAt(this.getAll().indexOf(item));
     return () => {
       const index = this.getAll().indexOf(item);
+      if (index < 0) return;
       const restore = this.current === item;
       if (!this.removeAt(index) || !restore) return;
-      this.currentIndex = previous ? this.getAll().indexOf(previous) : -1;
+      if (!previous) {
+        this.currentIndex = -1;
+        this.exhausted = exhausted;
+        return;
+      }
+      const previousIndex = this.getAll().indexOf(previous);
+      if (previousIndex < 0) return;
+      this.currentIndex = previousIndex;
       this.exhausted = exhausted;
     };
   }

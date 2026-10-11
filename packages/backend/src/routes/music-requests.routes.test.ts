@@ -273,8 +273,13 @@ for (const change of ['stop', 'replace', 'none']) {
       status: 'available', serverConfigId: 1, musicBotId: 3 }],
       finishAudit: async () => { entered(); await gate; } });
     const replay = request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
+    const settled = await Promise.race([
+      started.then(() => 'started' as const),
+      replay.then(() => 'early' as const, () => 'failed' as const),
+    ]);
+    if (settled === 'failed') await replay;
+    if (settled !== 'started') throw new Error('Replay completed before audit started');
     try {
-      await started;
       assert.equal(f.bot.nowPlaying, f.bot.queue.current);
       assert.equal(f.bot.nowPlaying.title, 'Radio');
       if (change !== 'none') f.bot.nowPlaying = change === 'stop' ? null : { id: 'newer', title: 'Newer' };

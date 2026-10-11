@@ -133,6 +133,20 @@ test('late startup cleanup preserves a newer selection and a cleared queue', () 
   }
 });
 
+test('failed startup keeps the remaining cursor when the previous track was removed', () => {
+  const q = new PlayQueue<{ id: string }>();
+  q.add({ id: 'played' });
+  q.add({ id: 'playing' });
+  q.add({ id: 'pending' });
+  q.playAt(1);
+  const cleanup = q.addForPlayback({ id: 'failed' });
+  assert.ok(q.remove('playing'));
+  cleanup();
+  assert.equal(q.current?.id, 'pending');
+  assert.equal(q.next(), null);
+  assert.deepEqual(q.getAll().map((item) => item.id), ['played', 'pending']);
+});
+
 test('failed startup preserves an unstarted or exhausted queue position', () => {
   for (const exhausted of [false, true]) {
     const q = new PlayQueue<{ id: string }>();
