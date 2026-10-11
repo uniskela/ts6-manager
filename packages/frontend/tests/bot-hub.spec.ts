@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { DEFAULT_BOT_AUTOMATION_SETTINGS } from '@ts6/common';
 
 async function signIn(page: Page, request: APIRequestContext) {
   await request.post('/__test/reset');
@@ -57,6 +58,70 @@ function summaries() {
     { ...base, id: 3, name: 'Backup Bot', nickname: 'Backup Bot', status: 'connected' },
   ];
 }
+
+test('Bot Hub saves per-bot Auto-DJ settings with server-scoped sources and 24/7 presence', async ({ page, request }) => {
+  const saves: unknown[] = [];
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
+  await page.route('**/api/music-bots/3', (r) => r.fulfill({ json: { ...summaries()[2], automationSettings: DEFAULT_BOT_AUTOMATION_SETTINGS } }));
+  await page.route('**/api/music-bots/3/automation', (r) => {
+    saves.push(r.request().postDataJSON());
+    return r.fulfill({ json: r.request().postDataJSON() });
+  });
+  await page.route('**/api/playlists?serverConfigId=1', (r) => r.fulfill({ json: [
+    { id: 10, name: 'Night rotation', serverConfigId: 1 },
+    { id: 11, name: 'Shared rotation', serverConfigId: null },
+    { id: 12, name: 'Other server rotation', serverConfigId: 2 },
+  ] }));
+  await page.route('**/api/servers/1/radio-stations', (r) => r.fulfill({ json: [
+    { id: 20, name: 'Jazz station', serverConfigId: 1 },
+    { id: 21, name: 'Other server radio', serverConfigId: 2 },
+  ] }));
+  await signIn(page, request);
+  await page.goto('/bot-hub');
+  await page.getByRole('button', { name: 'Settings for Backup Bot' }).click();
+  await page.getByRole('menuitem', { name: 'Auto-DJ & 24/7' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Auto-DJ & 24/7: Backup Bot' });
+  await expect(dialog.getByText('Enable Auto-start in Edit bot to restore this bot after a Manager restart.')).toBeVisible();
+  await dialog.getByRole('switch', { name: 'Enable Auto-DJ' }).check();
+  await expect(dialog.getByRole('button', { name: 'Save automation' })).toBeDisabled();
+  await dialog.getByRole('combobox', { name: 'Saved source' }).click();
+  await expect(page.getByRole('option')).toHaveText([
+    'Choose a playlist or radio station', 'Night rotation', 'Shared rotation', 'Jazz station',
+  ]);
+  await page.getByRole('option', { name: 'Night rotation', exact: true }).click();
+  await dialog.getByRole('switch', { name: 'Require a human listener' }).check();
+  await dialog.getByRole('switch', { name: 'Keep bot in channel (24/7)' }).check();
+  await dialog.getByLabel('Quiet period after manual Stop (seconds)').fill('0');
+  await dialog.getByLabel('First retry delay (seconds)').fill('60');
+  await dialog.getByLabel('Maximum retry delay (seconds)').fill('30');
+  await expect(dialog.getByRole('button', { name: 'Save automation' })).toBeDisabled();
+  await dialog.getByLabel('Maximum retry delay (seconds)').fill('3600');
+  await dialog.getByRole('button', { name: 'Save automation' }).click();
+  await expect.poll(() => saves.length).toBe(1);
+  expect(saves[0]).toEqual({ enabled: true, source: { kind: 'playlist', id: 10 }, requireListeners: true,
+    quietPeriodSeconds: 0, retryBaseSeconds: 60, retryMaxSeconds: 3600, stayInChannel: true });
+  await expect(dialog).toBeHidden();
+});
+
+test('failed automation save preserves radio choice and explains the error', async ({ page, request }) => {
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));
+  await page.route('**/api/music-bots/3', (r) => r.fulfill({ json: { ...summaries()[2], automationSettings: {
+    ...DEFAULT_BOT_AUTOMATION_SETTINGS, enabled: true, source: { kind: 'radio', id: 20 },
+  } } }));
+  await page.route('**/api/playlists?serverConfigId=1', (r) => r.fulfill({ json: [] }));
+  await page.route('**/api/servers/1/radio-stations', (r) => r.fulfill({ json: [{ id: 20, name: 'Jazz station', serverConfigId: 1 }] }));
+  await page.route('**/api/music-bots/3/automation', (r) => r.fulfill({ status: 500, json: { error: 'Settings could not be saved' } }));
+  await signIn(page, request);
+  await page.goto('/bot-hub');
+  await page.getByRole('button', { name: 'Settings for Backup Bot' }).click();
+  await page.getByRole('menuitem', { name: 'Auto-DJ & 24/7' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Auto-DJ & 24/7: Backup Bot' });
+  await expect(dialog.getByRole('combobox', { name: 'Saved source' })).toHaveText('Jazz station');
+  await dialog.getByRole('button', { name: 'Save automation' }).click();
+  await expect(dialog.getByRole('alert')).toHaveText('Settings could not be saved');
+  await expect(dialog.getByRole('combobox', { name: 'Saved source' })).toHaveText('Jazz station');
+  await expect(dialog.getByRole('button', { name: 'Save automation' })).toBeEnabled();
+});
 
 test('Bot Hub shows each bot\'s active media session and links to its sections', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
@@ -133,7 +198,7 @@ test('a bot\'s settings menu edits, stops, shows the widget link, and deletes', 
   const openMenu = () => page.getByRole('button', { name: 'Settings for Backup Bot' }).click();
 
   await openMenu();
-  await expect(page.getByRole('menuitem')).toHaveText(['Edit bot', 'Stop bot', 'Widget link', 'Delete bot']);
+  await expect(page.getByRole('menuitem')).toHaveText(['Edit bot', 'Auto-DJ & 24/7', 'Stop bot', 'Widget link', 'Return home (suspend automation)', 'Delete bot']);
   await page.getByRole('menuitem', { name: 'Edit bot' }).click();
   const edit = page.getByRole('dialog', { name: 'Edit bot' });
   await expect(edit.getByLabel('Bot name and TeamSpeak nickname')).toHaveValue('Backup Bot');
@@ -151,6 +216,10 @@ test('a bot\'s settings menu edits, stops, shows the widget link, and deletes', 
   await expect(widget.getByRole('alert')).toHaveText('Widget tokens are unavailable');
   await expect(widget.getByRole('button', { name: 'Try again' })).toBeVisible();
   await page.keyboard.press('Escape');
+
+  await openMenu();
+  await page.getByRole('menuitem', { name: 'Return home (suspend automation)' }).click();
+  await expect.poll(() => calls).toContain('POST /api/music-bots/3/home');
 
   await openMenu();
   await page.getByRole('menuitem', { name: 'Delete bot' }).click();

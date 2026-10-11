@@ -88,6 +88,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'listener.remote.request': 'Listener remote: request link',
   'listener.remote.revoke': 'Revoke listener remote access',
   'music_bot.avatar_update': 'Update bot avatar',
+  'music_bot.automation_update': 'Update bot automation',
   'channel_banner.upload': 'Upload channel banner',
   'channel_banner.delete': 'Delete channel banner',
   'settings.public_url_update': 'Update public URL',

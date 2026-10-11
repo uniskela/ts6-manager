@@ -18,6 +18,9 @@ import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-st
 import { parseAutoStopEmptySeconds } from './streaming/lifecycle.js';
 import { VideoQueueController, type VideoQueueItem, type VideoQueueSessionOptions } from './streaming/video-queue.js';
 import { createVideoQueueStore } from './streaming/video-queue-store.js';
+import { AutomationController, type AutomationRuntimeState } from './automation-controller.js';
+import { readAutomationSettings } from './automation-settings.js';
+import type { BotAutomationSettings } from '@ts6/common';
 
 type SavedVideoQueue = { items: VideoQueueItem[]; options: VideoQueueSessionOptions | null };
 
@@ -110,11 +113,11 @@ export class VoiceBotManager extends EventEmitter {
         autoStopEmptySeconds: parsedAutoStop,
       };
 
-      const bot = this.createBotInstance(config, savedVideoQueues[i]);
+      const bot = this.createBotInstance(config, savedVideoQueues[i], dbBot.automationSettings, dbBot.automationState);
       this.bots.set(dbBot.id, bot);
       this.botServerConfigIds.set(dbBot.id, dbBot.serverConfigId);
 
-      if (dbBot.autoStart) {
+      if (dbBot.autoStart && !bot.automation?.state.presenceSuppressed) {
         bot.start().catch((err) => {
           console.error(`[VoiceBotManager] Auto-start failed for bot ${dbBot.id}: ${err.message}`);
         });
@@ -132,7 +135,7 @@ export class VoiceBotManager extends EventEmitter {
     }
   }
 
-  private createBotInstance(config: VoiceBotConfig, savedVideoQueue?: SavedVideoQueue): VoiceBot {
+  private createBotInstance(config: VoiceBotConfig, savedVideoQueue?: SavedVideoQueue, settings?: string | null, state?: string | null): VoiceBot {
     // The bot's config needs the queue's hook and the queue needs the bot.
     let videoQueue: VideoQueueController | undefined;
     // Streaming defaults are read when a stream starts, so admin changes apply
@@ -157,6 +160,46 @@ export class VoiceBotManager extends EventEmitter {
     );
     this.videoQueues.set(config.id, videoQueue);
     const queue = videoQueue;
+
+    let runtime: Partial<AutomationRuntimeState> = {};
+    try { runtime = state ? JSON.parse(state) ?? {} : {}; } catch { /* invalid state starts with safe defaults */ }
+    bot.automation = new AutomationController({
+      settings: readAutomationSettings(settings), state: runtime,
+      snapshot: () => ({
+        connected: ['connected', 'playing', 'paused'].includes(bot.status) && bot.getCurrentChannelId() > 0,
+        busy: !!bot.mediaSession || !!bot.nowPlaying || bot.status === 'paused',
+        hasRequests: bot.queue.upcomingCount > 0 || queue.snapshot().upNext.length > 0,
+        humanListeners: this.humanListenerCount(bot),
+      }),
+      loadSource: (source, lastTrackId) => this.loadAutomationSource(config.serverConfigId, source, lastTrackId),
+      play: async (item, isCurrent) => {
+        if (item.streamUrl) await bot.playStream(item, { automation: isCurrent });
+        else await bot.play(item, { automation: isCurrent });
+      },
+      stop: () => bot.clearPlayback('channel_empty', 'Auto-DJ suspended'),
+      persist: async (runtimeState) => {
+        await this.prisma.musicBot.update({ where: { id: config.id }, data: { automationState: JSON.stringify(runtimeState) } });
+      },
+      onError: () => console.warn(`[VoiceBotManager] Bot ${config.id}: Auto-DJ source or state write failed`),
+    });
+    let automationTimer: ReturnType<typeof setInterval> | undefined;
+    const tickAutomation = () => {
+      const settings = bot.automation?.configuration;
+      if (!settings?.enabled && !settings?.stayInChannel) return;
+      bot.automation?.rememberChannel(bot.getCurrentChannelId());
+      void bot.automation?.reconcile();
+    };
+    bot.on('connected', () => {
+      if (automationTimer) clearInterval(automationTimer);
+      automationTimer = setInterval(tickAutomation, 1000);
+      automationTimer.unref();
+      tickAutomation();
+    });
+    bot.on('command', tickAutomation);
+    bot.on('disconnected', () => {
+      if (automationTimer) clearInterval(automationTimer);
+      automationTimer = undefined;
+    });
 
     bot.on('statusChange', (status: VoiceBotStatus) => {
       this.broadcast('music:bot:status', { botId: config.id, status });
@@ -287,6 +330,33 @@ export class VoiceBotManager extends EventEmitter {
     }
 
     return bot;
+  }
+
+  private humanListenerCount(bot: VoiceBot): number {
+    const managed = new Set([...this.bots.values()]
+      .filter(other => other.currentConfig.serverConfigId === bot.currentConfig.serverConfigId
+        && other.currentConfig.serverPort === bot.currentConfig.serverPort
+        && ['connected', 'playing', 'paused'].includes(other.status))
+      .map(other => other.ts3ClientId));
+    return bot.getHumanChannelPeerClids().filter(clid => !managed.has(clid)).length;
+  }
+
+  private async loadAutomationSource(serverConfigId: number, source: NonNullable<BotAutomationSettings['source']>, lastTrackId: string | null): Promise<QueueItem> {
+    if (source.kind === 'radio') {
+      const station = await this.prisma.radioStation.findFirst({ where: { id: source.id, serverConfigId } });
+      if (!station) throw new Error('Auto-DJ radio station no longer exists');
+      return { id: `radio_${station.id}`, title: station.name, artist: station.genre ?? 'Radio', filePath: '', source: 'radio', streamUrl: station.url };
+    }
+    const playlist = await this.prisma.playlist.findFirst({
+      where: { id: source.id, OR: [{ serverConfigId }, { serverConfigId: null }],
+        AND: [{ OR: [{ musicBotId: null }, { musicBot: { serverConfigId } }] }] },
+      include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
+    });
+    if (!playlist?.songs.length) throw new Error('Auto-DJ playlist is missing or empty');
+    const previous = playlist.songs.findIndex(entry => String(entry.song.id) === lastTrackId);
+    const { song } = playlist.songs[(previous + 1) % playlist.songs.length];
+    return { id: String(song.id), title: song.title, artist: song.artist ?? undefined, duration: song.duration ?? undefined,
+      filePath: song.filePath, source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined };
   }
 
   async createBot(data: {
@@ -439,7 +509,7 @@ export class VoiceBotManager extends EventEmitter {
       .filter((b) => b !== bot)
       .map((b) => ({ bot: b, session: b.videoSessionInfo() }))
       .filter((x): x is { bot: VoiceBot; session: MediaSessionInfo } => x.session != null);
-    const ownMusic = bot.musicSessionInfo();
+    const ownMusic = bot.automation?.active ? null : bot.musicSessionInfo();
     const conflicts = [...otherVideo.map((x) => x.session), ...(ownMusic ? [ownMusic] : [])];
     if (conflicts.some((c) => c.state === 'starting' || !confirmed.has(c.id))) {
       throw new MediaSessionConflictError('video', conflicts);
@@ -501,6 +571,9 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   async removeBot(id: number): Promise<void> {
+    const automation = this.bots.get(id)?.automation;
+    automation?.dispose();
+    await automation?.flush();
     this.clearReconnect(id);
     this.stopProgressBroadcast(id);
     this.identityJobs.delete(id);
@@ -553,6 +626,7 @@ export class VoiceBotManager extends EventEmitter {
     const bot = this.bots.get(id);
     if (!bot) throw new Error(`Music bot ${id} not found`);
     this.clearReconnect(id);
+    bot.automation?.resumePresence();
     // Do not await level-23 upgrade here — create already attached a fast
     // placeholder identity so Start cannot inherit the old create 499 hang.
     await bot.start();
@@ -565,7 +639,18 @@ export class VoiceBotManager extends EventEmitter {
     const bot = this.bots.get(id);
     if (!bot) throw new Error(`Music bot ${id} not found`);
     this.clearReconnect(id);
+    bot.automation?.suspendPresence();
+    await bot.automation?.flush();
     await bot.stop();
+  }
+
+  async homeBot(id: number): Promise<void> {
+    const bot = this.bots.get(id);
+    if (!bot) throw new Error(`Music bot ${id} not found`);
+    this.clearReconnect(id);
+    bot.automation?.suspendPresence();
+    await bot.automation?.flush();
+    await bot.restart();
   }
 
   async stopAll(): Promise<void> {
@@ -577,6 +662,8 @@ export class VoiceBotManager extends EventEmitter {
 
     const promises: Promise<void>[] = [];
     for (const bot of this.bots.values()) {
+      bot.automation?.dispose();
+      promises.push(bot.automation?.flush() ?? Promise.resolve());
       if (bot.status !== 'stopped') {
         promises.push(bot.stop());
       }

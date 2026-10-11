@@ -23,9 +23,12 @@ async function send(app: Express, path: string) {
 }
 
 const rows = [
-  { id: 1, name: 'Server one', mode: 'local', musicBotId: 11, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-01'), _count: { songs: 1 } },
-  { id: 2, name: 'Server two', mode: 'local', musicBotId: 22, youtubePlaylistId: null, serverConfigId: 2, createdAt: new Date('2026-10-02'), _count: { songs: 2 } },
-  { id: 3, name: 'Legacy shared', mode: 'local', musicBotId: 22, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-03'), _count: { songs: 3 } },
+  { id: 1, name: 'Server one', mode: 'local', musicBotId: 11, musicBot: { serverConfigId: 1 }, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-01'), _count: { songs: 1 } },
+  { id: 2, name: 'Server two', mode: 'local', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: 2, createdAt: new Date('2026-10-02'), _count: { songs: 2 } },
+  { id: 3, name: 'Legacy shared', mode: 'local', musicBotId: null, musicBot: null, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-03'), _count: { songs: 3 } },
+  { id: 4, name: 'Legacy server one bot', mode: 'local', musicBotId: 11, musicBot: { serverConfigId: 1 }, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-04'), _count: { songs: 4 } },
+  { id: 5, name: 'Legacy server two bot', mode: 'local', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-05'), _count: { songs: 5 } },
+  { id: 6, name: 'Conflicting server and bot', mode: 'local', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-06'), _count: { songs: 6 } },
 ];
 
 // Apply both top-level AND conditions and OR branches, as Prisma does.
@@ -33,7 +36,11 @@ function matchesWhere(row: Record<string, unknown>, where?: any): boolean {
   return !where || Object.entries(where).every(([key, value]) =>
     key === 'OR'
       ? (value as any[]).some((condition) => matchesWhere(row, condition))
-      : row[key] === value);
+      : key === 'AND'
+        ? (value as any[]).every((condition) => matchesWhere(row, condition))
+        : value !== null && typeof value === 'object'
+          ? row[key] !== null && typeof row[key] === 'object' && matchesWhere(row[key] as Record<string, unknown>, value)
+          : row[key] === value);
 }
 
 function routeFixture() {
@@ -57,27 +64,25 @@ function routeFixture() {
 }
 
 describe('playlist listing scope', () => {
-  for (const serverConfigId of [1, 2]) it(`lists server ${serverConfigId} playlists plus legacy shared playlists`, async () => {
+  for (const serverConfigId of [1, 2]) it(`lists server ${serverConfigId} and unowned shared playlists, excluding foreign bot owners`, async () => {
     const f = routeFixture();
     const response = await send(f.app, `/playlists?serverConfigId=${serverConfigId}`);
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [serverConfigId, 3]);
-    assert.deepEqual(f.seenWhere, { OR: [{ serverConfigId }, { serverConfigId: null }] });
+    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [serverConfigId, 3, serverConfigId + 3]);
   });
 
   it('ignores musicBotId when listing playlists', async () => {
     const f = routeFixture();
     const response = await send(f.app, '/playlists?serverConfigId=1&musicBotId=999');
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [1, 3]);
-    assert.deepEqual(f.seenWhere, { OR: [{ serverConfigId: 1 }, { serverConfigId: null }] });
+    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [1, 3, 4]);
   });
 
   it('returns all playlists without a server parameter', async () => {
     const f = routeFixture();
     const response = await send(f.app, '/playlists');
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [1, 2, 3]);
+    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [1, 2, 3, 4, 5, 6]);
     assert.equal(f.seenWhere, undefined);
   });
 
@@ -94,7 +99,7 @@ describe('playlist listing scope', () => {
     const f = routeFixture();
     const response = await send(f.app, '/playlists?musicBotId=11');
     assert.equal(response.status, 200);
-    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [1, 2, 3]);
+    assert.deepEqual(response.body.map((playlist: any) => playlist.id), [1, 2, 3, 4, 5, 6]);
     assert.equal(f.seenWhere, undefined);
   });
 });

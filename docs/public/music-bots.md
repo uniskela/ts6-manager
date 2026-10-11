@@ -31,6 +31,18 @@ If the bot is offline, the console offers **Start bot** before showing its sourc
 
 Radio and video keep the music queue. **Play queue** resumes the upcoming songs, with the replacement prompt when needed; while radio plays and nothing is queued, **Up next** is hidden. While a video streams, **Up next** lists the bot's queued videos and a waiting music queue is shown as one line below it; see [Queue videos and playlists](video-streaming.md#queue-videos-and-playlists). Radio shows the station and live status rather than track progress or skip controls. Music controls include pause/resume, skip and volume; **Up next** also provides **Shuffle** and repeat modes.
 
+## Auto-DJ and 24/7 presence
+
+Open **Bot settings → Auto-DJ & 24/7** on a Bot Hub card or in its console. Existing bots have automation off. Enable Auto-DJ and choose a saved playlist or radio station for that server. Playlist tracks play in saved order, continuing after the last automated track across restarts; a playlist with multiple tracks avoids immediate repeats.
+
+Auto-DJ fills idle time only when neither request queue has upcoming items and no human media is playing or paused. A new music request immediately interrupts automated music or live radio. Automated tracks stay outside the request queue, so request shuffle and repeat controls keep their normal meaning. A kept video queue waits for **Play queue** and blocks Auto-DJ.
+
+**Require a human listener** suspends automated playback when the last human leaves, excluding managed media bots and Query clients. It resumes when a listener returns. With this rule off, automated audio continues in an empty channel; ordinary human playback and video retain their existing auto-stop policies.
+
+Manual **Stop** or **Clear queue** starts the saved quiet period (five minutes by default). Requests can still play during that period. Broken sources retry with exponential backoff, starting at 30 seconds and capped at 30 minutes by default. Short radio dropouts count as failures. Quiet periods, retry deadlines and playlist position survive a Manager restart.
+
+**Keep bot in channel (24/7)** reserves the channel from automatic idle-bot summons and restores the most recently joined channel on reconnect. An explicitly targeted `!here <id>` can still move it. Enable **Auto-start** in **Edit bot** to reconnect after a Manager restart. **Stop bot** leaves the server and suppresses auto-start until **Start bot**. **Return home (suspend automation)** reconnects in the configured default channel (or the server's default) and keeps automation suspended. Stop and start the bot to re-enable it. These manual overrides survive restarts.
+
 ## Media Library
 
 **Automation → Media Library** (`/media-bots`) manages media shared by every bot on a server. Select the server, then choose one of its five tabs:

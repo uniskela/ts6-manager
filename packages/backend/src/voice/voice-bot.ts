@@ -7,6 +7,7 @@ import type { Readable } from 'stream';
 import { Ts3Client, type Ts3ClientOptions, generateIdentity, type IdentityData, buildCommand, buildSendTextCommands, isConnectionRefusal } from './tslib/index.js';
 import { AudioPipeline, FRAME_MS, BYTES_PER_FRAME, isRemoteInput } from './audio/pipeline.js';
 import { PlayQueue, type QueueItem } from './playlist/queue.js';
+import type { AutomationController } from './automation-controller.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
@@ -134,6 +135,8 @@ const FLOOD_HOLD_MS = 30_000;
 
 export interface MusicStartOptions {
   replaceSessionIds?: string[];
+  /** Internal fallback playback ownership; never accepted from an API request. */
+  automation?: () => boolean;
 }
 
 /** One log record for a viewer-controlled signaling error. */
@@ -143,6 +146,7 @@ function quoteLog(err: unknown): string {
 }
 
 export class VoiceBot extends EventEmitter {
+  automation?: AutomationController;
   private client: Ts3Client;
   private pipeline: AudioPipeline;
   readonly queue: PlayQueue;
@@ -199,6 +203,7 @@ export class VoiceBot extends EventEmitter {
 
   // Reconnect: distinguishes manual stop from unexpected disconnect
   private _manuallyStopped: boolean = false;
+  private connectionEpoch = 0;
 
   // Video streaming state
   private signaling: StreamSignaling | null = null;
@@ -277,7 +282,18 @@ export class VoiceBot extends EventEmitter {
     this._videoStreamVolume = config.videoStreamVolume ?? config.volume;
     this.client = new Ts3Client();
     this.pipeline = new AudioPipeline();
-    this.queue = new PlayQueue();
+    this.queue = new PlayQueue((added) => {
+      const preempted = added && this.automation?.configuration.enabled;
+      if (added) this.automation?.requestQueued();
+      // Let the caller select/start its item before advancing a plain queue insertion.
+      queueMicrotask(() => {
+        if (preempted && this._status === 'connected' && !this.nowPlaying && !this.videoSessionInfo()) {
+          const next = this.queue.next();
+          if (next) this.play(next).catch(err => this.emit('error', err));
+        }
+        void this.automation?.reconcile();
+      });
+    });
 
     this.client.on('error', (err) => {
       this._status = 'error';
@@ -286,6 +302,9 @@ export class VoiceBot extends EventEmitter {
     });
 
     this.client.on('disconnected', () => {
+      this.automation?.disconnected();
+      this.connectionEpoch++;
+      if (this.musicActive) this.endMusicSession('server_disconnect', 'Disconnected from TeamSpeak');
       // Cancel the separate avatar transfer socket so a later start() is not queued behind it.
       this.avatarAbort?.abort();
       this._streamNotificationsRegistered = false;
@@ -528,6 +547,7 @@ export class VoiceBot extends EventEmitter {
 
     this.autoStopEmptySince = null;
     this.autoStopTimer = setInterval(() => {
+      if (this.automation?.active && !this.automation.configuration.requireListeners) return;
       if (this._status !== 'playing' && !this._videoStreaming) {
         this.stopAutoStopTimer();
         return;
@@ -789,11 +809,12 @@ export class VoiceBot extends EventEmitter {
   }
 
   async start(): Promise<void> {
-    if (this._status === 'connected' || this._status === 'playing' || this._status === 'paused') {
+    if (this._status === 'starting' || this._status === 'connected' || this._status === 'playing' || this._status === 'paused') {
       throw new Error('Bot is already running');
     }
 
     this._manuallyStopped = false;
+    const connectionEpoch = ++this.connectionEpoch;
     this._status = 'starting';
     this.emit('statusChange', this._status);
 
@@ -805,13 +826,15 @@ export class VoiceBot extends EventEmitter {
       identity: this.identity,
       nickname: this.config.nickname,
       serverPassword: this.config.serverPassword,
-      defaultChannel: this.config.defaultChannel,
+      defaultChannel: this.automation?.keepChannel && this.automation.state.channelId
+        ? String(this.automation.state.channelId) : this.config.defaultChannel,
       channelPassword: this.config.channelPassword,
     };
 
     // A new connection has no server-side notification registrations yet.
     this._streamNotificationsRegistered = false;
     await this.client.connect(opts);
+    if (connectionEpoch !== this.connectionEpoch) return;
     this._status = 'connected';
     this.emit('statusChange', this._status);
     this.emit('connected');
@@ -821,6 +844,8 @@ export class VoiceBot extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    this.connectionEpoch++;
+    this.automation?.disconnected();
     this._manuallyStopped = true;
     this.avatarAbort?.abort();
     this.stopAutoStopTimer();
@@ -858,6 +883,8 @@ export class VoiceBot extends EventEmitter {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
+    if (options.automation && !options.automation()) return [];
+    if (!options.automation) this.automation?.requestQueued();
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
       const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
@@ -911,6 +938,7 @@ export class VoiceBot extends EventEmitter {
       this._status = 'connected';
       this._nowPlaying = null;
       this.emit('statusChange', this._status);
+      this.automation?.sourceEnded({ failed: true });
       throw err;
     }
     return replaced;
@@ -968,6 +996,10 @@ export class VoiceBot extends EventEmitter {
           return;
         }
         if (!this._videoStreaming) this.stopAutoStopTimer();
+        if (this.recoverAutomatedFailure()) {
+          this.emit('error', new Error(`FFmpeg file playback exited with code ${code}`));
+          return;
+        }
         this._status = 'error';
         this.emit('error', new Error(`FFmpeg file playback exited with code ${code}`));
         this.emit('statusChange', this._status);
@@ -985,6 +1017,10 @@ export class VoiceBot extends EventEmitter {
       this.streamChunks = [];
       this.streamChunksSize = 0;
       if (!this._videoStreaming) this.stopAutoStopTimer();
+      if (this.recoverAutomatedFailure()) {
+        this.emit('error', err);
+        return;
+      }
       this._status = 'error';
       this.emit('error', err);
       this.emit('statusChange', this._status);
@@ -1026,6 +1062,7 @@ export class VoiceBot extends EventEmitter {
         this._status = 'connected';
         this._nowPlaying = null;
         this.emit('statusChange', this._status);
+        this.automation?.sourceEnded({ failed: true });
         this.emit('error', err instanceof Error ? err : new Error(String(err)));
       });
   }
@@ -1080,6 +1117,7 @@ export class VoiceBot extends EventEmitter {
   };
 
   private finishFileTrack(): void {
+    if (this.fileFramesSent === 0 && this.recoverAutomatedFailure()) return;
     this.client.sendVoiceStop();
     this.clearTimer();
     this._fileStreamActive = false;
@@ -1094,6 +1132,13 @@ export class VoiceBot extends EventEmitter {
     this.emit('statusChange', this._status);
     this.emit('trackEnd', finished);
 
+    if (this.automation?.active) {
+      this.endMusicSession('source_ended', 'Auto-DJ track finished');
+      this.resetNickname();
+      this.automation.sourceEnded();
+      return;
+    }
+
     if (this.queue.repeat === 'track' && finished) {
       this.play(finished).catch((err) => this.emit('error', err));
       return;
@@ -1106,6 +1151,7 @@ export class VoiceBot extends EventEmitter {
       this.endMusicSession('source_ended', 'Queue finished');
       this.resetNickname();
       if (!this._videoStreaming) this.stopAutoStopTimer();
+      void this.automation?.reconcile();
     }
   }
 
@@ -1149,6 +1195,8 @@ export class VoiceBot extends EventEmitter {
     if (!item.streamUrl) {
       throw new Error('No streamUrl provided');
     }
+    if (options.automation && !options.automation()) return [];
+    if (!options.automation) this.automation?.requestQueued();
     const replaced: MediaSessionInfo[] = [];
     if (this._videoStreaming || this._videoStarting) {
       const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
@@ -1158,6 +1206,8 @@ export class VoiceBot extends EventEmitter {
 
     this.stopIcyPolling();
     this.stopPlayback();
+    const owner = this.playbackOwner;
+    const current = () => owner === this.playbackOwner;
     this._nowPlaying = item;
     this._isStreaming = true;
     this._status = 'playing';
@@ -1169,6 +1219,10 @@ export class VoiceBot extends EventEmitter {
 
     try {
       const stream = await this.pipeline.toPcmStream(item.streamUrl);
+      if (!current()) {
+        stream.kill();
+        return replaced;
+      }
       this.streamKill = stream.kill;
       this.streamChunks = [];
       this.streamChunksSize = 0;
@@ -1183,8 +1237,10 @@ export class VoiceBot extends EventEmitter {
         this.streamChunksSize += chunk.length;
       });
 
-      stream.process.on('close', () => {
+      stream.process.on('close', (code) => {
         if (epoch !== this.loopEpoch) return;
+        this.stopIcyPolling();
+        this.stopPlayback();
         this.client.sendVoiceStop();
         this._isStreaming = false;
         this.streamKill = null;
@@ -1193,10 +1249,15 @@ export class VoiceBot extends EventEmitter {
         this.endMusicSession('source_ended', 'Stream ended');
         this.emit('statusChange', this._status);
         this.emit('trackEnd', item);
+        this.automation?.sourceEnded({ failed: code != null && code !== 0 });
       });
 
       stream.process.on('error', (err) => {
         if (epoch !== this.loopEpoch) return;
+        if (this.recoverAutomatedFailure()) {
+          this.emit('error', err);
+          return;
+        }
         this._isStreaming = false;
         this.streamKill = null;
         this._status = 'error';
@@ -1250,6 +1311,7 @@ export class VoiceBot extends EventEmitter {
       this.playbackTimer = setTimeout(tick, 200);
       this.startAutoStopTimer();
     } catch (err) {
+      if (!current()) return replaced;
       // A failed start must not leave ICY polling running for a dead stream.
       this.stopIcyPolling();
       this._isStreaming = false;
@@ -1258,14 +1320,24 @@ export class VoiceBot extends EventEmitter {
       this._status = 'connected';
       this._nowPlaying = null;
       this.emit('statusChange', this._status);
+      this.automation?.sourceEnded({ failed: true });
       throw err;
     }
     return replaced;
   }
 
+  private recoverAutomatedFailure(): boolean {
+    if (!this.automation?.active) return false;
+    this.clearPlayback('source_unreachable', 'Auto-DJ source failed');
+    this.automation.sourceEnded({ failed: true });
+    return true;
+  }
+
   /** Stop current audio without disconnecting the bot (used by clear-queue). */
   clearPlayback(reason: MediaStopReason = 'manual', detail: string | null = null): void {
-    if (this.musicActive) this.endMusicSession(reason, detail);
+    const hadMusic = this.musicActive;
+    if (reason === 'manual') this.automation?.manualStop();
+    if (hadMusic) this.endMusicSession(reason, detail);
     this.stopIcyPolling();
     this.stopPlayback();
     try {
@@ -1319,7 +1391,8 @@ export class VoiceBot extends EventEmitter {
       const item = this._nowPlaying;
       this._status = 'playing';
       this.emit('statusChange', this._status);
-      this.playStream(item).catch((err) => this.emit('error', err));
+      this.playStream(item, this.automation?.active ? { automation: () => this.automation?.active ?? false } : {})
+        .catch((err) => this.emit('error', err));
     }
   }
 
@@ -1364,6 +1437,7 @@ export class VoiceBot extends EventEmitter {
       this._status = 'connected';
       this._nowPlaying = null;
       this.emit('statusChange', this._status);
+      this.automation?.sourceEnded({ failed: true });
       this.emit('error', err instanceof Error ? err : new Error(String(err)));
       throw err;
     }
@@ -1497,6 +1571,7 @@ export class VoiceBot extends EventEmitter {
   }
 
   skip(options: MusicStartOptions = {}): void {
+    if (this.automation?.active) this.automation.requestQueued();
     this.stopIcyPolling();
     this.stopPlayback();
     this._nowPlaying = null;
@@ -1508,10 +1583,13 @@ export class VoiceBot extends EventEmitter {
       this.play(next, options).catch((err) => this.emit('error', err));
     } else {
       this.resetNickname();
+      this.endMusicSession('source_ended', 'Queue finished');
+      void this.automation?.reconcile();
     }
   }
 
   previous(options: MusicStartOptions = {}): void {
+    if (this.automation?.active) this.automation.requestQueued();
     this.stopIcyPolling();
     this.stopPlayback();
     this._nowPlaying = null;
@@ -1523,11 +1601,15 @@ export class VoiceBot extends EventEmitter {
       this.play(prev, options).catch((err) => this.emit('error', err));
     } else {
       this.resetNickname();
+      this.endMusicSession('source_ended', 'No previous request');
+      void this.automation?.reconcile();
     }
   }
 
   stopAudio(): void {
-    if (this.musicActive) this.endMusicSession('manual', null);
+    const hadMusic = this.musicActive;
+    this.automation?.manualStop();
+    if (hadMusic) this.endMusicSession('manual', null);
     this.stopIcyPolling();
     this.stopPlayback();
     this.client.sendVoiceStop();
@@ -2122,7 +2204,7 @@ export class VoiceBot extends EventEmitter {
     if (this._videoStreaming || this._videoStarting || this._videoStopping) {
       this.refuseActiveVideoStart(source, options);
     }
-    const music = this.musicSessionInfo();
+    const music = this.automation?.active ? null : this.musicSessionInfo();
     if (music && !options.replaceSessionIds?.includes(music.id)) {
       throw new MediaSessionConflictError('video', [music]);
     }
@@ -2132,6 +2214,7 @@ export class VoiceBot extends EventEmitter {
     this._videoStarting = true;
     this._videoStartAbortError = null;
     this._videoSessionId = newMediaSessionId();
+    this.automation?.requestQueued();
     try {
       if (music) {
         this.clearPlayback('replaced_by_video', 'Replaced by a video stream');
@@ -2401,6 +2484,7 @@ export class VoiceBot extends EventEmitter {
    * new stream) starts before the old stream is gone.
    */
   stopVideoStream(reason: MediaStopReason = 'manual', detail: string | null = null): Promise<void> {
+    if (reason === 'manual') this.automation?.manualStop();
     if (!this._videoStopPromise) {
       this._videoStopPromise = this.stopVideoStreamOnce(reason, detail).finally(() => {
         this._videoStopPromise = null;

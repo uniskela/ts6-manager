@@ -166,6 +166,10 @@ model MusicBot {
   avatarFile      String?
   avatarMd5       String?
   autoStart       Boolean   @default(false)
+  /// JSON Auto-DJ and persistent channel presence settings; absent means disabled.
+  automationSettings String?
+  /// JSON controller checkpoint (quiet deadline, source cursor and retry deadline).
+  automationState String?
   streamPreset    String    @default("720p")
   sidecarPort     Int       @default(9800)
   createdAt       DateTime  @default(now())

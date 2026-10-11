@@ -21,6 +21,7 @@ import {
 import { invalidateChatPlaylistExpansion } from '../voice/commands/queue.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
 import type { BotMediaOverview } from '@ts6/common';
+import { parseAutomationSettings, readAutomationSettings } from '../voice/automation-settings.js';
 
 export const musicBotRoutes: Router = Router();
 
@@ -90,11 +91,11 @@ musicBotRoutes.use(requireRole('admin'));
 const avatarUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_AVATAR_BYTES, files: 1, fields: 0 } }).single('file');
 // Avatar audits record saving the selected image/mode. A TS6 refusal does not
 // undo that saved selection; applyAvatar exposes it separately as avatarError.
-const avatarWrites = new Map<number, Promise<unknown>>();
-async function serializeAvatar<T>(id: number, write: () => Promise<T>): Promise<T> {
-  const next = (avatarWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(write);
-  avatarWrites.set(id, next);
-  try { return await next; } finally { if (avatarWrites.get(id) === next) avatarWrites.delete(id); }
+const botSettingsWrites = new Map<number, Promise<unknown>>();
+async function serializeBotSettings<T>(id: number, write: () => Promise<T>): Promise<T> {
+  const next = (botSettingsWrites.get(id) ?? Promise.resolve()).catch(() => {}).then(write);
+  botSettingsWrites.set(id, next);
+  try { return await next; } finally { if (botSettingsWrites.get(id) === next) botSettingsWrites.delete(id); }
 }
 async function avatarBot(req: Request) {
   const id = Number(req.params.id);
@@ -126,7 +127,7 @@ musicBotRoutes.put('/:id/avatar', (req, res, next) => {
     if (!req.file) throw new AppError(400, 'Upload exactly one PNG, JPEG or GIF image');
     avatarImageType(req.file.buffer);
     const existing = await avatarBot(req);
-    await serializeAvatar(existing.id, () => runRemoteAudited(req.app.locals.prisma, {
+    await serializeBotSettings(existing.id, () => runRemoteAudited(req.app.locals.prisma, {
       actor: actorFromRequest(req.user), action: 'music_bot.avatar_update', connectionId: existing.serverConfigId,
       target: { type: 'music_bot', id: existing.id },
     }, async () => {
@@ -152,7 +153,7 @@ musicBotRoutes.put('/:id/avatar/mode', async (req, res, next) => {
     const mode = req.body.mode as BotAvatarMode;
     if (!['custom', 'default', 'none'].includes(mode)) throw new AppError(400, 'mode must be custom, default or none');
     const existing = await avatarBot(req);
-    await serializeAvatar(existing.id, async () => {
+    await serializeBotSettings(existing.id, async () => {
       const current = await avatarBot(req);
       if (mode === 'custom' && !current.avatarFile) throw new AppError(400, 'Upload a custom avatar first');
       const image = await readBotAvatar({ ...current, avatarMode: mode });
@@ -196,6 +197,7 @@ musicBotRoutes.get('/', async (req: Request, res: Response, next) => {
         voicePort: b.voicePort,
         volume: b.volume,
         autoStart: b.autoStart,
+        automationSettings: readAutomationSettings(b.automationSettings),
         avatarMode: b.avatarMode ?? 'none',
         avatarMd5: b.avatarMd5 ?? null,
         avatarError: manager.getBot(b.id)?.avatarError ?? null,
@@ -255,12 +257,46 @@ musicBotRoutes.get('/:id', async (req: Request, res: Response, next) => {
     res.json({
       ...dbBot,
       identityData: undefined, // don't expose identity
+      automationSettings: readAutomationSettings(dbBot.automationSettings),
+      automationState: undefined,
       status: bot?.status ?? 'stopped',
       nowPlaying: bot?.nowPlaying ?? null,
       playbackProgress: bot?.playbackProgress ?? null,
       avatarError: bot?.avatarError ?? null,
     });
   } catch (err) { next(err); }
+});
+
+// PUT /:id/automation — saved Auto-DJ source and idle channel behaviour.
+musicBotRoutes.put('/:id/automation', async (req, res, next) => {
+  try {
+    const settings = parseAutomationSettings(req.body);
+    const existing = await avatarBot(req);
+    const prisma = req.app.locals.prisma;
+    if (settings.source?.kind === 'playlist') {
+      const playlist = await prisma.playlist.findUnique({
+        where: { id: settings.source.id }, include: { musicBot: { select: { serverConfigId: true } } },
+      });
+      if (!playlist || (playlist.serverConfigId != null && playlist.serverConfigId !== existing.serverConfigId) ||
+          (playlist.musicBot && playlist.musicBot.serverConfigId !== existing.serverConfigId)) {
+        throw new AppError(400, 'Choose a playlist shared with this bot’s server');
+      }
+    } else if (settings.source?.kind === 'radio') {
+      const station = await prisma.radioStation.findUnique({ where: { id: settings.source.id } });
+      if (!station || station.serverConfigId !== existing.serverConfigId) {
+        throw new AppError(400, 'Choose a radio station from this bot’s server');
+      }
+    }
+    // Serialize saves and runtime application so overlapping edits keep the newest settings.
+    await serializeBotSettings(existing.id, () => runRemoteAudited(prisma, {
+      actor: actorFromRequest(req.user), action: 'music_bot.automation_update', connectionId: existing.serverConfigId,
+      target: { type: 'music_bot', id: existing.id },
+    }, async () => {
+      await prisma.musicBot.update({ where: { id: existing.id }, data: { automationSettings: JSON.stringify(settings) } });
+      await req.app.locals.voiceBotManager.getBot(existing.id)?.automation.configure(settings);
+    }));
+    res.json(settings);
+  } catch (error) { next(error); }
 });
 
 // POST / — Create bot
@@ -385,6 +421,20 @@ musicBotRoutes.post('/:id/stop', async (req: Request, res: Response, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /:id/home — return to configured home and suspend automation.
+musicBotRoutes.post('/:id/home', async (req: Request, res: Response, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id <= 0) throw new AppError(400, 'Invalid bot ID');
+    const manager: VoiceBotManager = req.app.locals.voiceBotManager;
+    if (!manager.getBot(id)) throw new AppError(404, 'Music bot not found');
+    invalidatePlaylistExpansion(id);
+    invalidateChatPlaylistExpansion(id);
+    await manager.homeBot(id);
+    res.json({ success: true });
+  } catch (err) { next(err); }
+});
+
 // POST /:id/restart — Restart bot
 musicBotRoutes.post('/:id/restart', async (req: Request, res: Response, next) => {
   try {
@@ -429,10 +479,12 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
       sourceUrl: song.sourceUrl ?? undefined,
     };
 
-    // Add to queue so repeat modes work, then play
-    bot.queue.add(queueItem);
-    bot.queue.playAt(bot.queue.length - 1);
-    await runMediaAudited(req, bot, 'media.music.start', () => bot.play(queueItem, { replaceSessionIds }), replaceSessionIds);
+    await runMediaAudited(req, bot, 'media.music.start', async () => {
+      // Select and start together after the audit wait, before queue notifications advance.
+      bot.queue.add(queueItem);
+      bot.queue.playAt(bot.queue.length - 1);
+      return bot.play(queueItem, { replaceSessionIds });
+    }, replaceSessionIds);
 
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -796,22 +848,27 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     // Only require a session replace when this load will actually start playback.
     if (shouldAutoplay && items.length > 0) bot.assertMusicCanStart(replaceSessionIds);
 
-    if (clearFirst) bot.queue.clear();
-    bot.queue.addMany(items);
+    const loadQueue = () => {
+      if (clearFirst) bot.queue.clear();
+      const playIndex = bot.queue.length;
+      bot.queue.addMany(items);
+      return playIndex;
+    };
 
     let playError: string | undefined;
     if (shouldAutoplay && items.length > 0) {
-      const playIndex = clearFirst ? 0 : bot.queue.length - items.length;
-      const item = bot.queue.playAt(playIndex);
-      if (item) {
-        try {
-          if (item.streamUrl) await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(item, { replaceSessionIds }), replaceSessionIds);
-          else await runMediaAudited(req, bot, 'media.music.start', () => bot.play(item, { replaceSessionIds }), replaceSessionIds);
-        } catch (err: any) {
-          playError = err.message || String(err);
-          console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
-        }
+      try {
+        await runMediaAudited(req, bot, 'media.music.start', async () => {
+          const item = bot.queue.playAt(loadQueue());
+          if (!item) return [];
+          return item.streamUrl ? bot.playStream(item, { replaceSessionIds }) : bot.play(item, { replaceSessionIds });
+        }, replaceSessionIds);
+      } catch (err: any) {
+        playError = err.message || String(err);
+        console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
       }
+    } else {
+      loadQueue();
     }
 
     res.json({ success: true, queueLength: bot.queue.length, playError });

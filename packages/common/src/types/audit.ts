@@ -54,6 +54,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.video_streaming_update',
   'settings.iptv_network_update',
   'music_bot.avatar_update',
+  'music_bot.automation_update',
   'channel_banner.upload',
   'channel_banner.delete',
   'settings.public_url_update',

@@ -4,6 +4,26 @@ export type BotAvatarMode = 'none' | 'default' | 'custom';
 
 export type VoiceBotStatus = 'stopped' | 'starting' | 'connected' | 'playing' | 'paused' | 'error';
 
+export interface BotAutomationSettings {
+  enabled: boolean;
+  source: { kind: 'playlist' | 'radio'; id: number } | null;
+  requireListeners: boolean;
+  quietPeriodSeconds: number;
+  retryBaseSeconds: number;
+  retryMaxSeconds: number;
+  stayInChannel: boolean;
+}
+
+export const DEFAULT_BOT_AUTOMATION_SETTINGS: BotAutomationSettings = {
+  enabled: false,
+  source: null,
+  requireListeners: false,
+  quietPeriodSeconds: 300,
+  retryBaseSeconds: 30,
+  retryMaxSeconds: 1800,
+  stayInChannel: false,
+};
+
 export interface MusicBotSummary {
   id: number;
   name: string;
@@ -18,6 +38,7 @@ export interface MusicBotSummary {
   voicePort: number;
   volume: number;
   autoStart: boolean;
+  automationSettings?: BotAutomationSettings;
   avatarMode?: BotAvatarMode;
   avatarMd5?: string | null;
   avatarError?: string | null;
