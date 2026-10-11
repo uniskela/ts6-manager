@@ -114,6 +114,8 @@ Continue validating quality presets, source compatibility, and sidecar/media tra
 
 Queued videos and YouTube playlist streaming ([#253](https://github.com/uniskela/ts6-manager/issues/253) Slice 3) are implemented for the next release: a bot plays queued videos back to back on one stream, and the queue survives a restart. Starting a kept queue stays a manual action; unattended resume belongs to the Auto-DJ slice. Operator detail: [Video streaming — Queue videos and playlists](video-streaming.md#queue-videos-and-playlists).
 
+Adaptive Auto quality ([#253](https://github.com/uniskela/ts6-manager/issues/253) Slice 5) is implemented for the next release: an Auto stream steps down one preset when encoding stays below realtime and back up after a steady recovery, never above the preset Auto started at. It reads encoder health only; TeamSpeak and the sidecar expose no viewer connection feedback to adapt to. Operator detail: [Video streaming — Adaptive Auto quality](video-streaming.md#adaptive-auto-quality).
+
 ## Explicit scope boundaries
 
 The fork currently does not plan to adopt features that weaken the sidecar/encryption boundaries or turn TS6 Manager into a general container orchestrator.

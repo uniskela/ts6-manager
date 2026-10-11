@@ -27,7 +27,8 @@ import type {
   VideoSourceModeRequest,
   VideoStreamHealth,
 } from '@ts6/common';
-import { SidecarClient, type SidecarEncoderSession } from './streaming/sidecar-client.js';
+import { SidecarClient, type SidecarEncoderSession, type SidecarStreamHealth } from './streaming/sidecar-client.js';
+import { AdaptiveQualityController, type QualityDecision } from './streaming/adaptive-quality.js';
 import { SidecarProcess, type SidecarConfig } from './streaming/sidecar-process.js';
 import { STREAM_PRESETS, DEFAULT_PRESET, type VideoViewerInfo, type VideoStreamStatus } from './streaming/types.js';
 import { downloadVideoForStream, safeUnlinkStreamTemp, resolvePathUnderMusicDir } from './streaming/video-download.js';
@@ -243,6 +244,13 @@ export class VoiceBot extends EventEmitter {
   private _videoHealth: VideoStreamHealth | null = null;
   private _videoHealthTimer: ReturnType<typeof setInterval> | null = null;
   private _videoHealthPolling = false;
+  /** Adaptive Auto quality for the running source; null for fixed presets. */
+  private _videoAdaptive: AdaptiveQualityController | null = null;
+  /** True while an automatic quality change is restarting the encode. */
+  private _qualityChangeActive = false;
+  /** Probed length of the running source, for resuming a looped file mid-loop. */
+  private _videoSourceDurationSec: number | null = null;
+  private _adaptiveResumeWarned = false;
   private _videoStarting = false;
   /** Set while startVideoStreamClaimed awaits TeamSpeak; used to abort that wait. */
   private _videoStartReject: ((err: Error) => void) | null = null;
@@ -1542,6 +1550,19 @@ export class VoiceBot extends EventEmitter {
     }
   }
 
+  /** Resolve the running source again for an encoder restart (volume or quality change). */
+  private async resolveRunningSource(
+    maxHeight: number,
+  ): Promise<{ sourcePath: string; audioPath?: string; loop: boolean }> {
+    if (this._videoTempFile) {
+      try {
+        return { sourcePath: resolvePathUnderMusicDir(this._videoTempFile), loop: false };
+      } catch { /* the download is gone: resolve it again */ }
+    }
+    const resolved = await this.resolveStreamSource(this._videoSource!, maxHeight);
+    return { sourcePath: resolved.path, audioPath: resolved.audioPath, loop: resolved.loop };
+  }
+
   /** Restart the running encode so the sidecar picks up `_videoStreamVolume`. */
   private async pushVideoStreamVolume(): Promise<void> {
     if (!this._videoStreaming || !this.sidecarHttp || !this._videoSource) {
@@ -1549,26 +1570,7 @@ export class VoiceBot extends EventEmitter {
     }
     // Reuse the resolved quality: a volume change must not re-probe the source.
     const quality = this._videoQuality ?? resolveQuality(this._videoPreset, this._videoSettings.autoMaxPreset, null);
-    const maxHeight = STREAM_PRESETS[quality.actual].height;
-    let sourcePath: string;
-    let audioPath: string | undefined;
-    let loop = true;
-    if (this._videoTempFile) {
-      try {
-        sourcePath = resolvePathUnderMusicDir(this._videoTempFile);
-        loop = false;
-      } catch {
-        const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
-        sourcePath = resolved.path;
-        audioPath = resolved.audioPath;
-        loop = resolved.loop;
-      }
-    } else {
-      const resolved = await this.resolveStreamSource(this._videoSource, maxHeight);
-      sourcePath = resolved.path;
-      audioPath = resolved.audioPath;
-      loop = resolved.loop;
-    }
+    const { sourcePath, audioPath, loop } = await this.resolveRunningSource(STREAM_PRESETS[quality.actual].height);
     // Source resolution can take a while; a stop or source change that began
     // meanwhile owns the sidecar now, and a /source here would restart ffmpeg
     // after the stop, or on the old source.
@@ -1842,7 +1844,9 @@ export class VoiceBot extends EventEmitter {
       viewerCount: this._viewers.size,
       viewers: Array.from(this._viewers.values()),
       sidecar: null,
-      quality: this._videoStreaming ? this._videoQuality : null,
+      quality: this._videoStreaming && this._videoQuality
+        ? { ...this._videoQuality, adaptation: this._videoAdaptive?.snapshot() ?? null }
+        : null,
       encoder: this._videoStreaming ? this._videoEncoder : null,
       noViewer: { timeoutSec: this._noViewerTimeoutSec, stopAt: this._noViewerStopAt },
       lastStop: this._lastVideoStop,
@@ -1931,6 +1935,7 @@ export class VoiceBot extends EventEmitter {
       this._videoHealthTimer = null;
     }
     this._videoHealth = null;
+    this._videoAdaptive = null;
   }
 
   /** One health sample; stops the stream with a truthful reason if ffmpeg died. */
@@ -1980,9 +1985,136 @@ export class VoiceBot extends EventEmitter {
       if (h.belowRealtime) {
         console.warn(`[VoiceBot ${this.config.id}] ${this._videoHealth.warning}`);
       }
+      await this.adaptVideoQuality(h);
     } finally {
       this._videoHealthPolling = false;
     }
+  }
+
+  // ─── Adaptive Auto quality (#253) ─────────────────────────
+
+  /** Feed one health sample to the Auto controller and apply what it decides. */
+  private async adaptVideoQuality(h: SidecarStreamHealth): Promise<void> {
+    const ctl = this._videoAdaptive;
+    // A volume restart in flight resets the encoder's health; wait for the next sample.
+    if (!ctl || !this.canPushVideoVolume() || this._volumePushActive) return;
+    const decision = ctl.observe({
+      speed: h.speed > 0 ? h.speed : null,
+      belowRealtime: !!h.belowRealtime,
+      belowRealtimeSecs: h.belowRealtimeSecs ?? 0,
+      sampleAgeSecs: h.sampleAgeSecs ?? 0,
+    }, Date.now());
+    if (!decision) return;
+
+    // A restart replays an on-demand source from its start unless the sidecar
+    // can say where playback is; one that cannot is older than this feature.
+    if (this._videoSourceMode !== 'live' && h.positionSecs == null) {
+      ctl.reject(Date.now());
+      if (!this._adaptiveResumeWarned) {
+        this._adaptiveResumeWarned = true;
+        console.warn(
+          `[VoiceBot ${this.config.id}] Auto quality stays at ${ctl.current}: the sidecar does not report `
+          + 'the playback position, so a restart would replay the video from the start. Update the sidecar.',
+        );
+      }
+      return;
+    }
+
+    this._qualityChangeActive = true;
+    const run = this._volumePushTail.then(() => this.changeVideoQuality(ctl, decision, h.positionSecs ?? null));
+    this._volumePushTail = run.catch(() => { /* reported below */ });
+    try {
+      await run;
+    } catch (err: any) {
+      console.error(`[VoiceBot ${this.config.id}] Auto quality change failed: ${err?.message ?? err}`);
+    } finally {
+      this._qualityChangeActive = false;
+    }
+  }
+
+  /**
+   * Where a restarted encode should resume. Undefined restarts from the
+   * beginning (live sources have no position).
+   */
+  private resumeOffset(positionSecs: number | null, loop: boolean): number | undefined {
+    if (this._videoSourceMode === 'live' || positionSecs == null || positionSecs <= 0) return undefined;
+    if (!loop) return positionSecs;
+    // ffmpeg's clock keeps counting across loops of a file.
+    const duration = this._videoSourceDurationSec;
+    return duration != null && duration > 0 ? positionSecs % duration : undefined;
+  }
+
+  /** Restart the encode one preset away, resuming where playback was. */
+  private async changeVideoQuality(
+    ctl: AdaptiveQualityController,
+    decision: QualityDecision,
+    polledPositionSecs: number | null,
+  ): Promise<void> {
+    const previous = this._videoQuality;
+    const sidecar = this.sidecarHttp;
+    if (!previous || !sidecar || this._videoAdaptive !== ctl || !this.canPushVideoVolume()) return;
+    const preset = STREAM_PRESETS[decision.to];
+    const target: VideoStreamQualityInfo = { ...previous, actual: decision.to, width: preset.width, height: preset.height };
+
+    let resolved: { sourcePath: string; audioPath?: string; loop: boolean };
+    try {
+      resolved = await this.resolveRunningSource(preset.height);
+    } catch (err) {
+      // Nothing was sent to the sidecar: the current encode is still running.
+      ctl.reject(Date.now());
+      throw err;
+    }
+    if (this._videoAdaptive !== ctl || !this.canPushVideoVolume()) return;
+
+    // Resolving can take seconds; ask again so viewers do not see them twice.
+    let positionSecs = polledPositionSecs;
+    try {
+      const stats = await sidecar.getStats();
+      if (stats.encoder?.state === 'exited') return; // the next health sample ends the stream
+      positionSecs = stats.health?.positionSecs ?? positionSecs;
+    } catch { /* keep the sampled position */ }
+    if (this._videoAdaptive !== ctl || !this.canPushVideoVolume()) return;
+
+    const { sourcePath, audioPath } = resolved;
+    const mode: VideoSourceMode = /^https?:\/\//i.test(sourcePath) ? (this._videoSourceMode ?? 'vod') : 'file';
+    const loop = resolved.loop && mode === 'file';
+    const startAt = this.resumeOffset(positionSecs, loop);
+    const remainingSec = !loop && this._videoDurationSec != null
+      ? this._videoDurationSec - (startAt ?? 0)
+      : null;
+    if (remainingSec != null && remainingSec < 15) {
+      // Nearly over: a restart would cost more of the ending than it could save.
+      ctl.reject(Date.now());
+      this.scheduleVideoEndStop(Math.max(0, remainingSec));
+      return;
+    }
+
+    try {
+      await this.sendSourceToSidecar(sourcePath, loop, target, mode, audioPath, startAt);
+    } catch (err) {
+      ctl.reject(Date.now());
+      // The sidecar stops the old encode before it starts the new one, so a
+      // failed start can leave nothing running. Go back to what was working.
+      try {
+        await this.sendSourceToSidecar(sourcePath, loop, previous, mode, audioPath, startAt);
+        if (remainingSec != null) this.scheduleVideoEndStop(remainingSec);
+      } catch {
+        this._qualityChangeActive = false;
+        void this.stopVideoStream('encoder_failure', 'The encoder did not restart after an automatic quality change')
+          .catch((stopErr) => this.emit('error', stopErr));
+      }
+      throw err;
+    }
+    if (remainingSec != null) this.scheduleVideoEndStop(remainingSec);
+
+    const change = ctl.commit(decision, Date.now());
+    const arrow = change.direction === 'down' ? 'reduced' : 'raised';
+    console.log(
+      `[VoiceBot ${this.config.id}] Auto quality ${arrow} ${change.from} → ${change.to} `
+      + `(Auto started at ${ctl.ceiling}): ${change.reason}`,
+    );
+    this.emit('videoQualityChanged', { ...change, ceiling: ctl.ceiling });
+    this.emit('statusChange', this._status);
   }
 
   private recordVideoStop(reason: MediaStopReason, detail: string | null): void {
@@ -2028,6 +2160,7 @@ export class VoiceBot extends EventEmitter {
     quality: VideoStreamQualityInfo,
     mode: VideoSourceMode,
     audioSource?: string,
+    startAtSecs?: number,
   ): Promise<void> {
     if (!this.sidecarHttp || !this._videoEncoder) throw new Error('No active video stream');
     const preset = STREAM_PRESETS[quality.actual];
@@ -2049,11 +2182,13 @@ export class VoiceBot extends EventEmitter {
       allowedHosts: this._videoLocalHosts,
       cpuUsed: this._videoSettings.cpuUsed,
       audioSource,
+      ...(startAtSecs ? { startAtSecs } : {}),
     });
 
     this._videoSourceMode = mode;
     this._videoLoop = loop;
     this._videoHealth = null;
+    this._videoAdaptive?.noteRestart();
 
     this._videoQuality = quality;
     this._videoPreset = quality.actual;
@@ -2119,6 +2254,10 @@ export class VoiceBot extends EventEmitter {
       console.log(`[VoiceBot ${this.config.id}] Auto quality → ${quality.actual}: ${quality.note}`);
     }
     await this.sendSourceToSidecar(resolved.path, resolved.loop && mode === 'file', quality, mode, resolved.audioPath);
+    // Each source starts at Auto's own choice, which is as high as it may go.
+    this._videoAdaptive = requested === 'auto' ? new AdaptiveQualityController(quality.actual) : null;
+    this._videoSourceDurationSec = probe?.durationSec ?? resolved.durationSec ?? null;
+    this._adaptiveResumeWarned = false;
 
     // Pass-through / remote VOD: drop any prior YouTube download temp so a later
     // volume change cannot restart the old file. Keep temp for downloaded clips.
@@ -2526,7 +2665,7 @@ export class VoiceBot extends EventEmitter {
       // Let a volume restart already talking to the sidecar finish before
       // stopSource, so it cannot start ffmpeg again after the stop.
       this._volumePushWanted = null;
-      if (this._volumePushActive) await this._volumePushTail;
+      if (this._volumePushActive || this._qualityChangeActive) await this._volumePushTail;
       // Same for a source change: the running one finishes before stopSource;
       // queued ones see the stop and drop out without touching the sidecar.
       if (this._videoSourceChangesPending > 0) await this._videoSourceChangeTail;
@@ -2622,7 +2761,8 @@ export class VoiceBot extends EventEmitter {
   ): Promise<void> {
     // A volume restart still resolving the old source would post it after
     // this change; with a change pending it stops before /source. Let it finish.
-    if (this._volumePushActive) await this._volumePushTail;
+    // The same goes for an automatic quality change.
+    if (this._volumePushActive || this._qualityChangeActive) await this._volumePushTail;
     if (!this._videoStreaming || this._videoStopping || !this.sidecarHttp || this._activeStreamId !== streamId) {
       throw new Error('No active video stream');
     }

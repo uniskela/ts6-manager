@@ -124,3 +124,24 @@ func TestExtraFFmpegArgsOverrideAndReject(t *testing.T) {
 		t.Fatalf("a bad extra value is ignored and the default remains: %s", broken)
 	}
 }
+
+func TestStartAtSeeksOnDemandInputsOnly(t *testing.T) {
+	vod := ffmpegArgLine(SourceRequest{Source: "https://x/clip.mp4", Mode: modeVOD, StartAtSecs: 754.25})
+	if !strings.Contains(vod, "-re -ss 754.250 -i https://x/clip.mp4") {
+		t.Fatalf("vod must resume at the offset: %s", vod)
+	}
+	split := ffmpegArgLine(SourceRequest{Source: "https://x/v.webm", AudioSource: "https://x/a.webm", Mode: modeVOD, StartAtSecs: 30})
+	if strings.Count(split, "-ss 30.000 -i") != 2 {
+		t.Fatalf("video and audio inputs must seek together: %s", split)
+	}
+	file := ffmpegArgLine(SourceRequest{Source: "/data/music/bg.mp4", Mode: modeFile, Loop: true, StartAtSecs: 10})
+	if !strings.Contains(file, "-stream_loop -1") || !strings.Contains(file, "-ss 10.000 -i") {
+		t.Fatalf("looping file must resume: %s", file)
+	}
+	if live := ffmpegArgLine(SourceRequest{Source: "https://x/live", Mode: modeLive, StartAtSecs: 99}); strings.Contains(live, "-ss ") {
+		t.Fatalf("live sources never seek: %s", live)
+	}
+	if plain := ffmpegArgLine(SourceRequest{Source: "https://x/clip.mp4", Mode: modeVOD}); strings.Contains(plain, "-ss ") {
+		t.Fatalf("no offset means no seek: %s", plain)
+	}
+}

@@ -58,7 +58,8 @@ Streaming defaults also offer **Performance / Balanced / Quality** profiles (def
 
 - **Auto** probes the source with `ffprobe` and uses the largest preset the source fits without upscaling, up to the **Auto limit** (default 1080p under Balanced). A 720p channel stays 720p even when the limit is 2160p. If the probe fails, Auto uses 720p (or the limit, if lower) and says so.
 - **Fixed presets** skip the probe. Prefer them for IPTV services that allow only one connection, since the probe is a second one.
-- The stream panel shows *requested → actual*, e.g. `Auto → 1080p (source 1920×1080)`.
+- **Auto adapts while the stream runs.** If the encoder cannot keep up, Auto steps down one preset; once encoding has been steady again, it steps back up. Fixed presets never change by themselves. See [Adaptive Auto quality](#adaptive-auto-quality).
+- The stream panel shows *requested → actual*, e.g. `Auto → 1080p`, or `Auto → 720p (reduced from 1080p)` after an automatic step down.
 - Leave the bitrate empty to use the preset's bitrate. Admins can set a **bitrate limit** that clamps every stream.
 - Every stream is capped at **9500 kbps**, whatever the preset, custom bitrate or limit says: TeamSpeak drops a stream above 10 Mbit/s, which would look like an encoder failure. 2160p therefore uses 9500 kbps.
 - Software VP8 and VP9 are held at the target bitrate (`-minrate`); without it libvpx overshoots on detailed video.
@@ -231,6 +232,24 @@ Every stream has a source type:
 **Detect** (the default for URLs) uses the Auto-quality probe: a source without a duration is live. The URL itself (for example `.m3u8`) is never used to guess, because IPTV providers often use opaque URLs. With a fixed preset there is no probe, so a URL is treated as on demand unless you pick **Live**.
 
 While a stream runs, the backend samples the sidecar's encode stats every 10 seconds (in-memory counters, not a diagnostic probe). The stream panel and Bot Hub show the source type and encode speed (for example `1.01x · 30 fps`). If encoding stays below 0.9x for 20 seconds after a 15-second startup grace, a warning names the speed, dropped packets, preset, encoder and source type — for example *Encoding below realtime (0.62x for 40 s) at 1080p with VP8 (software) from a live source*. Use a lower preset or a hardware encoder.
+
+### Adaptive Auto quality
+
+A stream started with **Auto** quality follows what the host can encode. It uses the same encode stats as the warning above, and only those: there is no measurement of viewers' connections, and the encoder and codec never change.
+
+- **Step down.** When encoding has stayed below 0.9x for 30 seconds, the stream moves to the next preset down (1080p → 720p → 480p).
+- **Step up.** When encoding has held at 0.97x or better for 2 minutes without a break, the stream moves one preset back up.
+- **Limit.** Auto never goes above the preset it started the source at, which is itself never above the **Auto limit**. Each new source (a switch, or the next queued video) starts again from Auto's own choice.
+- **No flapping.** Two changes are at least 1 minute apart. Speeds between 0.9x and 0.97x change nothing. Encode speed is capped at realtime, so the only way to learn whether a higher preset now fits is to try it; if that step up fails, the next attempt waits twice as long (4 minutes, then 8, up to 30). A step up that holds for 2 minutes clears the back-off.
+- **Fixed presets** (480p … 2160p) are never changed. Pick one when a stream must stay at one resolution.
+
+A change restarts ffmpeg, so viewers see a short interruption, as they do after a volume change. An on-demand video or local file resumes from where it was. A live source rejoins at the live edge. A video in its last 15 seconds is left alone. If the encoder does not start at the new preset, the stream goes back to the preset that was running; if that fails too, the stream stops with *encoder failure*.
+
+Resuming needs a sidecar from 1.11.0 or newer, which reports the playback position. Behind an older sidecar, Auto adapts live sources only and leaves on-demand video at its starting preset, because a restart would replay it from the beginning. The backend log says so once per source.
+
+The Bot Hub and the console's Now playing card show the requested and the effective quality, for example `Auto → 720p (reduced from 1080p)`, with the reason for the last change: *Auto reduced quality to 720p: Encoding stayed below realtime (0.62x for 30 s) at 1080p · 3 min ago*. The same line is written to the backend log. A full recovery stays on screen for 10 minutes.
+
+A source that is itself slow (a stalling IPTV channel) also reads as encoding below realtime, so Auto may step down for it even though a lower preset does not help. It steps back up once the source recovers. Use a fixed preset for a source like that.
 
 If ffmpeg stops on its own, the stream stops instead of showing a frozen picture, with a reason: *source ended*, *source unreachable* (network/HTTP errors, or a live source ending), or *encoder failure*.
 

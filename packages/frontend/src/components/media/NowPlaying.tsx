@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  AlertTriangle, Music, Pause, Play, Radio, SkipForward, Square, Video,
+  AlertTriangle, Gauge, Music, Pause, Play, Radio, SkipForward, Square, Video,
 } from 'lucide-react';
 import type { BotMediaOverview } from '@ts6/common';
 import { VideoPlayer } from '@/components/video/VideoPlayer';
@@ -16,7 +16,7 @@ import { apiErrorMessage } from '@/lib/api-error';
 import {
   hubFacts, hubHeadline, hubLastStop, hubTone, queuePosition, videoDetails, type HubTone,
 } from '@/lib/bot-hub';
-import { formatClock } from '@/lib/video-streaming';
+import { formatClock, qualityAdaptationNote } from '@/lib/video-streaming';
 import { cn } from '@/lib/utils';
 
 const TONE_BADGE: Record<HubTone, { label: string; variant: 'destructive' | 'default' | 'secondary' | 'outline' }> = {
@@ -56,6 +56,7 @@ function CompactNowPlaying(props: NowPlayingProps): JSX.Element {
   const { data: musicState } = useMusicBotState(showVolume ? bot.botId : null);
   const badge = TONE_BADGE[tone];
   const facts = hubFacts(bot, now);
+  const adaptation = qualityAdaptationNote(bot.video?.quality, now);
   const lastStop = tone === 'idle' || tone === 'offline' ? hubLastStop(bot, now) : null;
   // One playback command at a time: repeat clicks would send duplicate skips.
   const playbackPending = pausePlayback.isPending || resumePlayback.isPending || skipTrack.isPending;
@@ -100,6 +101,12 @@ function CompactNowPlaying(props: NowPlayingProps): JSX.Element {
           <p className="flex items-start gap-1.5 text-xs text-warning">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span className="line-clamp-3">{bot.video.health.warning}</span>
+          </p>
+        )}
+        {adaptation && (
+          <p className={cn('flex items-start gap-1.5 text-xs', adaptation.reduced ? 'text-warning' : 'text-muted-foreground')}>
+            <Gauge className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="line-clamp-3">{adaptation.text}</span>
           </p>
         )}
         {bot.video?.encoder?.fallbackReason && (
@@ -258,6 +265,7 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
     ? ['Live radio · plays until stopped', music?.position != null ? `up ${formatClock(music.position * 1000)}` : null]
     : [music?.artist, queuePosition(musicState)];
   const details = videoDetails(bot, now);
+  const adaptation = qualityAdaptationNote(bot.video?.quality, now);
 
   return (
     <Card className={cn(tone === 'offline' && 'opacity-70')}>
@@ -351,6 +359,12 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
               <p className="flex items-start gap-1.5 text-xs text-warning">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span className="line-clamp-3">{bot.video.health.warning}</span>
+              </p>
+            )}
+            {adaptation && (
+              <p className={cn('flex items-start gap-1.5 text-xs', adaptation.reduced ? 'text-warning' : 'text-muted-foreground')}>
+                <Gauge className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                <span className="line-clamp-3">{adaptation.text}</span>
               </p>
             )}
             {bot.video?.encoder?.fallbackReason && (

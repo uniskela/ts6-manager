@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"os"
@@ -1380,6 +1381,20 @@ type SourceRequest struct {
 	// the sidecar itself when the source turns out to have none
 	// (restartWithSilenceIfNoAudio), never by a request.
 	SilentAudio bool
+	// StartAtSecs resumes an on-demand source at this offset, so a restart for
+	// a quality change does not replay it from the beginning. Ignored for live.
+	StartAtSecs float64
+}
+
+// maxStartAtSecs bounds a requested resume offset (a week of video).
+const maxStartAtSecs = 7 * 24 * 3600
+
+// clampStartAt keeps a requested resume offset finite and non-negative.
+func clampStartAt(secs float64) float64 {
+	if math.IsNaN(secs) || secs <= 0 {
+		return 0
+	}
+	return math.Min(secs, maxStartAtSecs)
 }
 
 // EncoderSession reports which encoder is actually running, so a hardware
@@ -1549,6 +1564,11 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			args = append(args, "-fflags", fflags)
 			if mode != modeLive || !livePacedBySource() {
 				args = append(args, "-re")
+			}
+			// Both inputs of a split source seek together. A looped file plays
+			// from the offset once, then loops from its start.
+			if mode != modeLive && req.StartAtSecs > 0 {
+				args = append(args, "-ss", strconv.FormatFloat(req.StartAtSecs, 'f', 3, 64))
 			}
 			args = append(args, "-i", input)
 		}
@@ -1842,7 +1862,11 @@ func (s *Sidecar) launchAttemptLocked(req SourceRequest, requested EncoderSpec, 
 
 	args := s.buildFFmpegArgs(req, a.spec, a.lowPower)
 	mode := resolveSourceMode(req.Mode, req.Source)
-	health := newHealthTracker(mode, nil)
+	startAt := 0.0
+	if mode != modeLive && req.StartAtSecs > 0 {
+		startAt = req.StartAtSecs
+	}
+	health := newHealthTracker(mode, startAt, nil)
 	atomic.StoreUint64(&s.rtpVideoDrops, 0)
 	atomic.StoreUint64(&s.rtpAudioDrops, 0)
 	s.statusMu.Lock()
@@ -2113,6 +2137,8 @@ func main() {
 			AllowedHosts []string `json:"allowedHosts"`
 			// CpuUsed overrides VIDEO_CPU_USED for software VP8/VP9 when > 0.
 			CpuUsed int `json:"cpuUsed"`
+			// StartAtSecs resumes an on-demand source at this offset.
+			StartAtSecs float64 `json:"startAtSecs"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), 400)
@@ -2159,6 +2185,7 @@ func main() {
 			Mode:         req.Mode,
 			AllowedHosts: req.AllowedHosts,
 			CpuUsed:      req.CpuUsed,
+			StartAtSecs:  clampStartAt(req.StartAtSecs),
 		})
 		if err != nil {
 			http.Error(w, err.Error(), 500)

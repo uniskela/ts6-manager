@@ -33,6 +33,8 @@ export interface SidecarSourceOptions {
   cpuUsed?: number;
   /** Second remote input carrying the audio, when `source` is video only (YouTube direct). */
   audioSource?: string;
+  /** Resume an on-demand source at this offset (sidecar 1.11+; ignored for live). */
+  startAtSecs?: number;
 }
 
 /** Encode health from GET /stats (sidecar 1.9+; absent on older sidecars). */
@@ -48,6 +50,8 @@ export interface SidecarStreamHealth {
   belowRealtime: boolean;
   belowRealtimeSecs: number;
   sampleAgeSecs: number;
+  /** Playback position in the source (sidecar 1.11+; absent until ffmpeg reports a time). */
+  positionSecs?: number;
 }
 
 export interface SidecarStats {

@@ -8,6 +8,7 @@ import {
   formatClock,
   formatTimeout,
   lastStopLabel,
+  qualityAdaptationNote,
   qualityLabel,
 } from '../../src/lib/video-streaming';
 
@@ -31,6 +32,42 @@ describe('video streaming labels', () => {
     assert.equal(qualityLabel({ ...base, requested: 'auto', actual: '1080p' }), 'Auto → 1080p');
     assert.equal(qualityLabel({ ...base, requested: '1440p', actual: '1440p' }), '1440p');
     assert.equal(qualityLabel(null, '720p'), '720p');
+  });
+
+  it('shows when Auto is below the quality it started at, and why', () => {
+    const base = { width: 1280, height: 720, sourceWidth: 1920, sourceHeight: 1080, note: null };
+    const down = {
+      direction: 'down' as const, from: '1080p' as const, to: '720p' as const, at: 1_000_000,
+      reason: 'Encoding stayed below realtime (0.62x for 30 s) at 1080p',
+    };
+    const reduced = {
+      ...base, requested: 'auto' as const, actual: '720p' as const,
+      adaptation: { ceiling: '1080p' as const, lastChange: down, changes: 1 },
+    };
+    assert.equal(qualityLabel(reduced), 'Auto → 720p (reduced from 1080p)');
+    assert.deepEqual(qualityAdaptationNote(reduced, 1_000_000 + 3 * 60_000), {
+      text: 'Auto reduced quality to 720p: Encoding stayed below realtime (0.62x for 30 s) at 1080p · 3 min ago',
+      reduced: true,
+    });
+    // Still explained hours later while the stream stays reduced.
+    assert.equal(qualityAdaptationNote(reduced, 1_000_000 + 5 * 3_600_000)?.reduced, true);
+
+    const up = { direction: 'up' as const, from: '720p' as const, to: '1080p' as const, at: 2_000_000, reason: 'Encoding held realtime for 2 minutes at 720p' };
+    const restored = {
+      ...base, requested: 'auto' as const, actual: '1080p' as const,
+      adaptation: { ceiling: '1080p' as const, lastChange: up, changes: 2 },
+    };
+    assert.equal(qualityLabel(restored), 'Auto → 1080p');
+    assert.deepEqual(qualityAdaptationNote(restored, 2_000_000), {
+      text: 'Auto raised quality to 1080p: Encoding held realtime for 2 minutes at 720p · just now',
+      reduced: false,
+    });
+    assert.equal(qualityAdaptationNote(restored, 2_000_000 + 11 * 60_000), null, 'a full recovery is not shown for ever');
+
+    const untouched = { ...base, requested: 'auto' as const, actual: '1080p' as const, adaptation: { ceiling: '1080p' as const, lastChange: null, changes: 0 } };
+    assert.equal(qualityAdaptationNote(untouched), null);
+    assert.equal(qualityAdaptationNote({ ...base, requested: '720p', actual: '720p', adaptation: null }), null);
+    assert.equal(qualityAdaptationNote(null), null);
   });
 
   it('makes encoder fallbacks visible', () => {

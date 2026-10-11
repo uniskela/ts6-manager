@@ -333,8 +333,27 @@ export interface VideoStreamHealth {
   checkedAt: number;
 }
 
+/** One automatic quality change made while a stream runs (Auto only). */
+export interface VideoQualityChange {
+  direction: 'down' | 'up';
+  from: VideoStreamPresetKey;
+  to: VideoStreamPresetKey;
+  at: number;
+  reason: string;
+}
+
+/** Adaptive Auto quality state. Fixed presets never adapt and carry none. */
+export interface VideoQualityAdaptation {
+  /** Preset Auto started this source at; adaptation never goes above it. */
+  ceiling: VideoStreamPresetKey;
+  lastChange: VideoQualityChange | null;
+  /** Automatic changes made on this source so far. */
+  changes: number;
+}
+
 export interface VideoStreamQualityInfo {
   requested: VideoQualityRequest;
+  /** Preset being encoded now; below `adaptation.ceiling` while Auto is reduced. */
   actual: VideoStreamPresetKey;
   width: number;
   height: number;
@@ -343,6 +362,8 @@ export interface VideoStreamQualityInfo {
   sourceHeight: number | null;
   /** Why Auto chose what it chose, when not obvious (probe failure, capped by limit). */
   note: string | null;
+  /** Present while an Auto stream runs; null or absent for fixed presets. */
+  adaptation?: VideoQualityAdaptation | null;
 }
 
 export interface VideoStreamEncoderInfo {

@@ -103,10 +103,34 @@ export function formatTimeout(sec: number): string {
   return parts.join(' ');
 }
 
-/** "Auto → 1080p", or just "1440p" for a fixed preset. */
+/** "Auto → 1080p", "Auto → 720p (reduced from 1080p)", or just "1440p" for a fixed preset. */
 export function qualityLabel(q: VideoStreamQualityInfo | null | undefined, fallbackPreset?: string): string {
   if (!q) return fallbackPreset ?? '—';
-  return q.requested === 'auto' ? `Auto → ${q.actual}` : q.actual;
+  if (q.requested !== 'auto') return q.actual;
+  const ceiling = q.adaptation?.ceiling;
+  return ceiling && ceiling !== q.actual ? `Auto → ${q.actual} (reduced from ${ceiling})` : `Auto → ${q.actual}`;
+}
+
+/** How long a finished recovery stays on screen. */
+const QUALITY_RESTORED_NOTE_MS = 10 * 60_000;
+
+/**
+ * Why Auto is not at the quality it started at, or how it got back:
+ * "Auto reduced quality to 720p: Encoding stayed below realtime (0.62x for 30 s) at 1080p · 3 min ago".
+ * Null for fixed presets, with no change yet, or once a full recovery is old news.
+ */
+export function qualityAdaptationNote(
+  q: VideoStreamQualityInfo | null | undefined,
+  now: number = Date.now(),
+): { text: string; reduced: boolean } | null {
+  const change = q?.adaptation?.lastChange;
+  if (!q || !q.adaptation || !change) return null;
+  const reduced = q.actual !== q.adaptation.ceiling;
+  if (!reduced && now - change.at > QUALITY_RESTORED_NOTE_MS) return null;
+  const agoMin = Math.floor(Math.max(0, now - change.at) / 60_000);
+  const ago = agoMin < 1 ? 'just now' : agoMin < 60 ? `${agoMin} min ago` : `${Math.floor(agoMin / 60)} h ago`;
+  const verb = change.direction === 'down' ? 'reduced' : 'raised';
+  return { text: `Auto ${verb} quality to ${change.to}: ${change.reason} · ${ago}`, reduced };
 }
 
 /** "H.264 (VAAPI)", "Auto → VP8 (software)", or "H.264 (VAAPI) → H.264 (software)" after a fallback. */

@@ -5,7 +5,7 @@ import type { PrismaClient } from '../../generated/prisma/index.js';
 import type { WebSocketServer } from 'ws';
 import { broadcastScoped } from '../ws/ws-session.js';
 import { VoiceBot, type VoiceBotConfig, type VoiceBotStatus, type VideoStreamStartOptions } from './voice-bot.js';
-import type { BotAutomationSettings, MediaSessionInfo, MediaStopInfo } from '@ts6/common';
+import type { BotAutomationSettings, MediaSessionInfo, MediaStopInfo, VideoQualityChange } from '@ts6/common';
 import { AppError } from '../middleware/error-handler.js';
 import { MediaSessionConflictError } from './media-session.js';
 import { generateIdentity, generateIdentityAsync, restoreIdentity, type IdentityData } from './tslib/index.js';
@@ -318,6 +318,10 @@ export class VoiceBotManager extends EventEmitter {
 
     bot.on('videoSourceChanged', (source: string) => {
       this.broadcast('music:bot:videoSourceChanged', { botId: config.id, source });
+    });
+
+    bot.on('videoQualityChanged', (change: VideoQualityChange & { ceiling: string }) => {
+      this.broadcast('music:bot:videoQualityChanged', { botId: config.id, ...change });
     });
 
     bot.on('fatalError', (msg: string) => {

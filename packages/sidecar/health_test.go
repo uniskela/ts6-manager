@@ -17,7 +17,7 @@ func progress(speed string) string {
 
 func TestHealthParsesProgressAcrossWrites(t *testing.T) {
 	clock := &fakeClock{t: time.Unix(1000, 0)}
-	h := newHealthTracker(modeLive, clock.now)
+	h := newHealthTracker(modeLive, 0, clock.now)
 	line := progress("0.62")
 	// ffmpeg writes progress in arbitrary chunks.
 	_, _ = h.Write([]byte(line[:20]))
@@ -33,7 +33,7 @@ func TestHealthParsesProgressAcrossWrites(t *testing.T) {
 
 func TestHealthIgnoresStartupAndShortDips(t *testing.T) {
 	clock := &fakeClock{t: time.Unix(1000, 0)}
-	h := newHealthTracker(modeLive, clock.now)
+	h := newHealthTracker(modeLive, 0, clock.now)
 
 	// Startup transient: slow but inside the grace period.
 	_, _ = h.Write([]byte(progress("0.40")))
@@ -55,7 +55,7 @@ func TestHealthIgnoresStartupAndShortDips(t *testing.T) {
 
 func TestHealthWarnsWhenSustained(t *testing.T) {
 	clock := &fakeClock{t: time.Unix(1000, 0)}
-	h := newHealthTracker(modeLive, clock.now)
+	h := newHealthTracker(modeLive, 0, clock.now)
 	clock.advance(healthStartupGrace)
 	for i := 0; i < 6; i++ {
 		_, _ = h.Write([]byte(progress("0.55")))
@@ -137,5 +137,31 @@ func TestSourceModeDrivesPacingAndLooping(t *testing.T) {
 	}
 	if a := args(SourceRequest{Source: "https://iptv.example/live.m3u8"}); !strings.Contains(a, "-stats -loglevel warning") {
 		t.Fatalf("live sources must not log info-level segment chatter: %s", a)
+	}
+}
+
+func TestHealthTrackerReportsResumePosition(t *testing.T) {
+	clock := &fakeClock{t: time.Unix(1000, 0)}
+	h := newHealthTracker(modeVOD, 600, clock.now)
+	if h.snapshot(0, 0).PositionSecs != nil {
+		t.Fatal("position must be unknown before ffmpeg reports a time")
+	}
+	_, _ = h.Write([]byte("frame=    0 fps=0.0 q=0.0 size=N/A time=N/A bitrate=N/A speed=N/A    \r"))
+	_, _ = h.Write([]byte("frame=    1 fps=0.0 q=0.0 size=N/A time=-00:00:00.02 bitrate=N/A speed=0.5x    \r"))
+	if h.snapshot(0, 0).PositionSecs != nil {
+		t.Fatal("N/A and negative times are not a position")
+	}
+	_, _ = h.Write([]byte(progress("1.00")))
+	pos := h.snapshot(0, 0).PositionSecs
+	if pos == nil || *pos != 660 {
+		t.Fatalf("position must be the start offset plus output time, got %v", pos)
+	}
+}
+
+func TestClampStartAt(t *testing.T) {
+	for in, want := range map[float64]float64{-5: 0, 0: 0, 12.5: 12.5, 1e12: maxStartAtSecs} {
+		if got := clampStartAt(in); got != want {
+			t.Fatalf("clampStartAt(%v) = %v, want %v", in, got, want)
+		}
 	}
 }

@@ -382,7 +382,7 @@ func TestFFmpegProgressFeedsHealth(t *testing.T) {
 	if os.Getenv("SIDECAR_FFMPEG_IT") != "1" {
 		t.Skip("set SIDECAR_FFMPEG_IT=1 to run against a real ffmpeg")
 	}
-	h := newHealthTracker(modeLive, nil)
+	h := newHealthTracker(modeLive, 0, nil)
 	// Bounded run: a slow encode never finishes 20s of input in 8s; the
 	// progress lines seen before the deadline are what matters.
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)

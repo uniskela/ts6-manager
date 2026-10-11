@@ -56,6 +56,9 @@ type StreamHealth struct {
 	BelowRealtime     bool    `json:"belowRealtime"`
 	BelowRealtimeSecs float64 `json:"belowRealtimeSecs"`
 	SampleAgeSecs     float64 `json:"sampleAgeSecs"`
+	// PositionSecs is how far into the source this run has played: the offset
+	// it started at plus ffmpeg's output time. Nil until ffmpeg reports a time.
+	PositionSecs *float64 `json:"positionSecs,omitempty"`
 }
 
 // healthTracker parses ffmpeg's periodic progress lines from stderr.
@@ -70,18 +73,40 @@ type healthTracker struct {
 	drop       int64
 	dup        int64
 	belowSince time.Time
-	partial    []byte
-	now        func() time.Time
+	// startAt is the source offset this run began at (SourceRequest.StartAtSecs).
+	startAt float64
+	outTime float64
+	hasTime bool
+	partial []byte
+	now     func() time.Time
 }
 
-func newHealthTracker(mode string, now func() time.Time) *healthTracker {
+func newHealthTracker(mode string, startAtSecs float64, now func() time.Time) *healthTracker {
 	if now == nil {
 		now = time.Now
 	}
-	return &healthTracker{mode: mode, startedAt: now(), now: now}
+	return &healthTracker{mode: mode, startedAt: now(), startAt: startAtSecs, now: now}
 }
 
 var progressFields = regexp.MustCompile(`(frame|fps|drop|dup|speed)=\s*([0-9.]+)`)
+
+// progressTime is ffmpeg's output timestamp ("time=00:01:23.45"). It is "N/A"
+// or slightly negative before the first frame, which never matches.
+var progressTime = regexp.MustCompile(`\btime=\s*(\d+):(\d{2}):(\d{2}(?:\.\d+)?)`)
+
+func parseProgressTime(line string) (float64, bool) {
+	m := progressTime.FindStringSubmatch(line)
+	if m == nil {
+		return 0, false
+	}
+	h, errH := strconv.ParseFloat(m[1], 64)
+	min, errM := strconv.ParseFloat(m[2], 64)
+	sec, errS := strconv.ParseFloat(m[3], 64)
+	if errH != nil || errM != nil || errS != nil {
+		return 0, false
+	}
+	return h*3600 + min*60 + sec, true
+}
 
 // Write implements io.Writer over ffmpeg stderr; progress lines end in \r.
 func (h *healthTracker) Write(p []byte) (int, error) {
@@ -133,6 +158,10 @@ func (h *healthTracker) parseLocked(line string) {
 	if !speedSeen {
 		return
 	}
+	if t, ok := parseProgressTime(line); ok {
+		h.outTime = t
+		h.hasTime = true
+	}
 	now := h.now()
 	h.lastSample = now
 	if now.Sub(h.startedAt) < healthStartupGrace || h.speed >= healthSpeedThreshold {
@@ -157,6 +186,10 @@ func (h *healthTracker) snapshot(videoDrops, audioDrops uint64) StreamHealth {
 		DuplicatedFrames: h.dup,
 		RTPVideoDrops:    videoDrops,
 		RTPAudioDrops:    audioDrops,
+	}
+	if h.hasTime {
+		pos := h.startAt + h.outTime
+		out.PositionSecs = &pos
 	}
 	if !h.lastSample.IsZero() {
 		out.SampleAgeSecs = now.Sub(h.lastSample).Seconds()
