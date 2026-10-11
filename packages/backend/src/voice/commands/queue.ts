@@ -1,7 +1,7 @@
 import type { VoiceBot } from '../voice-bot.js';
 import type { QueueItem } from '../playlist/queue.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline } from '../media-url-pipeline.js';
-import { recordMusicRequests } from '../music-request-history.js';
+import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
@@ -45,12 +45,18 @@ export async function enqueueMediaItem(context: CommandContext, bot: VoiceBot, i
   bot.queue.add(item);
   if (!queued) {
     bot.queue.playAt(bot.queue.length - 1);
-    if (item.streamUrl) await bot.playStream(item, options);
-    else await bot.play(item, options);
-    if (!isCurrent() || bot.nowPlaying !== item) {
-      bot.queue.removeAt(bot.queue.getAll().findIndex(entry => entry === item));
-      return null;
+    let started = false;
+    try {
+      if (item.streamUrl) await bot.playStream(item, options);
+      else await bot.play(item, options);
+      started = isCurrent() && bot.nowPlaying === item;
+    } finally {
+      if (!started) {
+        const index = bot.queue.getAll().indexOf(item);
+        if (index >= 0) bot.queue.removeAt(index);
+      }
     }
+    if (!started) return null;
   }
   context.saveMusicRequest(bot, item);
   return queued;
@@ -330,7 +336,7 @@ export function saveMusicRequest(context: CommandContext, bot: VoiceBot, item: Q
   void recordMusicRequests(context.prisma, {
     serverConfigId,
     musicBotId: bot.currentConfig.id,
-  }, Array.isArray(item) ? item : [item]).catch(() => {
-    console.error('[MusicCmd] Failed to save music request history');
+  }, Array.isArray(item) ? item : [item]).catch(error => {
+    console.error('[MusicCmd] Failed to save music request history (%s)', musicHistoryErrorCode(error));
   });
 }

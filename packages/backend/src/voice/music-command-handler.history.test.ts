@@ -281,7 +281,7 @@ test('radio lookup does not restart playback after stop or a newer request', asy
 });
 
 test('rejected startup removes only its own queue entry even with duplicate IDs and shuffle', async () => {
-  for (const shuffle of [false, true]) {
+  for (const shuffle of [false, true]) for (const removed of [false, true]) {
     const f = fixture([row(1, { source: 'radio', url: 'https://8.8.8.8/radio' })]);
     const older = { id: 'history_1', title: 'Accepted earlier', source: 'radio', filePath: '', streamUrl: 'https://8.8.8.8/older' };
     f.bot.queue.add(older);
@@ -294,15 +294,76 @@ test('rejected startup removes only its own queue entry even with duplicate IDs 
     const replay = f.command('!again');
     await new Promise(done => setImmediate(done));
     assert.ok(release);
+    assert.equal(f.bot.queue.length, 2);
+    assert.ok(f.bot.queue.getAll().includes(f.bot.nowPlaying));
+    assert.equal(f.bot.nowPlaying.streamUrl, 'https://8.8.8.8/radio');
+    if (removed) f.bot.queue.clear();
     const newer = { ...older, title: 'Accepted newer', streamUrl: 'https://8.8.8.8/newer' };
     f.bot.queue.add(newer);
     f.bot.queue.playAt(f.bot.queue.getAll().indexOf(newer));
     f.bot.nowPlaying = newer;
     release();
     await replay;
-    assert.deepEqual(f.bot.queue.getAll(), [older, newer], String(shuffle));
+    assert.deepEqual(f.bot.queue.getAll(), removed ? [newer] : [older, newer], `shuffle=${shuffle}, removed=${removed}`);
     assert.equal(f.bot.queue.current, newer);
     assert.deepEqual(f.saved, []);
     assert.deepEqual(f.replies, []);
+  }
+});
+
+test('radio list and error replies survive media changes during either lookup', async () => {
+  for (const lookup of ['bot', 'stations']) for (const change of ['stop', 'again']) {
+    for (const command of ['!radio', '!radio nope', '!radio 404', '!radio 3']) {
+      const f = fixture();
+      const config = { serverConfigId: 9, virtualServerId: 2 };
+      const stations = command === '!radio 3' ? [] : [{ id: 3, name: 'Station', url: 'https://8.8.8.8/radio' }];
+      let release!: (value: unknown) => void;
+      f.prisma.radioStation = { findMany: async () => stations };
+      if (lookup === 'bot') {
+        let first = true;
+        f.prisma.musicBot.findUnique = () => {
+          if (!first) return Promise.resolve(config);
+          first = false;
+          return new Promise(done => { release = done; });
+        };
+      } else f.prisma.radioStation.findMany = () => new Promise(done => { release = done; });
+      const radio = f.command(command);
+      await new Promise(done => setImmediate(done));
+      assert.ok(release);
+      if (change === 'stop') {
+        f.bot.stopAudio = () => {};
+        await f.command('!stop');
+      } else await f.command('!again');
+      const count = f.replies.length;
+      release(lookup === 'bot' ? config : stations);
+      await radio;
+      assert.equal(f.replies.length, count + 1, `${command}: ${lookup}/${change}`);
+      const expected = command === '!radio' ? /Station/ : command === '!radio nope' ? /Usage:/
+        : command === '!radio 404' ? /not found/ : /No radio stations/;
+      assert.match(f.replies.at(-1)!, expected);
+      assert.deepEqual(f.played, []);
+      assert.deepEqual(f.saved, []);
+    }
+  }
+});
+
+test('failed local and radio startup removes its entry and preserves accepted duplicate IDs', async () => {
+  fs.writeFileSync(path.join(musicDir, 'track.ogg'), 'fixture');
+  for (const source of ['local', 'radio']) for (const shuffle of [false, true]) {
+    const f = fixture([row(1, { source, url: source === 'local' ? 'track.ogg' : 'https://8.8.8.8/radio' })]);
+    const accepted = { id: 'history_1', title: 'Accepted track', source: 'local', filePath: 'accepted.ogg' };
+    f.bot.queue.add(accepted);
+    f.bot.queue.setShuffle(shuffle);
+    const fail = async (item: unknown) => {
+      assert.equal(f.bot.queue.length, 2);
+      assert.ok(f.bot.queue.getAll().includes(item));
+      throw new Error('Startup failed');
+    };
+    f.bot.play = fail;
+    f.bot.playStream = fail;
+    await f.command('!again');
+    assert.deepEqual(f.bot.queue.getAll(), [accepted], `${source}/${shuffle}`);
+    assert.deepEqual(f.saved, []);
+    assert.deepEqual(f.replies, ['Error: Startup failed']);
   }
 });

@@ -11,6 +11,12 @@ export const MUSIC_REQUEST_HISTORY_LIMIT = Number.isSafeInteger(configuredLimit)
 
 export const MEDIA_UNAVAILABLE = 'This media is no longer available.';
 
+/** Prisma diagnostics without messages, metadata, URLs or paths. */
+export function musicHistoryErrorCode(error: unknown): string {
+  const code = (error as { code?: unknown })?.code;
+  return typeof code === 'string' && code.length === 5 && /^P\d{4}$/.test(code) ? code : 'UNKNOWN';
+}
+
 export interface MusicRequestReference {
   url: string;
   source: string;

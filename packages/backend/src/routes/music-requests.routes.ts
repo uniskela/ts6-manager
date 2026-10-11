@@ -14,6 +14,7 @@ import {
   isUnavailableMusicRequestError,
   markMusicRequestUnavailable,
   musicRequestListWhere,
+  musicHistoryErrorCode,
   pruneMusicRequests,
   pruneOrphanMusicRequests,
   recordMusicRequest,
@@ -125,8 +126,8 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
       try {
         await recordMusicRequest(prisma, { serverConfigId: configId, musicBotId: botId, url: row.url,
           title: row.title, source: row.source, artist: row.artist ?? undefined, duration: row.duration ?? undefined });
-      } catch {
-        console.error('[music-requests.routes] Failed to save replay history');
+      } catch (error) {
+        console.error('[music-requests.routes] Failed to save replay history (%s)', musicHistoryErrorCode(error));
       }
     }
   } catch (error) {

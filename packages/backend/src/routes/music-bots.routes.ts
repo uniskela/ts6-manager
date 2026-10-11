@@ -14,7 +14,7 @@ import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
 import { createVideoQueueRoutes } from './video-queue.routes.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
-import { recordMusicRequests } from '../voice/music-request-history.js';
+import { musicHistoryErrorCode, recordMusicRequests } from '../voice/music-request-history.js';
 import {
   invalidatePlaylistExpansion,
   playlistExpansionGeneration,
@@ -90,8 +90,8 @@ async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem |
   if (!serverConfigId) return;
   try {
     await recordMusicRequests(req.app.locals.prisma, { serverConfigId, musicBotId: bot.currentConfig.id }, Array.isArray(item) ? item : [item]);
-  } catch {
-    console.error('[music-bots.routes] Failed to save music request history');
+  } catch (error) {
+    console.error('[music-bots.routes] Failed to save music request history (%s)', musicHistoryErrorCode(error));
   }
 }
 

@@ -14,15 +14,15 @@ export async function handleRadio(
   userClid: number,
   args: string,
 ): Promise<void> {
-  let generation = getChatMediaGeneration(botId);
+  const generation = getChatMediaGeneration(botId);
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
-  const isCurrent = () => getChatMediaGeneration(botId) === generation && context.voiceBotManager.getBot(botId) === bot
+  const isSameBot = () => context.voiceBotManager.getBot(botId) === bot
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
   // Get serverConfigId for this bot from DB
   const dbBot = await context.prisma.musicBot.findUnique({ where: { id: botId }, select: { serverConfigId: true } });
-  if (!isCurrent()) return;
+  if (!isSameBot()) return;
   if (!dbBot) {
     context.reply(bot, userClid, 'Bot config not found.');
     return;
@@ -32,7 +32,7 @@ export async function handleRadio(
     where: { serverConfigId: dbBot.serverConfigId },
     orderBy: { name: 'asc' },
   });
-  if (!isCurrent()) return;
+  if (!isSameBot()) return;
 
   if (stations.length === 0) {
     context.reply(bot, userClid, 'No radio stations configured.');
@@ -64,8 +64,9 @@ export async function handleRadio(
     return;
   }
 
-  beginChatMediaRequest(botId);
-  generation = getChatMediaGeneration(botId);
+  if (getChatMediaGeneration(botId) !== generation) return;
+  const request = beginChatMediaRequest(botId);
+  const isCurrent = () => !request.isCancelled() && isSameBot();
   await context.joinChannelForCommand(botId, bot, userClid);
   if (!isCurrent()) return;
 

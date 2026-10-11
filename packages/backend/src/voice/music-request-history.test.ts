@@ -8,6 +8,7 @@ const previousMusicDir = process.env.MUSIC_DIR;
 process.env.MUSIC_DIR = musicRoot;
 const {
   MEDIA_UNAVAILABLE,
+  musicHistoryErrorCode,
   MUSIC_REQUEST_HISTORY_LIMIT,
   canonicalRequestReference,
   markMusicRequestUnavailable,
@@ -143,4 +144,11 @@ test('playlist history writes share one transaction and one retention read', asy
   assert.equal(retentionReads, 1);
   assert.deepEqual(writes.map(args => args.create.url), ['first.ogg', 'https://8.8.8.8/radio']);
   assert.equal(writes[0].create.requestedAt, writes[1].create.requestedAt);
+});
+
+test('history failure diagnostics expose only a bounded Prisma error code', () => {
+  assert.equal(musicHistoryErrorCode({ code: 'P2024', message: 'Private media reference', meta: { url: 'https://example.test/private' } }), 'P2024');
+  for (const error of [null, undefined, 'private path', new Error('Private media reference'), { code: 'https://example.test/private' }, { code: 'P2024\nprivate' }, { code: 'P2024\n' }]) {
+    assert.equal(musicHistoryErrorCode(error), 'UNKNOWN');
+  }
 });
