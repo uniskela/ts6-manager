@@ -204,6 +204,7 @@ export class VoiceBot extends EventEmitter {
   // Reconnect: distinguishes manual stop from unexpected disconnect
   private _manuallyStopped: boolean = false;
   private connectionEpoch = 0;
+  private connectionIntent = 0;
 
   // Video streaming state
   private signaling: StreamSignaling | null = null;
@@ -814,6 +815,7 @@ export class VoiceBot extends EventEmitter {
     }
 
     this._manuallyStopped = false;
+    this.connectionIntent++;
     const connectionEpoch = ++this.connectionEpoch;
     this._status = 'starting';
     this.emit('statusChange', this._status);
@@ -844,6 +846,7 @@ export class VoiceBot extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    this.connectionIntent++;
     this.connectionEpoch++;
     this.automation?.disconnected();
     this._manuallyStopped = true;
@@ -867,16 +870,17 @@ export class VoiceBot extends EventEmitter {
   }
 
   async restart(): Promise<void> {
+    // stop() claims the next intent synchronously, before any video cleanup awaits.
+    const connectionIntent = this.connectionIntent + 1;
     await this.stop();
-    const connectionEpoch = this.connectionEpoch;
     await new Promise<void>((resolve) => {
       const check = () => {
-        if (this._status === 'stopped') resolve();
+        if (connectionIntent !== this.connectionIntent || this._status === 'stopped') resolve();
         else setTimeout(check, 100);
       };
       setTimeout(check, 600);
     });
-    if (connectionEpoch === this.connectionEpoch) await this.start();
+    if (connectionIntent === this.connectionIntent) await this.start();
   }
 
   /** Returns sessions actually replaced (this bot's video) when starting music. */
