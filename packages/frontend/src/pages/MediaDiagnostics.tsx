@@ -19,7 +19,7 @@ function badgeVariant(status: MediaDiagnosticStatus): 'success' | 'warning' | 'd
   return 'outline';
 }
 
-function CheckRow({ check }: { check: MediaDiagnosticCheck }) {
+function CheckRow({ check }: { readonly check: MediaDiagnosticCheck }) {
   return (
     <li className="rounded-md border border-border px-3 py-2" data-status={check.status}>
       <div className="flex flex-wrap items-center gap-2">
@@ -38,6 +38,10 @@ function CheckRow({ check }: { check: MediaDiagnosticCheck }) {
 
 export default function MediaDiagnostics() {
   const { report, isFetching, isError, invalidated, notChecked, offlineUnchecked, refresh } = useMediaAdminDiagnostics();
+
+  let statusMessage = '';
+  if (isFetching) statusMessage = 'Checking media tools…';
+  else if (report) statusMessage = `Last checked: ${new Date(report.checkedAt).toLocaleString()}`;
 
   const copyReport = async () => {
     if (!report) return;
@@ -60,7 +64,7 @@ export default function MediaDiagnostics() {
         icon={Stethoscope}
         description="Check media tools, audio encoding, and sidecar health."
         badge={report && (
-          <Badge variant={badgeVariant(report.overall === 'ok' ? 'ok' : report.overall === 'partial' ? 'warning' : 'fail')}>
+          <Badge variant={badgeVariant(report.overall === 'partial' ? 'warning' : report.overall)}>
             {mediaDiagnosticOverallWord(report.overall)}
           </Badge>
         )}
@@ -78,9 +82,7 @@ export default function MediaDiagnostics() {
         )}
       />
 
-      <p role="status" className="text-sm text-muted-foreground">
-        {isFetching ? 'Checking media tools…' : report ? `Last checked: ${new Date(report.checkedAt).toLocaleString()}` : ''}
-      </p>
+      <output className="block text-sm text-muted-foreground">{statusMessage}</output>
 
       {(notChecked || offlineUnchecked) && !report && (
         <p className="text-sm text-muted-foreground">Not checked. Use Refresh when this browser is online.</p>
@@ -130,18 +132,23 @@ export default function MediaDiagnostics() {
               <p className="text-sm text-muted-foreground">{report.encoders.message}</p>
               {report.encoders.items.length > 0 && (
                 <ul className="space-y-1 text-sm">
-                  {report.encoders.items.map((item) => (
-                    <li key={item.id} className="flex flex-wrap items-baseline gap-2">
-                      <Badge variant={item.available ? 'success' : item.hardware ? 'warning' : 'destructive'}>
-                        {item.available ? 'Green' : item.hardware ? 'Warning' : 'Failed'}
-                      </Badge>
-                      <span className="font-medium">{item.id}</span>
-                      <span className="text-muted-foreground">
-                        {item.codec} · {item.hardware ? 'hardware' : 'software'}
-                        {item.detail ? ` — ${item.detail}` : ''}
-                      </span>
-                    </li>
-                  ))}
+                  {report.encoders.items.map((item) => {
+                    let status: MediaDiagnosticStatus = 'fail';
+                    if (item.available) status = 'ok';
+                    else if (item.hardware) status = 'warning';
+                    return (
+                      <li key={item.id} className="flex flex-wrap items-baseline gap-2">
+                        <Badge variant={badgeVariant(status)}>
+                          {mediaDiagnosticStatusWord(status)}
+                        </Badge>
+                        <span className="font-medium">{item.id}</span>
+                        <span className="text-muted-foreground">
+                          {item.codec} · {item.hardware ? 'hardware' : 'software'}
+                          {item.detail ? ` — ${item.detail}` : ''}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
             </CardContent>

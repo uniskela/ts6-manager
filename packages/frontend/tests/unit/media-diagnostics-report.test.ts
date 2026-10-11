@@ -113,6 +113,26 @@ describe('media diagnostic report', () => {
     });
   });
 
+  it('redacts quoted delimiters and mixed-case bearer credentials without losing adjacent fields', () => {
+    const cases = [
+      ['password="one two &,; three" format=pcm', 'password=[redacted] format=pcm'],
+      ["secret='one two &,; three' format=pcm", 'secret=[redacted] format=pcm'],
+      ['{"api-key":"one two", "format":"pcm"}', '{"api-key=[redacted], "format":"pcm"}'],
+      ['TOKEN=one&format=pcm', 'TOKEN=[redacted]&format=pcm'],
+      ['passwd=one; format=pcm', 'passwd=[redacted]; format=pcm'],
+      ['cookie=one,format=pcm', 'cookie=[redacted],format=pcm'],
+      ['secret="one\ntwo"\nformat=pcm', 'secret=[redacted]\nformat=pcm'],
+      ['{"password":"one two"}', '{"password=[redacted]}'],
+      ["(api_key='one two')", '(api_key=[redacted])'],
+      ['token="one two", passwd="three four"', 'token=[redacted], passwd=[redacted]'],
+      ['bEaReR AbCz09-._~+/== format=pcm', 'Bearer [redacted] format=pcm'],
+      ['yt-dlp listed extractors without cookies', 'yt-dlp listed extractors without cookies'],
+    ];
+    for (const [input, expected] of cases) {
+      assert.equal(redactDiagnosticText(input), expected);
+    }
+  });
+
   it('treats the admin diagnostics query as expensive', () => {
     assert.equal(isExpensiveDiagnosticQuery({ queryKey: ['media-admin-diagnostics'] }), true);
   });

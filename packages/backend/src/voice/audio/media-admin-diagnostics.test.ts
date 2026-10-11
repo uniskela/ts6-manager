@@ -215,7 +215,11 @@ describe('diagnoseMediaAdmin', () => {
   });
 
   it('does not mark a malformed HTTP health response as healthy', async () => {
-    const server = createServer((_req, res) => res.end('<html>wrong service</html>'));
+    let requestedPath: string | undefined;
+    const server = createServer((req, res) => {
+      requestedPath = req.url;
+      res.end('<html>wrong service</html>');
+    });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     const address = server.address();
@@ -223,7 +227,7 @@ describe('diagnoseMediaAdmin', () => {
     let encoderCalls = 0;
     try {
       const report = await diagnoseMediaAdmin({
-        env: { SIDECAR_URL: `http://127.0.0.1:${address.port}` },
+        env: { SIDECAR_URL: `http://127.0.0.1:${address.port}///` },
         probeCommand: passingProbe,
         probeOpus: () => ({ ok: true }),
         loadEncoders: async () => {
@@ -233,9 +237,26 @@ describe('diagnoseMediaAdmin', () => {
       });
       assert.equal(report.sidecar.status, 'fail');
       assert.equal(encoderCalls, 0);
+      assert.equal(requestedPath, '/health');
     } finally {
       await new Promise<void>((resolve, reject) => server.close(err => err ? reject(err) : resolve()));
     }
+  });
+
+  it('keeps successful tool results when loading encoder capabilities fails', async () => {
+    const report = await diagnoseMediaAdmin({
+      env: { SIDECAR_URL: 'http://sidecar:9800' },
+      probeCommand: passingProbe,
+      probeSidecarHealth: async () => ({ status: 'ok' }),
+      probeOpus: () => ({ ok: true }),
+      loadEncoders: async () => { throw new Error('timeout'); },
+    });
+    assert.equal(report.sidecar.status, 'ok');
+    assert.ok(report.checks.every((check) => check.status === 'ok'));
+    assert.equal(report.encoders.status, 'warning');
+    assert.deepEqual(report.encoders.items, []);
+    assert.equal(report.overall, 'partial');
+    assert.match(report.encoders.message, /did not answer within the diagnostic budget/);
   });
 
   it('preserves absolute executable paths without changing them', async () => {

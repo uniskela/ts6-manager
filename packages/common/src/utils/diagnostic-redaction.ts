@@ -5,10 +5,12 @@
 const REPLACEMENTS: Array<[RegExp, string]> = [
   [/\b(Cookie|Set-Cookie|Authorization)\s*:\s*[^\r\n]*/gi, '$1: [redacted]'],
   [/\b(https?:\/\/)[^/\s@]+@/gi, '$1[redacted]@'],
-  [/Bearer\s+[A-Za-z0-9\-._~+/]+=*/gi, 'Bearer [redacted]'],
+  [/Bearer\s+[a-z0-9\-._~+/]+=*/gi, 'Bearer [redacted]'],
   [/\beyJ[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*){0,2}/g, '[redacted-jwt]'],
   [/\benc:[a-f\d]+:[a-f\d]+:[a-f\d]+/gi, '[redacted-credential]'],
-  [/((?:api[_-]?key|token|password|passwd|secret|cookie|authorization))['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;]+)/gi, '$1=[redacted]'],
+  [/(api[_-]?key)['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;]+)/gi, '$1=[redacted]'],
+  [/(token|password|passwd)['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;]+)/gi, '$1=[redacted]'],
+  [/(secret|cookie|authorization)['"]?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&,;]+)/gi, '$1=[redacted]'],
 ];
 const SECRET_KEY = /(?:api[_-]?key|token|password|passwd|secret|cookie|authorization)$/i;
 

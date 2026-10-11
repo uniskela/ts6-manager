@@ -14,6 +14,7 @@ const report: MediaAdminDiagnosticReport = {
   encoders: { status: 'ok', message: 'Software encoding available.', items: [
     { id: 'vp8', codec: 'vp8', hardware: false, available: true },
     { id: 'h264_nvenc', codec: 'h264', hardware: true, available: false, detail: 'No NVIDIA device' },
+    { id: 'vp9', codec: 'vp9', hardware: false, available: false, detail: 'Encoder unavailable' },
   ] },
   warnings: ['Deno: deno was not found. Pull or rebuild the image.'],
 };
@@ -51,6 +52,8 @@ test('admin sees tool results and copies a diagnostic report', async ({ page, re
   await expect(page.getByText('Version: not reported by GET /health', { exact: true })).toBeVisible();
   const hardware = page.getByRole('listitem').filter({ has: page.getByText('h264_nvenc', { exact: true }) });
   await expect(hardware.getByText('Warning', { exact: true })).toBeVisible();
+  const software = page.getByRole('listitem').filter({ has: page.getByText('vp9', { exact: true }) });
+  await expect(software.getByText('Failed', { exact: true })).toBeVisible();
   await expect(page.getByRole('status').filter({ hasText: 'Last checked:' })).toBeVisible();
   await page.getByRole('button', { name: 'Copy diagnostic report' }).click();
   const copied = await page.evaluate(() => (window as unknown as { copiedReport: string }).copiedReport);

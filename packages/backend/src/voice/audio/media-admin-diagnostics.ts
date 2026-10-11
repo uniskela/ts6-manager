@@ -104,7 +104,7 @@ async function fetchSidecarHealth(baseUrl: string, timeoutMs: number): Promise<S
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/health`, {
+    const res = await fetch(`${baseUrl}/health`, {
       method: 'GET',
       signal: controller.signal,
     });
@@ -130,11 +130,7 @@ function stageCheck(
   if (!stage) {
     return { id: label, label, status: 'fail', message: 'Not reported', remediation };
   }
-  const status: MediaDiagnosticStatus = stage.status === 'ok'
-    ? 'ok'
-    : stage.status === 'skipped'
-      ? 'warning'
-      : 'fail';
+  const status: MediaDiagnosticStatus = stage.status === 'skipped' ? 'warning' : stage.status;
   return {
     id: stage.id,
     label,
@@ -247,6 +243,56 @@ async function defaultLoadEncoders(env: NodeJS.ProcessEnv, timeoutMs: number): P
   return client.getEncoders(false, timeoutMs);
 }
 
+function sidecarSummary(
+  stage: RuntimeMediaStageResult | undefined,
+  mode: MediaDiagnosticSidecar['mode'],
+  health?: SidecarHealthBody,
+): MediaDiagnosticSidecar {
+  let status: MediaDiagnosticStatus = 'fail';
+  if (stage?.status === 'ok') status = 'ok';
+  if (stage?.code === 'version_mismatch' || stage?.status === 'skipped') status = 'warning';
+  return {
+    mode,
+    status,
+    message: clip(stage?.message || 'Sidecar was not checked'),
+    ...(health?.version ? { version: health.version } : {}),
+    ...(health?.status ? { healthStatus: health.status } : {}),
+    ...(health?.videoPort != null ? { videoPort: health.videoPort } : {}),
+    ...(health?.audioPort != null ? { audioPort: health.audioPort } : {}),
+  };
+}
+
+async function loadEncoderReport(
+  sidecarHealthy: boolean,
+  remainingMs: () => number,
+  load: NonNullable<DiagnoseMediaAdminOptions['loadEncoders']>,
+): Promise<MediaDiagnosticEncoders> {
+  if (!sidecarHealthy) {
+    return {
+      status: 'warning',
+      message: 'Encoder capabilities were not loaded because the sidecar health check did not succeed. GET /encoders was not called.',
+      items: [],
+    };
+  }
+  const budget = Math.min(ENCODER_WAIT_MS, Math.max(0, remainingMs()));
+  if (budget < 200) {
+    return {
+      status: 'warning',
+      message: 'Skipped encoder capabilities — overall diagnostic deadline reached.',
+      items: [],
+    };
+  }
+  try {
+    return encoderSummary(await load(budget));
+  } catch {
+    return {
+      status: 'warning',
+      message: 'Encoder capabilities did not answer within the diagnostic budget. Use Check encoders on Streaming defaults.',
+      items: [],
+    };
+  }
+}
+
 export async function diagnoseMediaAdmin(
   options: DiagnoseMediaAdminOptions = {},
 ): Promise<MediaAdminDiagnosticReport> {
@@ -304,21 +350,22 @@ export async function diagnoseMediaAdmin(
 
   const probeOpus = options.probeOpus ?? probeMusicOpus;
   const opus = probeOpus();
-  checks.push(opus.ok
-    ? { id: 'opus', label: 'Opus', status: 'ok', message: 'In-process Opus encoder produced a silent frame (same settings as music playback).' }
-    : {
-      id: 'opus',
-      label: 'Opus',
-      status: 'fail',
-      message: clip(opus.message),
-      remediation: 'Music playback needs the bundled Opus encoder. Pull or rebuild the image.',
-    });
-
-  checks.push(stageCheck(
-    stage('yt-dlp'),
-    'yt-dlp',
-    `Verify YT_DLP_PATH points to a trusted executable. ${IMAGE_REMEDIATION}`,
-  ));
+  checks.push(
+    opus.ok
+      ? { id: 'opus', label: 'Opus', status: 'ok', message: 'In-process Opus encoder produced a silent frame (same settings as music playback).' }
+      : {
+        id: 'opus',
+        label: 'Opus',
+        status: 'fail',
+        message: clip(opus.message),
+        remediation: 'Music playback needs the bundled Opus encoder. Pull or rebuild the image.',
+      },
+    stageCheck(
+      stage('yt-dlp'),
+      'yt-dlp',
+      `Verify YT_DLP_PATH points to a trusted executable. ${IMAGE_REMEDIATION}`,
+    ),
+  );
 
   const ytOk = stage('yt-dlp')?.status === 'ok';
   if (!ytOk) {
@@ -365,46 +412,12 @@ export async function diagnoseMediaAdmin(
   }
 
   const sidecarStage = stage('sidecar');
-  const sidecar: MediaDiagnosticSidecar = {
-    mode: runtime.meta.sidecarMode,
-    status: sidecarStage?.code === 'version_mismatch' ? 'warning' : sidecarStage?.status === 'ok' ? 'ok' : sidecarStage?.status === 'skipped' ? 'warning' : 'fail',
-    message: clip(sidecarStage?.message || 'Sidecar was not checked'),
-    ...(healthBody?.version ? { version: healthBody.version } : {}),
-    ...(healthBody?.status ? { healthStatus: healthBody.status } : {}),
-    ...(healthBody?.videoPort != null ? { videoPort: healthBody.videoPort } : {}),
-    ...(healthBody?.audioPort != null ? { audioPort: healthBody.audioPort } : {}),
-  };
-
-  let encoders: MediaDiagnosticEncoders;
-  if (sidecarStage?.status !== 'ok') {
-    encoders = {
-      status: 'warning',
-      message: 'Encoder capabilities were not loaded because the sidecar health check did not succeed. GET /encoders was not called.',
-      items: [],
-    };
-  } else {
-    const budget = Math.min(ENCODER_WAIT_MS, Math.max(0, remainingMs()));
-    if (budget < 200) {
-      encoders = {
-        status: 'warning',
-        message: 'Skipped encoder capabilities — overall diagnostic deadline reached.',
-        items: [],
-      };
-    } else {
-      try {
-        const caps = options.loadEncoders
-          ? await options.loadEncoders(budget)
-          : await defaultLoadEncoders(env, budget);
-        encoders = encoderSummary(caps);
-      } catch {
-        encoders = {
-          status: 'warning',
-          message: 'Encoder capabilities did not answer within the diagnostic budget. Use Check encoders on Streaming defaults.',
-          items: [],
-        };
-      }
-    }
-  }
+  const sidecar = sidecarSummary(sidecarStage, runtime.meta.sidecarMode, healthBody);
+  const encoders = await loadEncoderReport(
+    sidecarStage?.status === 'ok',
+    remainingMs,
+    options.loadEncoders ?? ((timeoutMs) => defaultLoadEncoders(env, timeoutMs)),
+  );
 
   const draft: MediaAdminDiagnosticReport = {
     checkedAt: new Date().toISOString(),

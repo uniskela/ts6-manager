@@ -31,7 +31,8 @@ export function formatMediaDiagnosticReport(report: MediaAdminDiagnosticReport):
   const sidecarVersion = report.sidecar.version ?? 'not reported by GET /health';
   const encoders = report.encoders.items.map((item) => {
     const kind = item.hardware ? 'hardware' : 'software';
-    const state = item.available ? 'available' : `unavailable${item.detail ? ` — ${item.detail}` : ''}`;
+    const detail = item.detail ? ` — ${item.detail}` : '';
+    const state = item.available ? 'available' : `unavailable${detail}`;
     return `- ${item.id} (${item.codec}, ${kind}): ${state}`;
   });
   const warnings = report.warnings.length ? report.warnings.map((warning) => `- ${warning}`) : ['- none'];
