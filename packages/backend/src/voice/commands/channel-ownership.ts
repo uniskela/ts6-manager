@@ -517,6 +517,7 @@ export async function isBotIdleForSummon(
   serverConfigId: number,
   virtualServerId: number,
 ): Promise<boolean> {
+  if (bot.automation?.keepChannel) return false;
   let homeCid = bot.getCurrentChannelId();
   if (homeCid <= 0 && context.eventBridge) {
     try {

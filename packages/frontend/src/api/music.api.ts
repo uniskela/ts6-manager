@@ -1,6 +1,7 @@
 import api from './client';
 import type {
   BotMediaOverview,
+  BotAutomationSettings,
   MediaCommandPermissions,
   QueueVideoResponse,
   StartVideoStreamRequest,
@@ -17,9 +18,12 @@ export const musicBotsApi = {
   get: (id: number) => api.get(`/music-bots/${id}`).then((r) => r.data),
   create: (data: any) => api.post('/music-bots', data).then((r) => r.data),
   update: (id: number, data: any) => api.put(`/music-bots/${id}`, data).then((r) => r.data),
+  automation: (id: number, settings: BotAutomationSettings): Promise<BotAutomationSettings> =>
+    api.put(`/music-bots/${id}/automation`, settings).then((r) => r.data),
   delete: (id: number) => api.delete(`/music-bots/${id}`),
   start: (id: number) => api.post(`/music-bots/${id}/start`).then((r) => r.data),
   stop: (id: number) => api.post(`/music-bots/${id}/stop`).then((r) => r.data),
+  home: (id: number) => api.post(`/music-bots/${id}/home`).then((r) => r.data),
   restart: (id: number) => api.post(`/music-bots/${id}/restart`).then((r) => r.data),
 
   // The authenticated client supplies the bearer header; <img src> cannot.

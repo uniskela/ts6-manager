@@ -57,7 +57,14 @@ playlistRoutes.get('/', async (req: Request, res: Response, next) => {
     }
     const serverConfigId = raw === undefined ? undefined : Number(raw);
     const playlists = await prisma.playlist.findMany({
-      where: serverConfigId ? { OR: [{ serverConfigId }, { serverConfigId: null }] } : undefined,
+      // Legacy playlists without an explicit server can still belong to a bot.
+      // Match the same server eligibility enforced when choosing an Auto-DJ source.
+      where: serverConfigId ? {
+        AND: [
+          { OR: [{ serverConfigId }, { serverConfigId: null }] },
+          { OR: [{ musicBot: null }, { musicBot: { serverConfigId } }] },
+        ],
+      } : undefined,
       include: { _count: { select: { songs: true } } },
       orderBy: { createdAt: 'desc' },
     });

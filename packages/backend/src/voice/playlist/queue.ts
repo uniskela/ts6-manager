@@ -19,12 +19,15 @@ function moveEntry<T>(list: T[], from: number, to: number): void {
 export class PlayQueue<T extends { id: string } = QueueItem> {
   private items: T[] = [];
   private currentIndex = -1;
+  private exhausted = false;
   private _shuffle = false;
   private _repeat: RepeatMode = "off";
   private shuffleOrder: number[] = [];
 
+  constructor(private readonly onChange?: (added: boolean) => void) {}
+
   get current(): T | null {
-    if (this.currentIndex < 0 || this.currentIndex >= this.items.length) {
+    if (this.exhausted || this.currentIndex < 0 || this.currentIndex >= this.items.length) {
       return null;
     }
     const idx = this._shuffle ? this.shuffleOrder[this.currentIndex] : this.currentIndex;
@@ -73,6 +76,7 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
       const pos = start + Math.floor(Math.random() * (this.shuffleOrder.length - start + 1));
       this.shuffleOrder.splice(pos, 0, this.items.length - 1);
     }
+    this.onChange?.(true);
   }
 
   addMany(items: T[]): void {
@@ -107,22 +111,27 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
       this.currentIndex = Math.min(this.currentIndex, this.items.length - 1);
     }
 
+    this.onChange?.(false);
     return true;
   }
 
   clear(): void {
     this.items = [];
     this.currentIndex = -1;
+    this.exhausted = false;
     this.shuffleOrder = [];
+    this.onChange?.(false);
   }
 
   /** Keep every item and make the current one upcoming again. */
   rewind(): void {
     this.currentIndex = -1;
+    this.exhausted = false;
   }
 
   next(): T | null {
     if (this.items.length === 0) return null;
+    this.exhausted = false;
 
     // Track repeat is handled by VoiceBot directly — here we just advance
     this.currentIndex++;
@@ -134,7 +143,9 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
           this.regenerateShuffleOrder();
         }
       } else {
-        this.currentIndex = -1;
+        // Retain the exhausted position so a later request never replays history.
+        this.currentIndex = this.items.length - 1;
+        this.exhausted = true;
         return null;
       }
     }
@@ -145,11 +156,13 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
   playAt(index: number): T | null {
     if (!Number.isInteger(index) || index < 0 || index >= this.items.length) return null;
     this.currentIndex = index;
+    this.exhausted = false;
     return this.current;
   }
 
   previous(): T | null {
     if (this.items.length === 0) return null;
+    this.exhausted = false;
 
     this.currentIndex--;
     if (this.currentIndex < 0) {

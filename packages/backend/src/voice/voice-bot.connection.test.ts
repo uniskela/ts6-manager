@@ -2,12 +2,81 @@ import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { SidecarClient } from './streaming/sidecar-client.js';
 import { VoiceBot } from './voice-bot.js';
+import { generateIdentity } from './tslib/identity.js';
 
 function makeBot(): VoiceBot {
   return new VoiceBot({
     id: 7, serverConfigId: 1, name: 'test', serverHost: '127.0.0.1', serverPort: 9987, nickname: 'Bot', volume: 50,
   });
 }
+
+describe('restart connection intent', () => {
+  beforeEach(() => mock.timers.enable({ apis: ['setTimeout'] }));
+  afterEach(() => mock.timers.reset());
+
+  function connectedBot() {
+    const bot = makeBot();
+    const b = bot as any;
+    b._status = 'connected';
+    b.config.identity = generateIdentity(0);
+    b.applyAvatar = async () => {};
+    b.client.sendCommand = () => {};
+    b.client.disconnect = () => b.client.emit('disconnected');
+    const connect = b.client.connect = mock.fn(async () => {});
+    return { bot, b, connect };
+  }
+
+  for (const newer of ['none', 'stop', 'restart'] as const) {
+    it(`honors ${newer === 'none' ? 'its own restart' : `a newer ${newer}`} during video cleanup`, async () => {
+      const { bot, b, connect } = connectedBot();
+      let finishCleanup!: () => void;
+      const cleanup = new Promise<void>(resolve => { finishCleanup = resolve; });
+      b._videoStreaming = true;
+      b.stopVideoStream = async () => { await cleanup; b._videoStreaming = false; };
+
+      const restarting = bot.restart();
+      let latest = Promise.resolve();
+      if (newer === 'stop') latest = bot.stop();
+      else if (newer === 'restart') latest = bot.restart();
+      finishCleanup();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      mock.timers.tick(600);
+      await Promise.all([restarting, latest]);
+
+      assert.equal(connect.mock.callCount(), newer === 'stop' ? 0 : 1);
+      assert.equal(bot.status, newer === 'stop' ? 'stopped' : 'connected');
+      assert.equal(bot.manuallyStopped, newer === 'stop');
+    });
+  }
+
+  it('restarts after its own asynchronous disconnect notification', async () => {
+    const { bot, b, connect } = connectedBot();
+    b.client.disconnect = () => setTimeout(() => b.client.emit('disconnected'), 500);
+    const restarting = bot.restart();
+    await Promise.resolve();
+    mock.timers.tick(600);
+    await restarting;
+    assert.equal(connect.mock.callCount(), 1);
+    assert.equal(bot.status, 'connected');
+  });
+
+  for (const newer of ['stop', 'start'] as const) {
+    it(`honors a newer ${newer} during the reconnect delay`, async () => {
+      const { bot, connect } = connectedBot();
+      let finished = false;
+      const restarting = bot.restart().then(() => { finished = true; });
+      await Promise.resolve();
+      await bot[newer]();
+      mock.timers.tick(600);
+      await new Promise<void>(resolve => setImmediate(resolve));
+
+      assert.equal(finished, true, 'a cancelled restart must finish even when the bot is running again');
+      await restarting;
+      assert.equal(connect.mock.callCount(), newer === 'stop' ? 0 : 1);
+      assert.equal(bot.status, newer === 'stop' ? 'stopped' : 'connected');
+    });
+  }
+});
 
 describe('connection refusals', () => {
   for (const [id, msg] of [[1027, 'server maxclient reached'], [1028, 'invalid server password'], [3329, 'you are banned']] as const) {
