@@ -55,7 +55,7 @@ The startup script stops on the first error (`set -e`). If the schema step fails
 
 #### Reverse proxy: set `TRUST_PROXY`
 
-Before 1.11.0 the backend always trusted "one hop" in front of it. That setting is gone. The backend now trusts only the proxies named in `TRUST_PROXY`, and the bundled images set a default for it:
+**Breaking change for some reverse-proxy setups** (an all-in-one install behind an outer proxy, a backend run outside the stock images, or a proxy with a public address). Before 1.11.0 the backend always trusted "one hop" in front of it. That setting is gone. The backend now trusts only the proxies named in `TRUST_PROXY`, and the bundled images set a default for it:
 
 - the **all-in-one** image trusts `loopback`, which is its own bundled nginx;
 - the **split** backend image trusts `uniquelocal`, the private address ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7), which covers the frontend container on the compose network; and
