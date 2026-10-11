@@ -22,7 +22,7 @@ case "$ARCH" in
     ;;
 esac
 
-EXPECTED="$(awk -v arch="$DENO_ARCH" '$1 == arch { print $2; exit }' "$CHECKSUM_FILE" | tr 'A-F' 'a-f')"
+EXPECTED="$(awk -v arch="$DENO_ARCH" '$1 == arch { sub(/\r$/, "", $2); print $2; exit }' "$CHECKSUM_FILE" | tr 'A-F' 'a-f')"
 if ! printf '%s\n' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
   echo "install-deno: missing sha256 for $DENO_ARCH" >&2
   exit 1
