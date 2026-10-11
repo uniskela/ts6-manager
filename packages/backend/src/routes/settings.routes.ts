@@ -34,6 +34,8 @@ import type { PublicUrlSettings } from '@ts6/common';
 import { SidecarClient } from '../voice/streaming/sidecar-client.js';
 import { actorFromRequest, recordLocalSuccess, runRemoteAudited } from '../audit/index.js';
 import { diagnoseRuntimeMedia } from '../voice/audio/runtime-media-diagnostics.js';
+import { diagnoseMediaAdmin } from '../voice/audio/media-admin-diagnostics.js';
+import { redactDiagnosticValue } from '@ts6/common';
 
 const settingsRoutes: Router = Router();
 
@@ -151,6 +153,25 @@ settingsRoutes.get(
     try {
       const report = await diagnoseRuntimeMedia();
       res.json(report);
+    } catch (err) {
+      next(err);
+    }
+  },
+);
+
+/**
+ * GET /api/settings/media-diagnostics — read-only admin report (#300).
+ * Same limiter and on-demand rule as runtime-diagnostics. Does not refresh
+ * encoder probes or change sidecar health/encoder contracts.
+ */
+settingsRoutes.get(
+  '/media-diagnostics',
+  requireAdmin,
+  runtimeDiagnosticsLimiter,
+  async (req: Request, res: Response, next) => {
+    try {
+      const diagnose = req.app.locals.diagnoseMediaAdmin ?? diagnoseMediaAdmin;
+      res.json(redactDiagnosticValue(await diagnose()));
     } catch (err) {
       next(err);
     }

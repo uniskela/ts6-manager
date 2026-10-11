@@ -371,4 +371,8 @@ If a stream does not start, check:
 
 Use the Runtime / media strip in **Media Library → Streaming defaults** or beside the IPTV channel browser (**Refresh**) for a bounded on-demand sidecar and tool probe. Routine music-bot status polling does not call the sidecar health endpoint.
 
+Admins can open **System → Diagnostics** for a combined media toolchain report. It shows tool versions and executable paths, checks FFmpeg and ffprobe, decodes a short synthetic audio input, encodes one silent Opus frame, lists yt-dlp extractors locally, checks Deno, and reads sidecar health and encoder capabilities. It runs once on page entry and again only with **Refresh**; focus, reconnect, and routine status polling do not rerun it. **Copy diagnostic report** copies the results with credential redaction for troubleshooting.
+
+The checks do not download media, install tools, update binaries, or start playback. Missing tools in containers require pulling or rebuilding the image. Encoder results reuse the sidecar cache; its first request may run short test encodes. Use **Streaming defaults → Check encoders** to refresh that cache. Unavailable hardware encoders are normal on hosts without a GPU. A native sidecar that starts with video playback can show a warning while idle; its version appears only when its health response includes one.
+
 See [Troubleshooting](troubleshooting.md) for common deployment checks.

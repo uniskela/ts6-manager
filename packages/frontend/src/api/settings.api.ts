@@ -1,5 +1,6 @@
 import api from './client';
 import type {
+  MediaAdminDiagnosticReport,
   RuntimeMediaDiagnosticReport,
   VideoEncoderCapabilities,
   VideoStreamSettings,
@@ -30,6 +31,10 @@ export const settingsApi = {
   /** Demand-driven bounded media tool + sidecar probes (not polled). */
   getRuntimeDiagnostics: (): Promise<RuntimeMediaDiagnosticReport> =>
     api.get('/settings/runtime-diagnostics').then((r) => r.data),
+
+  /** Read-only admin media report. Demand-driven; does not refresh encoder probes. */
+  getMediaDiagnostics: (): Promise<MediaAdminDiagnosticReport> =>
+    api.get('/settings/media-diagnostics', { timeout: 15_000 }).then((r) => r.data),
 
   getLimits: () => api.get('/settings/limits').then((r) => r.data),
 

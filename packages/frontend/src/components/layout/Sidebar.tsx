@@ -4,7 +4,7 @@ import {
   LayoutDashboard, Server, Hash, Users, Shield, ShieldCheck,
   Lock, Ban, KeyRound, FolderOpen, MessageSquareWarning, Mail,
   ScrollText, Settings, Bot, LayoutGrid, Cpu, ChevronDown, ChevronLeft, ChevronRight, Library, Tv, Github, BookOpen, Menu,
-  ClipboardList, NotebookPen,
+  ClipboardList, NotebookPen, Stethoscope,
 
   type LucideIcon,
 } from 'lucide-react';
@@ -81,6 +81,7 @@ const navSections: NavSection[] = [
       { to: '/activity-journal', icon: NotebookPen, label: 'Activity Journal', adminOnly: true },
 
       { to: '/instance', icon: Cpu, label: 'Instance', adminOnly: true },
+      { to: '/diagnostics', icon: Stethoscope, label: 'Diagnostics', adminOnly: true },
     ],
   },
   {

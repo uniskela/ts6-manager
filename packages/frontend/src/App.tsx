@@ -55,6 +55,7 @@ const AuditHistory = lazy(() => import('@/pages/AuditHistory'));
 const ActivityJournal = lazy(() => import('@/pages/ActivityJournal'));
 
 const Instance = lazy(() => import('@/pages/Instance'));
+const MediaDiagnostics = lazy(() => import('@/pages/MediaDiagnostics'));
 const BotList = lazy(() => import('@/pages/BotList'));
 const BotEditor = lazy(() => import('@/pages/BotEditor'));
 const MusicBots = lazy(() => import('@/pages/media-bots/MusicBots'));
@@ -99,6 +100,7 @@ export function App() {
               <Route path="/activity-journal" element={<AdminRoute><ActivityJournal /></AdminRoute>} />
 
               <Route path="/instance" element={<AdminRoute><Instance /></AdminRoute>} />
+              <Route path="/diagnostics" element={<AdminRoute><MediaDiagnostics /></AdminRoute>} />
               <Route path="/music-requests" element={<AdminRoute><MusicRequestsRedirect /></AdminRoute>} />
               <Route path="/bots" element={<AdminRoute><BotList /></AdminRoute>} />
               <Route path="/bots/:botId" element={<AdminRoute><BotEditor /></AdminRoute>} />

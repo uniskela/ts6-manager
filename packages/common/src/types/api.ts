@@ -124,6 +124,55 @@ export interface RuntimeMediaDiagnosticReport {
   };
 }
 
+/** Read-only admin media diagnostics (#300). Status words match the screen. */
+export type MediaDiagnosticStatus = 'ok' | 'warning' | 'fail' | 'skipped';
+
+export interface MediaDiagnosticCheck {
+  id: string;
+  label: string;
+  status: MediaDiagnosticStatus;
+  message: string;
+  version?: string;
+  /** Resolved executable path, or the configured command when unavailable. */
+  path?: string;
+  remediation?: string;
+}
+
+export interface MediaDiagnosticSidecar {
+  mode: RuntimeMediaSidecarMode;
+  status: MediaDiagnosticStatus;
+  message: string;
+  /** Set only when GET /health already includes `version` (sidecar contract is unchanged). */
+  version?: string;
+  healthStatus?: string;
+  videoPort?: number;
+  audioPort?: number;
+}
+
+export interface MediaDiagnosticEncoderRow {
+  id: string;
+  codec: string;
+  hardware: boolean;
+  available: boolean;
+  detail?: string;
+}
+
+export interface MediaDiagnosticEncoders {
+  status: MediaDiagnosticStatus;
+  message: string;
+  checkedAt?: string;
+  items: MediaDiagnosticEncoderRow[];
+}
+
+export interface MediaAdminDiagnosticReport {
+  checkedAt: string;
+  overall: RuntimeMediaOverall;
+  checks: MediaDiagnosticCheck[];
+  sidecar: MediaDiagnosticSidecar;
+  encoders: MediaDiagnosticEncoders;
+  warnings: string[];
+}
+
 // Dashboard
 export type DashboardWebQuerySourceStatus = 'current' | 'unavailable';
 export type DashboardMetricsSourceStatus = 'disabled' | 'current' | 'unavailable';

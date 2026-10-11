@@ -8,8 +8,9 @@
 import { spawn } from 'child_process';
 import { accessSync, constants as fsConstants } from 'fs';
 import { createRequire } from 'node:module';
-import { delimiter, isAbsolute, join } from 'path';
+import { delimiter, isAbsolute, join, resolve } from 'path';
 import { getYtDlpPath } from './yt-dlp-path.js';
+import { redactDiagnosticText } from '@ts6/common';
 import type {
   RuntimeMediaDiagnosticReport,
   RuntimeMediaOverall,
@@ -68,7 +69,7 @@ export type CommandProbeResult =
   | { ok: false; code: 'binary_missing' | 'timeout' | 'nonzero_exit' | 'error'; message: string };
 
 function sanitizeSnippet(raw: string, max = 120): string {
-  return raw.replace(/\s+/g, ' ').trim().slice(0, max);
+  return redactDiagnosticText(raw).replace(/\s+/g, ' ').trim().slice(0, max);
 }
 
 function versionFromOutput(stdout: string, stderr: string): string {
@@ -267,29 +268,36 @@ function resolveSidecarMode(env: NodeJS.ProcessEnv): {
   };
 }
 
-/** True when `command` is an absolute/relative path or resolves on PATH. Never spawns. */
-export function binaryExistsOnPath(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
+/** Resolve an executable using the playback process's PATH. Never spawns. */
+export function resolveBinaryOnPath(command: string, env: NodeJS.ProcessEnv = process.env): string | undefined {
   const name = command.trim();
-  if (!name) return false;
+  if (!name) return undefined;
   if (isAbsolute(name) || name.includes('/') || name.includes('\\')) {
     try {
-      accessSync(name, fsConstants.X_OK);
-      return true;
+      accessSync(command, fsConstants.X_OK);
+      return resolve(command);
     } catch {
-      return false;
+      return undefined;
     }
   }
   const pathEnv = env.PATH || '';
+  const suffixes = process.platform === 'win32' ? ['', '.com', '.exe'] : [''];
   for (const dir of pathEnv.split(delimiter)) {
     if (!dir) continue;
-    try {
-      accessSync(join(dir, name), fsConstants.X_OK);
-      return true;
-    } catch {
-      /* continue */
+    for (const suffix of suffixes) {
+      try {
+        accessSync(join(dir, name + suffix), fsConstants.X_OK);
+        return resolve(dir, name + suffix);
+      } catch {
+        /* continue */
+      }
     }
   }
-  return false;
+  return undefined;
+}
+
+export function binaryExistsOnPath(command: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return resolveBinaryOnPath(command, env) !== undefined;
 }
 
 /**
@@ -465,7 +473,7 @@ export async function diagnoseRuntimeMedia(
     await runBinary(
       'yt-dlp',
       ytDlpCommand,
-      ['--version'],
+      ['--ignore-config', '--version'],
       'yt-dlp',
       'yt-dlp was not found — pull or rebuild the TS6 Manager image to restore the bundled extractor',
     );

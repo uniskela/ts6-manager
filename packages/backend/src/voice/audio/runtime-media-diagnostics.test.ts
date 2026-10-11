@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { delimiter, join } from 'node:path';
 import {
   DEFAULT_OVERALL_TIMEOUT_MS,
   diagnoseRuntimeMedia,
   probeCommandVersion,
+  binaryExistsOnPath,
+  resolveBinaryOnPath,
 } from './runtime-media-diagnostics.js';
 
 describe('diagnoseRuntimeMedia', () => {
@@ -167,7 +172,41 @@ describe('diagnoseRuntimeMedia', () => {
   });
 });
 
+describe('resolveBinaryOnPath', () => {
+  it('uses the first executable on PATH, supports absolute paths with spaces, and rejects missing binaries', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ts6-media-tools-'));
+    try {
+      const executable = join(dir, 'media tool');
+      writeFileSync(executable, '#!/bin/sh\nexit 0\n');
+      chmodSync(executable, 0o755);
+      const env = { PATH: `${join(dir, 'missing')}${delimiter}${dir}` };
+      assert.equal(resolveBinaryOnPath('media tool', env), executable);
+      assert.equal(resolveBinaryOnPath(executable, {}), executable);
+      assert.equal(binaryExistsOnPath('media tool', env), true);
+      assert.equal(resolveBinaryOnPath('missing-media-tool', env), undefined);
+      assert.equal(binaryExistsOnPath('missing-media-tool', env), false);
+      if (process.platform !== 'win32') {
+        chmodSync(executable, 0o644);
+        assert.equal(resolveBinaryOnPath('media tool', env), undefined);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('probeCommandVersion', () => {
+  it('redacts credentials before truncating probe output', async () => {
+    const result = await probeCommandVersion(process.execPath, [
+      '-e', `console.log('https://user:${'fake-password'.repeat(20)}@media.example.test/path')`,
+    ], 1_000);
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.match(result.version, /https:\/\/\[redacted\]@media\.example\.test/);
+      assert.doesNotMatch(result.version, /fake-password/);
+    }
+  });
+
   it('kills hung commands within the stage timeout', async () => {
     const started = Date.now();
     const result = await probeCommandVersion(

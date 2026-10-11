@@ -7,6 +7,7 @@ export * from './types/iptv.js';
 export * from './types/audit.js';
 export * from './constants/events.js';
 export * from './constants/chat-commands.js';
+export * from './utils/diagnostic-redaction.js';
 export * from './utils/ts-escape.js';
 export * from './utils/server-logs.js';
 export * from './widget-themes.js';

@@ -15,6 +15,7 @@
 export const EXPENSIVE_DIAGNOSTIC_QUERY_ROOTS = [
   'file-summaries',
   'runtime-media-diagnostics',
+  'media-admin-diagnostics',
   'video-encoder-capabilities',
 ] as const;
 
