@@ -69,7 +69,11 @@ Choosing **None** clears the avatar and asks TeamSpeak to delete the uploaded fi
 
 ## Requests
 
-**Media Library → Requests** (`/media-bots?tab=requests`) shows `!play` history for the selected server. **Play** starts that request immediately. **Enqueue** adds it to the queue without interrupting current playback. When several bots are running, pick the target bot. `/music-requests` redirects here. System → Music Request History is no longer a separate page.
+**Bot console → Music → Recent requests** and **Media Library → Requests** (`/media-bots?tab=requests`) show requests for the selected bot, including title, artist and duration when known, source, request time and availability. **Play** starts that request immediately, confirming any media it replaces. **Enqueue** adds it without interrupting playback. When several bots are running, pick the target bot. `/music-requests` redirects here.
+
+History stays in the existing database across restarts. Repeated requests update the same source's time for that bot. By default, the newest 100 unique requests are kept per bot and connection; set `MUSIC_REQUEST_HISTORY_LIMIT` in the backend process environment to a positive integer (maximum 1,000) to change the limit. For Docker, pass it in the backend service's `environment`. Oldest rows are trimmed as requests are saved. Older server-wide history remains visible to bots on that connection and is trimmed when history is read. The timestamp is the request time, including queued items, rather than proof of completed playback. History does not retain requester identities or expose raw URLs or local paths to the UI.
+
+Replay uses the stored media reference through the normal validation and permission checks. Missing files, removed sources, or references rejected by current URL policy show **Unavailable**. Chat `!again` can retry a reference after it becomes available again. The listener remote keeps its existing library and URL-request actions; its token does not grant access to administrator history or replay endpoints.
 
 ## Sources
 
@@ -97,6 +101,8 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!play <url>`** — Play supported media
 - **`!play <song name>`** — Search YouTube Music and play the best match (falls back to a regular YouTube search). Queues it if something is already playing
 - **`!play`** — Resume paused playback
+- **`!history`** — Show this bot's 10 most recent requests, with request IDs, source and UTC time
+- **`!again [id]`** — Replay a stored request by ID, or the most recent request when no ID is given. Adds it to the queue while music is playing or paused. Unavailable files or blocked sources report that the media is no longer available
 - **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue
 - **`!add <url>`** — Alias for adding to the queue
 - **`!playlist [name-or-id]` / `!pl <name-or-id>`** — List or append a saved playlist

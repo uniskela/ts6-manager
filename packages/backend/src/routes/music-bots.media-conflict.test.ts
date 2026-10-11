@@ -53,12 +53,18 @@ describe('music routes keep the media-session conflict contract', () => {
   it('queueing a playlist without autoplay never asks to replace the stream', async () => {
     let asserted = 0;
     const added: unknown[] = [];
+    const recorded: any[] = [];
     const bot = {
       status: 'connected',
+      currentConfig: { id: 3, serverConfigId: 1 },
       queue: { addMany: (items: unknown[]) => added.push(...items), length: 1, clear: () => {} },
       assertMusicCanStart: () => { asserted++; throw new MediaSessionConflictError('music', [VIDEO]); },
     };
     const prisma = {
+      musicRequest: {
+        upsert: async (args: any) => { recorded.push(args.create); },
+        findMany: async () => [],
+      },
       playlist: {
         findUnique: async () => ({
           id: 5,
@@ -71,6 +77,9 @@ describe('music routes keep the media-session conflict contract', () => {
     assert.equal(queued.status, 200);
     assert.equal(asserted, 0);
     assert.equal(added.length, 1);
+    assert.equal(recorded[0].musicBotId, 3);
+    assert.equal(recorded[0].url, '/a.mp3');
+    assert.equal(recorded[0].source, 'local');
 
     const autoplay = await post(app, '/api/music-bots/3/queue/playlist', { playlistId: 5, autoplay: true });
     assert.equal(autoplay.status, 409);

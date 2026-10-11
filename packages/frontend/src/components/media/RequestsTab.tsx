@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { formatDistanceToNow } from 'date-fns';
-import { Clock, ExternalLink, ListMusic, Loader2, Music, Play } from 'lucide-react';
-import { musicRequestsApi, type MusicRequest } from '@/api/music-requests.api';
+import { Clock, ListMusic, Loader2, Music, Play } from 'lucide-react';
+import type { MusicRequest } from '@/api/music-requests.api';
 import { EmptyState } from '@/components/shared/EmptyState';
 import { ConnectionRequiredNotice } from '@/components/shared/NoServerSelectedState';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { useMusicBots, usePlayUrl } from '@/hooks/use-music-bots';
+import { useMusicBots } from '@/hooks/use-music-bots';
+import { useMusicRequests, useReplayMusicRequest } from '@/hooks/use-music-requests';
 import { apiErrorMessage } from '@/lib/api-error';
+import { musicRequestSourceLabel } from '@/lib/music-requests';
 import { toastMediaStarted } from '@/lib/media-start-toast';
 import { cn } from '@/lib/utils';
 import { useServerStore } from '@/stores/server.store';
 import type { MusicBotSummary } from '@ts6/common';
 import { toast } from 'sonner';
+import { formatTime } from '@/pages/media-bots/shared';
 
 function runningBotsForServer(bots: MusicBotSummary[], configId: number | null): MusicBotSummary[] {
   if (!configId) return [];
@@ -32,7 +34,7 @@ export function RequestsTab() {
   const bots = Array.isArray(botQuery.data) ? botQuery.data : [];
   const running = useMemo(() => runningBotsForServer(bots, configId), [bots, configId]);
   const [botId, setBotId] = useState<number | null>(null);
-  const playUrl = usePlayUrl();
+  const replay = useReplayMusicRequest();
 
   useEffect(() => {
     if (running.length === 0) {
@@ -44,11 +46,7 @@ export function RequestsTab() {
     }
   }, [running, botId]);
 
-  const { data: requests = [], isLoading } = useQuery({
-    queryKey: ['music-requests', configId],
-    queryFn: () => musicRequestsApi.list(configId!),
-    enabled: !!configId,
-  });
+  const { data: requests = [], isLoading, error: loadError } = useMusicRequests(configId, botId);
 
   if (!configId) {
     return (
@@ -62,15 +60,15 @@ export function RequestsTab() {
 
   const selectedBot = running.find((b) => b.id === botId) ?? null;
   const canAct = !!selectedBot;
-  const busy = playUrl.isPending;
+  const busy = replay.isPending;
 
   const runAction = (req: MusicRequest, enqueue: boolean) => {
     if (!selectedBot) {
       toast.error('Start a media bot on this server first');
       return;
     }
-    playUrl.mutate(
-      { botId: selectedBot.id, url: req.url, enqueue },
+    replay.mutate(
+      { configId, requestId: req.id, botId: selectedBot.id, enqueue },
       {
         onSuccess: () => {
           if (enqueue) toast.success(`Queued on ${selectedBot.name}`);
@@ -88,7 +86,7 @@ export function RequestsTab() {
         <div className="min-w-0">
           <h2 className="text-sm font-medium">Requests</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Songs requested via <code className="text-[10px] bg-muted px-1 rounded">!play</code> on this server.
+            Recent music requests for the selected bot on this server.
           </p>
         </div>
         <div className="flex flex-col gap-1">
@@ -115,13 +113,15 @@ export function RequestsTab() {
         </div>
       </div>
 
+      {loadError && <p role="alert" className="text-sm text-destructive">{apiErrorMessage(loadError, 'Could not load recent requests')}</p>}
+
       <div className="relative flex flex-col border border-border rounded-lg bg-card min-h-[280px]">
         {requests.length === 0 ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <EmptyState
               icon={Music}
               title="No music requests yet"
-              description="When users request songs with !play, they appear here."
+              description="Music requests from the console and !play appear here."
             />
           </div>
         ) : (
@@ -140,16 +140,24 @@ export function RequestsTab() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <p className="font-medium text-sm truncate">{req.title}</p>
+                    {(req.artist || req.duration != null) && <p className="truncate text-xs text-muted-foreground">
+                      {[req.artist, req.duration != null ? formatTime(req.duration) : null].filter(Boolean).join(' · ')}
+                    </p>}
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {musicRequestSourceLabel(req.source)} · {req.status === 'unavailable' ? 'Unavailable' : 'Available'}
+                    </p>
                     <p className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground font-mono-data">
                       <Clock className="w-3 h-3 shrink-0" />
-                      Requested {formatDistanceToNow(new Date(req.requestedAt), { addSuffix: true })}
+                      <time dateTime={req.requestedAt} title={new Date(req.requestedAt).toLocaleString()}>
+                        Requested {formatDistanceToNow(new Date(req.requestedAt), { addSuffix: true })}
+                      </time>
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
                     <Button
                       size="sm"
                       className="h-7 text-xs"
-                      disabled={!canAct || busy}
+                      disabled={!canAct || busy || req.status === 'unavailable'}
                       onClick={() => runAction(req, false)}
                     >
                       {busy ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
@@ -159,16 +167,11 @@ export function RequestsTab() {
                       size="sm"
                       variant="outline"
                       className="h-7 text-xs"
-                      disabled={!canAct || busy}
+                      disabled={!canAct || busy || req.status === 'unavailable'}
                       onClick={() => runAction(req, true)}
                     >
                       <ListMusic className="h-3 w-3" />
                       <span className="ml-1">Enqueue</span>
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0" asChild>
-                      <a href={req.url} target="_blank" rel="noopener noreferrer" title="Open URL">
-                        <ExternalLink className="h-3.5 w-3.5" />
-                      </a>
                     </Button>
                   </div>
                 </div>

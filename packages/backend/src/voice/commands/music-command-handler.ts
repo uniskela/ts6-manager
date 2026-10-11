@@ -9,6 +9,7 @@ import * as routing from './routing.js';
 import * as channelOwnership from './channel-ownership.js';
 import * as playback from './playback.js';
 import * as queue from './queue.js';
+import * as history from './history.js';
 import * as streaming from './streaming.js';
 import * as info from './info.js';
 import * as summon from './summon.js';
@@ -109,6 +110,8 @@ export class MusicCommandHandler {
       handleHere: (...args) => handler.handleHere(...args),
       handleHereCrossChannel: (...args) => handler.handleHereCrossChannel(...args),
       handlePlay: (...args) => handler.handlePlay(...args),
+      handleHistory: (...args) => handler.handleHistory(...args),
+      handleAgain: (...args) => handler.handleAgain(...args),
       enqueueMediaUrl: (...args) => handler.enqueueMediaUrl(...args),
       findSong: (...args) => handler.findSong(...args),
       handlePlaylist: (...args) => handler.handlePlaylist(...args),
@@ -390,6 +393,14 @@ export class MusicCommandHandler {
 
   private enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string, request?: queue.ChatMediaRequest): Promise<void> {
     return queue.enqueueMediaUrl(this.context, botId, bot, userClid, rawUrl, request);
+  }
+
+  private handleHistory(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    return history.handleHistory(this.context, botId, bot, userClid, args);
+  }
+
+  private handleAgain(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void> {
+    return history.handleAgain(this.context, botId, bot, userClid, args);
   }
 
   private findSong(query: string, signal?: AbortSignal): ReturnType<typeof findSongForQuery> {

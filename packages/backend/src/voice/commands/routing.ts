@@ -426,6 +426,12 @@ export async function onTextMessage(
         case 'play':
           await context.handlePlay(botId, bot, userClid, args);
           break;
+        case 'history':
+          await context.handleHistory(botId, bot, userClid, args);
+          break;
+        case 'again':
+          await context.handleAgain(botId, bot, userClid, args);
+          break;
         case 'stop':
           context.handleStop(bot, userClid);
           break;

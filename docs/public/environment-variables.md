@@ -8,6 +8,7 @@
 | `ENCRYPTION_KEY` | — | Required production key for encrypted stored credentials |
 | `PORT` | `3001` | Backend HTTP port |
 | `DATABASE_URL` | `file:./data/ts6webui.db` | Prisma SQLite database path |
+| `MUSIC_REQUEST_HISTORY_LIMIT` | `100` | Recent unique requests retained per bot and connection (positive integer, capped at 1,000). Oldest rows are removed when a request is recorded; legacy server-wide rows are trimmed when history is read |
 | `JWT_ACCESS_EXPIRY` | `15m` | Access-token lifetime |
 | `JWT_REFRESH_EXPIRY` | `7d` | Refresh-token lifetime |
 | `FRONTEND_URL` | `http://localhost:3000` | Allowed frontend/CORS origin |

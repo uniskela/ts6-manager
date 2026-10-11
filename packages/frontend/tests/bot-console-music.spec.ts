@@ -66,7 +66,7 @@ async function mockConsole(page: Page) {
         { id: 4, name: 'Coast Local', url: 'https://example.com/coast', genre: 'local, local news, chill', imageUrl: null, serverConfigId: 1 },
       ],
     }));
-  await page.route('**/api/servers/1/music-requests', (r) => r.fulfill({ json: [] }));
+  await page.route('**/api/servers/1/music-requests**', (r) => r.fulfill({ json: [] }));
   await page.route(/\/api\/music-bots\/1\/(play|queue|play-radio|play-url)(\/.*)?$/, async (r) => {
     const req = r.request();
     calls.push({ method: req.method(), url: req.url(), body: req.postDataJSON?.() ?? null });
@@ -87,6 +87,122 @@ test('playing a song from the Music tab sends play with the song id', async ({ p
   await expect.poll(() => calls.find((c) => c.url.includes('/play') && !c.url.includes('play-radio') && !c.url.includes('play-url')))
     .toMatchObject({ method: 'POST', body: { songId: 42 } });
 });
+
+const recentRequest = {
+  id: 81, title: 'Evening recording', source: 'local', status: 'available',
+  artist: 'Evening Ensemble', duration: 185,
+  requestedAt: '2026-10-01T12:30:00.000Z',
+};
+
+test('recent requests are scoped to this bot and queue a local recording by history id', async ({ page, request }) => {
+  const calls = await mockConsole(page);
+  const historyQueries: string[] = [];
+  await page.route('**/api/servers/1/music-requests**', async (r) => {
+    if (r.request().method() === 'POST') {
+      calls.push({ method: 'POST', url: r.request().url(), body: r.request().postDataJSON() });
+      return r.fulfill({ json: { success: true, queued: 1 } });
+    }
+    historyQueries.push(r.request().url());
+    return r.fulfill({ json: [recentRequest] });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Recent requests' }).click();
+
+  await expect(page.getByText('Evening recording', { exact: true })).toBeVisible();
+  await expect(page.getByText('Local file · Available')).toBeVisible();
+  await expect(page.getByText('Evening Ensemble · 3:05')).toBeVisible();
+  await expect(page.locator('time[datetime="2026-10-01T12:30:00.000Z"]')).toBeVisible();
+  expect(historyQueries.some((url) => new URL(url).searchParams.get('botId') === '1')).toBe(true);
+  await page.getByRole('button', { name: 'Queue again Evening recording' }).click();
+  await expect.poll(() => calls.find((c) => c.url.endsWith('/music-requests/81/replay')))
+    .toMatchObject({ method: 'POST', body: { botId: 1, enqueue: true } });
+  expect(calls.some((c) => c.url.endsWith('/play-url'))).toBe(false);
+});
+
+test('replaying history confirms media replacement and retries with only the confirmed session', async ({ page, request }) => {
+  await mockConsole(page);
+  const bodies: unknown[] = [];
+  await page.route('**/api/servers/1/music-requests**', async (r) => {
+    if (r.request().method() === 'GET') return r.fulfill({ json: [recentRequest] });
+    const body = r.request().postDataJSON();
+    bodies.push(body);
+    if (!body.replaceSessionIds) return r.fulfill({ status: 409, json: {
+      error: 'Video is playing.', reason: 'media_session_conflict', requested: 'music',
+      conflicts: [{ id: 'video-session', kind: 'video', state: 'active', botId: 1,
+        botName: 'Aurora Radio', startedAt: 0, label: 'Live channel' }],
+    } });
+    return r.fulfill({ json: { success: true, queued: 1 } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Recent requests' }).click();
+  await page.getByRole('button', { name: 'Play Evening recording' }).click();
+  await expect(page.getByRole('heading', { name: 'Replace what is playing?' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Evening recording', includeHidden: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Stop and switch' }).click();
+  await expect.poll(() => bodies).toEqual([
+    { botId: 1, enqueue: false },
+    { botId: 1, enqueue: false, replaceSessionIds: ['video-session'] },
+  ]);
+});
+
+test('unavailable history stays visible and offers no replay actions', async ({ page, request }) => {
+  await mockConsole(page);
+  await page.route('**/api/servers/1/music-requests**', (r) => r.fulfill({
+    json: [{ ...recentRequest, status: 'unavailable' }],
+  }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Recent requests' }).click();
+  await expect(page.getByText('Local file · Unavailable')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Play Evening recording' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Queue again Evening recording' })).toBeDisabled();
+});
+
+test('a missing recording reports the failure and refreshes its unavailable status', async ({ page, request }) => {
+  await mockConsole(page);
+  let unavailable = false;
+  await page.route('**/api/servers/1/music-requests**', async (r) => {
+    if (r.request().method() === 'GET') return r.fulfill({
+      json: [{ ...recentRequest, status: unavailable ? 'unavailable' : 'available' }],
+    });
+    unavailable = true;
+    return r.fulfill({ status: 410, json: { error: 'This media is no longer available.' } });
+  });
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+  await page.getByRole('tab', { name: 'Recent requests' }).click();
+  await page.getByRole('button', { name: 'Play Evening recording' }).click();
+  await expect(page.getByRole('alert')).toContainText('This media is no longer available.');
+  await expect(page.getByText('Local file · Unavailable')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Queue again Evening recording' })).toBeDisabled();
+});
+
+test('the Media Library replays sanitized history through the selected bot', async ({ page, request }) => {
+  const calls = await mockConsole(page);
+  await page.route(/\/api\/music-bots(?:\?.*)?$/, (r) => r.fulfill({ json: [
+    { id: 1, name: 'Aurora Radio', serverConfigId: 1, status: 'playing' },
+  ] }));
+  await page.route('**/api/servers/1/music-requests**', async (r) => {
+    if (r.request().method() === 'GET') return r.fulfill({ json: [recentRequest] });
+    calls.push({ method: 'POST', url: r.request().url(), body: r.request().postDataJSON() });
+    return r.fulfill({ json: { success: true, queued: 1 } });
+  });
+  await signIn(page, request);
+  await request.post('/__test/dashboard?scenario=normal');
+  await page.evaluate(() => localStorage.setItem('ts6-server', JSON.stringify({
+    state: { selectedConfigId: 1, selectedSid: 1 }, version: 0,
+  })));
+  await page.goto('/media-bots?tab=requests');
+  await expect(page.getByText('Evening recording', { exact: true })).toBeVisible();
+  await expect(page.getByText('Evening Ensemble · 3:05')).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open URL' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Enqueue', exact: true }).click();
+  await expect.poll(() => calls.find((c) => c.url.endsWith('/music-requests/81/replay')))
+    .toMatchObject({ method: 'POST', body: { botId: 1, enqueue: true } });
+});
+
 
 test('queueing a playlist appends without clearing the queue', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });

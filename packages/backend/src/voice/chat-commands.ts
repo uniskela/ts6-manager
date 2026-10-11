@@ -19,6 +19,8 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
     blurb: 'Play a YouTube / Spotify / Apple Music link, or search YouTube Music by song name',
   },
   { name: 'queue', usage: '!queue [url|show|clear|remove <n>|play <n>]', blurb: 'Show queue or add a URL' },
+  { name: 'history', usage: '!history', blurb: 'Show the 10 most recent requests for this bot' },
+  { name: 'again', usage: '!again [id]', blurb: 'Replay a history request (latest by default); queue it while music is playing' },
   { name: 'add', usage: '!add <url>', blurb: 'Alias for !queue <url>' },
   { name: 'playlist', usage: '!playlist [name-or-id]', blurb: 'List or queue playlists for this server/bot' },
   { name: 'pl', usage: '!pl <name-or-id>', blurb: 'Alias for !playlist' },

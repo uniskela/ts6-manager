@@ -14,6 +14,7 @@ import { parseReplaceSessionIds } from '../voice/media-session.js';
 import { runMediaAudited } from './media-audit.js';
 import { createVideoQueueRoutes } from './video-queue.routes.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
+import { canonicalRequestReference, recordMusicRequest } from '../voice/music-request-history.js';
 import {
   invalidatePlaylistExpansion,
   playlistExpansionGeneration,
@@ -81,6 +82,18 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
     if (!bot || bot.currentConfig.volume === vol) {
       await saveBotVolume(prisma, id, vol);
     }
+  }
+}
+
+async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem): Promise<void> {
+  const ref = canonicalRequestReference(item);
+  const serverConfigId = bot.currentConfig.serverConfigId;
+  if (!ref || !serverConfigId) return;
+  try {
+    await recordMusicRequest(req.app.locals.prisma, { serverConfigId, musicBotId: bot.currentConfig.id,
+      title: item.title, artist: item.artist, duration: item.duration, ...ref });
+  } catch {
+    console.error('[music-bots.routes] Failed to save music request history');
   }
 }
 
@@ -433,6 +446,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
     bot.queue.add(queueItem);
     bot.queue.playAt(bot.queue.length - 1);
     await runMediaAudited(req, bot, 'media.music.start', () => bot.play(queueItem, { replaceSessionIds }), replaceSessionIds);
+    await saveRequestHistory(req, bot, queueItem);
 
     res.json({ success: true });
   } catch (err) { next(err); }
@@ -457,34 +471,11 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
       throw new AppError(400, 'Bot is not connected');
     }
 
-    const saveHistory = async (sourceUrl: string, title: string) => {
-      try {
-        const prisma = req.app.locals.prisma;
-        if (!bot.currentConfig.serverConfigId) return;
-        await prisma.musicRequest.upsert({
-          where: {
-            serverConfigId_url: {
-              serverConfigId: bot.currentConfig.serverConfigId,
-              url: sourceUrl,
-            },
-          },
-          update: {
-            requestedAt: new Date(),
-            title: title || 'Unknown Title',
-          },
-          create: {
-            serverConfigId: bot.currentConfig.serverConfigId,
-            url: sourceUrl,
-            title: title || 'Unknown Title',
-            requestedAt: new Date(),
-          },
-        });
-      } catch (saveErr) {
-        console.error('[music-bots.routes] Failed to save music request history:', saveErr);
-      }
-    };
-
     const generation = invalidatePlaylistExpansion(id);
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    const serverPort = bot.currentConfig.serverPort;
+    const isCurrent = () => playlistExpansionGeneration(id) === generation && manager.getBot(id) === bot
+      && bot.currentConfig.serverConfigId === serverConfigId && bot.currentConfig.serverPort === serverPort;
 
     let firstCall = true;
     let pipelineResult: Awaited<ReturnType<typeof runMediaUrlPipeline>>;
@@ -496,7 +487,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             const isFirst = firstCall;
             firstCall = false;
             const live = manager.getBot(id);
-            if (!live || playlistExpansionGeneration(id) !== generation) return;
+            if (!live || !isCurrent()) return;
             const shouldStart = isFirst || !enqueueOnly;
             // Audited start: mutate queue only after the audit wait + generation re-check,
             // so a concurrent stop cannot leave a stale first-item entry behind.
@@ -506,7 +497,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
                 live,
                 'media.music.start',
                 async () => {
-                  if (playlistExpansionGeneration(id) !== generation) return [];
+                  if (!isCurrent()) return [];
                   live.queue.add(item);
                   live.queue.playAt(live.queue.length - 1);
                   return live.play(item, { replaceSessionIds: opts.replaceSessionIds });
@@ -522,20 +513,20 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
                 });
               }
             }
-            if (item.sourceUrl) await saveHistory(item.sourceUrl, item.title);
+            await saveRequestHistory(req, live, item);
           },
           enqueue: (item: QueueItem) => {
-            if (playlistExpansionGeneration(id) !== generation) return;
+            if (!isCurrent()) return;
             const live = manager.getBot(id);
             if (!live || live.status === 'stopped' || live.status === 'error') return;
             live.queue.add(item);
-            if (item.sourceUrl) void saveHistory(item.sourceUrl, item.title);
+            void saveRequestHistory(req, live, item);
           },
           isIdle: () => {
             const live = manager.getBot(id);
-            return Boolean(live && live.status === 'connected' && !live.nowPlaying);
+            return Boolean(isCurrent() && live && live.status === 'connected' && !live.nowPlaying);
           },
-          isCancelled: () => playlistExpansionGeneration(id) !== generation,
+          isCancelled: () => !isCurrent(),
         },
         { url, enqueueOnly },
         {
@@ -602,6 +593,7 @@ musicBotRoutes.post('/:id/play-radio', async (req: Request, res: Response, next)
     };
 
     await runMediaAudited(req, bot, 'media.music.start', () => bot.playStream(queueItem, { replaceSessionIds }), replaceSessionIds);
+    await saveRequestHistory(req, bot, queueItem);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -752,7 +744,7 @@ musicBotRoutes.post('/:id/queue', async (req: Request, res: Response, next) => {
     const song = await prisma.song.findUnique({ where: { id: parseInt(songId) } });
     if (!song) throw new AppError(404, 'Song not found');
 
-    bot.queue.add({
+    const item: QueueItem = {
       id: String(song.id),
       title: song.title,
       artist: song.artist ?? undefined,
@@ -760,7 +752,9 @@ musicBotRoutes.post('/:id/queue', async (req: Request, res: Response, next) => {
       filePath: song.filePath,
       source: song.source as any,
       sourceUrl: song.sourceUrl ?? undefined,
-    });
+    };
+    bot.queue.add(item);
+    await saveRequestHistory(req, bot, item);
 
     res.json({ success: true, queueLength: bot.queue.length });
   } catch (err) { next(err); }
@@ -814,6 +808,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
       }
     }
 
+    for (const item of items) await saveRequestHistory(req, bot, item);
     res.json({ success: true, queueLength: bot.queue.length, playError });
   } catch (err) { next(err); }
 });

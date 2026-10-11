@@ -243,7 +243,7 @@ test('adding and removing nodes are visible dirty edits without changing the sav
 });
 
 const builtinCommands = [
-  'help', 'commands', 'here', 'come', 'play', 'queue', 'add', 'playlist', 'pl', 'repeat', 'seek',
+  'help', 'commands', 'here', 'come', 'play', 'history', 'again', 'queue', 'add', 'playlist', 'pl', 'repeat', 'seek',
   'remove', 'shuffle', 'stop', 'pause', 'skip', 'next', 'voteskip', 'prev', 'vol', 'volume', 'np',
   'nowplaying', 'radio', 'stream', 'stopstream', 'viewers', 'channels', 'tv', 'iptv', 'lyrics',
 ];

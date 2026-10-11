@@ -22,6 +22,7 @@ function fixture(status = 'connected') {
   const handler = new MusicCommandHandler(prisma, {} as any) as any;
   handler.botChannelConfig.set(1, { serverConfigId: 9, virtualServerId: 1 });
   handler.reply = (_bot: unknown, _id: number, message: string) => replies.push(message);
+  handler.saveMusicRequest = () => {};
   const bot = { currentConfig: { id: 1, serverConfigId: 9 }, ts3ClientId: 42,
     queue: new PlayQueue(), status, nowPlaying: null, canSeek: true,
     playbackProgress: { position: 60, duration: 100 },

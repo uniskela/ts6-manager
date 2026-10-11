@@ -68,6 +68,7 @@ export async function handleRadio(
   };
 
   await bot.playStream(queueItem, context.chatMusicSwitch(bot));
+  context.saveMusicRequest(bot, queueItem);
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
 

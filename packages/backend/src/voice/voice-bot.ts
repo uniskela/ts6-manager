@@ -855,6 +855,7 @@ export class VoiceBot extends EventEmitter {
 
   /** Returns sessions actually replaced (this bot's video) when starting music. */
   async play(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
+    if (item.streamUrl) return this.playStream(item, options);
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }

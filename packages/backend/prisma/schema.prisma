@@ -338,12 +338,20 @@ model Widget {
 model MusicRequest {
   id             Int            @id @default(autoincrement())
   title          String
+  artist         String?
+  duration       Float?
+  /// Canonical replay reference (media URL or local filename). Never a display title.
   url            String
+  source         String         @default("url")
+  status         String         @default("available")
   serverConfigId Int
   serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
+  /// 0 keeps rows recorded before history was stored per bot.
+  musicBotId     Int            @default(0)
   requestedAt    DateTime       @default(now())
 
-  @@unique([serverConfigId, url])
+  @@unique([serverConfigId, musicBotId, url])
+  @@index([serverConfigId, requestedAt])
 }
 
 model StreamSession {

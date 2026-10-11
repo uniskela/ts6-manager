@@ -483,3 +483,28 @@ it('playback token resets votes on play/replay/stop but survives pause/resume/se
     assert.notEqual(bot.playbackToken, replay);
   } finally { bot.stopAudio(); }
 });
+
+describe('radio requests queued from history', () => {
+  for (const action of ['finish', 'skip', 'previous'] as const) {
+    it(`plays the live stream when the queue advances through ${action}`, async () => {
+      const bot = makeBot();
+      const radio = { id: 'history_7', title: 'Station', source: 'radio' as const,
+        filePath: '', streamUrl: 'https://example.test/radio' };
+      const local = { id: 'local', title: 'Song', source: 'local' as const, filePath: '/fake.ogg' };
+      bot.queue.addMany(action === 'previous' ? [radio, local] : [local, radio]);
+      bot.queue.playAt(action === 'previous' ? 1 : 0);
+      const b = bot as any;
+      b._status = 'playing';
+      b._nowPlaying = local;
+      let received: unknown;
+      let options: unknown;
+      bot.playStream = async (item, opts) => { received = item; options = opts; return []; };
+      b.ensurePlayableFile = async () => assert.fail('radio must not resolve a local file');
+      if (action === 'finish') b.finishFileTrack();
+      else bot[action]({ replaceSessionIds: ['confirmed-session'] });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(received, radio);
+      assert.deepEqual(options, action === 'finish' ? {} : { replaceSessionIds: ['confirmed-session'] });
+    });
+  }
+});

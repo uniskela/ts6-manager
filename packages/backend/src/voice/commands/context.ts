@@ -128,6 +128,8 @@ export interface CommandMethods {
     args: string,
   ): Promise<void>;
   handlePlay(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
+  handleHistory(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
+  handleAgain(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;
   enqueueMediaUrl(botId: number, bot: VoiceBot, userClid: number, rawUrl: string, request?: ChatMediaRequest): Promise<void>;
   findSong(query: string, signal?: AbortSignal): ReturnType<typeof findSongForQuery>;
   handlePlaylist(botId: number, bot: VoiceBot, userClid: number, args: string): Promise<void>;

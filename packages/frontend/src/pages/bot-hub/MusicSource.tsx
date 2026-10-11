@@ -3,17 +3,17 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
 import { ListMusic, Play, Plus } from 'lucide-react';
 import type { PlaylistSummary, SongInfo } from '@ts6/common';
-import { musicRequestsApi } from '@/api/music-requests.api';
 import { Pager } from '@/components/shared/Pager';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { useSongSearch } from '@/hooks/use-music-library';
-import { useEnqueue, useLoadPlaylist, usePlaySong, usePlayUrl } from '@/hooks/use-music-bots';
+import { useEnqueue, useLoadPlaylist, usePlaySong } from '@/hooks/use-music-bots';
+import { useMusicRequests, useReplayMusicRequest } from '@/hooks/use-music-requests';
 import { usePlaylists } from '@/hooks/use-playlists';
 import { apiErrorMessage } from '@/lib/api-error';
+import { musicRequestSourceLabel } from '@/lib/music-requests';
 import { pageSlice, rememberedPageSize, type PageSize } from '@/lib/pager';
 import { cn } from '@/lib/utils';
 import { formatTime } from '../media-bots/shared';
@@ -216,20 +216,17 @@ function PlaylistsView({ ctx, search }: { ctx: ConsoleSourceContext; search: str
 
 function RecentView({ ctx, search }: { ctx: ConsoleSourceContext; search: string }) {
   const { page, setPage, pageSize, setPageSize } = useListPaging('console-recent', search);
-  const query = useQuery({
-    queryKey: ['music-requests', ctx.serverConfigId],
-    queryFn: () => musicRequestsApi.list(ctx.serverConfigId),
-  });
-  const playUrl = usePlayUrl();
+  const query = useMusicRequests(ctx.serverConfigId, ctx.botId);
+  const replay = useReplayMusicRequest();
   const q = search.trim().toLowerCase();
   const filtered = useMemo(() => {
     const list = Array.isArray(query.data) ? query.data : [];
     if (!q) return list;
-    return list.filter((req) => req.title.toLowerCase().includes(q));
+    return list.filter((req) => req.title.toLowerCase().includes(q) || req.artist?.toLowerCase().includes(q));
   }, [query.data, q]);
   const pageItems = pageSlice(filtered, page, pageSize);
-  const pending = playUrl.isPending;
-  const error = playUrl.error ?? query.error;
+  const pending = replay.isPending;
+  const error = replay.error ?? query.error;
 
   return (
     <div className="space-y-3">
@@ -244,14 +241,23 @@ function RecentView({ ctx, search }: { ctx: ConsoleSourceContext; search: string
             <li key={req.id} className="flex items-center gap-2 rounded-md px-1 py-1">
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium" title={req.title}>{req.title}</p>
+                {(req.artist || req.duration != null) && <p className="truncate text-xs text-muted-foreground">
+                  {[req.artist, req.duration != null ? formatTime(req.duration) : null].filter(Boolean).join(' · ')}
+                </p>}
+                <p className="text-xs text-muted-foreground">
+                  {musicRequestSourceLabel(req.source)} · {req.status === 'unavailable' ? 'Unavailable' : 'Available'}
+                </p>
+                <time dateTime={req.requestedAt} className="block text-xs text-muted-foreground">
+                  {new Date(req.requestedAt).toLocaleString()}
+                </time>
               </div>
               <Button
                 variant="default"
                 size="icon"
                 className="h-11 w-11 shrink-0"
-                disabled={pending}
+                disabled={pending || !ctx.botOnline || req.status === 'unavailable'}
                 aria-label={`Play ${req.title}`}
-                onClick={() => playUrl.mutate({ botId: ctx.botId, url: req.url })}
+                onClick={() => replay.mutate({ configId: ctx.serverConfigId, requestId: req.id, botId: ctx.botId, enqueue: false })}
               >
                 <Play className="h-4 w-4" aria-hidden="true" />
               </Button>
@@ -259,9 +265,9 @@ function RecentView({ ctx, search }: { ctx: ConsoleSourceContext; search: string
                 variant="outline"
                 size="icon"
                 className="h-11 w-11 shrink-0"
-                disabled={pending}
-                aria-label={`Queue ${req.title}`}
-                onClick={() => playUrl.mutate({ botId: ctx.botId, url: req.url, enqueue: true })}
+                disabled={pending || !ctx.botOnline || req.status === 'unavailable'}
+                aria-label={`Queue again ${req.title}`}
+                onClick={() => replay.mutate({ configId: ctx.serverConfigId, requestId: req.id, botId: ctx.botId, enqueue: true })}
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
               </Button>

@@ -9,6 +9,8 @@ export const BUILTIN_CHAT_COMMANDS = [
   'come',
   'radio',
   'play',
+  'history',
+  'again',
   'stop',
   'pause',
   'skip',
@@ -49,8 +51,8 @@ export type MediaCommandPermissions = Record<MediaCommandGroup, MediaCommandAcce
 /** Exhaustive so new built-ins must explicitly choose an authorization group. */
 export const MEDIA_COMMAND_GROUP_BY_COMMAND = {
   help: 'info', commands: 'info', np: 'info', nowplaying: 'info',
-  viewers: 'info', channels: 'info', lyrics: 'info',
-  here: 'playback', come: 'playback', radio: 'playback', play: 'playback',
+  viewers: 'info', channels: 'info', lyrics: 'info', history: 'info',
+  here: 'playback', come: 'playback', radio: 'playback', play: 'playback', again: 'playback',
   stop: 'playback', pause: 'playback', skip: 'playback', next: 'playback',
   prev: 'playback', vol: 'playback', volume: 'playback', repeat: 'playback', seek: 'playback',
   queue: 'queue', add: 'queue', shuffle: 'queue', playlist: 'queue', pl: 'queue', remove: 'queue',

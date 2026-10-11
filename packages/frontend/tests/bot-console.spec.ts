@@ -63,7 +63,7 @@ async function mockBot(page: Page) {
     r.fulfill({ json: { total: 0, page: 1, pageSize: 50, songs: [] } }));
   await page.route('**/api/playlists**', (r) => r.fulfill({ json: [] }));
   await page.route('**/api/servers/1/radio-stations', (r) => r.fulfill({ json: [] }));
-  await page.route('**/api/servers/1/music-requests', (r) => r.fulfill({ json: [] }));
+  await page.route('**/api/servers/1/music-requests**', (r) => r.fulfill({ json: [] }));
   await page.route(/\/api\/music-bots\/1\/queue(\/.*)?$/, async (r) => {
     const req = r.request();
     calls.push({ method: req.method(), url: req.url(), body: req.postDataJSON?.() ?? null });
