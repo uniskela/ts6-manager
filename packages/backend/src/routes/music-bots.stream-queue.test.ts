@@ -156,6 +156,28 @@ describe('stream/queue: audit action when a stop races the add', () => {
     assert.equal(recordedAction(app.calls), 'media.video.start');
   });
 
+  it('corrects a switch to a queue add when another start won the race', async () => {
+    const app = buildApp();
+    const enqueue = app.controller.enqueue.bind(app.controller);
+    app.controller.enqueue = (...args) => {
+      app.bot.videoStreaming = true;
+      app.bot.source = watch(1);
+      return enqueue(...args);
+    };
+    const res = await app.request('POST', '/3/stream/queue', { source: watch(2), replaceSessionIds: [OTHER_VIDEO.id] });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.started, false);
+    assert.equal(app.calls.audits.at(-1)?.action, 'media.session.switch');
+    assert.equal(recordedAction(app.calls), 'media.video.queue_add');
+  });
+
+  it('keeps the switch label when the add really started a stream', async () => {
+    const app = buildApp();
+    const res = await app.request('POST', '/3/stream/queue', { source: watch(2), replaceSessionIds: [OTHER_VIDEO.id] });
+    assert.equal(res.body.started, true);
+    assert.equal(recordedAction(app.calls), 'media.session.switch');
+  });
+
   it('records a queue add when a stream began after the route looked', async () => {
     const app = buildApp();
     const enqueue = app.controller.enqueue.bind(app.controller);

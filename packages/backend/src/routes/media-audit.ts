@@ -68,7 +68,14 @@ export async function runMediaAudited<T>(
       isSwitch || resolveAction
         ? {
           ...(isSwitch ? { relatedAfter: () => replacedSessionRows(manager, actor, replaced) } : {}),
-          ...(resolveAction && !isSwitch ? { resolveAction } : {}),
+          // A switch that really started keeps its switch label; one that turned out
+          // to join a running stream (nothing replaced) is corrected.
+          ...(resolveAction
+            ? { resolveAction: () => {
+              const resolved = resolveAction();
+              return isSwitch && resolved === 'media.video.start' ? undefined : resolved;
+            } }
+            : {}),
         }
         : undefined,
     );
