@@ -104,7 +104,7 @@ async function fetchSidecarHealth(baseUrl: string, timeoutMs: number): Promise<S
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(`${baseUrl}/health`, {
+    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/health`, {
       method: 'GET',
       signal: controller.signal,
     });
