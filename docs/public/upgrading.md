@@ -55,7 +55,7 @@ The startup script stops on the first error (`set -e`). If the schema step fails
 
 #### Reverse proxy: set `TRUST_PROXY`
 
-Before 1.11.0 the backend always trusted the first proxy in front of it. From 1.11.0 it trusts none unless `TRUST_PROXY` is set. Behind a reverse proxy without that variable, the backend sees every visitor as the proxy's own address, so the login rate limit (15 attempts per 15 minutes) and the listener remote limits are shared by all users instead of applying per person. One person mistyping a password can lock everyone else out of signing in for a while.
+**Breaking change for deployments behind a reverse proxy.** Before 1.11.0 the backend always trusted the first proxy in front of it. From 1.11.0 it trusts none unless `TRUST_PROXY` is set. Behind a reverse proxy without that variable, the backend sees every visitor as the proxy's own address, so the login rate limit (15 attempts per 15 minutes) and the listener remote limits are shared by all users instead of applying per person. One person mistyping a password can lock everyone else out of signing in for a while.
 
 If you run behind nginx, Traefik, Caddy or another proxy, set `TRUST_PROXY` to only the address or subnet of your proxy. The recommended values for the all-in-one image and for split Docker are in [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits), and the variable is listed in [Environment variables](environment-variables.md). Direct access with no proxy needs nothing.
 
