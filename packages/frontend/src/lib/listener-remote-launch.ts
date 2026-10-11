@@ -14,7 +14,6 @@ export function takeHashToken(hash: string): { token: string | null; nextHash: s
 
 let captured = false;
 let launchToken: string | null = null;
-let installed = false;
 
 export function remoteLaunchToken(): string | null {
   return launchToken;
@@ -33,19 +32,31 @@ export function captureRemoteLaunchToken(
   return launchToken;
 }
 
-/** Strip the fragment before React paints. A later `#token=` in this document exchanges again. */
-export function installRemoteTokenCapture(): void {
+let removeListener: (() => void) | null = null;
+
+/**
+ * Strip the fragment before React paints. A later `#token=` in this document exchanges again.
+ * Installed once for the life of the page (repeat calls share the listener); the returned
+ * function removes it.
+ */
+export function installRemoteTokenCapture(): () => void {
   captureRemoteLaunchToken();
-  if (installed) return;
-  installed = true;
-  window.addEventListener('hashchange', () => {
+  if (removeListener) return removeListener;
+  const onHashChange = () => {
     captured = false;
     if (captureRemoteLaunchToken()) window.dispatchEvent(new Event('ts6-remote-token'));
-  });
+  };
+  window.addEventListener('hashchange', onHashChange);
+  const dispose = () => {
+    window.removeEventListener('hashchange', onHashChange);
+    if (removeListener === dispose) removeListener = null;
+  };
+  removeListener = dispose;
+  return dispose;
 }
 
 export function resetRemoteLaunchForTests(): void {
+  removeListener?.();
   captured = false;
   launchToken = null;
-  installed = false;
 }
