@@ -91,3 +91,13 @@ test('changing the public URL updates a selected hosted banner link', async ({ p
   await expect(dialog.getByPlaceholder('https://… or ts3image://…')).toHaveValue(`https://new.example.com/api/banners/${existing}`);
   await expect(dialog.getByRole('button', { name: 'Selected hosted banner' })).toBeVisible();
 });
+
+test('a saved public URL can be cleared by saving it empty', async ({ page, request }) => {
+  const { calls, dialog } = await setup(page, request, 'https://wrong.example.com');
+  await dialog.getByRole('button', { name: 'Change' }).click();
+  await dialog.getByLabel('Public URL').fill('');
+  await dialog.getByRole('button', { name: 'Save', exact: true }).first().click();
+  await expect.poll(() => calls.find((c) => c.url.endsWith('/api/settings/public-url'))?.body).toBe(JSON.stringify({ publicUrl: '' }));
+  await expect(dialog.getByLabel('Public URL')).toHaveValue(new URL(page.url()).origin);
+  await expect(dialog.getByRole('button', { name: 'Use this hosted banner' })).toBeDisabled();
+});

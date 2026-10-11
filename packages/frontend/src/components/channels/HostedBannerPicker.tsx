@@ -48,7 +48,7 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
       onSuccess: (settings) => {
         if (selected && settings.effective && valueRef.current === selected.url) onSelect(`${settings.effective}${selected.path}`);
         setEditingUrl(null);
-        toast.success('Public URL saved');
+        toast.success(urlDraft.trim() ? 'Public URL saved' : 'Public URL cleared');
       },
     });
   };
@@ -83,11 +83,12 @@ export function HostedBannerPicker({ value, onSelect }: { value: string; onSelec
         <div className="space-y-1">
           <p className="text-[10px] text-muted-foreground">
             Address of this manager as TeamSpeak clients reach it, not an image link. Links to hosted banners start with it.
+            {data.publicUrlSource === 'setting' && ' Save it empty to clear the saved address.'}
           </p>
           <div className="flex gap-2">
             <Input aria-label="Public URL" className="h-8 text-xs" value={urlDraft} placeholder="https://ts6.example.com"
               onChange={(e) => setEditingUrl(e.target.value)} />
-            <Button type="button" size="sm" className="h-8 text-xs" disabled={savePublicUrl.isPending || !urlDraft.trim()} onClick={handleSaveUrl}>Save</Button>
+            <Button type="button" size="sm" className="h-8 text-xs" disabled={savePublicUrl.isPending || (!urlDraft.trim() && data.publicUrlSource !== 'setting')} onClick={handleSaveUrl}>Save</Button>
             {publicUrl && <Button type="button" size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setEditingUrl(null)}>Cancel</Button>}
           </div>
           {savePublicUrl.error && <p role="alert" className="text-[10px] text-destructive">{apiErrorMessage(savePublicUrl.error, 'Could not save public URL')}</p>}
