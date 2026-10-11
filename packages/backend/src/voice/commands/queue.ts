@@ -9,6 +9,11 @@ const chatPlaylistGeneration = new Map<number, number>();
 /** Abort pending song searches when the bot's media request is replaced or stopped. */
 const chatMediaControllers = new Map<number, AbortController>();
 
+/** Observe pending media intent without cancelling it. */
+export function getChatMediaGeneration(botId: number): number {
+  return chatPlaylistGeneration.get(botId) ?? 0;
+}
+
 /** One cancellation identity spans song search, channel movement, and queue insertion. */
 export interface ChatMediaRequest {
   signal: AbortSignal;
@@ -42,7 +47,10 @@ export async function enqueueMediaItem(context: CommandContext, bot: VoiceBot, i
     bot.queue.playAt(bot.queue.length - 1);
     if (item.streamUrl) await bot.playStream(item, options);
     else await bot.play(item, options);
-    if (!isCurrent() || bot.nowPlaying !== item) return null;
+    if (!isCurrent() || bot.nowPlaying !== item) {
+      bot.queue.removeAt(bot.queue.getAll().findIndex(entry => entry === item));
+      return null;
+    }
   }
   context.saveMusicRequest(bot, item);
   return queued;

@@ -238,5 +238,71 @@ test('radio and again do not record or announce playback superseded during start
     await playback;
     assert.deepEqual(f.saved, [], `${command}: ${change}`);
     assert.deepEqual(f.replies, replies, `${command}: ${change}`);
+    assert.equal(f.bot.queue.length, 0, `${command}: ${change}`);
+  }
+});
+
+test('invalid and read-only radio commands leave pending history replay intact', async () => {
+  for (const command of ['!radio', '!radio nope', '!radio 404', '!radio 3oops', '!radio 9007199254740992', '!radio 3']) {
+    const f = fixture();
+    f.prisma.radioStation = { findMany: async () => command === '!radio 3' ? [] : [{ id: 3, name: 'Station', url: 'https://8.8.8.8/radio' }] };
+    let release!: (value: unknown) => void;
+    f.prisma.musicRequest.findFirst = () => new Promise(done => { release = done; });
+    const replay = f.command('!again');
+    await new Promise(done => setImmediate(done));
+    assert.ok(release);
+    await f.command(command);
+    release(row(1));
+    await replay;
+    assert.deepEqual(f.enqueued, ['https://8.8.8.8/media/1'], command);
+    assert.equal(f.played.length, 0, command);
+  }
+});
+
+test('radio lookup does not restart playback after stop or a newer request', async () => {
+  for (const change of ['stop', 'again']) {
+    const f = fixture();
+    let release!: (value: unknown) => void;
+    f.prisma.radioStation = { findMany: () => new Promise(done => { release = done; }) };
+    const radio = f.command('!radio 3');
+    await new Promise(done => setImmediate(done));
+    assert.ok(release);
+    if (change === 'stop') {
+      f.bot.stopAudio = () => {};
+      await f.command('!stop');
+    } else await f.command('!again');
+    const replies = [...f.replies];
+    release([{ id: 3, name: 'Station', url: 'https://8.8.8.8/radio' }]);
+    await radio;
+    assert.equal(f.played.length, 0, change);
+    assert.deepEqual(f.saved, [], change);
+    assert.deepEqual(f.replies, replies, change);
+  }
+});
+
+test('rejected startup removes only its own queue entry even with duplicate IDs and shuffle', async () => {
+  for (const shuffle of [false, true]) {
+    const f = fixture([row(1, { source: 'radio', url: 'https://8.8.8.8/radio' })]);
+    const older = { id: 'history_1', title: 'Accepted earlier', source: 'radio', filePath: '', streamUrl: 'https://8.8.8.8/older' };
+    f.bot.queue.add(older);
+    f.bot.queue.setShuffle(shuffle);
+    let release!: () => void;
+    f.bot.playStream = (item: unknown) => {
+      f.bot.nowPlaying = item;
+      return new Promise<void>(done => { release = done; });
+    };
+    const replay = f.command('!again');
+    await new Promise(done => setImmediate(done));
+    assert.ok(release);
+    const newer = { ...older, title: 'Accepted newer', streamUrl: 'https://8.8.8.8/newer' };
+    f.bot.queue.add(newer);
+    f.bot.queue.playAt(f.bot.queue.getAll().indexOf(newer));
+    f.bot.nowPlaying = newer;
+    release();
+    await replay;
+    assert.deepEqual(f.bot.queue.getAll(), [older, newer], String(shuffle));
+    assert.equal(f.bot.queue.current, newer);
+    assert.deepEqual(f.saved, []);
+    assert.deepEqual(f.replies, []);
   }
 });

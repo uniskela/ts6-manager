@@ -3,7 +3,7 @@ import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
-import { beginChatMediaRequest, invalidateChatPlaylistExpansion } from './queue.js';
+import { beginChatMediaRequest, getChatMediaGeneration, invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
 /** List configured radio stations or play a selected station in the requesting channel. */
@@ -14,10 +14,10 @@ export async function handleRadio(
   userClid: number,
   args: string,
 ): Promise<void> {
-  const request = args ? beginChatMediaRequest(botId) : undefined;
+  let generation = getChatMediaGeneration(botId);
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
-  const isCurrent = () => !request?.isCancelled() && context.voiceBotManager.getBot(botId) === bot
+  const isCurrent = () => getChatMediaGeneration(botId) === generation && context.voiceBotManager.getBot(botId) === bot
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
   // Get serverConfigId for this bot from DB
@@ -52,8 +52,8 @@ export async function handleRadio(
   }
 
   // Argument — play station by ID
-  const stationId = parseInt(args);
-  if (isNaN(stationId)) {
+  const stationId = Number(args);
+  if (!/^[1-9]\d*$/.test(args) || !Number.isSafeInteger(stationId)) {
     context.reply(bot, userClid, 'Usage: !radio <id> — Use !radio to list stations.');
     return;
   }
@@ -64,6 +64,8 @@ export async function handleRadio(
     return;
   }
 
+  beginChatMediaRequest(botId);
+  generation = getChatMediaGeneration(botId);
   await context.joinChannelForCommand(botId, bot, userClid);
   if (!isCurrent()) return;
 

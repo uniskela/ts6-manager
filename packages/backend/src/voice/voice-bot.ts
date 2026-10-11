@@ -1257,7 +1257,10 @@ export class VoiceBot extends EventEmitter {
       this.startAutoStopTimer();
     } catch (err) {
       // A failed start must not leave ICY polling running for a dead stream.
-      if (owner !== this.playbackOwner) return replaced;
+      if (owner !== this.playbackOwner) {
+        console.warn('[VoiceBot %s] Discarding failed stale stream startup', this.config.id);
+        return replaced;
+      }
       this.stopIcyPolling();
       this._isStreaming = false;
       this.streamKill = null;

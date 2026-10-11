@@ -39,8 +39,13 @@ describe('stale radio startup', () => {
       b.pipeline.toPcmStream = () => new Promise((done, fail) => { resolve = done; reject = fail; });
       const startup = bot.playStream({ id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/radio' });
       assert.ok(resolve);
-      bot.clearPlayback();
-      if (newer) fakeMusic(bot);
+      const startupToken = bot.playbackToken;
+      if (newer) {
+        b.ensurePlayableFile = async () => '/newer.opus';
+        b.startFileStream = async () => true;
+        await bot.play({ id: 'newer', title: 'Newer track', source: 'local', filePath: '/newer.opus' });
+      } else bot.clearPlayback();
+      assert.notEqual(bot.playbackToken, startupToken);
       const token = bot.playbackToken;
       const current = bot.nowPlaying;
       if (outcome === 'opened') resolve({ kill: () => { killed++; } });
