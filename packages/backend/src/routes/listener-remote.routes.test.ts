@@ -227,6 +227,18 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(f.queue.upcomingCount, 500);
   }));
 
+  it('lets only one of several simultaneous requests take the last free place', async () => using(async f => {
+    const { session } = await f.exchange();
+    const track = (n: number): QueueItem => ({ id: `waiting-${n}`, title: `Track ${n}`, filePath: `/music/${n}.mp3`, source: 'local' });
+    f.queue.addMany(Array.from({ length: 499 }, (_, n) => track(n)));
+    f.queue.playAt(0);
+    assert.equal(f.queue.upcomingCount, 499);
+    const responses = await Promise.all(Array.from({ length: 8 }, () => f.request('/queue', { session, body: { songId: 11 } })));
+    const statuses = responses.map(response => response.status).sort((a, b) => a - b);
+    assert.deepEqual(statuses, [200, 429, 429, 429, 429, 429, 429, 429]);
+    assert.equal(f.queue.upcomingCount, 500);
+  }));
+
   it('still caps the whole queue so played tracks cannot accumulate without bound', async () => using(async f => {
     const { session } = await f.exchange();
     const track = (n: number): QueueItem => ({ id: `old-${n}`, title: `Track ${n}`, filePath: `/music/${n}.mp3`, source: 'local' });
