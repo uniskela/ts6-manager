@@ -75,6 +75,18 @@ async function box(page: Page, testId: string) {
   return b!;
 }
 
+async function expectColumns(page: Page, first: string, second: string, sideBySide: boolean) {
+  const a = await box(page, first);
+  const b = await box(page, second);
+  if (sideBySide) {
+    expect(b.x).toBeGreaterThan(a.x + a.width - 1);
+    expect(Math.abs(a.y - b.y)).toBeLessThan(2);
+  } else {
+    expect(Math.abs(a.x - b.x)).toBeLessThan(2);
+    expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
+  }
+}
+
 for (const size of widths) {
   const wide = size.width >= 1280;
 
@@ -83,15 +95,7 @@ for (const size of widths) {
     await signInAsAdmin(page, request);
     await page.goto('/settings?tab=appearance');
     await expect(page.getByRole('button', { name: 'Dark base theme' })).toBeVisible();
-    const a = await box(page, 'appearance-column-theme');
-    const b = await box(page, 'appearance-column-background');
-    if (wide) {
-      expect(b.x).toBeGreaterThan(a.x + a.width - 1);
-      expect(Math.abs(a.y - b.y)).toBeLessThan(2);
-    } else {
-      expect(Math.abs(a.x - b.x)).toBeLessThan(2);
-      expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
-    }
+    await expectColumns(page, 'appearance-column-theme', 'appearance-column-background', wide);
     await noHorizontalScroll(page);
     await shot(page, 'appearance', size.width);
   });
@@ -103,15 +107,7 @@ for (const size of widths) {
     await page.goto('/settings?tab=youtube');
     await expect(page.getByText('Download & Stream Limits')).toBeVisible();
     await expect(page.getByRole('button', { name: 'Save Limits' })).toBeVisible();
-    const a = await box(page, 'youtube-column-sources');
-    const b = await box(page, 'youtube-column-limits');
-    if (wide) {
-      expect(b.x).toBeGreaterThan(a.x + a.width - 1);
-      expect(Math.abs(a.y - b.y)).toBeLessThan(2);
-    } else {
-      expect(Math.abs(a.x - b.x)).toBeLessThan(2);
-      expect(b.y).toBeGreaterThanOrEqual(a.y + a.height - 1);
-    }
+    await expectColumns(page, 'youtube-column-sources', 'youtube-column-limits', wide);
     await noHorizontalScroll(page);
     await shot(page, 'youtube', size.width);
   });
