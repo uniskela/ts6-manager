@@ -55,21 +55,21 @@ The startup script stops on the first error (`set -e`). If the schema step fails
 
 #### Reverse proxy: set `TRUST_PROXY`
 
-**Breaking change for some reverse-proxy setups** (an all-in-one install behind an outer proxy, a backend run outside the stock images, or a proxy with a public address). Before 1.11.0 the backend always trusted "one hop" in front of it. That setting is gone. The backend now trusts only the proxies named in `TRUST_PROXY`, and the bundled images set a default for it:
+**Breaking change for some reverse-proxy setups** (an all-in-one install behind an outer proxy, or a backend run outside the stock images). Before 1.11.0 the backend always trusted "one hop" in front of it. That setting is gone. The backend now trusts only the proxies named in `TRUST_PROXY`, and the bundled images set a default for it:
 
 - the **all-in-one** image trusts `loopback`, which is its own bundled nginx;
-- the **split** backend image trusts `uniquelocal`, the private address ranges (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 and fc00::/7), which covers the frontend container on the compose network; and
+- the **split** backend image uses `private-peer`: it trusts one hop, and only when the peer connecting to the backend has a private address (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 or fc00::/7). That is the frontend container on the compose network, and it is the same single hop 1.10.2 trusted; and
 - a backend run **outside these images** (plain `node`, a development setup) trusts nothing.
 
-**Stock all-in-one and split Docker installs need no action.** Set `TRUST_PROXY` yourself only if:
+**Stock all-in-one and split Docker installs with no other proxy in front need no action.** Set `TRUST_PROXY` yourself only if:
 
 - you run the all-in-one image behind an outer reverse proxy: use `TRUST_PROXY=loopback,<outer proxy IP or CIDR>`;
-- you run the backend outside the stock images behind a proxy; or
-- your proxy has a public address (the split default does not cover it).
+- you run the split images behind an outer reverse proxy and want a limit per visitor: use `TRUST_PROXY=<frontend container IP or compose subnet>,<outer proxy IP or CIDR>`. Left unset, visitors share the outer proxy's limit, as they did in 1.10.2; or
+- you run the backend outside the stock images behind a proxy.
 
 Without the right value, the backend sees every visitor as the proxy's address, so the login rate limit (15 attempts per 15 minutes) and the listener remote limits are shared by everyone: one person mistyping a password can lock everyone else out of signing in for a while. The backend logs the setting it uses at startup (`Trusted proxies: …`) and warns once if an `X-Forwarded-For` header arrives while nothing is trusted.
 
-For the split image, anything on the same private network that connects straight to the backend can choose its own rate-limit bucket, so keep port 3001 unpublished. A value you set always replaces the image default; `none` trusts nothing, and `true` or a number of hops is refused at startup. Recommended values and the accepted syntax are in [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits), and the variable is listed in [Environment variables](environment-variables.md).
+For the split image, a peer with a private address that connects straight to the backend is taken for the proxy and can choose its own rate-limit bucket. The stock `docker-compose.yml` publishes port 3001; remove that mapping or bind it to `127.0.0.1` if nothing outside Docker needs the API directly. A value you set always replaces the image default; `none` trusts nothing, and `true` or a number of hops is refused at startup. Recommended values and the accepted syntax are in [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits), and the variable is listed in [Environment variables](environment-variables.md).
 
 #### Defaults after upgrading
 

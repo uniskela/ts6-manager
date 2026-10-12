@@ -40,7 +40,7 @@ import { auditRoutes } from './routes/audit.routes.js';
 import { activityJournalRoutes } from './routes/activity-journal.routes.js';
 import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard } from './routes/listener-remote.routes.js';
 
-import { forwardedHeaderWarning } from './trust-proxy.js';
+import { expressTrustProxy, forwardedHeaderWarning } from './trust-proxy.js';
 import { requireServerAccess } from './middleware/server-access.js';
 import { createRequire } from 'module';
 
@@ -51,7 +51,7 @@ export function createApp(): Express {
   const app = express();
 
   // Explicit addresses/subnets prevent direct clients spoofing rate-limit IPs.
-  app.set('trust proxy', config.trustProxy);
+  app.set('trust proxy', expressTrustProxy(config.trustProxy));
   app.use(forwardedHeaderWarning(config.trustProxy));
 
   app.use(helmet());

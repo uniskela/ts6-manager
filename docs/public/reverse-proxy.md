@@ -92,16 +92,25 @@ in the source repository.
 | Deployment | Default |
 |---|---|
 | All-in-one image | `loopback` (its bundled nginx) |
-| Split backend image | `uniquelocal` (10/8, 172.16/12, 192.168/16, fc00::/7) |
+| Split backend image | `private-peer`: one hop, and only when the peer connecting to the backend has a private address (10/8, 172.16/12, 192.168/16, fc00::/7) |
 | Backend run outside these images | nothing trusted |
 
-Stock installs need no action. Set `TRUST_PROXY` to **only** the IPs or subnets of your actual reverse proxies when:
+With `private-peer` the backend takes the client address from the bundled frontend proxy, which records the address it saw itself. Whatever a client writes into `X-Forwarded-For` is ignored, whether the client has a public or a private address.
+
+Stock installs with no other proxy in front need no action. Set `TRUST_PROXY` to **only** the IPs or subnets of your actual reverse proxies when:
 
 - the all-in-one image sits behind an outer proxy: `TRUST_PROXY=loopback,<outer proxy IP/CIDR>`;
-- the split image has an outer proxy on a public address, or you want to narrow the private-range default to the frontend container's address or the compose subnet (advisable when untrusted containers share the network). An outer proxy on a private address is already covered; and
+- the split image sits behind an outer proxy, on a public or a private address: name both hops, `TRUST_PROXY=<frontend container IP or compose subnet>,<outer proxy IP/CIDR>`. Without this the backend sees every visitor as the outer proxy and they share one limit. For a proxy on the Docker host that reaches the published frontend port, the address to name is the one the frontend container sees, usually the compose network's gateway; and
 - you run the backend yourself, outside the images.
 
-Accepted values are comma-separated IPs or CIDRs and the Express names `loopback`, `linklocal` and `uniquelocal`. `none` (also `false`, `off`, `no`) trusts nothing. `true` and numeric hop counts are rejected at startup, because they let a direct caller pick its own rate-limit address. An empty value counts as unset. The backend logs `Trusted proxies: …` at startup and warns once if `X-Forwarded-For` arrives while nothing is trusted. Pass the value through your backend service's environment. Keep port 3001 unpublished: on the split image, a peer on the private network that reaches the backend directly can choose its own rate-limit bucket.
+`uniquelocal` trusts every private address at every hop. It covers a private outer proxy in one word, but it also lets any client with a private address (a LAN user, or everyone when Docker hides the source address) choose its own rate-limit address by sending `X-Forwarded-For`. Use it only when the outer proxy overwrites that header and clients cannot reach the frontend or backend ports directly.
+
+Accepted values are comma-separated IPs or CIDRs and the Express names `loopback`, `linklocal` and `uniquelocal`, or `private-peer` on its own. `none` (also `false`, `off`, `no`) trusts nothing. `true` and numeric hop counts are rejected at startup, because they let a direct caller pick its own rate-limit address. An empty value counts as unset. The backend logs `Trusted proxies: …` at startup and warns once if `X-Forwarded-For` arrives while nothing is trusted. Pass the value through your backend service's environment.
+
+Two limits remain on the split image:
+
+- **Direct access to the backend port.** A peer with a private address that connects straight to port 3001 is taken for the proxy, so it can still choose its own rate-limit address. The stock `docker-compose.yml` publishes `3001:3001` on every host interface. If nothing outside Docker needs the API directly, remove that mapping or bind it to `127.0.0.1`; the web interface only needs the frontend port.
+- **Hidden source addresses.** Where Docker replaces the client's address with its own (rootless Docker, Docker Desktop, some IPv6 and userland-proxy setups), every visitor reaches the frontend from the same private address and shares one limit. Nobody can forge their way out of it, but one person's failed sign-ins count against everyone.
 
 At the outermost proxy, **overwrite** `X-Forwarded-For` with `$remote_addr` and
 `X-Forwarded-Proto` with `$scheme`. Inner trusted proxies may append their

@@ -129,7 +129,7 @@ Check:
 - the public frontend origin matches `FRONTEND_URL`;
 - WebSocket upgrades are supported by the reverse proxy (see [Reverse proxy](reverse-proxy.md) for a full NGINX example); and
 - the public domain routes to the frontend/nginx service, not directly to the internal sidecar; and
-- `TRUST_PROXY` covers your proxy if it is an outer proxy or has a public address (the startup log shows `Trusted proxies: …`); otherwise every user shares one sign-in rate limit (see [Upgrading to 1.11.0](upgrading.md#reverse-proxy-set-trust_proxy)).
+- `TRUST_PROXY` names your proxy if you run an outer proxy in front of the stock images (the startup log shows `Trusted proxies: …`); otherwise every user shares one sign-in rate limit (see [Upgrading to 1.11.0](upgrading.md#reverse-proxy-set-trust_proxy)).
 
 ## Browser preview stuck on “Connecting to stream…”
 
