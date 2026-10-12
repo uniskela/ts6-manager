@@ -7,6 +7,7 @@
 | `JWT_SECRET` | — | Required production JWT signing secret |
 | `ENCRYPTION_KEY` | — | Required production key for encrypted stored credentials |
 | `PORT` | `3001` | Backend HTTP port |
+| `BACKEND_BIND_IP` | `127.0.0.1` (compose) | Host address the split stack's compose file publishes backend port 3001 on (compose only; not a backend env). The web interface does not need it. Set a LAN address or `0.0.0.0` only if another machine calls the API directly; see [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits). |
 | `DATABASE_URL` | `file:./data/ts6webui.db` | Prisma SQLite database path |
 | `MUSIC_REQUEST_HISTORY_LIMIT` | `100` | Recent unique requests retained per bot and connection (positive integer, capped at 1,000). Oldest rows are removed when a request is recorded; legacy server-wide rows are trimmed when history is read |
 | `JWT_ACCESS_EXPIRY` | `15m` | Access-token lifetime |

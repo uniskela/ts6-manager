@@ -109,7 +109,7 @@ Accepted values are comma-separated IPs or CIDRs and the Express names `loopback
 
 Two limits remain on the split image:
 
-- **Direct access to the backend port.** A peer with a private address that connects straight to port 3001 is taken for the proxy, so it can still choose its own rate-limit address. The stock `docker-compose.yml` publishes `3001:3001` on every host interface. If nothing outside Docker needs the API directly, remove that mapping or bind it to `127.0.0.1`; the web interface only needs the frontend port.
+- **Direct access to the backend port.** A peer with a private address that connects straight to port 3001 is taken for the proxy, so it can still choose its own rate-limit address. The stock `docker-compose.yml` publishes port 3001 on the host's loopback address only (`BACKEND_BIND_IP`, default `127.0.0.1`), so other machines cannot do this; other containers on the same Docker network still can. A compose file from 1.10.x or earlier publishes `3001:3001` on every host interface: change it to `127.0.0.1:3001:3001` or remove the mapping unless something outside the host needs the API directly. The web interface only needs the frontend port.
 - **Hidden source addresses.** Where Docker replaces the client's address with its own (rootless Docker, Docker Desktop, some IPv6 and userland-proxy setups), every visitor reaches the frontend from the same private address and shares one limit. Nobody can forge their way out of it, but one person's failed sign-ins count against everyone.
 
 At the outermost proxy, **overwrite** `X-Forwarded-For` with `$remote_addr` and

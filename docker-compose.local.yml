@@ -22,8 +22,11 @@ services:
     volumes:
       - backend-data:/app/packages/backend/data
       - music-data:/data/music
+    # The web UI reaches the backend through the frontend on the Docker network, so the
+    # API is published on the host's loopback only. Set BACKEND_BIND_IP (for example
+    # 0.0.0.0 or a LAN address) only if something outside this host calls the API directly.
     ports:
-      - "3001:3001"
+      - "${BACKEND_BIND_IP:-127.0.0.1}:3001:3001"
     networks:
       - ts6-network
 
