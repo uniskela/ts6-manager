@@ -112,3 +112,24 @@ export function activeBotsLabel(active: BotMediaOverview[]): string | null {
   if (active.length > 1) return `${active.length} active bots`;
   return hubHeadline(active[0]);
 }
+
+export interface AutomationBadge {
+  label: string;
+  /** Longer explanation for the tooltip and screen readers. */
+  title: string;
+}
+
+/** Badges for a bot's Auto-DJ and 24/7 settings; empty when both are off. */
+export function automationBadges(bot: BotMediaOverview): AutomationBadge[] {
+  const automation = bot.automation;
+  if (!automation) return [];
+  const badges: AutomationBadge[] = [];
+  if (automation.autoDj) {
+    const source = automation.sourceKind === 'radio' ? 'a radio station' : 'a saved playlist';
+    badges.push(automation.playing
+      ? { label: 'Auto-DJ playing', title: `Auto-DJ is playing ${source}. A request replaces it at once.` }
+      : { label: 'Auto-DJ', title: `Auto-DJ is on: it plays ${source} when nothing is queued.` });
+  }
+  if (automation.stayInChannel) badges.push({ label: '24/7', title: '24/7 is on: the bot stays in its channel.' });
+  return badges;
+}

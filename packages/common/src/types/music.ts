@@ -24,6 +24,28 @@ export const DEFAULT_BOT_AUTOMATION_SETTINGS: BotAutomationSettings = {
   stayInChannel: false,
 };
 
+/** What a bot's Auto-DJ and 24/7 settings mean right now, for status badges and `!help`. */
+export interface BotAutomationOverview {
+  /** Auto-DJ is on and has a source to play. */
+  autoDj: boolean;
+  /** Where Auto-DJ plays from, when it is on. */
+  sourceKind: 'playlist' | 'radio' | null;
+  /** The bot keeps its channel (24/7). */
+  stayInChannel: boolean;
+  /** Auto-DJ, not a request, is what is playing now. */
+  playing: boolean;
+}
+
+/** Null when the bot has neither Auto-DJ nor 24/7 on, so callers show nothing. */
+export function summarizeBotAutomation(
+  settings: BotAutomationSettings | null | undefined, playing = false,
+): BotAutomationOverview | null {
+  const autoDj = !!settings?.enabled && !!settings.source;
+  const stayInChannel = !!settings?.stayInChannel;
+  if (!autoDj && !stayInChannel) return null;
+  return { autoDj, sourceKind: autoDj ? settings!.source!.kind : null, stayInChannel, playing: autoDj && playing };
+}
+
 export interface MusicBotSummary {
   id: number;
   name: string;
@@ -301,6 +323,8 @@ export interface BotMediaOverview {
   video: Omit<VideoStreamStatus, 'source' | 'viewers' | 'sidecar'> | null;
   lastMusicStop: MediaStopInfo | null;
   lastVideoStop: MediaStopInfo | null;
+  /** Auto-DJ and 24/7 status; null or absent when both are off. */
+  automation?: BotAutomationOverview | null;
 }
 
 export interface VideoStreamPreset {

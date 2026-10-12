@@ -12,7 +12,9 @@ import type { AutomationController } from './automation-controller.js';
 import { fetchIcyMetadata } from './audio/icy-metadata.js';
 import { downloadYouTube, resolveYouTubeAudioStream, isYouTubeHostUrl } from './audio/youtube.js';
 import { StreamSignaling, type ActiveStream, type SignalingMessage } from './streaming/stream-signaling.js';
+import { summarizeBotAutomation } from '@ts6/common';
 import type {
+  BotAutomationOverview,
   BotMediaOverview,
   MediaSessionInfo,
   MediaStopInfo,
@@ -1806,7 +1808,13 @@ export class VoiceBot extends EventEmitter {
       video: video.streaming ? videoSummary : null,
       lastMusicStop: this._lastMusicStop,
       lastVideoStop: this._lastVideoStop,
+      automation: this.automationOverview(),
     };
+  }
+
+  /** Auto-DJ and 24/7 status for the Bot hub and `!help`; null when both are off. */
+  automationOverview(): BotAutomationOverview | null {
+    return this.automation ? summarizeBotAutomation(this.automation.configuration, this.automation.active) : null;
   }
 
   /**

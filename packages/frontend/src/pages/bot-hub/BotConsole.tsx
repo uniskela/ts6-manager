@@ -8,6 +8,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AlertTriangle, Bot } from 'lucide-react';
 import type { BotMediaOverview, PlaybackState } from '@ts6/common';
 import { NowPlaying } from '@/components/media/NowPlaying';
+import { AutomationBadges } from '@/components/media/AutomationBadges';
 import { StreamSourceSwitch } from '@/components/video/StreamSourceSwitch';
 import { StreamViewers } from '@/components/video/StreamViewers';
 import { EmptyState } from '@/components/shared/EmptyState';
@@ -121,7 +122,12 @@ export default function BotConsole() {
       <PageHeader
         title={bot.botName}
         leading={<BotAvatar botId={bot.botId} name={bot.botName} mode={bot.avatarMode} md5={bot.avatarMd5} />}
-        badge={<Badge variant={connection.variant} aria-live="polite">{connection.label}</Badge>}
+        badge={(
+          <span className="flex flex-wrap items-center gap-1">
+            <Badge variant={connection.variant} aria-live="polite">{connection.label}</Badge>
+            <AutomationBadges bot={bot} />
+          </span>
+        )}
         description={`${bot.serverName ?? `Server ${bot.serverConfigId}`}${bot.channelName ? ` · #${bot.channelName}` : ''}`}
         actions={(
           <BotSettingsMenu botId={bot.botId} botName={bot.botName} status={bot.status} size="default"

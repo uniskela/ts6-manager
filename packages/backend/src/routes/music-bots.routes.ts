@@ -21,6 +21,7 @@ import {
 } from '../voice/playlist-expansion.js';
 import { invalidateChatPlaylistExpansion } from '../voice/commands/queue.js';
 import type { QueueItem } from '../voice/playlist/queue.js';
+import { summarizeBotAutomation } from '@ts6/common';
 import type { BotMediaOverview } from '@ts6/common';
 import { parseAutomationSettings, readAutomationSettings } from '../voice/automation-settings.js';
 
@@ -227,7 +228,7 @@ musicBotRoutes.get('/media', async (req: Request, res: Response, next) => {
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const dbBots = await prisma.musicBot.findMany({
-      select: { id: true, name: true, serverConfigId: true, avatarMode: true, avatarMd5: true, serverConfig: { select: { name: true } } },
+      select: { id: true, name: true, serverConfigId: true, avatarMode: true, avatarMd5: true, automationSettings: true, serverConfig: { select: { name: true } } },
       orderBy: { id: 'asc' },
     });
     const overview: BotMediaOverview[] = dbBots.map((b: any) => {
@@ -244,6 +245,7 @@ musicBotRoutes.get('/media', async (req: Request, res: Response, next) => {
         return {
           ...base, botId: b.id, status: 'stopped', channelId: null, channelName: null, session: null,
           music: null, video: null, lastMusicStop: null, lastVideoStop: null,
+          automation: summarizeBotAutomation(readAutomationSettings(b.automationSettings)),
         };
       }
       return { ...base, ...bot.mediaOverview() };

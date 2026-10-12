@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { DEFAULT_BOT_AUTOMATION_SETTINGS, summarizeBotAutomation } from '@ts6/common';
 import type { BotMediaOverview } from '@ts6/common';
-import { activeBots, activeBotsLabel, hubFacts, hubHeadline, hubLastStop, hubTone, queuePosition, videoDetails } from '../../src/lib/bot-hub';
+import { automationBadges, activeBots, activeBotsLabel, hubFacts, hubHeadline, hubLastStop, hubTone, queuePosition, videoDetails } from '../../src/lib/bot-hub';
 
 const base: BotMediaOverview = {
   botId: 1, botName: 'Aurora', serverConfigId: 1, serverName: 'Ops', status: 'connected',
@@ -85,5 +86,33 @@ describe('active bots pill', () => {
     assert.equal(activeBotsLabel([]), null);
     assert.equal(activeBotsLabel([music(2, 'playing', 'Two')]), 'Two');
     assert.equal(activeBotsLabel([music(2, 'playing', 'Two'), music(3, 'playing', 'Three')]), '2 active bots');
+  });
+});
+
+describe('Auto-DJ and 24/7 badges', () => {
+  const on = { ...DEFAULT_BOT_AUTOMATION_SETTINGS, enabled: true, source: { kind: 'playlist' as const, id: 3 } };
+
+  it('summarizes settings and hides bots with neither feature on', () => {
+    assert.equal(summarizeBotAutomation(null), null);
+    assert.equal(summarizeBotAutomation(DEFAULT_BOT_AUTOMATION_SETTINGS), null);
+    // Enabled without a source cannot play anything, so it is not shown as on.
+    assert.equal(summarizeBotAutomation({ ...DEFAULT_BOT_AUTOMATION_SETTINGS, enabled: true }), null);
+    assert.deepEqual(summarizeBotAutomation(on), { autoDj: true, sourceKind: 'playlist', stayInChannel: false, playing: false });
+    assert.deepEqual(
+      summarizeBotAutomation({ ...DEFAULT_BOT_AUTOMATION_SETTINGS, stayInChannel: true }, true),
+      { autoDj: false, sourceKind: null, stayInChannel: true, playing: false },
+    );
+    assert.equal(summarizeBotAutomation({ ...on, source: { kind: 'radio', id: 1 } }, true)?.playing, true);
+  });
+
+  it('labels each state for the card and console', () => {
+    assert.deepEqual(automationBadges(base), []);
+    assert.deepEqual(automationBadges({ ...base, automation: null }), []);
+    const idle = automationBadges({ ...base, automation: summarizeBotAutomation({ ...on, stayInChannel: true }) });
+    assert.deepEqual(idle.map((badge) => badge.label), ['Auto-DJ', '24/7']);
+    assert.match(idle[0].title, /saved playlist when nothing is queued/);
+    const playing = automationBadges({ ...base, automation: summarizeBotAutomation({ ...on, source: { kind: 'radio', id: 1 } }, true) });
+    assert.deepEqual(playing.map((badge) => badge.label), ['Auto-DJ playing']);
+    assert.match(playing[0].title, /radio station/);
   });
 });

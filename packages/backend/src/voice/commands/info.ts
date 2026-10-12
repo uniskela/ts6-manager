@@ -1,3 +1,4 @@
+import { summarizeBotAutomation } from '@ts6/common';
 import type { VoiceBot } from '../voice-bot.js';
 import { fetchLyrics, chunkLyrics, lyricsInputFromTrack } from '../lyrics.js';
 import { BUILTIN_COMMAND_HELP, suggestBuiltinCommand } from '../chat-commands.js';
@@ -120,7 +121,9 @@ export async function handleHelp(
       });
     }
 
-    await context.reply(bot, userClid, formatHelpMessage(BUILTIN_COMMAND_HELP, custom));
+    await context.reply(bot, userClid, formatHelpMessage(
+      BUILTIN_COMMAND_HELP, custom, summarizeBotAutomation(bot.automation?.configuration, bot.automation?.active),
+    ));
     completeHelpAction(ownedKey, true);
   } catch (err) {
     completeHelpAction(ownedKey, false);

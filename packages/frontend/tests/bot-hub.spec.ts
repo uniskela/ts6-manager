@@ -331,3 +331,22 @@ test('IPTV Stream on… opens the chosen bot\'s console with the channel selecte
   expect(lookups.some((q) => new URLSearchParams(q).get('channelId') === '7')).toBe(true);
   expect(streams).toHaveLength(0);
 });
+
+test('a bot with Auto-DJ and 24/7 on shows both on its card and console header', async ({ page, request }) => {
+  await signIn(page, request);
+  const withAutomation = (now: number) => media(now).map((bot) => (bot.botId === 1
+    ? { ...bot, automation: { autoDj: true, sourceKind: 'playlist', stayInChannel: true, playing: true } }
+    : bot));
+  await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: withAutomation(Date.now()) }));
+  await page.route('**/api/music-bots/*/state', (route) => route.fulfill({ json: { status: 'playing', currentIndex: -1, queue: [], position: 0, duration: 0, volume: 50, shuffle: false, repeat: 'off' } }));
+  await page.goto('/bot-hub');
+
+  await expect(page.getByText('Auto-DJ playing', { exact: true })).toHaveCount(1);
+  await expect(page.getByText('24/7', { exact: true })).toHaveCount(1);
+  await expect(page.getByLabel('Auto-DJ is playing a saved playlist. A request replaces it at once.')).toBeVisible();
+
+  await page.getByRole('link', { name: 'Open console for Aurora Radio' }).click();
+  await expect(page).toHaveURL('/bot-hub/1');
+  await expect(page.getByText('Auto-DJ playing', { exact: true })).toBeVisible();
+  await expect(page.getByText('24/7', { exact: true })).toBeVisible();
+});

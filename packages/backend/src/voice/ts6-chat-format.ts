@@ -4,6 +4,8 @@
  * Interactive pause/skip buttons are not available server-side — use command hints.
  */
 
+import type { BotAutomationOverview } from '@ts6/common';
+
 export interface TrackLine {
   title: string;
   artist?: string;
@@ -108,6 +110,7 @@ export function formatNowPlayingMessage(input: NowPlayingFormatInput): string {
 export function formatHelpMessage(
   builtin: HelpCommandLine[],
   custom: CustomHelpLine[],
+  automation?: BotAutomationOverview | null,
 ): string {
   const lines: string[] = ['## Music bot commands', '', '### Built-in'];
   for (const entry of builtin) {
@@ -115,6 +118,19 @@ export function formatHelpMessage(
   }
   lines.push('');
   lines.push('_Several bots in one channel? Add a bot\'s name: **!next Bot 2** or **!vol 30 @Bot 2**._');
+
+  // Auto-DJ and 24/7 have no chat command, so say here when the answering bot has them on.
+  if (automation?.autoDj || automation?.stayInChannel) {
+    lines.push('');
+    lines.push('### This bot');
+    if (automation.autoDj) {
+      const source = automation.sourceKind === 'radio' ? 'a radio station' : 'a saved playlist';
+      lines.push(`- **Auto-DJ is on** — when nothing is queued it plays ${source}. Your requests always play first.`);
+    }
+    if (automation.stayInChannel) {
+      lines.push('- **24/7 is on** — the bot stays in its channel.');
+    }
+  }
 
   if (custom.length > 0) {
     lines.push('');
