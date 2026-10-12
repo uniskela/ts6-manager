@@ -164,7 +164,7 @@ function AppearanceTab() {
   const landedViaSafeUi = searchParams.get('safe-ui') === '1' || safeUi;
 
   return (
-    <div className="max-w-2xl space-y-4">
+    <div className="min-w-0 space-y-4">
       {safeUi && (
         <div
           role="status"
@@ -195,6 +195,8 @@ function AppearanceTab() {
           </p>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="grid min-w-0 gap-6 xl:grid-cols-2 xl:gap-x-10" data-testid="appearance-columns">
+          <div className="min-w-0 space-y-6" data-testid="appearance-column-theme">
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Base theme</legend>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -245,6 +247,42 @@ function AppearanceTab() {
             </div>
           </fieldset>
 
+
+          <fieldset className="space-y-2">
+            <legend className="text-sm font-medium">Motion</legend>
+            <p className="text-xs text-muted-foreground">
+              Decorative motion is never required to understand application state.
+            </p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {BACKGROUND_MOTIONS.map(value => {
+                const selected = value === backgroundMotion;
+                const option = MOTION_LABELS[value];
+                const showResolvedHint = value === 'system';
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-label={`${option.label} motion`}
+                    aria-pressed={selected}
+                    onClick={() => setBackgroundMotion(value)}
+                    className={`min-w-0 rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
+                  >
+                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
+                      {option.label}
+                      {selected && <Check className="h-4 w-4 text-primary" aria-hidden="true" />}
+                    </span>
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      {option.description}
+                      {showResolvedHint ? ` — currently ${resolvedMotion}` : ''}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </fieldset>
+          </div>
+
+          <div className="min-w-0 space-y-6" data-testid="appearance-column-background">
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Background</legend>
             <p className="text-xs text-muted-foreground">
@@ -307,38 +345,8 @@ function AppearanceTab() {
             </fieldset>
           )}
 
-          <fieldset className="space-y-2">
-            <legend className="text-sm font-medium">Motion</legend>
-            <p className="text-xs text-muted-foreground">
-              Decorative motion is never required to understand application state.
-            </p>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-              {BACKGROUND_MOTIONS.map(value => {
-                const selected = value === backgroundMotion;
-                const option = MOTION_LABELS[value];
-                const showResolvedHint = value === 'system';
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    aria-label={`${option.label} motion`}
-                    aria-pressed={selected}
-                    onClick={() => setBackgroundMotion(value)}
-                    className={`min-w-0 rounded-md border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${selected ? 'border-primary bg-primary/10' : 'border-border bg-card hover:bg-accent'}`}
-                  >
-                    <span className="flex items-center justify-between gap-2 text-sm font-medium">
-                      {option.label}
-                      {selected && <Check className="h-4 w-4 text-primary" aria-hidden="true" />}
-                    </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {option.description}
-                      {showResolvedHint ? ` — currently ${resolvedMotion}` : ''}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </fieldset>
+          </div>
+          </div>
 
           <div className="space-y-2">
             <p className="text-sm font-medium">Semantic colours</p>
@@ -959,7 +967,8 @@ function YouTubeTab() {
   };
 
   return (
-    <div className="max-w-lg space-y-4">
+    <div className="grid min-w-0 items-start gap-4 xl:grid-cols-2" data-testid="youtube-columns">
+      <div className="min-w-0 space-y-4" data-testid="youtube-column-sources">
       <RuntimeMediaDiagnostics focus={['yt-dlp', 'ffmpeg', 'ffprobe']} />
       <Card>
         <CardHeader>
@@ -1047,8 +1056,11 @@ function YouTubeTab() {
           )}
         </CardContent>
       </Card>
+      </div>
 
-      <LimitsCard />
+      <div className="min-w-0" data-testid="youtube-column-limits">
+        <LimitsCard />
+      </div>
     </div>
   );
 }
