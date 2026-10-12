@@ -1,4 +1,4 @@
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
 
 const token = 't'.repeat(43);
 const session = 's'.repeat(43);
@@ -162,4 +162,92 @@ test('shows an empty remote, a load error, and the link prompt', async ({ page }
   await expect(page.getByText('Nothing is playing.')).toBeVisible();
   await expect(page.getByText('Nothing is queued.')).toBeVisible();
   await expect(page.getByText('No songs found.')).toBeVisible();
+});
+
+async function openRemote(page: Page, state: unknown = playing, extra?: (page: Page) => Promise<void>) {
+  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await page.route(remote('/state'), (route) => fulfill(route, state));
+  await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, {
+    songs: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}`, artist: 'Artist', duration: 100 })),
+    page: 1,
+    pageSize: 25,
+  }));
+  await extra?.(page);
+  await page.goto(`/remote#token=${token}`);
+  await expect(page.getByText(title)).toBeVisible();
+}
+
+async function box(locator: Locator) {
+  const result = await locator.boundingBox();
+  if (!result) throw new Error('element has no bounding box');
+  return result;
+}
+
+test('desktop puts playback and the add controls side by side', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openRemote(page);
+  const now = await box(page.getByRole('heading', { name: 'Now playing' }));
+  const queue = await box(page.getByRole('heading', { name: /Up next/ }));
+  const urlBox = await box(page.getByLabel('Media URL'));
+  const searchBox = await box(page.getByLabel('Search songs'));
+  expect(urlBox.x).toBeGreaterThan(now.x + 300);
+  expect(Math.abs(urlBox.x - searchBox.x)).toBeLessThan(2);
+  expect(urlBox.y + urlBox.height).toBeLessThan(900);
+  expect(urlBox.y).toBeLessThan(searchBox.y);
+  expect(queue.y).toBeGreaterThan(now.y);
+  await noHorizontalOverflow(page);
+});
+
+test('phone keeps one column with the link control above the library', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRemote(page);
+  const boxes = [
+    await box(page.getByRole('heading', { name: 'Now playing' })),
+    await box(page.getByRole('heading', { name: /Up next/ })),
+    await box(page.getByLabel('Media URL')),
+    await box(page.getByLabel('Search songs')),
+  ];
+  for (let i = 1; i < boxes.length; i += 1) expect(boxes[i].y).toBeGreaterThan(boxes[i - 1].y);
+  expect(Math.max(...boxes.map((b) => b.x)) - Math.min(...boxes.map((b) => b.x))).toBeLessThan(40);
+  const add = await box(page.getByRole('button', { name: 'Add Song 1 to the queue' }));
+  expect(add.width).toBeGreaterThanOrEqual(44);
+  expect(add.height).toBeGreaterThanOrEqual(44);
+  await noHorizontalOverflow(page);
+});
+
+test('no horizontal overflow at common widths', async ({ page }) => {
+  await openRemote(page);
+  for (const width of [390, 768, 1024, 1280, 1440, 1920]) {
+    await page.setViewportSize({ width, height: 900 });
+    await noHorizontalOverflow(page);
+  }
+});
+
+test('hides the add controls when adding is denied', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await openRemote(page, { ...playing, permissions: { searchLibrary: true, addToQueue: false, requestUrl: false } });
+  await expect(page.getByLabel('Media URL')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Add .+ to the queue/ })).toHaveCount(0);
+  await expect(page.getByLabel('Search songs')).toBeVisible();
+});
+
+test('a pasted link uses the existing endpoint and reports rate limits', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const bodies: unknown[] = [];
+  let calls = 0;
+  await openRemote(page, playing, async (p) => {
+    await p.route(remote('/requests'), (route) => {
+      calls += 1;
+      bodies.push(route.request().postDataJSON());
+      if (calls === 1) return fulfill(route, { ok: true });
+      return fulfill(route, { error: 'Too many requests. Try again shortly.', code: 'rate_limited' }, 429);
+    });
+  });
+  await page.getByLabel('Media URL').fill('https://example.com/a.mp3');
+  await page.getByRole('button', { name: 'Request URL' }).click();
+  await expect(page.getByText('Added the link to the queue.')).toBeVisible();
+  await page.getByLabel('Media URL').fill('https://example.com/b.mp3');
+  await page.getByRole('button', { name: 'Request URL' }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  expect(bodies).toEqual([{ url: 'https://example.com/a.mp3' }, { url: 'https://example.com/b.mp3' }]);
 });

@@ -86,7 +86,7 @@ export default function ListenerRemote() {
   }, [generation]);
 
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-3 py-4" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col px-3 py-4 lg:max-w-6xl lg:px-6 lg:py-8" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
       {phase.kind === 'ready'
         ? <RemoteController key={phase.nonce} onEnded={(message) => setPhase({ kind: 'ended', message })} />
         : <Gate phase={phase} />}
@@ -177,11 +177,11 @@ function RemoteController({ onEnded }: { readonly onEnded: (message: string) => 
   };
 
   return (
-    <div className="space-y-4">
-      <header className="flex items-start justify-between gap-3">
+    <div className="space-y-4 lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:items-start lg:gap-x-8 lg:gap-y-6 lg:space-y-0">
+      <header className="flex items-start justify-between gap-3 lg:col-span-2">
         <div className="min-w-0">
           <p className="text-xs text-muted-foreground">Listener remote</p>
-          <h1 className="truncate text-lg font-semibold">{state?.bot.name ?? 'Listener remote'}</h1>
+          <h1 className="truncate text-lg font-semibold lg:text-2xl">{state?.bot.name ?? 'Listener remote'}</h1>
         </div>
         {state && (
           <Badge variant={state.bot.status === 'playing' ? 'default' : 'secondary'} className="shrink-0">
@@ -190,12 +190,16 @@ function RemoteController({ onEnded }: { readonly onEnded: (message: string) => 
         )}
       </header>
 
-      <NowPlaying state={state} loading={loadingState} error={stateError} />
-      <UpNext state={state} loading={loadingState} />
-      {state?.permissions.searchLibrary && (
-        <Library canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
-      )}
-      {state?.permissions.requestUrl && <UrlRequest expire={expire} refresh={() => loadRef.current(true)} />}
+      <div className="min-w-0 space-y-4 lg:sticky lg:top-6">
+        <NowPlaying state={state} loading={loadingState} error={stateError} />
+        <UpNext state={state} loading={loadingState} />
+      </div>
+      <div className="min-w-0 space-y-4">
+        {state?.permissions.requestUrl && <UrlRequest expire={expire} refresh={() => loadRef.current(true)} />}
+        {state?.permissions.searchLibrary && (
+          <Library canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
+        )}
+      </div>
     </div>
   );
 }
@@ -258,13 +262,17 @@ function UpNext({ state, loading }: { readonly state: RemoteState | null; readon
   const items = state?.upNext ?? [];
   const count = state?.upNextCount ?? items.length;
   return (
-    <section aria-labelledby="up-next" className="space-y-2">
-      <h2 id="up-next" className="text-sm font-semibold">Up next{state ? ` (${count})` : ''}</h2>
-      <UpNextItems state={state} loading={loading} items={items} />
-      {state && count > items.length && (
-        <p className="text-xs text-muted-foreground">Showing {items.length} of {count}.</p>
-      )}
-    </section>
+    <Card>
+      <CardContent className="p-4">
+        <section aria-labelledby="up-next" className="space-y-2">
+          <h2 id="up-next" className="text-base font-semibold">Up next{state ? ` (${count})` : ''}</h2>
+          <UpNextItems state={state} loading={loading} items={items} />
+          {state && count > items.length && (
+            <p className="text-xs text-muted-foreground">Showing {items.length} of {count}.</p>
+          )}
+        </section>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -279,7 +287,7 @@ function UpNextItems({ state, loading, items }: {
   }
   if (items.length === 0) return <p className="text-sm text-muted-foreground">Nothing is queued.</p>;
   return (
-    <ol aria-label="Up next" className="max-h-64 space-y-1.5 overflow-y-auto">
+    <ol aria-label="Up next" className="max-h-64 space-y-1.5 overflow-y-auto lg:max-h-[45dvh]">
       {items.map((item) => (
         <li key={item.id} className="flex items-center gap-2 rounded-md border bg-card p-2">
           <div className="min-w-0 flex-1">
@@ -349,38 +357,42 @@ function Library({ canAdd, expire, refresh }: {
 
   const songs = library?.songs ?? [];
   return (
-    <section aria-labelledby="library" className="space-y-2">
-      <h2 id="library" className="text-sm font-semibold">Library</h2>
-      <form role="search" onSubmit={(event) => event.preventDefault()}>
-        <Input
-          id="remote-search"
-          value={search}
-          maxLength={200}
-          enterKeyHint="search"
-          placeholder="Search songs"
-          aria-label="Search songs"
-          className="h-11"
-          onChange={(event) => setSearch(event.target.value)}
-        />
-      </form>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {notice && <StatusNote>{notice}</StatusNote>}
-      <LibrarySongs songs={songs} page={page} loading={loading} library={library} canAdd={canAdd} busy={busy} add={add} />
-      {(page > 1 || songs.length >= 25) && (
-        <div className="flex gap-2">
-          {page > 1 && (
-            <Button type="button" variant="outline" className="h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n - 1)}>
-              Previous page
-            </Button>
+    <Card>
+      <CardContent className="p-4">
+        <section aria-labelledby="library" className="space-y-3">
+          <h2 id="library" className="text-base font-semibold">Library</h2>
+          <form role="search" onSubmit={(event) => event.preventDefault()}>
+            <Input
+              id="remote-search"
+              value={search}
+              maxLength={200}
+              enterKeyHint="search"
+              placeholder="Search songs"
+              aria-label="Search songs"
+              className="h-11"
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </form>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          {notice && <StatusNote>{notice}</StatusNote>}
+          <LibrarySongs songs={songs} page={page} loading={loading} library={library} canAdd={canAdd} busy={busy} add={add} />
+          {(page > 1 || songs.length >= 25) && (
+            <div className="flex gap-2">
+              {page > 1 && (
+                <Button type="button" variant="outline" className="h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n - 1)}>
+                  Previous page
+                </Button>
+              )}
+              {songs.length >= 25 && (
+                <Button type="button" variant="outline" className="h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n + 1)}>
+                  Next page
+                </Button>
+              )}
+            </div>
           )}
-          {songs.length >= 25 && (
-            <Button type="button" variant="outline" className="h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n + 1)}>
-              Next page
-            </Button>
-          )}
-        </div>
-      )}
-    </section>
+        </section>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -449,28 +461,35 @@ function UrlRequest({ expire, refresh }: {
   };
 
   return (
-    <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <Label htmlFor="remote-url">Media URL</Label>
-      <Input
-        id="remote-url"
-        type="url"
-        inputMode="url"
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
-        autoComplete="off"
-        enterKeyHint="done"
-        maxLength={2048}
-        placeholder="https://"
-        value={url}
-        className="h-11"
-        onChange={(event) => setUrl(event.target.value)}
-      />
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      {notice && <StatusNote>{notice}</StatusNote>}
-      <Button type="submit" className="h-11 w-full sm:w-auto" disabled={busy || url.trim().length === 0}>
-        {busy ? 'Adding…' : 'Request URL'}
-      </Button>
-    </form>
+    <Card>
+      <CardContent className="p-4">
+        <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+          <Label htmlFor="remote-url" className="text-base font-semibold">Media URL</Label>
+          <p className="text-sm text-muted-foreground">Paste a link to add a song that is not in the library.</p>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              id="remote-url"
+              type="url"
+              inputMode="url"
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
+              autoComplete="off"
+              enterKeyHint="done"
+              maxLength={2048}
+              placeholder="https://"
+              value={url}
+              className="h-11 sm:flex-1"
+              onChange={(event) => setUrl(event.target.value)}
+            />
+            <Button type="submit" className="h-11 w-full sm:w-auto" disabled={busy || url.trim().length === 0}>
+              {busy ? 'Adding…' : 'Request URL'}
+            </Button>
+          </div>
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+          {notice && <StatusNote>{notice}</StatusNote>}
+        </form>
+      </CardContent>
+    </Card>
   );
 }
