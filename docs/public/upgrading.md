@@ -79,6 +79,15 @@ For the split image, anything on the same private network that connects straight
 - **Listener remote** (`!remote`) needs an HTTPS **Public URL** before it works. Set `PUBLIC_URL` (or save the address in the **Public URL of this manager** field under the hosted banner upload in a channel's edit dialog). See [Listener remote](music-bots.md#listener-remote).
 - **Native sidecar**: archives for Windows, Linux and macOS are attached to each release. A native sidecar from 1.10.x reports no version and shows as `unversioned`, which is not supported alongside a 1.11.0 backend. Replace it with the 1.11.0 archive; see [Native media sidecar](native-sidecar.md#version-compatibility). Docker sidecars update with the image tag.
 
+#### Media sources on Tailscale and other shared addresses
+
+**Breaking change if a media source lives on a `100.64.0.0/10` address**, which includes Tailscale hosts and carrier-grade NAT. 1.10.x reached those addresses without asking. 1.11.0 treats them like private addresses and refuses them until an admin allows the host.
+
+- **IPTV playlists and channels**: add the hostname, IP or a narrow range under **IPTV → Local hosts**, then refresh the playlist. See [Playlists and channels on your local network](video-streaming.md#playlists-and-channels-on-your-local-network).
+- **Pasted links, `!play` and `!stream` links, radio station URLs and Bot Flow HTTP requests** to those addresses cannot be allowed. Serve the media through an allowed IPTV playlist or from a publicly reachable address instead.
+
+Cloud metadata addresses stay blocked even when listed.
+
 ## Pull and recreate
 
 For the split stack:
