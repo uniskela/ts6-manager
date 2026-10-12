@@ -21,6 +21,8 @@ services:
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=7d
       - FRONTEND_URL=${FRONTEND_URL:-http://localhost:3000}
+      # !remote links need a listener-reachable HTTPS address; set PUBLIC_URL in .env.
+      - PUBLIC_URL=${PUBLIC_URL:-}
       - MUSIC_DIR=/data/music
       - SIDECAR_URL=http://127.0.0.1:9800
       - SIDECAR_PORT=9800
