@@ -307,6 +307,7 @@ func TestFirstEncoderAttemptFollowsThePlatform(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			setHostOS(t, tc.goos)
 			s := &Sidecar{}
+			s.caps.run = fullFFmpegBuild
 			s.caps.caps = tc.caps
 			got := s.firstEncoderAttempt(mustEncoder(t, tc.encoder))
 			// None of these has a low-power mode to flip before the fallback.

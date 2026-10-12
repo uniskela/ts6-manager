@@ -69,6 +69,7 @@ func TestFirstEncoderAttempt(t *testing.T) {
 			vaapiDevice(t, tc.devicePresent)
 			t.Setenv("VAAPI_LOW_POWER", tc.lowPowerEnv)
 			s := &Sidecar{}
+			s.caps.run = fullFFmpegBuild
 			s.caps.caps = tc.caps
 
 			got := s.firstEncoderAttempt(mustEncoder(t, tc.encoder))

@@ -102,6 +102,17 @@ func TestMissingEncoderReason(t *testing.T) {
 	}
 }
 
+// fullFFmpegBuild is a probe runner standing in for an ffmpeg built with every
+// encoder the registry knows, so a test of the first attempt does not depend on
+// the ffmpeg installed on the machine running it.
+func fullFFmpegBuild(ctx context.Context, args []string) (string, error) {
+	var names []string
+	for _, spec := range encoderOrder {
+		names = append(names, spec.FFmpeg)
+	}
+	return encoderTable(names), nil
+}
+
 func queryCount(t *testing.T, calls string) int {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(filepath.Dir(calls), "queries"))
