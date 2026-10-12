@@ -212,15 +212,15 @@ Please include the Mac model, the macOS version and `ffmpeg -version` in a repor
 
 ## What has and has not been verified
 
-Release archives are compiled for every platform in the table above, and CI runs the sidecar's tests, including real FFmpeg software encodes, on Linux x64. Beyond that, the project has **not** verified the following. Treat them as expected to work, and report results.
+Release archives are compiled for every platform in the table above, and CI runs the sidecar's tests, including real FFmpeg software encodes, on Linux x64. Beyond that, the project has verified only what the table below says it has. Treat the rest as expected to work, and report results.
 
 | Combination | Status |
 |---|---|
 | Linux x64, software encoders | Tested in CI |
 | Linux x64 native, VAAPI or NVENC | Not verified natively. The same encoder code runs in the Docker sidecar |
 | Linux ARM64, any encoder | Compiled only. Not run on ARM hardware |
-| Windows x64, software encoders | Compiled only in CI |
-| Windows x64, AMF | Not verified on AMD hardware by the project, including TeamSpeak playback and late joins ([#361](https://github.com/uniskela/ts6-manager/issues/361)) |
+| Windows x64, software encoders | Verified once, on Windows 11 with a sidecar built from source: VP8 and H.264 software played in TeamSpeak 6 and the browser preview, including late joins ([#361](https://github.com/uniskela/ts6-manager/issues/361)). The release archive itself has not been run |
+| Windows x64, AMF | Verified on one machine (AMD Radeon RX 9060 XT, Windows 11, FFmpeg 9.0.1) with a sidecar built from source: H.264 AMF used the GPU encoder and played in TeamSpeak 6 and the browser preview, including late joins and reconnects ([#361](https://github.com/uniskela/ts6-manager/issues/361)). Not verified with the release archive, or on other AMD GPUs and drivers |
 | Windows x64, NVENC | Not verified |
 | macOS Intel and Apple Silicon, software encoders | Compiled only. Not run on macOS |
 | macOS Intel and Apple Silicon, H.264 VideoToolbox | **Not verified.** Arguments, capability check and software fallback are unit-tested on Linux. Never run on Apple hardware; TeamSpeak playback, browser preview and late joins are unconfirmed ([checklist](#videotoolbox-on-macos)) |
