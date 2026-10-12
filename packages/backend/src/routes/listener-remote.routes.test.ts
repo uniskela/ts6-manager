@@ -227,6 +227,19 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(f.queue.upcomingCount, 500);
   }));
 
+  it('still caps the whole queue so played tracks cannot accumulate without bound', async () => using(async f => {
+    const { session } = await f.exchange();
+    const track = (n: number): QueueItem => ({ id: `old-${n}`, title: `Track ${n}`, filePath: `/music/${n}.mp3`, source: 'local' });
+    f.queue.addMany(Array.from({ length: 4998 }, (_, n) => track(n)));
+    f.queue.playAt(f.queue.length - 1);
+    assert.equal(f.queue.length, 4999);
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+    assert.equal(f.queue.length, 5000);
+    const full = await f.request('/queue', { session, body: { songId: 11 } });
+    assert.equal(full.status, 429);
+    assert.equal(f.queue.length, 5000);
+  }));
+
   it('applies the scoped shared policy to every read and write, and reflects subsequent policy changes', async () => using(async f => {
     const { session } = await f.exchange();
     restrict(f, [7]);
