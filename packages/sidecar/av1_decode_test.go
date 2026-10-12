@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -142,14 +143,49 @@ func TestVideoCodecIsValidated(t *testing.T) {
 	}
 }
 
-// stubLocalCodec answers the local file codec probe with codec and counts it.
+// stubLocalCodec answers the local file probe with codec (video stream 0)
+// and counts it.
 func stubLocalCodec(t *testing.T, codec string) *int32 {
 	t.Helper()
 	var calls int32
-	prev := localVideoCodec
-	localVideoCodec = func(string) string { atomic.AddInt32(&calls, 1); return codec }
-	t.Cleanup(func() { localVideoCodec = prev })
+	prev := localVideo
+	localVideo = func(string) sourceVideo { atomic.AddInt32(&calls, 1); return sourceVideo{codec: codec} }
+	t.Cleanup(func() { localVideo = prev })
 	return &calls
+}
+
+func TestParseProbedVideo(t *testing.T) {
+	for out, want := range map[string]sourceVideo{
+		"0,av1\n":  {codec: "av1", stream: 0},
+		"1,av1\n":  {codec: "av1", stream: 1},
+		"2,vp9":    {codec: "vp9", stream: 2},
+		"":         {},
+		"av1\n":    {},
+		"x,av1\n":  {},
+		"-1,av1\n": {},
+	} {
+		if got := parseProbedVideo(out); got != want {
+			t.Errorf("%q: want %+v, got %+v", out, want, got)
+		}
+	}
+}
+
+// Only the video stream's decode errors count: the file's own audio failing
+// must not take the GPU decoder away.
+func TestAV1DecodeFailedMatchesTheVideoStreamOnly(t *testing.T) {
+	audio := &tailBuffer{}
+	_, _ = audio.Write([]byte("Error while decoding stream #0:1: Invalid data found when processing input\n"))
+	if av1DecodeFailed(audio, 0) {
+		t.Error("an audio decode error (stream #0:1) is not the video failing")
+	}
+	if !av1DecodeFailed(audio, 1) {
+		t.Error("with the video as stream 1, its errors count")
+	}
+	video10 := &tailBuffer{}
+	_, _ = video10.Write([]byte("Error while decoding stream #0:10: Invalid data found when processing input\n"))
+	if av1DecodeFailed(video10, 1) {
+		t.Error("stream #0:10 is not stream #0:1")
+	}
 }
 
 func TestAV1GPUDecoderDecision(t *testing.T) {
@@ -191,7 +227,7 @@ func TestAV1GPUDecoderDecision(t *testing.T) {
 			}
 			s := NewSidecar()
 			s.caps.run = av1Runner(out, err, &probes)
-			hwaccel, isAV1 := s.av1GPUDecoder(SourceRequest{Source: c.source, VideoCodec: c.videoCodec}, mustEncoder(t, c.encoder))
+			hwaccel, isAV1, _ := s.av1GPUDecoder(SourceRequest{Source: c.source, VideoCodec: c.videoCodec}, mustEncoder(t, c.encoder))
 			if hwaccel != c.wantHwaccel || isAV1 != c.wantAV1 {
 				t.Errorf("want (%q, %v), got (%q, %v)", c.wantHwaccel, c.wantAV1, hwaccel, isAV1)
 			}
@@ -299,8 +335,8 @@ func TestFFmpegAV1ProbeSample(t *testing.T) {
 	if err != nil || strings.TrimSpace(string(out)) != "" {
 		t.Fatalf("the sample must decode with FFmpeg's default AV1 decoder: %v %s", err, out)
 	}
-	if codec := probeLocalVideoCodec(sample); codec != "av1" {
-		t.Errorf("ffprobe reads the sample as %q", codec)
+	if v := probeLocalVideo(sample); v.codec != "av1" || v.stream != 0 {
+		t.Errorf("ffprobe reads the sample as %+v", v)
 	}
 
 	t.Setenv("VAAPI_DEVICE", "/nonexistent/renderD128")
@@ -315,15 +351,32 @@ func TestFFmpegAV1ProbeSample(t *testing.T) {
 }
 
 // installAV1FailingFFmpeg installs an ffmpeg whose AV1 test decode passes and
-// whose stream with the forced AV1 decoder keeps running but fails every
-// frame after delay seconds, as NVDEC does with AV1 4:4:4. Without the forced
-// decoder it streams.
-func installAV1FailingFFmpeg(t *testing.T, delay string) string {
+// whose stream with the forced AV1 decoder fails every frame of the video
+// stream, as NVDEC does with AV1 4:4:4. Without the forced decoder it
+// streams. With gate, the failure waits until the test calls release, so
+// the test decides whether it comes inside or after the startup check. With
+// exit, ffmpeg stops after the error instead of running on.
+func installAV1FailingFFmpeg(t *testing.T, gate, exit bool) (calls string, release func()) {
 	t.Helper()
-	return installFakeFFmpeg(t, "case \"$*\" in\n"+
+	wait := ""
+	if gate {
+		wait = "while [ ! -f \"${0%/*}/gate\" ]; do sleep 0.02; done; "
+	}
+	after := "exec sleep 30"
+	if exit {
+		after = "exit 1"
+	}
+	calls = installFakeFFmpeg(t, "case \"$*\" in\n"+
 		"*av1-probe*) exit 0 ;;\n"+
-		"*'-c:v av1 '*) sleep "+delay+"; echo 'Error while decoding stream #0:0: Invalid data found when processing input' >&2; exec sleep 30 ;;\n"+
+		"*'-c:v av1 '*) "+wait+"echo 'Error while decoding stream #0:0: Invalid data found when processing input' >&2; "+after+" ;;\n"+
 		"esac\nexec sleep 30\n")
+	release = func() {
+		gateFile := filepath.Join(filepath.Dir(os.Getenv("FFMPEG_PATH")), "gate")
+		if err := os.WriteFile(gateFile, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return calls, release
 }
 
 func streamRuns(t *testing.T, calls string, n int) []string {
@@ -340,7 +393,7 @@ func streamRuns(t *testing.T, calls string, n int) []string {
 // Failed frames inside the startup check count like an exit: the stream
 // starts again on libdav1d before StartFFmpeg answers.
 func TestAV1DecodeErrorsAtStartupFallBackToLibdav1d(t *testing.T) {
-	calls := installAV1FailingFFmpeg(t, "0")
+	calls, _ := installAV1FailingFFmpeg(t, false, false)
 	t.Setenv("VIDEO_HW_DECODE", "1")
 	t.Setenv("VAAPI_VERIFY_MS", "500")
 	s := NewSidecar()
@@ -362,7 +415,7 @@ func TestAV1DecodeErrorsAtStartupFallBackToLibdav1d(t *testing.T) {
 // Failed frames after the startup check (a remote source that is slow to
 // open) restart the stream on libdav1d too, and the session says so.
 func TestLateAV1DecodeErrorsRestartOnLibdav1d(t *testing.T) {
-	calls := installAV1FailingFFmpeg(t, "0.6")
+	calls, release := installAV1FailingFFmpeg(t, true, false)
 	t.Setenv("VIDEO_HW_DECODE", "1")
 	t.Setenv("VAAPI_VERIFY_MS", "200")
 	s := NewSidecar()
@@ -375,6 +428,7 @@ func TestLateAV1DecodeErrorsRestartOnLibdav1d(t *testing.T) {
 	if session.Decoder != "av1 (cuda)" {
 		t.Fatalf("the startup check passed on the GPU decoder: %+v", session)
 	}
+	release()
 	runs := streamRuns(t, calls, 2)
 	if len(runs) != 2 || strings.Contains(runs[1], "-c:v av1 ") || !strings.Contains(runs[1], "h264_nvenc") {
 		t.Errorf("want a second run on libdav1d with NVENC:\n%s", strings.Join(runs, "\n"))
@@ -386,8 +440,34 @@ func TestLateAV1DecodeErrorsRestartOnLibdav1d(t *testing.T) {
 	if got := s.encoderSession(); got.Decoder != "libdav1d" || !strings.Contains(got.DecoderFallbackReason, "Invalid data") {
 		t.Errorf("the session must report the fallback: %+v", got)
 	}
-	time.Sleep(800 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 	if runs := streamRuns(t, calls, 2); len(runs) != 2 {
 		t.Errorf("libdav1d is not retried on the GPU:\n%s", strings.Join(runs, "\n"))
+	}
+}
+
+// An ffmpeg that logs a decode error and then exits after the startup check
+// is left to the usual exit handling: the stream is not started again.
+func TestAV1DecodeErrorBeforeAnExitDoesNotRestart(t *testing.T) {
+	calls, release := installAV1FailingFFmpeg(t, true, true)
+	t.Setenv("VIDEO_HW_DECODE", "1")
+	t.Setenv("VAAPI_VERIFY_MS", "200")
+	s := NewSidecar()
+	defer s.Stop()
+
+	if _, err := s.StartFFmpeg(SourceRequest{Source: "https://example.com/v.webm", VideoCodec: "av1", Encoder: "h264_nvenc", Volume: 100}); err != nil {
+		t.Fatal(err)
+	}
+	release()
+	deadline := time.Now().Add(3 * time.Second)
+	for s.encoderSession().State != "exited" && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(500 * time.Millisecond)
+	if runs := streamRuns(t, calls, 1); len(runs) != 1 {
+		t.Errorf("an exited stream must not be restarted:\n%s", strings.Join(runs, "\n"))
+	}
+	if got := s.encoderSession(); got.State != "exited" || got.Decoder != "av1 (cuda)" || got.DecoderFallbackReason != "" {
+		t.Errorf("want the exit reported, with no decoder fallback: %+v", got)
 	}
 }

@@ -607,7 +607,7 @@ type capabilityCache struct {
 	list      ffmpegEncoderList
 	listPath  string
 	listAsked bool
-	av1  av1DecodeCache
+	av1       av1DecodeCache
 }
 
 func (c *capabilityCache) runner() probeRunner {

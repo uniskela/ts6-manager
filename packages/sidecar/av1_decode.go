@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -184,66 +185,95 @@ func validVideoCodec(codec string) error {
 
 const localCodecProbeTimeout = 5 * time.Second
 
-// probeLocalVideoCodec reads the codec of a local file's first video stream
-// with ffprobe ("" when it cannot tell). Local only: a remote source would
-// need another connection, which some IPTV providers refuse.
-func probeLocalVideoCodec(path string) string {
+// sourceVideo is the codec of a source's video and the index of that stream
+// in the first input, where FFmpeg's decode errors name it ("#0:<index>").
+type sourceVideo struct {
+	codec  string
+	stream int
+}
+
+// probeLocalVideo reads the codec and stream index of a local file's first
+// video stream with ffprobe (no codec when it cannot tell). Local only: a
+// remote source would need another connection, which some IPTV providers
+// refuse.
+func probeLocalVideo(path string) sourceVideo {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return ""
+		return sourceVideo{}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), localCodecProbeTimeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, getFfprobePath(), "-v", "error",
-		"-select_streams", "v:0", "-show_entries", "stream=codec_name",
-		"-of", "default=noprint_wrappers=1:nokey=1", "file:"+abs).Output()
+		"-select_streams", "v:0", "-show_entries", "stream=index,codec_name",
+		"-of", "csv=p=0", "file:"+abs).Output()
 	if err != nil {
-		return ""
+		return sourceVideo{}
 	}
-	return strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+	return parseProbedVideo(string(out))
 }
 
-// localVideoCodec is probeLocalVideoCodec, replaced in tests.
-var localVideoCodec = probeLocalVideoCodec
+// parseProbedVideo reads ffprobe's "index,codec_name" line.
+func parseProbedVideo(out string) sourceVideo {
+	fields := strings.Split(strings.TrimSpace(strings.SplitN(out, "\n", 2)[0]), ",")
+	if len(fields) != 2 {
+		return sourceVideo{}
+	}
+	index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
+	if err != nil || index < 0 {
+		return sourceVideo{}
+	}
+	return sourceVideo{codec: strings.TrimSpace(fields[1]), stream: index}
+}
 
-// sourceVideoCodec is the codec of req's video: as the backend named it (it
-// knows the codec of a YouTube stream it resolved), else read from a local
-// file. "" for any other source.
-func sourceVideoCodec(req SourceRequest) string {
+// localVideo is probeLocalVideo, replaced in tests.
+var localVideo = probeLocalVideo
+
+// sourceVideoOf is req's video: as the backend named it, else read from a
+// local file; no codec for any other source. The backend names the codec of
+// a YouTube stream it resolved, and YouTube serves AV1 only as video-only
+// formats, so that video is stream 0 of its input.
+func sourceVideoOf(req SourceRequest) sourceVideo {
 	if req.VideoCodec != "" {
-		return req.VideoCodec
+		return sourceVideo{codec: req.VideoCodec}
 	}
 	if req.Source == "" || isRemoteSource(req.Source) {
-		return ""
+		return sourceVideo{}
 	}
-	return localVideoCodec(req.Source)
+	return localVideo(req.Source)
 }
 
 // av1GPUDecoder decides whether a stream with spec forces FFmpeg's own AV1
 // decoder onto the GPU. It returns the hwaccel to decode on ("" for the
-// default decoder) and whether the source is AV1 at all. The cheap checks
-// come first: nothing is probed for a stream that cannot use it.
-func (s *Sidecar) av1GPUDecoder(req SourceRequest, spec EncoderSpec) (hwaccel string, isAV1 bool) {
+// default decoder), whether the source is AV1 at all, and the AV1 video's
+// stream index. The cheap checks come first: nothing is probed for a stream
+// that cannot use it.
+func (s *Sidecar) av1GPUDecoder(req SourceRequest, spec EncoderSpec) (hwaccel string, isAV1 bool, stream int) {
 	if !spec.Hardware || !hwDecodeEnabled() || req.Source == "" {
-		return "", false
+		return "", false, 0
 	}
 	hwaccel, device := av1DecodeHwaccel(spec)
-	if hwaccel == "" || sourceVideoCodec(req) != "av1" {
-		return "", false
+	if hwaccel == "" {
+		return "", false, 0
+	}
+	video := sourceVideoOf(req)
+	if video.codec != "av1" {
+		return "", false, 0
 	}
 	if !s.caps.av1Decode(hwaccel, device).Available {
-		return "", true
+		return "", true, video.stream
 	}
-	return hwaccel, true
+	return hwaccel, true, video.stream
 }
 
 // av1DecodeFailed reports whether FFmpeg failed to decode frames of the
-// video input. FFmpeg's own AV1 decoder does not always exit when the GPU
-// cannot decode a source: on an RTX 5080, AV1 4:4:4 (High profile, which
-// NVDEC does not decode) failed every frame with "Invalid data found when
-// processing input" while FFmpeg kept running without a picture.
-func av1DecodeFailed(t *tailBuffer) bool {
-	return t.contains("Error while decoding stream #0:")
+// video stream (stream of the first input). FFmpeg's own AV1 decoder does
+// not always exit when the GPU cannot decode a source: on an RTX 5080, AV1
+// 4:4:4 (High profile, which NVDEC does not decode) failed every frame with
+// "Invalid data found when processing input" while FFmpeg kept running
+// without a picture. Errors of another stream, such as the file's own audio,
+// do not count.
+func av1DecodeFailed(t *tailBuffer, stream int) bool {
+	return t.contains(fmt.Sprintf("Error while decoding stream #0:%d:", stream))
 }
 
 // av1DecodeWatchWindow is how long after a launch with FFmpeg's own AV1
@@ -254,13 +284,18 @@ var av1DecodeWatchWindow = 15 * time.Second
 
 // restartOnLibdav1dIfAV1Fails watches the ffmpeg of generation gen, launched
 // with FFmpeg's own AV1 decoder, and starts the stream again on libdav1d if it
-// fails to decode frames within av1DecodeWatchWindow. Only if nothing has
-// moved on since: the startup check in startFFmpegLocked catches the same
-// failure while it holds ffmpegLock, and its relaunch is a new generation.
-func (s *Sidecar) restartOnLibdav1dIfAV1Fails(req SourceRequest, hwaccel string, gen uint64, done <-chan struct{}, tail *tailBuffer) {
+// fails to decode frames of the video stream within av1DecodeWatchWindow
+// while still running. Only if nothing has moved on since: the startup check
+// in startFFmpegLocked catches the same failure while it holds ffmpegLock,
+// and its relaunch is a new generation. An ffmpeg that has exited is left to
+// the usual exit handling, so a stream that ended is never started again.
+func (s *Sidecar) restartOnLibdav1dIfAV1Fails(req SourceRequest, hwaccel string, stream int, gen uint64, done <-chan struct{}, tail *tailBuffer) {
 	deadline := time.After(av1DecodeWatchWindow)
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
+	// The failure must still be there a tick later with ffmpeg running: an
+	// ffmpeg that logs one error and then exits is not restarted.
+	seen := false
 	for {
 		select {
 		case <-done:
@@ -269,12 +304,16 @@ func (s *Sidecar) restartOnLibdav1dIfAV1Fails(req SourceRequest, hwaccel string,
 			return
 		case <-tick.C:
 		}
-		if !av1DecodeFailed(tail) {
+		if exited(done) || !av1DecodeFailed(tail, stream) {
+			continue
+		}
+		if !seen {
+			seen = true
 			continue
 		}
 		s.ffmpegLock.Lock()
 		defer s.ffmpegLock.Unlock()
-		if atomic.LoadUint64(&s.ffmpegGen) != gen {
+		if atomic.LoadUint64(&s.ffmpegGen) != gen || exited(done) {
 			return
 		}
 		reason := tail.summary()
@@ -284,6 +323,16 @@ func (s *Sidecar) restartOnLibdav1dIfAV1Fails(req SourceRequest, hwaccel string,
 			log.Printf("[FFmpeg] Restart on libdav1d failed: %v", err)
 		}
 		return
+	}
+}
+
+// exited reports whether the ffmpeg behind done has exited, without waiting.
+func exited(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
 	}
 }
 

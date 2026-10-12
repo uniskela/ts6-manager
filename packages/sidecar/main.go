@@ -1761,7 +1761,7 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 		attempt.av1Source = true
 		attempt.decoderFallbackReason = req.av1FallbackReason
 	} else {
-		attempt.av1Hwaccel, attempt.av1Source = s.av1GPUDecoder(req, attempt.spec)
+		attempt.av1Hwaccel, attempt.av1Source, attempt.av1Stream = s.av1GPUDecoder(req, attempt.spec)
 	}
 	if attempt.av1Hwaccel != "" {
 		log.Printf("[FFmpeg] AV1 source: decoding on the GPU (%s)", attempt.av1Hwaccel)
@@ -1776,14 +1776,14 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 			go s.restartWithSilenceIfNoAudio(req, gen, done, tail)
 		}
 		if attempt.av1Hwaccel != "" {
-			go s.restartOnLibdav1dIfAV1Fails(req, attempt.av1Hwaccel, gen, done, tail)
+			go s.restartOnLibdav1dIfAV1Fails(req, attempt.av1Hwaccel, attempt.av1Stream, gen, done, tail)
 		}
 
 		if !attempt.spec.Hardware {
 			return s.encoderSession(), nil
 		}
 		if survivedStartup(done) {
-			if attempt.av1Hwaccel == "" || !av1DecodeFailed(tail) {
+			if attempt.av1Hwaccel == "" || !av1DecodeFailed(tail, attempt.av1Stream) {
 				return s.encoderSession(), nil
 			}
 			// FFmpeg's own AV1 decoder can keep running while the GPU
@@ -1835,6 +1835,8 @@ type encoderAttempt struct {
 	// default decoder); av1Source is set for an AV1 source either way.
 	av1Hwaccel string
 	av1Source  bool
+	// av1Stream is the AV1 video's stream index in the first input.
+	av1Stream int
 	// decoderFallbackReason is why the AV1 source no longer decodes on the GPU.
 	decoderFallbackReason string
 }
