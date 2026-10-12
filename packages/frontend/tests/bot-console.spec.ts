@@ -1,4 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { DEFAULT_BOT_AUTOMATION_SETTINGS } from '@ts6/common';
 
 async function signIn(page: Page, request: APIRequestContext) {
   await request.post('/__test/reset');
@@ -83,6 +84,22 @@ test('opens a bot console from the Bot Hub', async ({ page, request }) => {
   await expect(page.getByRole('heading', { name: 'Aurora Radio', level: 1 })).toBeVisible();
   await expect(page.getByText('Operations Voice · #Lounge')).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Now playing' })).toBeVisible();
+});
+
+test('Now playing opens Auto-DJ and 24/7', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1400, height: 1000 });
+  await mockBot(page);
+  await page.route(/\/api\/music-bots\/1$/, (r) => r.fulfill({ json: {
+    id: 1, name: 'Aurora Radio', serverConfigId: 1, automationSettings: DEFAULT_BOT_AUTOMATION_SETTINGS,
+  } }));
+  await signIn(page, request);
+  await page.goto('/bot-hub/1');
+
+  await page.getByRole('button', { name: 'Auto-DJ & 24/7' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Auto-DJ & 24/7: Aurora Radio' });
+  await expect(dialog.getByRole('switch', { name: 'Enable Auto-DJ' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Cancel' }).click();
+  await expect(dialog).toBeHidden();
 });
 
 test('phone Now playing keeps Pause, Skip, and Stop fully on screen', async ({ page, request }) => {

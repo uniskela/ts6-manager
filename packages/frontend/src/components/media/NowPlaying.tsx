@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   AlertTriangle, Gauge, Music, Pause, Play, Radio, SkipForward, Square, Video,
 } from 'lucide-react';
+import { BotAutomationDialog } from '@/pages/bot-hub/BotAutomationDialog';
 import type { BotMediaOverview } from '@ts6/common';
 import { VideoPlayer } from '@/components/video/VideoPlayer';
 import { Badge } from '@/components/ui/badge';
@@ -243,6 +244,7 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
   const stopMusic = useStopPlayback();
   const stopVideo = useStopVideoStream();
   const [draggingVolume, setDraggingVolume] = useState<number | null>(null);
+  const [automationOpen, setAutomationOpen] = useState(false);
 
   const tone = hubTone(bot);
   const active = tone === 'music' || tone === 'live';
@@ -274,12 +276,17 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
   return (
     <Card className={cn(tone === 'offline' && 'opacity-70')}>
       <CardContent className="space-y-4 p-4 sm:p-5">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 id="now-playing" className="text-base font-semibold">Now playing</h2>
-          <Badge variant={badge.variant} className="shrink-0 gap-1">
-            {tone === 'live' && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />}
-            {badgeLabel}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setAutomationOpen(true)}>
+              <Radio className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Auto-DJ &amp; 24/7
+            </Button>
+            <Badge variant={badge.variant} className="shrink-0 gap-1">
+              {tone === 'live' && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-current" aria-hidden="true" />}
+              {badgeLabel}
+            </Badge>
+          </div>
         </div>
 
         {tone === 'music' && music && (
@@ -402,6 +409,9 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
         {lastStop && <p className="text-xs text-muted-foreground">{lastStop}</p>}
         {footer}
       </CardContent>
+      {automationOpen && (
+        <BotAutomationDialog botId={bot.botId} botName={bot.botName} onClose={() => setAutomationOpen(false)} />
+      )}
     </Card>
   );
 }
