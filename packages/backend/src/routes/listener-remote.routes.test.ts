@@ -239,6 +239,30 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(f.queue.upcomingCount, 500);
   }));
 
+  it('checks the limit again when a refused start appends a tick later', async () => using(async f => {
+    const { session } = await f.exchange();
+    const track = (n: number): QueueItem => ({ id: `gap-${n}`, title: `Track ${n}`, filePath: `/music/${n}.mp3`, source: 'local' });
+    f.state.botStatus = 'connected';
+    f.bot.nowPlaying = null;
+    const conflict = () => { throw new MediaSessionConflictError('music', [{ id: 'video-1', state: 'active' } as any]); };
+
+    // A video session appears after the first check: the request is appended, not started.
+    f.bot.assertMusicCanStart = conflict;
+    const before = f.queue.length;
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+    assert.equal(f.queue.length, before + 1);
+    assert.equal(f.plays.length, 0);
+
+    // The same refusal, but other requests fill the queue during the gap: nothing more is added.
+    f.bot.assertMusicCanStart = () => {
+      f.queue.addMany(Array.from({ length: 500 - f.queue.upcomingCount }, (_, n) => track(n)));
+      conflict();
+    };
+    const full = await f.request('/queue', { session, body: { songId: 11 } });
+    assert.equal(full.status, 429);
+    assert.equal(f.queue.upcomingCount, 500);
+  }));
+
   it('still caps the whole queue so played tracks cannot accumulate without bound', async () => using(async f => {
     const { session } = await f.exchange();
     const track = (n: number): QueueItem => ({ id: `old-${n}`, title: `Track ${n}`, filePath: `/music/${n}.mp3`, source: 'local' });
