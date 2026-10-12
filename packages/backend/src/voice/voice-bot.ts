@@ -1814,7 +1814,9 @@ export class VoiceBot extends EventEmitter {
 
   /** Auto-DJ and 24/7 status for the Bot hub and `!help`; null when both are off. */
   automationOverview(): BotAutomationOverview | null {
-    return this.automation ? summarizeBotAutomation(this.automation.configuration, this.automation.active) : null;
+    const automation = this.automation;
+    if (!automation) return null;
+    return summarizeBotAutomation(automation.configuration, automation.active, automation.state.presenceSuppressed);
   }
 
   /**

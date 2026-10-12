@@ -103,6 +103,8 @@ describe('Auto-DJ and 24/7 badges', () => {
       { autoDj: false, sourceKind: null, stayInChannel: true, playing: false },
     );
     assert.equal(summarizeBotAutomation({ ...on, source: { kind: 'radio', id: 1 } }, true)?.playing, true);
+    // "Return home" suspends automation until the bot is started again.
+    assert.equal(summarizeBotAutomation({ ...on, stayInChannel: true }, false, true), null);
   });
 
   it('labels each state for the card and console', () => {

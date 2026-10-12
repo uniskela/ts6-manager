@@ -43,7 +43,7 @@ Manual **Stop** or **Clear queue** starts the saved quiet period (five minutes b
 
 **Keep bot in channel (24/7)** reserves the channel from automatic idle-bot summons and restores the most recently joined channel on reconnect. An explicitly targeted `!here <id>` can still move it. Enable **Auto-start** in **Edit bot** to reconnect after a Manager restart. **Stop bot** leaves the server and suppresses auto-start until **Start bot**. **Return home (suspend automation)** reconnects in the configured default channel (or the server's default) and keeps automation suspended. Stop and start the bot to re-enable it. These manual overrides survive restarts.
 
-A bot with either setting on shows it without opening the dialog: its Bot Hub card and console header carry an **Auto-DJ** badge (**Auto-DJ playing** while automated music is on) and a **24/7** badge. In chat, `!help` ends with a **This bot** section that tells listeners Auto-DJ is on, whether it plays a saved playlist or a radio station, and that requests play first. Auto-DJ plays the playlist or station an admin chose; it does not pick similar music by itself.
+A bot with either setting on shows it without opening the dialog: its Bot Hub card and console header carry an **Auto-DJ** badge (**Auto-DJ playing** while automated music is on) and a **24/7** badge. In chat, `!help` ends with a **This bot** section that tells listeners Auto-DJ is on, whether it plays a saved playlist or a radio station, and that requests play first. Neither is shown while automation is suspended by **Return home**. Auto-DJ plays the playlist or station an admin chose; it does not pick similar music by itself.
 
 ## Media Library
 

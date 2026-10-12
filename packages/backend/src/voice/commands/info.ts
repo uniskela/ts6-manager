@@ -122,7 +122,9 @@ export async function handleHelp(
     }
 
     await context.reply(bot, userClid, formatHelpMessage(
-      BUILTIN_COMMAND_HELP, custom, summarizeBotAutomation(bot.automation?.configuration, bot.automation?.active),
+      BUILTIN_COMMAND_HELP, custom, summarizeBotAutomation(
+        bot.automation?.configuration, bot.automation?.active, bot.automation?.state.presenceSuppressed,
+      ),
     ));
     completeHelpAction(ownedKey, true);
   } catch (err) {

@@ -36,10 +36,15 @@ export interface BotAutomationOverview {
   playing: boolean;
 }
 
-/** Null when the bot has neither Auto-DJ nor 24/7 on, so callers show nothing. */
+/**
+ * Null when the bot has neither Auto-DJ nor 24/7 on, so callers show nothing. Also null
+ * while automation is suspended ("Return home"): neither feature acts until the bot is
+ * started again, so it must not be shown as on.
+ */
 export function summarizeBotAutomation(
-  settings: BotAutomationSettings | null | undefined, playing = false,
+  settings: BotAutomationSettings | null | undefined, playing = false, suspended = false,
 ): BotAutomationOverview | null {
+  if (suspended) return null;
   const autoDj = !!settings?.enabled && !!settings.source;
   const stayInChannel = !!settings?.stayInChannel;
   if (!autoDj && !stayInChannel) return null;

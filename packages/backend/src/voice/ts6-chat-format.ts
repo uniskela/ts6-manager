@@ -119,6 +119,15 @@ export function formatHelpMessage(
   lines.push('');
   lines.push('_Several bots in one channel? Add a bot\'s name: **!next Bot 2** or **!vol 30 @Bot 2**._');
 
+  if (custom.length > 0) {
+    lines.push('');
+    lines.push('### Custom');
+    for (const c of custom) {
+      const blurb = c.description?.trim() || 'Custom reply';
+      lines.push(`- **!${c.name}** — ${blurb}`);
+    }
+  }
+
   // Auto-DJ and 24/7 have no chat command, so say here when the answering bot has them on.
   if (automation?.autoDj || automation?.stayInChannel) {
     lines.push('');
@@ -129,15 +138,6 @@ export function formatHelpMessage(
     }
     if (automation.stayInChannel) {
       lines.push('- **24/7 is on** — the bot stays in its channel.');
-    }
-  }
-
-  if (custom.length > 0) {
-    lines.push('');
-    lines.push('### Custom');
-    for (const c of custom) {
-      const blurb = c.description?.trim() || 'Custom reply';
-      lines.push(`- **!${c.name}** — ${blurb}`);
     }
   }
 

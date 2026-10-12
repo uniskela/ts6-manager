@@ -46,6 +46,11 @@ describe('ts6-chat-format', () => {
     assert.ok(both.includes('Your requests always play first.'));
     assert.ok(both.includes('**24/7 is on**'));
 
+    const withCustom = formatHelpMessage(builtin, [{ name: 'rules', description: 'Server rules' }],
+      { autoDj: true, sourceKind: 'playlist', stayInChannel: false, playing: false });
+    assert.ok(withCustom.indexOf('### This bot') > withCustom.indexOf('### Custom'), 'the bot section closes the message');
+    assert.ok(withCustom.trimEnd().endsWith('Your requests always play first.'));
+
     const playlistOnly = formatHelpMessage(builtin, [], { autoDj: true, sourceKind: 'playlist', stayInChannel: false, playing: true });
     assert.ok(playlistOnly.includes('plays a saved playlist'));
     assert.ok(!playlistOnly.includes('24/7'));
