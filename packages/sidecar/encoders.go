@@ -468,6 +468,14 @@ func encoderProbeArgs(spec EncoderSpec, lowPower bool) []string {
 }
 
 func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) EncoderProbeResult {
+	return probeOneEncoderIn(spec, devicePresent, nil, run)
+}
+
+// probeOneEncoderIn is probeOneEncoder given the encoders the FFmpeg build has
+// (nil when unknown). A hardware encoder the build lacks is not test-encoded:
+// ffmpeg would only answer "Unknown encoder", or reject one of the encoder's
+// private options with a message that does not say so.
+func probeOneEncoderIn(spec EncoderSpec, devicePresent bool, list ffmpegEncoderList, run probeRunner) EncoderProbeResult {
 	res := EncoderProbeResult{EncoderSpec: spec}
 	if reason := backendUnsupportedReason(spec.Backend); reason != "" {
 		res.Error = reason
@@ -477,6 +485,11 @@ func probeOneEncoder(spec EncoderSpec, devicePresent bool, run probeRunner) Enco
 	if spec.Backend == backendVAAPI && !devicePresent {
 		res.Error = "VAAPI device not present"
 		res.Skipped = fmt.Sprintf("VAAPI device %s not present", getVaapiDevice())
+		return res
+	}
+	if reason := missingEncoderReason(spec, list); reason != "" {
+		res.Error = reason
+		res.Skipped = fmt.Sprintf("`ffmpeg %s` does not list %s", strings.Join(encoderListArgs, " "), spec.FFmpeg)
 		return res
 	}
 	attempts := []bool{false}
@@ -554,6 +567,11 @@ func nvencMissingReason(spec EncoderSpec, out string) string {
 
 // probeEncoders test-encodes every registered encoder concurrently.
 func probeEncoders(run probeRunner) *EncoderCapabilities {
+	return probeEncodersIn(run, queryEncoderList(run))
+}
+
+// probeEncodersIn is probeEncoders given the encoders the FFmpeg build has.
+func probeEncodersIn(run probeRunner, list ffmpegEncoderList) *EncoderCapabilities {
 	devicePresent := vaapiDevicePresent()
 	results := make([]EncoderProbeResult, len(encoderOrder))
 	var wg sync.WaitGroup
@@ -561,7 +579,7 @@ func probeEncoders(run probeRunner) *EncoderCapabilities {
 		wg.Add(1)
 		go func(i int, spec EncoderSpec) {
 			defer wg.Done()
-			results[i] = probeOneEncoder(spec, devicePresent, run)
+			results[i] = probeOneEncoderIn(spec, devicePresent, list, run)
 		}(i, spec)
 	}
 	wg.Wait()
@@ -579,17 +597,46 @@ type capabilityCache struct {
 	mu   sync.Mutex
 	caps *EncoderCapabilities
 	run  probeRunner
+	// list is the encoder list of the ffmpeg at listPath, asked for once.
+	// listAsked is set even when the answer was unusable, so a broken ffmpeg
+	// is not run again for every stream start. A refresh asks again.
+	list      ffmpegEncoderList
+	listPath  string
+	listAsked bool
+}
+
+func (c *capabilityCache) runner() probeRunner {
+	if c.run == nil {
+		return runFFmpegProbe
+	}
+	return c.run
+}
+
+// encoderListLocked returns the cached encoder list, asking ffmpeg when it has
+// not been asked yet (or when force is set, or the ffmpeg path changed).
+func (c *capabilityCache) encoderListLocked(force bool) ffmpegEncoderList {
+	if path := getFfmpegPath(); force || !c.listAsked || c.listPath != path {
+		c.list, c.listPath, c.listAsked = queryEncoderList(c.runner()), path, true
+	}
+	return c.list
+}
+
+// missingReason is why spec cannot run because this FFmpeg build lacks its
+// encoder, or "" when the build has it or that is not known.
+func (c *capabilityCache) missingReason(spec EncoderSpec) string {
+	if !spec.Hardware {
+		return ""
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return missingEncoderReason(spec, c.encoderListLocked(false))
 }
 
 func (c *capabilityCache) get(refresh bool) *EncoderCapabilities {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.caps == nil || refresh {
-		run := c.run
-		if run == nil {
-			run = runFFmpegProbe
-		}
-		c.caps = probeEncoders(run)
+		c.caps = probeEncodersIn(c.runner(), c.encoderListLocked(refresh))
 	}
 	return c.caps
 }

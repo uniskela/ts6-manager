@@ -84,6 +84,8 @@ VideoToolbox is test-encoded only when the sidecar runs on macOS, and AMF is not
 
 If a hardware encoder cannot open the device or exits during startup, the sidecar restarts with the software encoder **of the same codec** (so connected viewers keep working) and the stream panel shows the fallback and its reason. Use **Check encoders** under *Streaming defaults* to run the test encodes on demand; routine status polling never runs them.
 
+An encoder that the sidecar's FFmpeg was not built with is not launched at all. The sidecar reads `ffmpeg -hide_banner -encoders` once, and **Check encoders** and a stream that asks for it show `This FFmpeg build has no h264_amf encoder (AMF needs an FFmpeg built with AMF support and an AMD driver)` (or the same for another hardware encoder) before it starts on the software encoder. Older versions showed FFmpeg's own `Unrecognized option 'header_spacing'` / `Option not found` instead, which means the same thing. This is expected when the sidecar runs under WSL or in the Docker image with a stock Linux FFmpeg, such as the static build checked for this change: it has no AMF encoder. AMF is documented here only for the [native Windows sidecar](#amd-amf-windows) with an AMF-enabled FFmpeg. To see what your FFmpeg has, run `ffmpeg -hide_banner -encoders | grep amf`. If FFmpeg cannot list its encoders, the sidecar skips this check and behaves as before.
+
 ### Enabling VAAPI (Intel / AMD GPUs)
 
 1. Pass the render node through to the sidecar container, for example in `docker-compose.yml`:

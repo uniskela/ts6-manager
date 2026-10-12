@@ -1823,6 +1823,13 @@ func (s *Sidecar) firstEncoderAttempt(requested EncoderSpec) encoderAttempt {
 	case requested.Backend == backendVAAPI && !vaapiDevicePresent():
 		a.fallbackReason = "VAAPI device not present"
 		a.spec = softwareEncoderFor(requested.Codec)
+	default:
+		// Not probed yet: still no point launching an encoder this FFmpeg
+		// build does not contain.
+		if reason := s.caps.missingReason(requested); reason != "" {
+			a.fallbackReason = reason
+			a.spec = softwareEncoderFor(requested.Codec)
+		}
 	}
 	return a
 }

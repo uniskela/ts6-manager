@@ -74,15 +74,46 @@ func installFakeFFmpeg(t *testing.T, behaviour string) string {
 	// The script finds the log next to itself, so no path is written into it
 	// and the temp directory may hold any character. One line per run: an
 	// argument can hold a line break (the HTTP headers option does).
+	//
+	// `-hide_banner -encoders` is answered from encoders.txt (a build with every
+	// encoder the registry knows; a test may rewrite or remove the file) and
+	// noted in "queries", not in the log of runs. Without the file it fails.
 	script := "#!/bin/sh\nlog=\"${0%/*}/calls\"\n" +
+		"if [ \"$1 $2\" = \"-hide_banner -encoders\" ]; then\n" +
+		"  echo q >> \"${0%/*}/queries\"; cat \"${0%/*}/encoders.txt\" 2>/dev/null || exit 1; exit 0\nfi\n" +
 		"printf '%s\\n' \"$*\" | tr -d '\\r' | tr '\\n' ' ' >> \"$log\"\necho >> \"$log\"\n" + behaviour
 	bin := filepath.Join(dir, "ffmpeg")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	writeEncoderTable(t, dir, nil)
 	t.Setenv("FFMPEG_PATH", bin)
 	t.Setenv("SIDECAR_EGRESS_PROXY", "off")
 	return calls
+}
+
+// encoderTable renders `ffmpeg -hide_banner -encoders` output listing names.
+func encoderTable(names []string) string {
+	var b strings.Builder
+	b.WriteString("Encoders:\n V..... = Video\n A..... = Audio\n ------\n")
+	for _, n := range names {
+		b.WriteString(" V....D " + n + "   " + n + " encoder\n")
+	}
+	return b.String()
+}
+
+// writeEncoderTable sets what the fake ffmpeg in dir lists as its encoders;
+// nil lists every encoder of the registry.
+func writeEncoderTable(t *testing.T, dir string, names []string) {
+	t.Helper()
+	if names == nil {
+		for _, spec := range encoderOrder {
+			names = append(names, spec.FFmpeg)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "encoders.txt"), []byte(encoderTable(names)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func waitForCalls(t *testing.T, calls string, n int) []string {
