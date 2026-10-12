@@ -18,6 +18,8 @@ services:
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=7d
       - FRONTEND_URL=http://localhost:3000
+      # !remote requires a listener-reachable HTTPS address in production mode.
+      - PUBLIC_URL=${PUBLIC_URL:-}
       - MUSIC_DIR=/data/music
     volumes:
       - backend-data:/app/packages/backend/data
