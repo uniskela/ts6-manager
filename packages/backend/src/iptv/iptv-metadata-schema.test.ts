@@ -26,7 +26,10 @@ it('adds nullable country and language columns to IPTV channels', async () => {
 });
 
 it('migrates an existing channel without backfilling its metadata', async () => {
-  const legacy = new PrismaClient({ datasources: { db: { url: `file:${join(directory, 'legacy.db')}` } } });
+  // One connection only. With a pool, the SELECT can land on a connection whose cached
+  // schema predates the ALTER TABLE statements; SQLite then reads the quoted names it
+  // cannot resolve as string literals and reports them, quotes included, as column names.
+  const legacy = new PrismaClient({ datasources: { db: { url: `file:${join(directory, 'legacy.db')}?connection_limit=1` } } });
   try {
     await legacy.$executeRawUnsafe('CREATE TABLE "IptvChannel" ("id" INTEGER PRIMARY KEY, "name" TEXT NOT NULL)');
     await legacy.$executeRawUnsafe('INSERT INTO "IptvChannel" ("id", "name") VALUES (1, \'Existing\')');
