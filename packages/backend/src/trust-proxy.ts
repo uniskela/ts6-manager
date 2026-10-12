@@ -1,4 +1,4 @@
-import express, { type NextFunction, type Request, type Response } from 'express';
+import type { Application, NextFunction, Request, Response } from 'express';
 
 /**
  * `private-peer` trusts exactly one hop, and only when the connecting peer has a private
@@ -10,8 +10,8 @@ export const PRIVATE_PEER = 'private-peer';
 /** Parsed TRUST_PROXY: `false` (trust nothing), `private-peer`, or an explicit list. */
 export type TrustProxySetting = false | typeof PRIVATE_PEER | string[];
 
-/** What Express receives for `trust proxy`. */
-export type ExpressTrustProxy = false | string[] | ((address: string, hop: number) => boolean);
+/** Express asks this about the socket peer (hop 0) and then each forwarded entry from the right. */
+type TrustFunction = (address: string, hop: number) => boolean;
 
 const NONE_WORDS = new Set(['false', 'none', 'off', 'no']);
 
@@ -47,23 +47,22 @@ export function parseTrustProxy(raw: string | undefined): TrustProxySetting {
   return tokens;
 }
 
-/** Express compiles named ranges with proxy-addr; reuse that instead of our own CIDR checks. */
-function compileRange(range: string): (address: string, hop: number) => boolean {
-  const probe = express();
-  probe.set('trust proxy', [range]);
-  return probe.get('trust proxy fn') as (address: string, hop: number) => boolean;
-}
-
 /**
- * The value for `app.set('trust proxy', …)`. Express asks about the socket peer as hop 0
- * and then about each X-Forwarded-For entry from the right; `req.ip` is the first address
- * that is not trusted. For `private-peer` only hop 0 can be trusted, so `req.ip` is the
- * address the proxy itself observed and nothing a client wrote further left is believed.
+ * Set `trust proxy` on the app. Express asks about the socket peer as hop 0 and then about
+ * each X-Forwarded-For entry from the right; `req.ip` is the first address that is not
+ * trusted. For `private-peer` only hop 0 can be trusted, so `req.ip` is the address the
+ * proxy itself observed and nothing a client wrote further left is believed.
  */
-export function expressTrustProxy(setting: TrustProxySetting): ExpressTrustProxy {
-  if (setting !== PRIVATE_PEER) return setting;
-  const isPrivate = compileRange('uniquelocal');
-  return (address, hop) => hop === 0 && isPrivate(address, 0);
+export function applyTrustProxy(app: Application, setting: TrustProxySetting): void {
+  if (setting !== PRIVATE_PEER) {
+    app.set('trust proxy', setting);
+    return;
+  }
+  // Let Express compile the private ranges (proxy-addr) rather than keeping our own CIDR checks.
+  app.set('trust proxy', ['uniquelocal']);
+  const isPrivate = app.get('trust proxy fn') as TrustFunction;
+  const privatePeerOnly: TrustFunction = (address, hop) => hop === 0 && isPrivate(address, 0);
+  app.set('trust proxy', privatePeerOnly);
 }
 
 export function describeTrustProxy(setting: TrustProxySetting): string {

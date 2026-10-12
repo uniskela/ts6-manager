@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
-import { describeTrustProxy, expressTrustProxy, forwardedHeaderWarning, parseTrustProxy } from './trust-proxy.js';
+import { applyTrustProxy, describeTrustProxy, forwardedHeaderWarning, parseTrustProxy } from './trust-proxy.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const backendDir = resolve(here, '..');
@@ -91,15 +91,19 @@ describe('parseTrustProxy', () => {
   });
 
   it('hands explicit settings to Express unchanged', () => {
-    assert.equal(expressTrustProxy(false), false);
+    const none = express();
+    applyTrustProxy(none, false);
+    assert.equal(none.get('trust proxy'), false);
     const list = ['uniquelocal', '203.0.113.7'];
-    assert.equal(expressTrustProxy(list), list);
+    const explicit = express();
+    applyTrustProxy(explicit, list);
+    assert.equal(explicit.get('trust proxy'), list);
   });
 
   it('private-peer trusts a private socket peer and nothing further left', () => {
-    const trust = expressTrustProxy('private-peer');
-    assert.equal(typeof trust, 'function');
-    if (typeof trust !== 'function') return;
+    const app = express();
+    applyTrustProxy(app, 'private-peer');
+    const trust = app.get('trust proxy fn') as (addr: string, hop: number) => boolean;
     for (const addr of ['10.1.2.3', '172.18.0.3', '::ffff:172.18.0.3', '192.168.1.9', 'fd00::5']) {
       assert.equal(trust(addr, 0), true, `peer ${addr}`);
       assert.equal(trust(addr, 1), false, `forwarded entry ${addr}`);
@@ -109,7 +113,7 @@ describe('parseTrustProxy', () => {
 
   it('private-peer makes req.ip the right-most forwarded entry, and only behind a private peer', () => {
     const app = express();
-    app.set('trust proxy', expressTrustProxy('private-peer'));
+    applyTrustProxy(app, 'private-peer');
     const ipFor = (peer: string, xff?: string) => {
       const req = Object.create(app.request) as express.Request;
       Object.assign(req, { app, socket: { remoteAddress: peer }, headers: xff ? { 'x-forwarded-for': xff } : {} });
