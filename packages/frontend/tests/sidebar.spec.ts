@@ -218,6 +218,23 @@ for (const [width, height, navigationName, opensSheet] of [
   });
 }
 
+test('the bottom hint goes away at the end of the list when the browser is zoomed', async ({ page, request }) => {
+  await page.setViewportSize({ width: 1280, height: 458 });
+  await signInAsAdmin(page, request);
+  await page.getByRole('button', { name: 'Expand Automation section' }).click();
+  // 110% zoom leaves the furthest scroll position a fraction short of scrollHeight - clientHeight.
+  await page.evaluate(() => { document.documentElement.style.setProperty('zoom', '1.1'); });
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  const container = navigation.locator('xpath=ancestor::div[@data-nav-scroll-container][1]');
+  await expect(container.locator('[data-nav-scroll-edge="bottom"]')).toHaveCount(1);
+
+  await navigation.hover();
+  await page.mouse.wheel(0, 5000);
+  await expect(container.locator('[data-nav-scroll-edge="bottom"]')).toHaveCount(0);
+  await expect(container.locator('[data-nav-scroll-edge="top"]')).toHaveCount(1);
+  await expect(page.getByRole('link', { name: 'IPTV', exact: true })).toBeInViewport();
+});
+
 test('navigation that fits shows no scroll edges', async ({ page, request }) => {
   await page.setViewportSize({ width: 1440, height: 1400 });
   await signInAsAdmin(page, request);

@@ -5,6 +5,21 @@ export interface ScrollEdges {
   bottom: boolean;
 }
 
+/**
+ * `scrollHeight` and `clientHeight` are whole numbers while `scrollTop` is fractional, so
+ * at a zoomed or scaled display the furthest scroll position can stop more than a pixel
+ * short of `scrollHeight - clientHeight`. Anything within this distance counts as the end.
+ */
+const EDGE_TOLERANCE_PX = 2;
+
+/** Which edges of a scroll viewport still hide content. */
+export function scrollEdgesOf(
+  viewport: { scrollTop: number; scrollHeight: number; clientHeight: number },
+): ScrollEdges {
+  const remaining = viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop;
+  return { top: viewport.scrollTop > EDGE_TOLERANCE_PX, bottom: remaining > EDGE_TOLERANCE_PX };
+}
+
 /** Tracks whether a Radix ScrollArea has hidden content above or below its viewport. */
 export function useScrollEdges(rootRef: RefObject<HTMLElement>): ScrollEdges {
   const [edges, setEdges] = useState<ScrollEdges>({ top: false, bottom: false });
@@ -14,8 +29,7 @@ export function useScrollEdges(rootRef: RefObject<HTMLElement>): ScrollEdges {
     if (!viewport) return;
 
     const update = () => {
-      const maximum = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
-      const next = { top: viewport.scrollTop > 1, bottom: viewport.scrollTop < maximum - 1 };
+      const next = scrollEdgesOf(viewport);
       setEdges((current) => (current.top === next.top && current.bottom === next.bottom ? current : next));
     };
 
