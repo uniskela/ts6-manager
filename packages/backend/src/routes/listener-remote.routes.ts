@@ -170,7 +170,8 @@ async function append(req: Request, binding: ListenerRemoteBinding, resolveItem:
     await authorized(req, 'add', 'request');
     const item = await resolveItem();
     const { bot } = await authorized(req, 'add', 'request');
-    if (bot.queue.length >= 500) fail(429, 'rate_limited', 'The queue is full.');
+    // Count what is still to play: tracks already played stay in the queue and must not use up the limit.
+    if (bot.queue.upcomingCount >= 500) fail(429, 'rate_limited', 'The queue is full.');
     // Conservative: a listener may only start music on an idle bot. Anything
     // already playing or paused is never touched, and an active video stream is
     // never replaced (no replaceSessionIds, unlike a chat !play); the item is

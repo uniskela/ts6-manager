@@ -208,6 +208,25 @@ describe('listener remote HTTP security boundary', () => {
     });
   }));
 
+  it('limits the queue by tracks still to play, not by tracks already played', async () => using(async f => {
+    const { session } = await f.exchange();
+    const track = (n: number): QueueItem => ({ id: `played-${n}`, title: `Track ${n}`, filePath: `/music/${n}.mp3`, source: 'local' });
+    // A long-running bot: 600 tracks in the queue, all but the last already played.
+    f.queue.addMany(Array.from({ length: 600 }, (_, n) => track(n)));
+    f.queue.playAt(f.queue.length - 1);
+    assert.equal(f.queue.upcomingCount, 0);
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+    assert.equal(f.queue.upcomingCount, 1);
+
+    // 500 tracks waiting is the limit.
+    f.queue.addMany(Array.from({ length: 499 }, (_, n) => track(1000 + n)));
+    assert.equal(f.queue.upcomingCount, 500);
+    const full = await f.request('/queue', { session, body: { songId: 11 } });
+    assert.equal(full.status, 429);
+    assert.deepEqual(await full.json(), { error: 'The queue is full.', code: 'rate_limited' });
+    assert.equal(f.queue.upcomingCount, 500);
+  }));
+
   it('applies the scoped shared policy to every read and write, and reflects subsequent policy changes', async () => using(async f => {
     const { session } = await f.exchange();
     restrict(f, [7]);
