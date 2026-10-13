@@ -458,6 +458,17 @@ test('opening the cached shell with an expired proxy session signs in again by i
   await expect(page.getByRole('status')).toHaveCount(0);
 });
 
+test('an expired proxy session never reloads in a loop when the attempt cannot be recorded', async ({ page, request }) => {
+  await controlled(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'sessionStorage', { get() { throw new DOMException('blocked', 'SecurityError'); } });
+  });
+  await request.post('/__test/access?on');
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Sign in again' })).toBeVisible();
+  expect((await (await request.post('/__test/noop')).json()).accessLogins).toBe(0);
+});
+
 test('a proxy session that expires mid-use asks before reloading', async ({ page, request }) => {
   await controlled(page);
   await page.getByLabel('Username').fill('unsaved-edit');

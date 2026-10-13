@@ -8,6 +8,7 @@ let generation = 0;
 let unavailable = false;
 let accessExpired = false;
 let accessLogins = 0;
+const APP_ORIGIN = 'http://127.0.0.1:4175';
 let mutations = 0;
 let needsSetup = false;
 let allowTestAuth = false;
@@ -314,7 +315,9 @@ const server = createServer(async (req, res) => {
       if (req.headers['sec-fetch-mode'] !== 'navigate') { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<title>Sign in</title>'); return; }
       accessExpired = false;
       accessLogins++;
-      res.writeHead(302, { Location: url.searchParams.get('next') || '/' });
+      // Only ever send the browser back to a path on the app under test.
+      const back = new URL(url.searchParams.get('next') || '/', APP_ORIGIN);
+      res.writeHead(302, { Location: back.origin === APP_ORIGIN ? APP_ORIGIN + back.pathname + back.search : APP_ORIGIN });
       res.end();
       return;
     }
@@ -401,8 +404,7 @@ const server = createServer(async (req, res) => {
   if (accessExpired) {
     // The login lives on another origin, as a real proxy's does, so a fetch
     // cannot follow it; only a page navigation can.
-    const back = `http://${req.headers.host}${url.pathname}${url.search}`;
-    res.writeHead(302, { Location: `http://localhost:4175/__test/access-login?next=${encodeURIComponent(back)}` });
+    res.writeHead(302, { Location: `http://localhost:4175/__test/access-login?next=${encodeURIComponent(url.pathname + url.search)}` });
     res.end();
     return;
   }

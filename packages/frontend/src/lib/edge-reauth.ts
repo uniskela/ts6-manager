@@ -13,19 +13,36 @@ export function stripEdgeReauthMarker(): void {
   window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
 }
 
+let warned = false;
+function storageBlocked(error: unknown): void {
+  if (warned) return;
+  warned = true;
+  console.warn('Session storage is unavailable; automatic gateway sign-in is disabled.', error);
+}
+
 /** Load the current page from the network so the proxy can sign the user in. */
 export function reauthenticateAtEdge(): void {
-  try { sessionStorage.setItem(ATTEMPT_KEY, '1'); } catch { /* Storage may be blocked. */ }
   const url = new URL(window.location.href);
   url.searchParams.set(MARKER, '1');
   window.location.replace(url.href);
 }
 
-/** True when this tab already tried and the proxy still redirects: do not loop. */
-export function edgeReauthAttempted(): boolean {
-  try { return sessionStorage.getItem(ATTEMPT_KEY) !== null; } catch { return false; }
+/**
+ * Take this tab's one automatic attempt. False when it was already used, or
+ * when it cannot be recorded: an unrecorded attempt would reload forever
+ * against a proxy that keeps redirecting.
+ */
+export function claimEdgeReauthAttempt(): boolean {
+  try {
+    if (sessionStorage.getItem(ATTEMPT_KEY) !== null) return false;
+    sessionStorage.setItem(ATTEMPT_KEY, '1');
+    return sessionStorage.getItem(ATTEMPT_KEY) !== null;
+  } catch (error) {
+    storageBlocked(error);
+    return false;
+  }
 }
 
 export function clearEdgeReauthAttempt(): void {
-  try { sessionStorage.removeItem(ATTEMPT_KEY); } catch { /* Storage may be blocked. */ }
+  try { sessionStorage.removeItem(ATTEMPT_KEY); } catch (error) { storageBlocked(error); }
 }

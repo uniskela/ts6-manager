@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { invalidateAfterPwaRecovery } from '@/lib/demand-driven-query-policy';
-import { clearEdgeReauthAttempt, edgeReauthAttempted, reauthenticateAtEdge } from '@/lib/edge-reauth';
+import { claimEdgeReauthAttempt, clearEdgeReauthAttempt, reauthenticateAtEdge } from '@/lib/edge-reauth';
 
 /** Available on login/setup as well as protected routes. No persisted live data. */
 export function PwaStatus() {
@@ -55,6 +55,8 @@ export function PwaStatus() {
     let probing = false;
     let failures = 0;
     let probes = 0;
+    let edited = false;
+    const markEdited = () => { edited = true; };
     let retry: number | undefined;
     let controller = navigator.serviceWorker?.controller;
     const abort = new AbortController();
@@ -87,9 +89,9 @@ export function PwaStatus() {
       if (disposed) return;
       probes += 1;
       if (available) clearEdgeReauthAttempt();
-      // A page that has only just opened has nothing to lose, so renew at once.
-      // Later, or if that already failed, ask first: a reload discards edits.
-      if (redirected && probes === 1 && !edgeReauthAttempted()) { reauthenticateAtEdge(); return; }
+      // A page that has only just opened and is untouched has nothing to lose,
+      // so renew at once. Otherwise ask first: a reload discards edits.
+      if (redirected && probes === 1 && !edited && claimEdgeReauthAttempt()) { reauthenticateAtEdge(); return; }
       setSignedOut(redirected);
       setUnavailable(!available);
       // Recovery refreshes ordinary live queries but must not start expensive scans.
@@ -140,6 +142,7 @@ export function PwaStatus() {
         }).catch(() => { /* PWA is progressive enhancement; browser use still works. */ });
     }
 
+    document.addEventListener('input', markEdited, { capture: true, once: true });
     void checkConnection();
     const interval = window.setInterval(resume, 60_000);
     window.addEventListener('online', resume);
@@ -150,6 +153,7 @@ export function PwaStatus() {
       abort.abort();
       clearInterval(interval);
       clearTimeout(retry);
+      document.removeEventListener('input', markEdited, { capture: true });
       window.removeEventListener('online', resume);
       window.removeEventListener('offline', offline);
       document.removeEventListener('visibilitychange', resume);
