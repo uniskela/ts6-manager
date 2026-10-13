@@ -115,6 +115,7 @@ func TestAV1ProbeIsCachedPerGPU(t *testing.T) {
 // The capability report tests AV1 on the GPUs it found: CUDA when NVENC
 // works, VAAPI when its device is present.
 func TestCapabilitiesReportAV1Decoding(t *testing.T) {
+	t.Setenv("VIDEO_HW_DECODE", "1")
 	vaapiDevice(t, false)
 	var calls int32
 	c := &capabilityCache{run: av1Runner("", nil, &calls)}

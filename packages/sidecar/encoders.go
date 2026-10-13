@@ -598,9 +598,11 @@ func probeEncodersIn(run probeRunner, list ffmpegEncoderList) *EncoderCapabiliti
 
 // capabilityCache holds the last probe so routine requests never re-probe.
 type capabilityCache struct {
-	mu   sync.Mutex
-	caps *EncoderCapabilities
-	run  probeRunner
+	// probeMu serializes refreshes without blocking reads of published capabilities.
+	probeMu sync.Mutex
+	mu      sync.Mutex
+	caps    *EncoderCapabilities
+	run     probeRunner
 	// list is the encoder list of the ffmpeg at listPath, asked for once.
 	// listAsked is set even when the answer was unusable, so a broken ffmpeg
 	// is not run again for every stream start. A refresh asks again.
@@ -639,17 +641,37 @@ func (c *capabilityCache) missingReason(spec EncoderSpec) string {
 
 func (c *capabilityCache) get(refresh bool) *EncoderCapabilities {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.caps == nil || refresh {
-		run := c.runner()
-		caps := probeEncodersIn(run, c.encoderListLocked(refresh))
-		caps.AV1Decode = c.av1.probeAll(run, caps, refresh)
-		for _, r := range caps.AV1Decode {
-			caps.AV1HwDecode = caps.AV1HwDecode || r.Available
-		}
-		c.caps = caps
+	cached := c.caps
+	c.mu.Unlock()
+	if cached != nil && !refresh {
+		return cached
 	}
-	return c.caps
+
+	c.probeMu.Lock()
+	defer c.probeMu.Unlock()
+	c.mu.Lock()
+	if c.caps != nil && !refresh {
+		cached = c.caps
+		c.mu.Unlock()
+		return cached
+	}
+	run := c.runner()
+	list := c.encoderListLocked(refresh)
+	c.mu.Unlock()
+
+	caps := probeEncodersIn(run, list)
+	// Decode probes can crash faulty drivers. They are unnecessary when GPU
+	// decoding is disabled, and must not hold the lock used by stream startup.
+	if caps.HwDecode {
+		caps.AV1Decode = c.av1.probeAll(run, caps, refresh)
+	}
+	for _, r := range caps.AV1Decode {
+		caps.AV1HwDecode = caps.AV1HwDecode || r.Available
+	}
+	c.mu.Lock()
+	c.caps = caps
+	c.mu.Unlock()
+	return caps
 }
 
 // av1Decode is the cached AV1 test decode for hwaccel and device, run on first
