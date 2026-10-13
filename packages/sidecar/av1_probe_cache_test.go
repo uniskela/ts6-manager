@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -30,6 +31,11 @@ func TestCapabilitiesSkipAV1ProbeWhenHardwareDecodeDisabled(t *testing.T) {
 	caps := c.get(false)
 	if av1Calls.Load() != 0 || caps.AV1HwDecode || len(caps.AV1Decode) != 0 {
 		t.Fatalf("hardware decoding off: %d unnecessary AV1 probes, capabilities %+v", av1Calls.Load(), caps.AV1Decode)
+	}
+	// Reported as an empty list, not null: null means a sidecar that predates
+	// AV1 decoding to the backend's diagnostics.
+	if out, err := json.Marshal(caps); err != nil || !strings.Contains(string(out), `"av1Decode":[]`) {
+		t.Fatalf("want \"av1Decode\":[] in %s (%v)", out, err)
 	}
 }
 

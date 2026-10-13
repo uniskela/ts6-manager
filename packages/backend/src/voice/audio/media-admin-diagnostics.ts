@@ -227,6 +227,10 @@ export function av1DecodeSummary(caps: VideoEncoderCapabilities): MediaDiagnosti
     ...(!probe.available && probe.error ? { detail: clip(probe.error, 160) } : {}),
   }));
   const cpu = 'AV1 sources decode on the CPU (libdav1d).';
+  if (!caps.hwDecode) {
+    // The sidecar runs no AV1 test decode then: nothing decodes on the GPU.
+    return { decodesOn: 'cpu', message: `VIDEO_HW_DECODE is off, so the GPU is not tested for AV1. ${cpu}`, items };
+  }
   if (items.length === 0) {
     return { decodesOn: 'cpu', message: `No GPU to test. ${cpu}`, items };
   }
@@ -236,13 +240,6 @@ export function av1DecodeSummary(caps: VideoEncoderCapabilities): MediaDiagnosti
       ? ' On many Intel GPUs the free Debian VA-API driver cannot decode AV1; see INTEL_VAAPI_DRIVER in the video streaming guide.'
       : '';
     return { decodesOn: 'cpu', message: `The GPU does not decode AV1. ${cpu}${intel}`, items };
-  }
-  if (!caps.hwDecode) {
-    return {
-      decodesOn: 'cpu',
-      message: `The GPU decodes AV1 (${passed.join(', ')}), but VIDEO_HW_DECODE is off. ${cpu}`,
-      items,
-    };
   }
   return { decodesOn: 'gpu', message: `AV1 sources decode on the GPU (${passed.join(', ')}).`, items };
 }

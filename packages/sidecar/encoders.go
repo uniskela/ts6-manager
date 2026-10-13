@@ -663,6 +663,9 @@ func (c *capabilityCache) get(refresh bool) *EncoderCapabilities {
 	caps := probeEncodersIn(run, list)
 	// Decode probes can crash faulty drivers. They are unnecessary when GPU
 	// decoding is disabled, and must not hold the lock used by stream startup.
+	// An empty list (not null) tells the backend this sidecar does report AV1
+	// decoding and simply tested no GPU; hwDecode says why.
+	caps.AV1Decode = []AV1DecodeProbe{}
 	if caps.HwDecode {
 		caps.AV1Decode = c.av1.probeAll(run, caps, refresh)
 	}

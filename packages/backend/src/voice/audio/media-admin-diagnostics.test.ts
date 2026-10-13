@@ -288,10 +288,12 @@ describe('av1DecodeSummary', () => {
     assert.deepEqual(r.items, [{ hwaccel: 'vaapi', available: true }]);
   });
 
-  it('points at VIDEO_HW_DECODE when the GPU could decode AV1 but streams decode on the CPU', () => {
-    const r = av1DecodeSummary({ ...encoders, hwDecode: false, av1HwDecode: true, av1Decode: [vaapi] });
+  it('says VIDEO_HW_DECODE is off, not that no GPU exists, when the sidecar skipped the test decode', () => {
+    // A 1.11 sidecar with hardware decoding off reports an empty list.
+    const r = av1DecodeSummary({ ...encoders, hwDecode: false, av1HwDecode: false, av1Decode: [] });
     assert.equal(r.decodesOn, 'cpu');
     assert.match(r.message, /VIDEO_HW_DECODE is off/);
+    assert.doesNotMatch(r.message, /No GPU|before 1\.11/);
   });
 
   it("keeps the failed test decode's reason and points Intel users at the driver choice", () => {
@@ -304,7 +306,7 @@ describe('av1DecodeSummary', () => {
   });
 
   it('says so when there was no GPU to test, or the sidecar is too old to report it', () => {
-    assert.match(av1DecodeSummary({ ...encoders, av1HwDecode: false, av1Decode: [] }).message, /No GPU to test/);
+    assert.match(av1DecodeSummary({ ...encoders, hwDecode: true, av1HwDecode: false, av1Decode: [] }).message, /No GPU to test/);
     assert.equal(av1DecodeSummary(encoders).decodesOn, 'unknown');
   });
 });
