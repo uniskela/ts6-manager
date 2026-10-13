@@ -244,18 +244,20 @@ func parseProbedVideo(out string) sourceVideo {
 // localVideo is probeLocalVideo, replaced in tests.
 var localVideo = probeLocalVideo
 
-// sourceVideoOf is req's video: as the backend named it, else read from a
-// local file; no codec for any other source. The backend names the codec of
+// sourceVideoOf probes local video indexes, or uses backend codec metadata
+// for remote inputs. The backend names the codec of
 // a YouTube stream it resolved, and YouTube serves AV1 only as video-only
 // formats, so that video is stream 0 of its input.
 func sourceVideoOf(req SourceRequest) sourceVideo {
+	// Codec metadata does not identify a local file's stream index. Probe
+	// local inputs even when the caller knows AV1, including reordered audio.
+	if req.Source != "" && !isRemoteSource(req.Source) {
+		return localVideo(req.Source)
+	}
 	if req.VideoCodec != "" {
 		return sourceVideo{codec: req.VideoCodec}
 	}
-	if req.Source == "" || isRemoteSource(req.Source) {
-		return sourceVideo{}
-	}
-	return localVideo(req.Source)
+	return sourceVideo{}
 }
 
 // av1GPUDecoder decides whether a stream with spec forces FFmpeg's own AV1
@@ -363,47 +365,85 @@ func av1DecodeFailed(t *tailBuffer, stream int) bool {
 // open. A variable for tests.
 var av1DecodeWatchWindow = 15 * time.Second
 
-// restartOnLibdav1dIfAV1Fails watches the ffmpeg of generation gen, launched
-// with FFmpeg's own AV1 decoder, and starts the stream again on libdav1d if it
-// fails to decode frames of the video stream within av1DecodeWatchWindow
-// while still running. Only if nothing has moved on since: the startup check
-// in startFFmpegLocked catches the same failure while it holds ffmpegLock,
-// and its relaunch is a new generation. An ffmpeg that has exited is left to
-// the usual exit handling, so a stream that ended is never started again.
+// restartOnLibdav1dIfAV1Fails watches one GPU-decoding generation, including
+// a fatal exit. Completion and a polling tick use the same decision path so
+// scheduling cannot decide whether a qualifying failure receives its retry.
 func (s *Sidecar) restartOnLibdav1dIfAV1Fails(req SourceRequest, hwaccel string, stream int, gen uint64, done <-chan struct{}, tail *tailBuffer) {
-	deadline := time.After(av1DecodeWatchWindow)
+	deadline := time.NewTimer(av1DecodeWatchWindow)
+	defer deadline.Stop()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
-	// The failure must still be there a tick later with ffmpeg running: an
-	// ffmpeg that logs one error and then exits is not restarted.
-	seen := false
+	s.watchAV1DecodeFailure(req, hwaccel, stream, gen, done, tail, tick.C, deadline.C, s.startFFmpegLocked)
+}
+
+// The clock channels let concurrency tests drive the precise ordering of
+// process completion, detection, cancellation and stream replacement.
+func (s *Sidecar) watchAV1DecodeFailure(req SourceRequest, hwaccel string, stream int, gen uint64, done <-chan struct{}, tail *tailBuffer, ticks, deadline <-chan time.Time, restart func(SourceRequest) (EncoderSession, error)) {
 	for {
 		select {
 		case <-done:
-			return
+			// A nonzero exit can be the decoder failure, not an EOF.
 		case <-deadline:
-			return
-		case <-tick.C:
+			// Completion may have raced the timer. A failure that completed
+			// inside the window still owns its retry, regardless of select.
+			if !exited(done) || (!tail.decodeDeadline.IsZero() && !tail.processExitedAt.Before(tail.decodeDeadline)) {
+				return
+			}
+		case <-ticks:
 		}
-		if exited(done) || !av1DecodeFailed(tail, stream) {
-			continue
-		}
-		if !seen {
-			seen = true
-			continue
-		}
-		s.ffmpegLock.Lock()
-		defer s.ffmpegLock.Unlock()
-		if atomic.LoadUint64(&s.ffmpegGen) != gen || exited(done) {
+		if !tail.decodeDeadline.IsZero() && time.Now().After(tail.decodeDeadline) && (!exited(done) || !tail.processExitedAt.Before(tail.decodeDeadline)) {
 			return
 		}
-		reason := tail.summary()
-		log.Printf("[FFmpeg] AV1 did not decode on the GPU (%s): %s; starting again on the CPU decoder (libdav1d)", hwaccel, reason)
-		req.av1FallbackReason = reason
-		if _, err := s.startFFmpegLocked(req); err != nil {
-			log.Printf("[FFmpeg] Restart on libdav1d failed: %v", err)
+		if !av1DecodeFailed(tail, stream) {
+			if exited(done) {
+				return
+			}
+			continue
 		}
+		// Claim the terminal decision before waiting for ffmpegLock or Kill.
+		// Process completion may cross the window boundary in the meantime.
+		tail.retryPending.Store(true)
+		s.retryAV1DecodeFailure(req, hwaccel, stream, gen, done, tail, restart)
 		return
+	}
+}
+
+func (s *Sidecar) retryAV1DecodeFailure(req SourceRequest, hwaccel string, stream int, gen uint64, done <-chan struct{}, tail *tailBuffer, restart func(SourceRequest) (EncoderSession, error)) {
+	s.ffmpegLock.Lock()
+	defer s.ffmpegLock.Unlock()
+	if atomic.LoadUint64(&s.ffmpegGen) != gen {
+		return
+	}
+	if !exited(done) {
+		// Keep ownership until Wait has completed. In particular, do not
+		// replace s.ffmpeg and leave the previous process alive or unreaped.
+		if s.ffmpeg == nil || s.ffmpeg.Process == nil {
+			return
+		}
+		s.ffmpeg.Process.Kill()
+		<-done
+	}
+	// Completion publishes the exit result before closing done. Even when
+	// EOF races with detection/Kill, successful completion must not replay.
+	if tail.processError == nil {
+		return
+	}
+	reason := av1DecodeFailureReason(tail, stream)
+	if reason == "" {
+		reason = "AV1 GPU decoder failed"
+	}
+	log.Printf("[FFmpeg] AV1 did not decode on the GPU (%s): %s; starting again with a software AV1 decoder", hwaccel, reason)
+	req.av1FallbackReason = reason
+	if _, err := restart(req); err != nil {
+		log.Printf("[FFmpeg] Restart on software AV1 decoder failed: %v", err)
+		// Validation can fail before restart changes the generation. Publish
+		// that terminal error rather than leaving a pending retry running.
+		s.statusMu.Lock()
+		if s.encoder.gen == gen && atomic.LoadUint64(&s.ffmpegGen) == gen {
+			s.encoder.State = "exited"
+			s.encoder.ExitError = err.Error()
+		}
+		s.statusMu.Unlock()
 	}
 }
 
@@ -423,8 +463,10 @@ func decoderLabel(a encoderAttempt) string {
 	switch {
 	case a.av1Hwaccel != "":
 		return "av1 (" + a.av1Hwaccel + ")"
+	case a.av1SoftwareDecoder != "":
+		return a.av1SoftwareDecoder
 	case a.av1Source:
-		return "libdav1d"
+		return "software"
 	}
 	return ""
 }

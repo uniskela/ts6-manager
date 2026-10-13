@@ -81,12 +81,17 @@ func installFakeFFmpeg(t *testing.T, behaviour string) string {
 	script := "#!/bin/sh\nlog=\"${0%/*}/calls\"\n" +
 		"if [ \"$1 $2\" = \"-hide_banner -encoders\" ]; then\n" +
 		"  echo q >> \"${0%/*}/queries\"; cat \"${0%/*}/encoders.txt\" 2>/dev/null || exit 1; exit 0\nfi\n" +
+		"if [ \"$1 $2\" = \"-hide_banner -decoders\" ]; then\n" +
+		"  cat \"${0%/*}/decoders.txt\" 2>/dev/null || exit 1; exit 0\nfi\n" +
 		"printf '%s\\n' \"$*\" | tr -d '\\r' | tr '\\n' ' ' >> \"$log\"\necho >> \"$log\"\n" + behaviour
 	bin := filepath.Join(dir, "ffmpeg")
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeEncoderTable(t, dir, nil)
+	if err := os.WriteFile(filepath.Join(dir, "decoders.txt"), []byte(" V..... libdav1d dav1d AV1 decoder\n V....D libaom-av1 libaom AV1 decoder\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("FFMPEG_PATH", bin)
 	t.Setenv("SIDECAR_EGRESS_PROXY", "off")
 	return calls

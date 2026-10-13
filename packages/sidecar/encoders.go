@@ -606,10 +606,11 @@ type capabilityCache struct {
 	// list is the encoder list of the ffmpeg at listPath, asked for once.
 	// listAsked is set even when the answer was unusable, so a broken ffmpeg
 	// is not run again for every stream start. A refresh asks again.
-	list      ffmpegEncoderList
-	listPath  string
-	listAsked bool
-	av1       av1DecodeCache
+	list        ffmpegEncoderList
+	listPath    string
+	listAsked   bool
+	av1         av1DecodeCache
+	av1Software av1SoftwareDecoderCache
 }
 
 func (c *capabilityCache) runner() probeRunner {

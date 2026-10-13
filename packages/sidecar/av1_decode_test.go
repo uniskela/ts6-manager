@@ -277,6 +277,7 @@ func TestAfterHardwareFailureDropsTheAV1DecoderFirst(t *testing.T) {
 	if a.av1Hwaccel != "" || a.spec.ID != "h264_vaapi" || a.triedLowPowerToggle || a.decoderFallbackReason != "Failed to get HW surface format" {
 		t.Errorf("first failure: back to libdav1d on the same encoder, got %+v", a)
 	}
+	a.av1SoftwareDecoder = "libdav1d"
 	if decoderLabel(a) != "libdav1d" {
 		t.Errorf("decoder label: %q", decoderLabel(a))
 	}
@@ -447,28 +448,5 @@ func TestLateAV1DecodeErrorsRestartOnLibdav1d(t *testing.T) {
 	}
 }
 
-// An ffmpeg that logs a decode error and then exits after the startup check
-// is left to the usual exit handling: the stream is not started again.
-func TestAV1DecodeErrorBeforeAnExitDoesNotRestart(t *testing.T) {
-	calls, release := installAV1FailingFFmpeg(t, true, true)
-	t.Setenv("VIDEO_HW_DECODE", "1")
-	t.Setenv("VAAPI_VERIFY_MS", "200")
-	s := NewSidecar()
-	defer s.Stop()
-
-	if _, err := s.StartFFmpeg(SourceRequest{Source: "https://example.com/v.webm", VideoCodec: "av1", Encoder: "h264_nvenc", Volume: 100}); err != nil {
-		t.Fatal(err)
-	}
-	release()
-	deadline := time.Now().Add(3 * time.Second)
-	for s.encoderSession().State != "exited" && time.Now().Before(deadline) {
-		time.Sleep(20 * time.Millisecond)
-	}
-	time.Sleep(500 * time.Millisecond)
-	if runs := streamRuns(t, calls, 1); len(runs) != 1 {
-		t.Errorf("an exited stream must not be restarted:\n%s", strings.Join(runs, "\n"))
-	}
-	if got := s.encoderSession(); got.State != "exited" || got.Decoder != "av1 (cuda)" || got.DecoderFallbackReason != "" {
-		t.Errorf("want the exit reported, with no decoder fallback: %+v", got)
-	}
-}
+// Fatal-exit, EOF, cancellation and watcher scheduling are covered without
+// sleeps in av1_lifecycle_test.go.

@@ -622,6 +622,7 @@ type Sidecar struct {
 	iceAdvertiseIPs []string
 
 	ffmpeg     *exec.Cmd
+	ffmpegDone <-chan struct{}
 	ffmpegLock sync.Mutex
 	ffmpegGen  uint64
 	source     string
@@ -1386,8 +1387,9 @@ type SourceRequest struct {
 	VideoCodec string
 	// av1Hwaccel forces FFmpeg's own AV1 decoder on the video input, decoding
 	// on this hwaccel. Set per launch from encoderAttempt, never by a request.
-	av1Hwaccel string
-	// av1FallbackReason starts an AV1 source on libdav1d because the GPU
+	av1Hwaccel         string
+	av1SoftwareDecoder string
+	// av1FallbackReason starts an AV1 source on a software decoder because the GPU
 	// failed to decode it (restartOnLibdav1dIfAV1Fails). Never set by a request.
 	av1FallbackReason string
 	// StartAtSecs resumes an on-demand source at this offset, so a restart for
@@ -1418,10 +1420,11 @@ type EncoderSession struct {
 	ExitError      string     `json:"exitError,omitempty"`
 	StartedAt      *time.Time `json:"startedAt,omitempty"`
 	// Decoder names the video decoder for an AV1 source: "av1 (vaapi)" or
-	// "av1 (cuda)" on the GPU, "libdav1d" on the CPU. Empty for other sources.
+	// "av1 (cuda)" on the GPU; "libdav1d" or "libaom-av1" on the CPU, or
+	// "software" when FFmpeg chooses. Empty for other sources.
 	Decoder string `json:"decoder,omitempty"`
 	// DecoderFallbackReason is why an AV1 source that started on the GPU
-	// decoder was started again on libdav1d.
+	// decoder was started again on a software AV1 decoder.
 	DecoderFallbackReason string `json:"decoderFallbackReason,omitempty"`
 	gen                   uint64
 }
@@ -1452,6 +1455,11 @@ type tailBuffer struct {
 	decodeFailures     map[int]string
 	mu                 sync.Mutex
 	buf                []byte
+	// processError is published before the process completion channel closes.
+	processError    error
+	processExitedAt time.Time
+	decodeDeadline  time.Time
+	retryPending    atomic.Bool
 }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
@@ -1593,6 +1601,8 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 			// video input only.
 			if input == source && req.av1Hwaccel != "" && spec.Hardware && hwDecodeEnabled() {
 				args = append(args, "-c:v", "av1")
+			} else if input == source && req.av1SoftwareDecoder != "" {
+				args = append(args, "-c:v", req.av1SoftwareDecoder)
 			}
 			args = append(args, "-i", input)
 		}
@@ -1690,27 +1700,39 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 }
 
 // launchFFmpegLocked starts ffmpeg and returns a channel closed on exit.
-func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64, health *healthTracker) (<-chan struct{}, *tailBuffer, error) {
-	tail := &tailBuffer{}
+func (s *Sidecar) launchFFmpegLocked(args []string, gen uint64, health *healthTracker, av1Stream int) (<-chan struct{}, *tailBuffer, error) {
+	tail := &tailBuffer{decodeDeadline: time.Now().Add(av1DecodeWatchWindow)}
 	cmd := exec.Command(getFfmpegPath(), args...)
 	if s.egress != nil {
 		cmd.Env = egressCommandEnv()
 	}
 	cmd.Stdout = nil
 	cmd.Stderr = io.MultiWriter(os.Stderr, tail, health)
+	// Stopping waits for this process to be reaped. A child that inherited
+	// stderr must not hold that wait, and ffmpegLock with it, open.
+	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Start(); err != nil {
 		return nil, nil, err
 	}
 	s.ffmpeg = cmd
 
 	done := make(chan struct{})
+	s.ffmpegDone = done
 	go func() {
 		err := cmd.Wait()
+		tail.processError = err
+		tail.processExitedAt = time.Now()
 		log.Printf("[FFmpeg] Exited: %v", err)
 		s.statusMu.Lock()
 		if s.encoder.gen == gen && atomic.LoadUint64(&s.ffmpegGen) == gen {
-			s.encoder.State = "exited"
-			if err != nil {
+			// Keep the session active while the fallback watcher owns a
+			// qualifying terminal failure. The backend must not act on an
+			// intermediate exited state before the retry is committed.
+			pendingRetry := err != nil && (tail.retryPending.Load() || (av1Stream >= 0 && tail.processExitedAt.Before(tail.decodeDeadline) && av1DecodeFailed(tail, av1Stream)))
+			if !pendingRetry {
+				s.encoder.State = "exited"
+			}
+			if err != nil && !pendingRetry {
 				reason := tail.summary()
 				if reason == "" {
 					reason = err.Error()
@@ -1776,6 +1798,7 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 			return s.encoderSession(), err
 		}
 
+		req.av1FallbackReason = attempt.decoderFallbackReason
 		if mayLackAudio(req) {
 			go s.restartWithSilenceIfNoAudio(req, gen, done, tail)
 		}
@@ -1792,6 +1815,7 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 			}
 			// FFmpeg's own AV1 decoder can keep running while the GPU
 			// fails every frame: stop it, and go on as if it had exited.
+			tail.retryPending.Store(true)
 			if s.ffmpeg != nil && s.ffmpeg.Process != nil {
 				s.ffmpeg.Process.Kill()
 			}
@@ -1799,6 +1823,11 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 		}
 
 		s.ffmpeg = nil
+		s.ffmpegDone = nil
+		// A successful exit is normal EOF, including short files. Never replay it.
+		if tail.processError == nil {
+			return s.encoderSession(), nil
+		}
 		if mayLackAudio(req) && noAudioTrack(tail) {
 			// Not the hardware encoder's fault: start it again with
 			// silence for the missing audio track.
@@ -1806,7 +1835,17 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 			req.SilentAudio = true
 			continue
 		}
-		attempt = attempt.afterHardwareFailure(tail.summary())
+		// Any failed startup drops a forced AV1 decoder first: a GPU that
+		// cannot decode the source need not log a decode error before ffmpeg
+		// exits. The video's own decode error is the better reason when the
+		// rolling tail has moved past it.
+		reason := tail.summary()
+		if attempt.av1Hwaccel != "" {
+			if evidence := av1DecodeFailureReason(tail, attempt.av1Stream); evidence != "" {
+				reason = evidence
+			}
+		}
+		attempt = attempt.afterHardwareFailure(reason)
 	}
 }
 
@@ -1837,8 +1876,9 @@ type encoderAttempt struct {
 	triedLowPowerToggle bool
 	// av1Hwaccel is the GPU FFmpeg's own AV1 decoder runs on ("" = FFmpeg's
 	// default decoder); av1Source is set for an AV1 source either way.
-	av1Hwaccel string
-	av1Source  bool
+	av1Hwaccel         string
+	av1SoftwareDecoder string
+	av1Source          bool
 	// av1Stream is the AV1 video's stream index in the first input.
 	av1Stream int
 	// decoderFallbackReason is why the AV1 source no longer decodes on the GPU.
@@ -1891,7 +1931,7 @@ func (s *Sidecar) firstEncoderAttempt(requested EncoderSpec) encoderAttempt {
 
 // afterHardwareFailure returns the attempt that follows a hardware encoder
 // exiting during startup with reason. With FFmpeg's own AV1 decoder forced,
-// the same encoder again on libdav1d first: the test decode passed, but the
+// the same encoder again on a software AV1 decoder first: the test decode passed, but the
 // GPU may still not decode this source (another profile, a driver fault).
 // Then the other low-power mode once, then the software encoder of the same
 // codec.
@@ -1900,7 +1940,7 @@ func (a encoderAttempt) afterHardwareFailure(reason string) encoderAttempt {
 		reason = "hardware encoder exited during startup"
 	}
 	if a.av1Hwaccel != "" {
-		log.Printf("[FFmpeg] AV1 did not decode on the GPU (%s): %s; starting again on the CPU decoder (libdav1d)", a.av1Hwaccel, reason)
+		log.Printf("[FFmpeg] AV1 did not decode on the GPU (%s): %s; starting again with a software AV1 decoder", a.av1Hwaccel, reason)
 		a.av1Hwaccel = ""
 		a.decoderFallbackReason = reason
 		return a
@@ -1921,6 +1961,11 @@ func (a encoderAttempt) afterHardwareFailure(reason string) encoderAttempt {
 // publishes it as the running encoder session. It returns the generation, a
 // channel closed when that ffmpeg exits, and the end of its stderr.
 func (s *Sidecar) launchAttemptLocked(req SourceRequest, requested EncoderSpec, a encoderAttempt) (uint64, <-chan struct{}, *tailBuffer, error) {
+	if a.av1Source && a.av1Hwaccel == "" {
+		// Name the software decoder when this build lists one. Otherwise
+		// FFmpeg chooses, as it did before the decoder was named.
+		a.av1SoftwareDecoder = s.caps.av1Software.get(s.caps.runner(), getFfmpegPath())
+	}
 	gen := atomic.AddUint64(&s.ffmpegGen, 1)
 	now := time.Now().UTC()
 	s.statusMu.Lock()
@@ -1939,6 +1984,7 @@ func (s *Sidecar) launchAttemptLocked(req SourceRequest, requested EncoderSpec, 
 	s.statusMu.Unlock()
 
 	req.av1Hwaccel = a.av1Hwaccel
+	req.av1SoftwareDecoder = a.av1SoftwareDecoder
 	args := s.buildFFmpegArgs(req, a.spec, a.lowPower)
 	mode := resolveSourceMode(req.Mode, req.Source)
 	startAt := 0.0
@@ -1952,7 +1998,11 @@ func (s *Sidecar) launchAttemptLocked(req SourceRequest, requested EncoderSpec, 
 	s.health = health
 	s.statusMu.Unlock()
 	log.Printf("[FFmpeg] Starting: encoder=%s mode=%s video=:%d audio=:%d", a.spec.ID, mode, s.videoPort, s.audioPort)
-	done, tail, err := s.launchFFmpegLocked(args, gen, health)
+	av1Stream := -1
+	if a.av1Hwaccel != "" {
+		av1Stream = a.av1Stream
+	}
+	done, tail, err := s.launchFFmpegLocked(args, gen, health, av1Stream)
 	if err != nil {
 		log.Printf("[FFmpeg] Start error: %v", err)
 		s.statusMu.Lock()
@@ -2008,7 +2058,13 @@ func (s *Sidecar) StopFFmpegLocked() {
 	atomic.AddUint64(&s.ffmpegGen, 1)
 	if s.ffmpeg != nil && s.ffmpeg.Process != nil {
 		s.ffmpeg.Process.Kill()
+		// Reap the old process before permitting another launch. Wait owns
+		// no ffmpegLock, so completion cannot deadlock this stop.
+		if s.ffmpegDone != nil {
+			<-s.ffmpegDone
+		}
 		s.ffmpeg = nil
+		s.ffmpegDone = nil
 	}
 	if s.egress != nil {
 		s.egress.Close()
