@@ -61,3 +61,26 @@ func TestAV1CapabilityProbeDoesNotBlockCachedEncoderReads(t *testing.T) {
 	}
 	// release is deferred so a failing assertion cannot leak the probe goroutine.
 }
+
+func TestAV1RefreshDoesNotBlockCachedDecoderDecision(t *testing.T) {
+	var calls int32
+	c := &av1DecodeCache{}
+	original := c.get(av1Runner("", nil, &calls), hwaccelCUDA, "", false)
+	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	go func() {
+		c.get(func(context.Context, []string) (string, error) { close(entered); <-release; return "", nil }, hwaccelCUDA, "", true)
+		close(done)
+	}()
+	t.Cleanup(func() { close(release); <-done })
+	<-entered
+	read := make(chan AV1DecodeProbe, 1)
+	go func() { read <- c.get(av1Runner("", nil, &calls), hwaccelCUDA, "", false) }()
+	select {
+	case got := <-read:
+		if got != original {
+			t.Errorf("expected published cached decode decision, got %+v", got)
+		}
+	case <-time.After(time.Second):
+		t.Error("refresh blocks cached AV1 stream-start decision")
+	}
+}

@@ -137,6 +137,7 @@ func writeAV1ProbeSample() (string, error) {
 // av1DecodeCache keeps one test decode per hwaccel and device: the answer does
 // not change while the sidecar runs. GET /encoders?refresh=1 runs them again.
 type av1DecodeCache struct {
+	probeMu sync.Mutex
 	mu      sync.Mutex
 	results map[string]AV1DecodeProbe
 }
@@ -144,20 +145,34 @@ type av1DecodeCache struct {
 func (c *av1DecodeCache) get(run probeRunner, hwaccel, device string, refresh bool) AV1DecodeProbe {
 	key := hwaccel + "|" + device
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if r, ok := c.results[key]; ok && !refresh {
+	r, ok := c.results[key]
+	c.mu.Unlock()
+	if ok && !refresh {
 		return r
 	}
-	r := runAV1DecodeProbe(run, hwaccel, device)
+
+	// Serialize test processes, but leave published results available to streams
+	// while diagnostics refreshes a potentially slow or crashing driver probe.
+	c.probeMu.Lock()
+	defer c.probeMu.Unlock()
+	c.mu.Lock()
+	r, ok = c.results[key]
+	c.mu.Unlock()
+	if ok && !refresh {
+		return r
+	}
+	r = runAV1DecodeProbe(run, hwaccel, device)
 	if r.Available {
 		log.Printf("[Probe] AV1 decodes on the GPU (%s)", hwaccel)
 	} else {
 		log.Printf("[Probe] AV1 does not decode on the GPU (%s): %s; AV1 sources decode on the CPU", hwaccel, r.Error)
 	}
+	c.mu.Lock()
 	if c.results == nil {
 		c.results = map[string]AV1DecodeProbe{}
 	}
 	c.results[key] = r
+	c.mu.Unlock()
 	return r
 }
 
