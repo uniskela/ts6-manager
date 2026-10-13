@@ -164,6 +164,40 @@ test('Bot Hub shows each bot\'s active media session and links to its sections',
   await expect(page.getByRole('tab', { name: 'Streaming defaults' })).toHaveAttribute('aria-selected', 'true');
 });
 
+for (const path of ['/bot-hub', '/bot-hub/2']) {
+  test(`reports an asynchronous decoder fallback in ${path}`, async ({ page, request }) => {
+    let fallback = false;
+    await page.route('**/api/music-bots/2/state', route => route.fulfill({ json: {
+      status: 'connected', queue: [], currentIndex: -1, volume: 50, position: 0, duration: 0, nowPlaying: null,
+    } }));
+    await page.route('**/api/music-bots/2/stream/queue', route => route.fulfill({ json: {
+      current: null, upNext: [], kept: false,
+    } }));
+    await page.route('**/api/music-bots/2/stream/status', route => route.fulfill({ json: {
+      streaming: true, viewerCount: 0, viewers: [],
+    } }));
+    await page.route('**/api/music-bots/media', route => {
+      const sessions = media(Date.now());
+      if (fallback) {
+        Object.assign(sessions[1].video!.encoder, {
+          decoder: 'libdav1d', decoderFallbackReason: 'Failed to get HW surface format',
+        });
+      }
+      return route.fulfill({ json: sessions });
+    });
+    await signIn(page, request);
+    await page.goto(path);
+    await expect(page.getByText('Streaming from iptv.example')).toBeVisible();
+    const warning = page.getByRole('status').filter({ hasText: 'AV1 GPU decoding failed' });
+    await expect(warning).toHaveCount(0);
+    const nextSample = page.waitForResponse(response => new URL(response.url()).pathname === '/api/music-bots/media');
+    fallback = true;
+    await nextSample;
+    await expect(warning).toHaveText('AV1 GPU decoding failed, decoding on the CPU: Failed to get HW surface format');
+    await expect(warning).toHaveAttribute('aria-live', 'polite');
+  });
+}
+
 test('New bot creates a media bot on the chosen server', async ({ page, request }) => {
   const created: unknown[] = [];
   await page.route('**/api/music-bots/media', (r) => r.fulfill({ json: media(Date.now()) }));

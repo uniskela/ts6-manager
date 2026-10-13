@@ -92,6 +92,31 @@ test('only page entry and manual Refresh run probes', async ({ page, request }) 
   await expect.poll(() => probes).toBe(2);
 });
 
+test('AV1 decode probe results are a polite live region and update on Refresh', async ({ page, request }) => {
+  let available = false;
+  await page.route('**/api/settings/media-diagnostics', route => route.fulfill({ json: {
+    ...report,
+    encoders: {
+      ...report.encoders,
+      av1Decode: {
+        message: 'AV1 decode probe results',
+        items: [{ hwaccel: 'vaapi', available, detail: available ? 'AV1 decoding succeeded' : 'No AV1 device' }],
+      },
+    },
+  } }));
+  await signIn(page, request);
+  await page.goto('/diagnostics');
+  const results = page.getByRole('status', { name: 'AV1 decoding' });
+  await expect(results).toHaveAttribute('aria-live', 'polite');
+  await expect(results.getByText('No', { exact: true })).toBeVisible();
+  await expect(results.getByText('No AV1 device')).toBeVisible();
+  available = true;
+  await page.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await expect(results.getByText('Decodes', { exact: true })).toBeVisible();
+  await expect(results.getByText('AV1 decoding succeeded')).toBeVisible();
+  await expect(results.getByText('No', { exact: true })).toHaveCount(0);
+});
+
 test('failed checks require an explicit refresh to retry', async ({ page, request }) => {
   let probes = 0;
   await page.route('**/api/settings/media-diagnostics', route => {

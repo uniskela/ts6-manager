@@ -120,7 +120,7 @@ function CompactNowPlaying(props: NowPlayingProps): JSX.Element {
           </p>
         )}
         {bot.video?.encoder?.decoderFallbackReason && (
-          <p className="flex items-start gap-1.5 text-xs text-warning">
+          <p className="flex items-start gap-1.5 text-xs text-warning" role="status" aria-live="polite">
             <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
             <span className="line-clamp-2">AV1 GPU decoding failed, decoding on the CPU: {bot.video.encoder.decoderFallbackReason}</span>
           </p>
@@ -384,7 +384,7 @@ function FullNowPlaying({ bot, now, footer }: NowPlayingProps): JSX.Element {
               </p>
             )}
             {bot.video?.encoder?.decoderFallbackReason && (
-              <p className="flex items-start gap-1.5 text-xs text-warning">
+              <p className="flex items-start gap-1.5 text-xs text-warning" role="status" aria-live="polite">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
                 <span className="line-clamp-2">AV1 GPU decoding failed, decoding on the CPU: {bot.video.encoder.decoderFallbackReason}</span>
               </p>

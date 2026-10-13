@@ -152,7 +152,7 @@ export default function MediaDiagnostics() {
                 </ul>
               )}
               {report.encoders.av1Decode && (
-                <div className="space-y-1 pt-2 text-sm">
+                <div className="space-y-1 pt-2 text-sm" role="status" aria-live="polite" aria-label="AV1 decoding">
                   <p className="font-medium">AV1 decoding</p>
                   <p className="text-muted-foreground">{report.encoders.av1Decode.message}</p>
                   {report.encoders.av1Decode.items.length > 0 && (
