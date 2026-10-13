@@ -2,11 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { invalidateAfterPwaRecovery } from '@/lib/demand-driven-query-policy';
+import { clearEdgeReauthAttempt, edgeReauthAttempted, reauthenticateAtEdge } from '@/lib/edge-reauth';
 
 /** Available on login/setup as well as protected routes. No persisted live data. */
 export function PwaStatus() {
   const queryClient = useQueryClient();
   const [unavailable, setUnavailable] = useState(!navigator.onLine);
+  const [signedOut, setSignedOut] = useState(false);
   const [waiting, setWaiting] = useState<ServiceWorkerRegistration>();
   const [updating, setUpdating] = useState(false);
   const [updateError, setUpdateError] = useState(false);
@@ -24,7 +26,7 @@ export function PwaStatus() {
       observer.disconnect();
       document.documentElement.style.removeProperty('--pwa-status-height');
     };
-  }, [unavailable, waiting]);
+  }, [unavailable, signedOut, waiting]);
 
   useEffect(() => {
     // iOS does not resize layout viewport units when the keyboard opens.
@@ -52,6 +54,7 @@ export function PwaStatus() {
     let wasUnavailable = !navigator.onLine;
     let probing = false;
     let failures = 0;
+    let probes = 0;
     let retry: number | undefined;
     let controller = navigator.serviceWorker?.controller;
     const abort = new AbortController();
@@ -65,9 +68,13 @@ export function PwaStatus() {
       const cancel = () => probeAbort.abort();
       abort.signal.addEventListener('abort', cancel, { once: true });
       let available = false;
+      // The backend never redirects this path. A redirect is an authenticating
+      // proxy asking for a sign-in that only a page navigation can complete.
+      let redirected = false;
       try {
         if (navigator.onLine) {
-          const response = await fetch('/api/health', { cache: 'no-store', signal: probeAbort.signal });
+          const response = await fetch('/api/health', { cache: 'no-store', redirect: 'manual', signal: probeAbort.signal });
+          redirected = response.type === 'opaqueredirect';
           const body = response.ok ? await response.json() : null;
           available = body?.status === 'ok';
         }
@@ -78,6 +85,12 @@ export function PwaStatus() {
         probing = false;
       }
       if (disposed) return;
+      probes += 1;
+      if (available) clearEdgeReauthAttempt();
+      // A page that has only just opened has nothing to lose, so renew at once.
+      // Later, or if that already failed, ask first: a reload discards edits.
+      if (redirected && probes === 1 && !edgeReauthAttempted()) { reauthenticateAtEdge(); return; }
+      setSignedOut(redirected);
       setUnavailable(!available);
       // Recovery refreshes ordinary live queries but must not start expensive scans.
       if (wasUnavailable && available) void invalidateAfterPwaRecovery(queryClient);
@@ -154,7 +167,11 @@ export function PwaStatus() {
   if (!unavailable && !waiting) return null;
   return (
     <aside ref={statusRef} className="pwa-status space-y-2 rounded-lg border border-border bg-popover p-3 text-sm shadow-lg" aria-label="App status">
-      {unavailable && <p role="status">Server unavailable. Displayed data may be outdated. Live administration requires a connection; actions are not queued.</p>}
+      {unavailable && !signedOut && <p role="status">Server unavailable. Displayed data may be outdated. Live administration requires a connection; actions are not queued.</p>}
+      {signedOut && <div className="space-y-2">
+        <p role="status">Your access session has expired. Sign in again to reconnect. Unsaved changes on this page will be lost.</p>
+        <Button size="sm" onClick={reauthenticateAtEdge}>Sign in again</Button>
+      </div>}
       {waiting && <div className="space-y-2">
         <p role="status">Update available. Save your work in all open TS6 Manager tabs before reloading.</p>
         {updateError && <p role="alert">Update could not finish. Try Reload again when connected.</p>}

@@ -73,6 +73,20 @@ If the preview stays on “Connecting to stream…” and then reports an ICE fa
 
 Terminate HTTPS at the reverse proxy unless you have a different deliberate architecture. Keep TeamSpeak Query and sidecar management endpoints restricted to trusted/internal networks.
 
+## Authenticating proxies
+
+Cloudflare Access, oauth2-proxy, Authelia and similar gateways renew their
+session by redirecting a page navigation to a login. The installed app opens
+from the service worker's cache, so the app checks for this itself: when
+`/api/health` answers with a redirect, it reloads the page from the network so
+the gateway can sign you in. If the session expires while the app is already
+open, it shows **Sign in again** instead, because the reload discards unsaved
+edits.
+
+Configure the gateway to redirect unauthenticated API requests (the default for
+Cloudflare Access). A gateway that answers them with `401` or `403` shows
+**Server unavailable** until you reload the page from the network.
+
 ## Listener remote and client IP limits
 
 The listener remote backend generates private `!remote` links using the saved

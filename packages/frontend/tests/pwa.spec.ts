@@ -85,6 +85,7 @@ test('request policy denies private, cross-origin, authenticated and mutating re
     expect(canHandleRequest(req, new URL(req.url), origin)).toBe(false);
   }
   for (const path of [...routes, '/', '/remote/', '/bots/1/']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(true);
+  expect(isAppNavigation({ mode: 'navigate' } as Request, new URL('/dashboard?edge-auth=1', origin))).toBe(false);
   for (const path of ['/api/auth', '/ws', '/widget/private-token', '/unknown', '/settings-extra']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(false);
 });
 
@@ -444,6 +445,31 @@ test('opening the cached shell while the backend restarts recovers without a rel
   await request.post('/__test/unavailable');
   // No resume/online event and no reload: the notice must clear by itself.
   await expect(page.getByRole('status')).toHaveCount(0, { timeout: 20_000 });
+});
+
+test('opening the cached shell with an expired proxy session signs in again by itself', async ({ page, request }) => {
+  await controlled(page);
+  await request.post('/__test/access?on');
+  const response = await page.reload();
+  expect(response?.fromServiceWorker()).toBe(true);
+  await expect.poll(async () => (await (await request.post('/__test/noop')).json()).accessLogins).toBe(1);
+  await expect(page).toHaveURL('/login');
+  await expect(page.getByLabel('Username')).toBeVisible();
+  await expect(page.getByRole('status')).toHaveCount(0);
+});
+
+test('a proxy session that expires mid-use asks before reloading', async ({ page, request }) => {
+  await controlled(page);
+  await page.getByLabel('Username').fill('unsaved-edit');
+  await request.post('/__test/access?on');
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await expect(page.getByRole('status')).toContainText('access session has expired');
+  await expect(page.getByLabel('Username')).toHaveValue('unsaved-edit');
+  await page.getByRole('button', { name: 'Sign in again' }).click();
+  await expect(page.getByLabel('Username')).toHaveValue('');
+  await expect(page).toHaveURL('/login');
+  await expect(page.getByRole('status')).toHaveCount(0);
+  expect((await (await request.post('/__test/noop')).json()).accessLogins).toBe(1);
 });
 
 test('private navigation stays network-only and missing static files are not HTML', async ({ page, request }) => {

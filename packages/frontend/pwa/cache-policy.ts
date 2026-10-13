@@ -22,5 +22,7 @@ export function canHandleRequest(request: Request, url: URL, origin: string): bo
 }
 
 export function isAppNavigation(request: Request, url: URL): boolean {
-  return request.mode === 'navigate' && isAppPath(url.pathname);
+  // `edge-auth` marks a load that must reach the network so an authenticating
+  // proxy can renew its session (see src/lib/edge-reauth.ts).
+  return request.mode === 'navigate' && isAppPath(url.pathname) && !url.searchParams.has('edge-auth');
 }
