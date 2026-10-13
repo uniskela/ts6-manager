@@ -434,6 +434,18 @@ test('backend outage is visible even when the browser is online and clears on re
   await expect(page.getByRole('status')).toHaveCount(0);
 });
 
+test('opening the cached shell while the backend restarts recovers without a reload', async ({ page, request }) => {
+  await controlled(page);
+  await request.post('/__test/unavailable?on');
+  // The worker serves the shell instantly, so the app opens mid-restart.
+  const response = await page.reload();
+  expect(response?.fromServiceWorker()).toBe(true);
+  await expect(page.getByRole('status')).toContainText('Server unavailable');
+  await request.post('/__test/unavailable');
+  // No resume/online event and no reload: the notice must clear by itself.
+  await expect(page.getByRole('status')).toHaveCount(0, { timeout: 20_000 });
+});
+
 test('private navigation stays network-only and missing static files are not HTML', async ({ page, request }) => {
   await controlled(page);
   for (const path of ['/api/auth/me', '/ws']) {

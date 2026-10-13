@@ -51,12 +51,15 @@ export function PwaStatus() {
     let lastCheck = 0;
     let wasUnavailable = !navigator.onLine;
     let probing = false;
+    let failures = 0;
+    let retry: number | undefined;
     let controller = navigator.serviceWorker?.controller;
     const abort = new AbortController();
 
     const checkConnection = async () => {
       if (probing || document.visibilityState === 'hidden') return;
       probing = true;
+      clearTimeout(retry);
       const probeAbort = new AbortController();
       const timeout = window.setTimeout(() => probeAbort.abort(), 5000);
       const cancel = () => probeAbort.abort();
@@ -79,6 +82,11 @@ export function PwaStatus() {
       // Recovery refreshes ordinary live queries but must not start expensive scans.
       if (wasUnavailable && available) void invalidateAfterPwaRecovery(queryClient);
       wasUnavailable = !available;
+      // The cached shell opens instantly, often while the backend is still
+      // restarting after an update. Keep probing so the notice clears as soon
+      // as the server answers instead of on the next minute tick.
+      failures = available ? 0 : failures + 1;
+      if (!available) retry = window.setTimeout(() => void checkConnection(), Math.min(2000 * 2 ** (failures - 1), 15_000));
     };
 
     const checkUpdate = () => {
@@ -128,6 +136,7 @@ export function PwaStatus() {
       disposed = true;
       abort.abort();
       clearInterval(interval);
+      clearTimeout(retry);
       window.removeEventListener('online', resume);
       window.removeEventListener('offline', offline);
       document.removeEventListener('visibilitychange', resume);
