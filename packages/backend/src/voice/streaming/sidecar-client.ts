@@ -14,9 +14,9 @@ export interface SidecarEncoderSession {
   codec: VideoCodec;
   hardware: boolean;
   fallbackReason?: string;
-  /** Video decoder of an AV1 source: "av1 (vaapi)", "av1 (cuda)" or "libdav1d" (sidecar 1.11+). */
+  /** GPU path or selected software AV1 decoder, such as "av1 (vaapi)" or "libdav1d" (sidecar 1.11+). */
   decoder?: string;
-  /** Why an AV1 source that started on the GPU decoder fell back to libdav1d. */
+  /** Why an AV1 source that started on the GPU decoder fell back to software. */
   decoderFallbackReason?: string;
   state: string;
   exitError?: string;

@@ -1950,10 +1950,23 @@ export class VoiceBot extends EventEmitter {
   /** One health sample; stops the stream with a truthful reason if ffmpeg died. */
   async pollVideoHealth(): Promise<void> {
     if (!this._videoStreaming || !this.sidecarHttp || this._videoHealthPolling || this._videoStopping) return;
+    if (this._videoSourceChangesPending > 0 || this._volumePushActive || this._qualityChangeActive) return;
     this._videoHealthPolling = true;
+    const sidecar = this.sidecarHttp;
+    const streamId = this._activeStreamId;
+    const encoder = this._videoEncoder;
     try {
-      const stats = await this.sidecarHttp.getStats();
-      if (!this._videoStreaming || this._videoStopping) return;
+      const stats = await sidecar.getStats();
+      if (!this._videoStreaming || this._videoStopping || this.sidecarHttp !== sidecar
+        || this._activeStreamId !== streamId || this._videoEncoder !== encoder
+        || this._videoSourceChangesPending > 0 || this._volumePushActive || this._qualityChangeActive) return;
+
+      // A GPU decoder can fail after POST /source has already returned. Refresh
+      // its session even when FFmpeg has not produced a health sample yet.
+      // Older sidecars may omit the session; keep the startup result in that case.
+      if (stats.encoder && isEncoderId(stats.encoder.active) && this.applyEncoderSession(stats.encoder)) {
+        this.emit('statusChange', this._status);
+      }
 
       if (stats.encoder?.state === 'exited') {
         const exit = classifyEncoderExit({
@@ -2133,9 +2146,9 @@ export class VoiceBot extends EventEmitter {
   // ─── Source / encoder application ─────────────────────────
 
   /** Record what the sidecar reports running; an old sidecar ignores encoders and runs VP8. */
-  private applyEncoderSession(session: SidecarEncoderSession | null): void {
+  private applyEncoderSession(session: SidecarEncoderSession | null): boolean {
     const enc = this._videoEncoder;
-    if (!enc) return;
+    if (!enc) return false;
     if (!session || !isEncoderId(session.active)) {
       this._videoEncoder = {
         ...enc,
@@ -2145,8 +2158,10 @@ export class VoiceBot extends EventEmitter {
         fallbackReason: enc.selected === 'vp8'
           ? null
           : 'Sidecar did not report encoder support — update the sidecar image',
+        decoder: null,
+        decoderFallbackReason: null,
       };
-      return;
+      return true;
     }
     this._videoEncoder = {
       ...enc,
@@ -2157,16 +2172,20 @@ export class VoiceBot extends EventEmitter {
       decoder: session.decoder || null,
       decoderFallbackReason: session.decoderFallbackReason || null,
     };
-    if (session.fallbackReason) {
+    if (session.fallbackReason && session.fallbackReason !== enc.fallbackReason) {
       console.warn(
         `[VoiceBot ${this.config.id}] Encoder fallback ${session.requested} → ${session.active}: ${session.fallbackReason}`,
       );
     }
-    if (session.decoderFallbackReason) {
+    if (session.decoderFallbackReason && session.decoderFallbackReason !== enc.decoderFallbackReason) {
       console.warn(
-        `[VoiceBot ${this.config.id}] AV1 GPU decoding failed, decoding on the CPU (libdav1d): ${session.decoderFallbackReason}`,
+        `[VoiceBot ${this.config.id}] AV1 GPU decoding failed, decoding on the CPU (${session.decoder || 'software'}): ${session.decoderFallbackReason}`,
       );
     }
+    const next = this._videoEncoder;
+    return enc.active !== next.active || enc.fallbackReason !== next.fallbackReason
+      || (enc.decoder ?? null) !== next.decoder
+      || (enc.decoderFallbackReason ?? null) !== next.decoderFallbackReason;
   }
 
   /** (Re)start sidecar ffmpeg for an already-resolved path at `quality`. */

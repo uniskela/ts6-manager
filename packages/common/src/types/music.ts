@@ -406,10 +406,10 @@ export interface VideoStreamEncoderInfo {
   fallbackReason: string | null;
   /**
    * Video decoder of an AV1 source: "av1 (vaapi)" or "av1 (cuda)" on the GPU,
-   * "libdav1d" on the CPU. Null or absent for other sources.
+   * a software decoder such as "libdav1d" on the CPU. Null or absent for other sources.
    */
   decoder?: string | null;
-  /** Why an AV1 source that started on the GPU decoder fell back to libdav1d. */
+  /** Why an AV1 source that started on the GPU decoder fell back to software. */
   decoderFallbackReason?: string | null;
   note: string | null;
 }
