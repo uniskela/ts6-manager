@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -265,15 +266,80 @@ func (s *Sidecar) av1GPUDecoder(req SourceRequest, spec EncoderSpec) (hwaccel st
 	return hwaccel, true, video.stream
 }
 
-// av1DecodeFailed reports whether FFmpeg failed to decode frames of the
-// video stream (stream of the first input). FFmpeg's own AV1 decoder does
-// not always exit when the GPU cannot decode a source: on an RTX 5080, AV1
-// 4:4:4 (High profile, which NVDEC does not decode) failed every frame with
-// "Invalid data found when processing input" while FFmpeg kept running
-// without a picture. Errors of another stream, such as the file's own audio,
-// do not count.
+// These diagnostics are emitted by fftools/ffmpeg.c in 5.1, and
+// fftools/ffmpeg_dec.c in 6.1 through 9.0.1. Modern FFmpeg includes the
+// media type and codec in the input-stream log context; 7+ also includes
+// a child decoder context. Match the decoding operation, not generic
+// "Invalid data" or network/encoder/filter errors. See testdata/av1-errors.
+var legacyDecodeError = regexp.MustCompile(`^Error while decoding stream #0:([0-9]+): .+`)
+var modernDecodeError = regexp.MustCompile(`^\[vist#0:([0-9]+)/av1(?: @ [^]\r\n]+)?\] ?(?:\[dec:av1(?: @ [^]\r\n]+)?\] ?)?(?:Decoding error:|Error submitting packet to decoder:) .+`)
+
+func decodeErrorStream(line string) (int, bool) {
+	match := legacyDecodeError.FindStringSubmatch(line)
+	if match == nil {
+		match = modernDecodeError.FindStringSubmatch(line)
+	}
+	if match == nil {
+		return 0, false
+	}
+	stream, err := strconv.Atoi(match[1])
+	return stream, err == nil
+}
+
+// recordDecodeDiagnostics runs under tailBuffer.mu. Keep complete failure
+// evidence separately from the rolling tail. FFmpeg may write a line in
+// multiple chunks, or enough output in one Write to overflow the tail.
+func (t *tailBuffer) recordDecodeDiagnostics(p []byte) {
+	for _, b := range p {
+		if b == '\n' || b == '\r' {
+			t.recordDecodeLine()
+			t.diagnosticPending = t.diagnosticPending[:0]
+			t.diagnosticOverflow = false
+			continue
+		}
+		if len(t.diagnosticPending) < 4096 {
+			t.diagnosticPending = append(t.diagnosticPending, b)
+		} else {
+			t.diagnosticOverflow = true
+		}
+	}
+}
+
+func (t *tailBuffer) recordDecodeLine() {
+	if t.diagnosticOverflow {
+		return
+	}
+	line := string(t.diagnosticPending)
+	if stream, ok := decodeErrorStream(line); ok {
+		if t.decodeFailures == nil {
+			t.decodeFailures = make(map[int]string)
+		}
+		// Bound retained evidence even for a malicious input with many streams.
+		if _, exists := t.decodeFailures[stream]; !exists && len(t.decodeFailures) < 1024 {
+			t.decodeFailures[stream] = line
+		}
+	}
+}
+
+func av1DecodeFailureReason(t *tailBuffer, stream int) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if line := t.decodeFailures[stream]; line != "" {
+		return summarizeFFmpegError(line)
+	}
+	// A final stderr write need not end in a newline.
+	if !t.diagnosticOverflow {
+		if n, ok := decodeErrorStream(string(t.diagnosticPending)); ok && n == stream {
+			return summarizeFFmpegError(string(t.diagnosticPending))
+		}
+	}
+	return ""
+}
+
+// av1DecodeFailed reports a decode error from the selected input video
+// stream, including evidence already evicted from the stderr tail.
 func av1DecodeFailed(t *tailBuffer, stream int) bool {
-	return t.contains(fmt.Sprintf("Error while decoding stream #0:%d:", stream))
+	return av1DecodeFailureReason(t, stream) != ""
 }
 
 // av1DecodeWatchWindow is how long after a launch with FFmpeg's own AV1

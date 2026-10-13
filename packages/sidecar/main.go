@@ -1447,13 +1447,17 @@ func (s *Sidecar) encoderSession() EncoderSession {
 
 // tailBuffer keeps the last few KB of ffmpeg stderr for exit/fallback reasons.
 type tailBuffer struct {
-	mu  sync.Mutex
-	buf []byte
+	diagnosticPending  []byte
+	diagnosticOverflow bool
+	decodeFailures     map[int]string
+	mu                 sync.Mutex
+	buf                []byte
 }
 
 func (t *tailBuffer) Write(p []byte) (int, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	t.recordDecodeDiagnostics(p)
 	t.buf = append(t.buf, p...)
 	if len(t.buf) > 4096 {
 		t.buf = t.buf[len(t.buf)-4096:]

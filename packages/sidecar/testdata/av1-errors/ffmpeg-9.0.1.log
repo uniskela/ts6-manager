@@ -1,0 +1,2 @@
+[vist#0:1/av1 @ 0x1234] [dec:av1 @ 0x5678] Error submitting packet to decoder: Invalid data found when processing input
+[vist#0:1/av1 @ 0x1234] [dec:av1 @ 0x5678] Decoding error: Function not implemented
