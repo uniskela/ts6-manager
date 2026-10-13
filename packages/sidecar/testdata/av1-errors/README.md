@@ -20,8 +20,10 @@ https://github.com/FFmpeg/FFmpeg .
 The parser deliberately excludes generic `Error processing packet in decoder`
 (which can wrap downstream/filter errors), EOF submission, audio contexts,
 other inputs/codecs, and network/demux errors. A selected video decode error
-is evidence for the single software retry, not proof of GPU incompatibility:
-corrupt AV1 input can produce the same error. Unscoped libavcodec diagnostics
+is evidence, not proof of GPU incompatibility: corrupt AV1 input can produce
+the same error. The single software retry therefore needs one such error
+before a failed exit, or `av1SustainedDecodeErrors` of them from an ffmpeg
+that runs on. Unscoped libavcodec diagnostics
 alone cannot safely identify the selected video and are not matched.
 
 `ffmpeg-7.0.2-runtime.log` is an actual Linux CPU-only runtime capture using

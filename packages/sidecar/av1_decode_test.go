@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -357,8 +358,16 @@ func TestFFmpegAV1ProbeSample(t *testing.T) {
 // stream, as NVDEC does with AV1 4:4:4. Without the forced decoder it
 // streams. With gate, the failure waits until the test calls release, so
 // the test decides whether it comes inside or after the startup check. With
-// exit, ffmpeg stops after the error instead of running on.
+// exit, ffmpeg stops after one error; otherwise it runs on, failing frame
+// after frame.
 func installAV1FailingFFmpeg(t *testing.T, gate, exit bool) (calls string, release func()) {
+	t.Helper()
+	return installAV1ErrorFFmpeg(t, gate, exit, av1SustainedDecodeErrors)
+}
+
+// installAV1ErrorFFmpeg is installAV1FailingFFmpeg with the number of decode
+// errors a GPU-decoding ffmpeg that runs on logs first.
+func installAV1ErrorFFmpeg(t *testing.T, gate, exit bool, errors int) (calls string, release func()) {
 	t.Helper()
 	wait := ""
 	if gate {
@@ -366,11 +375,11 @@ func installAV1FailingFFmpeg(t *testing.T, gate, exit bool) (calls string, relea
 	}
 	after := "exec sleep 30"
 	if exit {
-		after = "exit 1"
+		after, errors = "exit 1", 1
 	}
 	calls = installFakeFFmpeg(t, "case \"$*\" in\n"+
 		"*av1-probe*) exit 0 ;;\n"+
-		"*'-c:v av1 '*) "+wait+"echo 'Error while decoding stream #0:0: Invalid data found when processing input' >&2; "+after+" ;;\n"+
+		"*'-c:v av1 '*) "+wait+"i=0; while [ $i -lt "+strconv.Itoa(errors)+" ]; do echo 'Error while decoding stream #0:0: Invalid data found when processing input' >&2; i=$((i+1)); done; "+after+" ;;\n"+
 		"esac\nexec sleep 30\n")
 	release = func() {
 		gateFile := filepath.Join(filepath.Dir(os.Getenv("FFMPEG_PATH")), "gate")
@@ -445,6 +454,28 @@ func TestLateAV1DecodeErrorsRestartOnLibdav1d(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	if runs := streamRuns(t, calls, 2); len(runs) != 2 {
 		t.Errorf("libdav1d is not retried on the GPU:\n%s", strings.Join(runs, "\n"))
+	}
+}
+
+// A few failed frames in a stream that plays on leave it on the GPU decoder:
+// the startup check passes and nothing is started again. The watcher's side
+// of this is TestAV1WatcherLeavesRecoverableErrorsAlone.
+func TestRecoverableAV1DecodeErrorsAtStartupStayOnTheGPU(t *testing.T) {
+	calls, _ := installAV1ErrorFFmpeg(t, false, false, av1SustainedDecodeErrors-1)
+	t.Setenv("VIDEO_HW_DECODE", "1")
+	t.Setenv("VAAPI_VERIFY_MS", "500")
+	s := NewSidecar()
+	defer s.Stop()
+
+	session, err := s.StartFFmpeg(SourceRequest{Source: "https://example.com/v.webm", VideoCodec: "av1", Encoder: "h264_nvenc", Volume: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.State != "running" || session.Decoder != "av1 (cuda)" || session.DecoderFallbackReason != "" {
+		t.Errorf("want the stream still on the GPU decoder: %+v", session)
+	}
+	if runs := streamRuns(t, calls, 1); len(runs) != 1 || !strings.Contains(runs[0], "-loglevel repeat+warning") {
+		t.Errorf("want one run that prints every decode error:\n%s", strings.Join(runs, "\n"))
 	}
 }
 

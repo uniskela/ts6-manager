@@ -1453,6 +1453,7 @@ type tailBuffer struct {
 	diagnosticPending  []byte
 	diagnosticOverflow bool
 	decodeFailures     map[int]string
+	decodeFailureCount map[int]int
 	mu                 sync.Mutex
 	buf                []byte
 	// processError is published before the process completion channel closes.
@@ -1550,7 +1551,13 @@ func (s *Sidecar) buildFFmpegArgs(req SourceRequest, spec EncoderSpec, lowPower 
 	// Periodic progress lines feed the encode-health tracker. -stats keeps
 	// them at warning level, which drops per-segment info chatter such as
 	// HLS "Skip ('#EXT-X-PROGRAM-DATE-TIME...')" lines from IPTV sources.
-	args := []string{"-stats_period", "2", "-stats", "-loglevel", "warning"}
+	loglevel := "warning"
+	if req.av1Hwaccel != "" && spec.Hardware && hwDecodeEnabled() {
+		// FFmpeg prints a message that repeats only once. Sustained AV1
+		// decode errors are counted, so each one must be printed.
+		loglevel = "repeat+warning"
+	}
+	args := []string{"-stats_period", "2", "-stats", "-loglevel", loglevel}
 	extraOut := extraFFmpegOutputArgs()
 	args = append(args, hwInitArgs(spec, req.Source != "")...)
 
@@ -1810,11 +1817,12 @@ func (s *Sidecar) startFFmpegLocked(req SourceRequest) (EncoderSession, error) {
 			return s.encoderSession(), nil
 		}
 		if survivedStartup(done) {
-			if attempt.av1Hwaccel == "" || !av1DecodeFailed(tail, attempt.av1Stream) {
+			if attempt.av1Hwaccel == "" || !av1DecodeFailing(tail, attempt.av1Stream) {
 				return s.encoderSession(), nil
 			}
 			// FFmpeg's own AV1 decoder can keep running while the GPU
 			// fails every frame: stop it, and go on as if it had exited.
+			// A few failed frames in a stream that plays on are not that.
 			tail.retryPending.Store(true)
 			if s.ffmpeg != nil && s.ffmpeg.Process != nil {
 				s.ffmpeg.Process.Kill()

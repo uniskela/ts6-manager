@@ -2,11 +2,18 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func writeDecodeErrors(tail *tailBuffer, stream, n int) {
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(tail, "Error while decoding stream #0:%d: Invalid data found when processing input\n", stream)
+	}
+}
 
 func awaitAV1Watcher(t *testing.T, done <-chan struct{}) {
 	t.Helper()
@@ -77,7 +84,7 @@ func TestAV1WatcherRechecksGenerationAfterWaitingForLock(t *testing.T) {
 		t.Run(cancellation, func(t *testing.T) {
 			s := &Sidecar{ffmpegGen: 7}
 			tail := &tailBuffer{}
-			tail.Write([]byte("Error while decoding stream #0:0: Invalid data found when processing input\n"))
+			writeDecodeErrors(tail, 0, av1SustainedDecodeErrors)
 			ticks := make(chan time.Time)
 			watcherDone := make(chan struct{})
 			s.ffmpegLock.Lock()
@@ -225,5 +232,81 @@ func TestAV1RetryValidationFailurePublishesTerminalStatus(t *testing.T) {
 	})
 	if got := s.encoderSession(); got.State != "exited" || got.ExitError != "source no longer available" {
 		t.Fatalf("failed retry remained pending: %+v", got)
+	}
+}
+
+// Decode errors of the video stream that stop short of sustained failure
+// never restart a running stream, however many ticks pass before the window
+// closes. Errors of another stream do not count towards it.
+func TestAV1WatcherLeavesRecoverableErrorsAlone(t *testing.T) {
+	s := &Sidecar{ffmpegGen: 7}
+	tail := &tailBuffer{}
+	writeDecodeErrors(tail, 0, av1SustainedDecodeErrors-1)
+	writeDecodeErrors(tail, 1, av1SustainedDecodeErrors)
+	ticks, deadline := make(chan time.Time), make(chan time.Time)
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		s.watchAV1DecodeFailure(SourceRequest{}, "cuda", 0, 7, make(chan struct{}), tail, ticks, deadline, func(SourceRequest) (EncoderSession, error) {
+			t.Error("a recoverable decode error restarted the stream")
+			return EncoderSession{}, nil
+		})
+	}()
+	// Each send is taken only once the watcher has decided the tick before.
+	for i := 0; i < 3; i++ {
+		ticks <- time.Time{}
+	}
+	deadline <- time.Time{}
+	awaitAV1Watcher(t, watcherDone)
+	if tail.retryPending.Load() {
+		t.Error("a recoverable decode error claimed the retry")
+	}
+}
+
+// Sustained decode errors of the video stream stop the running ffmpeg and
+// start the stream once on a software decoder.
+func TestAV1WatcherRestartsOnSustainedErrors(t *testing.T) {
+	installFakeFFmpeg(t, "exec sleep 30\n")
+	s := &Sidecar{ffmpegGen: 7}
+	defer s.Stop()
+	done, tail, err := s.launchFFmpegLocked(nil, 7, newHealthTracker(modeLive, 0, nil), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := s.ffmpeg
+	ticks := make(chan time.Time)
+	retries := 0
+	watcherDone := make(chan struct{})
+	go func() {
+		defer close(watcherDone)
+		s.watchAV1DecodeFailure(SourceRequest{}, "cuda", 0, 7, done, tail, ticks, nil, func(req SourceRequest) (EncoderSession, error) {
+			retries++
+			if !exited(done) || old.ProcessState == nil {
+				t.Error("replacement launched before the GPU-decoding ffmpeg was reaped")
+			}
+			if !strings.Contains(req.av1FallbackReason, "Error while decoding") {
+				t.Errorf("lost failure evidence: %q", req.av1FallbackReason)
+			}
+			atomic.AddUint64(&s.ffmpegGen, 1)
+			return EncoderSession{}, nil
+		})
+	}()
+	writeDecodeErrors(tail, 0, av1SustainedDecodeErrors-1)
+	ticks <- time.Time{}
+	// Taken only once the tick before has been decided: one error short of
+	// sustained left the stream running.
+	ticks <- time.Time{}
+	if exited(done) || tail.retryPending.Load() {
+		t.Fatal("stopped before the errors were sustained")
+	}
+	writeDecodeErrors(tail, 0, 1)
+	// The tick in progress may already see the last error.
+	select {
+	case ticks <- time.Time{}:
+	case <-watcherDone:
+	}
+	awaitAV1Watcher(t, watcherDone)
+	if retries != 1 {
+		t.Fatalf("retries=%d, want precisely one", retries)
 	}
 }

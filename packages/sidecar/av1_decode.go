@@ -335,6 +335,12 @@ func (t *tailBuffer) recordDecodeLine() {
 		if _, exists := t.decodeFailures[stream]; !exists && len(t.decodeFailures) < 1024 {
 			t.decodeFailures[stream] = line
 		}
+		if _, exists := t.decodeFailures[stream]; exists {
+			if t.decodeFailureCount == nil {
+				t.decodeFailureCount = make(map[int]int)
+			}
+			t.decodeFailureCount[stream]++
+		}
 	}
 }
 
@@ -354,9 +360,25 @@ func av1DecodeFailureReason(t *tailBuffer, stream int) string {
 }
 
 // av1DecodeFailed reports a decode error from the selected input video
-// stream, including evidence already evicted from the stderr tail.
+// stream, including evidence already evicted from the stderr tail. One error
+// is enough for an ffmpeg that then exited with a failure. For one that is
+// still running, see av1DecodeFailing.
 func av1DecodeFailed(t *tailBuffer, stream int) bool {
 	return av1DecodeFailureReason(t, stream) != ""
+}
+
+// av1SustainedDecodeErrors is how many decode errors of the video stream mean
+// a running ffmpeg is not decoding it on the GPU. A GPU that cannot decode
+// the source fails every frame and passes this within half a second; a
+// damaged frame or two in a stream that plays on does not.
+const av1SustainedDecodeErrors = 10
+
+// av1DecodeFailing reports sustained decode errors from the selected input
+// video stream: the reason to stop a running ffmpeg and decode on the CPU.
+func av1DecodeFailing(t *tailBuffer, stream int) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.decodeFailureCount[stream] >= av1SustainedDecodeErrors
 }
 
 // av1DecodeWatchWindow is how long after a launch with FFmpeg's own AV1
@@ -365,9 +387,12 @@ func av1DecodeFailed(t *tailBuffer, stream int) bool {
 // open. A variable for tests.
 var av1DecodeWatchWindow = 15 * time.Second
 
-// restartOnLibdav1dIfAV1Fails watches one GPU-decoding generation, including
-// a fatal exit. Completion and a polling tick use the same decision path so
-// scheduling cannot decide whether a qualifying failure receives its retry.
+// restartOnLibdav1dIfAV1Fails watches one GPU-decoding generation for
+// av1DecodeWatchWindow and starts the stream once on a software decoder if
+// the GPU does not decode it: sustained decode errors of the video stream
+// while ffmpeg runs on, or one such error before ffmpeg exits with a failure.
+// Completion and a polling tick use the same decision path so scheduling
+// cannot decide whether a qualifying failure receives its retry.
 func (s *Sidecar) restartOnLibdav1dIfAV1Fails(req SourceRequest, hwaccel string, stream int, gen uint64, done <-chan struct{}, tail *tailBuffer) {
 	deadline := time.NewTimer(av1DecodeWatchWindow)
 	defer deadline.Stop()
@@ -394,10 +419,15 @@ func (s *Sidecar) watchAV1DecodeFailure(req SourceRequest, hwaccel string, strea
 		if !tail.decodeDeadline.IsZero() && time.Now().After(tail.decodeDeadline) && (!exited(done) || !tail.processExitedAt.Before(tail.decodeDeadline)) {
 			return
 		}
-		if !av1DecodeFailed(tail, stream) {
-			if exited(done) {
+		if exited(done) {
+			// One decode error before a failed exit is a decoder that gave
+			// up. retryAV1DecodeFailure leaves a clean exit alone.
+			if !av1DecodeFailed(tail, stream) {
 				return
 			}
+		} else if !av1DecodeFailing(tail, stream) {
+			// Still running: only sustained errors stop it. A stream that
+			// recovers from a damaged frame stays on the GPU.
 			continue
 		}
 		// Claim the terminal decision before waiting for ffmpegLock or Kill.
