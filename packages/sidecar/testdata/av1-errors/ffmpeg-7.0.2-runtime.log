@@ -1,0 +1,19 @@
+[av1 @ 0x2042e180] Your platform doesn't support hardware accelerated AV1 decoding.
+[av1 @ 0x2042e180] Failed to get pixel format.
+[av1 @ 0x2042e180] Get current frame error
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Error submitting packet to decoder: Function not implemented
+[av1 @ 0x2042e180] Your platform doesn't support hardware accelerated AV1 decoding.
+[av1 @ 0x2042e180] Failed to get pixel format.
+[av1 @ 0x2042e180] Get current frame error
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Error submitting packet to decoder: Function not implemented
+[av1 @ 0x2042e180] Your platform doesn't support hardware accelerated AV1 decoding.
+[av1 @ 0x2042e180] Failed to get pixel format.
+[av1 @ 0x2042e180] Get current frame error
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Error submitting packet to decoder: Function not implemented
+[av1 @ 0x2042e180] Your platform doesn't support hardware accelerated AV1 decoding.
+[av1 @ 0x2042e180] Failed to get pixel format.
+[av1 @ 0x2042e180] Get current frame error
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Error submitting packet to decoder: Function not implemented
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Decode error rate 1 exceeds maximum 0.666667
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Task finished with error code: -1145393733 (Error number -1145393733 occurred)
+[vist#0:1/av1 @ 0x2041a940] [dec:av1 @ 0x2042d700] Terminating thread with return code -1145393733 (Error number -1145393733 occurred)

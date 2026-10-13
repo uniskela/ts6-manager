@@ -23,3 +23,18 @@ other inputs/codecs, and network/demux errors. A selected video decode error
 is evidence for the single software retry, not proof of GPU incompatibility:
 corrupt AV1 input can produce the same error. Unscoped libavcodec diagnostics
 alone cannot safely identify the selected video and are not matched.
+
+`ffmpeg-7.0.2-runtime.log` is an actual Linux CPU-only runtime capture using
+FFmpeg 7.0.2-static (johnvansickle.com build). The embedded AV1 sample was
+remuxed with PCM audio as stream 0 and copied AV1 video as stream 1:
+
+```sh
+ffmpeg -f lavfi -i anullsrc=r=48000:cl=stereo -i av1_probe.ivf \
+  -map 0:a -map 1:v -c:a pcm_s16le -c:v copy -t 0.2 reordered.mkv
+ffmpeg -hide_banner -nostdin -loglevel error -c:v av1 \
+  -i reordered.mkv -f null -
+```
+
+Native AV1 failed (exit 69) as expected without GPU acceleration; its scoped
+packet-submission diagnostic matches the source-derived fixture. This checks
+runtime diagnostic formatting and stream attribution, not any GPU capability.

@@ -96,3 +96,15 @@ func TestAV1DiagnosticConcurrentReader(t *testing.T) {
 		t.Fatal("missing concurrent diagnostic")
 	}
 }
+
+func TestAV1CapturedFFmpeg702ReorderedStreams(t *testing.T) {
+	fixture, err := os.ReadFile("testdata/av1-errors/ffmpeg-7.0.2-runtime.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tail := &tailBuffer{}
+	tail.Write(fixture)
+	if !av1DecodeFailed(tail, 1) || av1DecodeFailed(tail, 0) {
+		t.Fatal("captured video diagnostic did not retain stream identity")
+	}
+}
