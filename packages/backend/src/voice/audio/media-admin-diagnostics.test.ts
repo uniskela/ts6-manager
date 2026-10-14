@@ -25,6 +25,8 @@ describe('diagnoseMediaAdmin', () => {
     const commands: string[] = [];
     const report = await diagnoseMediaAdmin({
       env: { SIDECAR_URL: 'http://sidecar:9800', YT_DLP_PATH: '/trusted/tools/yt-dlp' },
+      // Pinned to the sidecar below, so a release version bump cannot turn this into a mismatch.
+      backendVersion: '1.10.2',
       probeCommand: async (command, args) => {
         commands.push(`${command} ${args.join(' ')}`);
         return passingProbe(command);
