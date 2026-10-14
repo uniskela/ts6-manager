@@ -190,7 +190,12 @@ for (const path of ['/bot-hub', '/bot-hub/2']) {
     await expect(page.getByText('Streaming from iptv.example')).toBeVisible();
     const warning = page.getByRole('status').filter({ hasText: 'AV1 GPU decoding failed' });
     await expect(warning).toHaveCount(0);
-    const nextSample = page.waitForResponse(response => new URL(response.url()).pathname === '/api/music-bots/media');
+    // A poll already in flight can still answer without the fallback.
+    const nextSample = page.waitForResponse(async response => {
+      if (new URL(response.url()).pathname !== '/api/music-bots/media') return false;
+      const sessions = await response.json();
+      return sessions[1]?.video?.encoder?.decoderFallbackReason === 'Failed to get HW surface format';
+    });
     fallback = true;
     await nextSample;
     await expect(warning).toHaveText('AV1 GPU decoding failed, decoding on the CPU: Failed to get HW surface format');
