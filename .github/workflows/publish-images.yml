@@ -433,9 +433,11 @@ jobs:
           python3 "$RUNNER_TEMP/complete-relative-readme-urls.py" \
             README.md "$RUNNER_TEMP/dockerhub-readme.md" --ref "$TAG"
 
+      # A refused update fails this job. No other job needs it, so the images
+      # stay published; the release run shows the failure instead of hiding it.
       - name: Docker Hub Description
+        id: hub-description
         if: steps.hub.outputs.push_hub == '1'
-        continue-on-error: true
         uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -444,6 +446,12 @@ jobs:
           short-description: ${{ github.event.repository.description }}
           readme-filepath: ${{ runner.temp }}/dockerhub-readme.md
           enable-url-completion: false
+
+      # The action only says "Forbidden" when the token may push but not edit.
+      - name: Explain a refused Hub update
+        if: failure() && steps.hub-description.outcome == 'failure'
+        run: |
+          echo "::error::Docker Hub refused the README and description update. Images are published. DOCKERHUB_TOKEN must be a Hub PAT with Repo Read, Write, Delete: Read & Write can push images but cannot edit the repository page. Fix the token, then re-run this job."
 
   # First publish often creates private packages; attempt to mark them public for pull-without-auth.
   # If this fails (org policy / token scope), set visibility manually under Packages → Package settings.

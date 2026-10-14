@@ -126,6 +126,16 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(checkout["with"]["ref"], "refs/tags/${{ inputs.tag }}")
         self.assertEqual(checkout["with"]["persist-credentials"], "false")
 
+    def test_refused_description_update_fails_without_holding_back_images(self):
+        job = self.publish["jobs"]["update-dockerhub-description"]
+        step = next(step for step in job["steps"] if step["name"] == "Docker Hub Description")
+        self.assertNotIn("continue-on-error", job)
+        self.assertNotIn("continue-on-error", step)
+        for name, other in self.publish["jobs"].items():
+            needs = other.get("needs", [])
+            with self.subTest(job=name):
+                self.assertNotIn("update-dockerhub-description", [needs] if isinstance(needs, str) else needs)
+
 
 if __name__ == "__main__":
     unittest.main()
