@@ -125,8 +125,11 @@ func waitForCalls(t *testing.T, calls string, n int) []string {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
+		// Count finished lines only: the fake ffmpeg writes a run's arguments
+		// and then its line break, and an empty log is no run at all.
 		if b, err := os.ReadFile(calls); err == nil {
-			if lines := strings.Split(strings.TrimSpace(string(b)), "\n"); len(lines) >= n {
+			done := strings.TrimSpace(string(b[:strings.LastIndex(string(b), "\n")+1]))
+			if lines := strings.Split(done, "\n"); done != "" && len(lines) >= n {
 				return lines
 			}
 		}
