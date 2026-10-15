@@ -575,10 +575,14 @@ type Peer struct {
 	PC         *webrtc.PeerConnection
 	VideoTrack *webrtc.TrackLocalStaticRTP
 	AudioTrack *webrtc.TrackLocalStaticRTP
-	VideoSSRC  uint32
-	AudioSSRC  uint32
-	Active     bool
-	Started    bool
+	// The SSRCs are resolved when ICE connects. Active is set while ICE is
+	// connected, and Started once the video gate has opened on a keyframe.
+	// All four are guarded by mu: the ICE callback, the media loops, the
+	// sender reports and ClosePeer touch them from different goroutines.
+	VideoSSRC uint32
+	AudioSSRC uint32
+	Active    bool
+	Started   bool
 	// checking and connected record how far ICE got, so a viewer that
 	// answered but never connected can be told apart from one that played
 	// and then left. Guarded by mu.
@@ -901,6 +905,21 @@ func (p *Peer) canSendMedia() bool {
 	return p.PC != nil && p.PC.ConnectionState() == webrtc.PeerConnectionStateConnected
 }
 
+// deactivate closes the peer's media gates. The caller may hold peersLock,
+// which is always taken before p.mu, but not p.mu. Nothing holds p.mu across
+// PC.Close: Pion reports the closed ICE state to a callback that takes p.mu.
+func (p *Peer) deactivate() {
+	p.mu.Lock()
+	p.Active = false
+	p.mu.Unlock()
+}
+
+func (p *Peer) isActive() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.Active
+}
+
 // nextVideoRTP clones pkt with this peer's sequence number. Caller holds p.mu.
 // The first packet keeps its sequence. follow numbers a packet straight after
 // the last one written: it is set for the packets that open the gate (injected
@@ -1110,25 +1129,35 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 			peer.checking = true
 			peer.mu.Unlock()
 		case webrtc.ICEConnectionStateConnected:
-			peer.mu.Lock()
-			peer.Active = true
-			peer.Started = false
-			peer.connected = true
-			peer.mu.Unlock()
-			// Resolve SSRCs NOW — they are only valid after negotiation
+			// Resolve SSRCs NOW — they are only valid after negotiation.
+			// Pion is asked outside peer.mu; the result is stored with Active,
+			// so the sender reports never see an active peer without them.
+			var videoSSRC, audioSSRC uint32
+			var videoFound, audioFound bool
 			for _, sender := range pc.GetSenders() {
 				params := sender.GetParameters()
 				if len(params.Encodings) > 0 {
 					ssrc := uint32(params.Encodings[0].SSRC)
 					if sender.Track() == videoTrack {
-						peer.VideoSSRC = ssrc
+						videoSSRC, videoFound = ssrc, true
 						log.Printf("[Peer %s] Video SSRC resolved: %d", id, ssrc)
 					} else if sender.Track() == audioTrack {
-						peer.AudioSSRC = ssrc
+						audioSSRC, audioFound = ssrc, true
 						log.Printf("[Peer %s] Audio SSRC resolved: %d", id, ssrc)
 					}
 				}
 			}
+			peer.mu.Lock()
+			if videoFound {
+				peer.VideoSSRC = videoSSRC
+			}
+			if audioFound {
+				peer.AudioSSRC = audioSSRC
+			}
+			peer.Active = true
+			peer.Started = false
+			peer.connected = true
+			peer.mu.Unlock()
 		case webrtc.ICEConnectionStateDisconnected, webrtc.ICEConnectionStateFailed, webrtc.ICEConnectionStateClosed:
 			peer.mu.Lock()
 			peer.Active = false
@@ -1167,7 +1196,7 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 
 	s.peersLock.Lock()
 	if old, exists := s.peers[id]; exists {
-		old.Active = false
+		old.deactivate()
 		close(old.stopSR)
 		old.PC.Close()
 	}
@@ -1193,7 +1222,10 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 		case <-peer.stopSR:
 			return
 		case <-ticker.C:
-			if !peer.Active {
+			peer.mu.Lock()
+			active, videoSSRC, audioSSRC := peer.Active, peer.VideoSSRC, peer.AudioSSRC
+			peer.mu.Unlock()
+			if !active {
 				continue
 			}
 
@@ -1214,10 +1246,10 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 			srCount++
 
 			// Send video SR + SDES
-			if peer.VideoSSRC != 0 && videoOK {
+			if videoSSRC != 0 && videoOK {
 				err := peer.PC.WriteRTCP([]rtcp.Packet{
 					&rtcp.SenderReport{
-						SSRC:        peer.VideoSSRC,
+						SSRC:        videoSSRC,
 						NTPTime:     ntpNow,
 						RTPTime:     videoTs,
 						PacketCount: vidPkts,
@@ -1225,7 +1257,7 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 					},
 					&rtcp.SourceDescription{
 						Chunks: []rtcp.SourceDescriptionChunk{{
-							Source: peer.VideoSSRC,
+							Source: videoSSRC,
 							Items: []rtcp.SourceDescriptionItem{{
 								Type: rtcp.SDESCNAME,
 								Text: cname,
@@ -1234,17 +1266,17 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 					},
 				})
 				if srCount <= 5 || srCount%30 == 0 {
-					log.Printf("[SR] Peer %s video SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, peer.VideoSSRC, videoTs, err)
+					log.Printf("[SR] Peer %s video SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, videoSSRC, videoTs, err)
 				}
-			} else if peer.VideoSSRC == 0 && srCount <= 5 {
+			} else if videoSSRC == 0 && srCount <= 5 {
 				log.Printf("[SR] Peer %s video SSRC still 0 — skipping SR", peer.ID)
 			}
 
 			// Send audio SR + SDES with SAME NTP time and SAME CNAME
-			if peer.AudioSSRC != 0 && audioOK {
+			if audioSSRC != 0 && audioOK {
 				err := peer.PC.WriteRTCP([]rtcp.Packet{
 					&rtcp.SenderReport{
-						SSRC:        peer.AudioSSRC,
+						SSRC:        audioSSRC,
 						NTPTime:     ntpNow,
 						RTPTime:     audioTs,
 						PacketCount: audPkts,
@@ -1252,7 +1284,7 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 					},
 					&rtcp.SourceDescription{
 						Chunks: []rtcp.SourceDescriptionChunk{{
-							Source: peer.AudioSSRC,
+							Source: audioSSRC,
 							Items: []rtcp.SourceDescriptionItem{{
 								Type: rtcp.SDESCNAME,
 								Text: cname,
@@ -1261,9 +1293,9 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 					},
 				})
 				if srCount <= 5 || srCount%30 == 0 {
-					log.Printf("[SR] Peer %s audio SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, peer.AudioSSRC, audioTs, err)
+					log.Printf("[SR] Peer %s audio SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, audioSSRC, audioTs, err)
 				}
-			} else if peer.AudioSSRC == 0 && srCount <= 5 {
+			} else if audioSSRC == 0 && srCount <= 5 {
 				log.Printf("[SR] Peer %s audio SSRC still 0 — skipping SR", peer.ID)
 			}
 		}
@@ -1349,7 +1381,7 @@ func (s *Sidecar) AddICECandidate(id string, candidate string, sdpMid string, sd
 func (s *Sidecar) ClosePeer(id string) {
 	s.peersLock.Lock()
 	if peer, exists := s.peers[id]; exists {
-		peer.Active = false
+		peer.deactivate()
 		close(peer.stopSR)
 		peer.PC.Close()
 		delete(s.peers, id)
@@ -2092,7 +2124,7 @@ func (s *Sidecar) GetStats() map[string]interface{} {
 	peers := map[string]interface{}{}
 	for id, peer := range s.peers {
 		peers[id] = map[string]interface{}{
-			"active": peer.Active,
+			"active": peer.isActive(),
 			"state":  peer.PC.ICEConnectionState().String(),
 		}
 	}
@@ -2124,7 +2156,7 @@ func (s *Sidecar) Stop() {
 
 	s.peersLock.Lock()
 	for id, peer := range s.peers {
-		peer.Active = false
+		peer.deactivate()
 		peer.PC.Close()
 		delete(s.peers, id)
 	}
