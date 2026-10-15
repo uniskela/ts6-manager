@@ -379,7 +379,7 @@ jobs:
           docker buildx imagetools create --tag "${DST}" "${SRC}"
 
   # Keep Hub's README/short description in sync with the released git tag.
-  # dockerhub-description.yml uses its own environment token, not
+  # dockerhub-description.yml uses its own environment token and never reads
   # DOCKERHUB_TOKEN. Nothing needs this job, so a failed update never holds
   # back the images; it only marks the run as failed.
   update-dockerhub-description:
@@ -389,9 +389,8 @@ jobs:
     uses: ./.github/workflows/dockerhub-description.yml
     with:
       tag: ${{ inputs.tag }}
-    # Only the username: the token comes from the job's environment.
-    secrets:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+    # Named secrets would hide the environment's token from the called job.
+    secrets: inherit
 
   # First publish often creates private packages; attempt to mark them public for pull-without-auth.
   # If this fails (org policy / token scope), set visibility manually under Packages → Package settings.

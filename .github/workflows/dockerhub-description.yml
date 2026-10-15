@@ -9,6 +9,10 @@ name: Update Docker Hub description
 # DOCKERHUB_DESCRIPTION_TOKEN from the dockerhub-description environment and
 # never DOCKERHUB_TOKEN, which only pushes images. Docker Hub truncates the
 # README at 25,000 bytes.
+#
+# A called workflow sees its job's environment secrets only when the caller
+# passes `secrets: inherit`; with named secrets the token arrives empty. So
+# workflow_call declares no secrets.
 on:
   workflow_call:
     inputs:
@@ -16,13 +20,6 @@ on:
         description: Released vX.Y.Z tag whose README to publish.
         required: true
         type: string
-    secrets:
-      DOCKERHUB_USERNAME:
-        required: false
-      # Never passed by a caller: the job reads it from its environment.
-      # Declared so the secrets context lists it.
-      DOCKERHUB_DESCRIPTION_TOKEN:
-        required: false
 
   workflow_dispatch:
     inputs:

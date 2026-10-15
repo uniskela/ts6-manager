@@ -32,7 +32,7 @@ Ordinary pushes and PR merges to `main` must **not** publish container images. I
 
 Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Hub PAT with Read & Write). If either is unset, the workflow still publishes GHCR and warns.
 
-The Hub repository short description and the README from `README.md` (truncated to 25,000 bytes on Hub) are updated after a successful image build by `dockerhub-description.yml`. Editing a Hub repository needs a PAT with Read, Write, and Delete, so that workflow uses its own token: the `DOCKERHUB_DESCRIPTION_TOKEN` secret of the `dockerhub-description` GitHub environment, plus `DOCKERHUB_USERNAME`. It never receives `DOCKERHUB_TOKEN`. If the token is unset it skips the update with a warning; if Hub refuses the update, that job fails without affecting the published images.
+The Hub repository short description and the README from `README.md` (truncated to 25,000 bytes on Hub) are updated after a successful image build by `dockerhub-description.yml`. Editing a Hub repository needs a PAT with Read, Write, and Delete, so that workflow uses its own token: the `DOCKERHUB_DESCRIPTION_TOKEN` secret of the `dockerhub-description` GitHub environment, plus `DOCKERHUB_USERNAME`, and never reads `DOCKERHUB_TOKEN`. Callers pass `secrets: inherit`: a called workflow only sees its environment's secrets that way. If the token is unset it skips the update with a warning; if Hub refuses the update, that job fails without affecting the published images.
 
 ### Normal flow (agents + humans)
 

@@ -161,9 +161,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 {key: on[event]["inputs"]["tag"][key] for key in ("required", "type")},
                 {"required": "true", "type": "string"},
             )
-        self.assertEqual(set(on["workflow_call"]["secrets"]), {"DOCKERHUB_USERNAME", "DOCKERHUB_DESCRIPTION_TOKEN"})
-        for secret in on["workflow_call"]["secrets"].values():
-            self.assertEqual(secret["required"], "false")
+        # Declared or named secrets hide the environment's token from a
+        # called job; it only arrives through `secrets: inherit`.
+        self.assertNotIn("secrets", on["workflow_call"])
         self.assertEqual(self.description["permissions"], {"contents": "read"})
         self.assertEqual(set(self.description["jobs"]), {"update"})
         job = self.description["jobs"]["update"]
@@ -172,9 +172,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         hub = next(step for step in job["steps"] if step["name"] == "Docker Hub Description")
         self.assertEqual(hub["with"]["password"], "${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}")
         self.assertNotIn("secrets.DOCKERHUB_TOKEN", (ROOT / ".github/workflows/dockerhub-description.yml").read_text())
-        # The publishing workflow hands over the username only, never every secret.
         caller = self.publish["jobs"]["update-dockerhub-description"]
-        self.assertEqual(caller["secrets"], {"DOCKERHUB_USERNAME": "${{ secrets.DOCKERHUB_USERNAME }}"})
+        self.assertEqual(caller["secrets"], "inherit")
+        self.assertEqual(self.release["jobs"]["publish-images"]["secrets"], "inherit")
         for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
             if path.name == "dockerhub-description.yml":
                 continue
