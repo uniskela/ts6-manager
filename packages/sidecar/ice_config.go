@@ -15,9 +15,10 @@ import (
 // forward the ephemeral ICE ports Pion opens, so host/LAN browsers fail ICE.
 //
 // Env:
-//   WEBRTC_UDP_PORT   — if >0, listen on 0.0.0.0:port (IPv4) and mux all ICE UDP there
-//   WEBRTC_NAT1TO1_IP  — comma-separated IPv4 host/LAN/Tailscale IPs to advertise as
-//                       host candidates (replaces container-private addresses)
+//
+//	WEBRTC_UDP_PORT   — if >0, listen on 0.0.0.0:port (IPv4) and mux all ICE UDP there
+//	WEBRTC_NAT1TO1_IP  — comma-separated IPv4 host/LAN/Tailscale IPs to advertise as
+//	                    host candidates (replaces container-private addresses)
 func (s *Sidecar) startICEMedia() error {
 	port := envIntOrDefault("WEBRTC_UDP_PORT", 0)
 	ips, err := parseICEAdvertiseIPs(os.Getenv("WEBRTC_NAT1TO1_IP"))
