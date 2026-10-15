@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
@@ -121,14 +122,70 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(job["needs"], build)
             self.assertNotIn("if", job)  # Keep GitHub's default success() guard.
 
-    def test_description_recovery_uses_released_readme_and_current_rewriter(self):
+    def test_description_recovery_uses_released_readme_and_current_scripts(self):
         steps = self.description["jobs"]["update"]["steps"]
         names = [step["name"] for step in steps]
-        self.assertLess(names.index("Checkout workflow revision"), names.index("Keep Hub README rewrite script"))
-        self.assertLess(names.index("Keep Hub README rewrite script"), names.index("Checkout release tag"))
+        order = [
+            "Checkout workflow revision",
+            "Keep Hub README scripts",
+            "Checkout release tag",
+            "Shorten the README for Docker Hub",
+            "Point relative README URLs at the release tag",
+            "Check the README fits on Docker Hub",
+            "Docker Hub Description",
+        ]
+        self.assertEqual([name for name in names if name in order], order)
         checkout = steps[names.index("Checkout release tag")]
         self.assertEqual(checkout["with"]["ref"], "refs/tags/${{ inputs.tag }}")
         self.assertEqual(checkout["with"]["persist-credentials"], "false")
+        keep = steps[names.index("Keep Hub README scripts")]["run"]
+        for script in ("dockerhub-readme.py", "complete-relative-readme-urls.py"):
+            with self.subTest(script=script):
+                self.assertIn(f'cp scripts/ci/{script} "$RUNNER_TEMP/{script}"', keep)
+                # After the tag checkout, scripts/ci is the release's copy.
+                for step in steps[names.index("Checkout release tag"):]:
+                    self.assertNotRegex(step.get("run", ""), rf"(python3?\s+|\./)scripts/ci/{re.escape(script)}")
+
+    def test_hub_gets_the_shortened_rewritten_readme(self):
+        steps = {step["name"]: step for step in self.description["jobs"]["update"]["steps"]}
+        hub = steps["Docker Hub Description"]["with"]
+        self.assertEqual(hub["readme-filepath"], "${{ runner.temp }}/dockerhub-readme.md")
+        self.assertEqual(hub["enable-url-completion"], "false")
+        with tempfile.TemporaryDirectory() as tmp:
+            temp, checkout = Path(tmp) / "runner-temp", Path(tmp) / "checkout"
+            temp.mkdir()
+            checkout.mkdir()
+            readme = (ROOT / "README.md").read_bytes()
+            (checkout / "README.md").write_bytes(readme)
+            env = {**os.environ, "RUNNER_TEMP": str(temp), "TAG": "v1.2.3",
+                   "GITHUB_REPOSITORY": "uniskela/ts6-manager", "GITHUB_SERVER_URL": "https://github.com"}
+
+            def run(name, cwd):
+                return subprocess.run(["bash", "-c", steps[name]["run"]], cwd=cwd, env=env,
+                                      capture_output=True, text=True, timeout=30)
+
+            for name, cwd in (
+                ("Keep Hub README scripts", ROOT),
+                ("Shorten the README for Docker Hub", checkout),
+                ("Point relative README URLs at the release tag", checkout),
+                ("Check the README fits on Docker Hub", checkout),
+            ):
+                with self.subTest(step=name):
+                    result = run(name, cwd)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual((checkout / "README.md").read_bytes(), readme)
+            final = (temp / "dockerhub-readme.md").read_text(encoding="utf-8")
+            self.assertLessEqual(len(final.encode("utf-8")), 25_000)
+            self.assertLess(len(final), len(readme) // 2)
+            self.assertIn("(https://github.com/uniskela/ts6-manager/blob/v1.2.3/README.md#screenshots)", final)
+            self.assertIn("[full README](https://github.com/uniskela/ts6-manager/blob/v1.2.3/README.md)", final)
+
+            for size, fits in ((25_000, True), (25_001, False)):
+                with self.subTest(size=size):
+                    (temp / "dockerhub-readme.md").write_bytes(b"x" * size)
+                    result = run("Check the README fits on Docker Hub", checkout)
+                    self.assertEqual(result.returncode == 0, fits)
+                    self.assertEqual("::error::" in result.stdout, not fits)
 
     def test_description_update_follows_a_build_and_holds_nothing_back(self):
         caller = self.publish["jobs"]["update-dockerhub-description"]
