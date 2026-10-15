@@ -2,6 +2,13 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.11.1](https://github.com/uniskela/ts6-manager/compare/v1.11.0...v1.11.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **sidecar:** guard a viewer's active and gate state with its lock ([#456](https://github.com/uniskela/ts6-manager/issues/456)) ([d3bec6c](https://github.com/uniskela/ts6-manager/commit/d3bec6cd8f1e835fc5d36d9a6d2b2a86587a878c)), closes [#455](https://github.com/uniskela/ts6-manager/issues/455)
+
 ## [1.11.0](https://github.com/uniskela/ts6-manager/compare/v1.10.2...v1.11.0) (2026-10-14)
 
 
