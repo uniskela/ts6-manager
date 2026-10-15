@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -30,6 +31,7 @@ def workflow(name):
 class ReleaseWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.publish = workflow("publish-images.yml")
+        self.description = workflow("dockerhub-description.yml")
         self.release = workflow("release-please.yml")
         self.validation = workflow("pr-validation.yml")
 
@@ -91,8 +93,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(caller["with"]["tag"], "${{ needs.release-please.outputs.tag_name }}")
 
     def test_builds_validate_tag_before_checkout(self):
-        for name in BUILDERS:
-            steps = self.publish["jobs"][name]["steps"]
+        jobs = {name: self.publish["jobs"][name] for name in BUILDERS}
+        jobs["dockerhub-description"] = self.description["jobs"]["update"]
+        for name, job in jobs.items():
+            steps = job["steps"]
             guard = next(step for step in steps if step.get("name") == "Validate release tag")
             checkout = next(step for step in steps if step.get("name") == "Checkout release tag")
             self.assertLess(steps.index(guard), steps.index(checkout))
@@ -118,7 +122,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("if", job)  # Keep GitHub's default success() guard.
 
     def test_description_recovery_uses_released_readme_and_current_rewriter(self):
-        steps = self.publish["jobs"]["update-dockerhub-description"]["steps"]
+        steps = self.description["jobs"]["update"]["steps"]
         names = [step["name"] for step in steps]
         self.assertLess(names.index("Checkout workflow revision"), names.index("Keep Hub README rewrite script"))
         self.assertLess(names.index("Keep Hub README rewrite script"), names.index("Checkout release tag"))
@@ -126,15 +130,91 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(checkout["with"]["ref"], "refs/tags/${{ inputs.tag }}")
         self.assertEqual(checkout["with"]["persist-credentials"], "false")
 
-    def test_refused_description_update_fails_without_holding_back_images(self):
-        job = self.publish["jobs"]["update-dockerhub-description"]
-        step = next(step for step in job["steps"] if step["name"] == "Docker Hub Description")
-        self.assertNotIn("continue-on-error", job)
-        self.assertNotIn("continue-on-error", step)
+    def test_description_update_follows_a_build_and_holds_nothing_back(self):
+        caller = self.publish["jobs"]["update-dockerhub-description"]
+        self.assertEqual(caller["uses"], "./.github/workflows/dockerhub-description.yml")
+        self.assertEqual(caller["needs"], ["build-and-push", "build-all-in-one"])
+        self.assertEqual(
+            caller["if"],
+            "always() && (needs.build-and-push.result == 'success' || needs.build-all-in-one.result == 'success')",
+        )
+        self.assertEqual(caller["with"], {"tag": "${{ inputs.tag }}"})
         for name, other in self.publish["jobs"].items():
             needs = other.get("needs", [])
             with self.subTest(job=name):
                 self.assertNotIn("update-dockerhub-description", [needs] if isinstance(needs, str) else needs)
+
+    def test_refused_description_update_fails_the_job(self):
+        job = self.description["jobs"]["update"]
+        self.assertNotIn("continue-on-error", job)
+        for step in job["steps"]:
+            with self.subTest(step=step["name"]):
+                self.assertNotIn("continue-on-error", step)
+        explain = next(step for step in job["steps"] if step["name"] == "Explain a failed Hub update")
+        self.assertEqual(explain["if"], "failure() && steps.hub-description.outcome == 'failure'")
+
+    def test_description_token_stays_in_its_environment(self):
+        on = self.description["on"]
+        self.assertEqual(set(on), {"workflow_call", "workflow_dispatch"})
+        for event in ("workflow_call", "workflow_dispatch"):
+            self.assertEqual(
+                {key: on[event]["inputs"]["tag"][key] for key in ("required", "type")},
+                {"required": "true", "type": "string"},
+            )
+        self.assertEqual(set(on["workflow_call"]["secrets"]), {"DOCKERHUB_USERNAME", "DOCKERHUB_DESCRIPTION_TOKEN"})
+        for secret in on["workflow_call"]["secrets"].values():
+            self.assertEqual(secret["required"], "false")
+        self.assertEqual(self.description["permissions"], {"contents": "read"})
+        self.assertEqual(set(self.description["jobs"]), {"update"})
+        job = self.description["jobs"]["update"]
+        self.assertEqual(job["environment"], "dockerhub-description")
+        self.assertNotIn("permissions", job)
+        hub = next(step for step in job["steps"] if step["name"] == "Docker Hub Description")
+        self.assertEqual(hub["with"]["password"], "${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}")
+        self.assertNotIn("secrets.DOCKERHUB_TOKEN", (ROOT / ".github/workflows/dockerhub-description.yml").read_text())
+        # The publishing workflow hands over the username only, never every secret.
+        caller = self.publish["jobs"]["update-dockerhub-description"]
+        self.assertEqual(caller["secrets"], {"DOCKERHUB_USERNAME": "${{ secrets.DOCKERHUB_USERNAME }}"})
+        for path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+            if path.name == "dockerhub-description.yml":
+                continue
+            with self.subTest(workflow=path.name):
+                self.assertNotIn("DOCKERHUB_DESCRIPTION_TOKEN", path.read_text())
+                for other in workflow(path.name)["jobs"].values():
+                    environment = other.get("environment", "")
+                    if isinstance(environment, dict):
+                        environment = environment.get("name", "")
+                    self.assertNotEqual(environment, "dockerhub-description")
+
+    def test_missing_description_credentials_skip_with_a_warning(self):
+        detect = next(step for step in self.description["jobs"]["update"]["steps"] if step.get("id") == "hub")
+        self.assertEqual(
+            detect["env"],
+            {
+                "DOCKERHUB_USERNAME": "${{ secrets.DOCKERHUB_USERNAME }}",
+                "DOCKERHUB_DESCRIPTION_TOKEN": "${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}",
+            },
+        )
+        for user, token, update in (("u", "t", "1"), ("u", "", "0"), ("", "t", "0"), ("", "", "0")):
+            with self.subTest(user=bool(user), token=bool(token)), tempfile.NamedTemporaryFile("r") as out:
+                env = {key: value for key, value in os.environ.items() if not key.startswith("DOCKERHUB_")}
+                result = subprocess.run(
+                    ["bash", "-c", detect["run"]],
+                    env={**env, "GITHUB_OUTPUT": out.name, "DOCKERHUB_USERNAME": user, "DOCKERHUB_DESCRIPTION_TOKEN": token},
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(out.read().strip(), f"update_hub={update}")
+                warned = "::warning::" in result.stdout and "DOCKERHUB_DESCRIPTION_TOKEN" in result.stdout
+                self.assertEqual(warned, update == "0")
+        gated = [step for step in self.description["jobs"]["update"]["steps"] if "if" in step and step.get("id") != "hub"]
+        for step in gated:
+            if step["name"] == "Explain a failed Hub update":
+                continue
+            with self.subTest(step=step["name"]):
+                self.assertEqual(step["if"], "steps.hub.outputs.update_hub == '1'")
 
 
 if __name__ == "__main__":

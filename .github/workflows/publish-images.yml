@@ -379,79 +379,19 @@ jobs:
           docker buildx imagetools create --tag "${DST}" "${SRC}"
 
   # Keep Hub's README/short description in sync with the released git tag.
-  # Uses the same DOCKERHUB_* secrets as the mirror; PAT needs Read/Write/Delete.
-  # Docker Hub truncates full descriptions at 25k bytes.
+  # dockerhub-description.yml uses its own environment token, not
+  # DOCKERHUB_TOKEN. Nothing needs this job, so a failed update never holds
+  # back the images; it only marks the run as failed.
   update-dockerhub-description:
-    name: Update Docker Hub description
+    name: Docker Hub description
     needs: [build-and-push, build-all-in-one]
-    runs-on: ubuntu-latest
     if: always() && (needs.build-and-push.result == 'success' || needs.build-all-in-one.result == 'success')
-    steps:
-      - name: Detect Docker Hub credentials
-        id: hub
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
-            echo "push_hub=1" >> "$GITHUB_OUTPUT"
-          else
-            echo "push_hub=0" >> "$GITHUB_OUTPUT"
-            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; skipping Hub description update"
-          fi
-
-      # Copy the rewriter from the workflow revision first. A workflow_dispatch
-      # recovery run can check out an older tag that does not contain the script.
-      - name: Checkout workflow revision
-        if: steps.hub.outputs.push_hub == '1'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Keep Hub README rewrite script
-        if: steps.hub.outputs.push_hub == '1'
-        run: |
-          set -euo pipefail
-          cp scripts/ci/complete-relative-readme-urls.py "$RUNNER_TEMP/complete-relative-readme-urls.py"
-
-      - name: Checkout release tag
-        if: steps.hub.outputs.push_hub == '1'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/tags/${{ inputs.tag }}
-          persist-credentials: false
-
-      # The Hub action completes URLs from GITHUB_REF_NAME (caller ref, usually
-      # main). GitHub forbids overriding GITHUB_* env vars, so rewrite first.
-      - name: Point relative README URLs at the release tag
-        if: steps.hub.outputs.push_hub == '1'
-        env:
-          TAG: ${{ inputs.tag }}
-        run: |
-          set -euo pipefail
-          python3 "$RUNNER_TEMP/complete-relative-readme-urls.py" \
-            README.md "$RUNNER_TEMP/dockerhub-readme.md" --ref "$TAG"
-
-      # A refused update fails this job. No other job needs it, so the images
-      # stay published; the release run shows the failure instead of hiding it.
-      - name: Docker Hub Description
-        id: hub-description
-        if: steps.hub.outputs.push_hub == '1'
-        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: ${{ env.DOCKERHUB_IMAGE }}
-          short-description: ${{ github.event.repository.description }}
-          readme-filepath: ${{ runner.temp }}/dockerhub-readme.md
-          enable-url-completion: false
-
-      # The action only says "Forbidden" when the token may push but not edit.
-      - name: Explain a failed Hub update
-        if: failure() && steps.hub-description.outcome == 'failure'
-        run: |
-          echo "::error::The Docker Hub README and description update failed; the images are published. If the step above says Forbidden, DOCKERHUB_TOKEN needs Repo Read, Write, Delete (Read & Write can push images but cannot edit the repository page). Otherwise the token may be invalid or Docker Hub unavailable. Re-run this job once fixed."
+    uses: ./.github/workflows/dockerhub-description.yml
+    with:
+      tag: ${{ inputs.tag }}
+    # Only the username: the token comes from the job's environment.
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
 
   # First publish often creates private packages; attempt to mark them public for pull-without-auth.
   # If this fails (org policy / token scope), set visibility manually under Packages → Package settings.

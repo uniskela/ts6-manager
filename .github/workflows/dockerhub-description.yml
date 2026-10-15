@@ -1,0 +1,121 @@
+name: Update Docker Hub description
+
+# Puts README.md and the GitHub repository description of a released vX.Y.Z
+# tag onto the Docker Hub page. publish-images.yml calls this after the image
+# builds. Run it by hand to republish the page for an existing tag; it never
+# builds, pushes or retags an image.
+#
+# Editing a Hub repository needs a PAT with Read, Write, Delete, so it uses
+# DOCKERHUB_DESCRIPTION_TOKEN from the dockerhub-description environment and
+# never DOCKERHUB_TOKEN, which only pushes images. Docker Hub truncates the
+# README at 25,000 bytes.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Released vX.Y.Z tag whose README to publish.
+        required: true
+        type: string
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      # Never passed by a caller: the job reads it from its environment.
+      # Declared so the secrets context lists it.
+      DOCKERHUB_DESCRIPTION_TOKEN:
+        required: false
+
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag whose README to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  # https://hub.docker.com/r/uniskela/ts6-manager
+  DOCKERHUB_IMAGE: ${{ github.repository_owner }}/ts6-manager
+
+jobs:
+  update:
+    name: Update Docker Hub description
+    runs-on: ubuntu-latest
+    environment: dockerhub-description
+    steps:
+      - name: Validate release tag
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a vX.Y.Z tag, got: $TAG" >&2
+            exit 1
+          fi
+
+      - name: Detect Docker Hub credentials
+        id: hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_DESCRIPTION_TOKEN: ${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_DESCRIPTION_TOKEN:-}" ]; then
+            echo "update_hub=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "update_hub=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::Docker Hub README and description not updated: set DOCKERHUB_USERNAME and the DOCKERHUB_DESCRIPTION_TOKEN secret of the dockerhub-description environment (a Hub PAT with Read, Write, Delete)."
+          fi
+
+      # Copy the rewriter from the workflow revision first. A recovery run can
+      # check out an older tag that does not contain the script.
+      - name: Checkout workflow revision
+        if: steps.hub.outputs.update_hub == '1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Keep Hub README rewrite script
+        if: steps.hub.outputs.update_hub == '1'
+        run: |
+          set -euo pipefail
+          cp scripts/ci/complete-relative-readme-urls.py "$RUNNER_TEMP/complete-relative-readme-urls.py"
+
+      - name: Checkout release tag
+        if: steps.hub.outputs.update_hub == '1'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      # The Hub action completes URLs from GITHUB_REF_NAME (caller ref, usually
+      # main). GitHub forbids overriding GITHUB_* env vars, so rewrite first.
+      - name: Point relative README URLs at the release tag
+        if: steps.hub.outputs.update_hub == '1'
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 "$RUNNER_TEMP/complete-relative-readme-urls.py" \
+            README.md "$RUNNER_TEMP/dockerhub-readme.md" --ref "$TAG"
+
+      # A refused update fails this job. Nothing waits on it, so the images
+      # stay published; the release run shows the failure instead of hiding it.
+      - name: Docker Hub Description
+        id: hub-description
+        if: steps.hub.outputs.update_hub == '1'
+        uses: peter-evans/dockerhub-description@1b9a80c056b620d92cedb9d9b5a223409c68ddfa # v5.0.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_DESCRIPTION_TOKEN }}
+          repository: ${{ env.DOCKERHUB_IMAGE }}
+          short-description: ${{ github.event.repository.description }}
+          readme-filepath: ${{ runner.temp }}/dockerhub-readme.md
+          enable-url-completion: false
+
+      # The action only says "Forbidden" when the token may push but not edit.
+      - name: Explain a failed Hub update
+        if: failure() && steps.hub-description.outcome == 'failure'
+        run: |
+          echo "::error::The Docker Hub README and description update failed; images are not affected. If the step above says Forbidden, DOCKERHUB_DESCRIPTION_TOKEN needs Repo Read, Write, Delete (Read & Write can push images but cannot edit the repository page). Otherwise the token may be invalid or Docker Hub unavailable. Re-run this workflow for the tag once fixed."

@@ -24,12 +24,15 @@ This repo uses [Release Please](https://github.com/googleapis/release-please) on
 | `packages/frontend/src/lib/app-version.ts` | UI fallback version (`// x-release-please-version`) |
 | `CHANGELOG.md` | Generated / updated by Release Please, with final human curation before merge when needed |
 | `.github/workflows/publish-images.yml` | Reusable image publish for an immutable `vX.Y.Z` release (GHCR default + Docker Hub mirror + Hub README/description); also supports manual recovery for an existing release tag |
+| `.github/workflows/dockerhub-description.yml` | Pushes the README and short description of a `vX.Y.Z` tag to the Docker Hub page. Called by `publish-images.yml` after the builds; run it by hand to republish the page for an existing tag without touching images |
 | `.github/workflows/publish-sidecar-binaries.yml` | Reusable native media sidecar build for the same `vX.Y.Z` tag; attaches per-platform archives and `SHA256SUMS` to the GitHub Release. Also supports manual recovery |
 | `scripts/sidecar/build-release.sh` | Cross-compiles the sidecar archives (used by the workflow above and compiled, without archives, in PR validation) |
 
 Ordinary pushes and PR merges to `main` must **not** publish container images. Image publication is tied to a created GitHub Release so `latest`, semver tags, and SHA tags all point at a deliberate release.
 
-Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`. If either is unset, the workflow still publishes GHCR and warns. The same secrets update the Hub repository short description and the README from `README.md`, truncated to 25,000 bytes on Hub, after a successful image build (`DOCKERHUB_TOKEN` must be a Hub PAT with Read, Write, and Delete).
+Docker Hub mirror (`uniskela/ts6-manager:<component>`) needs repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Hub PAT with Read & Write). If either is unset, the workflow still publishes GHCR and warns.
+
+The Hub repository short description and the README from `README.md` (truncated to 25,000 bytes on Hub) are updated after a successful image build by `dockerhub-description.yml`. Editing a Hub repository needs a PAT with Read, Write, and Delete, so that workflow uses its own token: the `DOCKERHUB_DESCRIPTION_TOKEN` secret of the `dockerhub-description` GitHub environment, plus `DOCKERHUB_USERNAME`. It never receives `DOCKERHUB_TOKEN`. If the token is unset it skips the update with a warning; if Hub refuses the update, that job fails without affecting the published images.
 
 ### Normal flow (agents + humans)
 
