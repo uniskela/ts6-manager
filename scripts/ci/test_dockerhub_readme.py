@@ -84,19 +84,19 @@ def without_section(text, name):
 
 class DockerHubReadmeTests(unittest.TestCase):
     def run_cli(self, readme_text, *, tag="v1.2.3"):
-        """Shorten and rewrite like the workflow; return (exit code, stdout, final text)."""
+        """Shorten and rewrite like the workflow; return (exit code, stderr, final text)."""
         with tempfile.TemporaryDirectory() as tmp:
             tmp = Path(tmp)
-            src = tmp / "src/README.md"
-            src.parent.mkdir()
-            src.write_text(readme_text, encoding="utf-8")
             short = tmp / "hub-readme/README.md"
+            short.parent.mkdir()
             result = subprocess.run(
-                [sys.executable, SCRIPT, src, short], capture_output=True, text=True, timeout=30
+                [sys.executable, SCRIPT], input=readme_text.encode("utf-8"), capture_output=True, timeout=30
             )
+            stderr = result.stderr.decode("utf-8")
             if result.returncode:
-                self.assertFalse(short.exists())
-                return result.returncode, result.stdout, None
+                self.assertEqual(result.stdout, b"")
+                return result.returncode, stderr, None
+            short.write_bytes(result.stdout)
             final = tmp / "dockerhub-readme.md"
             subprocess.run(
                 [sys.executable, REWRITER, short, final, "--ref", tag],
@@ -104,7 +104,7 @@ class DockerHubReadmeTests(unittest.TestCase):
                 check=True,
                 timeout=30,
             )
-            return 0, result.stdout, final.read_text(encoding="utf-8")
+            return 0, stderr, final.read_text(encoding="utf-8")
 
     def test_keeps_preamble_and_listed_sections_in_readme_order(self):
         out = hub.build(SAMPLE)
@@ -142,10 +142,10 @@ class DockerHubReadmeTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for name in hub.SECTIONS:
             with self.subTest(section=name):
-                code, stdout, _ = self.run_cli(without_section(readme, name))
+                code, stderr, _ = self.run_cli(without_section(readme, name))
                 self.assertEqual(code, 1)
-                self.assertIn("::error::", stdout)
-                self.assertIn(name, stdout)
+                self.assertIn("::error::", stderr)
+                self.assertIn(name, stderr)
 
     def test_renamed_section_fails(self):
         with self.assertRaisesRegex(hub.ReadmeError, "Quick Start"):
@@ -160,11 +160,16 @@ class DockerHubReadmeTests(unittest.TestCase):
         big = SAMPLE.replace("- TeamSpeak\n", "- TeamSpeak\n" + filler * (hub.MAX_BYTES // len(filler)))
         with self.assertRaisesRegex(hub.ReadmeError, rf"over the {hub.MAX_BYTES}"):
             hub.build(big)
-        code, stdout, _ = self.run_cli(big)
+        code, stderr, _ = self.run_cli(big)
         self.assertEqual(code, 1)
-        self.assertIn("::error::", stdout)
+        self.assertIn("::error::", stderr)
         # Text in dropped sections does not count.
         hub.build(SAMPLE.replace("Lots of people.\n", filler * (hub.MAX_BYTES // len(filler))))
+
+    def test_cli_takes_no_paths(self):
+        result = subprocess.run([sys.executable, SCRIPT, "README.md", "out.md"], capture_output=True, timeout=30)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, b"")
 
     def test_limit_leaves_room_for_url_rewriting(self):
         self.assertLessEqual(hub.MAX_BYTES, HUB_LIMIT - 4_000)
@@ -172,8 +177,8 @@ class DockerHubReadmeTests(unittest.TestCase):
     def test_real_readme_fits_on_docker_hub_and_links_the_full_readme(self):
         readme = ROOT / "README.md"
         before = hashlib.sha256(readme.read_bytes()).hexdigest()
-        code, stdout, final = self.run_cli(readme.read_text(encoding="utf-8"), tag="v1.2.3")
-        self.assertEqual(code, 0, stdout)
+        code, stderr, final = self.run_cli(readme.read_text(encoding="utf-8"), tag="v1.2.3")
+        self.assertEqual(code, 0, stderr)
         self.assertEqual(hashlib.sha256(readme.read_bytes()).hexdigest(), before)
         size = len(final.encode("utf-8"))
         self.assertLessEqual(size, HUB_LIMIT)

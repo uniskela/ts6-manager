@@ -7,16 +7,16 @@ heading plus the SECTIONS below, in README order, and ends with a link to the
 full README. It fails instead of publishing a page with a missing section or
 one Hub would cut short.
 
-Write the output as README.md (in another directory) and pass it through
+Reads README.md on stdin and writes the Hub copy on stdout. Save that as
+README.md (in another directory) and pass it through
 complete-relative-readme-urls.py: relative links, including the footer and
 `#anchor` links to sections left out here, then point at the full README.md of
 the release tag on GitHub.
 """
 from __future__ import annotations
 
-import argparse
 import re
-from pathlib import Path
+import sys
 
 SECTIONS = (
     "Documentation",
@@ -89,18 +89,16 @@ def build(text: str, sections=SECTIONS, max_bytes=MAX_BYTES) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("readme", type=Path)
-    parser.add_argument("outfile", type=Path)
-    args = parser.parse_args()
+    if len(sys.argv) > 1:
+        print("usage: dockerhub-readme.py < README.md > hub/README.md", file=sys.stderr)
+        return 2
     try:
-        out = build(args.readme.read_text(encoding="utf-8"))
+        out = build(sys.stdin.buffer.read().decode("utf-8")).encode("utf-8")
     except ReadmeError as error:
-        print(f"::error::{error}")
+        print(f"::error::{error}", file=sys.stderr)
         return 1
-    args.outfile.parent.mkdir(parents=True, exist_ok=True)
-    args.outfile.write_text(out, encoding="utf-8")
-    print(f"Docker Hub README: kept {len(SECTIONS)} sections, {len(out.encode('utf-8'))} bytes")
+    sys.stdout.buffer.write(out)
+    print(f"Docker Hub README: kept {len(SECTIONS)} sections, {len(out)} bytes", file=sys.stderr)
     return 0
 
 

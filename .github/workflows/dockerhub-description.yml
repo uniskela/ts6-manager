@@ -94,7 +94,8 @@ jobs:
         if: steps.hub.outputs.update_hub == '1'
         run: |
           set -euo pipefail
-          python3 "$RUNNER_TEMP/dockerhub-readme.py" README.md "$RUNNER_TEMP/hub-readme/README.md"
+          mkdir -p "$RUNNER_TEMP/hub-readme"
+          python3 "$RUNNER_TEMP/dockerhub-readme.py" < README.md > "$RUNNER_TEMP/hub-readme/README.md"
 
       # The Hub action completes URLs from GITHUB_REF_NAME (caller ref, usually
       # main). GitHub forbids overriding GITHUB_* env vars, so rewrite first.
