@@ -630,7 +630,8 @@ type Sidecar struct {
 	ffmpegLock sync.Mutex
 	ffmpegGen  uint64
 	source     string
-	running    bool
+	// running is cleared by Stop while the RTP readers loop on it.
+	running atomic.Bool
 	// egress is the current remote source's connection proxy (nil for local
 	// files or with SIDECAR_EGRESS_PROXY=off); guarded by ffmpegLock.
 	egress *egressProxy
@@ -728,7 +729,7 @@ func (s *Sidecar) StartRTP() error {
 	s.audioPort = s.audioConn.LocalAddr().(*net.UDPAddr).Port
 
 	log.Printf("[RTP] Video port: %d, Audio port: %d", s.videoPort, s.audioPort)
-	s.running = true
+	s.running.Store(true)
 
 	go s.readVideoRTP()
 	go s.readAudioRTP()
@@ -743,11 +744,11 @@ func (s *Sidecar) readVideoRTP() {
 	pkt := &rtp.Packet{}
 	count := 0
 
-	for s.running {
+	for s.running.Load() {
 		n, err := s.videoConn.Read(buf)
 		arrived := time.Now()
 		if err != nil {
-			if s.running {
+			if s.running.Load() {
 				log.Printf("[RTP] Video read error: %v", err)
 			}
 			return
@@ -788,11 +789,11 @@ func (s *Sidecar) readAudioRTP() {
 	pkt := &rtp.Packet{}
 	count := 0
 
-	for s.running {
+	for s.running.Load() {
 		n, err := s.audioConn.Read(buf)
 		arrived := time.Now()
 		if err != nil {
-			if s.running {
+			if s.running.Load() {
 				log.Printf("[RTP] Audio read error: %v", err)
 			}
 			return
@@ -2142,7 +2143,7 @@ func (s *Sidecar) GetStats() map[string]interface{} {
 }
 
 func (s *Sidecar) Stop() {
-	s.running = false
+	s.running.Store(false)
 	s.ffmpegLock.Lock()
 	s.StopFFmpegLocked()
 	s.ffmpegLock.Unlock()

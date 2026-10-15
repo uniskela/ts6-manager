@@ -129,10 +129,12 @@ jobs:
       - name: Install FFmpeg for playback regression tests
         run: apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg
 
-      - name: Test
+      # The race detector needs cgo; the golang image has gcc for it.
+      - name: Test with the race detector
         env:
           SIDECAR_FFMPEG_IT: "1"
-        run: go test ./...
+          CGO_ENABLED: "1"
+        run: go test -race ./...
 
       - name: Vet
         run: go vet ./...
