@@ -36,6 +36,8 @@ export async function appendForListener(req: Request, binding: ListenerRemoteBin
     await authorized(req, 'add', 'request');
     const item = await resolveItem();
     const { bot } = await authorized(req, 'add', 'request');
+    // A listener who left while the request was being checked does not get it queued.
+    if (req.res?.destroyed || req.socket?.destroyed) fail(503, 'unavailable', 'Listener remote is unavailable.');
     assertQueueRoom(bot);
     // Conservative: a listener may only start music on an idle bot. Anything
     // already playing or paused is never touched, and an active video stream is

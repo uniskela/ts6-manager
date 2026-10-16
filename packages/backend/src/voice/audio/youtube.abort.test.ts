@@ -1,12 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { downloadYouTube } from './youtube.js';
 
+/** Running (not exited). An exited child that nobody has reaped yet still answers kill(pid, 0). */
 function alive(pid: number): boolean {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    const state = readFileSync(`/proc/${pid}/stat`, 'utf8').replace(/^.*\) /s, '')[0];
+    return state !== 'Z' && state !== 'X';
+  } catch {
+    try { process.kill(pid, 0); return true; } catch { return false; }
+  }
 }
 
 async function waitFor(check: () => boolean | Promise<boolean>, what: string): Promise<void> {

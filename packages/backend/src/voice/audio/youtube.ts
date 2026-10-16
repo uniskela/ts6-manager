@@ -248,8 +248,8 @@ function buildSpotifyFetchUrl(allowedHost: SpotifyFetchHost, from: URL): URL {
  * The request URL is rebuilt from an allowlisted host constant (not the raw user URL)
  * so redirects cannot pivot SSRF off an open redirect.
  */
-async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Response> {
-  return (await fetchSpotifyPage(initialUrl, maxRedirects)).response;
+async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5, signal?: AbortSignal): Promise<Response> {
+  return (await fetchSpotifyPage(initialUrl, maxRedirects, signal)).response;
 }
 
 /**
@@ -259,6 +259,7 @@ async function fetchSpotifyOgPage(initialUrl: URL, maxRedirects = 5): Promise<Re
 export async function fetchSpotifyPage(
   initialUrl: URL,
   maxRedirects = 5,
+  signal?: AbortSignal,
 ): Promise<{ response: Response; url: URL }> {
   let current = initialUrl;
 
@@ -279,7 +280,7 @@ export async function fetchSpotifyPage(
     const res = await fetch(safeUrl.href, {
       headers: { "User-Agent": "Mozilla/5.0 (compatible; ts6-manager/1.0)" },
       redirect: "manual",
-      signal: AbortSignal.timeout(180_000),
+      signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
     });
 
     if (res.status >= 300 && res.status < 400) {
@@ -391,7 +392,7 @@ export async function resolveSpotifyToYouTube(url: string, signal?: AbortSignal)
   // Redirects are followed manually; each hop is rebuilt onto an allowlisted https host.
   let query = "";
   try {
-    const res = await fetchSpotifyOgPage(parsed);
+    const res = await fetchSpotifyOgPage(parsed, undefined, signal);
     query = spotifySearchQueryFromOg(await res.text());
   } catch {
     /* fall through */

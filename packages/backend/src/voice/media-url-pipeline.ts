@@ -35,9 +35,11 @@ export interface MediaUrlRequest {
   enqueueOnly: boolean;
   cap?: number;
   /**
-   * Cancels the request. Resolver and downloader processes that take the signal
-   * are stopped, and the pipeline rejects as soon as it aborts, even while a
-   * step that cannot be cancelled is still finishing on its own timeout.
+   * Cancels the request. Steps that take the signal (downloads, playlist
+   * expansion, the Spotify and Apple Music lookups) stop their work, and the
+   * pipeline rejects once they have, so no process outlives the request. The
+   * two collection lookups take no signal; they are left to finish on their
+   * own timeout (network only) and the pipeline rejects at once.
    */
   signal?: AbortSignal;
 }
@@ -114,7 +116,20 @@ export async function runMediaUrlPipeline(
 ): Promise<{ first: QueueItem; playlistTitle?: string; queuedInBackground: number }> {
   const cap = req.cap ?? PLAYLIST_CAP;
   const { signal } = req;
-  const step = <T>(promise: Promise<T>) => abortable(promise, signal);
+  // A step that takes the signal is awaited until it stops; one that cannot be cancelled is abandoned.
+  const step = async <T>(promise: Promise<T>) => {
+    let value: T;
+    try {
+      value = await promise;
+    } catch (error) {
+      // A step stopped by the cancellation fails with its own error; report why it was cancelled.
+      signal?.throwIfAborted();
+      throw error;
+    }
+    signal?.throwIfAborted();
+    return value;
+  };
+  const uncancellable = <T>(promise: Promise<T>) => abortable(promise, signal);
   signal?.throwIfAborted();
   let mediaUrl = req.url;
   let urlsToPlay = [mediaUrl];
@@ -125,7 +140,7 @@ export async function runMediaUrlPipeline(
   // Spotify / Apple Music playlists and albums: match each track on YouTube.
   let collection: { title?: string; tracks: AppleMusicTrack[] } | null = null;
   if (isSpotifyShareUrl(mediaUrl)) {
-    collection = await step(deps.resolveSpotifyCollection(mediaUrl));
+    collection = await uncancellable(deps.resolveSpotifyCollection(mediaUrl));
     if (collection) {
       pendingSource = 'Spotify';
     } else {
@@ -133,7 +148,7 @@ export async function runMediaUrlPipeline(
       urlsToPlay = [mediaUrl];
     }
   } else if (isAppleMusicShareUrl(mediaUrl)) {
-    collection = await step(deps.resolveAppleMusic(mediaUrl));
+    collection = await uncancellable(deps.resolveAppleMusic(mediaUrl));
   }
 
   if (collection) {

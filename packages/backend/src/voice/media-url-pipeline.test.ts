@@ -326,20 +326,41 @@ test('a failed first track releases the reservation', async () => {
   assert.equal(released, 1);
 });
 
-test('an aborted request rejects at once, even while a step is still running, and passes the signal on', async () => {
+test('an aborted request waits for a cancellable step to stop, then rejects', async () => {
   const controller = new AbortController();
   const seen: Array<AbortSignal | undefined> = [];
   let downloadStarted!: () => void;
   const started = new Promise<void>((resolve) => { downloadStarted = resolve; });
+  let stopped = false;
   const { target, calls } = fakeTarget();
   const pending = runMediaUrlPipeline(fakeDeps({
-    downloadTrack: (_url, signal) => { seen.push(signal); downloadStarted(); return new Promise<QueueItem>(() => {}); },
+    downloadTrack: (_url, signal) => {
+      seen.push(signal);
+      downloadStarted();
+      return new Promise<QueueItem>((_resolve, reject) => {
+        signal?.addEventListener('abort', () => { setImmediate(() => { stopped = true; reject(new Error('process closed')); }); }, { once: true });
+      });
+    },
   }), target, { url: 'https://www.youtube.com/watch?v=abcdefghijk', enqueueOnly: true, signal: controller.signal });
   await started;
   controller.abort(new Error('cancelled'));
   await assert.rejects(pending, /cancelled/);
+  assert.equal(stopped, true, 'the step stopped before the pipeline rejected');
   assert.deepEqual(seen, [controller.signal]);
   assert.equal(calls.enqueue.length, 0);
+});
+
+test('an aborted request abandons a lookup that cannot be cancelled', async () => {
+  const controller = new AbortController();
+  let lookupStarted!: () => void;
+  const started = new Promise<void>((resolve) => { lookupStarted = resolve; });
+  const { target } = fakeTarget();
+  const pending = runMediaUrlPipeline(fakeDeps({
+    resolveSpotifyCollection: () => { lookupStarted(); return new Promise(() => {}); },
+  }), target, { url: 'https://open.spotify.com/playlist/x', enqueueOnly: true, signal: controller.signal });
+  await started;
+  controller.abort(new Error('cancelled'));
+  await assert.rejects(pending, /cancelled/);
 });
 
 test('an already aborted request calls no resolver', async () => {

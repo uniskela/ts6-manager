@@ -523,15 +523,16 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
   }));
 
-  /** A download that never finishes on its own and reports when it is cancelled. */
+  /** A download that never finishes on its own; like the real one, it stops and rejects when cancelled. */
   function hangingDownload(f: Awaited<ReturnType<typeof fixture>>) {
     const started = deferred<void>();
     const cancelled = deferred<void>();
     f.app.locals.mediaUrlPipelineDeps.downloadTrack = (_url: string, signal?: AbortSignal) => {
       assert.ok(signal, 'the download receives the request signal');
-      signal.addEventListener('abort', () => cancelled.resolve(), { once: true });
       started.resolve();
-      return new Promise<QueueItem>(() => {});
+      return new Promise<QueueItem>((_resolve, reject) => {
+        signal.addEventListener('abort', () => { cancelled.resolve(); reject(new Error('download stopped')); }, { once: true });
+      });
     };
     return { started: started.promise, cancelled: cancelled.promise };
   }
@@ -576,6 +577,34 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(f.queue.length, 1);
     f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => item;
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
+  }));
+
+  it('does not queue a resolved link whose client left during the final access check', async () => using(async f => {
+    const { session } = await f.exchange();
+    const bridge = f.app.locals.eventBridge as { executeCommand: (...args: any[]) => Promise<string> };
+    const executeCommand = bridge.executeCommand;
+    let resolved = false;
+    const reached = deferred<void>();
+    const gate = deferred<void>();
+    bridge.executeCommand = async (...args) => {
+      if (resolved) { reached.resolve(); await gate.promise; }
+      return executeCommand(...args);
+    };
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { resolved = true; return item; };
+    const client = new AbortController();
+    const pending = f.request('/requests', { session, body: { url: mediaUrl }, signal: client.signal });
+    await reached.promise;
+    const socket = f.sockets.at(-1)!;
+    client.abort();
+    await assert.rejects(pending);
+    if (!socket.destroyed) await once(socket, 'close');
+    gate.resolve();
+    const failed = () => f.audit.some(row => { const outcome = (row.data as any)?.outcome; return outcome && outcome !== 'pending' && outcome !== 'success'; });
+    for (let turn = 0; turn < 500 && !failed(); turn++) await new Promise(resolve => setImmediate(resolve));
+    assert.ok(failed(), 'the abandoned request ended');
+    bridge.executeCommand = executeCommand;
+    assert.equal(f.queue.length, 1);
+    assert.equal(f.plays.length, 0);
   }));
 
   it('lets a finished link through untouched by the deadline and session checks', async () => using(async f => {

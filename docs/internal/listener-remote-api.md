@@ -143,12 +143,14 @@ URL resolution permits one pending job per bot and four across the remote
 service. A pasted link has two minutes, including the URL check, to resolve
 and download; the work is cancelled when that deadline passes (504 `timeout`),
 when the client disconnects (also before the link step starts), or when the
-session ends (checked every two seconds; 401). Its slots are released when the
-work stops. Cancellation kills the yt-dlp processes the request started,
+session ends (checked every two seconds; 401). A link whose client left during
+the final access check is not queued. Its slots are released once the work has
+stopped. Cancellation kills the yt-dlp processes the request started,
 including the YouTube searches behind Spotify and Apple Music links. yt-dlp
 runs in its own process group, and a cancellation or its three-minute timeout
 kills the whole group, so an ffmpeg conversion stops with it. Provider page fetches that take no signal keep their own
-three-minute timeout but no longer hold a slot. A cancelled request never
+three-minute timeout but no longer hold a slot: the Spotify playlist and album
+lookup and the Apple Music lookup. The Spotify track page fetch is cancelled. A cancelled request never
 enqueues.
 JSON request bodies are limited to 4 KiB. T05 should serialize mutations and
 disable the request button while resolution is pending.
