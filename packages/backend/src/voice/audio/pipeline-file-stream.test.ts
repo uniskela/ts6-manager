@@ -27,4 +27,12 @@ describe('buildPcmFileArgs', () => {
     assert.deepEqual(args.slice(args.indexOf('-re'), args.indexOf('-re') + 3), ['-re', '-i', url]);
     assert.equal(buildPcmFileArgs('/data/music/example.mp3').includes('-reconnect'), false);
   });
+
+  it('lets a remote track open only HTTP(S) through a proxy', () => {
+    const args = buildPcmFileArgs('https://rr1.googlevideo.com/videoplayback?id=1');
+    const at = args.indexOf('-protocol_whitelist');
+    assert.ok(at >= 0 && at < args.indexOf('-i'));
+    assert.equal(args[at + 1], 'http,https,tls,tcp,httpproxy,crypto');
+    assert.equal(buildPcmFileArgs('/data/music/example.mp3').includes('-protocol_whitelist'), false);
+  });
 });

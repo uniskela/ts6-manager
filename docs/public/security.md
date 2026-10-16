@@ -29,9 +29,29 @@ The `!remote` chat command gives a listener in a media bot's channel a private, 
 
 ## Outbound requests
 
-HTTP automation actions and FFmpeg/media URL paths include SSRF protections. An administrator can allow specific LAN IPTV hosts from the IPTV page header **Local hosts** dialog; that list is IPTV-only ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
+HTTP automation actions and FFmpeg/media URL paths include SSRF protections; media downloads are also checked at connection time (see [Media downloads](#media-downloads)). An administrator can allow specific LAN IPTV hosts from the IPTV page header **Local hosts** dialog; that list is IPTV-only ([Video streaming](video-streaming.md#playlists-and-channels-on-your-local-network)). Bot flows do not provide an unrestricted WebQuery escape hatch: raw WebQuery actions use an allowlist.
 
 Do not design deployments or automations around bypassing these checks.
+
+### Media downloads
+
+yt-dlp handles media links for music, video, library downloads, playlist imports, the listener remote and request replay. Every connection it makes goes through a checking proxy inside the backend. That includes connections from an ffmpeg that yt-dlp starts, and from the backend's own ffmpeg when it plays a track URL yt-dlp resolved. The proxy:
+
+- accepts only connections from the job that started them (each download gets its own short-lived credentials);
+- resolves each host itself, refuses loopback, private, link-local, cloud metadata and other reserved addresses (with no local-network exception), and connects only to an address it approved;
+- allows only ports 80 and 443;
+- never follows redirects: yt-dlp does, and each hop is checked again;
+- runs yt-dlp without configuration files or plugins from the host, with its own downloader and HTTP(S), HLS and DASH formats only.
+
+If the proxy cannot start, downloads fail instead of connecting directly. `MEDIA_EGRESS_PROXY=off` is an emergency setting; see [Environment variables](environment-variables.md#backend).
+
+**What this does not cover.** The proxy controls traffic that yt-dlp and ffmpeg send through it. It is not an operating-system boundary: a downloader that ignored its proxy settings, through a bug or a future change, would not be stopped by it. This applies to every deployment today, including the split Docker stack, the all-in-one image and a backend run outside Docker. Running downloads in a separate container with no route except the proxy is planned for the split stack ([#476](https://github.com/uniskela/ts6-manager/issues/476)). The all-in-one image and native installs will continue to rely on the proxy alone.
+
+**Restricting outbound access yourself.** The backend needs outbound HTTPS for media and its TeamSpeak Query connections. Media downloads need no private-network access. Where you control the host or network:
+
+- deny the backend's outbound traffic to cloud metadata, link-local and loopback addresses outside the container, and to private ranges it has no reason to reach (keep the TeamSpeak server, the sidecar and any outbound proxy reachable);
+- on a native install, run the backend under its own service account so host firewall rules can match it;
+- in Docker, apply those rules to the backend container's network, for example with host firewall rules for its bridge subnet.
 
 ## Appearance custom CSS
 

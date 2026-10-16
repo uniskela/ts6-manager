@@ -88,6 +88,19 @@ For the split image, a peer with a private address that connects straight to the
 
 Cloud metadata addresses stay blocked even when listed.
 
+### Upgrading to 1.11.2
+
+#### Media downloads go through a checking proxy
+
+Every media download (yt-dlp for music and video, and ffmpeg playing a track URL yt-dlp resolved) now connects through a checking proxy inside the backend; see [Security — Media downloads](security.md#media-downloads). There is no schema change and no Compose change. Most links work as before. These changes may affect you:
+
+- **Outbound proxy settings.** Media downloads no longer use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` from the backend's environment. If the backend can only reach the internet through an outbound proxy, set `MEDIA_UPSTREAM_PROXY=http://host:port`. The backend logs a startup warning when one of the old variables is set and `MEDIA_UPSTREAM_PROXY` is not. The outbound proxy is asked for IP addresses, not host names. A proxy that only allows named domains will refuse these requests, and the backend must be able to resolve public DNS names itself.
+- **Links to your local network.** Pasted links, `!play` links and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance; radio is unchanged.
+- **Ports other than 80 and 443.** Media hosted on another port, such as `https://media.example.com:8443/track.mp3`, is refused.
+- **Formats that are not HTTP.** Sources that offer only RTMP, RTSP, MMS or similar streams are refused. HTTP(S), HLS and DASH work.
+- **yt-dlp configuration files.** Media downloads ignore yt-dlp configuration files and plugin folders on the host. On a native install, options you set in a yt-dlp config file no longer apply; cookies still come from **Settings → YouTube** or `YT_COOKIE_FILE`.
+- **Emergency switch.** If downloads break because of the proxy, `MEDIA_EGRESS_PROXY=off` restores direct connections while you report the problem. It is not a supported way to run: only YouTube links and searches are accepted while it is off, and the media runtime check on the Media Library and IPTV pages reports it as a failure.
+
 ## Pull and recreate
 
 For the split stack:
@@ -108,7 +121,7 @@ Release images are produced from immutable Release Please tags. Pulling a newly 
 
 ### yt-dlp lifecycle
 
-Release images pin the exact yt-dlp version recorded in `.yt-dlp-version`. The backend reports that bundled version at startup but does not update it at runtime, so restarting the same image cannot silently change media-extractor behaviour. The same images pin Deno (`.deno-version`) and configure yt-dlp with `--js-runtimes deno` only, so YouTube EJS solvers run without operators installing a JS runtime by hand. Image Node stays at 20 for the Nest app and is not used as an EJS fallback.
+Release images pin the exact yt-dlp version recorded in `.yt-dlp-version`. The backend reports that bundled version at startup but does not update it at runtime, so restarting the same image cannot silently change media-extractor behaviour. The same images pin Deno (`.deno-version`), which yt-dlp uses for YouTube EJS solvers by default, so operators do not need to install a JS runtime by hand. Media downloads run yt-dlp without configuration files (`--ignore-config`). Image Node stays at 20 for the Nest app and is not used as an EJS fallback.
 
 A scheduled GitHub Actions check compares the pin with yt-dlp's latest stable release once a week. When a newer stable version is available, it opens a normal `fix(deps)` pull request instead of changing production automatically. The update PR is expected to pass the application validation and container build/security gates before it is merged. Release Please can then include the dependency refresh in a patch release.
 

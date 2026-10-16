@@ -7,13 +7,20 @@ import { fetchYouTubeVideoMeta, fetchSpotifyPage } from './youtube.js';
 import { resolveAppleMusicTracks } from './apple-music.js';
 import { isAbsolute } from 'node:path';
 
+/** A yt-dlp child: it reads its configuration (the media egress proxy) from stdin. */
+const fakeYtDlp = () => Object.assign(new EventEmitter(), {
+  pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(),
+  stdin: Object.assign(new EventEmitter(), { end: () => {} }), kill: () => true,
+});
+
 test('shared downloader bounds callers without an AbortSignal', async () => {
   const spawn = mock.method(childProcess, 'spawn', (command: string, _args: unknown, options: { detached?: boolean }) => {
     assert.ok(isAbsolute(command));
     // Its own process group on POSIX, so the timeout can kill everything it started.
     assert.equal(options.detached, process.platform !== 'win32');
-    const proc = Object.assign(new EventEmitter(), { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
-    queueMicrotask(() => {
+    const proc = fakeYtDlp();
+    // Like a real child, its output arrives on a later turn of the event loop.
+    setImmediate(() => {
       proc.stdout.emit('data', Buffer.from(JSON.stringify({ title: 'Song', duration: 1 })));
       proc.emit('close', 0);
     });
@@ -35,7 +42,7 @@ test('the downloader kills the whole process group after three minutes', { skip:
   const kills: Array<[number, string | number | undefined]> = [];
   let proc!: EventEmitter;
   const spawn = mock.method(childProcess, 'spawn', () => {
-    proc = Object.assign(new EventEmitter(), { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
+    proc = fakeYtDlp();
     return proc;
   });
   const kill = mock.method(process, 'kill', (pid: number, signal?: string | number) => {
@@ -46,6 +53,8 @@ test('the downloader kills the whole process group after three minutes', { skip:
   syncBuiltinESMExports();
   try {
     const pending = fetchYouTubeVideoMeta('00000000001');
+    // yt-dlp starts once the job's proxy access is ready.
+    while (spawn.mock.callCount() === 0) await new Promise((resolve) => setImmediate(resolve));
     mock.timers.tick(179_999);
     assert.deepEqual(kills, []);
     mock.timers.tick(1);

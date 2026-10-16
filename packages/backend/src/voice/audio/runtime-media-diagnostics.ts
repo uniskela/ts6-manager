@@ -19,6 +19,7 @@ import type {
   RuntimeMediaStageResult,
 } from '@ts6/common';
 import { checkSidecarVersion } from '../streaming/sidecar-version.js';
+import { mediaEgressEnabled } from '../egress/media-egress.js';
 
 const require = createRequire(import.meta.url);
 const backendPkg = require('../../../package.json') as { version?: string };
@@ -477,6 +478,13 @@ export async function diagnoseRuntimeMedia(
       'yt-dlp',
       'yt-dlp was not found — pull or rebuild the TS6 Manager image to restore the bundled extractor',
     );
+  }
+  const ytDlpStage = stages.find((stage) => stage.id === 'yt-dlp');
+  if (ytDlpStage?.status === 'ok' && !mediaEgressEnabled(env)) {
+    // An emergency setting, so it is shown as a failure until switched back on.
+    ytDlpStage.status = 'fail';
+    ytDlpStage.code = 'egress_disabled';
+    ytDlpStage.message = 'Media download protection is switched off (MEDIA_EGRESS_PROXY=off): downloads are not checked at connection time and only YouTube links are accepted';
   }
   await runBinary(
     'ffmpeg',

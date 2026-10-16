@@ -2,7 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
-import { getYtDlpPath } from '../audio/yt-dlp-path.js';
+import { spawnYtDlp, type YtDlpRun } from '../audio/yt-dlp-process.js';
+import { MediaEgressError } from '../egress/media-egress.js';
 import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
 import { describeDuration } from './lifecycle.js';
 import { AppError } from '../../middleware/error-handler.js';
@@ -82,6 +83,16 @@ export class VideoSourceFailedError extends AppError {
  * a slow resolve comes back as a readable error instead of a client timeout.
  */
 const RESOLVE_TIMEOUT_MS = 90_000;
+
+/** Start yt-dlp through the media egress proxy; a proxy failure is a source failure with a fixed message. */
+async function startYtDlp(args: string[], url: string, timeoutMs: number): Promise<YtDlpRun> {
+  try {
+    return await spawnYtDlp(args, { target: url, timeoutMs });
+  } catch (err) {
+    if (err instanceof MediaEgressError) throw new VideoSourceFailedError(err.message);
+    throw err;
+  }
+}
 
 /**
  * The user-facing reason from yt-dlp's stderr: its last "ERROR:" line (e.g.
@@ -280,22 +291,22 @@ async function resolveWithYtDlp(
   formatArgs: string[],
   site: string,
 ): Promise<Record<string, unknown>> {
+  const args = [
+    ...getCookieArgs(),
+    ...formatArgs,
+    '--dump-single-json',
+    '--no-download',
+    '--no-playlist',
+    '--no-warnings',
+    '--',
+    url,
+  ];
+  const { proc, redact } = await startYtDlp(args, url, RESOLVE_TIMEOUT_MS);
   const { stdout, stderr, code } = await new Promise<{
     stdout: string;
     stderr: string;
     code: number | null;
   }>((resolve, reject) => {
-    const args = [
-      ...getCookieArgs(),
-      ...formatArgs,
-      '--dump-single-json',
-      '--no-download',
-      '--no-playlist',
-      '--no-warnings',
-      '--',
-      url,
-    ];
-    const proc = spawn(getYtDlpPath(), args, { shell: false });
     let out = '';
     let err = '';
     proc.stdout.on('data', (chunk: Buffer) => { out += chunk.toString(); });
@@ -306,7 +317,7 @@ async function resolveWithYtDlp(
     }, RESOLVE_TIMEOUT_MS);
     proc.on('close', (exitCode) => {
       clearTimeout(timer);
-      resolve({ stdout: out, stderr: err, code: exitCode });
+      resolve({ stdout: out, stderr: redact(err), code: exitCode });
     });
     proc.on('error', (spawnErr: NodeJS.ErrnoException) => {
       clearTimeout(timer);
@@ -553,20 +564,19 @@ export async function downloadVideoForStream(
   const tempName = `.stream-${Date.now()}.mp4`;
   const tempPath = path.join(musicRoot, tempName);
 
+  const args = [
+    ...getCookieArgs(),
+    ...youtubeVideoFormatArgs(maxHeight),
+    '--merge-output-format', 'mp4',
+    '--no-playlist',
+    '--no-progress',
+    '-o', tempPath,
+    '--match-filter', maxDurationSec > 0 ? `duration <= ${maxDurationSec}` : 'duration >= 0',
+    '--',
+    url,
+  ];
+  const { proc, redact } = await startYtDlp(args, url, 10 * 60_000);
   await new Promise<void>((resolve, reject) => {
-    const args = [
-      ...getCookieArgs(),
-      ...youtubeVideoFormatArgs(maxHeight),
-      '--merge-output-format', 'mp4',
-      '--no-playlist',
-      '--no-progress',
-      '-o', tempPath,
-      '--match-filter', maxDurationSec > 0 ? `duration <= ${maxDurationSec}` : 'duration >= 0',
-      '--',
-      url,
-    ];
-
-    const proc = spawn(getYtDlpPath(), args, { shell: false });
     let stderr = '';
     let stdout = '';
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString(); });
@@ -579,7 +589,7 @@ export async function downloadVideoForStream(
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) {
-        reject(ytDlpFailure('yt-dlp could not download the video', code, stderr));
+        reject(ytDlpFailure('yt-dlp could not download the video', code, redact(stderr)));
         return;
       }
       const skipped = durationFilterSkipMessage(stdout, maxDurationSec);

@@ -20,6 +20,7 @@ import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
 import { startAuditRetention } from './audit/index.js';
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
+import { startMediaEgress } from './voice/egress/media-egress.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -159,6 +160,9 @@ async function main() {
 
   const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
   const stopAuditRetention = startAuditRetention(prisma);
+
+  // Media downloads connect only through the checking proxy; log its state before serving.
+  await startMediaEgress();
 
   server.listen(config.port, () => {
     console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);

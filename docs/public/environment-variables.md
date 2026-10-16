@@ -22,6 +22,8 @@
 | `SIDECAR_BINARY_PATH` | — | Optional sidecar binary path for non-standard deployments |
 | `YT_COOKIE_FILE` | — | Optional Netscape-format yt-dlp cookie file |
 | `YT_DLP_PATH` | `/usr/local/bin/yt-dlp` | Absolute path to the yt-dlp executable used by music, video and diagnostics. For a nonstandard or native install, set the full executable path (e.g. `/usr/bin/yt-dlp` or `C:\Tools\yt-dlp.exe`). Use an administrator-controlled directory that untrusted users cannot write; inherited `PATH` is not used to locate yt-dlp |
+| `MEDIA_EGRESS_PROXY` | `on` | Every media download (yt-dlp for music and video, and ffmpeg reading a track URL yt-dlp resolved) connects through a checking proxy inside the backend. It allows only public addresses on ports 80 and 443 and checks every redirect. `off` is an **emergency setting only**: downloads then connect directly without those checks, only YouTube links and searches are accepted, the backend logs a warning at startup and while downloads run, and the media runtime check on the Media Library and IPTV pages shows yt-dlp as failed. See [Security — Media downloads](security.md#media-downloads) |
+| `MEDIA_UPSTREAM_PROXY` | unset | `http://host:port` (credentials allowed: `http://user:pass@host:port`) when the backend can reach the internet only through an outbound proxy. Media downloads no longer use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY`. The checking proxy approves each destination first, then asks the outbound proxy for that IP address, not the host name. An outbound proxy that only accepts host names will refuse these requests. The backend must still be able to resolve public DNS names |
 | `TS_ALLOW_SELF_SIGNED` | `false` | Allow self-signed TeamSpeak WebQuery TLS certificates |
 
 ### Video streaming defaults

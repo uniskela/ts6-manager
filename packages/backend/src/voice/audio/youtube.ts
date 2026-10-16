@@ -1,6 +1,5 @@
 import { parseDownloadProgress, type ProgressUpdate } from './download-progress.js';
-import { getYtDlpPath } from './yt-dlp-path.js';
-import { spawn } from "child_process";
+import { spawnYtDlp, ytDlpTarget } from './yt-dlp-process.js';
 import path from "path";
 import fs from "fs";
 
@@ -319,12 +318,12 @@ const YT_DLP_TIMEOUT_MS = 180_000;
  * On POSIX yt-dlp runs in its own process group, and a timeout or cancellation kills the whole
  * group, so an ffmpeg it started for conversion stops with it instead of writing on afterwards.
  */
-function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
+async function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
+  signal?.throwIfAborted();
+  // Own process group on POSIX; Windows has no process groups to kill, so it keeps the old behaviour.
+  const group = process.platform !== "win32";
+  const { proc, redact } = await spawnYtDlp(args, { target: ytDlpTarget(args), timeoutMs: YT_DLP_TIMEOUT_MS, detached: group });
   return new Promise((resolve, reject) => {
-    signal?.throwIfAborted();
-    // Own process group on POSIX; Windows has no process groups to kill, so it keeps the old behaviour.
-    const group = process.platform !== "win32";
-    const proc = spawn(getYtDlpPath(), args, { shell: false, detached: group });
     let running = true;
     const killTree = () => {
       if (!running || proc.pid === undefined) return;
@@ -333,6 +332,8 @@ function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, sign
     };
     const timer = setTimeout(killTree, YT_DLP_TIMEOUT_MS);
     signal?.addEventListener("abort", killTree, { once: true });
+    // Cancelled while the job's proxy access was being set up.
+    if (signal?.aborted) killTree();
     const finished = () => {
       running = false;
       clearTimeout(timer);
@@ -362,7 +363,7 @@ function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, sign
     proc.on("close", (code) => {
       finished();
       if (signal?.aborted) reject(signal.reason);
-      else resolve({ code, stdout, stderr });
+      else resolve({ code, stdout: redact(stdout), stderr: redact(stderr) });
     });
     proc.on("error", (err) => {
       finished();
