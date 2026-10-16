@@ -343,6 +343,27 @@ test('replay is dropped when Stop runs while the history entry is still being re
   } finally { release(); }
 });
 
+test('replay is dropped when the bot is replaced while the history entry is still being read', async () => {
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const f = appFor({ rows: [{ id: 7, title: 'Radio', url: 'https://8.8.8.8/radio',
+    source: 'radio', status: 'available', serverConfigId: 1, musicBotId: 3 }],
+    findRequest: async () => { entered(); await gate; } });
+  try {
+    const replay = request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
+    await started;
+    // A restarted bot is a new instance whose generation starts again from 0.
+    const replacement = { ...f.bot, queue: new PlayQueue() };
+    f.app.locals.voiceBotManager.getBot = () => replacement;
+    release();
+    assert.equal((await replay).status, 409);
+    assert.deepEqual(f.played, []);
+    assert.equal(replacement.queue.length, 0);
+    assert.deepEqual(f.recorded, []);
+  } finally { release(); }
+});
+
 test('replay on a full queue answers 409 and queues, downloads and plays nothing', async () => {
   const radio = [{ id: 7, title: 'Radio', url: 'https://8.8.8.8/radio', source: 'radio', status: 'available', serverConfigId: 1, musicBotId: 3 }];
   for (const [rows, enqueue] of [[undefined, true], [undefined, false], [radio, true], [radio, false]] as const) {

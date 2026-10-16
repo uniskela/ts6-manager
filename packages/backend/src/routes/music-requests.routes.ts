@@ -59,12 +59,15 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
     const prisma = req.app.locals.prisma;
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     // Before any await: a Stop or queue clear from here on cancels the replay.
-    const arrivalGeneration = manager.getBot(botId)?.stopGeneration;
+    const arrivalBot = manager.getBot(botId);
+    const arrivalGeneration = arrivalBot?.stopGeneration;
     const row = await prisma.musicRequest.findFirst({ where: { id: requestId, serverConfigId: configId } });
     if (!row) throw new AppError(404, 'Request not found');
 
     const bot = manager.getBot(botId);
     if (bot?.currentConfig.serverConfigId !== configId) throw new AppError(404, 'Music bot not found');
+    // The generation is per bot instance, so a bot replaced during the lookup cannot be compared.
+    if (arrivalBot && arrivalBot !== bot) throw new AppError(409, 'Bot changed during replay. Try again.');
 
     const serverPort = bot.currentConfig.serverPort;
     const stopGeneration = arrivalGeneration ?? bot.stopGeneration;
