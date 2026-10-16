@@ -325,25 +325,8 @@ test('replay is dropped when Stop or a queue clear runs while its start is audit
   }
 });
 
-test('replay is dropped when Stop runs while the history entry is still being read', async () => {
-  let entered!: () => void, release!: () => void;
-  const started = new Promise<void>(resolve => { entered = resolve; });
-  const gate = new Promise<void>(resolve => { release = resolve; });
-  const f = appFor({ rows: [{ id: 7, title: 'Stopped', url: 'https://8.8.8.8/radio',
-    source: 'radio', status: 'available', serverConfigId: 1, musicBotId: 3 }],
-    findRequest: async () => { entered(); await gate; } });
-  try {
-    const replay = request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
-    await started;
-    f.bot.stopGeneration++;
-    release();
-    assert.equal((await replay).status, 409);
-    assert.deepEqual(f.played, []);
-    assert.deepEqual(f.recorded, []);
-  } finally { release(); }
-});
-
-test('replay is dropped when the bot is replaced while the history entry is still being read', async () => {
+/** Replay a radio entry and run `change` while its history entry is still being read; the replay must queue nothing. */
+async function replayChangedDuringLookup(change: (f: ReturnType<typeof appFor>) => { queue: PlayQueue }) {
   let entered!: () => void, release!: () => void;
   const started = new Promise<void>(resolve => { entered = resolve; });
   const gate = new Promise<void>(resolve => { release = resolve; });
@@ -353,15 +336,29 @@ test('replay is dropped when the bot is replaced while the history entry is stil
   try {
     const replay = request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
     await started;
-    // A restarted bot is a new instance whose generation starts again from 0.
-    const replacement = { ...f.bot, queue: new PlayQueue() };
-    f.app.locals.voiceBotManager.getBot = () => replacement;
+    const target = change(f);
     release();
     assert.equal((await replay).status, 409);
     assert.deepEqual(f.played, []);
-    assert.equal(replacement.queue.length, 0);
+    assert.equal(target.queue.length, 0);
     assert.deepEqual(f.recorded, []);
   } finally { release(); }
+}
+
+test('replay is dropped when Stop runs while the history entry is still being read', async () => {
+  await replayChangedDuringLookup(f => {
+    f.bot.stopGeneration++;
+    return f.bot;
+  });
+});
+
+test('replay is dropped when the bot is replaced while the history entry is still being read', async () => {
+  await replayChangedDuringLookup(f => {
+    // A restarted bot is a new instance whose generation starts again from 0.
+    const replacement = { ...f.bot, queue: new PlayQueue() };
+    f.app.locals.voiceBotManager.getBot = () => replacement;
+    return replacement;
+  });
 });
 
 test('replay on a full queue answers 409 and queues, downloads and plays nothing', async () => {
