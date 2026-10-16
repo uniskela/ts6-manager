@@ -40,6 +40,7 @@ import { auditRoutes } from './routes/audit.routes.js';
 import { activityJournalRoutes } from './routes/activity-journal.routes.js';
 import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard, listenerRemoteRateKey } from './routes/listener-remote.routes.js';
 import { clientRateKey } from './utils/client-address.js';
+import { BoundedRateLimitStore } from './utils/rate-windows.js';
 
 import { applyTrustProxy, forwardedHeaderWarning } from './trust-proxy.js';
 import { requireServerAccess } from './middleware/server-access.js';
@@ -58,9 +59,12 @@ export function createApp(): Express {
   app.use(helmet());
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
   // Parse remote requests separately so body-parser errors cannot echo token material.
+  // Bounded stores: a flood of new addresses cannot grow limiter memory without limit.
+  const remoteStore = new BoundedRateLimitStore({ windowMs: 60_000, limit: 120 });
   const remoteLimiter = rateLimit({
     windowMs: 60_000,
     max: 120,
+    store: remoteStore,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many remote requests', code: 'rate_limited' },
@@ -86,9 +90,11 @@ export function createApp(): Express {
   });
 
   // H1: Rate limiting on auth endpoints
+  const authStore = new BoundedRateLimitStore({ windowMs: 15 * 60 * 1000, limit: 15 });
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 15,
+    store: authStore,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many attempts, please try again later' },
@@ -97,6 +103,8 @@ export function createApp(): Express {
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/refresh', authLimiter);
   app.use('/api/auth/password', authLimiter);
+  // Exposed so tests can check the stores stay bounded.
+  app.locals.rateLimitStores = { remote: remoteStore, auth: authStore };
 
   // Public routes
   app.use('/api/setup', setupRoutes);

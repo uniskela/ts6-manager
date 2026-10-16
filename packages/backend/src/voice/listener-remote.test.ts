@@ -193,8 +193,8 @@ describe('listener remote bounded rate limits', () => {
     const { service, advance } = fixture();
     const { token } = service.issue(BINDING);
     const { session } = await service.exchange(token, allowed);
-    for (let i = 0; i < 4; i++) await assert.rejects(service.exchange(token, allowed), expired);
-    await assert.rejects(service.exchange(token, allowed), limited);
+    // A consumed token answers exactly like a never-issued one, however often it is presented.
+    for (let i = 0; i < 10; i++) await assert.rejects(service.exchange(token, allowed), expired);
     for (let i = 0; i < 60; i++) await service.authenticate(session, allowed);
     await assert.rejects(service.authenticate(session, allowed), limited);
     advance(60_000);

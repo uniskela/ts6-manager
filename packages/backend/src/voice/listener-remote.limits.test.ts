@@ -40,18 +40,35 @@ describe('listener remote rate limit hardening', () => {
     assert.ok(state.rates.size <= 10_000);
   });
 
-  it('evicts the oldest address window when the address store is full, never refusing everyone', () => {
+  it('keeps an exhausted address limited while fresh addresses churn through a full store', () => {
     const { service, state } = fixture();
     for (let i = 0; i < 120; i++) service.checkIp('ipv4:192.0.2.1', false);
     assert.throws(() => service.checkIp('ipv4:192.0.2.1', false), limited());
-    for (let i = 0; i < 10_000; i++) service.checkIp(`ipv6:${i.toString(16).padStart(16, '0')}/64`, false);
+    for (let i = 0; i < 10; i++) service.checkIp('ipv4:192.0.2.5', true);
+    assert.throws(() => service.checkIp('ipv4:192.0.2.5', true), limited());
+    for (let i = 0; i < 12_000; i++) service.checkIp(`ipv6:${i.toString(16).padStart(16, '0')}/64`, false);
     assert.equal(state.rates.size, 10_000);
-    // A new address gets its own budget and, at worst, its own 429.
-    for (let i = 0; i < 120; i++) service.checkIp('ipv4:198.51.100.1', false);
-    assert.throws(() => service.checkIp('ipv4:198.51.100.1', false), limited());
-    // The exhausted address was the oldest window, so it was evicted.
-    service.checkIp('ipv4:192.0.2.1', false);
-    assert.ok(state.rates.size <= 10_000);
+    assert.throws(() => service.checkIp('ipv4:192.0.2.1', false), limited());
+    assert.throws(() => service.checkIp('ipv4:192.0.2.5', true), limited());
+    // A new address still gets its own budget.
+    service.checkIp('ipv4:198.51.100.1', false);
+  });
+
+  it('refuses only a new address when every window is exhausted, never a live session', async () => {
+    const { service, state, advance } = fixture();
+    const session = await signIn(service);
+    for (let i = 0; i < 10_000; i++) {
+      const key = `ipv4:10.0.${i >> 8}.${i & 255}`;
+      for (let n = 0; n < 120; n++) service.checkIp(key, false);
+    }
+    assert.equal(state.rates.size, 10_000);
+    advance(30_000);
+    assert.throws(() => service.checkIp('ipv4:198.51.100.1', false), limited(30));
+    assert.equal(state.rates.size, 10_000);
+    assert.ok(service.sessionRateKey(session));
+    assert.deepEqual(await service.authenticate(session, allowed), BINDING);
+    advance(30_000);
+    service.checkIp('ipv4:198.51.100.1', false);
   });
 
   it('does not reset request or session limits when the listener asks for a new link', async () => {

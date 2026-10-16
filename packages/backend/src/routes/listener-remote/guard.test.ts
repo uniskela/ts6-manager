@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { ListenerRemoteError, ListenerRemoteService, type Binding } from '../../voice/listener-remote.js';
-import { endpoint, listenerRemoteIpGuard, listenerRemoteRateKey } from './shared.js';
+import { bearer, endpoint, listenerRemoteIpGuard, listenerRemoteRateKey, service } from './shared.js';
 
 const binding: Binding = { botId: 7, serverConfigId: 1, virtualServerId: 1, channelId: 3, clid: 9, uid: 'uid' };
 
@@ -22,7 +22,10 @@ async function fixture() {
   } });
   app.use('/remote', listenerRemoteIpGuard, limiter);
   app.post('/remote/exchange', (_req, res) => { res.json({ ok: true }); });
-  app.get('/remote/state', (_req, res) => { res.json({ ok: true }); });
+  app.get('/remote/state', endpoint(async (req, res) => {
+    await service(req).authenticate(bearer(req), async () => true);
+    res.json({ ok: true });
+  }));
   app.get('/thrown/:retry', endpoint(async (req) => {
     const retry = req.params.retry === 'none' ? undefined : Number(req.params.retry);
     throw new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests', retry);
@@ -33,9 +36,10 @@ async function fixture() {
   assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}`;
   const request = (path: string, headers: Record<string, string> = {}) => fetch(`${base}${path}`, { method: path.includes('exchange') ? 'POST' : 'GET', headers });
-  const session = (await remote.exchange(remote.issue(binding).token, async () => true)).session;
+  const signIn = async (who: Binding = binding) => (await remote.exchange(remote.issue(who).token, async () => true)).session;
+  const session = await signIn();
   return {
-    remote, request, session, keys, advance: (ms: number) => { now += ms; },
+    remote, request, session, signIn, keys, advance: (ms: number) => { now += ms; },
     close: () => new Promise<void>((resolve, reject) => {
       server.close(err => err ? reject(err) : resolve());
       server.closeAllConnections();
@@ -48,22 +52,48 @@ async function using(fn: (f: Awaited<ReturnType<typeof fixture>>) => Promise<voi
   try { await fn(f); } finally { await f.close(); }
 }
 
-const bearer = (value: string) => ({ Authorization: `Bearer ${value}` });
+const auth = (value: string) => ({ Authorization: `Bearer ${value}` });
 
 describe('listener remote address guard', () => {
   it('lets a live session through when its address is exhausted, and keys it by listener', async () => using(async f => {
     for (let n = 0; n < 120; n++) {
-      assert.equal((await f.request('/remote/state', { ...bearer('u'.repeat(43)), 'X-Forwarded-For': '192.0.2.1' })).status, 200);
+      assert.equal((await f.request('/remote/state', { ...auth('u'.repeat(43)), 'X-Forwarded-For': '192.0.2.1' })).status, 401);
     }
-    const refused = await f.request('/remote/state', { ...bearer('u'.repeat(43)), 'X-Forwarded-For': '192.0.2.1' });
+    const refused = await f.request('/remote/state', { ...auth('u'.repeat(43)), 'X-Forwarded-For': '192.0.2.1' });
     assert.equal(refused.status, 429);
     assert.deepEqual(await refused.json(), { error: 'Too many remote requests', code: 'rate_limited' });
     f.keys.length = 0;
-    const live = await f.request('/remote/state', { ...bearer(f.session), 'X-Forwarded-For': '192.0.2.1' });
+    const live = await f.request('/remote/state', { ...auth(f.session), 'X-Forwarded-For': '192.0.2.1' });
     assert.equal(live.status, 200);
     assert.equal(live.headers.get('ratelimit-limit'), '1000');
     assert.equal(f.keys.length, 1);
     assert.match(f.keys[0], /^listener:[0-9a-f]{64}$/);
+  }));
+
+  it('keeps listeners behind one address independent of each other', async () => using(async f => {
+    const other = await f.signIn({ ...binding, clid: 10, uid: 'other-uid' });
+    const from = { 'X-Forwarded-For': '203.0.113.9' };
+    for (let n = 0; n < 60; n++) assert.equal((await f.request('/remote/state', { ...auth(f.session), ...from })).status, 200);
+    const refused = await f.request('/remote/state', { ...auth(f.session), ...from });
+    assert.equal(refused.status, 429);
+    assert.equal(refused.headers.get('retry-after'), '60');
+    assert.equal((await f.request('/remote/state', { ...auth(other), ...from })).status, 200);
+    assert.equal((await f.request('/remote/exchange', from)).status, 200);
+  }));
+
+  it('counts a revoked or expired session against the client address', async () => using(async f => {
+    const from = { 'X-Forwarded-For': '203.0.113.10' };
+    f.remote.revoke(binding.botId, binding.uid);
+    f.keys.length = 0;
+    for (let n = 0; n < 120; n++) assert.equal((await f.request('/remote/state', { ...auth(f.session), ...from })).status, 401);
+    assert.ok(f.keys.every(key => key === 'ipv4:203.0.113.10'));
+    assert.equal((await f.request('/remote/state', { ...auth(f.session), ...from })).status, 429);
+
+    const session = await f.signIn();
+    f.advance(15 * 60_000);
+    const later = { 'X-Forwarded-For': '203.0.113.11' };
+    for (let n = 0; n < 120; n++) assert.equal((await f.request('/remote/state', { ...auth(session), ...later })).status, 401);
+    assert.equal((await f.request('/remote/state', { ...auth(session), ...later })).status, 429);
   }));
 
   it('gives one IPv6 /64 one budget and IPv4-mapped addresses their IPv4 budget', async () => using(async f => {

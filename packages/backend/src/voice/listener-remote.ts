@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { RateWindows } from '../utils/rate-windows.js';
 
 export interface Binding {
   botId: number;
@@ -24,10 +25,6 @@ interface Grant {
   tokenHash?: string;
   sessionHash?: string;
 }
-interface Rate {
-  count: number;
-  expiresAt: number;
-}
 
 const TOKEN_TTL = 5 * 60_000;
 const SESSION_TTL = 15 * 60_000;
@@ -46,14 +43,17 @@ export class ListenerRemoteService {
   private readonly tokens = new Map<string, Grant>();
   private readonly sessions = new Map<string, Grant>();
   /** Client address windows. Kept apart so an address flood cannot push out listener limits. */
-  private readonly rates = new Map<string, Rate>();
+  private readonly rates: RateWindows;
   /**
-   * Credential and listener identity windows. Entries are created only for
-   * credentials that exist, so unknown values cannot fill this store.
+   * Listener identity windows. Entries are created only for grants that exist,
+   * so unknown credentials cannot fill this store.
    */
-  private readonly credentialRates = new Map<string, Rate>();
+  private readonly credentialRates: RateWindows;
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(private readonly now: () => number = Date.now) {
+    this.rates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now);
+    this.credentialRates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now);
+  }
 
   /** `ip` is a client address key (see utils/client-address); only its hash is kept. */
   checkIp(ip: string, exchange: boolean): void {
@@ -106,8 +106,8 @@ export class ListenerRemoteService {
     this.prune();
     const tokenHash = this.credentialHash(token);
     const grant = this.tokens.get(tokenHash);
-    // A replayed token keeps counting against the window its first use opened; unknown values add nothing.
-    this.limit(this.credentialRates, `token:${tokenHash}`, 5, Boolean(grant));
+    // Unknown, expired and consumed tokens are indistinguishable and keep no state here;
+    // guessing is bounded by the per-address exchange limit.
     if (!grant) throw denied();
     // Consume synchronously before TeamSpeak validation; parallel exchanges cannot reuse this token.
     this.tokens.delete(tokenHash);
@@ -181,35 +181,15 @@ export class ListenerRemoteService {
   private prune(): void {
     const now = this.now();
     for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant);
-    // Every window has the same length, so insertion order is expiry order.
-    for (const store of [this.rates, this.credentialRates]) {
-      for (const [key, rate] of store) {
-        if (rate.expiresAt > now) break;
-        store.delete(key);
-      }
-    }
+    this.rates.prune(now);
+    this.credentialRates.prune(now);
   }
 
-  /**
-   * Count one use of `key`. With `create` false, only an existing window is
-   * counted. A full store drops the window closest to expiry (the oldest) rather
-   * than refusing everyone.
-   */
-  private limit(store: Map<string, Rate>, key: string, max: number, create = true): void {
-    const now = this.now();
-    let rate = store.get(key);
-    if (rate && rate.expiresAt <= now) {
-      store.delete(key);
-      rate = undefined;
-    }
-    if (!rate) {
-      if (!create) return;
-      if (store.size >= MAX_ENTRIES) store.delete(store.keys().next().value!);
-      rate = { count: 0, expiresAt: now + RATE_WINDOW };
-      store.set(key, rate);
-    }
-    if (++rate.count > max) {
-      const retryAfter = Math.max(1, Math.ceil((rate.expiresAt - now) / 1000));
+  /** Count one use of `key`; a full store refuses only new keys, never everyone (see RateWindows). */
+  private limit(store: RateWindows, key: string, max: number): void {
+    const rate = store.hit(key, max);
+    if (rate.count > max) {
+      const retryAfter = Math.max(1, Math.ceil((rate.expiresAt - this.now()) / 1000));
       throw new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests', retryAfter);
     }
   }
