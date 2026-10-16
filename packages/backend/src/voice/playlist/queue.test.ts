@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { PlayQueue } from './queue.js';
+import { MAX_QUEUE_ITEMS, PLAYED_HISTORY_LIMIT, PlayQueue, QueueFullError } from './queue.js';
 
 test('shuffle append preserves current and removal uses displayed position with duplicate IDs', () => {
   const queue = new PlayQueue();
@@ -267,4 +267,214 @@ test('starting the same item twice never loops when its cleanup runs', () => {
   first();
   second();
   assert.ok(!q.getAll().includes(item));
+});
+
+// Pruning, the queue cap and reservations (#445).
+function filled(count: number, prefix = 't'): PlayQueue<Entry> {
+  const q = new PlayQueue<Entry>();
+  q.addMany(Array.from({ length: count }, (_, i) => ({ id: `${prefix}${i}` })));
+  return q;
+}
+
+function advance(q: PlayQueue<Entry>, times: number) {
+  for (let i = 0; i < times; i++) q.next();
+}
+
+const ids = (list: Entry[]) => list.map((item) => item.id);
+
+test('advancing keeps the last 50 played tracks and prunes older ones', () => {
+  const q = filled(120);
+  advance(q, 51); // t50 playing, 50 played behind it: nothing pruned yet
+  assert.equal(q.length, 120);
+  assert.equal(q.pruned, 0);
+  advance(q, 10); // t60 playing
+  assert.equal(q.current?.id, 't60');
+  assert.equal(q.index, PLAYED_HISTORY_LIMIT);
+  assert.equal(q.pruned, 10);
+  assert.equal(q.length, 110);
+  assert.equal(q.getAll()[0].id, 't10');
+  assert.deepEqual(ids(q.upcoming(2)), ['t61', 't62']);
+  assert.equal(q.upcomingCount, 59);
+});
+
+test('the end of the queue prunes too and a later add plays next', () => {
+  const q = filled(60);
+  advance(q, 60);
+  assert.equal(q.next(), null);
+  assert.equal(q.current, null);
+  assert.equal(q.length, PLAYED_HISTORY_LIMIT + 1);
+  assert.equal(q.getAll().at(-1)?.id, 't59');
+  q.add({ id: 'late' });
+  assert.equal(q.next()?.id, 'late');
+});
+
+test('previous steps back through the kept history and replays the oldest kept track at the edge', () => {
+  const q = filled(100);
+  advance(q, 80); // t79 playing; t29..t78 kept
+  assert.equal(q.getAll()[0].id, 't29');
+  assert.equal(q.previous()?.id, 't78');
+  for (let i = 0; i < 48; i++) q.previous();
+  assert.equal(q.current?.id, 't30');
+  assert.equal(q.previous()?.id, 't29');
+  // Edge of the kept history: older tracks are gone, so !prev replays the oldest kept one.
+  assert.equal(q.previous()?.id, 't29');
+  assert.equal(q.index, 0);
+  // Moving forward again neither prunes nor skips anything.
+  assert.equal(q.next()?.id, 't30');
+  assert.equal(q.getAll()[0].id, 't29');
+});
+
+test('repeat-all never prunes, and turning it off prunes at the next advance', () => {
+  const q = filled(70);
+  q.setRepeat('queue');
+  advance(q, 70); // t69 playing, 69 played
+  assert.equal(q.length, 70);
+  assert.equal(q.next()?.id, 't0'); // wraps: played tracks come round again
+  advance(q, 65);
+  assert.equal(q.pruned, 0);
+  assert.equal(q.current?.id, 't65');
+  q.setRepeat('off');
+  assert.equal(q.length, 70, 'changing the mode prunes nothing by itself');
+  assert.equal(q.next()?.id, 't66');
+  assert.equal(q.pruned, 16);
+  assert.equal(q.getAll()[0].id, 't16');
+  assert.equal(q.index, PLAYED_HISTORY_LIMIT);
+});
+
+test('repeat-track prunes like repeat off when the queue advances', () => {
+  const q = filled(70);
+  q.setRepeat('track');
+  advance(q, 61);
+  assert.equal(q.current?.id, 't60');
+  assert.equal(q.pruned, 10);
+  assert.equal(q.previous()?.id, 't59');
+});
+
+test('pruning with shuffle on keeps the shuffled order, the current track and what is still to play', () => {
+  for (const draw of RANDOM_DRAWS) withRandom(draw, () => {
+    const q = filled(150);
+    q.setShuffle(true);
+    advance(q, 60);
+    const before = q.getAll();
+    const prunedBefore = q.pruned;
+    const current = q.current;
+    const upcoming = q.upcoming();
+    advance(q, 15);
+    const after = q.getAll();
+    assert.equal(q.pruned, 74 - PLAYED_HISTORY_LIMIT);
+    assert.deepEqual(after, before.slice(q.pruned - prunedBefore), `draw=${draw}`);
+    assert.equal(new Set(after).size, after.length, 'every kept track is shown once');
+    assert.equal(q.current, upcoming[14]);
+    assert.deepEqual(q.upcoming(), upcoming.slice(15));
+    assert.notEqual(q.current, current);
+    // Removing, moving and adding still address the displayed positions.
+    const last = q.getAll().at(-1)!;
+    assert.ok(q.move(q.length - 1, q.index + 1));
+    assert.equal(q.upcoming()[0], last);
+    assert.ok(q.removeAt(q.index + 1));
+    assert.ok(!q.getAll().includes(last));
+    q.add({ id: 'added' });
+    assert.ok(q.upcoming().some((item) => item.id === 'added'));
+  });
+});
+
+test('shuffle on and off reorder only what is still to play', () => {
+  for (const draw of RANDOM_DRAWS) withRandom(draw, () => {
+    const q = filled(80);
+    advance(q, 60); // t59 playing, t9..t58 kept
+    const played = q.getAll().slice(0, q.index + 1);
+    q.setShuffle(true);
+    assert.deepEqual(q.getAll().slice(0, q.index + 1), played);
+    assert.deepEqual(new Set(ids(q.upcoming())), new Set(Array.from({ length: 20 }, (_, i) => `t${60 + i}`)));
+    advance(q, 5);
+    const playedNow = q.getAll().slice(0, q.index + 1);
+    const current = q.current;
+    q.setShuffle(false);
+    assert.equal(q.current, current);
+    assert.deepEqual(q.getAll().slice(0, q.index + 1), playedNow, 'nothing played comes back');
+    const rest = ids(q.upcoming());
+    assert.deepEqual(rest, [...rest].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1))), 'original order');
+    assert.equal(rest.length, 15, 'nothing unplayed is skipped');
+    advance(q, 15);
+    assert.ok(q.current);
+    assert.equal(q.next(), null);
+  });
+});
+
+test('a full queue refuses one more track and leaves everything unchanged', () => {
+  const q = filled(MAX_QUEUE_ITEMS);
+  q.playAt(3);
+  const before = snapshot(q);
+  assert.equal(q.room, 0);
+  assert.throws(() => q.add({ id: 'over' }), (err: unknown) => {
+    assert.ok(err instanceof QueueFullError);
+    assert.equal(err.statusCode, 409);
+    assert.equal(err.reason, 'queue_full');
+    assert.match(err.message, /limit 5,000 tracks/);
+    return true;
+  });
+  assert.throws(() => q.addForPlayback({ id: 'over' }), QueueFullError);
+  assert.deepEqual(snapshot(q), before);
+  // Pruning played tracks frees room again.
+  q.playAt(MAX_QUEUE_ITEMS - 2);
+  q.next();
+  assert.ok(q.room > 0);
+  q.add({ id: 'fits' });
+});
+
+test('addMany adds every track or none of them', () => {
+  for (const shuffle of [false, true]) {
+    const q = filled(MAX_QUEUE_ITEMS - 3);
+    q.setShuffle(shuffle);
+    q.playAt(1);
+    const before = snapshot(q);
+    assert.throws(
+      () => q.addMany([{ id: 'a' }, { id: 'b' }, { id: 'c' }, { id: 'd' }]),
+      (err: unknown) => err instanceof QueueFullError && /only 3 of these 4 tracks fit/.test(err.message),
+    );
+    assert.deepEqual(snapshot(q), before);
+    q.addMany([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    assert.equal(q.length, MAX_QUEUE_ITEMS);
+  }
+});
+
+test('a reservation holds room for tracks that arrive later and is released once', () => {
+  const q = filled(MAX_QUEUE_ITEMS - 5);
+  const reservation = q.reserve(3);
+  assert.equal(q.room, 2);
+  assert.throws(() => q.reserve(3), QueueFullError);
+  q.add({ id: 'other 1' });
+  q.add({ id: 'other 2' });
+  assert.throws(() => q.add({ id: 'other 3' }), QueueFullError, 'held room is not given away');
+  q.add({ id: 'mine 1' }, reservation);
+  q.addForPlayback({ id: 'mine 2' }, reservation);
+  assert.equal(reservation.remaining, 1);
+  reservation.release();
+  reservation.release();
+  assert.equal(reservation.remaining, 0);
+  assert.equal(q.room, 1);
+  q.add({ id: 'other 3' });
+  assert.throws(() => q.add({ id: 'mine 3' }, reservation), QueueFullError, 'a released reservation holds nothing');
+});
+
+test('clear releases every reservation and resets the pruned count', () => {
+  const q = filled(80);
+  advance(q, 70);
+  assert.ok(q.pruned > 0);
+  const reservation = q.reserve(100);
+  q.clear();
+  assert.equal(q.pruned, 0);
+  assert.equal(reservation.remaining, 0);
+  assert.equal(q.room, MAX_QUEUE_ITEMS);
+});
+
+test('a rejected start after pruning restores the cursor', () => {
+  for (const shuffle of [false, true]) {
+    const q = filled(100);
+    q.setShuffle(shuffle);
+    advance(q, 70);
+    const before = snapshot(q);
+    q.addForPlayback({ id: 'failed' })();
+    assert.deepEqual(snapshot(q), before, `shuffle=${shuffle}`);
+  }
 });

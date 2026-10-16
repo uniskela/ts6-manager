@@ -1,5 +1,5 @@
 import type { VoiceBot } from '../voice-bot.js';
-import type { QueueItem } from '../playlist/queue.js';
+import { QueueFullError, type QueueItem, type QueueReservation } from '../playlist/queue.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline } from '../media-url-pipeline.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
@@ -41,20 +41,21 @@ export function invalidateChatPlaylistExpansion(botId: number): void {
  * Returns true when appended behind current music, false when it started, and
  * null when it did not start (the queue is restored). `options` carries the
  * caller's decision about replacing an active video; it is only used when the
- * bot is idle.
+ * bot is idle. A full queue throws QueueFullError before anything changes.
  */
 export async function startOrAppendMediaItem(
   bot: VoiceBot,
   item: QueueItem,
   isCurrent: () => boolean,
   options: { replaceSessionIds: string[] } | undefined,
+  reservation?: QueueReservation,
 ): Promise<boolean | null> {
   if (bot.status === 'playing' || bot.status === 'paused') {
-    bot.queue.add(item);
+    bot.queue.add(item, reservation);
     return true;
   }
   if (options) bot.assertMusicCanStart(options.replaceSessionIds);
-  const cleanup = bot.queue.addForPlayback(item);
+  const cleanup = bot.queue.addForPlayback(item, reservation);
   let started = false;
   try {
     if (item.streamUrl) await bot.playStream(item, options);
@@ -67,10 +68,16 @@ export async function startOrAppendMediaItem(
 }
 
 /** Append a resolved request, starting it only when music is idle. */
-export async function enqueueMediaItem(context: CommandContext, bot: VoiceBot, item: QueueItem, isCurrent: () => boolean): Promise<boolean | null> {
+export async function enqueueMediaItem(
+  context: CommandContext,
+  bot: VoiceBot,
+  item: QueueItem,
+  isCurrent: () => boolean,
+  reservation?: QueueReservation,
+): Promise<boolean | null> {
   if (!['connected', 'playing', 'paused'].includes(bot.status)) throw new Error('Bot is not connected');
   const idle = bot.status === 'connected';
-  const queued = await startOrAppendMediaItem(bot, item, isCurrent, idle ? context.chatMusicSwitch(bot) : undefined);
+  const queued = await startOrAppendMediaItem(bot, item, isCurrent, idle ? context.chatMusicSwitch(bot) : undefined, reservation);
   if (queued === null) return null;
   context.saveMusicRequest(bot, item);
   return queued;
@@ -100,6 +107,8 @@ export async function enqueueMediaUrl(
   let firstCall = true;
   let alreadyPlaying = false;
   let playbackAccepted = true;
+  // Room for every track of the link, held while its later tracks download.
+  let reservation: QueueReservation | undefined;
 
   const result = await runMediaUrlPipeline(
     defaultMediaUrlDeps(),
@@ -110,11 +119,11 @@ export async function enqueueMediaUrl(
         const live = context.voiceBotManager.getBot(botId);
         if (!live || !isCurrent()) return;
         if (isFirst) {
-          const queued = await enqueueMediaItem(context, live, item, isCurrent);
+          const queued = await enqueueMediaItem(context, live, item, isCurrent, reservation);
           playbackAccepted = queued !== null;
           alreadyPlaying = queued ?? false;
         } else {
-          live.queue.add(item);
+          live.queue.add(item, reservation);
           context.saveMusicRequest(live, item);
           live.queue.playAt(live.queue.length - 1);
           await live.play(item).catch((err) => {
@@ -126,7 +135,7 @@ export async function enqueueMediaUrl(
         if (!isCurrent() || !playbackAccepted) return;
         const live = context.voiceBotManager.getBot(botId);
         if (!live || live.status === 'stopped' || live.status === 'error') return;
-        live.queue.add(item);
+        live.queue.add(item, reservation);
         context.saveMusicRequest(live, item);
       },
       isIdle: () => {
@@ -134,6 +143,8 @@ export async function enqueueMediaUrl(
         return Boolean(isCurrent() && live?.status === 'connected' && !live.nowPlaying);
       },
       isCancelled: () => !isCurrent() || !playbackAccepted,
+      reserve: (count) => { reservation = bot.queue.reserve(count); },
+      release: () => reservation?.release(),
     },
     { url: rawUrl, enqueueOnly: false },
     {
@@ -155,7 +166,7 @@ export async function enqueueMediaUrl(
     context.reply(
       bot,
       userClid,
-      `Queued: ${result.first.artist} - ${result.first.title} (position #${bot.queue.length})${playlistNote}`,
+      `Queued: ${result.first.artist} - ${result.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${playlistNote}`,
     );
   } else {
     context.reply(bot, userClid, `Now playing: ${result.first.artist} - ${result.first.title}${playlistNote}`);
@@ -202,7 +213,13 @@ export async function handlePlaylist(
     duration: song.duration ?? undefined, filePath: song.filePath,
     source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined,
   }));
-  bot.queue.addMany(items);
+  try {
+    bot.queue.addMany(items);
+  } catch (err) {
+    if (!(err instanceof QueueFullError)) throw err;
+    context.reply(bot, userClid, err.message);
+    return;
+  }
   context.saveMusicRequest(bot, items);
   if (bot.status === 'connected' && !bot.nowPlaying) {
     const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
@@ -221,6 +238,25 @@ export function handleRepeat(context: CommandContext, bot: VoiceBot, userClid: n
   context.reply(bot, userClid, `Repeat mode: ${bot.queue.repeat}`);
 }
 
+/**
+ * Chat track numbers count from the first track kept since the last clear, so
+ * pruning played tracks never renumbers the ones still queued.
+ */
+function trackNumber(bot: VoiceBot, index: number): number {
+  return bot.queue.pruned + index + 1;
+}
+
+/** Queue position of a chat track number, or NaN when it is not a number. */
+function indexOfTrackNumber(bot: VoiceBot, raw: string): number {
+  const value = raw.trim();
+  return (/^[1-9]\d*$/.test(value) ? Number(value) : NaN) - 1 - bot.queue.pruned;
+}
+
+function invalidTrackNumber(bot: VoiceBot): string {
+  if (bot.queue.length === 0) return 'Invalid index. The queue is empty.';
+  return `Invalid index. Use a track number from ${trackNumber(bot, 0)} to ${trackNumber(bot, bot.queue.length - 1)} (see !queue).`;
+}
+
 /** Remove one unambiguous upcoming track matched by title or artist. */
 export function handleRemove(context: CommandContext, bot: VoiceBot, userClid: number, args: string): void {
   const query = args.trim().toLowerCase();
@@ -232,7 +268,7 @@ export function handleRemove(context: CommandContext, bot: VoiceBot, userClid: n
     item.title.toLowerCase().includes(query) || item.artist?.toLowerCase().includes(query));
   if (matches.length !== 1) {
     context.reply(bot, userClid, matches.length
-      ? 'Multiple matches; use !queue remove <n>: ' + matches.slice(0, 5).map(({ item, index }) => `#${index + 1} ${item.title.slice(0, 60)}`).join(', ')
+      ? 'Multiple matches; use !queue remove <n>: ' + matches.slice(0, 5).map(({ item, index }) => `#${trackNumber(bot, index)} ${item.title.slice(0, 60)}`).join(', ')
       : 'No upcoming track matches.');
     return;
   }
@@ -240,7 +276,10 @@ export function handleRemove(context: CommandContext, bot: VoiceBot, userClid: n
   context.reply(bot, userClid, `Removed: ${matches[0].item.title.slice(0, 100)}`);
 }
 
-/** Format all queued tracks with the current playback index. */
+/** Lines one !queue reply lists. */
+const QUEUE_LINES = 15;
+
+/** Format the queue around the playing track; the kept history would otherwise fill the list. */
 export function showQueue(context: CommandContext, bot: VoiceBot, userClid: number): void {
   const items = bot.queue.getAll();
   const trackLines = items.map((item) => ({
@@ -248,10 +287,11 @@ export function showQueue(context: CommandContext, bot: VoiceBot, userClid: numb
     artist: item.artist,
     duration: item.duration,
   }));
+  const start = Math.max(0, Math.min(bot.queue.index - 2, items.length - QUEUE_LINES));
   context.reply(
     bot,
     userClid,
-    formatQueueMessage(trackLines, bot.queue.index),
+    formatQueueMessage(trackLines, bot.queue.index, QUEUE_LINES, { start, numberOffset: bot.queue.pruned }),
   );
 }
 
@@ -271,24 +311,26 @@ export async function handleQueue(
 
   // !queue remove <index>
   if (args.toLowerCase().startsWith('remove ')) {
-    const idx = (/^[1-9]\d*$/.test(args.substring(7).trim()) ? Number(args.substring(7).trim()) : NaN) - 1; // 1-based to 0-based
+    const idx = indexOfTrackNumber(bot, args.substring(7));
     const items = bot.queue.getAll();
     if (isNaN(idx) || idx < 0 || idx >= items.length) {
-      context.reply(bot, userClid, `Invalid index. Queue has ${items.length} tracks.`);
+      context.reply(bot, userClid, invalidTrackNumber(bot));
       return;
     }
     const removed = items[idx];
+    const number = trackNumber(bot, idx);
     bot.queue.removeAt(idx);
-    context.reply(bot, userClid, `Removed #${idx + 1}: ${removed.title}`);
+    context.reply(bot, userClid, `Removed #${number}: ${removed.title}`);
     return;
   }
 
   // !queue play <index>
   if (args.toLowerCase().startsWith('play ')) {
-    const idx = (/^[1-9]\d*$/.test(args.substring(5).trim()) ? Number(args.substring(5).trim()) : NaN) - 1; // 1-based to 0-based
+    const idx = indexOfTrackNumber(bot, args.substring(5));
+    const number = trackNumber(bot, idx);
     const item = bot.queue.playAt(idx);
     if (!item) {
-      context.reply(bot, userClid, `Invalid index. Queue has ${bot.queue.length} tracks.`);
+      context.reply(bot, userClid, invalidTrackNumber(bot));
       return;
     }
     if (item.streamUrl) {
@@ -296,7 +338,7 @@ export async function handleQueue(
     } else {
       await bot.play(item, context.chatMusicSwitch(bot));
     }
-    context.reply(bot, userClid, `Playing #${idx + 1}: ${item.title}`);
+    context.reply(bot, userClid, `Playing #${number}: ${item.title}`);
     return;
   }
 

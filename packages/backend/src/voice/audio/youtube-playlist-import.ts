@@ -16,6 +16,7 @@ import {
   type AppleMusicTrack,
 } from './apple-music.js';
 import { loadMaxPlaylistImport } from '../../utils/app-settings.js';
+import type { QueueReservation } from '../playlist/queue.js';
 import type { VoiceBotManager } from '../voice-bot-manager.js';
 import type { VoiceBot } from '../voice-bot.js';
 
@@ -293,7 +294,7 @@ async function registerStreamSong(
   });
 }
 
-function enqueueSongOnBot(bot: VoiceBot, song: Song, job: ImportJob): void {
+function enqueueSongOnBot(bot: VoiceBot, song: Song, job: ImportJob, reservation: QueueReservation | undefined): void {
   bot.queue.add({
     id: String(song.id),
     title: song.title,
@@ -302,7 +303,7 @@ function enqueueSongOnBot(bot: VoiceBot, song: Song, job: ImportJob): void {
     filePath: song.filePath,
     source: song.source as 'local' | 'youtube' | 'url',
     sourceUrl: song.sourceUrl ?? undefined,
-  });
+  }, reservation);
   job.enqueued++;
 }
 
@@ -344,6 +345,9 @@ async function runImport(
   }
 
   const { items: allItems, listId, title } = await resolveImportItems(url, cap, job);
+  // Refuse a queue import that cannot fit before touching any playlist. At least
+  // this many tracks are queued; the exact count is reserved below.
+  queueBot?.queue.assertRoom(Math.min(allItems.length, cap));
   job.phase = 'importing';
 
   let playlistId = options.playlistId;
@@ -425,6 +429,10 @@ async function runImport(
 
   // Queue-only imports always register on-demand (no bulk download).
   const needsDownload = playlistTarget && playlistMode === 'local';
+  // Tracks are queued one by one as they register: hold room for all of them so
+  // the import is refused whole, never cut short by the queue limit. Every
+  // track's errors are caught in the loop, so the release below always runs.
+  const reservation = queueBot?.queue.reserve(items.length);
 
   for (const item of items) {
     const watchUrl = youtubeWatchUrl(item.id);
@@ -480,12 +488,13 @@ async function runImport(
         await ensurePlaylistSongLink(prisma, playlistId, song.id);
       }
       if (song && queueBot) {
-        enqueueSongOnBot(queueBot, song, job);
+        enqueueSongOnBot(queueBot, song, job, reservation);
       }
     } catch (err: any) {
       job.errors.push(`${item.title}: ${err.message}`);
     }
   }
+  reservation?.release();
 
   job.status = job.errors.length === job.total ? 'failed' : 'completed';
   job.finishedAt = Date.now();

@@ -828,17 +828,16 @@ export class FlowRunner {
         if (playlist) {
           const bot = mgr.getBot(botId);
           if (bot) {
-            for (const ps of playlist.songs) {
-              bot.queue.add({
-                id: `song_${ps.song.id}`,
-                title: ps.song.title,
-                artist: ps.song.artist || undefined,
-                duration: ps.song.duration || undefined,
-                filePath: ps.song.filePath,
-                source: (ps.song.source as 'local' | 'youtube' | 'url') || 'local',
-                sourceUrl: ps.song.sourceUrl || undefined,
-              });
-            }
+            // All or nothing: a playlist that does not fit throws QueueFullError and queues nothing.
+            bot.queue.addMany(playlist.songs.map((ps) => ({
+              id: `song_${ps.song.id}`,
+              title: ps.song.title,
+              artist: ps.song.artist || undefined,
+              duration: ps.song.duration || undefined,
+              filePath: ps.song.filePath,
+              source: (ps.song.source as 'local' | 'youtube' | 'url') || 'local',
+              sourceUrl: ps.song.sourceUrl || undefined,
+            })));
             if (bot.status === 'connected') {
               const first = bot.queue.next();
               if (first) bot.play(first);

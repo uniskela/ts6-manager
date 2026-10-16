@@ -7,7 +7,7 @@ import express, { type Express } from 'express';
 import { errorHandler, AppError } from '../middleware/error-handler.js';
 import { requireServerAccess } from '../middleware/server-access.js';
 import { MediaSessionConflictError } from '../voice/media-session.js';
-import { PlayQueue } from '../voice/playlist/queue.js';
+import { MAX_QUEUE_ITEMS, PlayQueue } from '../voice/playlist/queue.js';
 const musicRoot = await mkdtemp(path.join(tmpdir(), 'ts6-replay-'));
 const previousMusicDir = process.env.MUSIC_DIR;
 process.env.MUSIC_DIR = musicRoot;
@@ -289,3 +289,19 @@ for (const change of ['stop', 'replace', 'none']) {
     } finally { release(); await replay; }
   });
 }
+
+test('replay on a full queue answers 409 and queues, downloads and plays nothing', async () => {
+  const radio = [{ id: 7, title: 'Radio', url: 'https://8.8.8.8/radio', source: 'radio', status: 'available', serverConfigId: 1, musicBotId: 3 }];
+  for (const [rows, enqueue] of [[undefined, true], [undefined, false], [radio, true], [radio, false]] as const) {
+    const downloads: string[] = [];
+    const f = appFor({ rows: rows as any, download: async (url) => { downloads.push(url); throw new Error('must not download'); } });
+    f.bot.queue.addMany(Array.from({ length: MAX_QUEUE_ITEMS }, (_, i) => ({ id: `q${i}`, title: `Q${i}`, filePath: '', source: 'local' as const })));
+    const replay = await request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3, enqueue });
+    assert.equal(replay.status, 409, `${rows ? 'radio' : 'url'} enqueue=${enqueue}`);
+    assert.equal(replay.body.reason, 'queue_full');
+    assert.equal(f.bot.queue.length, MAX_QUEUE_ITEMS);
+    assert.equal(f.bot.nowPlaying, null);
+    assert.deepEqual(downloads, []);
+    assert.deepEqual(f.recorded, []);
+  }
+});

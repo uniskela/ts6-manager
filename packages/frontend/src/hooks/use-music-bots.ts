@@ -221,8 +221,8 @@ export function useLoadPlaylist() {
 export function useRemoveFromQueue() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ botId, index }: { botId: number; index: number }) =>
-      musicBotsApi.removeFromQueue(botId, index),
+    mutationFn: ({ botId, index, itemId }: { botId: number; index: number; itemId?: string }) =>
+      musicBotsApi.removeFromQueue(botId, index, itemId),
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
   });
 }
@@ -256,8 +256,8 @@ export function useSetRepeat() {
 export function usePlayFromQueue() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ botId, index }: { botId: number; index: number }) =>
-      musicBotsApi.playFromQueue(botId, index),
+    mutationFn: ({ botId, index, itemId }: { botId: number; index: number; itemId?: string }) =>
+      musicBotsApi.playFromQueue(botId, index, itemId),
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
   });
 }
@@ -265,8 +265,8 @@ export function usePlayFromQueue() {
 export function useMoveQueueItem() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ botId, from, to }: { botId: number; from: number; to: number }) =>
-      musicBotsApi.moveQueueItem(botId, from, to),
+    mutationFn: ({ botId, from, to, itemId }: { botId: number; from: number; to: number; itemId?: string }) =>
+      musicBotsApi.moveQueueItem(botId, from, to, itemId),
     onSuccess: (_, { botId }) => qc.invalidateQueries({ queryKey: ['music-bot-state', botId] }),
   });
 }

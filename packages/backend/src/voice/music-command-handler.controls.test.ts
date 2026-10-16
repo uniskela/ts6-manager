@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MusicCommandHandler } from './music-command-handler.js';
-import { PlayQueue } from './playlist/queue.js';
+import { MAX_QUEUE_ITEMS, PlayQueue } from './playlist/queue.js';
 import { BUILTIN_COMMAND_HELP, isReservedChatCommandName } from './chat-commands.js';
 
 function fixture(status = 'connected') {
@@ -266,4 +266,40 @@ test('concurrent commands from the same invoker preserve each request channel', 
   await pending;
   assert.deepEqual(channels.map(([, channel]) => channel), [5, 6, 5, 5]);
   assert.equal(f.handler.activeReplyChannel.size, 0);
+});
+
+test('!playlist that does not fit is refused whole with a message', async () => {
+  const f = fixture();
+  f.bot.queue.addMany(Array.from({ length: MAX_QUEUE_ITEMS }, (_, i) => ({ id: `q${i}`, title: `Q${i}`, filePath: '', source: 'local' as const })));
+  f.bot.queue.playAt(0);
+  await f.command('!playlist 3');
+  assert.equal(f.bot.queue.length, MAX_QUEUE_ITEMS);
+  assert.equal(f.played.length, 0);
+  assert.match(f.replies.at(-1)!, /^The queue is full \(limit 5,000 tracks\)\.$/);
+});
+
+test('chat track numbers stay stable when played tracks are pruned', async () => {
+  const f = fixture('playing');
+  f.bot.queue.addMany(Array.from({ length: 80 }, (_, i) => ({ id: `t${i}`, title: `Song ${i + 1}`, filePath: '', source: 'local' as const })));
+  for (let i = 0; i < 70; i++) f.bot.queue.next(); // "Song 70" (#70) is playing
+  assert.equal(f.bot.queue.pruned, 19);
+  await f.command('!queue');
+  const listing = f.replies.at(-1)!;
+  assert.match(listing, /## Queue \(61 tracks\)/);
+  assert.match(listing, /_… 46 earlier_/); // near the end, the window fills with earlier tracks
+  assert.match(listing, /▶️ \*\*70\.\*\* Song 70/);
+  assert.match(listing, /• \*\*72\.\*\* Song 72/);
+  // One more track ends and prunes #20: the numbers the listing showed still match.
+  f.bot.queue.next();
+  await f.command('!queue remove 72');
+  assert.equal(f.replies.at(-1), 'Removed #72: Song 72');
+  assert.ok(!f.bot.queue.getAll().some(item => item.title === 'Song 72'));
+  await f.command('!queue remove 5');
+  assert.equal(f.replies.at(-1), 'Invalid index. Use a track number from 21 to 79 (see !queue).');
+  // Removing #72 renumbers the tracks after it, as before.
+  await f.command('!queue play 74');
+  assert.equal(f.replies.at(-1), 'Playing #74: Song 75');
+  assert.equal(f.played.at(-1).title, 'Song 75');
+  await f.command('!remove song 7');
+  assert.match(f.replies.at(-1)!, /Multiple matches; use !queue remove <n>: #75 Song 76, #76 Song 77/);
 });

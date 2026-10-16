@@ -112,6 +112,7 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
     }
     const replaceSessionIds = parseReplaceSessionIds(req.body);
     bot.assertMusicCanStart(replaceSessionIds);
+    bot.queue.assertRoom(1);
     let started = false;
     await runMediaAudited(req, bot, 'media.music.start', async () => {
       assertCurrentBot();

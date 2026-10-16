@@ -31,6 +31,8 @@ If the bot is offline, the console offers **Start bot** before showing its sourc
 
 Radio and video keep the music queue. **Play queue** resumes the upcoming songs, with the replacement prompt when needed; while radio plays and nothing is queued, **Up next** is hidden. While a video streams, **Up next** lists the bot's queued videos and a waiting music queue is shown as one line below it; see [Queue videos and playlists](video-streaming.md#queue-videos-and-playlists). Radio shows the station and live status rather than track progress or skip controls. Music controls include pause/resume, skip and volume; **Up next** also provides **Shuffle** and repeat modes.
 
+**Queue limits.** A bot's music queue holds at most 5,000 tracks, played and waiting together, whether they come from the console, chat, a Bot Flow, a playlist import or replayed history. A request that does not fit is refused with a message, and a playlist or multi-track link is queued whole or not at all. The queue keeps the last 50 played tracks for `!prev`; older ones are removed as playback moves on. With repeat set to **queue**, nothing is removed, because played tracks come round again. Shuffle only reorders the tracks still to play. If the queue moves under an open console (for example, a played track was removed), a play, remove or reorder is refused with **The queue changed** instead of changing a different track; try again once **Up next** refreshes.
+
 ## Auto-DJ and 24/7 presence
 
 Open **Bot settings → Auto-DJ & 24/7** on a Bot Hub card or in its console. Existing bots have automation off. Enable Auto-DJ and choose a saved playlist or radio station for that server. Playlist tracks play in saved order, continuing after the last automated track across restarts; a playlist with multiple tracks avoids immediate repeats.
@@ -117,7 +119,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!play`** — Resume paused playback
 - **`!history`** — Show this bot's 10 most recent requests, with request IDs, source and UTC time
 - **`!again [id]`** — Replay a stored request by ID, or the most recent request when no ID is given. Adds it to the queue while music is playing or paused. Unavailable files or blocked sources report that the media is no longer available
-- **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue
+- **`!queue [show|clear|remove <n>|play <n>|<url>]`** — Show or manage the queue. The list starts just before the current track, and a track keeps its number while older played tracks are removed
 - **`!add <url>`** — Alias for adding to the queue
 - **`!playlist [name-or-id]` / `!pl <name-or-id>`** — List or append a saved playlist
 - **`!repeat [off|track|queue]`** — Show or set repeat mode
@@ -129,7 +131,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!skip` / `!next`** — Advance the queue
 - **`!voteskip`** — Vote to skip the current track; more than half of human listeners in the bot channel must vote. Bots do not count, each identity votes once, and changing tracks resets votes
 - **`!remote [bot name]`** — Get a private, one-time link to a phone-friendly [listener remote](#listener-remote) for the bot in your channel
-- **`!prev`** — Previous track
+- **`!prev`** — Previous track, up to 50 back; at the oldest kept track it replays that track
 - **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV.
 - **`!np` / `!nowplaying`** — Show the current track
 - **`!radio [id]`** — List or play radio stations

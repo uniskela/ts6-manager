@@ -62,7 +62,9 @@ export function Row({ rowKey, item, onPlay, onRemove, disabled, dragDisabled }: 
 
 /**
  * The bot's queue after the playing track. Positions in this list are
- * converted to absolute queue indexes for every API call.
+ * converted to absolute queue indexes for every API call, sent with the item's
+ * ID: the server prunes played tracks, which shifts every index, and refuses
+ * an edit whose index no longer holds that item.
  */
 export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = false }: {
   botId: number;
@@ -93,6 +95,7 @@ export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = fals
   const keys = rowKeys(items);
   const currentIndex = state?.currentIndex ?? -1;
   const busy = move.isPending || remove.isPending || playFrom.isPending;
+  const failed = [move, remove, playFrom].find((m) => m.isError)?.error;
 
   const sensors = useUpNextSensors();
 
@@ -101,7 +104,9 @@ export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = fals
     const moved = move.isPending ? null : droppedMove(keys, active.id, over?.id);
     if (!moved) return;
     setLocalItems(moveUpNext(items, moved.from, moved.to));
-    move.mutate({ botId, from: absoluteIndex(currentIndex, moved.from), to: absoluteIndex(currentIndex, moved.to) });
+    move.mutate({
+      botId, from: absoluteIndex(currentIndex, moved.from), to: absoluteIndex(currentIndex, moved.to), itemId: items[moved.from].id,
+    });
   };
 
   const repeat = state?.repeat ?? 'off';
@@ -117,7 +122,7 @@ export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = fals
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">
         <span>{items.length === 1 ? '1 queued song is kept.' : `${items.length} queued songs are kept.`}</span>
         <Button variant="outline" size="sm" className="h-9" disabled={busy} aria-label="Play music queue"
-          onClick={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, 0) })}>
+          onClick={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, 0), itemId: items[0].id })}>
           Play queue
         </Button>
       </div>
@@ -166,12 +171,17 @@ export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = fals
           Could not refresh the queue. {apiErrorMessage(loadError, 'Try again in a moment.')}
         </p>
       )}
+      {failed != null && (
+        <p role="alert" className="text-sm text-destructive">
+          {apiErrorMessage(failed, 'That change to the queue did not go through.')}
+        </p>
+      )}
 
       {keptFor && items.length > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-dashed p-2 text-sm text-muted-foreground">
           <span>Up next ({items.length}) is kept while the {keptFor} plays.</span>
           <Button variant="outline" size="sm" className="h-9" disabled={busy}
-            onClick={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, 0) })}>
+            onClick={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, 0), itemId: items[0].id })}>
             Play queue
           </Button>
         </div>
@@ -185,8 +195,8 @@ export function UpNextQueue({ botId, state, keptFor, loadError, stripOnly = fals
             <ol aria-label="Up next" className="max-h-[28rem] space-y-1.5 overflow-y-auto">
               {items.map((item, i) => (
                 <Row key={keys[i]} rowKey={keys[i]} item={item} disabled={busy} dragDisabled={move.isPending}
-                  onPlay={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, i) })}
-                  onRemove={() => remove.mutate({ botId, index: absoluteIndex(currentIndex, i) })} />
+                  onPlay={() => playFrom.mutate({ botId, index: absoluteIndex(currentIndex, i), itemId: item.id })}
+                  onRemove={() => remove.mutate({ botId, index: absoluteIndex(currentIndex, i), itemId: item.id })} />
               ))}
             </ol>
           </SortableContext>

@@ -165,22 +165,27 @@ export function formatQueueMessage(
   items: TrackLine[],
   currentIndex: number,
   maxLines = 15,
+  /** `start`: first position shown. `numberOffset`: added to every track number. */
+  { start = 0, numberOffset = 0 }: { start?: number; numberOffset?: number } = {},
 ): string {
   if (items.length === 0) return '_Queue is empty._';
 
   const lines: string[] = [`## Queue (${items.length} tracks)`, ''];
-  const shown = items.slice(0, maxLines);
-  shown.forEach((item, i) => {
+  if (start > 0) lines.push(`_… ${start} earlier_`);
+  const shown = items.slice(start, start + maxLines);
+  shown.forEach((item, offset) => {
+    const i = start + offset;
     const prefix = i === currentIndex ? '▶️' : '•';
     const artist = item.artist ? `${escapeMarkdownInline(item.artist)} — ` : '';
     lines.push(
-      `${prefix} **${i + 1}.** ${artist}${escapeMarkdownInline(item.title)}${trackDurationSuffix(item.duration)}`,
+      `${prefix} **${numberOffset + i + 1}.** ${artist}${escapeMarkdownInline(item.title)}${trackDurationSuffix(item.duration)}`,
     );
   });
 
-  if (items.length > maxLines) {
+  const after = items.length - start - shown.length;
+  if (after > 0) {
     lines.push('');
-    lines.push(`_… and ${items.length - maxLines} more_`);
+    lines.push(`_… and ${after} more_`);
   }
 
   return lines.join('\n');

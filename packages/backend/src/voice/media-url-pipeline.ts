@@ -41,6 +41,14 @@ export interface MediaUrlTarget {
   enqueue(item: QueueItem): void;
   isIdle(): boolean;
   isCancelled?(): boolean;
+  /**
+   * Called once the request's track count is known, before anything is
+   * downloaded or queued. Throw to refuse the whole request (for example when
+   * the queue cannot hold every track); otherwise hold room until release().
+   */
+  reserve?(count: number): void;
+  /** Called once when the request, including its background tracks, is finished or failed. */
+  release?(): void;
 }
 
 /** Use the shared media resolvers and cache downloads as playable queue items. */
@@ -145,16 +153,25 @@ export async function runMediaUrlPipeline(
     }
   }
 
-  const first = await deps.downloadTrack(urlsToPlay[0]);
-  if (req.enqueueOnly) {
-    target.enqueue(first);
-  } else {
-    await target.play(first, { replaceSessionIds: opts.replaceSessionIds });
-  }
-
   const rest = urlsToPlay.slice(1);
   const queuedInBackground = rest.length + pendingTracks.length;
-  if (queuedInBackground > 0) {
+  target.reserve?.(1 + queuedInBackground);
+  let first: QueueItem;
+  try {
+    first = await deps.downloadTrack(urlsToPlay[0]);
+    if (req.enqueueOnly) {
+      target.enqueue(first);
+    } else {
+      await target.play(first, { replaceSessionIds: opts.replaceSessionIds });
+    }
+  } catch (error) {
+    target.release?.();
+    throw error;
+  }
+
+  if (queuedInBackground === 0) {
+    target.release?.();
+  } else {
     void (async () => {
       const report = (error: unknown, label: string) => {
         opts.onBackgroundError?.(asError(error), label);
@@ -195,7 +212,7 @@ export async function runMediaUrlPipeline(
           report(error, label);
         }
       }
-    })();
+    })().finally(() => target.release?.());
   }
 
   return { first, playlistTitle, queuedInBackground };

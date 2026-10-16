@@ -4,6 +4,7 @@ import express, { type Express } from 'express';
 import { AppError, errorHandler } from '../middleware/error-handler.js';
 import { createPlayUrlHandler } from './music-bots.routes.js';
 import type { MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
+import { PlayQueue } from '../voice/playlist/queue.js';
 
 function deps(overrides: Partial<MediaUrlPipelineDeps> = {}): MediaUrlPipelineDeps {
   return {
@@ -30,7 +31,7 @@ function buildApp(pipelineDeps: MediaUrlPipelineDeps): Express {
         status: 'connected',
         assertMusicCanStart: () => {},
         currentConfig: { id: 3, serverConfigId: null },
-        queue: { add: () => {}, playAt: () => {} },
+        queue: new PlayQueue(),
       }),
     };
     req.app.locals.prisma = {};
@@ -85,7 +86,7 @@ test('play-url rethrows arbitrary errors carrying a numeric statusCode', async (
   const error = Object.assign(new Error('A media session is active'), { statusCode: 409 });
   const bot = {
     id: 3, status: 'connected', assertMusicCanStart: () => {},
-    currentConfig: { id: 3, serverConfigId: null }, queue: { add: () => {}, playAt: () => {} },
+    currentConfig: { id: 3, serverConfigId: null }, queue: new PlayQueue(),
   };
   const req = {
     params: { id: '3' }, body: { url: 'https://www.youtube.com/watch?v=00000000001' },

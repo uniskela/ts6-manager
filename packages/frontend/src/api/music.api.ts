@@ -60,12 +60,16 @@ export const musicBotsApi = {
   enqueue: (id: number, songId: number) => api.post(`/music-bots/${id}/queue`, { songId }).then((r) => r.data),
   loadPlaylist: (id: number, playlistId: number, clearFirst?: boolean) =>
     api.post(`/music-bots/${id}/queue/playlist`, { playlistId, clearFirst }).then((r) => r.data),
-  removeFromQueue: (id: number, index: number) => api.delete(`/music-bots/${id}/queue/${index}`).then((r) => r.data),
+  // `itemId` is the queue item shown at `index`; the server refuses the edit if the queue moved since.
+  removeFromQueue: (id: number, index: number, itemId?: string) =>
+    api.delete(`/music-bots/${id}/queue/${index}`, { params: itemId === undefined ? undefined : { id: itemId } }).then((r) => r.data),
   clearQueue: (id: number) => api.delete(`/music-bots/${id}/queue`).then((r) => r.data),
   shuffle: (id: number, enabled: boolean) => api.post(`/music-bots/${id}/queue/shuffle`, { enabled }).then((r) => r.data),
   repeat: (id: number, mode: string) => api.post(`/music-bots/${id}/queue/repeat`, { mode }).then((r) => r.data),
-  playFromQueue: (id: number, index: number) => api.post(`/music-bots/${id}/queue/${index}/play`).then((r) => r.data),
-  moveQueueItem: (id: number, from: number, to: number) => api.put(`/music-bots/${id}/queue/move`, { from, to }).then((r) => r.data),
+  playFromQueue: (id: number, index: number, itemId?: string) =>
+    api.post(`/music-bots/${id}/queue/${index}/play`, itemId === undefined ? undefined : { id: itemId }).then((r) => r.data),
+  moveQueueItem: (id: number, from: number, to: number, itemId?: string) =>
+    api.put(`/music-bots/${id}/queue/move`, { from, to, id: itemId }).then((r) => r.data),
   playerWidgetToken: (id: number) => api.get(`/music-bots/${id}/player-widget-token`).then((r) => r.data),
 
   // Video Streaming

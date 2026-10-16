@@ -274,3 +274,54 @@ test('unreadable Spotify playlist fails instead of playing a guess', async () =>
   );
   assert.equal(calls.play.length, 0);
 });
+
+test('the whole link is reserved before anything downloads, and released once when done', async () => {
+  const urls = Array.from({ length: 4 }, (_, i) => `https://www.youtube.com/watch?v=0000000000${i}`);
+  const events: string[] = [];
+  const { target, calls } = fakeTarget({
+    reserve: (count) => { events.push(`reserve ${count}`); },
+    release: () => { events.push('release'); },
+  });
+  await runMediaUrlPipeline(
+    fakeDeps({
+      expandYouTube: async () => ({ urls }),
+      downloadTrack: async (url) => { events.push('download'); return item(url); },
+    }),
+    target,
+    { url: 'https://www.youtube.com/playlist?list=PL1', enqueueOnly: false },
+  );
+  await flushBackground();
+  assert.deepEqual(events, ['reserve 4', 'download', 'download', 'download', 'download', 'release']);
+  assert.equal(calls.play.length + calls.enqueue.length, 4);
+});
+
+test('a refused reservation queues and downloads nothing', async () => {
+  let downloads = 0;
+  let released = 0;
+  const { target, calls } = fakeTarget({
+    reserve: () => { throw new Error('The queue is full'); },
+    release: () => { released++; },
+  });
+  await assert.rejects(runMediaUrlPipeline(
+    fakeDeps({
+      resolveSpotifyCollection: async () => ({ title: 'Mix', tracks: [{ artist: 'A', title: 'one' }, { artist: 'B', title: 'two' }] }),
+      downloadTrack: async (url) => { downloads++; return item(url); },
+    }),
+    target,
+    { url: 'https://open.spotify.com/playlist/abc', enqueueOnly: false },
+  ), /The queue is full/);
+  assert.equal(downloads, 0);
+  assert.equal(released, 0);
+  assert.equal(calls.play.length + calls.enqueue.length, 0);
+});
+
+test('a failed first track releases the reservation', async () => {
+  let released = 0;
+  const { target } = fakeTarget({ reserve: () => {}, release: () => { released++; } });
+  await assert.rejects(runMediaUrlPipeline(
+    fakeDeps({ downloadTrack: async () => { throw new Error('download failed'); } }),
+    target,
+    { url: 'https://www.youtube.com/watch?v=00000000001', enqueueOnly: false },
+  ), /download failed/);
+  assert.equal(released, 1);
+});

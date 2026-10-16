@@ -20,7 +20,7 @@ import {
   playlistExpansionGeneration,
 } from '../voice/playlist-expansion.js';
 import { invalidateChatPlaylistExpansion } from '../voice/commands/queue.js';
-import type { QueueItem } from '../voice/playlist/queue.js';
+import { MAX_QUEUE_ITEMS, QueueFullError, type QueueItem, type QueueReservation } from '../voice/playlist/queue.js';
 import { summarizeBotAutomation } from '@ts6/common';
 import type { BotMediaOverview } from '@ts6/common';
 import { parseAutomationSettings, readAutomationSettings } from '../voice/automation-settings.js';
@@ -493,6 +493,7 @@ musicBotRoutes.post('/:id/play', async (req: Request, res: Response, next) => {
       source: song.source as 'local' | 'youtube' | 'url',
       sourceUrl: song.sourceUrl ?? undefined,
     };
+    bot.queue.assertRoom(1);
 
     await runMediaAudited(req, bot, 'media.music.start', async () => {
       if (playlistExpansionGeneration(id) !== generation) return [];
@@ -539,6 +540,8 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
       && bot.currentConfig.serverConfigId === serverConfigId && bot.currentConfig.serverPort === serverPort;
 
     let firstCall = true;
+    // Room for every track of the link, held while its later tracks download.
+    let reservation: QueueReservation | undefined;
     let pipelineResult: Awaited<ReturnType<typeof runMediaUrlPipeline>>;
     try {
       pipelineResult = await runMediaUrlPipeline(
@@ -559,14 +562,14 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
                 'media.music.start',
                 async () => {
                   if (!isCurrent()) return [];
-                  live.queue.add(item);
+                  live.queue.add(item, reservation);
                   live.queue.playAt(live.queue.length - 1);
                   return live.play(item, { replaceSessionIds: opts.replaceSessionIds });
                 },
                 opts.replaceSessionIds,
               );
             } else {
-              live.queue.add(item);
+              live.queue.add(item, reservation);
               if (shouldStart) {
                 live.queue.playAt(live.queue.length - 1);
                 await live.play(item).catch((err) => {
@@ -580,7 +583,7 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             if (!isCurrent()) return;
             const live = manager.getBot(id);
             if (!live || live.status === 'stopped' || live.status === 'error') return;
-            live.queue.add(item);
+            live.queue.add(item, reservation);
             void saveRequestHistory(req, live, item);
           },
           isIdle: () => {
@@ -588,6 +591,8 @@ export function createPlayUrlHandler(deps: MediaUrlPipelineDeps = defaultMediaUr
             return Boolean(isCurrent() && live?.status === 'connected' && !live.nowPlaying);
           },
           isCancelled: () => !isCurrent(),
+          reserve: (count) => { reservation = bot.queue.reserve(count); },
+          release: () => reservation?.release(),
         },
         { url, enqueueOnly },
         {
@@ -850,11 +855,18 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
     }));
 
     const shouldAutoplay = autoplay ?? clearFirst;
+    // The whole playlist fits or none of it is queued; a refused load never clears first.
+    const assertFits = () => {
+      if (!clearFirst) bot.queue.assertRoom(items.length);
+      else if (items.length > MAX_QUEUE_ITEMS) throw new QueueFullError(items.length, MAX_QUEUE_ITEMS);
+    };
+    assertFits();
     // Only require a session replace when this load will actually start playback.
     if (shouldAutoplay && items.length > 0) bot.assertMusicCanStart(replaceSessionIds);
 
     let loaded = false;
     const loadQueue = () => {
+      assertFits();
       if (clearFirst) bot.queue.clear();
       const playIndex = bot.queue.length;
       bot.queue.addMany(items);
@@ -872,6 +884,7 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
           return item.streamUrl ? bot.playStream(item, { replaceSessionIds }) : bot.play(item, { replaceSessionIds });
         }, replaceSessionIds);
       } catch (err: any) {
+        if (err instanceof QueueFullError) throw err;
         playError = err.message || String(err);
         console.error('[music-bots.routes] Autoplay after playlist load failed:', playError);
       }
@@ -884,6 +897,20 @@ musicBotRoutes.post('/:id/queue/playlist', async (req: Request, res: Response, n
   } catch (err) { next(err); }
 });
 
+/**
+ * Index-based queue edits may name the item the client saw at that position
+ * (`id`). Pruning played tracks shifts every position by one, so a stale index
+ * is refused instead of changing a different track. Without `id` the index is
+ * used as is.
+ */
+function assertQueueEntry(bot: VoiceBot, index: number, expectedId: unknown): void {
+  if (expectedId === undefined) return;
+  if (typeof expectedId !== 'string') throw new AppError(400, 'Invalid queue item ID');
+  if (bot.queue.getAll()[index]?.id !== expectedId) {
+    throw new AppError(409, 'The queue changed', 'Check the queue, then try again.', { reason: 'queue_changed' });
+  }
+}
+
 // DELETE /:id/queue/:index — Remove from queue
 musicBotRoutes.delete('/:id/queue/:index', async (req: Request, res: Response, next) => {
   try {
@@ -891,11 +918,10 @@ musicBotRoutes.delete('/:id/queue/:index', async (req: Request, res: Response, n
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
 
-    const items = bot.queue.getAll();
     const index = parseInt(req.params.index as string);
-    if (index >= 0 && index < items.length) {
-      bot.queue.remove(items[index].id);
-    }
+    assertQueueEntry(bot, index, req.query.id);
+    // By position: a song queued twice shares its ID.
+    bot.queue.removeAt(index);
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -948,6 +974,7 @@ musicBotRoutes.post('/:id/queue/:index/play', async (req: Request, res: Response
     bot.assertMusicCanStart(replaceSessionIds);
 
     const index = parseInt(req.params.index as string);
+    assertQueueEntry(bot, index, req.body?.id);
     const item = bot.queue.playAt(index);
     if (!item) throw new AppError(400, 'Invalid queue index');
 
@@ -967,8 +994,9 @@ musicBotRoutes.put('/:id/queue/move', async (req: Request, res: Response, next) 
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
 
-    const { from, to } = req.body;
+    const { from, to, id } = req.body;
     if (typeof from !== 'number' || typeof to !== 'number') throw new AppError(400, 'from and to are required');
+    assertQueueEntry(bot, from, id);
     const moved = bot.queue.move(from, to);
     if (!moved) throw new AppError(400, 'Invalid indices');
     res.json({ success: true });

@@ -57,7 +57,7 @@ describe('music routes keep the media-session conflict contract', () => {
     const bot = {
       status: 'connected',
       currentConfig: { id: 3, serverConfigId: 1 },
-      queue: { addMany: (items: unknown[]) => added.push(...items), length: 1, clear: () => {} },
+      queue: { addMany: (items: unknown[]) => added.push(...items), length: 1, clear: () => {}, assertRoom: () => {} },
       assertMusicCanStart: () => { asserted++; throw new MediaSessionConflictError('music', [VIDEO]); },
     };
     const prisma = {

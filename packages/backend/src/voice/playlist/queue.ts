@@ -1,4 +1,44 @@
+import { AppError } from "../../middleware/error-handler.js";
+
 export type RepeatMode = "off" | "track" | "queue";
+
+/** Most tracks one queue holds, played and waiting together. Every add path is checked against it. */
+export const MAX_QUEUE_ITEMS = 5000;
+/**
+ * Played tracks kept behind the current one so `!prev` can step back. Older
+ * ones are pruned on each advance, except under repeat-all, where they come round again.
+ */
+export const PLAYED_HISTORY_LIMIT = 50;
+
+/** A request that does not fit under {@link MAX_QUEUE_ITEMS}; none of it was queued. */
+export class QueueFullError extends AppError {
+  constructor(readonly requested: number, readonly room: number) {
+    super(
+      409,
+      requested > 1
+        ? `The queue is full: only ${room} of these ${requested} tracks fit (limit ${MAX_QUEUE_ITEMS.toLocaleString("en-US")}), so none were queued.`
+        : `The queue is full (limit ${MAX_QUEUE_ITEMS.toLocaleString("en-US")} tracks).`,
+      "Remove some tracks or clear the queue, then try again.",
+      { reason: "queue_full" },
+    );
+    this.name = "QueueFullError";
+  }
+}
+
+/** Room held for a request whose tracks are added one at a time, such as a playlist link. */
+export interface QueueReservation {
+  readonly remaining: number;
+  /** Give back what was not used. Safe to call more than once. */
+  release(): void;
+}
+
+class Reservation implements QueueReservation {
+  constructor(public remaining: number, private readonly onRelease: (reservation: Reservation) => void) {}
+
+  release(): void {
+    this.onRelease(this);
+  }
+}
 
 export interface QueueItem {
   id: string;
@@ -16,6 +56,14 @@ function moveEntry<T>(list: T[], from: number, to: number): void {
   list.splice(to, 0, entry);
 }
 
+function shuffleInPlace(list: number[]): void {
+  // Fisher-Yates shuffle
+  for (let i = list.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [list[i], list[j]] = [list[j], list[i]];
+  }
+}
+
 export class PlayQueue<T extends { id: string } = QueueItem> {
   private items: T[] = [];
   private currentIndex = -1;
@@ -23,6 +71,10 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
   private _shuffle = false;
   private _repeat: RepeatMode = "off";
   private shuffleOrder: number[] = [];
+  private _pruned = 0;
+  /** Slots held by open reservations; they count against {@link MAX_QUEUE_ITEMS}. */
+  private reserved = 0;
+  private readonly reservations = new Set<Reservation>();
   /** What each in-flight start displaced, so a later start can fall back past a start that was already rejected. */
   private readonly displaced = new WeakMap<object, { previous: T | undefined; exhausted: boolean }>();
 
@@ -52,6 +104,51 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     return this._shuffle;
   }
 
+  /** Played tracks pruned from the front since the last clear. Chat numbers add it so they stay stable. */
+  get pruned(): number {
+    return this._pruned;
+  }
+
+  /** Tracks that can still be added, after the room held by open reservations. */
+  get room(): number {
+    return Math.max(MAX_QUEUE_ITEMS - this.items.length - this.reserved, 0);
+  }
+
+  /** Throw a {@link QueueFullError} unless `count` more tracks fit. */
+  assertRoom(count: number): void {
+    if (count > this.room) throw new QueueFullError(count, this.room);
+  }
+
+  /**
+   * Hold room for `count` tracks that arrive one at a time, so the request is
+   * refused whole up front instead of stopping part way. Adds that pass the
+   * reservation use its slots; clear() releases every reservation.
+   */
+  reserve(count: number): QueueReservation {
+    this.assertRoom(count);
+    const reservation = new Reservation(count, (r) => this.release(r));
+    this.reservations.add(reservation);
+    this.reserved += count;
+    return reservation;
+  }
+
+  private release(reservation: Reservation): void {
+    if (!this.reservations.delete(reservation)) return;
+    this.reserved -= reservation.remaining;
+    reservation.remaining = 0;
+  }
+
+  /** Use a reserved slot, or check the free room when there is none left. */
+  private claim(reservation: QueueReservation | undefined): void {
+    if (reservation instanceof Reservation && this.reservations.has(reservation) && reservation.remaining > 0) {
+      reservation.remaining--;
+      this.reserved--;
+      if (reservation.remaining === 0) this.reservations.delete(reservation);
+      return;
+    }
+    this.assertRoom(1);
+  }
+
   getAll(): T[] {
     if (this._shuffle) {
       return this.shuffleOrder.map((i) => this.items[i]);
@@ -70,7 +167,9 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     return Math.max(this.length - Math.max(this.currentIndex + 1, 0), 0);
   }
 
-  add(item: T): void {
+  /** Append one track; throws {@link QueueFullError} (changing nothing) when the queue is full. */
+  add(item: T, reservation?: QueueReservation): void {
+    this.claim(reservation);
     this.items.push(item);
     if (this._shuffle) {
       // Insert among upcoming items so appending never changes the current track.
@@ -81,17 +180,19 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     this.onChange?.(true);
   }
 
+  /** Append every track or, when they do not all fit, none of them. */
   addMany(items: T[]): void {
+    this.assertRoom(items.length);
     for (const item of items) {
       this.add(item);
     }
   }
 
   /** Select a new request; cleanup restores the cursor only while that request owns it. */
-  addForPlayback(item: T): () => void {
+  addForPlayback(item: T, reservation?: QueueReservation): () => void {
     const previous = this.getAll()[this.currentIndex];
+    this.add(item, reservation);
     this.displaced.set(item, { previous, exhausted: this.exhausted });
-    this.add(item);
     this.playAt(this.getAll().indexOf(item));
     return () => {
       const index = this.getAll().indexOf(item);
@@ -156,6 +257,10 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     this.currentIndex = -1;
     this.exhausted = false;
     this.shuffleOrder = [];
+    this._pruned = 0;
+    for (const reservation of this.reservations) reservation.remaining = 0;
+    this.reservations.clear();
+    this.reserved = 0;
     this.onChange?.(false);
   }
 
@@ -182,10 +287,12 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
         // Retain the exhausted position so a later request never replays history.
         this.currentIndex = this.items.length - 1;
         this.exhausted = true;
+        this.prunePlayed();
         return null;
       }
     }
 
+    this.prunePlayed();
     return this.current;
   }
 
@@ -205,6 +312,7 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
       if (this._repeat === "queue") {
         this.currentIndex = this.items.length - 1;
       } else {
+        // The oldest kept track: stepping back further replays it.
         this.currentIndex = 0;
       }
     }
@@ -237,40 +345,57 @@ export class PlayQueue<T extends { id: string } = QueueItem> {
     this._repeat = mode;
   }
 
+  /**
+   * Shuffle or unshuffle only what is still to play. Played tracks and the
+   * current one keep their displayed positions, so nothing unplayed lands
+   * behind the cursor (where it would be skipped and later pruned) and
+   * nothing played comes back as upcoming.
+   */
   setShuffle(enabled: boolean): void {
     if (enabled === this._shuffle) return;
 
-    const currentUnderlying = this.currentIndex >= 0
-      ? (this._shuffle ? this.shuffleOrder[this.currentIndex] : this.currentIndex)
-      : -1;
-    const currentPosition = this.currentIndex;
+    const display = this._shuffle ? this.shuffleOrder : this.items.map((_, i) => i);
+    const kept = display.slice(0, Math.max(this.currentIndex + 1, 0));
+    const rest = display.slice(kept.length);
 
     if (enabled) {
-      const order = Array.from({ length: this.items.length }, (_, i) => i)
-        .filter(i => i !== currentUnderlying);
-      for (let i = order.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [order[i], order[j]] = [order[j], order[i]];
-      }
-      if (currentUnderlying >= 0) {
-        order.splice(Math.min(Math.max(currentPosition, 0), order.length), 0, currentUnderlying);
-      }
-      this.shuffleOrder = order;
+      shuffleInPlace(rest);
+      this.shuffleOrder = [...kept, ...rest];
       this._shuffle = true;
       return;
     }
 
+    rest.sort((a, b) => a - b);
+    this.items = [...kept, ...rest].map((i) => this.items[i]);
     this._shuffle = false;
     this.shuffleOrder = [];
-    this.currentIndex = currentUnderlying;
+  }
+
+  /**
+   * Drop played tracks beyond {@link PLAYED_HISTORY_LIMIT}, oldest first in the
+   * displayed order. Never under repeat-all, where every track comes round again.
+   */
+  private prunePlayed(): void {
+    if (this._repeat === "queue") return;
+    const excess = this.currentIndex - PLAYED_HISTORY_LIMIT;
+    if (excess <= 0) return;
+
+    if (this._shuffle) {
+      const dropped = new Set(this.shuffleOrder.slice(0, excess));
+      const renumbered: number[] = [];
+      let next = 0;
+      for (let i = 0; i < this.items.length; i++) renumbered[i] = dropped.has(i) ? -1 : next++;
+      this.items = this.items.filter((_, i) => !dropped.has(i));
+      this.shuffleOrder = this.shuffleOrder.slice(excess).map((i) => renumbered[i]);
+    } else {
+      this.items.splice(0, excess);
+    }
+    this.currentIndex -= excess;
+    this._pruned += excess;
   }
 
   private regenerateShuffleOrder(): void {
     this.shuffleOrder = Array.from({ length: this.items.length }, (_, i) => i);
-    // Fisher-Yates shuffle
-    for (let i = this.shuffleOrder.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [this.shuffleOrder[i], this.shuffleOrder[j]] = [this.shuffleOrder[j], this.shuffleOrder[i]];
-    }
+    shuffleInPlace(this.shuffleOrder);
   }
 }
