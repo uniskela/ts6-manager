@@ -6,6 +6,7 @@ import { errorHandler } from '../middleware/error-handler.js';
 import { createPlayUrlHandler, musicBotRoutes } from './music-bots.routes.js';
 import type { MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
 import { MAX_QUEUE_ITEMS, PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
+import { beginChatMediaRequest, handleQueue } from '../voice/commands/queue.js';
 
 const track = (id: string): QueueItem => ({ id, title: id, filePath: `/music/${id}.opus`, source: 'local' });
 
@@ -217,5 +218,41 @@ describe('index-based console edits after pruning', () => {
     assert.equal(state.body.queue[state.body.currentIndex].id, 't69');
     assert.equal(state.body.queue[state.body.currentIndex + 1].id, 't70');
     assert.equal(state.body.queue.length, 61);
+  });
+});
+
+describe('a queue clear cancels requests still resolving on the other surface', () => {
+  it('the console clear cancels a pending chat request', async () => {
+    const { bot } = fakeBot('connected');
+    bot.clearPlayback = () => {};
+    // What a chat !play / !queue <url> holds while it resolves.
+    const request = beginChatMediaRequest(3);
+    assert.equal((await call(buildApp(bot), 'DELETE', '/api/music-bots/3/queue')).status, 200);
+    assert.ok(request.isCancelled());
+    assert.ok(request.signal.aborted);
+  });
+
+  it('chat !queue clear drops a console play-url that finishes resolving afterwards', async () => {
+    const { bot, played } = fakeBot('connected');
+    bot.clearPlayback = () => {};
+    let started!: () => void, release!: () => void;
+    const downloading = new Promise<void>((resolve) => { started = resolve; });
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const deps: MediaUrlPipelineDeps = {
+      resolveSpotify: async (url) => url,
+      resolveAppleMusic: async () => ({ tracks: [] }),
+      resolveSpotifyCollection: async () => null,
+      appleTrackToYouTube: async () => null,
+      expandYouTube: async () => null,
+      downloadTrack: async (url) => { started(); await gate; return { ...track('late'), sourceUrl: url }; },
+    };
+    const pending = call(buildApp(bot, 0, deps), 'POST', '/api/music-bots/3/play-url', { url: 'https://www.youtube.com/watch?v=00000000000' });
+    await downloading;
+    await handleQueue({ reply: () => {} } as any, 3, bot, 2, 'clear');
+    release();
+    assert.equal((await pending).status, 200);
+    await flushBackground();
+    assert.deepEqual(played, []);
+    assert.equal(bot.queue.length, 0);
   });
 });

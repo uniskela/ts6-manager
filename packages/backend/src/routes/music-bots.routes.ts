@@ -926,7 +926,8 @@ musicBotRoutes.delete('/:id/queue/:index', async (req: Request, res: Response, n
   } catch (err) { next(err); }
 });
 
-// DELETE /:id/queue — Clear queue and stop current playback
+// DELETE /:id/queue — Clear queue and stop current playback; like stop-playback,
+// cancels console and chat requests still resolving.
 musicBotRoutes.delete('/:id/queue', async (req: Request, res: Response, next) => {
   try {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
@@ -934,6 +935,7 @@ musicBotRoutes.delete('/:id/queue', async (req: Request, res: Response, next) =>
     const bot = manager.getBot(id);
     if (!bot) throw new AppError(404, 'Music bot not found');
     invalidatePlaylistExpansion(id);
+    invalidateChatPlaylistExpansion(id);
     bot.queue.clear();
     bot.clearPlayback();
     res.json({ success: true });

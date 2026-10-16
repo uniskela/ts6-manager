@@ -544,3 +544,31 @@ describe('radio requests queued from history', () => {
     });
   }
 });
+
+describe('stop generation', () => {
+  it('advances on a manual stop or clear, never on a track change, Auto-DJ or media replacement', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b.updateNowPlayingNickname = () => {};
+    b.ensurePlayableFile = async () => '/next.opus';
+    b.startFileStream = async () => true;
+    const local = (id: string) => ({ id, title: id, source: 'local' as const, filePath: `/${id}.opus` });
+    let generation = bot.stopGeneration;
+    // A new track, a skip, and stops recorded with an automatic reason keep pending requests alive.
+    await bot.play(local('a'));
+    bot.queue.add(local('b'));
+    bot.skip();
+    await new Promise(resolve => setImmediate(resolve));
+    for (const reason of ['channel_empty', 'replaced_by_video', 'source_unreachable'] as const) bot.clearPlayback(reason);
+    assert.equal(bot.stopGeneration, generation);
+    // Stop and clear-queue from chat or the console cancel them.
+    for (const stop of [() => bot.stopAudio(), () => bot.clearPlayback()]) {
+      stop();
+      assert.notEqual(bot.stopGeneration, generation);
+      generation = bot.stopGeneration;
+    }
+    b.client.disconnect = () => {};
+    await bot.stop();
+    assert.notEqual(bot.stopGeneration, generation);
+  });
+});

@@ -58,7 +58,7 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
   };
   const bot = {
     currentConfig: { id: binding.botId, serverConfigId: binding.serverConfigId, name: 'Music bot', password: 'bot-secret' },
-    ts3ClientId: 99,
+    ts3ClientId: 99, stopGeneration: 0,
     get status() { return state.botStatus; },
     getCurrentChannelId: () => state.botChannel,
     nowPlaying: item as QueueItem | null, queue,
@@ -744,6 +744,68 @@ describe('listener remote playback start', () => {
         assert.ok(!f.audit.some(row => (row.data as any)?.outcome === 'success'));
       });
     });
+
+    it(`drops a request that finishes resolving after Stop or a queue clear (${label})`, async () => {
+      for (const change of ['stop while playing', 'stop while idle', 'queue clear'] as const) await using(async f => {
+        if (change === 'stop while idle') idle(f);
+        const { session } = await f.exchange();
+        const started = deferred<void>();
+        const gate = deferred<void>();
+        f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { started.resolve(); await gate.promise; return item; };
+        const find = f.app.locals.prisma.song.findFirst;
+        f.app.locals.prisma.song.findFirst = async (query: unknown) => { started.resolve(); await gate.promise; return find(query); };
+        const pending = f.request(path, { session, body });
+        await started.promise;
+        // What VoiceBot.stopAudio / clearPlayback do: advance the stop generation, clear and go idle.
+        f.bot.stopGeneration++;
+        f.queue.clear();
+        idle(f);
+        gate.resolve();
+        const response = await pending;
+        assert.equal(response.status, 409, change);
+        assert.equal((await response.json() as { code: string }).code, 'cancelled', change);
+        assert.equal(f.plays.length, 0, change);
+        assert.equal(f.queue.length, 0, change);
+        assert.equal(f.state.botStatus, 'connected', change);
+        assert.equal(f.history.length, 0, change);
+        assert.ok(!f.audit.some(row => (row.data as any)?.outcome === 'success'), change);
+      });
+    });
+
+    it(`drops a request whose start is stopped before it plays (${label})`, async () => using(async f => {
+      idle(f);
+      const { session } = await f.exchange();
+      f.state.playGate = async () => { f.bot.stopGeneration++; f.state.botStatus = 'connected'; };
+      const response = await f.request(path, { session, body });
+      assert.equal(response.status, 409);
+      assert.equal(f.plays.length, 1);
+      assert.equal(f.bot.nowPlaying, null);
+      assert.equal(f.queue.length, 1);
+      assert.equal(f.history.length, 0);
+    }));
+
+    it(`still appends behind newer playback that started while resolving (${label})`, async () => using(async f => {
+      idle(f);
+      const { session } = await f.exchange();
+      const started = deferred<void>();
+      const gate = deferred<void>();
+      f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { started.resolve(); await gate.promise; return item; };
+      const find = f.app.locals.prisma.song.findFirst;
+      f.app.locals.prisma.song.findFirst = async (query: unknown) => { started.resolve(); await gate.promise; return find(query); };
+      const pending = f.request(path, { session, body });
+      await started.promise;
+      // Someone else starts music meanwhile; nobody pressed Stop.
+      const newer: QueueItem = { id: 'newer', title: 'Newer', filePath: '/music/newer.opus', source: 'local' };
+      f.queue.add(newer);
+      f.state.botStatus = 'playing';
+      f.bot.nowPlaying = newer;
+      gate.resolve();
+      assert.equal((await pending).status, 200);
+      assert.equal(f.plays.length, 0);
+      assert.equal(f.bot.nowPlaying, newer);
+      assert.equal(f.queue.length, 3);
+      assert.equal(f.history.length, 1);
+    }));
 
     it(`leaves nothing stranded when the bot stops, moves or fails while playback starts (${label})`, async () => {
       for (const change of ['disconnected', 'moved', 'error'] as const) await using(async f => {

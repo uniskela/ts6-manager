@@ -63,9 +63,12 @@ TeamSpeak. `/state` uses `np`/read-only `queue` authorization; `/library` uses
 read-only `queue`. Both mutations use `add` with nonempty arguments through
 the shared Slice 1 authorization service. State permission flags are hints;
 the backend rechecks policy and identity before queue insertion, including
-after slow URL resolution and audit writes. Pasted URLs use the existing SSRF
-validator without the admin LAN allowlist, followed by the normal media URL
-pipeline. URLs containing userinfo are rejected.
+after slow URL resolution and audit writes. A music Stop or queue clear on the
+bot (`VoiceBot.stopGeneration`) after the request arrived drops it with
+`cancelled` (409), so a slow link cannot restart music that was stopped.
+Pasted URLs use the existing SSRF validator without the admin LAN allowlist,
+followed by the normal media URL pipeline. URLs containing userinfo are
+rejected.
 
 ## Administrative revocation
 
@@ -80,9 +83,10 @@ also cancels exchanges and delayed queue insertions already in progress.
 Errors are `{error: string, code: string}` with static, credential-free text.
 Codes: `invalid_request` (400), `invalid_access` (401; missing, consumed,
 expired, revoked or departed access), `permission_denied` (403), `not_found`
-(404; song/bot), `rate_limited` (429), `unavailable` (503), `timeout` (504; a
-pasted link took longer than two minutes to load). The remote surface
-never returns resolver, Query, database or credential-bearing exception text.
+(404; song/bot), `cancelled` (409; stopped or cleared while resolving),
+`rate_limited` (429), `unavailable` (503), `timeout` (504; a pasted link took
+longer than two minutes to load). The remote surface never returns resolver,
+Query, database or credential-bearing exception text.
 
 Tokens expire after five minutes; sessions expire absolutely after fifteen
 minutes, with no extension on activity. A new `!remote` replaces earlier

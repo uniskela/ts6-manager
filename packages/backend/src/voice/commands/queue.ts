@@ -1,6 +1,7 @@
 import type { VoiceBot } from '../voice-bot.js';
 import { QueueFullError, type QueueItem, type QueueReservation } from '../playlist/queue.js';
 import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../media-url-pipeline.js';
+import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
@@ -343,9 +344,10 @@ export async function handleQueue(
     return;
   }
 
-  // !queue clear
+  // !queue clear — like !stop, cancels chat and console requests still resolving
   if (args.toLowerCase() === 'clear') {
     invalidateChatPlaylistExpansion(bot.currentConfig.id);
+    invalidatePlaylistExpansion(bot.currentConfig.id);
     bot.queue.clear();
     bot.clearPlayback();
     context.reply(bot, userClid, 'Queue cleared.');

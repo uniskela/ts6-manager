@@ -65,9 +65,12 @@ musicRequestRoutes.post('/:id/replay', requireRole('admin'), async (req: Request
     if (bot?.currentConfig.serverConfigId !== configId) throw new AppError(404, 'Music bot not found');
 
     const serverPort = bot.currentConfig.serverPort;
+    // A Stop or queue clear while the source is checked cancels the replay.
+    const stopGeneration = bot.stopGeneration;
     const assertCurrentBot = () => {
       if (manager.getBot(botId) !== bot || bot.currentConfig.serverConfigId !== configId
         || bot.currentConfig.serverPort !== serverPort) throw new AppError(409, 'Bot changed during replay. Try again.');
+      if (bot.stopGeneration !== stopGeneration) throw new AppError(409, 'Playback was stopped before the replay started.');
     };
     const ref = await replayReference(row);
     assertCurrentBot();

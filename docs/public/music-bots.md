@@ -183,7 +183,7 @@ What you can do on the page:
 - search the server's song library by title or artist and add a song with the **+** button; and
 - paste a link and choose **Request URL** to add it. A link to a playlist adds only its first track.
 
-The queue holds at most 500 items. If the bot is connected and idle, what you add starts playing at once, whether or not Auto-DJ is on. If music is playing or paused, it joins the end of **Up next**. If the bot is streaming video, it joins the music queue and does not start by itself. The remote never interrupts or replaces what is playing. Songs and links added from the remote are recorded in the bot's [request history](#requests).
+The queue holds at most 500 items. If the bot is connected and idle, what you add starts playing at once, whether or not Auto-DJ is on. If music is playing or paused, it joins the end of **Up next**. If the bot is streaming video, it joins the music queue and does not start by itself. The remote never interrupts or replaces what is playing. If someone stops the music or clears the queue while your link is still loading, the request is dropped and the page shows `Playback was stopped before this request was ready.`; add it again if you still want it. Songs and links added from the remote are recorded in the bot's [request history](#requests).
 
 What you cannot do: pause, skip, stop, seek, change the volume, reorder or clear the queue, or use any admin function. For those, use chat commands (`!skip`, `!voteskip` and so on) or ask an admin.
 
