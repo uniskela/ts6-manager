@@ -37,8 +37,12 @@ export function arrivalSnapshot(req: Request): ArrivalSnapshot {
   return { bot, stopGeneration: bot?.stopGeneration };
 }
 
-/** True when the bot was stopped or its queue cleared since the request arrived. */
+/**
+ * True when the bot was stopped or its queue cleared since the request arrived.
+ * Without a bot to compare against there is no Stop to detect; the access checks still apply.
+ */
 function stoppedSince(bot: ListenerBot, arrival: ArrivalSnapshot): boolean {
+  if (!arrival.bot) return false;
   return bot !== arrival.bot || bot.stopGeneration !== arrival.stopGeneration;
 }
 
@@ -63,7 +67,7 @@ export async function appendForListener(
     const first = await authorized(req, 'add', 'request');
     // A bot that was briefly unavailable on arrival but serves the listener now
     // has not been stopped; compare against it from here on.
-    if (!arrival.bot) arrival = { bot: first.bot, stopGeneration: first.bot.stopGeneration };
+    if (!arrival.bot && first.bot) arrival = { bot: first.bot, stopGeneration: first.bot.stopGeneration };
     const item = await resolveItem();
     const { bot } = await authorized(req, 'add', 'request');
     // A listener who left while the request was being checked does not get it queued.

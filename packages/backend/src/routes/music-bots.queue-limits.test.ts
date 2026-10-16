@@ -281,6 +281,7 @@ describe('a Stop or queue clear during a short lookup drops the add', () => {
     const gate = new Promise<void>(resolve => { release = resolve; });
     const replies: string[] = [];
     const context: any = {
+      voiceBotManager: { getBot: () => bot },
       reply: (_bot: unknown, _clid: number, message: string) => { replies.push(message); },
       saveMusicRequest: () => {},
       chatMusicSwitch: () => ({}),

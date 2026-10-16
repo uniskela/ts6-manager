@@ -126,7 +126,9 @@ describe('chat playlist scope', () => {
         },
       },
     } as any;
-    const handler = new MusicCommandHandler(prisma, {} as any) as any;
+    // The bot is looked up again after the playlist query; it is the one below.
+    const manager: any = { getBot: () => bot };
+    const handler = new MusicCommandHandler(prisma, manager) as any;
     handler.botChannelConfig.set(1, { serverConfigId, virtualServerId: 1 });
     handler.reply = (_bot: unknown, _id: number, message: string) => replies.push(message);
     const bot = {
