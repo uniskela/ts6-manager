@@ -10,7 +10,8 @@ export interface Binding {
 }
 
 export class ListenerRemoteError extends Error {
-  constructor(public readonly status: number, public readonly code: string, message: string) {
+  /** `retryAfter`: whole seconds until a rate limit's window resets. */
+  constructor(public readonly status: number, public readonly code: string, message: string, public readonly retryAfter?: number) {
     super(message);
     this.name = 'ListenerRemoteError';
   }
@@ -23,6 +24,10 @@ interface Grant {
   tokenHash?: string;
   sessionHash?: string;
 }
+interface Rate {
+  count: number;
+  expiresAt: number;
+}
 
 const TOKEN_TTL = 5 * 60_000;
 const SESSION_TTL = 15 * 60_000;
@@ -30,6 +35,8 @@ const MAX_ENTRIES = 10_000;
 const RATE_WINDOW = 60_000;
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const bindingKey = (binding: Binding): string => JSON.stringify([binding.botId, binding.uid]);
+/** Rate key for one listener on one bot; it survives a new `!remote`. */
+const identityKey = (binding: Binding): string => hash(bindingKey(binding));
 const denied = (): ListenerRemoteError => new ListenerRemoteError(401, 'invalid_access', 'Remote access is invalid or expired');
 
 /** Process-local credentials deliberately disappear on restart. Raw credentials are never stored. */
@@ -38,20 +45,40 @@ export class ListenerRemoteService {
   private readonly grants = new Map<string, Grant>();
   private readonly tokens = new Map<string, Grant>();
   private readonly sessions = new Map<string, Grant>();
-  private readonly rates = new Map<string, { count: number; expiresAt: number }>();
+  /** Client address windows. Kept apart so an address flood cannot push out listener limits. */
+  private readonly rates = new Map<string, Rate>();
+  /**
+   * Credential and listener identity windows. Entries are created only for
+   * credentials that exist, so unknown values cannot fill this store.
+   */
+  private readonly credentialRates = new Map<string, Rate>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
+  /** `ip` is a client address key (see utils/client-address); only its hash is kept. */
   checkIp(ip: string, exchange: boolean): void {
     this.prune();
     const ipHash = hash(ip);
-    this.limit(`ip:${ipHash}`, 120);
-    if (exchange) this.limit(`exchange-ip:${ipHash}`, 10);
+    this.limit(this.rates, `ip:${ipHash}`, 120);
+    if (exchange) this.limit(this.rates, `exchange-ip:${ipHash}`, 10);
+  }
+
+  /**
+   * Rate key of the listener behind a live session, or undefined. It creates no
+   * state, so it is safe to call for any value a client sends.
+   */
+  sessionRateKey(session: string | undefined): string | undefined {
+    if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(session)) return undefined;
+    const grant = this.sessions.get(hash(session));
+    if (!grant || grant.expiresAt <= this.now()) return undefined;
+    return `listener:${identityKey(grant.binding)}`;
   }
 
   checkRequest(session: string): void {
     this.prune();
-    this.limit(`request:${this.credentialHash(session)}`, 5);
+    const grant = this.sessions.get(this.credentialHash(session));
+    if (!grant) throw denied();
+    this.limit(this.credentialRates, `request:${identityKey(grant.binding)}`, 5);
   }
 
   issue(binding: Binding): { token: string; expiresAt: number } {
@@ -62,7 +89,7 @@ export class ListenerRemoteService {
       throw new ListenerRemoteError(400, 'invalid_request', 'Invalid remote listener identity');
     }
     const key = bindingKey(binding);
-    this.limit(`issue:${hash(key)}`, 3);
+    this.limit(this.credentialRates, `issue:${hash(key)}`, 3);
     const previous = this.grants.get(key);
     if (!previous && this.grants.size >= MAX_ENTRIES) this.unavailable();
     if (previous) this.remove(previous);
@@ -78,8 +105,9 @@ export class ListenerRemoteService {
   async exchange(token: string, validate: ValidateBinding): Promise<{ session: string; expiresAt: number; binding: Binding }> {
     this.prune();
     const tokenHash = this.credentialHash(token);
-    this.limit(`token:${tokenHash}`, 5);
     const grant = this.tokens.get(tokenHash);
+    // A replayed token keeps counting against the window its first use opened; unknown values add nothing.
+    this.limit(this.credentialRates, `token:${tokenHash}`, 5, Boolean(grant));
     if (!grant) throw denied();
     // Consume synchronously before TeamSpeak validation; parallel exchanges cannot reuse this token.
     this.tokens.delete(tokenHash);
@@ -95,9 +123,9 @@ export class ListenerRemoteService {
   async authenticate(session: string, validate: ValidateBinding): Promise<Binding> {
     this.prune();
     const sessionHash = this.credentialHash(session);
-    this.limit(`session:${sessionHash}`, 60);
     const grant = this.sessions.get(sessionHash);
     if (!grant) throw denied();
+    this.limit(this.credentialRates, `session:${identityKey(grant.binding)}`, 60);
     await this.validate(grant, validate);
     return { ...grant.binding };
   }
@@ -153,17 +181,37 @@ export class ListenerRemoteService {
   private prune(): void {
     const now = this.now();
     for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant);
-    for (const [key, rate] of this.rates) if (rate.expiresAt <= now) this.rates.delete(key);
+    // Every window has the same length, so insertion order is expiry order.
+    for (const store of [this.rates, this.credentialRates]) {
+      for (const [key, rate] of store) {
+        if (rate.expiresAt > now) break;
+        store.delete(key);
+      }
+    }
   }
 
-  private limit(key: string, max: number): void {
-    let rate = this.rates.get(key);
-    if (!rate) {
-      if (this.rates.size >= MAX_ENTRIES) this.unavailable();
-      rate = { count: 0, expiresAt: this.now() + RATE_WINDOW };
-      this.rates.set(key, rate);
+  /**
+   * Count one use of `key`. With `create` false, only an existing window is
+   * counted. A full store drops the window closest to expiry (the oldest) rather
+   * than refusing everyone.
+   */
+  private limit(store: Map<string, Rate>, key: string, max: number, create = true): void {
+    const now = this.now();
+    let rate = store.get(key);
+    if (rate && rate.expiresAt <= now) {
+      store.delete(key);
+      rate = undefined;
     }
-    if (++rate.count > max) throw new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests');
+    if (!rate) {
+      if (!create) return;
+      if (store.size >= MAX_ENTRIES) store.delete(store.keys().next().value!);
+      rate = { count: 0, expiresAt: now + RATE_WINDOW };
+      store.set(key, rate);
+    }
+    if (++rate.count > max) {
+      const retryAfter = Math.max(1, Math.ceil((rate.expiresAt - now) / 1000));
+      throw new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests', retryAfter);
+    }
   }
 
   private unavailable(): never {

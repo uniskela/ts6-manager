@@ -96,12 +96,33 @@ atomic storage is required before horizontal scaling. See the public reverse
 proxy guide for Public URL, HTTPS and trusted proxy configuration.
 
 One-minute limits: three issued links per bot/identity, five exchange attempts
-per token hash, sixty authentications per session hash (queue mutations check
-again at insertion), five URL resolutions per session, 120 requests per IP,
-and ten exchanges per IP. Both credential and rate stores are capped at 10,000
-entries and fail closed when full. Queue insertion is capped at 500 items.
-The app also applies the standard Express IP limiter after the bounded guard,
-before JSON parsing and authentication on every public remote endpoint.
+per issued token, sixty authentications per bot/identity (queue mutations check
+again at insertion), five URL resolutions per bot/identity, 120 requests per
+client address, and ten exchanges per client address. Identity limits survive a
+new `!remote`, so asking for a new link does not reset them. Credential and
+identity windows are created only for tokens and sessions that exist; an
+unknown or consumed credential gets the usual 401 and counts only against the
+caller's address.
+
+A client address is an IPv4 address, or the /64 network of an IPv6 address;
+IPv4-mapped IPv6 counts as its IPv4 address. When `req.ip` (which honours
+`TRUST_PROXY`) is not a valid IP address, the connecting peer's address is used.
+A request carrying a live session is limited per listener instead of per
+address, so listeners behind one shared address do not use up each other's
+budget; exchanges and requests without a live session count against the
+address.
+
+Address windows and credential/identity windows are kept in separate stores of
+10,000 entries each. A full store drops the window closest to expiry instead of
+refusing requests. The grant store is still capped at 10,000 and answers 503
+when full. Queue insertion is capped at 500 items.
+The app also applies the standard Express limiter after the bounded guard,
+before JSON parsing and authentication on every public remote endpoint, keyed
+the same way: per listener for a live session, otherwise per client address.
+
+A 429 from a rate limit carries `Retry-After` with the whole seconds left in
+that window (at least 1). A full queue or a pending link resolution answers 429
+with `Retry-After: 60`.
 URL resolution permits one pending job per bot and four across the remote
 service. Provider fetches and yt-dlp processes each have a three-minute timeout;
 the normal shared downloader now bounds calls without an explicit signal too.

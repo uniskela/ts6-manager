@@ -13,10 +13,11 @@ function rejects(fn: () => unknown, status: number, code: string) {
   assert.throws(fn, (err: unknown) => err instanceof ListenerRemoteError && err.status === status && err.code === code);
 }
 
-function request(downloadTrack: () => Promise<QueueItem>): Request {
+async function request(downloadTrack: () => Promise<QueueItem>): Promise<Request> {
   const listenerRemote = new ListenerRemoteService();
+  const { session } = await listenerRemote.exchange(listenerRemote.issue(binding).token, async () => true);
   return {
-    get: () => `Bearer ${'a'.repeat(43)}`,
+    get: () => `Bearer ${session}`,
     app: {
       locals: {
         listenerRemote,
@@ -42,7 +43,7 @@ describe('listener remote helpers', () => {
 
   it('resolveListenerLink rejects links with credentials before resolving', async () => {
     let downloads = 0;
-    const req = request(async () => { downloads++; return item; });
+    const req = await request(async () => { downloads++; return item; });
     await assert.rejects(resolveListenerLink(req, binding, 'https://user:secret@8.8.8.8/media'),
       (err: unknown) => err instanceof ListenerRemoteError && err.status === 400 && err.code === 'invalid_request');
     assert.equal(downloads, 0);
@@ -51,7 +52,7 @@ describe('listener remote helpers', () => {
   it('resolveListenerLink resolves one link per bot at a time and releases the lock', async () => {
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
-    const req = request(async () => { await gate; return item; });
+    const req = await request(async () => { await gate; return item; });
     const first = resolveListenerLink(req, binding, 'https://8.8.8.8/media?id=1');
     await new Promise(resolve => setImmediate(resolve));
     await assert.rejects(resolveListenerLink(req, binding, 'https://8.8.8.8/media?id=2'),

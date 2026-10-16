@@ -6,6 +6,7 @@ import { listHumanMediaListeners, resolveMediaIdentity } from '../../voice/media
 import { authorizeMediaCommand, loadMediaCommandPermissions } from '../../voice/media-command-permissions.js';
 import type { VoiceBotManager } from '../../voice/voice-bot-manager.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
+import { clientRateKey } from '../../utils/client-address.js';
 
 export function service(req: Request): ListenerRemoteService {
   const value = req.app.locals.listenerRemote;
@@ -21,7 +22,7 @@ export function endpoint(fn: (req: Request, res: Response) => Promise<void>) {
   return (req: Request, res: Response) => {
     void fn(req, res).catch((err: unknown) => {
       if (err instanceof ListenerRemoteError) {
-        if (err.status === 429) res.setHeader('Retry-After', '60');
+        if (err.status === 429) res.setHeader('Retry-After', retryAfter(err));
         res.status(err.status).json({ error: err.message, code: err.code });
       } else {
         // Resolver/Query/database exceptions can contain credentials or pasted URLs.
@@ -31,24 +32,46 @@ export function endpoint(fn: (req: Request, res: Response) => Promise<void>) {
   };
 }
 
+/** Seconds until a rate window resets; 429s without a window (full queue, pending link) keep 60. */
+function retryAfter(err: ListenerRemoteError): string {
+  return String(err.retryAfter ?? 60);
+}
+
+/** Rate key the app-wide remote limiter uses: the listener for a live session, else the client address. */
+export function listenerRemoteRateKey(req: Request, res: Response): string {
+  const listener: unknown = res.locals.listenerRemoteRateKey;
+  return typeof listener === 'string' ? listener : clientRateKey(req);
+}
+
 export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Referrer-Policy', 'no-referrer');
   try {
-    service(req).checkIp(req.ip ?? req.socket.remoteAddress ?? 'unknown', /^\/exchange\/?$/i.test(req.path));
+    const remote = service(req);
+    const exchange = /^\/exchange\/?$/i.test(req.path);
+    // A live session is limited per listener when it authenticates, so listeners
+    // sharing one address do not use up each other's budget. Everything else,
+    // including unknown credentials, counts against the client address.
+    const listener = exchange ? undefined : remote.sessionRateKey(bearerCredential(req));
+    if (listener) res.locals.listenerRemoteRateKey = listener;
+    else remote.checkIp(clientRateKey(req), exchange);
     next();
   } catch (err) {
     if (err instanceof ListenerRemoteError) {
-      if (err.status === 429) res.setHeader('Retry-After', '60');
+      if (err.status === 429) res.setHeader('Retry-After', retryAfter(err));
       res.status(err.status).json({ error: err.message, code: err.code });
     } else res.status(503).json({ error: 'Listener remote is unavailable.', code: 'unavailable' });
   }
 };
 
+function bearerCredential(req: Request): string | undefined {
+  return /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get('Authorization') ?? '')?.[1];
+}
+
 export function bearer(req: Request): string {
-  const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get('Authorization') ?? '');
-  if (!match) fail(401, 'invalid_access', 'Listener access is invalid or expired.');
-  return match[1];
+  const credential = bearerCredential(req);
+  if (!credential) fail(401, 'invalid_access', 'Listener access is invalid or expired.');
+  return credential;
 }
 
 export function botFor(req: Request, binding: ListenerRemoteBinding) {
