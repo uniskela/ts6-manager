@@ -4,7 +4,7 @@ import { registerLibraryRoutes } from './library.js';
 import { registerRequestRoutes } from './requests.js';
 import { registerSessionRoutes } from './session.js';
 
-export { listenerRemoteIpGuard, listenerRemoteRateKey } from './shared.js';
+export { listenerRemoteIpGuard, listenerRemoteListenerKey } from './shared.js';
 
 // Each area registers its own routes; the paths do not overlap, so their order does not matter.
 export const listenerRemoteRoutes: Router = Router();

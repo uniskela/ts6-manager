@@ -37,10 +37,14 @@ function retryAfter(err: ListenerRemoteError): string {
   return String(err.retryAfter ?? 60);
 }
 
-/** Rate key the app-wide remote limiter uses: the listener for a live session, else the client address. */
-export function listenerRemoteRateKey(req: Request, res: Response): string {
+/**
+ * The listener key the guard found for a live session, if any. The app-wide
+ * remote limiters count such requests per listener, in a store only verified
+ * listeners can fill, and everything else per client address.
+ */
+export function listenerRemoteListenerKey(res: Response): string | undefined {
   const listener: unknown = res.locals.listenerRemoteRateKey;
-  return typeof listener === 'string' ? listener : clientRateKey(req);
+  return typeof listener === 'string' ? listener : undefined;
 }
 
 export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {

@@ -1,35 +1,47 @@
-import type { ClientRateLimitInfo, Store } from 'express-rate-limit';
+import { performance } from 'node:perf_hooks';
+import type { ClientRateLimitInfo, Options, Store } from 'express-rate-limit';
+
+/** Monotonic milliseconds: a wall-clock step back cannot keep a stale window alive. */
+export const monotonicNow = (): number => performance.now();
 
 interface RateWindow {
-  count: number;
-  max: number;
+  /** One count per limit, so related budgets for a key share one entry. */
+  counts: number[];
+  limits: readonly number[];
   expiresAt: number;
 }
 
-/** The state of one key after a hit. `count > max` means the hit is refused. */
+/** One counter of a key after a hit. `count > limit` means the hit is refused. */
 export interface RateHit {
   count: number;
-  max: number;
-  expiresAt: number;
+  limit: number;
+  /** Milliseconds until the key's window resets. */
+  remainingMs: number;
 }
 
+const exhausted = (window: RateWindow): boolean => window.counts.some((count, i) => count >= window.limits[i]);
+
 /**
- * Fixed rate windows in a store with a hard size cap.
+ * Fixed rate windows in a store with a hard size cap. Every window has the same
+ * length and the clock is monotonic, so creation order is expiry order.
  *
- * Every window has the same length, so insertion order is expiry order. When
- * the store is full, a new key first frees expired windows, then takes the place
- * of a window still under its limit (fewest hits, oldest among equals). A window
- * that has reached its limit is never dropped early, so churning fresh keys
- * cannot reset it. If every window has reached its limit, only the new key is
- * refused, until the earliest window expires.
+ * Capacity never refuses a key. A new key on a full store first frees expired
+ * windows, then replaces the oldest window still under all its limits. A window
+ * that has reached a limit is dropped only when every window has, and then the
+ * oldest goes first. Each step is O(1) amortised: under-limit windows are kept in
+ * their own creation-ordered set.
  */
 export class RateWindows {
   private readonly windows = new Map<string, RateWindow>();
+  /** Keys of windows under all their limits, in creation order. */
+  private readonly open = new Set<string>();
+  /** Windows inspected while pruning or choosing a victim; tests use it to bound the work. */
+  scanned = 0;
 
   constructor(
     private readonly capacity: number,
     private readonly windowMs: number,
-    private readonly now: () => number = Date.now,
+    private readonly now: () => number = monotonicNow,
   ) {}
 
   get size(): number {
@@ -40,102 +52,124 @@ export class RateWindows {
     return this.windows.keys();
   }
 
-  get(key: string): RateHit | undefined {
+  /** Current counts of a live window, if any. */
+  get(key: string): { counts: number[]; remainingMs: number } | undefined {
     const window = this.windows.get(key);
-    return window && window.expiresAt > this.now() ? { ...window } : undefined;
+    const now = this.now();
+    return window && window.expiresAt > now ? { counts: [...window.counts], remainingMs: window.expiresAt - now } : undefined;
   }
 
   prune(now = this.now()): void {
     for (const [key, window] of this.windows) {
+      this.scanned++;
       if (window.expiresAt > now) break;
-      this.windows.delete(key);
+      this.delete(key);
     }
   }
 
-  hit(key: string, max: number): RateHit {
+  /** Count one hit on counter `index` of `key`, whose window has one limit per counter. */
+  hit(key: string, limits: readonly number[], index = 0): RateHit {
     const now = this.now();
     let window = this.windows.get(key);
     if (window && window.expiresAt <= now) {
-      this.windows.delete(key);
+      this.delete(key);
       window = undefined;
     }
     if (!window) {
-      if (this.windows.size >= this.capacity) {
-        this.prune(now);
-        if (this.windows.size >= this.capacity && !this.evictOne()) {
-          const earliest = this.windows.values().next().value!;
-          return { count: max + 1, max, expiresAt: earliest.expiresAt };
-        }
-      }
-      window = { count: 0, max, expiresAt: now + this.windowMs };
+      if (this.windows.size >= this.capacity) this.makeRoom(now);
+      window = { counts: limits.map(() => 0), limits, expiresAt: now + this.windowMs };
       this.windows.set(key, window);
+      this.open.add(key);
     }
-    window.count++;
-    return { ...window };
+    window.counts[index]++;
+    if (exhausted(window)) this.open.delete(key);
+    return { count: window.counts[index], limit: window.limits[index], remainingMs: window.expiresAt - now };
   }
 
-  decrement(key: string): void {
+  decrement(key: string, index = 0): void {
     const window = this.windows.get(key);
-    if (window && --window.count <= 0) this.windows.delete(key);
+    if (!window) return;
+    window.counts[index] = Math.max(0, window.counts[index] - 1);
+    if (window.counts.every(count => count === 0)) this.delete(key);
+    else if (!exhausted(window)) this.open.add(key);
   }
 
   delete(key: string): void {
     this.windows.delete(key);
+    this.open.delete(key);
   }
 
   clear(): void {
     this.windows.clear();
+    this.open.clear();
   }
 
-  /** Drop the under-limit window with the fewest hits, oldest first. False when none is under its limit. */
-  private evictOne(): boolean {
-    let victim: string | undefined;
-    let fewest = Infinity;
-    for (const [key, window] of this.windows) {
-      if (window.count >= window.max || window.count >= fewest) continue;
-      victim = key;
-      fewest = window.count;
-      // Counts start at one, so the oldest one-hit window is the best possible choice.
-      if (fewest <= 1) break;
-    }
-    if (victim === undefined) return false;
-    this.windows.delete(victim);
-    return true;
+  private makeRoom(now: number): void {
+    this.prune(now);
+    if (this.windows.size < this.capacity) return;
+    this.scanned++;
+    // Under-limit windows go first; every remaining window has reached a limit,
+    // so the oldest window is the oldest exhausted one.
+    const victim: string = this.open.values().next().value ?? this.windows.keys().next().value!;
+    this.delete(victim);
   }
 }
 
-/** An express-rate-limit store backed by `RateWindows`, so a limiter cannot grow without bound. */
+/**
+ * An express-rate-limit store backed by `RateWindows`, so a limiter cannot grow
+ * without bound. `windowMs` and `limit` come from the limiter through `init`.
+ */
 export class BoundedRateLimitStore implements Store {
   readonly localKeys = true;
-  private readonly windows: RateWindows;
+  private windows: RateWindows | undefined;
+  private limits: readonly number[] = [];
+  private window = 0;
 
-  constructor(private readonly options: { windowMs: number; limit: number; capacity?: number; now?: () => number }) {
-    this.windows = new RateWindows(options.capacity ?? 10_000, options.windowMs, options.now);
+  constructor(private readonly options: { capacity?: number; now?: () => number } = {}) {}
+
+  init(options: Options): void {
+    if (typeof options.limit !== 'number') throw new Error('BoundedRateLimitStore needs a numeric limit.');
+    this.window = options.windowMs;
+    this.limits = [options.limit];
+    this.windows = new RateWindows(this.options.capacity ?? 10_000, options.windowMs, this.options.now);
+  }
+
+  get windowMs(): number {
+    return this.window;
+  }
+
+  get limit(): number {
+    return this.limits[0];
   }
 
   get size(): number {
-    return this.windows.size;
+    return this.store().size;
   }
 
   get(key: string): ClientRateLimitInfo | undefined {
-    const window = this.windows.get(key);
-    return window && { totalHits: window.count, resetTime: new Date(window.expiresAt) };
+    const window = this.store().get(key);
+    return window && { totalHits: window.counts[0], resetTime: new Date(Date.now() + window.remainingMs) };
   }
 
   increment(key: string): ClientRateLimitInfo {
-    const window = this.windows.hit(key, this.options.limit);
-    return { totalHits: window.count, resetTime: new Date(window.expiresAt) };
+    const hit = this.store().hit(key, this.limits);
+    return { totalHits: hit.count, resetTime: new Date(Date.now() + hit.remainingMs) };
   }
 
   decrement(key: string): void {
-    this.windows.decrement(key);
+    this.store().decrement(key);
   }
 
   resetKey(key: string): void {
-    this.windows.delete(key);
+    this.store().delete(key);
   }
 
   resetAll(): void {
-    this.windows.clear();
+    this.store().clear();
+  }
+
+  private store(): RateWindows {
+    if (!this.windows) throw new Error('BoundedRateLimitStore is used before init.');
+    return this.windows;
   }
 }

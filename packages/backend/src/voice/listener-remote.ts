@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { RateWindows } from '../utils/rate-windows.js';
+import { RateWindows, monotonicNow } from '../utils/rate-windows.js';
 
 export interface Binding {
   botId: number;
@@ -30,6 +30,15 @@ const TOKEN_TTL = 5 * 60_000;
 const SESSION_TTL = 15 * 60_000;
 const MAX_ENTRIES = 10_000;
 const RATE_WINDOW = 60_000;
+/** One window per client address: all requests, and exchanges. */
+const ADDRESS_LIMITS = [120, 10] as const;
+const ALL_REQUESTS = 0;
+const EXCHANGES = 1;
+/** One window per listener: issued links, authentications, URL requests. */
+const IDENTITY_LIMITS = [3, 60, 5] as const;
+const ISSUES = 0;
+const AUTHENTICATIONS = 1;
+const URL_REQUESTS = 2;
 const hash = (value: string): string => createHash('sha256').update(value).digest('hex');
 const bindingKey = (binding: Binding): string => JSON.stringify([binding.botId, binding.uid]);
 /** Rate key for one listener on one bot; it survives a new `!remote`. */
@@ -42,25 +51,29 @@ export class ListenerRemoteService {
   private readonly grants = new Map<string, Grant>();
   private readonly tokens = new Map<string, Grant>();
   private readonly sessions = new Map<string, Grant>();
+  private readonly now: () => number;
   /** Client address windows. Kept apart so an address flood cannot push out listener limits. */
   private readonly rates: RateWindows;
   /**
-   * Listener identity windows. Entries are created only for grants that exist,
-   * so unknown credentials cannot fill this store.
+   * Listener identity windows. Entries are created only for listeners that hold
+   * a grant, so unknown credentials cannot fill this store.
    */
   private readonly credentialRates: RateWindows;
 
-  constructor(private readonly now: () => number = Date.now) {
-    this.rates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now);
-    this.credentialRates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now);
+  /** A test clock drives both credential lifetimes and rate windows; otherwise rate windows are monotonic. */
+  constructor(now?: () => number) {
+    this.now = now ?? Date.now;
+    this.rates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now ?? monotonicNow);
+    this.credentialRates = new RateWindows(MAX_ENTRIES, RATE_WINDOW, now ?? monotonicNow);
   }
 
   /** `ip` is a client address key (see utils/client-address); only its hash is kept. */
   checkIp(ip: string, exchange: boolean): void {
     this.prune();
     const ipHash = hash(ip);
-    this.limit(this.rates, `ip:${ipHash}`, 120);
-    if (exchange) this.limit(this.rates, `exchange-ip:${ipHash}`, 10);
+    // Both counts share one window, so making room for one can never discard the other.
+    this.limit(this.rates, `ip:${ipHash}`, ADDRESS_LIMITS, ALL_REQUESTS);
+    if (exchange) this.limit(this.rates, `ip:${ipHash}`, ADDRESS_LIMITS, EXCHANGES);
   }
 
   /**
@@ -78,7 +91,7 @@ export class ListenerRemoteService {
     this.prune();
     const grant = this.sessions.get(this.credentialHash(session));
     if (!grant) throw denied();
-    this.limit(this.credentialRates, `request:${identityKey(grant.binding)}`, 5);
+    this.limit(this.credentialRates, identityKey(grant.binding), IDENTITY_LIMITS, URL_REQUESTS);
   }
 
   issue(binding: Binding): { token: string; expiresAt: number } {
@@ -89,7 +102,7 @@ export class ListenerRemoteService {
       throw new ListenerRemoteError(400, 'invalid_request', 'Invalid remote listener identity');
     }
     const key = bindingKey(binding);
-    this.limit(this.credentialRates, `issue:${hash(key)}`, 3);
+    this.limit(this.credentialRates, hash(key), IDENTITY_LIMITS, ISSUES);
     const previous = this.grants.get(key);
     if (!previous && this.grants.size >= MAX_ENTRIES) this.unavailable();
     if (previous) this.remove(previous);
@@ -125,7 +138,7 @@ export class ListenerRemoteService {
     const sessionHash = this.credentialHash(session);
     const grant = this.sessions.get(sessionHash);
     if (!grant) throw denied();
-    this.limit(this.credentialRates, `session:${identityKey(grant.binding)}`, 60);
+    this.limit(this.credentialRates, identityKey(grant.binding), IDENTITY_LIMITS, AUTHENTICATIONS);
     await this.validate(grant, validate);
     return { ...grant.binding };
   }
@@ -181,15 +194,15 @@ export class ListenerRemoteService {
   private prune(): void {
     const now = this.now();
     for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant);
-    this.rates.prune(now);
-    this.credentialRates.prune(now);
+    this.rates.prune();
+    this.credentialRates.prune();
   }
 
-  /** Count one use of `key`; a full store refuses only new keys, never everyone (see RateWindows). */
-  private limit(store: RateWindows, key: string, max: number): void {
-    const rate = store.hit(key, max);
-    if (rate.count > max) {
-      const retryAfter = Math.max(1, Math.ceil((rate.expiresAt - this.now()) / 1000));
+  /** Count one use of counter `index` of `key`. A full store makes room; it never refuses (see RateWindows). */
+  private limit(store: RateWindows, key: string, limits: readonly number[], index: number): void {
+    const rate = store.hit(key, limits, index);
+    if (rate.count > rate.limit) {
+      const retryAfter = Math.max(1, Math.ceil(rate.remainingMs / 1000));
       throw new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests', retryAfter);
     }
   }

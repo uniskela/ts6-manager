@@ -113,17 +113,22 @@ budget; exchanges and requests without a live session count against the
 address.
 
 Address windows and identity windows are kept in separate stores of 10,000
-entries each. When a store is full, a new key first frees expired windows, then
-replaces the window still under its limit with the fewest hits (oldest among
-equals). A window that has reached its limit is never dropped early. If every
-window has reached its limit, only the new key is refused (429, with
-`Retry-After` until the earliest window expires); requests with a live session
-do not use the address store. The grant store is still capped at 10,000 and
+entries each. One window per address holds both its request and exchange
+counts, and one window per listener holds its link, authentication and URL
+counts, so making room for one count never discards another. Capacity never
+refuses a key: when a store is full, a new key first frees expired windows,
+then replaces the oldest window still under all its limits. A window that has
+reached a limit is dropped only when every window has, oldest first. Windows
+run on a monotonic clock. The grant store is still capped at 10,000 and
 answers 503 when full. Queue insertion is capped at 500 items.
-The app also applies the standard Express limiter after the bounded guard,
-before JSON parsing and authentication on every public remote endpoint, keyed
-the same way: per listener for a live session, otherwise per client address.
-That limiter and the sign-in limiter use a store with the same cap and policy.
+
+The app also applies two standard Express limiters after the bounded guard,
+before JSON parsing and authentication on every public remote endpoint: one per
+client address for requests without a live session, and one per listener for
+requests with one. The listener limiter's store can only be filled by verified
+sessions, so address traffic never affects a signed-in listener. These two
+limiters and the sign-in limiter use bounded stores with the same policy; the
+sign-in store holds 100,000 entries.
 
 A 429 from a rate limit carries `Retry-After` with the whole seconds left in
 that window (at least 1). A full queue or a pending link resolution answers 429

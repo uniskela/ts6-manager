@@ -38,7 +38,7 @@ import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
 import { activityJournalRoutes } from './routes/activity-journal.routes.js';
-import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard, listenerRemoteRateKey } from './routes/listener-remote.routes.js';
+import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard, listenerRemoteListenerKey } from './routes/listener-remote.routes.js';
 import { clientRateKey } from './utils/client-address.js';
 import { BoundedRateLimitStore } from './utils/rate-windows.js';
 
@@ -60,18 +60,31 @@ export function createApp(): Express {
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
   // Parse remote requests separately so body-parser errors cannot echo token material.
   // Bounded stores: a flood of new addresses cannot grow limiter memory without limit.
-  const remoteStore = new BoundedRateLimitStore({ windowMs: 60_000, limit: 120 });
-  const remoteLimiter = rateLimit({
+  // Live listeners have their own store, which only verified sessions can fill,
+  // so address traffic can never crowd out a signed-in listener.
+  const remoteAddressStore = new BoundedRateLimitStore();
+  const remoteListenerStore = new BoundedRateLimitStore();
+  const remoteLimit = {
     windowMs: 60_000,
     max: 120,
-    store: remoteStore,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many remote requests', code: 'rate_limited' },
-    keyGenerator: listenerRemoteRateKey,
+  } as const;
+  const remoteAddressLimiter = rateLimit({
+    ...remoteLimit,
+    store: remoteAddressStore,
+    skip: (_req, res) => listenerRemoteListenerKey(res) !== undefined,
+    keyGenerator: req => clientRateKey(req),
+  });
+  const remoteListenerLimiter = rateLimit({
+    ...remoteLimit,
+    store: remoteListenerStore,
+    skip: (_req, res) => listenerRemoteListenerKey(res) === undefined,
+    keyGenerator: (_req, res) => listenerRemoteListenerKey(res) ?? '',
   });
   // Keep the bounded guard first; it also enforces the stricter exchange quota.
-  app.use('/api/listener-remote', listenerRemoteIpGuard, remoteLimiter, listenerRemoteRoutes);
+  app.use('/api/listener-remote', listenerRemoteIpGuard, remoteAddressLimiter, remoteListenerLimiter, listenerRemoteRoutes);
   const remoteParseError: ErrorRequestHandler = (_err, _req, res, _next) => {
     res.setHeader('Cache-Control', 'no-store');
     res.status(400).json({ error: 'Invalid listener request.', code: 'invalid_request' });
@@ -90,7 +103,8 @@ export function createApp(): Express {
   });
 
   // H1: Rate limiting on auth endpoints
-  const authStore = new BoundedRateLimitStore({ windowMs: 15 * 60 * 1000, limit: 15 });
+  // Entries are small, so the sign-in store is large; when full it makes room and never refuses.
+  const authStore = new BoundedRateLimitStore({ capacity: 100_000 });
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 15,
@@ -98,13 +112,13 @@ export function createApp(): Express {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many attempts, please try again later' },
-    keyGenerator: clientRateKey,
+    keyGenerator: req => clientRateKey(req),
   });
   app.use('/api/auth/login', authLimiter);
   app.use('/api/auth/refresh', authLimiter);
   app.use('/api/auth/password', authLimiter);
   // Exposed so tests can check the stores stay bounded.
-  app.locals.rateLimitStores = { remote: remoteStore, auth: authStore };
+  app.locals.rateLimitStores = { remoteAddress: remoteAddressStore, remoteListener: remoteListenerStore, auth: authStore };
 
   // Public routes
   app.use('/api/setup', setupRoutes);

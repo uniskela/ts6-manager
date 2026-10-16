@@ -4,7 +4,8 @@ import { describe, it } from 'node:test';
 import express from 'express';
 import rateLimit from 'express-rate-limit';
 import { ListenerRemoteError, ListenerRemoteService, type Binding } from '../../voice/listener-remote.js';
-import { bearer, endpoint, listenerRemoteIpGuard, listenerRemoteRateKey, service } from './shared.js';
+import { clientRateKey } from '../../utils/client-address.js';
+import { bearer, endpoint, listenerRemoteIpGuard, listenerRemoteListenerKey, service } from './shared.js';
 
 const binding: Binding = { botId: 7, serverConfigId: 1, virtualServerId: 1, channelId: 3, clid: 9, uid: 'uid' };
 
@@ -16,7 +17,7 @@ async function fixture() {
   app.locals.listenerRemote = remote;
   const keys: string[] = [];
   const limiter = rateLimit({ windowMs: 60_000, max: 1_000, standardHeaders: true, legacyHeaders: false, validate: false, keyGenerator: (req, res) => {
-    const key = listenerRemoteRateKey(req, res);
+    const key = listenerRemoteListenerKey(res) ?? clientRateKey(req);
     keys.push(key);
     return key;
   } });

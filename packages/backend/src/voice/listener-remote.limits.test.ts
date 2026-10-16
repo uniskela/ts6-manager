@@ -54,7 +54,18 @@ describe('listener remote rate limit hardening', () => {
     service.checkIp('ipv4:198.51.100.1', false);
   });
 
-  it('refuses only a new address when every window is exhausted, never a live session', async () => {
+  it('keeps limiting exchanges from one address on a full store', () => {
+    const { service, state } = fixture();
+    for (let i = 0; i < 10_000; i++) service.checkIp(`ipv6:${i.toString(16).padStart(16, '0')}/64`, false);
+    for (let i = 0; i < 10; i++) {
+      service.checkIp('ipv4:192.0.2.7', true);
+      service.checkIp(`ipv4:198.51.100.${i}`, false);
+    }
+    assert.throws(() => service.checkIp('ipv4:192.0.2.7', true), limited());
+    assert.equal(state.rates.size, 10_000);
+  });
+
+  it('admits a new address when every window is exhausted, and never touches a live session', async () => {
     const { service, state, advance } = fixture();
     const session = await signIn(service);
     for (let i = 0; i < 10_000; i++) {
@@ -63,12 +74,13 @@ describe('listener remote rate limit hardening', () => {
     }
     assert.equal(state.rates.size, 10_000);
     advance(30_000);
-    assert.throws(() => service.checkIp('ipv4:198.51.100.1', false), limited(30));
+    // Capacity never refuses: the oldest exhausted window makes room.
+    service.checkIp('ipv4:198.51.100.1', false);
     assert.equal(state.rates.size, 10_000);
+    service.checkIp('ipv4:10.0.0.0', false);
+    assert.throws(() => service.checkIp('ipv4:10.0.0.1', false), limited(30));
     assert.ok(service.sessionRateKey(session));
     assert.deepEqual(await service.authenticate(session, allowed), BINDING);
-    advance(30_000);
-    service.checkIp('ipv4:198.51.100.1', false);
   });
 
   it('does not reset request or session limits when the listener asks for a new link', async () => {
