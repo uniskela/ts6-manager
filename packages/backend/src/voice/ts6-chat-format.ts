@@ -184,8 +184,7 @@ export function formatQueueMessage(
 
   const after = items.length - start - shown.length;
   if (after > 0) {
-    lines.push('');
-    lines.push(`_… and ${after} more_`);
+    lines.push('', `_… and ${after} more_`);
   }
 
   return lines.join('\n');

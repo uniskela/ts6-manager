@@ -217,7 +217,7 @@ export async function handlePlaylist(
     bot.queue.addMany(items);
   } catch (err) {
     if (!(err instanceof QueueFullError)) throw err;
-    context.reply(bot, userClid, err.message);
+    void context.reply(bot, userClid, err.message);
     return;
   }
   context.saveMusicRequest(bot, items);
@@ -249,7 +249,7 @@ function trackNumber(bot: VoiceBot, index: number): number {
 /** Queue position of a chat track number, or NaN when it is not a number. */
 function indexOfTrackNumber(bot: VoiceBot, raw: string): number {
   const value = raw.trim();
-  return (/^[1-9]\d*$/.test(value) ? Number(value) : NaN) - 1 - bot.queue.pruned;
+  return (/^[1-9]\d*$/.test(value) ? Number(value) : Number.NaN) - 1 - bot.queue.pruned;
 }
 
 function invalidTrackNumber(bot: VoiceBot): string {
@@ -314,13 +314,13 @@ export async function handleQueue(
     const idx = indexOfTrackNumber(bot, args.substring(7));
     const items = bot.queue.getAll();
     if (isNaN(idx) || idx < 0 || idx >= items.length) {
-      context.reply(bot, userClid, invalidTrackNumber(bot));
+      void context.reply(bot, userClid, invalidTrackNumber(bot));
       return;
     }
     const removed = items[idx];
     const number = trackNumber(bot, idx);
     bot.queue.removeAt(idx);
-    context.reply(bot, userClid, `Removed #${number}: ${removed.title}`);
+    void context.reply(bot, userClid, `Removed #${number}: ${removed.title}`);
     return;
   }
 
@@ -330,7 +330,7 @@ export async function handleQueue(
     const number = trackNumber(bot, idx);
     const item = bot.queue.playAt(idx);
     if (!item) {
-      context.reply(bot, userClid, invalidTrackNumber(bot));
+      void context.reply(bot, userClid, invalidTrackNumber(bot));
       return;
     }
     if (item.streamUrl) {
@@ -338,7 +338,7 @@ export async function handleQueue(
     } else {
       await bot.play(item, context.chatMusicSwitch(bot));
     }
-    context.reply(bot, userClid, `Playing #${number}: ${item.title}`);
+    void context.reply(bot, userClid, `Playing #${number}: ${item.title}`);
     return;
   }
 
