@@ -131,20 +131,41 @@ test('Up next lists the tracks after the playing one', async ({ page, request })
   await expect(list.getByRole('listitem').first()).toContainText('Third Song');
 });
 
-test('keyboard reorder and remove send absolute queue indexes', async ({ page, request }) => {
+/** The queue entry the console showed at an absolute index; its ID is what the request must name. */
+function shownAt(index: number, title: string) {
+  const item = state.queue[index];
+  expect(item.title).toBe(title);
+  return item.id;
+}
+
+test('keyboard reorder, remove and play now send absolute queue indexes with the shown item ID', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1400 });
   const calls = await mockBot(page);
   await signIn(page, request);
   await page.goto('/bot-hub/1');
 
   // Move "Third Song" (Up next 0 → absolute 2) down one place (absolute 3).
+  // The server refuses the edit if index 2 no longer holds that item, so the ID must be Third Song's.
   await expect(page.getByRole('list', { name: 'Up next' }).getByRole('listitem')).toHaveCount(3);
   await moveDownWithKeyboard(page, 'Third Song', 't3#0', 't4#0');
-  await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body).toEqual({ from: 2, to: 3 });
+  await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body)
+    .toEqual({ from: 2, to: 3, id: shownAt(2, 'Third Song') });
 
   // Remove "Fifth Song" (Up next 2 → absolute 4).
   await page.getByRole('button', { name: 'Remove Fifth Song from the queue' }).click();
-  await expect.poll(() => calls.find((c) => c.method === 'DELETE')?.url ?? '').toMatch(/\/queue\/4$/);
+  await expect.poll(() => {
+    const url = calls.find((c) => c.method === 'DELETE')?.url;
+    if (!url) return null;
+    const { pathname, searchParams } = new URL(url);
+    return { path: pathname.replace(/^.*\/queue\//, ''), id: searchParams.getAll('id') };
+  }).toEqual({ path: '4', id: [shownAt(4, 'Fifth Song')] });
+
+  // Play "Fourth Song" now (Up next 1 → absolute 3).
+  await page.getByRole('button', { name: 'Play Fourth Song now' }).click();
+  await expect.poll(() => {
+    const call = calls.find((c) => c.method === 'POST' && /\/queue\/\d+\/play$/.test(c.url));
+    return call && { index: call.url.match(/\/queue\/(\d+)\/play$/)![1], body: call.body };
+  }).toEqual({ index: '3', body: { id: shownAt(3, 'Fourth Song') } });
 });
 
 test('a queue refresh during a drag does not change what the drop moves', async ({ page, request }) => {
@@ -166,7 +187,8 @@ test('a queue refresh during a drag does not change what the drop moves', async 
   await page.keyboard.press('ArrowDown');
   await expect(live).toContainText('over droppable area t4#0');
   await page.keyboard.press('Space');
-  await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body).toEqual({ from: 2, to: 3 });
+  await expect.poll(() => calls.find((c) => c.method === 'PUT')?.body)
+    .toEqual({ from: 2, to: 3, id: shownAt(2, 'Third Song') });
 });
 
 test('radio and video streams hide an empty Up next but keep a queued one', async ({ page, request }) => {
