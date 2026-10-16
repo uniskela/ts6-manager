@@ -80,7 +80,8 @@ also cancels exchanges and delayed queue insertions already in progress.
 Errors are `{error: string, code: string}` with static, credential-free text.
 Codes: `invalid_request` (400), `invalid_access` (401; missing, consumed,
 expired, revoked or departed access), `permission_denied` (403), `not_found`
-(404; song/bot), `rate_limited` (429), `unavailable` (503). The remote surface
+(404; song/bot), `rate_limited` (429), `unavailable` (503), `timeout` (504; a
+pasted link took longer than two minutes to load). The remote surface
 never returns resolver, Query, database or credential-bearing exception text.
 
 Tokens expire after five minutes; sessions expire absolutely after fifteen
@@ -139,8 +140,13 @@ A 429 from a rate limit carries `Retry-After` with the whole seconds left in
 that window (at least 1). A full queue or a pending link resolution answers 429
 with `Retry-After: 60`.
 URL resolution permits one pending job per bot and four across the remote
-service. Provider fetches and yt-dlp processes each have a three-minute timeout;
-the normal shared downloader now bounds calls without an explicit signal too.
-An expired/revoked request may finish caching its download, but cannot enqueue.
+service. A pasted link has two minutes to resolve and download; the work is
+cancelled when that deadline passes (504 `timeout`), when the client
+disconnects, or when the session ends (checked every two seconds; 401). Its
+slots are released when the work stops, and cancellation kills the yt-dlp
+processes the request started, including the YouTube searches behind Spotify
+and Apple Music links. Provider page fetches that take no signal keep their own
+three-minute timeout but no longer hold a slot. A cancelled request never
+enqueues.
 JSON request bodies are limited to 4 KiB. T05 should serialize mutations and
 disable the request button while resolution is pending.

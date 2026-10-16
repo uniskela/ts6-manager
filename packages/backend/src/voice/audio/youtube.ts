@@ -342,7 +342,7 @@ function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, sign
 }
 
 /** Resolve Spotify track/album/playlist share links to a YouTube search query / best match URL. */
-export async function resolveSpotifyToYouTube(url: string): Promise<string> {
+export async function resolveSpotifyToYouTube(url: string, signal?: AbortSignal): Promise<string> {
   const cleaned = url.trim();
   let parsed: URL;
   try {
@@ -375,7 +375,8 @@ export async function resolveSpotifyToYouTube(url: string): Promise<string> {
     query = decodeURIComponent(parsed.pathname.split("/").pop() || "").replace(/-/g, " ");
   }
 
-  const song = await findSongForQuery(query);
+  signal?.throwIfAborted();
+  const song = await findSongForQuery(query, undefined, signal);
   if (!song) throw new Error(`No YouTube match found for Spotify title: ${query}`);
   return song.url;
 }
@@ -622,6 +623,7 @@ export async function fetchYouTubeVideoMeta(
  */
 export async function getYouTubeUrlInfo(
   url: string,
+  signal?: AbortSignal,
 ): Promise<{ type: "video" | "playlist"; items: YouTubeSearchResult[]; title?: string }> {
   // Apple Music / Spotify must be resolved before yt-dlp — never pass them through.
   try {
@@ -664,7 +666,7 @@ export async function getYouTubeUrlInfo(
     "--dump-single-json",
     "--ignore-errors",
     "--no-download",
-  ], probeUrl));
+  ], probeUrl), undefined, signal);
 
   const stdout = result.stdout.trim();
   if (!stdout) {
@@ -796,6 +798,7 @@ export function mapYtDlpInfoJson(
 export async function expandYouTubeToWatchUrls(
   url: string,
   cap = 25,
+  signal?: AbortSignal,
 ): Promise<{
   type: "video" | "playlist";
   urls: string[];
@@ -810,7 +813,7 @@ export async function expandYouTubeToWatchUrls(
 
   if (isPlaylist) {
     try {
-      const info = await getYouTubeUrlInfo(url);
+      const info = await getYouTubeUrlInfo(url, signal);
       if (info.items.length > 0) {
         const items = info.items.slice(0, cap).map((item) => ({
           url: `https://www.youtube.com/watch?v=${item.id}`,
@@ -838,7 +841,8 @@ export async function expandYouTubeToWatchUrls(
 
   // Last resort: probe again; never throw a raw TypeError from null JSON.
   try {
-    const info = await getYouTubeUrlInfo(parsed.canonicalUrl);
+    signal?.throwIfAborted();
+    const info = await getYouTubeUrlInfo(parsed.canonicalUrl, signal);
     if (info.items.length > 0) {
       return {
         type: info.type,
@@ -1005,8 +1009,8 @@ export async function findSongForQuery(
 }
 
 /** Best YouTube watch URL for an artist + title pair (Apple Music / Spotify tracks), or null. */
-export async function trackToYouTubeUrl(track: { artist?: string; title: string }): Promise<string | null> {
+export async function trackToYouTubeUrl(track: { artist?: string; title: string }, signal?: AbortSignal): Promise<string | null> {
   const query = [track.artist, track.title].filter(Boolean).join(" ").trim();
   if (!query) return null;
-  return (await findSongForQuery(query))?.url ?? null;
+  return (await findSongForQuery(query, undefined, signal))?.url ?? null;
 }

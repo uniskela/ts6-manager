@@ -442,8 +442,8 @@ export async function resolveAppleMusicTracks(url: string): Promise<AppleMusicRe
 }
 
 /** Search YouTube Music (then YouTube) for one Apple Music track; returns a watch URL or null. */
-export async function appleMusicTrackToYouTubeUrl(track: AppleMusicTrack): Promise<string | null> {
-  return trackToYouTubeUrl(track);
+export async function appleMusicTrackToYouTubeUrl(track: AppleMusicTrack, signal?: AbortSignal): Promise<string | null> {
+  return trackToYouTubeUrl(track, signal);
 }
 
 /**

@@ -135,13 +135,14 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
   const address = server.address();
   assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}/api`;
-  const request = (path: string, options: { method?: string; body?: unknown; rawBody?: string; session?: string; headers?: Record<string, string>; admin?: boolean } = {}) => fetch(`${base}/listener-remote${options.admin ? '-admin' : ''}${path}`, {
+  const request = (path: string, options: { method?: string; body?: unknown; rawBody?: string; session?: string; headers?: Record<string, string>; admin?: boolean; signal?: AbortSignal } = {}) => fetch(`${base}/listener-remote${options.admin ? '-admin' : ''}${path}`, {
     method: options.method ?? (options.body === undefined && options.rawBody === undefined ? 'GET' : 'POST'),
     headers: {
       ...(options.body === undefined && options.rawBody === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(options.session ? { Authorization: `Bearer ${options.session}` } : {}), ...options.headers,
     },
     body: options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
+    signal: options.signal,
   });
   const exchange = async () => {
     const issued = remote.issue(binding);
@@ -518,6 +519,78 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 503);
     f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => item;
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
+  }));
+
+  /** A download that never finishes on its own and reports when it is cancelled. */
+  function hangingDownload(f: Awaited<ReturnType<typeof fixture>>) {
+    const started = deferred<void>();
+    const cancelled = deferred<void>();
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = (_url: string, signal?: AbortSignal) => {
+      assert.ok(signal, 'the download receives the request signal');
+      signal.addEventListener('abort', () => cancelled.resolve(), { once: true });
+      started.resolve();
+      return new Promise<QueueItem>(() => {});
+    };
+    return { started: started.promise, cancelled: cancelled.promise };
+  }
+
+  it('cancels a link that outlives the deadline, answers 504 and frees its slot', async () => using(async f => {
+    f.app.locals.listenerLinkTimings = { deadlineMs: 50 };
+    const { session } = await f.exchange();
+    const download = hangingDownload(f);
+    const response = await f.request('/requests', { session, body: { url: mediaUrl } });
+    assert.equal(response.status, 504);
+    assert.deepEqual(await response.json(), { error: 'The media link took too long to load.', code: 'timeout' });
+    await download.cancelled;
+    assert.equal(f.queue.length, 1);
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => item;
+    assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
+  }));
+
+  it('cancels a resolving link as soon as its session ends, without waiting for the download', async () => using(async f => {
+    f.app.locals.listenerLinkTimings = { sessionCheckMs: 10 };
+    const { session } = await f.exchange();
+    const download = hangingDownload(f);
+    const pending = f.request('/requests', { session, body: { url: mediaUrl } });
+    await download.started;
+    f.remote.revoke(binding.botId, binding.uid);
+    assert.equal((await pending).status, 401);
+    await download.cancelled;
+    assert.equal(f.queue.length, 1);
+    const next = await f.exchange();
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => item;
+    assert.equal((await f.request('/requests', { session: next.session, body: { url: mediaUrl } })).status, 200);
+  }));
+
+  it('cancels a resolving link when the client disconnects and frees its slot', async () => using(async f => {
+    const { session } = await f.exchange();
+    const download = hangingDownload(f);
+    const client = new AbortController();
+    const pending = f.request('/requests', { session, body: { url: mediaUrl }, signal: client.signal });
+    await download.started;
+    client.abort();
+    await assert.rejects(pending);
+    await download.cancelled;
+    assert.equal(f.queue.length, 1);
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => item;
+    assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
+  }));
+
+  it('lets a finished link through untouched by the deadline and session checks', async () => using(async f => {
+    f.app.locals.listenerLinkTimings = { deadlineMs: 5_000, sessionCheckMs: 10 };
+    const { session } = await f.exchange();
+    const release = deferred<QueueItem>();
+    const started = deferred<void>();
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = (_url: string, signal?: AbortSignal) => {
+      started.resolve();
+      return release.promise.then(value => { assert.equal(signal?.aborted, false); return value; });
+    };
+    const pending = f.request('/requests', { session, body: { url: mediaUrl } });
+    await started.promise;
+    await new Promise(resolve => setTimeout(resolve, 50));
+    release.resolve(item);
+    assert.equal((await pending).status, 200);
+    assert.equal(f.queue.length, 2);
   }));
 });
 

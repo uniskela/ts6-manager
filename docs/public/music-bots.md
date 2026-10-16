@@ -206,7 +206,7 @@ When the session ends, the page says the access is invalid or expired. Type `!re
 - you type `!remote` again (the new link replaces the earlier link and session for that bot); and
 - the Manager backend restarts.
 
-**Rate limits** are per minute and keep the page usable for everyone: you can request about three links per minute for a bot, paste at most five links per minute for that bot (a new `!remote` link does not reset this), and only one pasted link per bot is resolved at a time. The page shows `Too many remote requests` or `A media request is already pending.` when you hit a limit; wait a minute and try again.
+**Rate limits** are per minute and keep the page usable for everyone: you can request about three links per minute for a bot, paste at most five links per minute for that bot (a new `!remote` link does not reset this), and only one pasted link per bot is resolved at a time. The page shows `Too many remote requests` or `A media request is already pending.` when you hit a limit; wait a minute and try again. A pasted link that takes longer than two minutes to load is cancelled with `The media link took too long to load.`; closing the page or losing access also cancels it.
 
 **What you may see in chat** when asking for a link. All of these arrive as private messages:
 

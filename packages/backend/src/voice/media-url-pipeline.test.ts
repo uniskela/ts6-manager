@@ -325,3 +325,57 @@ test('a failed first track releases the reservation', async () => {
   ), /download failed/);
   assert.equal(released, 1);
 });
+
+test('an aborted request rejects at once, even while a step is still running, and passes the signal on', async () => {
+  const controller = new AbortController();
+  const seen: Array<AbortSignal | undefined> = [];
+  let downloadStarted!: () => void;
+  const started = new Promise<void>((resolve) => { downloadStarted = resolve; });
+  const { target, calls } = fakeTarget();
+  const pending = runMediaUrlPipeline(fakeDeps({
+    downloadTrack: (_url, signal) => { seen.push(signal); downloadStarted(); return new Promise<QueueItem>(() => {}); },
+  }), target, { url: 'https://www.youtube.com/watch?v=abcdefghijk', enqueueOnly: true, signal: controller.signal });
+  await started;
+  controller.abort(new Error('cancelled'));
+  await assert.rejects(pending, /cancelled/);
+  assert.deepEqual(seen, [controller.signal]);
+  assert.equal(calls.enqueue.length, 0);
+});
+
+test('an already aborted request calls no resolver', async () => {
+  const controller = new AbortController();
+  controller.abort(new Error('cancelled'));
+  let called = false;
+  const { target } = fakeTarget();
+  await assert.rejects(runMediaUrlPipeline(fakeDeps({
+    resolveSpotify: async (url) => { called = true; return url; },
+    downloadTrack: async (url) => { called = true; return item(url); },
+  }), target, { url: 'https://open.spotify.com/track/x', enqueueOnly: true, signal: controller.signal }), /cancelled/);
+  assert.equal(called, false);
+});
+
+test('Spotify and Apple Music lookups receive the request signal', async () => {
+  const controller = new AbortController();
+  const seen: Array<AbortSignal | undefined> = [];
+  const { target } = fakeTarget();
+  await runMediaUrlPipeline(fakeDeps({
+    resolveSpotify: async (url, signal) => { seen.push(signal); return 'https://www.youtube.com/watch?v=abcdefghijk'; },
+  }), target, { url: 'https://open.spotify.com/track/x', enqueueOnly: true, signal: controller.signal });
+  await runMediaUrlPipeline(fakeDeps({
+    resolveAppleMusic: async () => ({ tracks: [{ title: 'Song', artist: 'Artist' } as AppleMusicTrack] }),
+    appleTrackToYouTube: async (_track, signal) => { seen.push(signal); return 'https://www.youtube.com/watch?v=abcdefghijk'; },
+  }), target, { url: 'https://music.apple.com/us/album/x/1?i=2', enqueueOnly: true, signal: controller.signal });
+  assert.deepEqual(seen, [controller.signal, controller.signal]);
+});
+
+test('a cancelled playlist expansion reports the cancellation, not a resolve failure', async () => {
+  const controller = new AbortController();
+  const { target } = fakeTarget();
+  const pending = runMediaUrlPipeline(fakeDeps({
+    expandYouTube: (_url, _cap, signal) => new Promise((_resolve, reject) => {
+      signal?.addEventListener('abort', () => reject(new Error('process killed')), { once: true });
+    }),
+  }), target, { url: 'https://www.youtube.com/playlist?list=PL123', enqueueOnly: true, signal: controller.signal });
+  controller.abort(new Error('cancelled'));
+  await assert.rejects(pending, /cancelled/);
+});

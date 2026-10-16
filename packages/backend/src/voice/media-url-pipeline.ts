@@ -21,19 +21,25 @@ const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
 const PLAYLIST_CAP = 25;
 
 export interface MediaUrlPipelineDeps {
-  resolveSpotify(url: string): Promise<string>;
+  resolveSpotify(url: string, signal?: AbortSignal): Promise<string>;
   resolveAppleMusic(url: string): Promise<AppleMusicResolved>;
   /** Tracks of a Spotify playlist/album, or null when the link is a single track. */
   resolveSpotifyCollection(url: string): Promise<{ title?: string; tracks: AppleMusicTrack[] } | null>;
-  appleTrackToYouTube(track: AppleMusicTrack): Promise<string | null>;
-  expandYouTube(url: string, cap: number): Promise<{ title?: string; urls: string[] } | null>;
-  downloadTrack(url: string): Promise<QueueItem>;
+  appleTrackToYouTube(track: AppleMusicTrack, signal?: AbortSignal): Promise<string | null>;
+  expandYouTube(url: string, cap: number, signal?: AbortSignal): Promise<{ title?: string; urls: string[] } | null>;
+  downloadTrack(url: string, signal?: AbortSignal): Promise<QueueItem>;
 }
 
 export interface MediaUrlRequest {
   url: string;
   enqueueOnly: boolean;
   cap?: number;
+  /**
+   * Cancels the request. Resolver and downloader processes that take the signal
+   * are stopped, and the pipeline rejects as soon as it aborts, even while a
+   * step that cannot be cancelled is still finishing on its own timeout.
+   */
+  signal?: AbortSignal;
 }
 
 export interface MediaUrlTarget {
@@ -58,12 +64,12 @@ export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
     resolveAppleMusic: resolveAppleMusicTracks,
     resolveSpotifyCollection,
     appleTrackToYouTube: appleMusicTrackToYouTubeUrl,
-    expandYouTube: async (url, cap) => {
-      const expanded = await expandYouTubeToWatchUrls(url, cap);
+    expandYouTube: async (url, cap, signal) => {
+      const expanded = await expandYouTubeToWatchUrls(url, cap, signal);
       return expanded ? { title: expanded.title, urls: expanded.urls } : null;
     },
-    downloadTrack: async (url) => {
-      const { filePath, info } = await downloadYouTube(url, MUSIC_DIR);
+    downloadTrack: async (url, signal) => {
+      const { filePath, info } = await downloadYouTube(url, MUSIC_DIR, undefined, signal);
       return {
         id: `yt_${info.id}`,
         title: info.title,
@@ -75,6 +81,17 @@ export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
       };
     },
   };
+}
+
+/** `promise`, or a rejection with the signal's reason as soon as `signal` aborts. */
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  signal.throwIfAborted();
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 }
 
 /** Normalize a rejected value for the background playlist error callback. */
@@ -96,6 +113,9 @@ export async function runMediaUrlPipeline(
   } = {},
 ): Promise<{ first: QueueItem; playlistTitle?: string; queuedInBackground: number }> {
   const cap = req.cap ?? PLAYLIST_CAP;
+  const { signal } = req;
+  const step = <T>(promise: Promise<T>) => abortable(promise, signal);
+  signal?.throwIfAborted();
   let mediaUrl = req.url;
   let urlsToPlay = [mediaUrl];
   let playlistTitle: string | undefined;
@@ -105,15 +125,15 @@ export async function runMediaUrlPipeline(
   // Spotify / Apple Music playlists and albums: match each track on YouTube.
   let collection: { title?: string; tracks: AppleMusicTrack[] } | null = null;
   if (isSpotifyShareUrl(mediaUrl)) {
-    collection = await deps.resolveSpotifyCollection(mediaUrl);
+    collection = await step(deps.resolveSpotifyCollection(mediaUrl));
     if (collection) {
       pendingSource = 'Spotify';
     } else {
-      mediaUrl = await deps.resolveSpotify(mediaUrl);
+      mediaUrl = await step(deps.resolveSpotify(mediaUrl, signal));
       urlsToPlay = [mediaUrl];
     }
   } else if (isAppleMusicShareUrl(mediaUrl)) {
-    collection = await deps.resolveAppleMusic(mediaUrl);
+    collection = await step(deps.resolveAppleMusic(mediaUrl));
   }
 
   if (collection) {
@@ -121,7 +141,7 @@ export async function runMediaUrlPipeline(
       throw new Error(`Could not resolve any tracks from that ${pendingSource} URL`);
     }
     playlistTitle = collection.title;
-    const firstYt = await deps.appleTrackToYouTube(collection.tracks[0]);
+    const firstYt = await step(deps.appleTrackToYouTube(collection.tracks[0], signal));
     if (!firstYt) {
       throw new Error(
         `No YouTube match for ${pendingSource} track: ${collection.tracks[0].artist} - ${collection.tracks[0].title}`,
@@ -134,8 +154,9 @@ export async function runMediaUrlPipeline(
     if (isYouTubePlaylistUrl(mediaUrl)) {
       let expanded: { title?: string; urls: string[] } | null;
       try {
-        expanded = await deps.expandYouTube(mediaUrl, cap);
+        expanded = await step(deps.expandYouTube(mediaUrl, cap, signal));
       } catch {
+        signal?.throwIfAborted();
         throw new Error('Could not resolve any videos from that playlist URL');
       }
       if (expanded?.urls.length) {
@@ -158,7 +179,8 @@ export async function runMediaUrlPipeline(
   target.reserve?.(1 + queuedInBackground);
   let first: QueueItem;
   try {
-    first = await deps.downloadTrack(urlsToPlay[0]);
+    first = await step(deps.downloadTrack(urlsToPlay[0], signal));
+    signal?.throwIfAborted();
     if (req.enqueueOnly) {
       target.enqueue(first);
     } else {
