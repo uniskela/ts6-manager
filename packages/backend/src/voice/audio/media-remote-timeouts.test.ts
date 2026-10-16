@@ -29,7 +29,8 @@ test('shared downloader bounds callers without an AbortSignal', async () => {
   }
 });
 
-test('the downloader kills the whole process group after three minutes', async () => {
+// Windows has no process groups; there the timeout kills yt-dlp alone, as before.
+test('the downloader kills the whole process group after three minutes', { skip: process.platform === 'win32' }, async () => {
   mock.timers.enable({ apis: ['setTimeout'] });
   const kills: Array<[number, string | number | undefined]> = [];
   let proc!: EventEmitter;
