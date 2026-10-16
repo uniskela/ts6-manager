@@ -119,7 +119,12 @@ counts, so making room for one count never discards another. Capacity never
 refuses a key: when a store is full, a new key first frees expired windows,
 then replaces the oldest window still under all its limits. A window that has
 reached a limit is dropped only when every window has, oldest first. Windows
-run on a monotonic clock. The grant store is still capped at 10,000 and
+run on a monotonic clock.
+
+This is an accepted trade-off. Under sustained saturation by very many distinct
+addresses, a partly used quota (and, in the extreme, an exhausted one) can
+restart early. Refusing new keys on a full store was rejected because it let a
+flood deny service to everyone. The grant store is still capped at 10,000 and
 answers 503 when full. Queue insertion is capped at 500 items.
 
 The app also applies two standard Express limiters after the bounded guard,

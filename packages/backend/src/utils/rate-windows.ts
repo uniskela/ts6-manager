@@ -86,12 +86,12 @@ export class RateWindows {
     return { count: window.counts[index], limit: window.limits[index], remainingMs: window.expiresAt - now };
   }
 
+  /** Undo one hit. The window keeps its reset time, even at zero hits. */
   decrement(key: string, index = 0): void {
     const window = this.windows.get(key);
     if (!window) return;
     window.counts[index] = Math.max(0, window.counts[index] - 1);
-    if (window.counts.every(count => count === 0)) this.delete(key);
-    else if (!exhausted(window)) this.open.add(key);
+    if (!exhausted(window) && !this.open.has(key)) this.reopen(key);
   }
 
   delete(key: string): void {
@@ -102,6 +102,17 @@ export class RateWindows {
   clear(): void {
     this.windows.clear();
     this.open.clear();
+  }
+
+  /**
+   * Put a window that fell back under its limits back in creation order. Only a
+   * decrement does this (express-rate-limit decrements only when a limiter skips
+   * failed or successful requests), so a linear rebuild is acceptable here.
+   */
+  private reopen(key: string): void {
+    const open = [...this.windows.keys()].filter(other => other === key || this.open.has(other));
+    this.open.clear();
+    for (const other of open) this.open.add(other);
   }
 
   private makeRoom(now: number): void {

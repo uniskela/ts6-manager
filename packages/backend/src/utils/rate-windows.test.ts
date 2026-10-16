@@ -60,6 +60,32 @@ describe('bounded rate windows', () => {
     assert.ok(windows.hit('b', [1]).count > 1);
   });
 
+  it('puts a window that falls back under its limit back in creation order', () => {
+    const { now } = clock();
+    const windows = new RateWindows(3, 60_000, now);
+    windows.hit('a', [2]);
+    windows.hit('a', [2]);
+    windows.hit('b', [2]);
+    windows.hit('c', [2]);
+    windows.decrement('a');
+    // a is the oldest under-limit window again, so it makes room first.
+    windows.hit('d', [2]);
+    assert.deepEqual([...windows.keys()], ['b', 'c', 'd']);
+  });
+
+  it('keeps a window and its reset time when its count drops to zero', () => {
+    const { now, advance } = clock();
+    const windows = new RateWindows(3, 60_000, now);
+    windows.hit('a', [2]);
+    advance(10_000);
+    windows.decrement('a');
+    assert.deepEqual(windows.get('a'), { counts: [0], remainingMs: 50_000 });
+    assert.deepEqual(windows.hit('a', [2]), { count: 1, limit: 2, remainingMs: 50_000 });
+    windows.decrement('a');
+    windows.decrement('a');
+    assert.deepEqual(windows.get('a')?.counts, [0]);
+  });
+
   it('does constant work per new key on a full store', () => {
     const { now } = clock();
     const windows = new RateWindows(1_000, 60_000, now);
