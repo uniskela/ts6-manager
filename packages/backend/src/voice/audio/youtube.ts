@@ -316,16 +316,19 @@ const YT_DLP_TIMEOUT_MS = 180_000;
 
 /**
  * Bound all downloader/playlist jobs, including listener requests without caller cancellation.
- * yt-dlp runs in its own process group, and a timeout or cancellation kills the whole group,
- * so an ffmpeg it started for conversion stops with it instead of writing on afterwards.
+ * On POSIX yt-dlp runs in its own process group, and a timeout or cancellation kills the whole
+ * group, so an ffmpeg it started for conversion stops with it instead of writing on afterwards.
  */
 function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
-    const proc = spawn(getYtDlpPath(), args, { shell: false, detached: true });
+    // Own process group on POSIX; Windows has no process groups to kill, so it keeps the old behaviour.
+    const group = process.platform !== "win32";
+    const proc = spawn(getYtDlpPath(), args, { shell: false, detached: group });
     let running = true;
     const killTree = () => {
       if (!running || proc.pid === undefined) return;
+      if (!group) { proc.kill("SIGKILL"); return; }
       try { process.kill(-proc.pid, "SIGKILL"); } catch { proc.kill("SIGKILL"); }
     };
     const timer = setTimeout(killTree, YT_DLP_TIMEOUT_MS);

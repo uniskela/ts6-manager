@@ -24,11 +24,12 @@ async function waitFor(check: () => boolean | Promise<boolean>, what: string): P
   assert.fail(`timed out waiting for ${what}`);
 }
 
-test('cancelling a download stops yt-dlp and the process it started', async () => {
+test('cancelling a download stops yt-dlp and the process it started', { skip: process.platform === 'win32' }, async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ts6-abort-'));
   const previousYtDlpPath = process.env.YT_DLP_PATH;
   const pidFile = path.join(dir, 'pids');
   let pids: number[] = [];
+  const controller = new AbortController();
   try {
     // A yt-dlp that starts a long-running child, as it starts ffmpeg to convert audio,
     // records both pids and never finishes.
@@ -41,7 +42,6 @@ setInterval(() => {}, 1000);
 `);
     await chmod(executable, 0o755);
     process.env.YT_DLP_PATH = executable;
-    const controller = new AbortController();
     const pending = downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, undefined, controller.signal);
     await waitFor(async () => {
       pids = (await readFile(pidFile, 'utf8').catch(() => '')).split(' ').map(Number).filter(Boolean);
@@ -52,6 +52,8 @@ setInterval(() => {}, 1000);
     await waitFor(() => !alive(pids[0]), 'yt-dlp to stop');
     await waitFor(() => !alive(pids[1]), 'the child of yt-dlp to stop');
   } finally {
+    // Also stops the processes when the test failed before reading their pids.
+    controller.abort(new Error('test finished'));
     for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
     if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;
     else process.env.YT_DLP_PATH = previousYtDlpPath;

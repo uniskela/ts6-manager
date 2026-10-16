@@ -10,8 +10,8 @@ import { isAbsolute } from 'node:path';
 test('shared downloader bounds callers without an AbortSignal', async () => {
   const spawn = mock.method(childProcess, 'spawn', (command: string, _args: unknown, options: { detached?: boolean }) => {
     assert.ok(isAbsolute(command));
-    // Its own process group, so the timeout can kill everything it started.
-    assert.equal(options.detached, true);
+    // Its own process group on POSIX, so the timeout can kill everything it started.
+    assert.equal(options.detached, process.platform !== 'win32');
     const proc = Object.assign(new EventEmitter(), { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
     queueMicrotask(() => {
       proc.stdout.emit('data', Buffer.from(JSON.stringify({ title: 'Song', duration: 1 })));
