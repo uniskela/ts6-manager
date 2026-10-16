@@ -54,7 +54,10 @@ if [ ! -f "$PRISMA_CLI" ]; then
 fi
 
 echo "[schema] Running: prisma db push --skip-generate (mode=$MODE)"
-node "$PRISMA_CLI" db push --skip-generate
+# The Prisma CLI's update check forks a detached node process. If the check hangs
+# (for example when outbound traffic is filtered) it outlives this script and,
+# after `exec node dist/index.js`, ends as a zombie under the backend (#466).
+CHECKPOINT_DISABLE=1 node "$PRISMA_CLI" db push --skip-generate
 
 # Seed is safe to re-run (script uses upsert / ignores existing values).
 if node prisma/seed.mjs; then
