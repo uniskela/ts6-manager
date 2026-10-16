@@ -8,11 +8,11 @@ import { resolveAppleMusicTracks } from './apple-music.js';
 import { isAbsolute } from 'node:path';
 
 test('shared downloader bounds callers without an AbortSignal', async () => {
-  const spawn = mock.method(childProcess, 'spawn', (command: string, _args: unknown, options: { timeout: number; killSignal: string }) => {
+  const spawn = mock.method(childProcess, 'spawn', (command: string, _args: unknown, options: { detached?: boolean }) => {
     assert.ok(isAbsolute(command));
-    assert.equal(options.timeout, 180_000);
-    assert.equal(options.killSignal, 'SIGKILL');
-    const proc = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), stderr: new EventEmitter() });
+    // Its own process group, so the timeout can kill everything it started.
+    assert.equal(options.detached, true);
+    const proc = Object.assign(new EventEmitter(), { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
     queueMicrotask(() => {
       proc.stdout.emit('data', Buffer.from(JSON.stringify({ title: 'Song', duration: 1 })));
       proc.emit('close', 0);
@@ -26,6 +26,35 @@ test('shared downloader bounds callers without an AbortSignal', async () => {
   } finally {
     spawn.mock.restore();
     syncBuiltinESMExports();
+  }
+});
+
+test('the downloader kills the whole process group after three minutes', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const kills: Array<[number, string | number | undefined]> = [];
+  let proc!: EventEmitter;
+  const spawn = mock.method(childProcess, 'spawn', () => {
+    proc = Object.assign(new EventEmitter(), { pid: 4242, stdout: new EventEmitter(), stderr: new EventEmitter(), kill: () => true });
+    return proc;
+  });
+  const kill = mock.method(process, 'kill', (pid: number, signal?: string | number) => {
+    kills.push([pid, signal]);
+    queueMicrotask(() => proc.emit('close', null));
+    return true;
+  });
+  syncBuiltinESMExports();
+  try {
+    const pending = fetchYouTubeVideoMeta('00000000001');
+    mock.timers.tick(179_999);
+    assert.deepEqual(kills, []);
+    mock.timers.tick(1);
+    assert.equal(await pending, null);
+    assert.deepEqual(kills, [[-4242, 'SIGKILL']]);
+  } finally {
+    kill.mock.restore();
+    spawn.mock.restore();
+    syncBuiltinESMExports();
+    mock.timers.reset();
   }
 });
 

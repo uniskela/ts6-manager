@@ -140,12 +140,14 @@ A 429 from a rate limit carries `Retry-After` with the whole seconds left in
 that window (at least 1). A full queue or a pending link resolution answers 429
 with `Retry-After: 60`.
 URL resolution permits one pending job per bot and four across the remote
-service. A pasted link has two minutes to resolve and download; the work is
-cancelled when that deadline passes (504 `timeout`), when the client
-disconnects, or when the session ends (checked every two seconds; 401). Its
-slots are released when the work stops, and cancellation kills the yt-dlp
-processes the request started, including the YouTube searches behind Spotify
-and Apple Music links. Provider page fetches that take no signal keep their own
+service. A pasted link has two minutes, including the URL check, to resolve
+and download; the work is cancelled when that deadline passes (504 `timeout`),
+when the client disconnects (also before the link step starts), or when the
+session ends (checked every two seconds; 401). Its slots are released when the
+work stops. Cancellation kills the yt-dlp processes the request started,
+including the YouTube searches behind Spotify and Apple Music links. yt-dlp
+runs in its own process group, and a cancellation or its three-minute timeout
+kills the whole group, so an ffmpeg conversion stops with it. Provider page fetches that take no signal keep their own
 three-minute timeout but no longer hold a slot. A cancelled request never
 enqueues.
 JSON request bodies are limited to 4 KiB. T05 should serialize mutations and

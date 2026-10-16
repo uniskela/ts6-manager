@@ -9,32 +9,43 @@ function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
 }
 
-test('cancelling a download stops the yt-dlp process and rejects', async () => {
+async function waitFor(check: () => boolean | Promise<boolean>, what: string): Promise<void> {
+  for (let i = 0; i < 300; i++) {
+    if (await check()) return;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail(`timed out waiting for ${what}`);
+}
+
+test('cancelling a download stops yt-dlp and the process it started', async () => {
   const dir = await mkdtemp(path.join(tmpdir(), 'ts6-abort-'));
   const previousYtDlpPath = process.env.YT_DLP_PATH;
-  const pidFile = path.join(dir, 'pid');
+  const pidFile = path.join(dir, 'pids');
+  let pids: number[] = [];
   try {
-    // A yt-dlp that records its pid and never finishes.
+    // A yt-dlp that starts a long-running child, as it starts ffmpeg to convert audio,
+    // records both pids and never finishes.
     const executable = path.join(dir, 'yt-dlp');
     await writeFile(executable, `#!${process.execPath}
-require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+const { spawn } = require('node:child_process');
+const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, process.pid + ' ' + child.pid);
 setInterval(() => {}, 1000);
 `);
     await chmod(executable, 0o755);
     process.env.YT_DLP_PATH = executable;
     const controller = new AbortController();
     const pending = downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, undefined, controller.signal);
-    let pid = 0;
-    for (let i = 0; i < 200 && !pid; i++) {
-      pid = Number(await readFile(pidFile, 'utf8').catch(() => '')) || 0;
-      if (!pid) await new Promise(resolve => setTimeout(resolve, 10));
-    }
-    assert.ok(pid > 0, 'yt-dlp started');
+    await waitFor(async () => {
+      pids = (await readFile(pidFile, 'utf8').catch(() => '')).split(' ').map(Number).filter(Boolean);
+      return pids.length === 2;
+    }, 'yt-dlp and its child to start');
     controller.abort(new Error('cancelled'));
-    await assert.rejects(pending);
-    for (let i = 0; i < 100 && alive(pid); i++) await new Promise(resolve => setTimeout(resolve, 10));
-    assert.equal(alive(pid), false, 'yt-dlp was stopped');
+    await assert.rejects(pending, /cancelled/);
+    await waitFor(() => !alive(pids[0]), 'yt-dlp to stop');
+    await waitFor(() => !alive(pids[1]), 'the child of yt-dlp to stop');
   } finally {
+    for (const pid of pids) if (alive(pid)) process.kill(pid, 'SIGKILL');
     if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;
     else process.env.YT_DLP_PATH = previousYtDlpPath;
     await rm(dir, { recursive: true, force: true });

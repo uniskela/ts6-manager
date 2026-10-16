@@ -84,7 +84,7 @@ export function defaultMediaUrlDeps(): MediaUrlPipelineDeps {
 }
 
 /** `promise`, or a rejection with the signal's reason as soon as `signal` aborts. */
-function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+export function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
   if (!signal) return promise;
   signal.throwIfAborted();
   return new Promise<T>((resolve, reject) => {

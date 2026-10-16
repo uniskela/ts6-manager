@@ -131,6 +131,8 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     next();
   }, listenerRemoteAdminRoutes);
   const server = app.listen(0, '127.0.0.1');
+  const sockets: import('node:net').Socket[] = [];
+  server.on('connection', socket => sockets.push(socket));
   await once(server, 'listening');
   const address = server.address();
   assert.ok(address && typeof address === 'object');
@@ -152,7 +154,7 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     return { ...data, token: issued.token };
   };
   return {
-    remote, request, exchange, queue, app, state, audit, songQueries, settingQueries, bot, history, plays,
+    remote, request, exchange, queue, app, state, audit, songQueries, settingQueries, bot, history, plays, sockets,
     get downloads() { return downloads; }, advance: (ms: number) => { now += ms; },
     close: () => new Promise<void>((resolve, reject) => {
       server.close(err => err ? reject(err) : resolve());
@@ -585,12 +587,49 @@ describe('listener remote HTTP security boundary', () => {
       started.resolve();
       return release.promise.then(value => { assert.equal(signal?.aborted, false); return value; });
     };
+    const checked = deferred<void>();
+    let checks = 0;
+    const sessionRateKey = f.remote.sessionRateKey.bind(f.remote);
+    f.remote.sessionRateKey = (value) => {
+      if (++checks === 4) checked.resolve();
+      return sessionRateKey(value);
+    };
     const pending = f.request('/requests', { session, body: { url: mediaUrl } });
     await started.promise;
-    await new Promise(resolve => setTimeout(resolve, 50));
+    // The guard checks once on arrival; wait for three session checks while the download runs.
+    await checked.promise;
     release.resolve(item);
     assert.equal((await pending).status, 200);
     assert.equal(f.queue.length, 2);
+  }));
+
+  it('cancels a link whose client left while its access was still being checked', async () => using(async f => {
+    const { session } = await f.exchange();
+    const bridge = f.app.locals.eventBridge as { executeCommand: (...args: any[]) => Promise<string> };
+    const executeCommand = bridge.executeCommand;
+    const reached = deferred<void>();
+    const gate = deferred<void>();
+    bridge.executeCommand = async (...args) => { reached.resolve(); await gate.promise; return executeCommand(...args); };
+    let downloads = 0;
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { downloads++; return item; };
+    const client = new AbortController();
+    const pending = f.request('/requests', { session, body: { url: mediaUrl }, signal: client.signal });
+    await reached.promise;
+    const socket = f.sockets.at(-1)!;
+    client.abort();
+    await assert.rejects(pending);
+    if (!socket.destroyed) await once(socket, 'close');
+    gate.resolve();
+    // Wait for the abandoned request to end: its audit attempt completes as a failure.
+    const failed = () => f.audit.some(row => { const outcome = (row.data as any)?.outcome; return outcome && outcome !== 'pending' && outcome !== 'success'; });
+    for (let turn = 0; turn < 500 && !failed(); turn++) await new Promise(resolve => setImmediate(resolve));
+    assert.ok(failed(), 'the abandoned request ended');
+    assert.equal(downloads, 0);
+    assert.equal(f.queue.length, 1);
+    bridge.executeCommand = executeCommand;
+    // Its slot is free for the next request.
+    assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
+    assert.equal(downloads, 1);
   }));
 });
 

@@ -310,11 +310,30 @@ function withMediaUrl(args: string[], url: string): string[] {
   return [...args, "--", url];
 }
 
-/** Bound all downloader/playlist jobs, including listener requests without caller cancellation. */
+/** Longest one yt-dlp process may run. */
+const YT_DLP_TIMEOUT_MS = 180_000;
+
+/**
+ * Bound all downloader/playlist jobs, including listener requests without caller cancellation.
+ * yt-dlp runs in its own process group, and a timeout or cancellation kills the whole group,
+ * so an ffmpeg it started for conversion stops with it instead of writing on afterwards.
+ */
 function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
-    const proc = spawn(getYtDlpPath(), args, { shell: false, signal, timeout: 180_000, killSignal: "SIGKILL" });
+    const proc = spawn(getYtDlpPath(), args, { shell: false, detached: true });
+    let running = true;
+    const killTree = () => {
+      if (!running || proc.pid === undefined) return;
+      try { process.kill(-proc.pid, "SIGKILL"); } catch { proc.kill("SIGKILL"); }
+    };
+    const timer = setTimeout(killTree, YT_DLP_TIMEOUT_MS);
+    signal?.addEventListener("abort", killTree, { once: true });
+    const finished = () => {
+      running = false;
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", killTree);
+    };
     let stdout = "";
     let stderr = "";
     const pending = { stdout: '', stderr: '' };
@@ -336,8 +355,15 @@ function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, sign
       stderr = (stderr + chunk.toString()).slice(-65536);
       consumeProgress('stderr', chunk);
     });
-    proc.on("close", (code) => resolve({ code, stdout, stderr }));
-    proc.on("error", (err) => reject(signal?.aborted ? signal.reason : new Error(`yt-dlp not found: ${err.message}`)));
+    proc.on("close", (code) => {
+      finished();
+      if (signal?.aborted) reject(signal.reason);
+      else resolve({ code, stdout, stderr });
+    });
+    proc.on("error", (err) => {
+      finished();
+      reject(signal?.aborted ? signal.reason : new Error(`yt-dlp not found: ${err.message}`));
+    });
   });
 }
 
@@ -840,8 +866,8 @@ export async function expandYouTubeToWatchUrls(
   }
 
   // Last resort: probe again; never throw a raw TypeError from null JSON.
+  signal?.throwIfAborted();
   try {
-    signal?.throwIfAborted();
     const info = await getYouTubeUrlInfo(parsed.canonicalUrl, signal);
     if (info.items.length > 0) {
       return {
