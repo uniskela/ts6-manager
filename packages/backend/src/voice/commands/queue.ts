@@ -213,7 +213,7 @@ export async function handlePlaylist(
   });
   if (!playlist?.songs.length) { context.reply(bot, userClid, 'Playlist is empty.'); return; }
   if (bot.stopGeneration !== stopGeneration) {
-    context.reply(bot, userClid, 'Playback was stopped before the playlist was loaded.');
+    void context.reply(bot, userClid, 'Playback was stopped before the playlist was loaded.');
     return;
   }
   const items: QueueItem[] = playlist.songs.map(({ song }) => ({
