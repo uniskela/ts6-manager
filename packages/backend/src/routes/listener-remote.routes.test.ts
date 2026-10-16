@@ -579,18 +579,22 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
   }));
 
-  it('does not queue a resolved link whose client left during the final access check', async () => using(async f => {
-    const { session } = await f.exchange();
+  /**
+   * Hold a ServerQuery lookup of a link request (the first one, or the first after the
+   * download when `afterDownload`), disconnect the client, then release the lookup and
+   * wait for the abandoned request to end. Returns how many downloads ran.
+   */
+  async function disconnectDuringLookup(f: Awaited<ReturnType<typeof fixture>>, session: string, afterDownload: boolean) {
     const bridge = f.app.locals.eventBridge as { executeCommand: (...args: any[]) => Promise<string> };
     const executeCommand = bridge.executeCommand;
-    let resolved = false;
+    let downloads = 0;
     const reached = deferred<void>();
     const gate = deferred<void>();
     bridge.executeCommand = async (...args) => {
-      if (resolved) { reached.resolve(); await gate.promise; }
+      if (!afterDownload || downloads > 0) { reached.resolve(); await gate.promise; }
       return executeCommand(...args);
     };
-    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { resolved = true; return item; };
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { downloads++; return item; };
     const client = new AbortController();
     const pending = f.request('/requests', { session, body: { url: mediaUrl }, signal: client.signal });
     await reached.promise;
@@ -599,10 +603,18 @@ describe('listener remote HTTP security boundary', () => {
     await assert.rejects(pending);
     if (!socket.destroyed) await once(socket, 'close');
     gate.resolve();
+    // The abandoned request ends with its audit attempt completed as a failure.
     const failed = () => f.audit.some(row => { const outcome = (row.data as any)?.outcome; return outcome && outcome !== 'pending' && outcome !== 'success'; });
     for (let turn = 0; turn < 500 && !failed(); turn++) await new Promise(resolve => setImmediate(resolve));
     assert.ok(failed(), 'the abandoned request ended');
     bridge.executeCommand = executeCommand;
+    return () => downloads;
+  }
+
+  it('does not queue a resolved link whose client left during the final access check', async () => using(async f => {
+    const { session } = await f.exchange();
+    const downloads = await disconnectDuringLookup(f, session, true);
+    assert.equal(downloads(), 1);
     assert.equal(f.queue.length, 1);
     assert.equal(f.plays.length, 0);
   }));
@@ -634,31 +646,12 @@ describe('listener remote HTTP security boundary', () => {
 
   it('cancels a link whose client left while its access was still being checked', async () => using(async f => {
     const { session } = await f.exchange();
-    const bridge = f.app.locals.eventBridge as { executeCommand: (...args: any[]) => Promise<string> };
-    const executeCommand = bridge.executeCommand;
-    const reached = deferred<void>();
-    const gate = deferred<void>();
-    bridge.executeCommand = async (...args) => { reached.resolve(); await gate.promise; return executeCommand(...args); };
-    let downloads = 0;
-    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { downloads++; return item; };
-    const client = new AbortController();
-    const pending = f.request('/requests', { session, body: { url: mediaUrl }, signal: client.signal });
-    await reached.promise;
-    const socket = f.sockets.at(-1)!;
-    client.abort();
-    await assert.rejects(pending);
-    if (!socket.destroyed) await once(socket, 'close');
-    gate.resolve();
-    // Wait for the abandoned request to end: its audit attempt completes as a failure.
-    const failed = () => f.audit.some(row => { const outcome = (row.data as any)?.outcome; return outcome && outcome !== 'pending' && outcome !== 'success'; });
-    for (let turn = 0; turn < 500 && !failed(); turn++) await new Promise(resolve => setImmediate(resolve));
-    assert.ok(failed(), 'the abandoned request ended');
-    assert.equal(downloads, 0);
+    const downloads = await disconnectDuringLookup(f, session, false);
+    assert.equal(downloads(), 0);
     assert.equal(f.queue.length, 1);
-    bridge.executeCommand = executeCommand;
     // Its slot is free for the next request.
     assert.equal((await f.request('/requests', { session, body: { url: mediaUrl } })).status, 200);
-    assert.equal(downloads, 1);
+    assert.equal(downloads(), 1);
   }));
 });
 
