@@ -4,11 +4,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import { MAX_QUEUE_ITEMS, PlayQueue, QueueFullError } from './playlist/queue.js';
+import type { MediaUrlPipelineDeps } from './media-url-pipeline.js';
 import { BUILTIN_COMMAND_HELP, isReservedChatCommandName } from './chat-commands.js';
 
 const musicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-history-'));
 process.env.MUSIC_DIR = musicDir;
 const { MusicCommandHandler } = await import('./music-command-handler.js');
+const { enqueueMediaUrl } = await import('./commands/queue.js');
 after(() => fs.rmSync(musicDir, { recursive: true, force: true }));
 
 const row = (id: number, overrides: object = {}) => ({
@@ -390,11 +392,21 @@ test('a chat link on a full queue is refused before anything downloads', async (
   const f = fixture();
   f.bot.queue.addMany(Array.from({ length: MAX_QUEUE_ITEMS }, (_, i) => ({ id: `q${i}`, title: `Q${i}`, filePath: '', source: 'local' })));
   f.handler.virtualServerIdForBot = () => 2;
-  // The real chat path; downloading would fail here, so a refusal must come first.
+  // The real chat path with stubbed resolvers: nothing may reach the network.
+  const downloads: string[] = [];
+  const deps: MediaUrlPipelineDeps = {
+    resolveSpotify: async (url) => url,
+    resolveAppleMusic: async () => ({ tracks: [] }),
+    resolveSpotifyCollection: async () => null,
+    appleTrackToYouTube: async () => null,
+    expandYouTube: async () => null,
+    downloadTrack: async (url) => { downloads.push(url); throw new Error('must not download'); },
+  };
   await assert.rejects(
-    Object.getPrototypeOf(f.handler).enqueueMediaUrl.call(f.handler, 1, f.bot, 2, 'https://8.8.8.8/media/a.mp3'),
+    enqueueMediaUrl(f.handler.context, 1, f.bot, 2, 'https://8.8.8.8/media/a.mp3', undefined, deps),
     (err: unknown) => err instanceof QueueFullError,
   );
+  assert.deepEqual(downloads, []);
   assert.equal(f.bot.queue.length, MAX_QUEUE_ITEMS);
   assert.deepEqual(f.played, []);
   assert.deepEqual(f.saved, []);

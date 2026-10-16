@@ -1,6 +1,6 @@
 import type { VoiceBot } from '../voice-bot.js';
 import { QueueFullError, type QueueItem, type QueueReservation } from '../playlist/queue.js';
-import { defaultMediaUrlDeps, runMediaUrlPipeline } from '../media-url-pipeline.js';
+import { defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../media-url-pipeline.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
@@ -94,6 +94,7 @@ export async function enqueueMediaUrl(
   userClid: number,
   rawUrl: string,
   request = beginChatMediaRequest(botId),
+  deps: MediaUrlPipelineDeps = defaultMediaUrlDeps(),
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
@@ -111,7 +112,7 @@ export async function enqueueMediaUrl(
   let reservation: QueueReservation | undefined;
 
   const result = await runMediaUrlPipeline(
-    defaultMediaUrlDeps(),
+    deps,
     {
       play: async (item, opts) => {
         const isFirst = firstCall;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
 import { describe, it } from 'node:test';
 import express, { type Express } from 'express';
 import { errorHandler } from '../middleware/error-handler.js';
@@ -51,7 +52,8 @@ function buildApp(bot: unknown, playlistSongs = 0, deps?: MediaUrlPipelineDeps):
 
 async function call(app: Express, method: string, path: string, body?: unknown) {
   const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((resolve) => server.once('listening', () => resolve()));
+  // Rejects if the server fails to start, instead of hanging.
+  await once(server, 'listening');
   const { port } = server.address() as { port: number };
   try {
     const res = await fetch(`http://127.0.0.1:${port}${path}`, {

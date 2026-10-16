@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { MAX_QUEUE_ITEMS, PlayQueue } from '../playlist/queue.js';
 import { getImportJob, startYouTubePlaylistImport } from './youtube-playlist-import.js';
+import { youtubeWatchUrl } from './playlist-import-plan.js';
 
 // A fake yt-dlp answers the playlist probe with three videos.
 const dir = await mkdtemp(path.join(tmpdir(), 'ts6-import-queue-'));
@@ -63,5 +64,28 @@ test('a queue import that fits queues every track and releases its room', async 
   assert.equal(job.status, 'completed');
   assert.equal(job.enqueued, 3);
   assert.deepEqual(queue.getAll().slice(-3).map((item) => item.title), entries.map((entry) => entry.title));
+  assert.equal(queue.room, 2);
+});
+
+test('a playlist-and-queue import counts tracks already in the playlist and is refused before any playlist write', async () => {
+  const { queue, created, prisma, context } = setup(2);
+  const writes: string[] = [];
+  // Cap 2, but all three videos are already in the playlist: three tracks would be queued.
+  prisma.appSetting.findUnique = async () => ({ value: '2' });
+  prisma.playlist = {
+    findUnique: async () => ({ id: 7, mode: 'stream', youtubePlaylistId: 'PLqueue' }),
+    update: async () => { writes.push('update'); },
+    create: async () => { writes.push('create'); return { id: 8 }; },
+  };
+  prisma.playlistSong = {
+    findMany: async () => entries.map((entry) => ({ song: { sourceUrl: youtubeWatchUrl(entry.id) } })),
+  };
+  const jobId = await startYouTubePlaylistImport(prisma, 1, 'https://www.youtube.com/playlist?list=PLqueue', { musicBotId: 3, playlistId: 7 }, context);
+  const job = await finished(jobId);
+  assert.equal(job.status, 'failed');
+  assert.match(job.errors.join('\n'), /only 2 of these 3 tracks fit/);
+  assert.deepEqual(writes, []);
+  assert.deepEqual(created, []);
+  assert.equal(queue.length, MAX_QUEUE_ITEMS - 2);
   assert.equal(queue.room, 2);
 });

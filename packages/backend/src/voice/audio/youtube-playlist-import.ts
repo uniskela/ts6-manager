@@ -345,61 +345,35 @@ async function runImport(
   }
 
   const { items: allItems, listId, title } = await resolveImportItems(url, cap, job);
-  // Refuse a queue import that cannot fit before touching any playlist. At least
-  // this many tracks are queued; the exact count is reserved below.
-  queueBot?.queue.assertRoom(Math.min(allItems.length, cap));
   job.phase = 'importing';
 
   let playlistId = options.playlistId;
   let playlistMode: 'local' | 'stream' = 'stream';
 
-  if (playlistTarget) {
-    if (playlistId) {
-      const existing = await prisma.playlist.findUnique({ where: { id: playlistId } });
-      if (!existing) throw new Error('Playlist not found');
-      playlistMode = existing.mode === 'stream' ? 'stream' : 'local';
+  if (playlistTarget && playlistId) {
+    const existing = await prisma.playlist.findUnique({ where: { id: playlistId } });
+    if (!existing) throw new Error('Playlist not found');
+    playlistMode = existing.mode === 'stream' ? 'stream' : 'local';
 
-      if (!isApple && existing.mode === 'local' && !existing.youtubePlaylistId) {
-        throw new Error(
-          'Cannot import a YouTube playlist into a local-only playlist — create or select a stream playlist',
-        );
-      }
-
-      await prisma.playlist.update({
-        where: { id: playlistId },
-        data: {
-          ...(isApple
-            ? { serverConfigId }
-            : {
-                mode: 'stream',
-                ...(listId ? { youtubePlaylistId: listId, serverConfigId } : { serverConfigId }),
-              }),
-          ...(options.playlistName ? { name: options.playlistName } : {}),
-        },
-      });
-    } else {
-      const created = await prisma.playlist.create({
-        data: {
-          name: options.playlistName || title || 'Imported Playlist',
-          mode: 'stream',
-          youtubePlaylistId: listId ?? null,
-          serverConfigId,
-        },
-      });
-      playlistId = created.id;
-      playlistMode = 'stream';
+    if (!isApple && existing.mode === 'local' && !existing.youtubePlaylistId) {
+      throw new Error(
+        'Cannot import a YouTube playlist into a local-only playlist — create or select a stream playlist',
+      );
     }
-    job.playlistId = playlistId;
   }
 
   if (title) job.title = title;
 
+  // Plan before any playlist write, so a queue import that cannot fit is
+  // refused with the playlist untouched. A new playlist has nothing attached.
   let items = allItems;
-  if (playlistTarget && playlistId) {
-    const attachedRows = await prisma.playlistSong.findMany({
-      where: { playlistId },
-      include: { song: { select: { sourceUrl: true } } },
-    });
+  if (playlistTarget) {
+    const attachedRows = playlistId
+      ? await prisma.playlistSong.findMany({
+        where: { playlistId },
+        include: { song: { select: { sourceUrl: true } } },
+      })
+      : [];
     const attached = new Set(
       attachedRows.map((row) => row.song.sourceUrl).filter((u): u is string => Boolean(u)),
     );
@@ -427,12 +401,47 @@ async function runImport(
 
   job.total = items.length;
 
-  // Queue-only imports always register on-demand (no bulk download).
-  const needsDownload = playlistTarget && playlistMode === 'local';
   // Tracks are queued one by one as they register: hold room for all of them so
   // the import is refused whole, never cut short by the queue limit. Every
   // track's errors are caught in the loop, so the release below always runs.
   const reservation = queueBot?.queue.reserve(items.length);
+
+  if (playlistTarget) {
+    try {
+      if (playlistId) {
+        await prisma.playlist.update({
+          where: { id: playlistId },
+          data: {
+            ...(isApple
+              ? { serverConfigId }
+              : {
+                  mode: 'stream',
+                  ...(listId ? { youtubePlaylistId: listId, serverConfigId } : { serverConfigId }),
+                }),
+            ...(options.playlistName ? { name: options.playlistName } : {}),
+          },
+        });
+      } else {
+        const created = await prisma.playlist.create({
+          data: {
+            name: options.playlistName || title || 'Imported Playlist',
+            mode: 'stream',
+            youtubePlaylistId: listId ?? null,
+            serverConfigId,
+          },
+        });
+        playlistId = created.id;
+        playlistMode = 'stream';
+      }
+    } catch (err) {
+      reservation?.release();
+      throw err;
+    }
+    job.playlistId = playlistId;
+  }
+
+  // Queue-only imports always register on-demand (no bulk download).
+  const needsDownload = playlistTarget && playlistMode === 'local';
 
   for (const item of items) {
     const watchUrl = youtubeWatchUrl(item.id);

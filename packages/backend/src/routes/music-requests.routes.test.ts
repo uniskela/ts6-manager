@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test, { after } from 'node:test';
@@ -106,7 +107,8 @@ function appFor(options: {
 
 async function request(app: Express, method: string, url: string, body?: unknown) {
   const server = app.listen(0, '127.0.0.1');
-  await new Promise<void>((resolve) => server.once('listening', resolve));
+  // Rejects if the server fails to start, instead of hanging.
+  await once(server, 'listening');
   const { port } = server.address() as { port: number };
   try {
     const response = await fetch(`http://127.0.0.1:${port}${url}`, {
