@@ -510,7 +510,7 @@ iptvRoutes.post('/stop', async (req: Request, res: Response, next) => {
     if (!botId) throw new AppError(400, 'botId is required');
     const bot = manager.getBot(parseInt(botId));
     if (!bot) throw new AppError(404, 'Music bot not found or not running');
-    await runMediaAudited(req, bot, 'media.video.stop', () => bot.stopVideoStream('manual', 'Stopped from the IPTV page'));
+    await runMediaAudited(req, bot, 'media.video.stop', () => bot.stopVideoStream('manual', 'Stopped from the IPTV page', { cancelPendingRequests: true }));
     res.json({ success: true });
   } catch (err) { next(err); }
 });

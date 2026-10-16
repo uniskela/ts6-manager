@@ -63,9 +63,11 @@ TeamSpeak. `/state` uses `np`/read-only `queue` authorization; `/library` uses
 read-only `queue`. Both mutations use `add` with nonempty arguments through
 the shared Slice 1 authorization service. State permission flags are hints;
 the backend rechecks policy and identity before queue insertion, including
-after slow URL resolution and audit writes. A music Stop or queue clear on the
-bot (`VoiceBot.stopGeneration`) after the request arrived drops it with
-`cancelled` (409), so a slow link cannot restart music that was stopped.
+after slow URL resolution and audit writes. An explicit music or video Stop,
+or a queue clear, on the bot (`VoiceBot.stopGeneration`) after the request
+arrived drops it with `cancelled` (409), so a slow link cannot restart music
+that was stopped. Skips, track changes, Auto-DJ and automatic video stops do
+not drop it.
 Pasted URLs use the existing SSRF validator without the admin LAN allowlist,
 followed by the normal media URL pipeline. URLs containing userinfo are
 rejected.

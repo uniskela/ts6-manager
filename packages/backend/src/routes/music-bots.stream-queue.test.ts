@@ -22,6 +22,8 @@ function buildApp(opts: { initial?: VideoQueueItem[]; expand?: Expand; conflict?
     starts: [] as Array<{ source: string; options: Record<string, unknown> }>,
     switches: [] as string[],
     stops: [] as string[],
+    /** Whether each stop also cancelled pending music requests. */
+    cancels: [] as boolean[],
     asserted: [] as string[][],
     audits: [] as Array<Record<string, any>>,
     auditUpdates: [] as Array<Record<string, any>>,
@@ -41,8 +43,9 @@ function buildApp(opts: { initial?: VideoQueueItem[]; expand?: Expand; conflict?
       calls.switches.push(source);
       bot.source = source;
     },
-    async stopVideoStream(reason = 'manual') {
+    async stopVideoStream(reason = 'manual', _detail?: string | null, options?: { cancelPendingRequests?: boolean }) {
       calls.stops.push(reason);
+      calls.cancels.push(options?.cancelPendingRequests === true);
       bot.videoStreaming = false;
       bot.source = null;
       // The manager forwards the bot's videoStreamStopped event to the queue.
@@ -435,6 +438,14 @@ describe('stream/queue: managing', () => {
     assert.equal(app.calls.audits.at(-1)?.action, 'media.video.skip');
   });
 
+  it('skipping past the last video stops the stream but keeps pending music requests', async () => {
+    const app = await streaming(1);
+    const res = await app.request('POST', '/3/stream/queue/skip');
+    assert.equal(res.status, 200);
+    assert.deepEqual(app.calls.stops, ['manual']);
+    assert.deepEqual(app.calls.cancels, [false]);
+  });
+
   it('play starts a kept queue and honours the conflict flow', async () => {
     const app = buildApp({ initial: held(2), conflict: true });
     const refused = await app.request('POST', '/3/stream/queue/play', {});
@@ -452,6 +463,8 @@ describe('stream/queue: managing', () => {
     const stop = await app.request('POST', '/3/stream/stop');
     assert.equal(stop.status, 200);
     assert.deepEqual(app.calls.stops, ['manual']);
+    // An explicit Stop also drops music requests still loading.
+    assert.deepEqual(app.calls.cancels, [true]);
     const state = await app.request('GET', '/3/stream/queue');
     assert.deepEqual(state.body, { current: null, upNext: [], kept: false });
   });

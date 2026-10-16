@@ -202,7 +202,8 @@ export async function handleSkip(context: CommandContext, bot: VoiceBot, userCli
     }
     context.reply(bot, userClid, `Skipped to: ${next.title}`);
   } else {
-    bot.stopAudio();
+    // A skip is not a Stop: requests still loading are kept.
+    bot.stopAudio({ keepPendingRequests: true });
     context.reply(bot, userClid, 'Queue empty — playback stopped.');
   }
 }

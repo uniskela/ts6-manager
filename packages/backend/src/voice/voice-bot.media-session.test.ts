@@ -561,9 +561,16 @@ describe('stop generation', () => {
     for (let turn = 0; turn < 100 && bot.nowPlaying?.id !== 'b'; turn++) await new Promise(resolve => setImmediate(resolve));
     assert.equal(bot.nowPlaying?.id, 'b');
     for (const reason of ['channel_empty', 'replaced_by_video', 'source_unreachable'] as const) bot.clearPlayback(reason);
+    // Neither do a chat skip past the last track nor a video stop that is not an explicit Stop.
+    bot.stopAudio({ keepPendingRequests: true });
+    for (const reason of ['manual', 'no_viewers', 'source_unreachable', 'replaced_by_music'] as const) await bot.stopVideoStream(reason);
     assert.equal(bot.stopGeneration, generation);
-    // Stop and clear-queue from chat or the console cancel them.
-    for (const stop of [() => bot.stopAudio(), () => bot.clearPlayback()]) {
+    // Stop and clear-queue from chat or the console, and an explicit video Stop, cancel them.
+    for (const stop of [
+      () => bot.stopAudio(),
+      () => bot.clearPlayback(),
+      () => { void bot.stopVideoStream('manual', 'Stopped from the web UI', { cancelPendingRequests: true }); },
+    ]) {
       stop();
       assert.notEqual(bot.stopGeneration, generation);
       generation = bot.stopGeneration;

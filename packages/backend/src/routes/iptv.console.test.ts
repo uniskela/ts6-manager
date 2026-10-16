@@ -107,3 +107,30 @@ describe('console IPTV routes', () => {
     }
   });
 });
+
+describe('IPTV stop', () => {
+  it('is an explicit Stop, so it also drops music requests still loading', async () => {
+    const stops: unknown[][] = [];
+    const bot = {
+      id: 3, currentConfig: { id: 3, serverConfigId: 1 },
+      async stopVideoStream(...args: unknown[]) { stops.push(args); },
+    };
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.user = { id: 1, role: 'admin', username: 'tester' }; next(); });
+    app.locals.voiceBotManager = { getBot: (id: number) => (id === 3 ? bot : undefined), on() {}, off() {} };
+    app.locals.prisma = { adminAuditEvent: { create: async () => ({}), updateMany: async () => ({ count: 1 }) } };
+    app.use('/api/iptv', iptvRoutes);
+    app.use(errorHandler);
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const { port } = server.address() as { port: number };
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/api/iptv/stop`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ botId: 3 }),
+      });
+      assert.equal(response.status, 200);
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+    assert.deepEqual(stops, [['manual', 'Stopped from the IPTV page', { cancelPendingRequests: true }]]);
+  });
+});

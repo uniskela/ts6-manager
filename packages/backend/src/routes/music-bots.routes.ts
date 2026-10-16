@@ -1075,7 +1075,7 @@ musicBotRoutes.post('/:id/stream/stop', async (req: Request, res: Response, next
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
-    await runMediaAudited(req, bot, 'media.video.stop', () => bot.stopVideoStream('manual', 'Stopped from the web UI'));
+    await runMediaAudited(req, bot, 'media.video.stop', () => bot.stopVideoStream('manual', 'Stopped from the web UI', { cancelPendingRequests: true }));
     res.json({ success: true });
   } catch (err) { next(err); }
 });
