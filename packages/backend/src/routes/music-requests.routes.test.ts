@@ -31,6 +31,7 @@ function appFor(options: {
   failHistoryUpdate?: boolean;
   finishAudit?: () => Promise<void>;
   beginAudit?: () => Promise<void>;
+  findRequest?: () => Promise<void>;
   download?: (url: string) => Promise<unknown>;
 } = {}) {
   const played: string[] = [];
@@ -87,8 +88,10 @@ function appFor(options: {
           if (skip != null) return filtered.slice(skip);
           return filtered.map(row => Object.fromEntries(Object.keys(select).map(key => [key, row[key] ?? null])));
         },
-        findFirst: async ({ where }: { where: { id: number; serverConfigId: number } }) =>
-          rows.find((row) => row.id === where.id && row.serverConfigId === where.serverConfigId) ?? null,
+        findFirst: async ({ where }: { where: { id: number; serverConfigId: number } }) => {
+          await options.findRequest?.();
+          return rows.find((row) => row.id === where.id && row.serverConfigId === where.serverConfigId) ?? null;
+        },
         update: async (args: unknown) => { if (options.failHistoryUpdate) throw new AppError(503, 'History storage unavailable'); updates.push(args); },
         upsert: async (args: unknown) => { recorded.push(args); return {}; },
         deleteMany: async () => ({ count: 0 }),
@@ -320,6 +323,24 @@ test('replay is dropped when Stop or a queue clear runs while its start is audit
       if (source === 'local') await rm(path.join(musicRoot, file), { force: true });
     }
   }
+});
+
+test('replay is dropped when Stop runs while the history entry is still being read', async () => {
+  let entered!: () => void, release!: () => void;
+  const started = new Promise<void>(resolve => { entered = resolve; });
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const f = appFor({ rows: [{ id: 7, title: 'Stopped', url: 'https://8.8.8.8/radio',
+    source: 'radio', status: 'available', serverConfigId: 1, musicBotId: 3 }],
+    findRequest: async () => { entered(); await gate; } });
+  try {
+    const replay = request(f.app, 'POST', '/api/servers/1/music-requests/7/replay', { botId: 3 });
+    await started;
+    f.bot.stopGeneration++;
+    release();
+    assert.equal((await replay).status, 409);
+    assert.deepEqual(f.played, []);
+    assert.deepEqual(f.recorded, []);
+  } finally { release(); }
 });
 
 test('replay on a full queue answers 409 and queues, downloads and plays nothing', async () => {

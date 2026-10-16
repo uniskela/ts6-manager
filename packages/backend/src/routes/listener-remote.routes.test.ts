@@ -772,6 +772,27 @@ describe('listener remote playback start', () => {
       });
     });
 
+    it(`drops a request when Stop runs while its access is first checked (${label})`, async () => using(async f => {
+      const { session } = await f.exchange();
+      const bridge = f.app.locals.eventBridge as { executeCommand: (...args: any[]) => Promise<string> };
+      const executeCommand = bridge.executeCommand;
+      const reached = deferred<void>();
+      const gate = deferred<void>();
+      bridge.executeCommand = async (...args) => { reached.resolve(); await gate.promise; return executeCommand(...args); };
+      const pending = f.request(path, { session, body });
+      await reached.promise;
+      f.bot.stopGeneration++;
+      f.queue.clear();
+      idle(f);
+      bridge.executeCommand = executeCommand;
+      gate.resolve();
+      const response = await pending;
+      assert.equal(response.status, 409);
+      assert.equal((await response.json() as { code: string }).code, 'cancelled');
+      assert.equal(f.plays.length, 0);
+      assert.equal(f.queue.length, 0);
+    }));
+
     it(`drops a request whose start is stopped before it plays (${label})`, async () => using(async f => {
       idle(f);
       const { session } = await f.exchange();

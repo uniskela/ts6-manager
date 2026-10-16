@@ -68,7 +68,7 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
   }
 };
 
-function bearerCredential(req: Request): string | undefined {
+export function bearerCredential(req: Request): string | undefined {
   return /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get('Authorization') ?? '')?.[1];
 }
 

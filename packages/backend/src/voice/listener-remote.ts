@@ -81,10 +81,18 @@ export class ListenerRemoteService {
    * state, so it is safe to call for any value a client sends.
    */
   sessionRateKey(session: string | undefined): string | undefined {
+    const binding = this.sessionBinding(session);
+    return binding ? `listener:${identityKey(binding)}` : undefined;
+  }
+
+  /**
+   * Binding of a live session, or undefined, without verifying the listener's
+   * identity. It creates no state; callers must still authenticate.
+   */
+  sessionBinding(session: string | undefined): Binding | undefined {
     if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(session)) return undefined;
     const grant = this.sessions.get(hash(session));
-    if (!grant || grant.expiresAt <= this.now()) return undefined;
-    return `listener:${identityKey(grant.binding)}`;
+    return grant && grant.expiresAt > this.now() ? grant.binding : undefined;
   }
 
   checkRequest(session: string): void {

@@ -558,7 +558,8 @@ describe('stop generation', () => {
     await bot.play(local('a'));
     bot.queue.add(local('b'));
     bot.skip();
-    await new Promise(resolve => setImmediate(resolve));
+    for (let turn = 0; turn < 100 && bot.nowPlaying?.id !== 'b'; turn++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(bot.nowPlaying?.id, 'b');
     for (const reason of ['channel_empty', 'replaced_by_video', 'source_unreachable'] as const) bot.clearPlayback(reason);
     assert.equal(bot.stopGeneration, generation);
     // Stop and clear-queue from chat or the console cancel them.

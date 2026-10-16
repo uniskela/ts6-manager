@@ -5,7 +5,7 @@ import type { PlayQueue, QueueItem } from '../../voice/playlist/queue.js';
 import { startOrAppendMediaItem } from '../../voice/commands/queue.js';
 import { MediaSessionConflictError } from '../../voice/media-session.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../../voice/music-request-history.js';
-import { authorized, botFor, fail, listenerActor, type ListenerBot } from './shared.js';
+import { authorized, bearerCredential, botFor, fail, listenerActor, service, type ListenerBot } from './shared.js';
 
 /** Tracks waiting to play that a listener request may add to. */
 const MAX_UPCOMING_TRACKS = 500;
@@ -23,14 +23,28 @@ export function assertQueueRoom(bot: { queue: Pick<PlayQueue, 'upcomingCount' | 
   }
 }
 
+/** The bound bot and its stop generation when a request arrived. */
+export interface ArrivalSnapshot { bot: ListenerBot | null; stopGeneration: number | undefined }
+
 /**
- * Fail with 409 when the bot was stopped or its queue cleared after the
- * listener asked, so a request still resolving then cannot restart music.
+ * Take before any await in the route: a Stop or queue clear from then on drops
+ * the request. Uses the session's binding without verifying it; the request is
+ * authenticated afterwards as usual.
  */
-function assertNotStopped(bot: ListenerBot, requestedOn: ListenerBot | null, stopGeneration: number | undefined): void {
-  if (bot !== requestedOn || bot.stopGeneration !== stopGeneration) {
-    fail(409, 'cancelled', 'Playback was stopped before this request was ready.');
-  }
+export function arrivalSnapshot(req: Request): ArrivalSnapshot {
+  const bound = service(req).sessionBinding(bearerCredential(req));
+  const bot = bound ? botFor(req, bound) : null;
+  return { bot, stopGeneration: bot?.stopGeneration };
+}
+
+/** True when the bot was stopped or its queue cleared since the request arrived. */
+function stoppedSince(bot: ListenerBot, arrival: ArrivalSnapshot): boolean {
+  return bot !== arrival.bot || bot.stopGeneration !== arrival.stopGeneration;
+}
+
+/** Fail with 409 when the bot was stopped or cleared after the listener asked. */
+function assertNotStopped(bot: ListenerBot, arrival: ArrivalSnapshot): void {
+  if (stoppedSince(bot, arrival)) fail(409, 'cancelled', 'Playback was stopped before this request was ready.');
 }
 
 /**
@@ -38,20 +52,23 @@ function assertNotStopped(bot: ListenerBot, requestedOn: ListenerBot | null, sto
  * again after `resolveItem`, because resolving can take long enough for the
  * listener to leave or be revoked, or for someone to press Stop.
  */
-export async function appendForListener(req: Request, binding: ListenerRemoteBinding, resolveItem: () => Promise<QueueItem>, action: ListenerAppendAction) {
-  // Read before any await: a Stop or queue clear from here on drops this request.
-  const requestedOn = botFor(req, binding);
-  const stopGeneration = requestedOn?.stopGeneration;
+export async function appendForListener(
+  req: Request, binding: ListenerRemoteBinding, resolveItem: () => Promise<QueueItem>, action: ListenerAppendAction,
+  arrival: ArrivalSnapshot = arrivalSnapshot(req),
+) {
   await runRemoteAudited(req.app.locals.prisma, {
     actor: listenerActor(binding), action, connectionId: binding.serverConfigId,
     virtualServerId: binding.virtualServerId, target: { type: 'music_bot', id: binding.botId },
   }, async () => {
-    await authorized(req, 'add', 'request');
+    const first = await authorized(req, 'add', 'request');
+    // A bot that was briefly unavailable on arrival but serves the listener now
+    // has not been stopped; compare against it from here on.
+    if (!arrival.bot) arrival = { bot: first.bot, stopGeneration: first.bot.stopGeneration };
     const item = await resolveItem();
     const { bot } = await authorized(req, 'add', 'request');
     // A listener who left while the request was being checked does not get it queued.
     if (req.res?.destroyed || req.socket?.destroyed) fail(503, 'unavailable', 'Listener remote is unavailable.');
-    assertNotStopped(bot, requestedOn, stopGeneration);
+    assertNotStopped(bot, arrival);
     assertQueueRoom(bot);
     // Conservative: a listener may only start music on an idle bot. Anything
     // already playing or paused is never touched, and an active video stream is
@@ -64,11 +81,12 @@ export async function appendForListener(req: Request, binding: ListenerRemoteBin
       queued = true;
     } else {
       try {
-        queued = await startOrAppendMediaItem(bot, item, () => botFor(req, binding) === bot, { replaceSessionIds: [] });
+        const current = () => botFor(req, binding) === bot && !stoppedSince(bot, arrival);
+        queued = await startOrAppendMediaItem(bot, item, current, { replaceSessionIds: [] });
       } catch (err) {
         if (!(err instanceof MediaSessionConflictError)) throw err;
         // The rejected start resumed on a later tick; another request may have added, or Stop run, meanwhile.
-        assertNotStopped(bot, requestedOn, stopGeneration);
+        assertNotStopped(bot, arrival);
         assertQueueRoom(bot);
         bot.queue.add(item);
         queued = true;
@@ -76,7 +94,7 @@ export async function appendForListener(req: Request, binding: ListenerRemoteBin
     }
     if (queued === null) {
       // A Stop during the start is a cancellation, not an outage.
-      assertNotStopped(bot, requestedOn, stopGeneration);
+      assertNotStopped(bot, arrival);
       fail(503, 'unavailable', 'Listener remote is unavailable.');
     }
     await saveRequestHistory(req, bot, item);

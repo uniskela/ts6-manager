@@ -1,6 +1,6 @@
 import type { Router } from 'express';
 import { z } from 'zod';
-import { appendForListener } from './append.js';
+import { appendForListener, arrivalSnapshot } from './append.js';
 import { resolveListenerLink } from './link.js';
 import { authenticate, body, endpoint, fail } from './shared.js';
 
@@ -8,6 +8,7 @@ import { authenticate, body, endpoint, fail } from './shared.js';
 export function registerRequestRoutes(router: Router): void {
   router.post('/queue', endpoint(async (req, res) => {
     const { songId } = body(req, z.object({ songId: z.number().int().positive().safe() }).strict());
+    const arrival = arrivalSnapshot(req);
     const binding = await authenticate(req);
     await appendForListener(req, binding, async () => {
       const song = await req.app.locals.prisma.song.findFirst({ where: { id: songId, serverConfigId: binding.serverConfigId } });
@@ -17,14 +18,15 @@ export function registerRequestRoutes(router: Router): void {
         duration: song.duration ?? undefined, filePath: song.filePath, source: song.source,
         sourceUrl: song.sourceUrl ?? undefined,
       };
-    }, 'listener.remote.queue_add');
+    }, 'listener.remote.queue_add', arrival);
     res.json({ ok: true });
   }));
 
   router.post('/requests', endpoint(async (req, res) => {
     const { url } = body(req, z.object({ url: z.string().max(2048).url() }).strict());
+    const arrival = arrivalSnapshot(req);
     const binding = await authenticate(req);
-    await appendForListener(req, binding, () => resolveListenerLink(req, binding, url), 'listener.remote.request');
+    await appendForListener(req, binding, () => resolveListenerLink(req, binding, url), 'listener.remote.request', arrival);
     res.json({ ok: true });
   }));
 }
