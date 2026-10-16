@@ -185,6 +185,8 @@ export async function handlePlaylist(
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   if (!serverConfigId) { context.reply(bot, userClid, 'No server configured.'); return; }
+  // A Stop or queue clear while the playlist is looked up drops this load.
+  const stopGeneration = bot.stopGeneration;
   const where = { OR: [{ serverConfigId }, { serverConfigId: null }] };
   const playlists = await context.prisma.playlist.findMany({
     where, select: { id: true, name: true }, orderBy: { name: 'asc' },
@@ -210,6 +212,10 @@ export async function handlePlaylist(
     include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
   });
   if (!playlist?.songs.length) { context.reply(bot, userClid, 'Playlist is empty.'); return; }
+  if (bot.stopGeneration !== stopGeneration) {
+    context.reply(bot, userClid, 'Playback was stopped before the playlist was loaded.');
+    return;
+  }
   const items: QueueItem[] = playlist.songs.map(({ song }) => ({
     id: String(song.id), title: song.title, artist: song.artist ?? undefined,
     duration: song.duration ?? undefined, filePath: song.filePath,

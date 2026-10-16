@@ -805,10 +805,13 @@ musicBotRoutes.post('/:id/queue', async (req: Request, res: Response, next) => {
     const manager: VoiceBotManager = req.app.locals.voiceBotManager;
     const bot = manager.getBot(parseInt(req.params.id as string));
     if (!bot) throw new AppError(404, 'Music bot not found');
+    // A Stop or queue clear while the song is looked up drops this add.
+    const stopGeneration = bot.stopGeneration;
 
     const { songId } = req.body;
     const song = await prisma.song.findUnique({ where: { id: parseInt(songId) } });
     if (!song) throw new AppError(404, 'Song not found');
+    if (bot.stopGeneration !== stopGeneration) throw new AppError(409, 'Playback was stopped before this song was added.');
 
     const item: QueueItem = {
       id: String(song.id),

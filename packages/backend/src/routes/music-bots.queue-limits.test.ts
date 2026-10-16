@@ -6,7 +6,7 @@ import { errorHandler } from '../middleware/error-handler.js';
 import { createPlayUrlHandler, musicBotRoutes } from './music-bots.routes.js';
 import type { MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
 import { MAX_QUEUE_ITEMS, PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
-import { beginChatMediaRequest, handleQueue } from '../voice/commands/queue.js';
+import { beginChatMediaRequest, handlePlaylist, handleQueue } from '../voice/commands/queue.js';
 
 const track = (id: string): QueueItem => ({ id, title: id, filePath: `/music/${id}.opus`, source: 'local' });
 
@@ -27,13 +27,13 @@ function fill(queue: PlayQueue, count: number) {
   queue.addMany(Array.from({ length: count }, (_, i) => track(`q${i}`)));
 }
 
-function buildApp(bot: unknown, playlistSongs = 0, deps?: MediaUrlPipelineDeps): Express {
+function buildApp(bot: unknown, playlistSongs = 0, deps?: MediaUrlPipelineDeps, hooks: { findSong?: () => Promise<void> } = {}): Express {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
     (req as any).user = { id: 1, role: 'admin', username: 'tester' };
     const prisma: any = {
-      song: { findUnique: async ({ where }: any) => ({ id: where.id, title: `Song ${where.id}`, filePath: '/music/song.opus', source: 'local' }) },
+      song: { findUnique: async ({ where }: any) => { await hooks.findSong?.(); return { id: where.id, title: `Song ${where.id}`, filePath: '/music/song.opus', source: 'local' }; } },
       playlist: {
         findUnique: async () => ({
           id: 5,
@@ -254,5 +254,48 @@ describe('a queue clear cancels requests still resolving on the other surface', 
     await flushBackground();
     assert.deepEqual(played, []);
     assert.equal(bot.queue.length, 0);
+  });
+});
+
+describe('a Stop or queue clear during a short lookup drops the add', () => {
+  it('console enqueue answers 409 and adds nothing', async () => {
+    const { bot } = fakeBot('connected');
+    bot.stopGeneration = 0;
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const pending = call(buildApp(bot, 0, undefined, { findSong: async () => { entered(); await gate; } }), 'POST', '/api/music-bots/3/queue', { songId: 9 });
+    await reached;
+    bot.stopGeneration++;
+    release();
+    assert.equal((await pending).status, 409);
+    assert.equal(bot.queue.length, 0);
+  });
+
+  it('chat !playlist neither queues nor starts the playlist', async () => {
+    const { bot, played } = fakeBot('connected');
+    bot.stopGeneration = 0;
+    bot.currentConfig.serverConfigId = 1;
+    let entered!: () => void, release!: () => void;
+    const reached = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const replies: string[] = [];
+    const context: any = {
+      reply: (_bot: unknown, _clid: number, message: string) => { replies.push(message); },
+      saveMusicRequest: () => {},
+      chatMusicSwitch: () => ({}),
+      prisma: { playlist: {
+        findMany: async () => [{ id: 5, name: 'Party' }],
+        findFirst: async () => { entered(); await gate; return { id: 5, name: 'Party', songs: [{ song: { id: 100, title: 'P0', filePath: '/music/p.opus', source: 'local' } }] }; },
+      } },
+    };
+    const pending = handlePlaylist(context, 3, bot, 2, '5');
+    await reached;
+    bot.stopGeneration++;
+    release();
+    await pending;
+    assert.equal(bot.queue.length, 0);
+    assert.deepEqual(played, []);
+    assert.deepEqual(replies, ['Playback was stopped before the playlist was loaded.']);
   });
 });
