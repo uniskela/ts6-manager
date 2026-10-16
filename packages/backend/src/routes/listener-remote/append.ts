@@ -72,6 +72,8 @@ export async function appendForListener(
     const { bot } = await authorized(req, 'add', 'request');
     // A listener who left while the request was being checked does not get it queued.
     if (req.res?.destroyed || req.socket?.destroyed) fail(503, 'unavailable', 'Listener remote is unavailable.');
+    // Still no reference bot: take it now, so a Stop during the start is still caught.
+    if (!arrival.bot && bot) arrival = { bot, stopGeneration: bot.stopGeneration };
     assertNotStopped(bot, arrival);
     assertQueueRoom(bot);
     // Conservative: a listener may only start music on an idle bot. Anything
