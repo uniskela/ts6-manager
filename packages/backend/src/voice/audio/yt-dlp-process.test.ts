@@ -16,12 +16,15 @@ describe('yt-dlp format restriction', () => {
     assert.equal(httpOnlyFormat('bv*[height<=720]+ba/b'), `bv*[height<=720]${filter}+ba${filter}/b${filter}`);
     assert.throws(() => httpOnlyFormat('(bv,ba)'), /Unsupported/);
     assert.deepEqual(withHttpOnlyFormats(['-x', '-f', 'b', '--', 'u']), ['-x', '-f', `b${filter}`, '--', 'u']);
+    assert.throws(() => withHttpOnlyFormats(['--format=b', '--', 'u']), /-f <selector>/);
+    assert.throws(() => withHttpOnlyFormats(['-fb', '--', 'u']), /-f <selector>/);
   });
 
   it('finds what a run fetches', () => {
     assert.equal(ytDlpTarget(['-J', '--', 'https://media.test/a']), 'https://media.test/a');
     assert.equal(ytDlpTarget(['ytsearch5:some song', '--dump-json']), 'ytsearch5:some song');
     assert.throws(() => ytDlpTarget(['--version']));
+    assert.throws(() => ytDlpTarget(['--', 'https://a.test/1', 'https://a.test/2']), /exactly one URL/);
   });
 });
 
@@ -71,6 +74,20 @@ process.stdin.on('end', () => {
     assert.match(proxyUrl, /^http:\/\/job:[0-9a-f]{64}@127\.0\.0\.1:\d+$/);
     assert.ok(!argv.join(' ').includes(new URL(proxyUrl).password), 'token not in the process list');
     assert.deepEqual(env, { http_proxy: proxyUrl, https_proxy: proxyUrl, HTTP_PROXY: proxyUrl, HTTPS_PROXY: proxyUrl });
+    const downloaderArgs = argv[argv.indexOf('--downloader-args') + 1];
+    assert.match(downloaderArgs, /^ffmpeg_i:-protocol_whitelist /);
+    assert.doesNotMatch(downloaderArgs, /httpproxy/, 'ffmpeg started by yt-dlp cannot tunnel on its own');
+  });
+
+  it('removes even a cut-off token from output', async () => {
+    const { proc, redact } = await spawnYtDlp(['--', 'https://media.test/a'], { target: 'https://media.test/a', timeoutMs: 10_000 });
+    await new Promise((resolve) => proc.once('close', resolve));
+    const { input } = await recorded();
+    const proxyUrl = /^--proxy (\S+)\n$/.exec(input)![1];
+    const token = new URL(proxyUrl).password;
+    assert.equal(redact(`x ${proxyUrl} y`).includes(token), false);
+    const tail = `${token.slice(20)}@127.0.0.1:${new URL(proxyUrl).port} failed`;
+    assert.equal(redact(tail).includes(token.slice(20)), false);
   });
 
   it('is used by the YouTube helpers', async () => {

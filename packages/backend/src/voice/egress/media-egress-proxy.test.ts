@@ -246,17 +246,29 @@ describe('media egress proxy', () => {
     }
   });
 
-  it('sends plain http to an upstream proxy in absolute form with the approved address', async () => {
+  it('sends plain http through an upstream proxy as a tunnel to the approved address, keeping its Host', async () => {
     const seen: string[] = [];
-    const upstream = http.createServer((req, res) => {
-      seen.push(`${req.method} ${req.url} host=${req.headers.host} auth=${req.headers['proxy-authorization'] ?? ''}`);
-      res.writeHead(200).end('ok');
+    const upstream = net.createServer((socket) => {
+      let buffered = '';
+      socket.on('data', (chunk) => {
+        buffered += chunk.toString('latin1');
+        if (!seen.length && buffered.includes('\r\n\r\n')) {
+          seen.push(buffered.split('\r\n')[0]);
+          buffered = buffered.slice(buffered.indexOf('\r\n\r\n') + 4);
+          socket.write('HTTP/1.1 200 Connection established\r\n\r\n');
+        }
+        if (seen.length === 1 && buffered.includes('\r\n\r\n')) {
+          const lines = buffered.split('\r\n');
+          seen.push(`${lines[0]} | ${lines.find((l) => /^host:/i.test(l))}`);
+          socket.end('HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok');
+        }
+      });
     });
     upstream.listen(0, '127.0.0.1');
     await once(upstream, 'listening');
     const proxy = new MediaEgressProxy({
-      upstream: { host: '127.0.0.1', port: (upstream.address() as net.AddressInfo).port, authorization: 'Basic dXA6c2VjcmV0' },
-      resolve: async () => ['2606:4700::1', '93.184.215.14'],
+      upstream: { host: '127.0.0.1', port: (upstream.address() as net.AddressInfo).port },
+      resolve: async () => ['93.184.215.14'],
       log: () => {},
     });
     try {
@@ -264,14 +276,95 @@ describe('media egress proxy', () => {
       const { text, socket } = await raw(
         proxyPort(job.proxyUrl),
         `GET http://media.test/track.mp3?x=1 HTTP/1.1\r\nHost: media.test\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`,
-        /\r\n\r\nok/,
+        /\r\n\r\nok$/,
       );
       assert.equal(statusOf(text), 200);
+      assert.match(text, /\r\n\r\nok$/);
       socket.destroy();
-      assert.deepEqual(seen, ['GET http://93.184.215.14:80/track.mp3?x=1 host=media.test auth=Basic dXA6c2VjcmV0']);
+      assert.deepEqual(seen, ['CONNECT 93.184.215.14:80 HTTP/1.1', 'GET /track.mp3?x=1 HTTP/1.1 | host: media.test']);
     } finally {
       await proxy.close();
       upstream.close();
+    }
+  });
+
+  it('answers 502 instead of failing on an invalid upstream status, and cuts off truncated bodies', async () => {
+    const origin = net.createServer((socket) => {
+      socket.once('data', (chunk) => {
+        if (chunk.toString().startsWith('GET /bad-status')) socket.end('HTTP/1.1 099 Odd\r\nContent-Length: 0\r\n\r\n');
+        else { socket.write('HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\npartial'); setTimeout(() => socket.destroy(), 20); }
+      });
+    });
+    origin.listen(0, '127.0.0.1');
+    await once(origin, 'listening');
+    const port = (origin.address() as net.AddressInfo).port;
+    const proxy = new MediaEgressProxy({ ...permitLocal, resolve: async () => ['127.0.0.1'], log: () => {} });
+    try {
+      const job = await proxy.issue(60_000);
+      const auth = `Proxy-Authorization: ${credentials(job.proxyUrl)}`;
+      const bad = await raw(proxyPort(job.proxyUrl), `GET http://media.test:${port}/bad-status HTTP/1.1\r\nHost: media.test\r\n${auth}\r\n\r\n`);
+      assert.equal(statusOf(bad.text), 502);
+      bad.socket.destroy();
+      const cut = await raw(proxyPort(job.proxyUrl), `GET http://media.test:${port}/cut HTTP/1.1\r\nHost: media.test\r\n${auth}\r\n\r\n`, /$^/);
+      assert.equal(statusOf(cut.text), 200);
+      assert.ok(cut.socket.destroyed || cut.socket.readableEnded, 'the client connection is closed, not left waiting');
+      // The proxy still serves requests afterwards.
+      const after = await raw(proxyPort(job.proxyUrl), `CONNECT 127.0.0.1:${echoPort} HTTP/1.1\r\n${auth}\r\n\r\n`);
+      assert.equal(statusOf(after.text), 200);
+      after.socket.destroy();
+    } finally {
+      await proxy.close();
+      origin.close();
+    }
+  });
+
+  it('forwards only GET and HEAD without a body', async () => {
+    const proxy = new MediaEgressProxy({ ...permitLocal, resolve: async () => ['127.0.0.1'], log: () => {} });
+    try {
+      const job = await proxy.issue(60_000);
+      const auth = `Proxy-Authorization: ${credentials(job.proxyUrl)}`;
+      const post = await raw(proxyPort(job.proxyUrl), `POST http://media.test:${webPort}/ HTTP/1.1\r\nHost: media.test\r\nContent-Length: 0\r\n${auth}\r\n\r\n`);
+      assert.equal(statusOf(post.text), 405);
+      const body = await raw(proxyPort(job.proxyUrl), `GET http://media.test:${webPort}/ HTTP/1.1\r\nHost: media.test\r\nContent-Length: 3\r\n${auth}\r\n\r\nabc`);
+      assert.equal(statusOf(body.text), 400);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('counts connections still being set up against the limits, and cancels them on release', async () => {
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    const proxy = new MediaEgressProxy({
+      ...permitLocal,
+      resolve: async () => { await blocked; return ['127.0.0.1']; },
+      log: () => {},
+      limits: { concurrentPerJob: 1, concurrentTotal: 2 },
+    });
+    try {
+      const job = await proxy.issue(60_000);
+      const port = proxyPort(job.proxyUrl);
+      const request = `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`;
+      const first = raw(port, request);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const second = await raw(port, request);
+      assert.equal(statusOf(second.text), 429, 'refused while the first is still resolving');
+      // Another job is limited by the shared cap too.
+      const other = await proxy.issue(60_000);
+      const third = raw(port, `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(other.proxyUrl)}\r\n\r\n`);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const yetAnother = await proxy.issue(60_000);
+      const fourth = await raw(port, `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(yetAnother.proxyUrl)}\r\n\r\n`);
+      assert.equal(statusOf(fourth.text), 429, 'the cap across jobs applies');
+      job.release();
+      unblock();
+      const cancelled = await first;
+      assert.notEqual(statusOf(cancelled.text), 200, 'a released job gets no tunnel');
+      const allowed = await third;
+      assert.equal(statusOf(allowed.text), 200);
+      allowed.socket.destroy();
+    } finally {
+      await proxy.close();
     }
   });
 

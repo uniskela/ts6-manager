@@ -21,6 +21,12 @@ export function isRemoteInput(input: string): boolean {
  */
 const REMOTE_PROTOCOLS = "http,https,tls,tcp,httpproxy,crypto";
 
+/**
+ * Containers a resolved track may be in. Playlist formats (HLS, DASH, concat)
+ * are refused, so ffmpeg never opens addresses named inside the response.
+ */
+const REMOTE_FORMATS = "matroska,webm,mov,mp4,m4a,mp3,ogg,aac,flac,wav";
+
 /** Longest a resolved track may stream through one proxy token. */
 const FILE_STREAM_EGRESS_TTL_MS = 12 * 60 * 60_000;
 
@@ -30,7 +36,7 @@ export function buildPcmFileArgs(input: string, startSeconds = 0): string[] {
     args.push("-ss", startSeconds.toFixed(3));
   }
   if (isRemoteInput(input)) {
-    args.push("-protocol_whitelist", REMOTE_PROTOCOLS);
+    args.push("-protocol_whitelist", REMOTE_PROTOCOLS, "-format_whitelist", REMOTE_FORMATS);
     args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
   }
   args.push(

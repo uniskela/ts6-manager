@@ -11,13 +11,28 @@ import { isNeverAllowedIP, isPrivateIP } from '../../utils/url-validator.js';
 /** Ports a media download may connect to. */
 export const MEDIA_EGRESS_PORTS: ReadonlySet<number> = new Set([80, 443]);
 
-const reservedV4 = new BlockList();
+/** Special-purpose ranges (RFC 6890 registries) that are never a public media host. */
+const reserved = new BlockList();
 for (const [ip, prefix] of [
   ['192.0.0.0', 24], // IETF protocol assignments
+  ['192.0.2.0', 24], // documentation
+  ['192.88.99.0', 24], // deprecated 6to4 relay anycast
   ['198.18.0.0', 15], // benchmarking
+  ['198.51.100.0', 24], // documentation
+  ['203.0.113.0', 24], // documentation
   ['240.0.0.0', 4], // reserved, including broadcast
 ] as const) { // NOSONAR: Fixed reserved ranges define the egress denylist.
-  reservedV4.addSubnet(ip, prefix, 'ipv4');
+  reserved.addSubnet(ip, prefix, 'ipv4');
+}
+for (const [ip, prefix] of [
+  ['100::', 64], // discard
+  ['2001::', 23], // IETF protocol assignments, including Teredo, benchmarking and ORCHID
+  ['2001:db8::', 32], // documentation
+  ['3fff::', 20], // documentation
+  ['64:ff9b:1::', 48], // local-use NAT64: the IPv4 address can sit anywhere, so it cannot be checked
+  ['fec0::', 10], // deprecated site-local
+] as const) { // NOSONAR: Fixed reserved ranges define the egress denylist.
+  reserved.addSubnet(ip, prefix, 'ipv6');
 }
 
 /** Expand an IPv6 address to its 16 bytes, or null when it is not one. */
@@ -46,7 +61,8 @@ export function ipv6Bytes(address: string): number[] | null {
 
 /**
  * The IPv4 address an IPv6 address stands for, when it is IPv4-mapped,
- * IPv4-compatible, NAT64 (64:ff9b::/96, 64:ff9b:1::/48) or 6to4 (2002::/16).
+ * IPv4-translated (SIIT), IPv4-compatible, well-known NAT64 (64:ff9b::/96) or
+ * 6to4 (2002::/16). A NAT64 prefix a network chose itself cannot be recognised.
  */
 export function embeddedIPv4(address: string): string | null {
   const b = ipv6Bytes(address);
@@ -54,19 +70,11 @@ export function embeddedIPv4(address: string): string | null {
   const v4 = (o: number) => b.slice(o, o + 4).join('.');
   const zeros = (from: number, to: number) => b.slice(from, to).every((x) => x === 0);
   if (zeros(0, 10) && b[10] === 0xff && b[11] === 0xff) return v4(12); // ::ffff:a.b.c.d
+  if (zeros(0, 8) && b[8] === 0xff && b[9] === 0xff && zeros(10, 12)) return v4(12); // ::ffff:0:a.b.c.d (SIIT)
   if (zeros(0, 12) && !zeros(12, 16)) return v4(12); // ::a.b.c.d (deprecated)
-  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b) {
-    if (zeros(4, 12)) return v4(12); // 64:ff9b::/96
-    if (b[4] === 0x00 && b[5] === 0x01) return v4(12); // 64:ff9b:1::/48 (last 32 bits)
-  }
+  if (b[0] === 0x00 && b[1] === 0x64 && b[2] === 0xff && b[3] === 0x9b && zeros(4, 12)) return v4(12); // 64:ff9b::/96
   if (b[0] === 0x20 && b[1] === 0x02) return v4(2); // 2002:aabb:ccdd::/48
   return null;
-}
-
-/** Teredo (2001::/32) hides the real destination; never used for media. */
-function isTeredo(address: string): boolean {
-  const b = ipv6Bytes(address);
-  return !!b && b[0] === 0x20 && b[1] === 0x01 && b[2] === 0 && b[3] === 0;
 }
 
 export type RefusalClass = 'reserved' | 'private' | 'not-an-address';
@@ -76,10 +84,10 @@ export function mediaEgressRefusal(address: string): RefusalClass | null {
   const family = isIP(address);
   if (family === 0) return 'not-an-address';
   if (family === 6) {
-    if (isTeredo(address)) return 'reserved';
+    if (reserved.check(address, 'ipv6')) return 'reserved';
     const v4 = embeddedIPv4(address);
     if (v4) return mediaEgressRefusal(v4);
-  } else if (reservedV4.check(address, 'ipv4')) {
+  } else if (reserved.check(address, 'ipv4')) {
     return 'reserved';
   }
   if (isNeverAllowedIP(address)) return 'reserved';

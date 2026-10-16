@@ -19,7 +19,7 @@ import type {
   RuntimeMediaStageResult,
 } from '@ts6/common';
 import { checkSidecarVersion } from '../streaming/sidecar-version.js';
-import { mediaEgressEnabled } from '../egress/media-egress.js';
+import { mediaEgressEnabled, mediaEgressProblem } from '../egress/media-egress.js';
 
 const require = createRequire(import.meta.url);
 const backendPkg = require('../../../package.json') as { version?: string };
@@ -485,6 +485,12 @@ export async function diagnoseRuntimeMedia(
     ytDlpStage.status = 'fail';
     ytDlpStage.code = 'egress_disabled';
     ytDlpStage.message = 'Media download protection is switched off (MEDIA_EGRESS_PROXY=off): downloads are not checked at connection time and only YouTube links are accepted';
+  }
+  const egressProblem = mediaEgressProblem(env);
+  if (ytDlpStage?.status === 'ok' && egressProblem) {
+    ytDlpStage.status = 'fail';
+    ytDlpStage.code = 'egress_misconfigured';
+    ytDlpStage.message = `Media downloads are unavailable: ${egressProblem}`;
   }
   await runBinary(
     'ffmpeg',

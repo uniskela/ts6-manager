@@ -41,11 +41,14 @@ yt-dlp handles media links for music, video, library downloads, playlist imports
 - resolves each host itself, refuses loopback, private, link-local, cloud metadata and other reserved addresses (with no local-network exception), and connects only to an address it approved;
 - allows only ports 80 and 443;
 - never follows redirects: yt-dlp does, and each hop is checked again;
-- runs yt-dlp without configuration files or plugins from the host, with its own downloader and HTTP(S), HLS and DASH formats only.
+- runs yt-dlp without configuration files or plugins from the host, with its own downloader and HTTP(S), HLS and DASH formats only. When yt-dlp would hand an HTTPS stream to ffmpeg instead, the download fails;
+- lets the backend's ffmpeg play only a single media file from a resolved URL, never a playlist.
 
-If the proxy cannot start, downloads fail instead of connecting directly. `MEDIA_EGRESS_PROXY=off` is an emergency setting; see [Environment variables](environment-variables.md#backend).
+If the proxy cannot start, downloads fail instead of connecting directly.
 
-**What this does not cover.** The proxy controls traffic that yt-dlp and ffmpeg send through it. It is not an operating-system boundary: a downloader that ignored its proxy settings, through a bug or a future change, would not be stopped by it. This applies to every deployment today, including the split Docker stack, the all-in-one image and a backend run outside Docker. Running downloads in a separate container with no route except the proxy is planned for the split stack ([#476](https://github.com/uniskela/ts6-manager/issues/476)). The all-in-one image and native installs will continue to rely on the proxy alone.
+Video that yt-dlp resolves for direct streaming (YouTube direct playback, Twitch) is played by the media sidecar. The sidecar connects through its own checking proxy (`SIDECAR_EGRESS_PROXY`). Before handing a URL over, the backend checks its address and limits it to ports 80 and 443. Redirects and playlist segments that the sidecar's ffmpeg then follows are checked by the sidecar's proxy under its own rules. `MEDIA_EGRESS_PROXY=off` is an emergency setting; see [Environment variables](environment-variables.md#backend).
+
+**What this does not cover.** The proxy controls traffic that yt-dlp and ffmpeg send through it. It is not an operating-system boundary: a downloader that ignored its proxy settings, through a bug or a future change, would not be stopped by it. The proxy also cannot recognise a NAT64 prefix that a network operator chose instead of the standard `64:ff9b::/96`. This applies to every deployment today, including the split Docker stack, the all-in-one image and a backend run outside Docker. Running downloads in a separate container with no route except the proxy is planned for the split stack ([#476](https://github.com/uniskela/ts6-manager/issues/476)). The all-in-one image and native installs will continue to rely on the proxy alone.
 
 **Restricting outbound access yourself.** The backend needs outbound HTTPS for media and its TeamSpeak Query connections. Media downloads need no private-network access. Where you control the host or network:
 

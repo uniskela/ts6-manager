@@ -87,6 +87,17 @@ function sharedProxy(): MediaEgressProxy {
   return proxy;
 }
 
+/** Why media downloads cannot use the proxy as configured, or undefined. Never includes values. */
+export function mediaEgressProblem(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (!mediaEgressEnabled(env)) return undefined;
+  try {
+    parseUpstreamProxy(env.MEDIA_UPSTREAM_PROXY);
+    return undefined;
+  } catch (err) {
+    return (err as Error).message;
+  }
+}
+
 /** Replace the shared proxy (tests). Pass undefined to reset. */
 export function setMediaEgressProxyForTests(value: MediaEgressProxy | undefined): void {
   proxy = value;

@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
+import { Resolver } from 'node:dns/promises';
 import http from 'node:http';
 import net from 'node:net';
 import { MEDIA_EGRESS_PORTS, mediaEgressRefusal } from './egress-policy.js';
@@ -52,6 +52,8 @@ export interface MediaEgressLimits {
   connectMs: number;
   /** Refusals logged per job; later ones are counted only. */
   logsPerJob: number;
+  /** Open connections across all jobs. */
+  concurrentTotal: number;
 }
 
 const DEFAULT_LIMITS: MediaEgressLimits = {
@@ -60,6 +62,7 @@ const DEFAULT_LIMITS: MediaEgressLimits = {
   idleMs: 300_000,
   connectMs: 10_000,
   logsPerJob: 5,
+  concurrentTotal: 256,
 };
 
 /** One job's access to the proxy. */
@@ -74,7 +77,11 @@ export interface EgressJob {
 
 interface JobState {
   open: Set<net.Socket>;
+  /** Connections being set up or open; reserved before any await. */
+  active: number;
   opened: number;
+  /** Aborted when the job is revoked, cancelling connections still being set up. */
+  abort: AbortController;
   logged: number;
   expires: number;
   revoked: boolean;
@@ -95,8 +102,20 @@ const HOP_HEADERS = new Set([
 
 const tokenKey = (token: string) => createHash('sha256').update(token).digest('hex');
 
+/**
+ * Resolve with c-ares rather than the system lookup, which runs on the libuv
+ * threadpool and has no timeout: slow names must not hold up file and crypto
+ * work elsewhere in the backend. IPv4 answers come first.
+ */
 async function systemResolve(host: string): Promise<string[]> {
-  return (await lookup(host, { all: true, verbatim: true })).map((a) => a.address);
+  const resolver = new Resolver({ timeout: 4_000, tries: 2 });
+  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+  const answers = [
+    ...(v4.status === 'fulfilled' ? v4.value : []),
+    ...(v6.status === 'fulfilled' ? v6.value : []),
+  ];
+  if (answers.length === 0) throw new Error('no answers');
+  return answers;
 }
 
 /** Host name or address safe to print: no credentials, no paths, bounded length. */
@@ -108,6 +127,8 @@ export class MediaEgressProxy {
   private server?: http.Server;
   private listening?: Promise<number>;
   private readonly jobs = new Map<string, JobState>();
+  /** Connections being set up or open, across all jobs. */
+  private active = 0;
   private readonly limits: MediaEgressLimits;
   private readonly resolve: (host: string) => Promise<string[]>;
   private readonly log: (message: string) => void;
@@ -151,7 +172,7 @@ export class MediaEgressProxy {
     const token = randomBytes(32).toString('hex');
     const key = tokenKey(token);
     const state: JobState = {
-      open: new Set(), opened: 0, logged: 0, expires: Date.now() + ttlMs, revoked: false,
+      open: new Set(), active: 0, opened: 0, abort: new AbortController(), logged: 0, expires: Date.now() + ttlMs, revoked: false,
       timer: setTimeout(() => this.revoke(key), ttlMs),
     };
     state.timer.unref();
@@ -181,6 +202,7 @@ export class MediaEgressProxy {
     if (!state) return;
     this.jobs.delete(key);
     state.revoked = true;
+    state.abort.abort();
     clearTimeout(state.timer);
     for (const stream of state.open) stream.destroy();
     state.open.clear();
@@ -199,27 +221,48 @@ export class MediaEgressProxy {
     return state;
   }
 
-  /** Count a new connection against the job, or refuse it. */
-  private admit(state: JobState): void {
-    if (state.open.size >= this.limits.concurrentPerJob || state.opened >= this.limits.totalPerJob) {
+  /**
+   * Reserve a connection for the job, synchronously, or refuse it. The returned
+   * function releases the reservation; it is safe to call more than once.
+   */
+  private admit(state: JobState): () => void {
+    if (state.active >= this.limits.concurrentPerJob || state.opened >= this.limits.totalPerJob
+      || this.active >= this.limits.concurrentTotal) {
       throw new Refused(429, 'connection limit');
     }
+    state.active++;
     state.opened++;
+    this.active++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      state.active--;
+      this.active--;
+    };
   }
 
-  private track(state: JobState, ...streams: net.Socket[]): void {
+  /**
+   * Register a connection's sockets so revoking the job closes them. `linked`
+   * sockets end together: when one closes, the others are closed too.
+   */
+  private track(state: JobState, release: () => void, linked: net.Socket[], others: net.Socket[] = []): void {
+    const all = [...linked, ...others];
     if (state.revoked) {
-      for (const stream of streams) stream.destroy();
+      for (const stream of all) stream.destroy();
+      release();
       return;
     }
-    for (const stream of streams) {
+    for (const stream of all) {
       state.open.add(stream);
       stream.setTimeout(this.limits.idleMs, () => stream.destroy());
       stream.once('close', () => state.open.delete(stream));
     }
-    // One side closing ends the other.
-    for (const stream of streams) {
-      stream.once('close', () => { for (const other of streams) other.destroy(); });
+    for (const stream of linked) {
+      stream.once('close', () => {
+        release();
+        for (const other of linked) other.destroy();
+      });
     }
   }
 
@@ -261,20 +304,36 @@ export class MediaEgressProxy {
     }
   }
 
-  /** Open a TCP connection to host:port. */
-  private dial(host: string, port: number): Promise<net.Socket> {
+  /** Open a TCP connection to host:port; abandoned when the job is revoked. */
+  private dial(host: string, port: number, signal: AbortSignal): Promise<net.Socket> {
     return new Promise<net.Socket>((resolve, reject) => {
+      if (signal.aborted) {
+        reject(new Refused(410, 'job ended'));
+        return;
+      }
       const s = net.connect({ host, port });
-      const timer = setTimeout(() => { s.destroy(); reject(new Refused(504, 'connect timed out')); }, this.limits.connectMs);
-      s.once('connect', () => { clearTimeout(timer); resolve(s); });
-      s.once('error', (err) => { clearTimeout(timer); reject(err); });
+      const finish = (err?: unknown) => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', onAbort);
+        if (err) {
+          s.destroy();
+          reject(err);
+        } else {
+          resolve(s);
+        }
+      };
+      const onAbort = () => finish(new Refused(410, 'job ended'));
+      const timer = setTimeout(() => finish(new Refused(504, 'connect timed out')), this.limits.connectMs);
+      signal.addEventListener('abort', onAbort, { once: true });
+      s.once('connect', () => finish());
+      s.once('error', (err) => finish(err));
     });
   }
 
   /** Open a TCP stream to address:port, directly or as a CONNECT tunnel through the upstream proxy. */
-  private async connect(address: string, port: number): Promise<{ socket: net.Socket; head: Buffer }> {
+  private async connect(address: string, port: number, signal: AbortSignal): Promise<{ socket: net.Socket; head: Buffer }> {
     const upstream = this.options.upstream;
-    const socket = upstream ? await this.dial(upstream.host, upstream.port) : await this.dial(address, port);
+    const socket = upstream ? await this.dial(upstream.host, upstream.port, signal) : await this.dial(address, port, signal);
     if (!upstream) return { socket, head: Buffer.alloc(0) };
     // Ask the upstream for the approved address, never the host name, so it cannot resolve it differently.
     const authority = net.isIPv6(address) ? `[${address}]:${port}` : `${address}:${port}`;
@@ -291,11 +350,12 @@ export class MediaEgressProxy {
   }
 
   /** Try each approved address in turn. */
-  private async connectAny(addresses: string[], port: number): Promise<{ socket: net.Socket; head: Buffer }> {
+  private async connectAny(addresses: string[], port: number, signal: AbortSignal): Promise<{ socket: net.Socket; head: Buffer }> {
     let lastErr: unknown;
     for (const address of addresses) {
+      if (signal.aborted) break;
       try {
-        return await this.connect(address, port);
+        return await this.connect(address, port, signal);
       } catch (err) {
         lastErr = err;
       }
@@ -312,18 +372,20 @@ export class MediaEgressProxy {
       return;
     }
     const target = parseAuthority(req.url ?? '');
+    let release = () => {};
     try {
       if (!target) throw new Refused(400, 'malformed target');
       this.checkPort(target.port);
-      this.admit(state);
+      release = this.admit(state);
       const addresses = await this.approvedAddresses(target.host);
-      const { socket, head: early } = await this.connectAny(addresses, target.port);
+      const { socket, head: early } = await this.connectAny(addresses, target.port, state.abort.signal);
       if (state.revoked || client.destroyed) {
         socket.destroy();
         client.destroy();
+        release();
         return;
       }
-      this.track(state, client, socket);
+      this.track(state, release, [client, socket]);
       socket.on('error', () => socket.destroy());
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (early.length) client.write(early);
@@ -331,13 +393,14 @@ export class MediaEgressProxy {
       socket.pipe(client);
       client.pipe(socket);
     } catch (err) {
+      release();
       const refused = err instanceof Refused ? err : new Refused(502, 'could not connect');
       this.refuse(state, target?.host ?? '?', refused.reason);
       client.end(`HTTP/1.1 ${refused.status} ${http.STATUS_CODES[refused.status] ?? 'Error'}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
     }
   }
 
-  /** Absolute-form http:// request. */
+  /** Absolute-form http:// request, sent on as origin-form to the approved address. */
   private async forward(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const state = this.authenticate(req);
     if (!state) {
@@ -348,19 +411,24 @@ export class MediaEgressProxy {
     try {
       url = new URL(req.url ?? '');
     } catch { /* refused below */ }
+    let release = () => {};
     try {
       if (!url || url.protocol !== 'http:' || !url.hostname || url.username || url.password) {
         throw new Refused(400, 'only absolute http:// URLs and CONNECT are forwarded');
       }
+      // Media downloads only read. A body without framing the upstream request keeps would be sent raw.
+      if (req.method !== 'GET' && req.method !== 'HEAD') throw new Refused(405, 'only GET and HEAD are forwarded');
+      if (req.headers['transfer-encoding'] || Number(req.headers['content-length'] ?? 0) > 0) {
+        throw new Refused(400, 'request body not allowed');
+      }
       const port = url.port ? Number(url.port) : 80;
       this.checkPort(port);
-      this.admit(state);
+      release = this.admit(state);
       const addresses = await this.approvedAddresses(url.hostname);
-      const upstream = this.options.upstream;
-      // Plain http goes to an upstream proxy in absolute form, naming the approved address.
-      const socket = upstream
-        ? await this.dial(upstream.host, upstream.port).catch(() => { throw new Refused(502, 'upstream proxy failed'); })
-        : (await this.connectAny(addresses, port)).socket;
+      // Directly, or through an upstream proxy as a tunnel to the approved address, so the
+      // request keeps its own Host for name-based hosting.
+      const { socket, head } = await this.connectAny(addresses, port, state.abort.signal);
+      if (head.length) socket.unshift(head);
       const headers: http.OutgoingHttpHeaders = {};
       const listed = new Set(String(req.headers.connection ?? '').toLowerCase().split(',').map((h) => h.trim()));
       for (const [name, value] of Object.entries(req.headers)) {
@@ -368,34 +436,47 @@ export class MediaEgressProxy {
       }
       headers.host = url.host;
       headers.connection = 'close';
-      if (upstream?.authorization) headers['proxy-authorization'] = upstream.authorization;
-      // Only the upstream proxy sees this address; prefer IPv4, which every proxy can reach.
-      const address = addresses.find((a) => net.isIPv4(a)) ?? addresses[0];
-      const authority = net.isIPv6(address) ? `[${address}]:${port}` : `${address}:${port}`;
+      // Revoking the job closes both sides; the upstream connection is used for this request only.
+      this.track(state, release, [socket], [req.socket]);
       const out = http.request({
         createConnection: () => socket,
         method: req.method,
-        // Through an upstream proxy the request names the approved address, not the host.
-        path: upstream ? `http://${authority}${url.pathname}${url.search}` : `${url.pathname}${url.search}`,
+        path: `${url.pathname}${url.search}`,
         headers,
         setHost: false,
       });
-      this.track(state, socket);
+      const fail = () => {
+        if (!res.headersSent) res.writeHead(502, { Connection: 'close' }).end();
+        else res.destroy();
+      };
       out.on('response', (upstreamRes) => {
-        const back: http.OutgoingHttpHeaders = {};
+        const status = upstreamRes.statusCode ?? 0;
+        if (status < 200 || status > 599) {
+          upstreamRes.destroy();
+          fail();
+          return;
+        }
+        const back: http.OutgoingHttpHeaders = { connection: 'close' };
         for (const [name, value] of Object.entries(upstreamRes.headers)) {
           if (!HOP_HEADERS.has(name) && value !== undefined) back[name] = value;
         }
-        res.writeHead(upstreamRes.statusCode ?? 502, back);
+        try {
+          res.writeHead(status, back);
+        } catch {
+          upstreamRes.destroy();
+          res.destroy();
+          return;
+        }
+        // A response cut off upstream is cut off here too, not left hanging.
+        upstreamRes.on('error', () => res.destroy());
+        upstreamRes.on('close', () => { if (!upstreamRes.complete) res.destroy(); });
         upstreamRes.pipe(res);
       });
-      out.on('error', () => {
-        if (!res.headersSent) res.writeHead(502, { Connection: 'close' });
-        res.end();
-      });
+      out.on('error', fail);
       res.on('close', () => out.destroy());
       req.pipe(out);
     } catch (err) {
+      release();
       const refused = err instanceof Refused ? err : new Refused(502, 'could not connect');
       this.refuse(state, url?.hostname ?? '?', refused.reason);
       if (!res.headersSent) res.writeHead(refused.status, { Connection: 'close' });

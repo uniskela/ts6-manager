@@ -576,7 +576,8 @@ export async function resolveYouTubeAudioStream(
     ...getCookieArgs(),
     '--no-warnings',
     '--no-playlist',
-    '-f', 'ba/b',
+    // A single file over HTTP(S), never a playlist: the backend's ffmpeg plays this URL.
+    '-f', "ba[protocol~='^https?$']/b[protocol~='^https?$']",
     '--dump-single-json',
     '--no-download',
   ], mediaUrl));

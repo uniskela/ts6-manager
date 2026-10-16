@@ -20,6 +20,9 @@ describe('media egress address policy', () => {
       '127.0.0.1', '0.0.0.0', '169.254.169.254', '224.0.0.1', '255.255.255.255',
       '240.0.0.1', '198.18.0.1', '192.0.0.8', '100.100.100.200',
       '::1', '::', 'fe80::1', 'ff02::1', 'fd00:ec2::254',
+      // documentation, discard, benchmarking, deprecated and other special-purpose ranges
+      '192.0.2.10', '198.51.100.7', '203.0.113.9', '192.88.99.1',
+      '2001:db8::1', '3fff::1', '100::1', '2001:2::1', '2001:20::1', 'fec0::1', 'feff::1',
     ]) {
       assert.equal(mediaEgressRefusal(address), 'reserved', address);
     }
@@ -29,15 +32,17 @@ describe('media egress address policy', () => {
     assert.equal(embeddedIPv4('::ffff:10.0.0.1'), '10.0.0.1');
     assert.equal(embeddedIPv4('::ffff:7f00:1'), '127.0.0.1');
     assert.equal(embeddedIPv4('64:ff9b::a00:1'), '10.0.0.1');
-    assert.equal(embeddedIPv4('64:ff9b:1::a9fe:a9fe'), '169.254.169.254');
     assert.equal(embeddedIPv4('2002:c0a8:0101::1'), '192.168.1.1');
     assert.equal(embeddedIPv4('2606:4700::1'), null);
+    assert.equal(embeddedIPv4('::ffff:0:a9fe:a9fe'), '169.254.169.254', 'SIIT');
     assert.equal(mediaEgressRefusal('::ffff:127.0.0.1'), 'reserved');
     assert.equal(mediaEgressRefusal('64:ff9b::c0a8:1'), 'private');
     assert.equal(mediaEgressRefusal('2002:0a00:0001::1'), 'private');
     // NAT64 of a public address stays usable on IPv6-only networks.
     assert.equal(mediaEgressRefusal('64:ff9b::5db8:d70e'), null);
     assert.equal(mediaEgressRefusal('2001:0:4136:e378::1'), 'reserved', 'Teredo');
+    assert.equal(embeddedIPv4('64:ff9b:1::a9fe:a9fe'), null);
+    assert.equal(mediaEgressRefusal('64:ff9b:1::5db8:d70e'), 'reserved', 'local-use NAT64 cannot be checked');
   });
 
   it('expands IPv6 spellings to the same bytes', () => {

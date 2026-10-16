@@ -4,6 +4,7 @@ import { spawn } from 'child_process';
 import { getCookieArgs } from '../audio/youtube.js';
 import { spawnYtDlp, type YtDlpRun } from '../audio/yt-dlp-process.js';
 import { MediaEgressError } from '../egress/media-egress.js';
+import { MEDIA_EGRESS_PORTS } from '../egress/egress-policy.js';
 import { validateUrl, parseLocalHostAllowlist } from '../../utils/url-validator.js';
 import { describeDuration } from './lifecycle.js';
 import { AppError } from '../../middleware/error-handler.js';
@@ -83,6 +84,16 @@ export class VideoSourceFailedError extends AppError {
  * a slow resolve comes back as a readable error instead of a client timeout.
  */
 const RESOLVE_TIMEOUT_MS = 90_000;
+
+/**
+ * A URL yt-dlp resolved for the sidecar to play keeps to the ports every media
+ * download is limited to. The sidecar's own proxy checks the addresses it connects to.
+ */
+export function assertResolvedMediaPort(url: string, site: string): void {
+  const parsed = new URL(url);
+  const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+  if (!MEDIA_EGRESS_PORTS.has(port)) throw new VideoSourceFailedError(`${site} media URL blocked: port ${port} is not allowed`);
+}
 
 /** Start yt-dlp through the media egress proxy; a proxy failure is a source failure with a fixed message. */
 async function startYtDlp(args: string[], url: string, timeoutMs: number): Promise<YtDlpRun> {
@@ -365,6 +376,7 @@ async function resolveTwitchStreamUrl(
   if (!mediaCheck.valid) {
     throw new Error(`Twitch media URL blocked: ${mediaCheck.error}`);
   }
+  assertResolvedMediaPort(resolved.path, 'Twitch');
   // Keep the same duration ceiling YouTube downloads used to enforce for Twitch VODs.
   if (
     !resolved.live &&
@@ -455,6 +467,7 @@ async function resolveYoutubeStreamUrl(url: string, maxHeight: number): Promise<
     if (!check.valid) {
       throw new Error(`YouTube media URL blocked: ${check.error}`);
     }
+    assertResolvedMediaPort(media, 'YouTube');
   }
   console.log(
     `[VideoDownload] Resolved YouTube ${resolved.live ? 'live' : 'VOD'} for direct streaming` +
