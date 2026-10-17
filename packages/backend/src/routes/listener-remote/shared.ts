@@ -50,6 +50,8 @@ function remember(req: Request, binding: ListenerRemoteBinding, command?: string
 export function recordRefusal(req: Request, res: Response, err: ListenerRemoteError, detail?: string): void {
   const audit = req.app.locals.listenerRemoteRefusals as ListenerRemoteRefusalAudit | undefined;
   if (!audit || res.locals.listenerRemoteAttemptOpened) return;
+  // Administrator routes share the endpoint wrapper but are not listener traffic.
+  if (req.baseUrl.startsWith('/api/listener-remote-admin')) return;
   if (err.status === 400 || err.status === 404) {
     audit.countValidation();
     return;

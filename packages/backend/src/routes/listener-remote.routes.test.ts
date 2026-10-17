@@ -359,13 +359,13 @@ describe('listener remote HTTP security boundary', () => {
 
   it('labels a refusal inside an opened attempt with its own result code', async () => using(async f => {
     const { session } = await f.exchange();
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { await gate; return item; };
+    const started = deferred<void>();
+    const gate = deferred<void>();
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { started.resolve(); await gate.promise; return item; };
     const pending = f.request('/requests', { session, body: { url: mediaUrl } });
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await started.promise;
     restrict(f, [8]);
-    release();
+    gate.resolve();
     assert.equal((await pending).status, 403);
     const completion = f.audit.find((row: any) => row.where?.operationId) as any;
     assert.equal(completion.data.resultCode, 'permission_denied');
@@ -401,10 +401,11 @@ describe('listener remote HTTP security boundary', () => {
 
   it('refuses a second pending link before opening an audit attempt for it', async () => using(async f => {
     const { session } = await f.exchange();
+    const started = deferred<void>();
     const gate = deferred<void>();
-    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { await gate.promise; return item; };
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { started.resolve(); await gate.promise; return item; };
     const first = f.request('/requests', { session, body: { url: mediaUrl } });
-    for (let i = 0; i < 200 && !f.audit.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await started.promise;
     const opened = f.audit.length;
     assert.equal((await f.request('/requests', { session, body: { url: `${mediaUrl}&second` } })).status, 429);
     assert.equal(f.audit.length, opened, 'no attempt row for the refused link');
@@ -427,10 +428,11 @@ describe('listener remote HTTP security boundary', () => {
     const { session } = await f.exchange();
     const prisma = f.app.locals.prisma as any;
     const create = prisma.adminAuditEvent.create;
+    const writing = deferred<void>();
     const gate = deferred<void>();
-    prisma.adminAuditEvent.create = async (args: unknown) => { await gate.promise; return create(args); };
+    prisma.adminAuditEvent.create = async (args: unknown) => { writing.resolve(); await gate.promise; return create(args); };
     const pending = f.request('/requests', { session, body: { url: mediaUrl } });
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await writing.promise;
     restrict(f, [8]);
     gate.resolve();
     assert.equal((await pending).status, 403);
@@ -482,6 +484,14 @@ describe('listener remote HTTP security boundary', () => {
       assert.equal((await f.request('/state', { session })).status, 200);
     }, role);
   });
+
+  it('does not count administrator route errors as listener refusals', async () => using(async f => {
+    assert.notEqual((await f.request('/bots/not-a-number/revoke', { admin: true, method: 'POST', body: {} })).status, 200);
+    const refusals = f.app.locals.listenerRemoteRefusals as { validation: number; unavailable: number };
+    assert.equal(refusals.validation + refusals.unavailable, 0);
+    await f.flushRefusals();
+    assert.deepEqual(f.refusalRows, []);
+  }, 'admin'));
 
   it('allows audited admin revocation of one listener and all listeners of a bot', async () => using(async f => {
     const first = await f.exchange();

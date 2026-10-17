@@ -140,7 +140,8 @@ export class ListenerRemoteRefusalAudit {
 
   /** Flush every window; returns a stop function that flushes what is left. */
   start(): () => Promise<void> {
-    this.timer = setInterval(() => { this.flush().catch(() => { /* logged inside */ }); }, this.windowMs);
+    // The flush chain logs its own errors.
+    this.timer = setInterval(() => { this.flush().catch(() => undefined); }, this.windowMs);
     this.timer.unref();
     return async () => {
       clearInterval(this.timer);
@@ -204,7 +205,7 @@ export class ListenerRemoteRefusalAudit {
   /** Write the window's totals and start a new window, after any flush still running. */
   flush(): Promise<void> {
     const run = this.flushing.then(() => this.flushWindow());
-    this.flushing = run.catch(() => { /* logged inside */ });
+    this.flushing = run.catch((err) => { this.log(`[audit] Could not flush listener remote refusals: ${errorKind(err)}`); });
     return run;
   }
 

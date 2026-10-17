@@ -141,6 +141,7 @@ describe('app rate limiter stores', () => {
     const limited = await f.remoteState('198.51.100.7');
     assert.equal(limited.status, 429);
     assert.deepEqual(await limited.json(), { error: 'Too many remote requests', code: 'rate_limited' }, 'the response is unchanged');
+    assert.equal((await f.remoteState('198.51.100.7')).status, 429, 'a repeat adds to the same total');
     for (let n = 0; n < 200; n++) {
       try { f.remote.checkIp('ipv4:198.51.100.8', false); } catch { /* exhausted */ }
     }
@@ -149,8 +150,8 @@ describe('app rate limiter stores', () => {
     await f.flushRefusals();
     const rows = f.refusalRows as any[];
     assert.deepEqual(rows.map((row) => [row.action, row.targetId]).sort(), [
-      ['listener.remote.rate_limited', 'n=1;limiter'],
       ['listener.remote.rate_limited', 'n=1;other'],
+      ['listener.remote.rate_limited', 'n=2;limiter'],
     ]);
     const { createHash } = await import('node:crypto');
     for (const row of rows) {

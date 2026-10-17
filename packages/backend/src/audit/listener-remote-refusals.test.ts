@@ -94,7 +94,8 @@ describe('listener remote refusal totals', () => {
     audit.record({ kind: 'denied', source: 'listener:f', botId: 4 });
     audit.record({ kind: 'denied', source: 'listener:f', botId: 4 });
     const flushed = audit.flush();
-    setTimeout(release, 20);
+    await tick();
+    release();
     await flushed;
     assert.equal(rows.length, 1);
     assert.equal(updates.length, 1);
