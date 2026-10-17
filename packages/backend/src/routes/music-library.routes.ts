@@ -239,13 +239,22 @@ async function enrichYouTubeIdFile(
   };
 }
 
+/** Where an upload is written, and where it is published; built only from our own id and a known extension. */
+interface UploadPaths { temp: string; final: string }
+const uploadPaths = new WeakMap<Request, UploadPaths>();
+
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, MUSIC_DIR),
-  filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
+  filename: (req, file, cb) => {
+    // The file filter has already accepted the extension; take it from the list, not the request.
+    const ext = ALLOWED_EXTENSIONS.find((allowed) => allowed === path.extname(file.originalname).toLowerCase());
+    if (!ext) { cb(new Error('Unsupported file type'), ''); return; }
+    const id = randomUUID();
     // A temporary name the scan ignores (it keeps the extension for probing);
     // the upload is published under the library lock.
-    cb(null, `${UPLOADING_PREFIX}${randomUUID()}${ext}`);
+    const name = `${UPLOADING_PREFIX}${id}${ext}`;
+    uploadPaths.set(req as Request, { temp: path.join(MUSIC_DIR, name), final: path.join(MUSIC_DIR, `${id}${ext}`) });
+    cb(null, name);
   },
 });
 
@@ -351,6 +360,31 @@ musicLibraryRoutes.get('/songs/search', async (req: Request, res: Response, next
     res.json({ total, page, pageSize, songs });
   } catch (err) { next(err); }
 });
+
+/** SQLite write conflicts surface from Prisma as P2034 or a "database is locked" error. */
+function isWriteConflict(err: any): boolean {
+  return err?.code === 'P2034' || /database is locked|SQLITE_BUSY/i.test(String(err?.message ?? ''));
+}
+
+/**
+ * Add a row for a scanned file, unless the file is gone or this server already
+ * has a row for it. The check and the insert run in one transaction, retried a
+ * few times when another writer holds the database.
+ */
+async function adoptScannedFile(prisma: any, configId: number, filePath: string, data: Record<string, unknown>) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await prisma.$transaction(async (tx: any) => {
+        if (!fs.existsSync(filePath)) return null;
+        const taken = await tx.song.findFirst({ where: { serverConfigId: configId, filePath } });
+        return taken ? null : tx.song.create({ data });
+      });
+    } catch (err) {
+      if (attempt >= 3 || !isWriteConflict(err)) throw err;
+      await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
+    }
+  }
+}
 
 // POST /scan — Import audio files already present under MUSIC_DIR
 musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
@@ -481,11 +515,8 @@ musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: 
 
       // Adopting the file runs under the library file lock, after the slow probing above:
       // a removal cannot delete it between its last reference check and this row.
-      const song = await withLibraryFileLock(async () => {
-        if (!fs.existsSync(filePath)) return null;
-        const taken = await prisma.song.findFirst({ where: { serverConfigId: configId, filePath } });
-        return taken ? null : prisma.song.create({ data: songData });
-      });
+      // Only files without a row in `knownByPath` get here; the check is repeated under the lock.
+      const song = await withLibraryFileLock(() => adoptScannedFile(prisma, configId, filePath, songData)); // NOSONAR: files are adopted one at a time, each briefly under the lock
       if (!song) continue;
       created.push(song);
       imported++;
@@ -501,21 +532,22 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
     const prisma = req.app.locals.prisma;
     const configId = parseInt(req.params.configId as string);
     const file = req.file;
-    if (!file) throw new AppError(400, 'No file uploaded');
+    const paths = uploadPaths.get(req);
+    if (!file || !paths) throw new AppError(400, 'No file uploaded');
 
-    const tags = await probeAudioTags(file.path);
+    const tags = await probeAudioTags(paths.temp);
     const fromName = parseTitleArtistFromFilename(file.originalname);
     const title = tags.title || fromName.title;
     const artist = tags.artist || fromName.artist;
     let duration = tags.duration ?? null;
     if (duration == null) {
-      try { duration = await getAudioDuration(file.path); } catch { /* ignore */ }
+      try { duration = await getAudioDuration(paths.temp); } catch { /* ignore */ }
     }
 
     // Publish the file under its final name together with its row.
-    const finalPath = path.join(path.dirname(file.path), path.basename(file.path).slice(UPLOADING_PREFIX.length));
+    const finalPath = paths.final;
     const song = await withLibraryFileLock(async () => {
-      fs.renameSync(file.path, finalPath);
+      fs.renameSync(paths.temp, finalPath);
       try {
         return await prisma.song.create({
           data: {
@@ -538,7 +570,8 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
     res.status(201).json(song);
   } catch (err) {
     // A failed upload leaves no temporary file behind (it was never published).
-    if (req.file && path.basename(req.file.path).startsWith(UPLOADING_PREFIX)) fs.rm(req.file.path, { force: true }, () => undefined);
+    const paths = uploadPaths.get(req);
+    if (paths) fs.rm(paths.temp, { force: true }, () => undefined);
     next(err);
   }
 });

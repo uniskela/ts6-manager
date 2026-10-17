@@ -25,10 +25,12 @@ interface Row { id: number; filePath: string; serverConfigId: number; title: str
 function fakeLibrary(rows: Row[], playlistSongs: Array<{ playlistId: number; songId: number }> = []) {
   let songs = rows.map((row) => ({ ...row }));
   let entries = [...playlistSongs];
-  return {
+  const library = {
     get songs() { return songs; },
     get entries() { return entries; },
     prisma: {
+      // No isolation is needed in memory: run the work with the same client.
+      $transaction: async <T>(work: (tx: unknown) => Promise<T>): Promise<T> => work(library.prisma),
       song: {
         findUnique: async ({ where }: { where: { id: number } }) => songs.find((s) => s.id === where.id) ?? null,
         delete: async ({ where }: { where: { id: number } }) => {
@@ -51,6 +53,7 @@ function fakeLibrary(rows: Row[], playlistSongs: Array<{ playlistId: number; son
       },
     },
   };
+  return library;
 }
 
 function app(prisma: unknown, queued: string[] = []): Express {
@@ -69,7 +72,12 @@ function app(prisma: unknown, queued: string[] = []): Express {
 
 async function request(server: Express, route: string, init: RequestInit): Promise<Response> {
   const listener = server.listen(0);
-  await new Promise<void>((resolve) => listener.once('listening', resolve));
+  await new Promise<void>((resolve, reject) => {
+    const onListening = () => { listener.off('error', onError); resolve(); };
+    const onError = (error: Error) => { listener.off('listening', onListening); reject(error); };
+    listener.once('listening', onListening);
+    listener.once('error', onError);
+  });
   const { port } = listener.address() as { port: number };
   try {
     const res = await fetch(`http://127.0.0.1:${port}${route}`, init);

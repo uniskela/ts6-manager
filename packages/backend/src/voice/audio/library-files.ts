@@ -167,10 +167,14 @@ async function decideAndRemove(check: SongFileCheck): Promise<SongFileOutcome> {
   // Where the cache puts its folder.
   const cacheDir = path.join(musicDir, CACHE_DIR_NAME);
   // Where the entry itself sits (its folder, links resolved) and where its target is.
-  const entryFolder = await realpath(path.dirname(given));
-  const realTarget = await realpath(given);
+  // A path that vanished meanwhile is missing; other lookup errors keep the file.
+  const entryFolder = await realpath(path.dirname(given)).catch((err: unknown) => lookupFailed(given, err));
+  const realTarget = await realpath(given).catch((err: unknown) => lookupFailed(given, err));
+  if (!entryFolder || !realTarget) return 'missing';
   if (await within(entryFolder, cacheDir) || await within(path.dirname(realTarget), cacheDir)) return 'cache';
-  if (!(entry.isFile() || entry.isSymbolicLink()) || !(await stat(given)).isFile()) return 'outside-music-folder';
+  const info = await stat(given).catch((err: unknown) => lookupFailed(given, err));
+  if (!info) return 'missing';
+  if (!(entry.isFile() || entry.isSymbolicLink()) || !info.isFile()) return 'outside-music-folder';
   if (!(await within(entryFolder, musicDir)) || !(await within(path.dirname(realTarget), musicDir))) return 'outside-music-folder';
 
   if ((await identities(await check.otherSongPaths())).has(target)) return 'shared';
