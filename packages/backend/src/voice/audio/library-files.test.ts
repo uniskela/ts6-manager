@@ -107,6 +107,43 @@ describe('removeSongFileIfUnused', () => {
     assert.ok(existsSync(path.join(music, 'a-folder')));
   });
 
+  it('never deletes an entry that lives in the cache folder, even when it points at a music file', async (t) => {
+    const track = await put('kept.mp3');
+    const inCache = path.join(music, CACHE_DIR_NAME, 'v2', 'entry.mp3');
+    await mkdir(path.dirname(inCache), { recursive: true });
+    if (!(await symlink(track, inCache).then(() => true, () => false))) return t.skip('file links are not allowed here');
+    assert.equal(await removeSongFileIfUnused({ filePath: inCache, musicDir: music, otherSongPaths: none }), 'cache');
+    assert.ok(existsSync(inCache));
+    assert.ok(existsSync(track));
+  });
+
+  it('keeps a file when another song\'s file cannot be identified', async (t) => {
+    const file = await put('unsure.mp3');
+    // A link loop: looking it up fails with an error other than "not found".
+    const loopA = path.join(music, 'loop-a.mp3');
+    const loopB = path.join(music, 'loop-b.mp3');
+    if (!(await symlink(loopB, loopA).then(() => symlink(loopA, loopB)).then(() => true, () => false))) return t.skip('file links are not allowed here');
+    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [loopA] }), 'unverifiable');
+    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths: () => [loopB] }), 'unverifiable');
+    assert.ok(existsSync(file));
+  });
+
+  it('looks at the queue once more right before deleting', async () => {
+    const file = await put('late.mp3');
+    let looks = 0;
+    const queuedPaths = () => (++looks > 1 ? [file] : []);
+    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths }), 'in-use');
+    assert.ok(existsSync(file));
+  });
+
+  it('checks many other songs without missing a match', async () => {
+    const file = await put('many.mp3');
+    const others = Array.from({ length: 100 }, (_, i) => path.join(music, `absent-${i}.mp3`));
+    others.splice(77, 0, file);
+    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => others }), 'shared');
+    assert.ok(existsSync(file));
+  });
+
   it('lets a scan adopt a file only before or after a removal, never in between', async () => {
     const file = await put('contested.mp3');
     const rows: string[] = [];

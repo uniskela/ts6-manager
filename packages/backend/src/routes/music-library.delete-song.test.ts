@@ -5,6 +5,7 @@ import path from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 import express, { type Express } from 'express';
 import { errorHandler } from '../middleware/error-handler.js';
+import { withLibraryFileLock } from '../voice/audio/library-files.js';
 import { CACHE_DIR_NAME } from '../voice/audio/media-cache.js';
 
 // music-library.routes creates MUSIC_DIR on import; keep it out of /data in tests.
@@ -35,8 +36,18 @@ function fakeLibrary(rows: Row[], playlistSongs: Array<{ playlistId: number; son
           entries = entries.filter((e) => e.songId !== where.id);
           return {};
         },
-        findMany: async ({ where }: { where: { id: { not: number } } }) =>
-          songs.filter((s) => s.id !== where.id.not).map((s) => ({ filePath: s.filePath })),
+        findMany: async ({ where }: { where: { id?: { not: number }; filePath?: { not: string }; serverConfigId?: number } }) =>
+          songs.filter((s) =>
+            (where.id === undefined || s.id !== where.id.not)
+            && (where.filePath === undefined || s.filePath !== where.filePath.not)
+            && (where.serverConfigId === undefined || s.serverConfigId === where.serverConfigId)),
+        findFirst: async ({ where }: { where: { serverConfigId: number; filePath: string } }) =>
+          songs.find((s) => s.serverConfigId === where.serverConfigId && s.filePath === where.filePath) ?? null,
+        create: async ({ data }: { data: Omit<Row, 'id'> }) => {
+          const row = { ...data, id: 1000 + songs.length };
+          songs.push(row);
+          return row;
+        },
       },
     },
   };
@@ -56,16 +67,33 @@ function app(prisma: unknown, queued: string[] = []): Express {
   return server;
 }
 
-async function remove(server: Express, id: number): Promise<number> {
+async function request(server: Express, route: string, init: RequestInit): Promise<Response> {
   const listener = server.listen(0);
   await new Promise<void>((resolve) => listener.once('listening', resolve));
   const { port } = listener.address() as { port: number };
   try {
-    return (await fetch(`http://127.0.0.1:${port}/songs/${id}`, { method: 'DELETE' })).status;
+    const res = await fetch(`http://127.0.0.1:${port}${route}`, init);
+    await res.clone().arrayBuffer();
+    return res;
   } finally {
     await new Promise<void>((resolve) => listener.close(() => resolve()));
   }
 }
+
+async function remove(server: Express, id: number): Promise<number> {
+  return (await request(server, `/songs/${id}`, { method: 'DELETE' })).status;
+}
+
+/** Holds the library file lock until the returned function is called. */
+function holdLibraryLock(): () => void {
+  let release!: () => void;
+  void withLibraryFileLock(() => new Promise<void>((resolve) => { release = resolve; }));
+  return () => release();
+}
+
+const waitFor = async (check: () => boolean) => {
+  for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+};
 
 function file(name: string, content = 'audio'): string {
   const full = path.join(musicDir, name);
@@ -167,5 +195,46 @@ describe('deleting a song', () => {
     library.prisma.song.findUnique = async () => ({ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' });
     assert.equal(await remove(server, 60), 200);
     assert.equal(await remove(server, 60), 404);
+  });
+
+  it('adopts a scanned file only under the library file lock, and not after it was removed', async () => {
+    file('scan-kept.mp3');
+    const doomed = file('scan-doomed.mp3');
+    const library = fakeLibrary([]);
+    const release = holdLibraryLock();
+    const scanning = request(app(library.prisma), '/scan', { method: 'POST' });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    assert.deepEqual(library.songs, [], 'nothing adopted while the lock is held');
+    fs.rmSync(doomed);
+    release();
+    const res = await scanning;
+    assert.equal(res.status, 200);
+    assert.deepEqual(library.songs.map((s) => path.basename(s.filePath)), ['scan-kept.mp3']);
+  });
+
+  it('publishes an upload under the library file lock, and leaves nothing behind when that fails', async () => {
+    const library = fakeLibrary([]);
+    const upload = () => {
+      const form = new FormData();
+      form.append('file', new Blob(['not really audio']), 'Artist - Song.mp3');
+      return request(app(library.prisma), '/upload', { method: 'POST', body: form });
+    };
+    const names = () => fs.readdirSync(musicDir);
+    const release = holdLibraryLock();
+    const uploading = upload();
+    await waitFor(() => names().some((n) => n.endsWith('.mp3.uploading')));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.ok(names().every((n) => n.endsWith('.uploading')), 'not published while the lock is held');
+    assert.deepEqual(library.songs, []);
+    release();
+    assert.equal((await uploading).status, 201);
+    assert.equal(library.songs.length, 1);
+    assert.deepEqual(names(), [path.basename(library.songs[0].filePath)]);
+    assert.ok(library.songs[0].filePath.endsWith('.mp3'));
+
+    library.prisma.song.create = async () => { throw new Error('database unavailable'); };
+    assert.equal((await upload()).status, 500);
+    await waitFor(() => names().length === 1);
+    assert.deepEqual(names(), [path.basename(library.songs[0].filePath)], 'the failed upload left no file');
   });
 });

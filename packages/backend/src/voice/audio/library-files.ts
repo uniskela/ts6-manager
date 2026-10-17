@@ -15,7 +15,9 @@ export type SongFileOutcome =
   /** It belongs to the download cache, which manages its own files. */
   | 'cache'
   /** It is outside the music folder, or not a plain file; the library never deletes such files. */
-  | 'outside-music-folder';
+  | 'outside-music-folder'
+  /** Its identity could not be established reliably; it is kept. */
+  | 'unverifiable';
 
 export interface SongFileCheck {
   /** The removed song's file path. */
@@ -27,26 +29,33 @@ export interface SongFileCheck {
   queuedPaths?: () => string[];
 }
 
-/** A file's identity: the same file under any spelling, link or letter case. */
-type Identity = string;
+/** A file whose identity cannot be told reliably: anything about it is unknown, so it is kept. */
+class UnknownIdentity extends Error {}
 
-async function identityOf(file: string): Promise<Identity | null> {
+/** A file's identity, the same under any spelling, link or letter case; null when it does not exist. */
+async function identityOf(file: string): Promise<string | null> {
   if (!file.trim()) return null;
-  const info = await stat(file, { bigint: true }).catch(() => null);
-  return info ? `${info.dev}:${info.ino}` : null;
+  try {
+    const info = await stat(file, { bigint: true });
+    // Some network and FUSE filesystems report no file ids.
+    if (info.ino === 0n) throw new UnknownIdentity();
+    return `${info.dev}:${info.ino}`;
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    // Permission, I/O and other errors: unknown, not "not shared".
+    throw err instanceof UnknownIdentity ? err : new UnknownIdentity();
+  }
 }
 
 /**
- * True when one of the folders above `file` (after resolving links) is the
- * folder `dir`, compared by identity, so a link or a different letter case in
- * the path cannot hide where the file really is.
+ * True when `dir` is `folder` or one of the folders above it, compared by
+ * identity, so a link or a different letter case cannot hide where it is.
  */
-async function under(file: string, dir: string): Promise<boolean> {
+async function within(folder: string, dir: string): Promise<boolean> {
   const target = await identityOf(dir);
   if (!target) return false;
-  const real = await realpath(file).catch(() => null);
-  if (!real) return false;
-  let current = path.dirname(real);
+  let current = folder;
   for (;;) {
     if ((await identityOf(current)) === target) return true; // NOSONAR: walks up one folder at a time
     const parent = path.dirname(current);
@@ -55,12 +64,25 @@ async function under(file: string, dir: string): Promise<boolean> {
   }
 }
 
+/** Identities of `paths`, a few at a time; missing files are skipped. */
+async function identities(paths: string[]): Promise<Set<string>> {
+  const found = new Set<string>();
+  const unique = [...new Set(paths.filter((p) => p.trim()).map((p) => path.resolve(p)))];
+  for (let i = 0; i < unique.length; i += 32) {
+    const batch = await Promise.all(unique.slice(i, i + 32).map(identityOf)); // NOSONAR: bounded batches
+    for (const id of batch) if (id) found.add(id);
+  }
+  return found;
+}
+
 /** One lock for everything that adds library songs for existing files, or deletes them. */
 let libraryFiles: Promise<unknown> = Promise.resolve();
 
 /**
- * Run `task` alone with respect to other library file changes: a scan cannot
- * adopt a file between a removal's last reference check and its deletion.
+ * Run `task` alone with respect to other library file changes: a scan or an
+ * upload cannot adopt a file between a removal's last reference check and its
+ * deletion. The lock is per backend process (one backend is supported). Never
+ * call `removeSongFileIfUnused` from inside a task: it takes the lock itself.
  */
 export function withLibraryFileLock<T>(task: () => Promise<T>): Promise<T> {
   const run = libraryFiles.then(task, task);
@@ -72,34 +94,45 @@ export function withLibraryFileLock<T>(task: () => Promise<T>): Promise<T> {
  * After a song row was deleted, delete its file only when nothing else uses it.
  * Runs under the library file lock.
  *
- * - Files in the download cache (`.ts6-media-cache`) are never deleted here:
- *   other songs and requests can share them, and the cache manages them.
- * - Only plain files inside the music folder are ever deleted.
- * - A file another song row still names (on any server, under any path,
- *   link or letter case), or that a bot has queued or playing, is kept.
+ * - Nothing inside the download cache (`.ts6-media-cache`) is ever unlinked
+ *   here: neither a cache file nor an entry that lives in the cache folder.
+ * - Only plain files whose entry and target both lie in the music folder are deleted.
+ * - A file another song row still names (on any server, under any path, link
+ *   or letter case), or that a bot has queued or playing, is kept.
+ * - Anything whose identity cannot be established reliably is kept.
  */
 export function removeSongFileIfUnused(check: SongFileCheck): Promise<SongFileOutcome> {
   return withLibraryFileLock(async () => {
-    if (!check.filePath.trim()) return 'missing';
-    const given = path.resolve(check.filePath);
-    const info = await lstat(given).catch(() => null);
-    if (!info) return 'missing';
-    const target = await identityOf(given);
-    if (!target) return 'missing';
-    const musicDir = path.resolve(check.musicDir);
-    if (await under(given, path.join(musicDir, CACHE_DIR_NAME))) return 'cache';
-    // Only a plain file (or a link to one) whose real location is inside the music folder.
-    if (!(info.isFile() || info.isSymbolicLink()) || !(await under(given, musicDir))) return 'outside-music-folder';
-    if (!(await stat(given)).isFile()) return 'outside-music-folder';
-
-    for (const other of new Set(await check.otherSongPaths())) {
-      if ((await identityOf(path.resolve(other))) === target) return 'shared'; // NOSONAR: one row after another
+    try {
+      return await decideAndRemove(check);
+    } catch (err) {
+      if (err instanceof UnknownIdentity) return 'unverifiable';
+      throw err;
     }
-    for (const queued of new Set(check.queuedPaths?.() ?? [])) {
-      if ((await identityOf(path.resolve(queued))) === target) return 'in-use'; // NOSONAR: one item after another
-    }
-
-    await rm(given, { force: true });
-    return 'removed';
   });
+}
+
+async function decideAndRemove(check: SongFileCheck): Promise<SongFileOutcome> {
+  if (!check.filePath.trim()) return 'missing';
+  const given = path.resolve(check.filePath);
+  const entry = await lstat(given).catch(() => null);
+  if (!entry) return 'missing';
+  const target = await identityOf(given);
+  if (!target) return 'missing';
+  const musicDir = path.resolve(check.musicDir);
+  const cacheDir = path.join(musicDir, CACHE_DIR_NAME);
+  // Where the entry itself sits (its folder, links resolved) and where its target is.
+  const entryFolder = await realpath(path.dirname(given));
+  const realTarget = await realpath(given);
+  if (await within(entryFolder, cacheDir) || await within(path.dirname(realTarget), cacheDir)) return 'cache';
+  if (!(entry.isFile() || entry.isSymbolicLink()) || !(await stat(given)).isFile()) return 'outside-music-folder';
+  if (!(await within(entryFolder, musicDir)) || !(await within(path.dirname(realTarget), musicDir))) return 'outside-music-folder';
+
+  if ((await identities(await check.otherSongPaths())).has(target)) return 'shared';
+  if ((await identities(check.queuedPaths?.() ?? [])).has(target)) return 'in-use';
+  // Queued meanwhile? Playback is not under this lock; look once more right before deleting.
+  if ((await identities(check.queuedPaths?.() ?? [])).has(target)) return 'in-use';
+
+  await rm(given, { force: true });
+  return 'removed';
 }
