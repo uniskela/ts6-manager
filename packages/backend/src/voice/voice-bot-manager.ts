@@ -13,6 +13,7 @@ import type { QueueItem } from './playlist/queue.js';
 import type { MusicCommandHandler } from './music-command-handler.js';
 import { decrypt, encrypt } from '../utils/crypto.js';
 import { sweepStreamTempFiles } from './streaming/video-download.js';
+import { mediaCacheFor } from './audio/media-cache.js';
 import { loadMaxVideoDuration, loadVideoStreamingSettings, loadYoutubeDirectStream } from '../utils/app-settings.js';
 import { serializeCommandChannelIds } from './music-command-channels.js';
 import { reconnectAttemptBusy, type ReconnectAttemptState } from './reconnect-state.js';
@@ -73,6 +74,10 @@ export class VoiceBotManager extends EventEmitter {
 
   async start(): Promise<void> {
     sweepStreamTempFiles();
+    // Leftovers of interrupted downloads, inside the download cache only.
+    void mediaCacheFor(process.env.MUSIC_DIR || '/data/music').sweep().catch((err: Error) => {
+      console.warn(`[MediaCache] ${err.message}`);
+    });
     const maxVideoDurationSec = await loadMaxVideoDuration(this.prisma);
     const parsedAutoStop = parseAutoStopEmptySeconds(process.env.BOT_AUTO_STOP_EMPTY_SECONDS);
 

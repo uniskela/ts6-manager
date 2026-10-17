@@ -1,5 +1,6 @@
 import { parseDownloadProgress, type ProgressUpdate } from './download-progress.js';
 import { spawnYtDlp, ytDlpTarget } from './yt-dlp-process.js';
+import { cacheKey, identityFromInfo, MAX_CACHE_FILE_BYTES, mediaCacheFor } from './media-cache.js';
 import path from "path";
 import fs from "fs";
 
@@ -68,18 +69,6 @@ function buildYtDlpBaseArgs(playerClients: string): string[] {
 
 export function getCookieArgs(): string[] {
   return buildYtDlpBaseArgs(YT_EXTRACTOR_CLIENT_ROTATION[0]);
-}
-
-function findCachedAudioFile(outputDir: string, videoId: string): string | null {
-  if (!fs.existsSync(outputDir)) return null;
-  const prefix = `${videoId}.`;
-  // Interrupted jobs can leave .part/.ytdl files. Never treat them as playable cache hits.
-  const files = fs.readdirSync(outputDir).filter((f) => f.startsWith(prefix)
-    && /\.(opus|ogg|webm|m4a|mp3|aac|flac|wav|mp4)$/i.test(f)
-    && !/\.(part|ytdl|temp|f\d+)\./i.test(f)
-    && fs.statSync(path.join(outputDir, f)).size > 0);
-  if (files.length === 0) return null;
-  return path.join(outputDir, files[files.length - 1]);
 }
 
 function formatYtDlpFailure(phase: string, code: number | null, stderr: string): string {
@@ -318,11 +307,17 @@ const YT_DLP_TIMEOUT_MS = 180_000;
  * On POSIX yt-dlp runs in its own process group, and a timeout or cancellation kills the whole
  * group, so an ffmpeg it started for conversion stops with it instead of writing on afterwards.
  */
-async function runYtDlp(args: string[], onProgress?: (p: ProgressUpdate) => void, signal?: AbortSignal): Promise<{ code: number | null; stdout: string; stderr: string }> {
+async function runYtDlp(
+  args: string[],
+  onProgress?: (p: ProgressUpdate) => void,
+  signal?: AbortSignal,
+  /** What the run fetches, when no URL follows `--` (a download from a saved info document). */
+  target?: string,
+): Promise<{ code: number | null; stdout: string; stderr: string }> {
   signal?.throwIfAborted();
   // Own process group on POSIX; Windows has no process groups to kill, so it keeps the old behaviour.
   const group = process.platform !== "win32";
-  const { proc, redact } = await spawnYtDlp(args, { target: ytDlpTarget(args), timeoutMs: YT_DLP_TIMEOUT_MS, detached: group });
+  const { proc, redact } = await spawnYtDlp(args, { target: target ?? ytDlpTarget(args), timeoutMs: YT_DLP_TIMEOUT_MS, detached: group });
   return new Promise((resolve, reject) => {
     let running = true;
     const killTree = () => {
@@ -477,14 +472,19 @@ async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Re
   throw new Error(formatYtDlpFailure("yt-dlp info failed", lastCode, lastStderr));
 }
 
+/**
+ * Download the audio described by a saved info document into `stagingDir`,
+ * trying the format strategies in turn. Downloading from the document means
+ * the download uses exactly the metadata that was checked. Returns the lines
+ * yt-dlp printed for its final file.
+ */
 async function ytDlpDownloadAudio(
+  infoFile: string,
+  stagingDir: string,
   mediaUrl: string,
-  outputDir: string,
-  outputTemplate: string,
-  videoId: string,
   onProgress?: (p: ProgressUpdate) => void,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<string[]> {
   const formatStrategies: string[][] = [
     ["-f", YT_AUDIO_FORMAT, "-x", "--audio-quality", "0"],
     ["-f", YT_AUDIO_FORMAT],
@@ -494,37 +494,48 @@ async function ytDlpDownloadAudio(
   let lastCode: number | null = null;
   let lastStderr = "";
 
-  for (const clients of YT_EXTRACTOR_CLIENT_ROTATION) {
-    for (const fmtArgs of formatStrategies) {
-      const dlResult = await runYtDlp(
-        withMediaUrl(
-          [
-            ...buildYtDlpBaseArgs(clients),
-            "--no-warnings",
-            "--newline", "--progress",
-            "--progress-template", 'download:ts6-progress:%(progress)j',
-            "--progress-template", 'postprocess:ts6-processing',
-            ...fmtArgs,
-            "--no-playlist",
-            "-o",
-            outputTemplate,
-          ],
-          mediaUrl,
-        ), onProgress, signal,
-      );
+  for (const fmtArgs of formatStrategies) {
+    // A failed attempt may leave partial files; each attempt starts from an empty folder.
+    for (const name of await fs.promises.readdir(stagingDir)) {
+      if (name !== "info.json") await fs.promises.rm(path.join(stagingDir, name), { recursive: true, force: true });
+    }
+    const dlResult = await runYtDlp(
+      [
+        ...getCookieArgs(),
+        "--no-warnings",
+        "--newline", "--progress",
+        "--progress-template", 'download:ts6-progress:%(progress)j',
+        "--progress-template", 'postprocess:ts6-processing',
+        ...fmtArgs,
+        "--no-playlist",
+        "--max-filesize", `${MAX_CACHE_FILE_BYTES}`,
+        "--load-info-json", infoFile,
+        "-o", path.join(stagingDir, "media.%(ext)s"),
+        "--print", "after_move:filepath",
+      ],
+      onProgress, signal, mediaUrl,
+    );
 
-      lastCode = dlResult.code;
-      lastStderr = dlResult.stderr;
+    lastCode = dlResult.code;
+    lastStderr = dlResult.stderr;
 
-      if (dlResult.code === 0 && findCachedAudioFile(outputDir, videoId)) {
-        return;
-      }
+    if (dlResult.code === 0) {
+      return dlResult.stdout
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter((line) => line && !/^ts6-(progress|processing)/.test(line) && !line.startsWith("["));
     }
   }
 
   throw new Error(formatYtDlpFailure("yt-dlp download failed", lastCode, lastStderr));
 }
 
+/**
+ * Download audio for a URL into the music folder's download cache, or reuse
+ * the cached file for the same source. YouTube Music URLs are canonicalised to
+ * www.youtube.com/watch?v=… first. The cache never reuses files outside its
+ * own folder (see media-cache.ts).
+ */
 export async function downloadYouTube(
   url: string,
   outputDir: string,
@@ -538,30 +549,34 @@ export async function downloadYouTube(
     );
   }
   const mediaUrl = parsed.watchUrl || parsed.canonicalUrl;
-  const outputTemplate = path.join(outputDir, "%(id)s.%(ext)s");
 
   const parsedInfo = await ytDlpDumpJson(mediaUrl, signal);
+  // The identity comes from what the backend parsed, checked against the metadata.
+  const identity = identityFromInfo(
+    { youtubeVideoId: parsed.videoId && isYouTubeHostUrl(mediaUrl) ? parsed.videoId : undefined, url: mediaUrl },
+    parsedInfo,
+  );
 
+  const duration = typeof parsedInfo.duration === "number" && parsedInfo.duration > 0 ? parsedInfo.duration : 0;
   const info: YouTubeInfo = {
     id: String(parsedInfo.id),
     title: (parsedInfo.title as string) || "Unknown",
     artist: (parsedInfo.uploader as string) || (parsedInfo.channel as string) || "Unknown",
-    duration: (parsedInfo.duration as number) || 0,
+    duration,
     thumbnail: (parsedInfo.thumbnail as string) || "",
     url: mediaUrl,
   };
 
-  const cached = findCachedAudioFile(outputDir, info.id);
-  if (cached) {
-    return { filePath: cached, info };
-  }
-
-  await ytDlpDownloadAudio(mediaUrl, outputDir, outputTemplate, info.id, onProgress, signal);
-
-  const filePath = findCachedAudioFile(outputDir, info.id);
-  if (!filePath) {
-    throw new Error("Downloaded file not found");
-  }
+  const filePath = await mediaCacheFor(outputDir).fetch(cacheKey(identity), async (stagingDir, jobSignal) => {
+    const infoFile = path.join(stagingDir, "info.json");
+    await fs.promises.writeFile(infoFile, JSON.stringify(parsedInfo), { flag: "wx" });
+    const reportedPaths = await ytDlpDownloadAudio(infoFile, stagingDir, mediaUrl, onProgress, jobSignal);
+    return {
+      reportedPaths,
+      expectedDurationSec: duration > 0 ? duration : null,
+      extractor: String(parsedInfo.extractor_key),
+    };
+  }, signal);
 
   return { filePath, info };
 }
