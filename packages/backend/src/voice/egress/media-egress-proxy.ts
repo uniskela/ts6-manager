@@ -480,6 +480,7 @@ export class MediaEgressProxy {
       if (setup.signal.aborted) {
         socket.destroy();
         release();
+        res.destroy();
         return;
       }
       if (head.length) socket.unshift(head);
@@ -562,10 +563,8 @@ export function parseAuthority(value: string): { host: string; port: number } | 
 function readConnectResponse(socket: net.Socket, timeoutMs: number, signal: AbortSignal): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let buffered = Buffer.alloc(0);
-    const timer = setTimeout(() => finish(new Refused(504, 'upstream proxy timed out')), timeoutMs);
-    const onAbort = () => finish(new Refused(410, 'cancelled'));
-    signal.addEventListener('abort', onAbort, { once: true });
-    if (signal.aborted) queueMicrotask(onAbort);
+    let timer: NodeJS.Timeout | undefined;
+    let onAbort = () => {};
     const finish = (err?: Error, rest?: Buffer) => {
       clearTimeout(timer);
       signal.removeEventListener('abort', onAbort);
@@ -591,5 +590,10 @@ function readConnectResponse(socket: net.Socket, timeoutMs: number, signal: Abor
     socket.on('data', onData);
     socket.on('error', onError);
     socket.on('close', onClose);
+    // Registered last: everything finish() touches exists by now.
+    timer = setTimeout(() => finish(new Refused(504, 'upstream proxy timed out')), timeoutMs);
+    onAbort = () => finish(new Refused(410, 'cancelled'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) queueMicrotask(onAbort);
   });
 }
