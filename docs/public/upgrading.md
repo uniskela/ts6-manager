@@ -104,14 +104,16 @@ Cloud metadata addresses stay blocked even when listed.
 
 #### Downloads go into a separate cache folder
 
-Songs downloaded from links (YouTube, other sites, Spotify and Apple Music matches) are now stored in an app-owned folder, `.ts6-media-cache`, inside the music folder (`MUSIC_DIR`). Each download is checked before it is kept: it must be the one item that was requested and readable audio of the expected length. There is no schema change and no Compose change.
+Songs downloaded from links (YouTube, other sites, Spotify and Apple Music matches) are now stored in an app-owned folder, `.ts6-media-cache`, inside the music folder (`MUSIC_DIR`). Each download is checked before it is kept: it must be the one item that was requested, and audio whose length `ffprobe` can read (and that matches the announced length, when the site gives one). Downloads that fail the check are not kept, and the request fails with a message. There is no schema change and no Compose change.
 
 What changes, and what does not:
 
 - **Existing songs, playlists and queues keep working.** Their files stay where they are and are played as before. Nothing in the music folder outside `.ts6-media-cache` is renamed, moved, overwritten or deleted by the upgrade, the cache or its clean-up.
-- **Files from older downloads are not reused for new requests.** Asking again for something that was downloaded before 1.11.2 downloads it once more into the cache, so it takes disk space twice until you remove the old copy yourself. Plan for some extra space: in the worst case, as much again as your existing downloads.
+- **Files from older downloads are not reused for new requests, and are not migrated.** They stay where they are and keep playing for the songs that use them. Asking again for something downloaded before 1.11.2 downloads it once more into the cache.
+
+  **Disk space.** Each such repeat keeps two copies until you archive the old one yourself. The worst case is about as much extra space as all your existing downloads. On top of that, the cache grows with every new source played or downloaded, because nothing in it is removed automatically.
 - **A link to a site other than YouTube is cached per exact link.** The same track pasted with a different link is downloaded separately.
-- **ffprobe is required.** It ships with ffmpeg in the Docker images. A native install without `ffprobe` on its `PATH` cannot download new songs; the Runtime / media check shows whether it is available.
+- **ffprobe is required for new downloads.** It ships with ffmpeg in the Docker images. On a native install without `ffprobe` on the backend's `PATH`, new downloads fail with *New downloads need ffprobe, which was not found…*; songs already in the library keep playing. The Runtime / media check shows whether ffprobe is available.
 - **A folder named `.ts6-media-cache` that TS6 Manager did not create** is left alone, and downloads fail with a message asking you to rename or move it. If the backend is stopped at the moment it creates the cache, an empty `.ts6-media-cache.<random>.tmp` folder can be left next to it; you can delete it.
 - **The cache holds the files of songs downloaded from now on.** Library songs, playlists and queues point into it, so do not delete or move `.ts6-media-cache`. Tracks that are played without being added to the library are kept there too, and the Library's **Scan** does not list them.
 - **The cache is not cleaned up automatically.** It grows with every new source played or downloaded; only leftovers of interrupted downloads are removed.

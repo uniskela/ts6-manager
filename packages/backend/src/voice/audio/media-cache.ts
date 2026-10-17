@@ -123,7 +123,13 @@ export function probeAudio(filePath: string, timeoutMs = 30_000): Promise<ProbeR
     let out = '';
     const timer = setTimeout(() => proc.kill('SIGKILL'), timeoutMs);
     proc.stdout.on('data', (chunk: Buffer) => { out = (out + chunk.toString()).slice(-65_536); });
-    proc.on('error', (err) => { clearTimeout(timer); reject(new MediaCacheError(`ffprobe could not run (${(err as NodeJS.ErrnoException).code ?? err.name})`)); });
+    proc.on('error', (err) => {
+      clearTimeout(timer);
+      const code = (err as NodeJS.ErrnoException).code;
+      reject(new MediaCacheError(code === 'ENOENT'
+        ? 'New downloads need ffprobe, which was not found. Install FFmpeg (it includes ffprobe) and make sure the backend can find it on its PATH; songs already in the library keep playing.'
+        : `ffprobe could not run (${code ?? err.name}).`));
+    });
     proc.on('close', (code) => {
       clearTimeout(timer);
       if (code !== 0) { reject(new MediaCacheError('The downloaded file could not be read as audio.')); return; }
@@ -145,16 +151,25 @@ export function parseProbe(json: string): ProbeResult {
   };
 }
 
-/** The probe must find audio, and a duration close to the one the metadata announced. */
-export function checkProbe(probe: ProbeResult, expectedSec: number | null): void {
+/**
+ * A cached track must be audio with a readable, positive length; there is no
+ * exception. When the metadata announced a length, the two must agree within
+ * 10 seconds or 10%, whichever is more. Metadata without a length is fine: the
+ * probed length is then the only one.
+ */
+export function checkProbe(probe: ProbeResult, expectedSec: number | null): number {
   if (!probe.hasAudio) throw new MediaCacheError('The downloaded file has no audio.');
-  if (expectedSec && expectedSec > 0) {
-    // An announced length must be confirmed: a file whose length cannot be read is not kept.
+  const probed = probe.durationSec;
+  if (probed === null || !Number.isFinite(probed) || probed <= 0) {
+    throw new MediaCacheError('The length of the downloaded file could not be read.');
+  }
+  if (expectedSec !== null && Number.isFinite(expectedSec) && expectedSec > 0) {
     const tolerance = Math.max(10, expectedSec * 0.1);
-    if (probe.durationSec === null || Math.abs(probe.durationSec - expectedSec) > tolerance) {
+    if (Math.abs(probed - expectedSec) > tolerance) {
       throw new MediaCacheError('The downloaded file does not match the track length.');
     }
   }
+  return probed;
 }
 
 /**
@@ -502,16 +517,16 @@ export class MediaCache {
       const result = await download(staging, signal);
       signal.throwIfAborted();
       const staged = await checkStagedFile(staging, result.reportedPaths);
-      checkProbe(await this.probe(staged.file), result.expectedDurationSec);
+      const durationSec = checkProbe(await this.probe(staged.file), result.expectedDurationSec);
       signal.throwIfAborted();
-      return await this.publish(key, staged, result);
+      return await this.publish(key, staged, result, durationSec);
     } finally {
       await rm(staging, { recursive: true, force: true }).catch(() => undefined);
       await unlock();
     }
   }
 
-  private async publish(key: string, staged: { file: string; ext: string; size: number }, result: StagedDownload): Promise<string> {
+  private async publish(key: string, staged: { file: string; ext: string; size: number }, result: StagedDownload, durationSec: number): Promise<string> {
     const name = `${key}.${randomBytes(8).toString('hex')}.${staged.ext}`;
     const target = path.join(this.v2, name);
     const temporary = path.join(this.v2, `${key}.json.${randomBytes(8).toString('hex')}.tmp`);
@@ -525,7 +540,7 @@ export class MediaCache {
       file: name,
       size: staged.size,
       sha256: await sha256File(staged.file),
-      durationSec: result.expectedDurationSec,
+      durationSec,
       createdAt: new Date(this.now()).toISOString(),
     };
     let committed = false;

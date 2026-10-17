@@ -5,11 +5,16 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
-  CACHE_DIR_NAME, MediaCache, MediaCacheError, cacheKey, canonicalUrl, checkProbe, checkStagedFile,
+  CACHE_DIR_NAME, MediaCache, MediaCacheError, cacheKey, probeAudio, canonicalUrl, checkProbe, checkStagedFile,
   identityFromInfo, parseManifest, parseProbe, renameWithRetry, type StagedDownload,
 } from './media-cache.js';
 
 const audioProbe = async () => ({ hasAudio: true, durationSec: 100 });
+
+/** A folder link: a junction on Windows, which needs no special privileges. */
+function linkFolder(target: string, at: string): Promise<void> {
+  return symlink(target, at, process.platform === 'win32' ? 'junction' : 'dir');
+}
 
 /** Settles with `gate`, or rejects when `signal` aborts; the listener is removed either way. */
 function untilOrAbort(gate: Promise<unknown>, signal: AbortSignal): Promise<void> {
@@ -91,7 +96,8 @@ describe('download verification', () => {
     await writeFile(path.join(staging, 'page.html'), '<html>');
     await writeFile(path.join(staging, 'sub', 'c.opus'), 'audio');
     await writeFile(path.join(dir, 'outside.opus'), 'audio');
-    await symlink(path.join(dir, 'outside.opus'), path.join(staging, 'link.opus'));
+    // File links need extra privileges on Windows; without them that case is not tested there.
+    const fileLink = await symlink(path.join(dir, 'outside.opus'), path.join(staging, 'link.opus')).then(() => true, () => false);
     const cases: Array<[string, string[]]> = [
       ['no file', []],
       ['two files', [path.join(staging, 'a.opus'), path.join(staging, 'b.opus')]],
@@ -99,22 +105,49 @@ describe('download verification', () => {
       ['wrong type', [path.join(staging, 'page.html')]],
       ['nested folder', [path.join(staging, 'sub', 'c.opus')]],
       ['outside staging', [path.join(dir, 'outside.opus')]],
-      ['link leading outside', [path.join(staging, 'link.opus')]],
       ['missing', [path.join(staging, 'gone.opus')]],
     ];
+    if (fileLink) cases.push(['link leading outside', [path.join(staging, 'link.opus')]]);
     for (const [label, reported] of cases) {
       await assert.rejects(checkStagedFile(staging, reported), MediaCacheError, label);
     }
   });
 
-  it('requires audio and a duration close to the metadata', () => {
+  it('requires audio with a readable, positive length that matches the metadata', () => {
     assert.deepEqual(parseProbe('{"streams":[{"codec_type":"video"},{"codec_type":"audio"}],"format":{"duration":"212.4"}}'), { hasAudio: true, durationSec: 212.4 });
-    assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 212 }, 214));
+    assert.equal(parseProbe('{"streams":[{"codec_type":"audio"}],"format":{"duration":"N/A"}}').durationSec, null);
+    assert.equal(checkProbe({ hasAudio: true, durationSec: 212 }, 214), 212);
     assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 3600 }, 3900), 'within 10%');
-    assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 30 }, null), 'no announced length');
-    assert.throws(() => checkProbe({ hasAudio: false, durationSec: 200 }, 200), MediaCacheError);
-    assert.throws(() => checkProbe({ hasAudio: true, durationSec: 30 }, 214), MediaCacheError);
-    assert.throws(() => checkProbe({ hasAudio: true, durationSec: null }, 214), MediaCacheError, 'an announced length must be confirmed');
+    assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 5 }, 14), 'within 10 seconds');
+    // Metadata without a length: the probe must still read one.
+    assert.equal(checkProbe({ hasAudio: true, durationSec: 30 }, null), 30);
+    assert.throws(() => checkProbe({ hasAudio: true, durationSec: null }, null), /could not be read/);
+    // A length the probe cannot read is refused even when the metadata announced one.
+    assert.throws(() => checkProbe({ hasAudio: true, durationSec: null }, 214), /could not be read/);
+    assert.throws(() => checkProbe({ hasAudio: true, durationSec: 0 }, null), /could not be read/);
+    // Metadata and probe disagree.
+    assert.throws(() => checkProbe({ hasAudio: true, durationSec: 30 }, 214), /does not match/);
+    assert.throws(() => checkProbe({ hasAudio: true, durationSec: 4000 }, 3600), /does not match/);
+    assert.throws(() => checkProbe({ hasAudio: false, durationSec: 200 }, 200), /no audio/);
+  });
+
+  it('publishes nothing when the length cannot be read, with or without metadata', async () => {
+    for (const expected of [null, 120]) {
+      const music = await mkdtemp(path.join(tmpdir(), 'ts6-cache-length-'));
+      try {
+        const cache = new MediaCache(music, { probe: async () => ({ hasAudio: true, durationSec: null }), log: () => {} });
+        const key = cacheKey({ kind: 'youtube', videoId: 'abcdefghijk' });
+        const download = async (staging: string): Promise<StagedDownload> => {
+          const file = path.join(staging, 'media.opus');
+          await writeFile(file, 'audio');
+          return { reportedPaths: [file], expectedDurationSec: expected, kind: 'youtube', extractor: 'Youtube' };
+        };
+        await assert.rejects(cache.fetch(key, download), /could not be read/);
+        assert.equal(await cache.lookup(key), null);
+      } finally {
+        await rm(music, { recursive: true, force: true });
+      }
+    }
   });
 
   it('retries replacing a manifest that is briefly in use (Windows), and gives up on other errors', async () => {
@@ -133,6 +166,16 @@ describe('download verification', () => {
     const alwaysBusy = async () => { calls++; throw Object.assign(new Error('in use'), { code: 'EACCES' }); };
     await assert.rejects(renameWithRetry('a', 'b', alwaysBusy, 3), /in use/);
     assert.equal(calls, 3);
+  });
+
+  it('explains a missing ffprobe in words an administrator can act on', async () => {
+    const previous = process.env.PATH;
+    process.env.PATH = path.join(dir, 'no-tools-here');
+    try {
+      await assert.rejects(probeAudio(path.join(dir, 'x.opus')), /New downloads need ffprobe, which was not found/);
+    } finally {
+      process.env.PATH = previous;
+    }
   });
 
   it('reads only manifests this cache writes', () => {
@@ -289,7 +332,7 @@ describe('media cache', () => {
     await utimes(old, past, past);
     const staging = path.join(music, CACHE_DIR_NAME, 'v2', 'staging');
     await rm(staging, { recursive: true });
-    await symlink(outside, staging);
+    await linkFolder(outside, staging);
     const fresh = new MediaCache(music, { probe: audioProbe, log: () => {} });
     await assert.rejects(fresh.sweep(), /link where a folder belongs/);
     await assert.rejects(fresh.fetch(key, writer({ n: 0 })), /link where a folder belongs/);
@@ -411,7 +454,7 @@ describe('media cache', () => {
     await writeFile(path.join(root, 'OWNER'), 'ts6-manager media cache\nformat=2\n');
     const outside = path.join(music, 'elsewhere');
     await mkdir(outside);
-    await symlink(outside, path.join(root, 'v2'));
+    await linkFolder(outside, path.join(root, 'v2'));
     const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
     await assert.rejects(cache.init(), /link where a folder belongs/);
     assert.deepEqual(await readdir(outside), [], 'no locks or staging folder were created through the link');
@@ -464,6 +507,43 @@ describe('media cache', () => {
       await assert.rejects(cache.fetch(key, writer({ n: 0 })), /stale download lock could not be removed/);
     } finally {
       await chmod(locks, 0o755);
+    }
+  });
+
+  it('keeps ids that differ only by letter case apart on any filesystem', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    const upper = cacheKey({ kind: 'youtube', videoId: 'aBcDeFgHiJk' });
+    const lower = cacheKey({ kind: 'youtube', videoId: 'abcdefghijk' });
+    const content = (text: string) => async (staging: string): Promise<StagedDownload> => {
+      const file = path.join(staging, 'media.opus');
+      await writeFile(file, text);
+      return { reportedPaths: [file], expectedDurationSec: 100, kind: 'youtube', extractor: 'Youtube' };
+    };
+    const a = await cache.fetch(upper, content('upper case id'));
+    const b = await cache.fetch(lower, content('lower case id'));
+    assert.notEqual(a.toLowerCase(), b.toLowerCase(), 'the names differ even ignoring case');
+    assert.equal(await readFile(a, 'utf8'), 'upper case id');
+    assert.equal(await readFile(b, 'utf8'), 'lower case id');
+    assert.equal(await cache.lookup(upper), a);
+    assert.equal(await cache.lookup(lower), b);
+  });
+
+  it('replaces an entry while its old file is still open', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    const first = await cache.fetch(key, writer({ n: 0 }));
+    // A player keeps the old file open (on Windows this blocks renaming over it or deleting it).
+    const { open } = await import('node:fs/promises');
+    const handle = await open(first, 'r');
+    try {
+      await writeFile(path.join(music, CACHE_DIR_NAME, 'v2', `${key}.json`), 'not a manifest');
+      const fresh = new MediaCache(music, { probe: audioProbe, log: () => {} });
+      const second = await fresh.fetch(key, writer({ n: 0 }));
+      assert.notEqual(second, first, 'published under a fresh name');
+      assert.equal(await fresh.lookup(key), second);
+      assert.equal((await handle.read(Buffer.alloc(4), 0, 4, 0)).bytesRead, 4, 'the open file is still readable');
+      assert.ok(existsSync(first), 'the old file is not removed');
+    } finally {
+      await handle.close();
     }
   });
 
