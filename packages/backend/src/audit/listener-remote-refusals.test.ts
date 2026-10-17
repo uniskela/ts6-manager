@@ -79,7 +79,42 @@ describe('listener remote refusal totals', () => {
     await audit.flush();
     const rowsWritten = writes.reduce((sum, write) => sum + write.rows.length, 0);
     // Per kind: at most 5 sources (+5 total updates for the immediate kinds) and one overflow row.
-    assert.ok(rowsWritten <= 4 * 6 + 2 * 5, `${rowsWritten} rows`);
+    assert.equal(rowsWritten, 4 * 6 + 2 * 5, `${rowsWritten} rows`);
+  });
+
+  it('waits for a slow first write before updating its total, and drains writes on stop', async () => {
+    const rows: any[] = [];
+    const updates: any[] = [];
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => { release = resolve; });
+    const audit = new ListenerRemoteRefusalAudit({ adminAuditEvent: {
+      createMany: async ({ data }: { data: any[] }) => { await slow; rows.push(...data); return { count: data.length }; },
+      updateMany: async (query: any) => { updates.push(query); return { count: rows.some((r) => r.operationId === query.where.operationId) ? 1 : 0 }; },
+    } } as any, { log: () => {} });
+    audit.record({ kind: 'denied', source: 'listener:f', botId: 4 });
+    audit.record({ kind: 'denied', source: 'listener:f', botId: 4 });
+    const flushed = audit.flush();
+    setTimeout(release, 20);
+    await flushed;
+    assert.equal(rows.length, 1);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].data.targetId, 'n=2;bot=4');
+
+    let releaseLater!: () => void;
+    const later = new Promise<void>((resolve) => { releaseLater = resolve; });
+    const stopped = new ListenerRemoteRefusalAudit({ adminAuditEvent: {
+      createMany: async ({ data }: { data: any[] }) => { await later; rows.push(...data); return { count: data.length }; },
+      updateMany: async () => ({ count: 1 }),
+    } } as any, { log: () => {} });
+    const stop = stopped.start();
+    stopped.record({ kind: 'capacity', source: 'listener:g', botId: 5 });
+    let done = false;
+    const stopping = stop().then(() => { done = true; });
+    await tick();
+    assert.equal(done, false, 'stop waits for the pending write');
+    releaseLater();
+    await stopping;
+    assert.equal(rows.length, 2);
   });
 
   it('never throws and logs only the kind of storage error', async () => {

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { ListenerRemoteService, type Binding } from './voice/listener-remote.js';
 import type { BoundedRateLimitStore } from './utils/rate-windows.js';
+import { ListenerRemoteRefusalAudit } from './audit/listener-remote-refusals.js';
 
 let musicDir = '';
 let previousMusicDir: string | undefined;
@@ -28,6 +29,12 @@ async function fixture() {
   app.set('trust proxy', 'loopback');
   const remote = new ListenerRemoteService();
   app.locals.listenerRemote = remote;
+  const refusalRows: Record<string, unknown>[] = [];
+  const refusals = new ListenerRemoteRefusalAudit({ adminAuditEvent: {
+    createMany: async ({ data }: { data: Record<string, unknown>[] }) => { refusalRows.push(...data); return { count: data.length }; },
+    updateMany: async () => ({ count: 1 }),
+  } } as any, { log: () => {} });
+  app.locals.listenerRemoteRefusals = refusals;
   const stores = app.locals.rateLimitStores as { remoteAddress: BoundedRateLimitStore; remoteListener: BoundedRateLimitStore; auth: BoundedRateLimitStore };
   const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
@@ -41,7 +48,7 @@ async function fixture() {
     method: 'POST', headers: { 'Content-Type': 'application/json', ...(from ? { 'X-Forwarded-For': from } : {}) }, body: '{}',
   });
   return {
-    remote, stores, remoteState, refresh,
+    remote, stores, remoteState, refresh, refusalRows, flushRefusals: () => refusals.flush(), base,
     close: () => new Promise<void>((resolve, reject) => {
       server.close(err => err ? reject(err) : resolve());
       server.closeAllConnections();
@@ -127,6 +134,44 @@ describe('app rate limiter stores', () => {
     assert.equal(f.stores.remoteListener.size, 1);
     assert.equal((await f.remoteState('10.1.0.2')).status, 429);
     assert.equal((await f.remoteState('198.51.100.40')).status, 401);
+  }));
+
+  it('record limiter and guard refusals as totals with a fixed route label and keyed address hash', async () => using(async f => {
+    for (let n = 0; n < 121; n++) f.stores.remoteAddress.increment('ipv4:198.51.100.7');
+    const limited = await f.remoteState('198.51.100.7');
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: 'Too many remote requests', code: 'rate_limited' }, 'the response is unchanged');
+    for (let n = 0; n < 200; n++) {
+      try { f.remote.checkIp('ipv4:198.51.100.8', false); } catch { /* exhausted */ }
+    }
+    const guarded = await fetch(`${f.base}/listener-remote/secret-looking-path-text`, { headers: { 'X-Forwarded-For': '198.51.100.8' } });
+    assert.equal(guarded.status, 429);
+    await f.flushRefusals();
+    const rows = f.refusalRows as any[];
+    assert.deepEqual(rows.map((row) => [row.action, row.targetId]).sort(), [
+      ['listener.remote.rate_limited', 'n=1;limiter'],
+      ['listener.remote.rate_limited', 'n=1;other'],
+    ]);
+    const { createHash } = await import('node:crypto');
+    for (const row of rows) {
+      assert.match(row.actorUsername, /^address:[0-9a-f]{64}$/);
+      for (const key of ['ipv4:198.51.100.7', 'ipv4:198.51.100.8']) {
+        assert.notEqual(row.actorUsername, `address:${createHash('sha256').update(key).digest('hex')}`, 'not a plain, reversible hash');
+      }
+    }
+    assert.ok(!JSON.stringify(rows).includes('secret'));
+  }));
+
+  it('record a live listener\'s rate limit under the same fingerprint as its other records', async () => using(async f => {
+    const binding: Binding = { botId: 1, serverConfigId: 1, virtualServerId: 1, channelId: 1, clid: 1, uid: 'uid-for-fingerprint' };
+    const { session } = await f.remote.exchange(f.remote.issue(binding).token, async () => true);
+    const key = f.remote.sessionRateKey(session)!;
+    for (let n = 0; n < 121; n++) f.stores.remoteListener.increment(key);
+    assert.equal((await f.remoteState('10.9.0.1', session)).status, 429);
+    await f.flushRefusals();
+    const { createHash } = await import('node:crypto');
+    const limited = (f.refusalRows as any[]).find((row) => row.action === 'listener.remote.rate_limited');
+    assert.equal(limited?.actorUsername, `listener:${createHash('sha256').update(binding.uid).digest('hex')}`);
   }));
 
   it('group sign-in attempts per IPv6 /64', async () => using(async f => {

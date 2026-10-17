@@ -2,7 +2,7 @@ import type { Router } from 'express';
 import { z } from 'zod';
 import { authorizeMediaCommand } from '../../voice/media-command-permissions.js';
 import type { QueueItem } from '../../voice/playlist/queue.js';
-import { authenticate, authorized, endpoint, fail } from './shared.js';
+import { authenticate, authorized, deny, endpoint, fail } from './shared.js';
 
 function track(item: QueueItem | null) {
   return item ? { id: item.id, title: item.title, artist: item.artist ?? null, duration: item.duration ?? null } : null;
@@ -12,7 +12,7 @@ function track(item: QueueItem | null) {
 export function registerLibraryRoutes(router: Router): void {
   router.get('/state', endpoint(async (req, res) => {
     const { binding, bot, policy, identity } = await authorized(req, 'np');
-    if (!authorizeMediaCommand(policy, 'queue', identity)) fail(403, 'permission_denied', 'You are not allowed to use this command.');
+    if (!authorizeMediaCommand(policy, 'queue', identity)) deny(req, 'queue');
     const canAdd = authorizeMediaCommand(policy, 'add', identity, 'request');
     res.json({
       bot: { id: binding.botId, name: bot.currentConfig.name, status: bot.status },

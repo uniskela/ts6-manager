@@ -7,18 +7,19 @@ import { bearer, fail, service } from './shared.js';
 
 const resolvingBots = new WeakMap<ListenerRemoteService, Set<number>>();
 
-/** Longest a pasted link may take to resolve and download before it is refused. */
+/** Longest a pasted link may take, from its destination check to the end of its download. */
 export const LINK_DEADLINE_MS = 120_000;
-/** How often a resolving link checks that its session is still live. */
+/** How often a pending link checks that its session is still live. */
 const SESSION_CHECK_MS = 2_000;
-
-/** Longest the destination check before a link is accepted for work may take. */
-const LINK_CHECK_MS = 15_000;
 
 const notAllowed = (): never => fail(400, 'invalid_request', 'This media URL is not allowed.');
 
-/** Refuse a link that is not plain http(s) or carries credentials. No I/O. */
-export function checkListenerUrl(url: string): void {
+/**
+ * Refuse, without any lookup, a link that is not plain http(s), carries
+ * credentials, or names a blocked host or a private, loopback or reserved
+ * address literally.
+ */
+export async function checkListenerUrl(url: string): Promise<void> {
   let parsed: URL;
   try {
     parsed = new URL(url);
@@ -26,38 +27,32 @@ export function checkListenerUrl(url: string): void {
     return notAllowed();
   }
   if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password) notAllowed();
-}
-
-/**
- * Checks before a link is accepted for work: the session's link-request limit,
- * then the destination (a DNS lookup), within its own short deadline.
- */
-export async function checkListenerLink(req: Request, url: string): Promise<void> {
-  service(req).checkRequest(bearer(req));
-  checkListenerUrl(url);
-  const signal = AbortSignal.timeout(LINK_CHECK_MS);
-  let valid: boolean;
-  try {
-    valid = (await abortable(validateUrl(url), signal)).valid;
-  } catch {
-    fail(504, 'timeout', 'The media link took too long to load.');
-  }
-  if (!valid) notAllowed();
+  if (!(await validateUrl(url, { skipDnsCheck: true })).valid) notAllowed();
 }
 
 /** Overrides for tests; production uses the defaults above. */
 export interface ListenerLinkTimings { deadlineMs?: number; sessionCheckMs?: number }
 
+/** One pasted link's work, from its checks to its download, under one deadline. */
+export interface ListenerLink {
+  /**
+   * The checks before any media work: the session's link-request limit, a free
+   * resolving slot (one per bot, four in total), then the destination (DNS).
+   */
+  check(): Promise<void>;
+  /** Resolve the checked link to a queue item. */
+  resolve(): Promise<QueueItem>;
+  /** Clear the deadline and checks and free the slot. Safe to call twice. */
+  dispose(): void;
+}
+
 /**
- * Resolve one pasted media link, already passed by `checkListenerLink`, to a
- * queue item for the listener's bot. At most one link per bot and four in total
- * resolve at a time. The work is cancelled, and its slots released, when the
- * deadline passes, the client disconnects or the session ends; cancellation
- * stops the resolver and downloader processes.
+ * Start one pasted link for the listener's bot. The deadline, the session
+ * checks and the client-disconnect check cover both `check` and `resolve`;
+ * any of them cancels the work, and cancellation stops the resolver and
+ * downloader processes. Call `dispose` when done.
  */
-export async function resolveListenerLink(req: Request, binding: ListenerRemoteBinding, url: string): Promise<QueueItem> {
-  // Repeated here so this function never resolves a link with credentials, whoever calls it.
-  checkListenerUrl(url);
+export function listenerLink(req: Request, binding: ListenerRemoteBinding, url: string): ListenerLink {
   const session = bearer(req);
   const remote = service(req);
   const timings: ListenerLinkTimings = req.app.locals.listenerLinkTimings ?? {};
@@ -69,36 +64,62 @@ export async function resolveListenerLink(req: Request, binding: ListenerRemoteB
   const disconnected = () => {
     if (!req.res?.writableEnded) abort(503, 'unavailable', 'Listener remote is unavailable.');
   };
-  // The finally block clears the deadline and the session checks.
-  const deadline = setTimeout(() => abort(504, 'timeout', 'The media link took too long to load.'), timings.deadlineMs ?? LINK_DEADLINE_MS);
-  const sessionCheck = setInterval(() => {
-    if (!remote.sessionRateKey(session)) abort(401, 'invalid_access', 'Listener access is invalid or expired.');
-  }, timings.sessionCheckMs ?? SESSION_CHECK_MS);
+  let deadline: NodeJS.Timeout | undefined;
+  let sessionCheck: NodeJS.Timeout | undefined;
   let pending: Set<number> | undefined;
-  try {
-    // `close` is not emitted again, so a client that left during the earlier lookups is caught here.
-    if (req.res?.destroyed || req.socket?.destroyed) disconnected();
-    else req.res?.once('close', disconnected);
-    pending = resolvingBots.get(remote);
-    if (!pending) { pending = new Set(); resolvingBots.set(remote, pending); }
-    if (pending.has(binding.botId) || pending.size >= 4) {
+  let checked = false;
+
+  return {
+    async check() {
+      remote.checkRequest(session);
+      deadline = setTimeout(() => abort(504, 'timeout', 'The media link took too long to load.'), timings.deadlineMs ?? LINK_DEADLINE_MS);
+      sessionCheck = setInterval(() => {
+        if (!remote.sessionRateKey(session)) abort(401, 'invalid_access', 'Listener access is invalid or expired.');
+      }, timings.sessionCheckMs ?? SESSION_CHECK_MS);
+      // `close` is not emitted again, so a client that left during the earlier lookups is caught here.
+      if (req.res?.destroyed || req.socket?.destroyed) disconnected();
+      else req.res?.once('close', disconnected);
+      let bots = resolvingBots.get(remote);
+      if (!bots) { bots = new Set(); resolvingBots.set(remote, bots); }
+      if (bots.has(binding.botId) || bots.size >= 4) fail(429, 'rate_limited', 'A media request is already pending.');
+      bots.add(binding.botId);
+      pending = bots;
+      signal.throwIfAborted();
+      if (!(await abortable(validateUrl(url), signal)).valid) notAllowed();
+      checked = true;
+    },
+
+    async resolve() {
+      if (!checked) fail(503, 'unavailable', 'Listener remote is unavailable.');
+      // Use the normal resolver/download path; no admin LAN exception and no playlist background work.
+      const deps: MediaUrlPipelineDeps = req.app.locals.mediaUrlPipelineDeps ?? defaultMediaUrlDeps();
+      let resolved: QueueItem | undefined;
+      await runMediaUrlPipeline(deps, {
+        play: () => Promise.reject(new ListenerRemoteError(503, 'unavailable', 'Listener remote is unavailable.')),
+        enqueue: item => { resolved = item; }, isIdle: () => false,
+      }, { url, enqueueOnly: true, cap: 1, signal });
+      if (!resolved) fail(503, 'unavailable', 'Listener remote is unavailable.');
+      return resolved;
+    },
+
+    dispose() {
+      clearTimeout(deadline);
+      clearInterval(sessionCheck);
+      req.res?.off('close', disconnected);
+      pending?.delete(binding.botId);
       pending = undefined;
-      fail(429, 'rate_limited', 'A media request is already pending.');
-    }
-    pending.add(binding.botId);
-    // Use the normal resolver/download path; no admin LAN exception and no playlist background work.
-    const deps: MediaUrlPipelineDeps = req.app.locals.mediaUrlPipelineDeps ?? defaultMediaUrlDeps();
-    let resolved: QueueItem | undefined;
-    await runMediaUrlPipeline(deps, {
-      play: () => Promise.reject(new ListenerRemoteError(503, 'unavailable', 'Listener remote is unavailable.')),
-      enqueue: item => { resolved = item; }, isIdle: () => false,
-    }, { url, enqueueOnly: true, cap: 1, signal });
-    if (!resolved) fail(503, 'unavailable', 'Listener remote is unavailable.');
-    return resolved;
+    },
+  };
+}
+
+/** Check and resolve one pasted link in one go (see `listenerLink`). */
+export async function resolveListenerLink(req: Request, binding: ListenerRemoteBinding, url: string): Promise<QueueItem> {
+  await checkListenerUrl(url);
+  const link = listenerLink(req, binding, url);
+  try {
+    await link.check();
+    return await link.resolve();
   } finally {
-    clearTimeout(deadline);
-    clearInterval(sessionCheck);
-    req.res?.off('close', disconnected);
-    pending?.delete(binding.botId);
+    link.dispose();
   }
 }

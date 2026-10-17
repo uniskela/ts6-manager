@@ -1,5 +1,5 @@
 import type { Request, Response, RequestHandler } from 'express';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import type { z } from 'zod';
 import { ListenerRemoteError, type Binding as ListenerRemoteBinding, type ListenerRemoteService } from '../../voice/listener-remote.js';
 import { listHumanMediaListeners, resolveMediaIdentity } from '../../voice/media-listeners.js';
@@ -8,6 +8,7 @@ import type { VoiceBotManager } from '../../voice/voice-bot-manager.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import { clientRateKey } from '../../utils/client-address.js';
 import type { ListenerRemoteRefusalAudit, RefusalEvent } from '../../audit/index.js';
+import { config } from '../../config.js';
 
 export function service(req: Request): ListenerRemoteService {
   const value = req.app.locals.listenerRemote;
@@ -19,9 +20,16 @@ export function fail(status: number, code: string, message: string): never {
   throw new ListenerRemoteError(status, code, message);
 }
 
-/** Hashed client address, for refusals that have no verified listener. */
+/**
+ * Keyed with a secret of this installation: a plain hash of an IPv4 address
+ * could be reversed by trying every address.
+ */
+let addressKey: Buffer | undefined;
+
+/** Keyed hash of the client address, for refusals that have no verified listener. */
 function addressSource(req: Request): string {
-  return `address:${createHash('sha256').update(clientRateKey(req)).digest('hex')}`;
+  addressKey ??= createHash('sha256').update('ts6:listener-remote:refusal-address:').update(config.jwtSecret).digest();
+  return `address:${createHmac('sha256', addressKey).update(clientRateKey(req)).digest('hex')}`;
 }
 
 /** The listener verified for this request so far, if any (set by authenticate and authorized). */
@@ -46,6 +54,10 @@ export function recordRefusal(req: Request, res: Response, err: ListenerRemoteEr
     audit.countValidation();
     return;
   }
+  if (err.status === 503 || err.status === 504) {
+    audit.countUnavailable();
+    return;
+  }
   const binding = verifiedBinding(res);
   const context: Omit<RefusalEvent, 'kind' | 'source'> = binding
     ? { connectionId: binding.serverConfigId, virtualServerId: binding.virtualServerId, botId: binding.botId }
@@ -63,15 +75,24 @@ export function recordRefusal(req: Request, res: Response, err: ListenerRemoteEr
   }
 }
 
-/** Source for a limit counted per verified listener before authentication. */
+/** The listener the guard found for a live session, under the same fingerprint as its other records. */
 function listenerRateSource(res: Response): string | undefined {
-  const key = listenerRemoteListenerKey(res);
-  return key ? `listener:${createHash('sha256').update(key).digest('hex')}` : undefined;
+  const source: unknown = res.locals.listenerRemoteSource;
+  return typeof source === 'string' ? source : undefined;
 }
 
-/** Fixed label of the route, for refusal totals. */
-function routeLabel(req: Request): string {
-  return (req.path.split('/').find(Boolean) ?? 'root').toLowerCase().replace(/[^a-z_]/g, '').slice(0, 16);
+const ROUTE_LABELS = new Set(['state', 'library', 'queue', 'requests', 'exchange', 'session']);
+
+/** Fixed label of the route, for refusal totals; never text from the request. */
+export function routeLabel(req: Request): string {
+  const first = (req.path.split('/').find(Boolean) ?? '').toLowerCase();
+  return ROUTE_LABELS.has(first) ? first : 'other';
+}
+
+/** Refuse with 403 and record which command was denied. */
+export function deny(req: Request, command: string): never {
+  if (req.res) req.res.locals.listenerRemoteCommand = command;
+  fail(403, 'permission_denied', 'You are not allowed to use this command.');
 }
 
 export function endpoint(fn: (req: Request, res: Response) => Promise<void>) {
@@ -113,8 +134,11 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
     // A live session is limited per listener when it authenticates, so listeners
     // sharing one address do not use up each other's budget. Everything else,
     // including unknown credentials, counts against the client address.
-    const listener = exchange ? undefined : remote.sessionRateKey(bearerCredential(req));
+    const credential = exchange ? undefined : bearerCredential(req);
+    const listener = remote.sessionRateKey(credential);
+    const bound = listener ? remote.sessionBinding(credential) : undefined;
     if (listener) res.locals.listenerRemoteRateKey = listener;
+    if (bound) res.locals.listenerRemoteSource = listenerActor(bound).username;
     else remote.checkIp(clientRateKey(req), exchange);
     next();
   } catch (err) {
@@ -187,9 +211,7 @@ export async function authorized(req: Request, command: string, args = '') {
   // authenticate rechecks expiry and revocation after every awaited lookup above.
   remember(req, binding, command);
   if (!identity || !policy) fail(503, 'unavailable', 'Listener remote is unavailable.');
-  if (!authorizeMediaCommand(policy, command, identity, args)) {
-    fail(403, 'permission_denied', 'You are not allowed to use this command.');
-  }
+  if (!authorizeMediaCommand(policy, command, identity, args)) deny(req, command);
   return { binding, identity, policy, bot: botFor(req, binding)! };
 }
 

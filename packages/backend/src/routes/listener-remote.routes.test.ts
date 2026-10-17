@@ -385,6 +385,36 @@ describe('listener remote HTTP security boundary', () => {
     assert.ok(f.refusalLog.every(line => !line.includes('credential')), 'no storage error text reaches the log');
   }));
 
+  it('refuses plainly disallowed links before any TeamSpeak lookup or audit work', async () => using(async f => {
+    const { session } = await f.exchange();
+    const bridge = f.app.locals.eventBridge as { executeCommand: (...args: any[]) => Promise<string> };
+    const executeCommand = bridge.executeCommand;
+    let commands = 0;
+    bridge.executeCommand = async (...args) => { commands++; return executeCommand(...args); };
+    for (const url of ['http://127.0.0.1/a', 'http://localhost/a', 'http://10.0.0.1/a', 'http://169.254.169.254/a', 'http://[::1]/a']) {
+      assert.equal((await f.request('/requests', { session, body: { url } })).status, 400, url);
+    }
+    assert.equal(commands, 0);
+    assert.deepEqual(f.audit, []);
+    bridge.executeCommand = executeCommand;
+  }));
+
+  it('refuses a second pending link before opening an audit attempt for it', async () => using(async f => {
+    const { session } = await f.exchange();
+    const gate = deferred<void>();
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => { await gate.promise; return item; };
+    const first = f.request('/requests', { session, body: { url: mediaUrl } });
+    for (let i = 0; i < 200 && !f.audit.length; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    const opened = f.audit.length;
+    assert.equal((await f.request('/requests', { session, body: { url: `${mediaUrl}&second` } })).status, 429);
+    assert.equal(f.audit.length, opened, 'no attempt row for the refused link');
+    gate.resolve();
+    assert.equal((await first).status, 200);
+    await f.flushRefusals();
+    const row = f.refusalRows.find((r: any) => r.action === 'listener.remote.rate_limited') as any;
+    assert.equal(row?.targetId, `n=1;bot=${binding.botId};requests`);
+  }));
+
   it('scopes song lookup to the bound server and refuses missing or foreign songs', async () => using(async f => {
     const { session } = await f.exchange();
     f.state.missingSong = true;
@@ -692,10 +722,15 @@ describe('listener remote HTTP security boundary', () => {
     await assert.rejects(pending);
     if (!socket.destroyed) await once(socket, 'close');
     gate.resolve();
-    // The abandoned request ends with its audit attempt completed as a failure.
-    const failed = () => f.audit.some(row => { const outcome = (row.data as any)?.outcome; return outcome && outcome !== 'pending' && outcome !== 'success'; });
+    // The abandoned request ends: after the download its audit attempt is completed as a
+    // failure; before it, no attempt was opened and it is only counted.
+    const refusals = f.app.locals.listenerRemoteRefusals as { unavailable: number };
+    const failed = () => afterDownload
+      ? f.audit.some(row => { const outcome = (row.data as any)?.outcome; return outcome && outcome !== 'pending' && outcome !== 'success'; })
+      : refusals.unavailable > 0;
     for (let turn = 0; turn < 500 && !failed(); turn++) await new Promise(resolve => setImmediate(resolve));
     assert.ok(failed(), 'the abandoned request ended');
+    if (!afterDownload) assert.deepEqual(f.audit, [], 'no audit attempt for a request abandoned during its checks');
     bridge.executeCommand = executeCommand;
     return () => downloads;
   }

@@ -74,13 +74,17 @@ followed by the normal media URL pipeline. URLs containing userinfo are
 rejected.
 
 Order of checks for `/queue` and `/requests` (cheapest first): body schema and,
-for links, URL syntax (no I/O) → authentication → authorization (`add`) →
-queue room → the request's own check (song lookup; link-request limit and
-destination check) → audit attempt opened → resolve → authorization again →
-stop check and queue room again → queue. Refusals before the attempt are kept
+for links, URL syntax plus blocked hosts and private or reserved literals (no
+I/O) → authentication → authorization (`add`) → queue room → the request's own
+check (song lookup; for links: link-request limit, a free resolving slot, the
+destination's DNS check) → audit attempt opened → resolve → authorization
+again → stop check and queue room again → queue. One 120-second deadline, the
+session checks and the client-disconnect check cover a link from its slot
+reservation to the end of its download. Refusals before the attempt are kept
 in `ListenerRemoteRefusalAudit` (bounded per-window totals; 401, 403, 429 and
-full queues), routine 400/404 refusals are only counted, and refusals after
-the attempt is opened complete that attempt with a specific result code.
+full queues), routine 400/404 and unavailable or timed-out 503/504 refusals are
+only counted in the log, and refusals after the attempt is opened complete that
+attempt with a specific result code.
 
 ## Administrative revocation
 

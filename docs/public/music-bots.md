@@ -226,11 +226,11 @@ Asking again within a couple of seconds is ignored, and nothing is sent while th
 - **Run one backend.** Links, sessions and limits live in memory; a restart ends every session.
 - **Revoke access.** An administrator can end all remote sessions for a bot, or one listener's, with `POST /api/listener-remote-admin/bots/<bot id>/revoke` using the normal admin sign-in. Pass `{"uid": "<TeamSpeak unique ID>"}` to revoke one person and omit it to revoke everyone; the response is `{"revoked": <count>}`. There is no button for this in the web UI yet.
 - **Audit.** Issuing a link, adding a song or link, and revoking are recorded in the audit history with an anonymous fingerprint for listeners, never the link, session or pasted URL. Refusals are recorded as totals per 5 minutes rather than one entry per request:
-  - refused or expired access and rate limits get one entry per source (a hashed address or listener fingerprint), written when the 5 minutes end;
+  - refused or expired access and rate limits get one entry per source (a keyed hash of the address, or the listener fingerprint), written when the 5 minutes end;
   - a permission denial or a full queue is written at once with the listener's fingerprint, the bot and the command, and its entry shows how many followed in the same 5 minutes;
   - each kind keeps at most 50 sources per window; the rest are added to one combined entry, so no total is lost;
-  - refused access and rate-limit entries are kept within their own budget of 10,000, so a flood of requests cannot push other audit history out;
-  - malformed requests, disallowed links and missing songs are only counted in the server log.
+  - refusal entries have their own retention budgets (10,000 for refused access and rate limits, 10,000 for permission denials and full queues) and do not count toward the 100,000-entry audit limit, so a flood of requests cannot push other audit history out;
+  - malformed requests, disallowed links and missing songs, and requests that could not be checked, are only counted in the server log.
 
   The target column shows the total, for example `n=12;bot=4;add`.
 

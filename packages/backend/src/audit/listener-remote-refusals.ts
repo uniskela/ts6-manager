@@ -12,8 +12,8 @@
  *   cause) are written when the window ends, in one batch;
  * - the first permission denial or full queue per listener and bot is written
  *   at once, and its total is updated when the window ends;
- * - access refusals and rate limits are pruned against their own retention
- *   budget before the global cap (see retention.ts).
+ * - refusal totals have two retention budgets of their own (unauthenticated
+ *   and verified listeners) and never count toward the global cap (see retention.ts).
  *
  * Recording never changes a response: the request is refused either way, and a
  * failed write is logged and dropped. Routine validation refusals are only
@@ -46,10 +46,17 @@ const IMMEDIATE: ReadonlySet<RefusalKind> = new Set(['denied', 'capacity']);
 
 /** Actions unauthenticated traffic can produce; they have their own retention budget. */
 export const UNAUTHENTICATED_REFUSAL_ACTIONS: readonly AdminAuditAction[] = [ACTIONS.auth_failed, ACTIONS.rate_limited];
+/** Refusals of verified listeners; a second budget, so floods cannot push them out either. */
+export const LISTENER_REFUSAL_ACTIONS: readonly AdminAuditAction[] = [ACTIONS.denied, ACTIONS.capacity];
+/** Every refusal total; none of them count toward the global audit cap. */
+export const REFUSAL_ACTIONS: readonly AdminAuditAction[] = [...UNAUTHENTICATED_REFUSAL_ACTIONS, ...LISTENER_REFUSAL_ACTIONS];
 
 export const REFUSAL_WINDOW_MS = 5 * 60_000;
 export const REFUSAL_SOURCES_PER_WINDOW = 50;
+/** Retention budget for each of the two refusal groups. */
 export const REFUSAL_RETENTION_MAX_ROWS = 10_000;
+/** Distinct sources an overflow row counts exactly; beyond this it reports a lower bound. */
+const OVERFLOW_SOURCES_COUNTED = 10_000;
 
 /** Actor name of the row that holds a window's refusals beyond the per-window limit. */
 export const OVERFLOW_ACTOR = 'listener-remote:other-sources';
@@ -72,11 +79,13 @@ interface Entry {
   last: Date;
   /** Set once the row was written immediately; the window's end updates its total. */
   operationId?: string;
+  /** The immediate write, awaited before its total is updated. */
+  written?: Promise<boolean>;
 }
 
 interface Overflow {
   count: number;
-  sources: number;
+  sources: Set<string>;
   first: Date;
   last: Date;
 }
@@ -89,7 +98,7 @@ export interface RefusalAuditOptions {
 }
 
 /** `n=<count>` plus context, within the 64-character target id. */
-function targetId(count: number, event?: RefusalEvent, sources?: number): string {
+function targetId(count: number, event?: RefusalEvent, sources?: string): string {
   const parts = [`n=${count}`];
   if (sources !== undefined) parts.push(`sources=${sources}`);
   if (event?.botId !== undefined) parts.push(`bot=${event.botId}`);
@@ -105,9 +114,12 @@ function errorKind(err: unknown): string {
 
 export class ListenerRemoteRefusalAudit {
   private entries = new Map<string, Entry>();
-  private perKind = new Map<RefusalKind, number>();
+  /** Sources seen per kind this window; the per-window limit counts these, not entries. */
+  private sources = new Map<RefusalKind, Set<string>>();
   private overflow = new Map<RefusalKind, Overflow>();
   private validation = 0;
+  private unavailable = 0;
+  private readonly pendingWrites = new Set<Promise<boolean>>();
   private timer?: NodeJS.Timeout;
   private readonly windowMs: number;
   private readonly sourcesPerWindow: number;
@@ -128,6 +140,7 @@ export class ListenerRemoteRefusalAudit {
     return async () => {
       clearInterval(this.timer);
       await this.flush();
+      await Promise.all([...this.pendingWrites]);
     };
   }
 
@@ -142,22 +155,24 @@ export class ListenerRemoteRefusalAudit {
         entry.last = at;
         return;
       }
-      const sources = this.perKind.get(event.kind) ?? 0;
-      if (sources >= this.sourcesPerWindow) {
-        const overflow = this.overflow.get(event.kind) ?? { count: 0, sources: 0, first: at, last: at };
+      const seen = this.sources.get(event.kind) ?? new Set<string>();
+      this.sources.set(event.kind, seen);
+      if (!seen.has(event.source) && seen.size >= this.sourcesPerWindow) {
+        const overflow = this.overflow.get(event.kind) ?? { count: 0, sources: new Set<string>(), first: at, last: at };
         overflow.count++;
         overflow.last = at;
-        // Counts first sightings while full; a source seen again is counted again, so this is an upper bound.
-        overflow.sources++;
+        if (overflow.sources.size < OVERFLOW_SOURCES_COUNTED) overflow.sources.add(event.source);
         this.overflow.set(event.kind, overflow);
         return;
       }
-      this.perKind.set(event.kind, sources + 1);
+      seen.add(event.source);
       const created: Entry = { event, count: 1, first: at, last: at };
       this.entries.set(key, created);
       if (IMMEDIATE.has(event.kind)) {
         created.operationId = randomUUID();
-        void this.write([this.row(created)]);
+        created.written = this.write([this.row(created)]);
+        this.pendingWrites.add(created.written);
+        void created.written.finally(() => this.pendingWrites.delete(created.written!));
       }
     } catch (err) {
       this.log(`[audit] Could not count a listener remote refusal: ${errorKind(err)}`);
@@ -169,16 +184,24 @@ export class ListenerRemoteRefusalAudit {
     this.validation++;
   }
 
+  /** Count a request refused because something was unavailable or timed out before any audit attempt. */
+  countUnavailable(): void {
+    this.unavailable++;
+  }
+
   /** Write the window's totals and start a new window. */
   async flush(): Promise<void> {
     const entries = [...this.entries.values()];
     const overflow = [...this.overflow.entries()];
     const validation = this.validation;
+    const unavailable = this.unavailable;
     this.entries = new Map();
-    this.perKind = new Map();
+    this.sources = new Map();
     this.overflow = new Map();
     this.validation = 0;
+    this.unavailable = 0;
     if (validation > 0) this.log(`[listener-remote] Refused ${validation} invalid request(s) in the last window`);
+    if (unavailable > 0) this.log(`[listener-remote] Could not check ${unavailable} request(s) in the last window (unavailable or timed out)`);
 
     const rows = entries.filter((entry) => !entry.operationId).map((entry) => this.row(entry));
     for (const [kind, totals] of overflow) {
@@ -188,11 +211,14 @@ export class ListenerRemoteRefusalAudit {
     await this.write(rows);
     for (const entry of entries) {
       if (!entry.operationId || entry.count === 1) continue;
+      // The first row must exist before its total is updated.
+      if (!(await entry.written)) continue;
       try {
-        await this.prisma.adminAuditEvent.updateMany({
+        const updated = await this.prisma.adminAuditEvent.updateMany({
           where: { operationId: entry.operationId },
           data: { targetId: targetId(entry.count, entry.event), completedAt: entry.last },
         });
+        if (updated.count === 0) this.log('[audit] A listener remote refusal total found no row to update');
       } catch (err) {
         this.log(`[audit] Could not update a listener remote refusal total: ${errorKind(err)}`);
       }
@@ -222,7 +248,10 @@ export class ListenerRemoteRefusalAudit {
       ...buildRow({
         actor: { id: 0, username: OVERFLOW_ACTOR },
         action: ACTIONS[kind],
-        target: { type: 'listener_remote_refusals', id: targetId(totals.count, undefined, totals.sources) },
+        target: {
+          type: 'listener_remote_refusals',
+          id: targetId(totals.count, undefined, `${totals.sources.size}${totals.sources.size >= OVERFLOW_SOURCES_COUNTED ? '+' : ''}`),
+        },
         operationId: randomUUID(),
         outcome: 'failure',
         resultCode: RESULTS[kind],
@@ -232,12 +261,15 @@ export class ListenerRemoteRefusalAudit {
     };
   }
 
-  private async write(rows: ReturnType<ListenerRemoteRefusalAudit['row']>[]): Promise<void> {
-    if (rows.length === 0) return;
+  /** Write rows; resolves false (after logging) when they could not be written. */
+  private async write(rows: ReturnType<ListenerRemoteRefusalAudit['row']>[]): Promise<boolean> {
+    if (rows.length === 0) return true;
     try {
       await this.prisma.adminAuditEvent.createMany({ data: rows });
+      return true;
     } catch (err) {
       this.log(`[audit] Could not write ${rows.length} listener remote refusal row(s): ${errorKind(err)}`);
+      return false;
     }
   }
 }

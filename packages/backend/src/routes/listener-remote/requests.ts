@@ -2,7 +2,7 @@ import type { Router } from 'express';
 import { z } from 'zod';
 import type { QueueItem } from '../../voice/playlist/queue.js';
 import { appendForListener, arrivalSnapshot } from './append.js';
-import { checkListenerLink, checkListenerUrl, resolveListenerLink } from './link.js';
+import { checkListenerUrl, listenerLink } from './link.js';
 import { authenticate, body, endpoint, fail } from './shared.js';
 
 /** Queue a library song (`POST /queue`) or request a pasted link (`POST /requests`). */
@@ -26,14 +26,16 @@ export function registerRequestRoutes(router: Router): void {
 
   router.post('/requests', endpoint(async (req, res) => {
     const { url } = body(req, z.object({ url: z.string().max(2048).url() }).strict());
-    // Malformed links are refused before any lookup or audit work.
-    checkListenerUrl(url);
     const arrival = arrivalSnapshot(req);
+    // Malformed and plainly disallowed links are refused before any lookup or audit work.
+    await checkListenerUrl(url);
     const binding = await authenticate(req);
-    await appendForListener(
-      req, binding, () => resolveListenerLink(req, binding, url), 'listener.remote.request', arrival,
-      () => checkListenerLink(req, url),
-    );
+    const link = listenerLink(req, binding, url);
+    try {
+      await appendForListener(req, binding, () => link.resolve(), 'listener.remote.request', arrival, () => link.check());
+    } finally {
+      link.dispose();
+    }
     res.json({ ok: true });
   }));
 }
