@@ -636,6 +636,8 @@ export class MediaCache {
         removed = await removeIfSame(file, held);
       } catch (err) {
         const code = (err as NodeJS.ErrnoException).code;
+        // Already removed by another process: try to take the lock again.
+        if (code === 'ENOENT') return;
         // Windows: briefly in use or pending delete; anything else will not go away by retrying.
         if (!(process.platform === 'win32' && (code === 'EPERM' || code === 'EBUSY'))) {
           throw new MediaCacheError(`A stale download lock could not be removed (${code ?? 'error'}); check the cache folder's permissions.`);
