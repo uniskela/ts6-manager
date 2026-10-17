@@ -433,6 +433,9 @@ describe('media cache', () => {
     assert.equal(calls.n, 1);
     assert.equal(existsSync(lock), false);
 
+    // On Windows a lock file cannot be replaced while its owner still has it open (it stays
+    // pending delete), so another process can never take it over mid-download there.
+    if (process.platform === 'win32') return;
     const otherKey = cacheKey({ kind: 'youtube', videoId: 'ccccccccccc' });
     const otherLock = path.join(music, CACHE_DIR_NAME, 'v2', 'locks', `${otherKey}.lock`);
     let release!: () => void;
