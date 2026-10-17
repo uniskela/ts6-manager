@@ -120,6 +120,8 @@ export class ListenerRemoteRefusalAudit {
   private validation = 0;
   private unavailable = 0;
   private readonly pendingWrites = new Set<Promise<boolean>>();
+  /** The flush in progress; flushes run one after another, and stop waits for them. */
+  private flushing: Promise<void> = Promise.resolve();
   private timer?: NodeJS.Timeout;
   private readonly windowMs: number;
   private readonly sourcesPerWindow: number;
@@ -140,7 +142,7 @@ export class ListenerRemoteRefusalAudit {
     return async () => {
       clearInterval(this.timer);
       await this.flush();
-      await Promise.all([...this.pendingWrites]);
+      await Promise.all(this.pendingWrites);
     };
   }
 
@@ -189,8 +191,14 @@ export class ListenerRemoteRefusalAudit {
     this.unavailable++;
   }
 
-  /** Write the window's totals and start a new window. */
-  async flush(): Promise<void> {
+  /** Write the window's totals and start a new window, after any flush still running. */
+  flush(): Promise<void> {
+    const run = this.flushing.then(() => this.flushWindow());
+    this.flushing = run.catch(() => { /* logged inside */ });
+    return run;
+  }
+
+  private async flushWindow(): Promise<void> {
     const entries = [...this.entries.values()];
     const overflow = [...this.overflow.entries()];
     const validation = this.validation;

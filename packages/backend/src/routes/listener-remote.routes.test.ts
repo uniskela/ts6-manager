@@ -415,6 +415,28 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(row?.targetId, `n=1;bot=${binding.botId};requests`);
   }));
 
+  it('counts a request that failed before its audit attempt existed', async () => using(async f => {
+    const { session } = await f.exchange();
+    f.state.failAudit = true;
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 503);
+    const refusals = f.app.locals.listenerRemoteRefusals as { unavailable: number };
+    assert.equal(refusals.unavailable, 1, 'a failed attempt insert is counted, not hidden');
+  }));
+
+  it('checks access again once the audit attempt is written, before any media work', async () => using(async f => {
+    const { session } = await f.exchange();
+    const prisma = f.app.locals.prisma as any;
+    const create = prisma.adminAuditEvent.create;
+    const gate = deferred<void>();
+    prisma.adminAuditEvent.create = async (args: unknown) => { await gate.promise; return create(args); };
+    const pending = f.request('/requests', { session, body: { url: mediaUrl } });
+    await new Promise(resolve => setTimeout(resolve, 50));
+    restrict(f, [8]);
+    gate.resolve();
+    assert.equal((await pending).status, 403);
+    assert.equal(f.downloads, 0, 'no download after access was withdrawn');
+  }));
+
   it('scopes song lookup to the bound server and refuses missing or foreign songs', async () => using(async f => {
     const { session } = await f.exchange();
     f.state.missingSong = true;

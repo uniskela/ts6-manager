@@ -117,6 +117,36 @@ describe('listener remote refusal totals', () => {
     assert.equal(rows.length, 2);
   });
 
+  it('runs flushes one after another and stop waits for one still running', async () => {
+    const order: string[] = [];
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => { release = resolve; });
+    let calls = 0;
+    const audit = new ListenerRemoteRefusalAudit({ adminAuditEvent: {
+      createMany: async ({ data }: { data: any[] }) => {
+        const call = ++calls;
+        if (call === 1) await slow;
+        order.push(`write ${call}: ${data.map((row) => `${row.actorUsername}=${row.targetId}`).join(',')}`);
+        return { count: data.length };
+      },
+      updateMany: async () => ({ count: 1 }),
+    } } as any, { log: () => {} });
+    const stop = audit.start();
+    audit.record({ kind: 'auth_failed', source: 'address:a' });
+    const first = audit.flush();
+    await tick();
+    // Recorded while the first flush is still writing: they belong to the next window.
+    audit.record({ kind: 'auth_failed', source: 'address:b' });
+    audit.record({ kind: 'auth_failed', source: 'address:b' });
+    let stopped = false;
+    const stopping = stop().then(() => { stopped = true; });
+    await tick();
+    assert.equal(stopped, false);
+    release();
+    await Promise.all([first, stopping]);
+    assert.deepEqual(order, ['write 1: address:a=n=1', 'write 2: address:b=n=2']);
+  });
+
   it('never throws and logs only the kind of storage error', async () => {
     const logs: string[] = [];
     const audit = new ListenerRemoteRefusalAudit({

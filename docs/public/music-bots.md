@@ -229,7 +229,7 @@ Asking again within a couple of seconds is ignored, and nothing is sent while th
   - refused or expired access and rate limits get one entry per source (a keyed hash of the address, or the listener fingerprint), written when the 5 minutes end;
   - a permission denial or a full queue is written at once with the listener's fingerprint, the bot and the command, and its entry shows how many followed in the same 5 minutes;
   - each kind keeps at most 50 sources per window; the rest are added to one combined entry, so no total is lost;
-  - refusal entries have their own retention budgets (10,000 for refused access and rate limits, 10,000 for permission denials and full queues) and do not count toward the 100,000-entry audit limit, so a flood of requests cannot push other audit history out;
+  - refusal entries have their own retention budgets (10,000 for refused access and rate limits, 10,000 for permission denials and full queues) and do not count toward the 100,000-entry audit limit, so a flood of requests cannot push other audit history out. The audit history therefore holds at most 120,000 entries;
   - malformed requests, disallowed links and missing songs, and requests that could not be checked, are only counted in the server log.
 
   The target column shows the total, for example `n=12;bot=4;add`.

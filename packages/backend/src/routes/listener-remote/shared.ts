@@ -104,6 +104,7 @@ export function endpoint(fn: (req: Request, res: Response) => Promise<void>) {
         res.status(err.status).json({ error: err.message, code: err.code });
       } else {
         // Resolver/Query/database exceptions can contain credentials or pasted URLs.
+        recordRefusal(req, res, new ListenerRemoteError(503, 'unavailable', 'Listener remote is unavailable.'));
         res.status(503).json({ error: 'Listener remote is unavailable.', code: 'unavailable' });
       }
     });
@@ -137,9 +138,12 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
     const credential = exchange ? undefined : bearerCredential(req);
     const listener = remote.sessionRateKey(credential);
     const bound = listener ? remote.sessionBinding(credential) : undefined;
-    if (listener) res.locals.listenerRemoteRateKey = listener;
-    if (bound) res.locals.listenerRemoteSource = listenerActor(bound).username;
-    else remote.checkIp(clientRateKey(req), exchange);
+    if (listener && bound) {
+      res.locals.listenerRemoteRateKey = listener;
+      res.locals.listenerRemoteSource = listenerActor(bound).username;
+    } else {
+      remote.checkIp(clientRateKey(req), exchange);
+    }
     next();
   } catch (err) {
     if (err instanceof ListenerRemoteError) {

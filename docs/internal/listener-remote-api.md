@@ -77,8 +77,10 @@ Order of checks for `/queue` and `/requests` (cheapest first): body schema and,
 for links, URL syntax plus blocked hosts and private or reserved literals (no
 I/O) → authentication → authorization (`add`) → queue room → the request's own
 check (song lookup; for links: link-request limit, a free resolving slot, the
-destination's DNS check) → audit attempt opened → resolve → authorization
-again → stop check and queue room again → queue. One 120-second deadline, the
+destination's DNS check) → audit attempt opened → authorization again →
+resolve → authorization again → stop check and queue room again → queue. A
+link request uses up one of the session's link requests even when the bot's
+resolving slot is taken. One 120-second deadline, the
 session checks and the client-disconnect check cover a link from its slot
 reservation to the end of its download. Refusals before the attempt are kept
 in `ListenerRemoteRefusalAudit` (bounded per-window totals; 401, 403, 429 and

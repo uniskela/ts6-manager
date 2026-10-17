@@ -73,12 +73,14 @@ export async function appendForListener(
   if (!arrival.bot && first.bot) arrival = { bot: first.bot, stopGeneration: first.bot.stopGeneration };
   assertQueueRoom(first.bot);
   await precheck?.();
-  // From here a refusal is recorded on the attempt row, not in the refusal totals.
-  if (req.res) req.res.locals.listenerRemoteAttemptOpened = true;
   await runRemoteAudited(req.app.locals.prisma, {
     actor: listenerActor(binding), action, connectionId: binding.serverConfigId,
     virtualServerId: binding.virtualServerId, target: { type: 'music_bot', id: binding.botId },
   }, async () => {
+    // The attempt row exists from here, so a refusal is recorded on it, not in the refusal totals.
+    if (req.res) req.res.locals.listenerRemoteAttemptOpened = true;
+    // Writing the attempt can take a while; check access again before any media work.
+    await authorized(req, 'add', 'request');
     const item = await resolveItem();
     const { bot } = await authorized(req, 'add', 'request');
     // A listener who left while the request was being checked does not get it queued.
