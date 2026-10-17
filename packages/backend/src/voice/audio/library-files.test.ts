@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -8,6 +8,17 @@ import { removeSongFileIfUnused, withLibraryFileLock } from './library-files.js'
 import { CACHE_DIR_NAME, MediaCache, cacheKey, type StagedDownload } from './media-cache.js';
 
 const none = async () => [] as string[];
+
+/**
+ * Create a link (a junction for folders on Windows); false only when Windows
+ * refuses a file link for lack of privileges. Any other failure fails the test.
+ */
+function link(target: string, at: string, folder = false): Promise<boolean> {
+  return symlink(target, at, folder ? (process.platform === 'win32' ? 'junction' : 'dir') : undefined).then(() => true, (err: NodeJS.ErrnoException) => {
+    if (process.platform === 'win32' && (err.code === 'EPERM' || err.code === 'EACCES')) return false;
+    throw err;
+  });
+}
 
 describe('removeSongFileIfUnused', () => {
   let root: string;
@@ -42,7 +53,7 @@ describe('removeSongFileIfUnused', () => {
   it('keeps a file another song reaches through a link with another name', async (t) => {
     const file = await put('target.mp3');
     const alias = path.join(music, 'alias.mp3');
-    if (!(await symlink(file, alias).then(() => true, () => false))) return t.skip('file links are not allowed here');
+    if (!(await link(file, alias))) return t.skip('file links are not allowed here');
     assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [alias] }), 'shared');
     assert.ok(existsSync(file));
   });
@@ -71,10 +82,10 @@ describe('removeSongFileIfUnused', () => {
     } else {
       t.diagnostic('case-sensitive filesystem: the upper-case spelling names no file here');
     }
-    const link = path.join(music, 'link-to-cache.opus');
-    if (await symlink(cached, link).then(() => true, () => false)) {
-      assert.equal(await removeSongFileIfUnused({ filePath: link, musicDir: music, otherSongPaths: none }), 'cache');
-      assert.ok(existsSync(link));
+    const linkPath = path.join(music, 'link-to-cache.opus');
+    if (await link(cached, linkPath)) {
+      assert.equal(await removeSongFileIfUnused({ filePath: linkPath, musicDir: music, otherSongPaths: none }), 'cache');
+      assert.ok(existsSync(linkPath));
     }
     assert.ok(existsSync(cached));
   });
@@ -85,7 +96,7 @@ describe('removeSongFileIfUnused', () => {
     await writeFile(path.join(outside, 'theirs.mp3'), 'x');
     assert.equal(await removeSongFileIfUnused({ filePath: path.join(outside, 'theirs.mp3'), musicDir: music, otherSongPaths: none }), 'outside-music-folder');
     const linked = path.join(music, 'linked');
-    if (await symlink(outside, linked, process.platform === 'win32' ? 'junction' : 'dir').then(() => true, () => false)) {
+    if (await link(outside, linked, true)) {
       assert.equal(await removeSongFileIfUnused({ filePath: path.join(linked, 'theirs.mp3'), musicDir: music, otherSongPaths: none }), 'outside-music-folder');
     }
     assert.ok(existsSync(path.join(outside, 'theirs.mp3')));
@@ -93,7 +104,7 @@ describe('removeSongFileIfUnused', () => {
 
   it('works when the music folder itself is reached through a link', async (t) => {
     const viaLink = path.join(root, 'music-link');
-    if (!(await symlink(music, viaLink, process.platform === 'win32' ? 'junction' : 'dir').then(() => true, () => false))) return t.skip('folder links are not allowed here');
+    if (!(await link(music, viaLink, true))) return t.skip('folder links are not allowed here');
     const file = await put('linked-folder.mp3');
     assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: viaLink, otherSongPaths: async () => [path.join(viaLink, 'linked-folder.mp3')] }), 'shared');
     assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: viaLink, otherSongPaths: none }), 'removed');
@@ -111,21 +122,38 @@ describe('removeSongFileIfUnused', () => {
     const track = await put('kept.mp3');
     const inCache = path.join(music, CACHE_DIR_NAME, 'v2', 'entry.mp3');
     await mkdir(path.dirname(inCache), { recursive: true });
-    if (!(await symlink(track, inCache).then(() => true, () => false))) return t.skip('file links are not allowed here');
+    if (!(await link(track, inCache))) return t.skip('file links are not allowed here');
     assert.equal(await removeSongFileIfUnused({ filePath: inCache, musicDir: music, otherSongPaths: none }), 'cache');
     assert.ok(existsSync(inCache));
     assert.ok(existsSync(track));
   });
 
   it('keeps a file when another song\'s file cannot be identified', async (t) => {
+    if (process.platform === 'win32' || process.getuid?.() === 0) return t.skip('needs a folder this user cannot read');
     const file = await put('unsure.mp3');
-    // A link loop: looking it up fails with an error other than "not found".
+    const locked = path.join(root, 'locked');
+    await mkdir(locked);
+    await writeFile(path.join(locked, 'theirs.mp3'), 'x');
+    await chmod(locked, 0o000);
+    try {
+      const reported: string[] = [];
+      const onUnverifiable = (_file: string, reason: string) => { reported.push(reason); };
+      const unreadable = path.join(locked, 'theirs.mp3');
+      assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [unreadable], onUnverifiable }), 'unverifiable');
+      assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths: () => [unreadable], onUnverifiable }), 'unverifiable');
+      assert.deepEqual(reported, ['EACCES', 'EACCES']);
+      assert.ok(existsSync(file));
+    } finally {
+      await chmod(locked, 0o700);
+    }
+  });
+
+  it('treats a path that cannot name a file as not this file', async (t) => {
+    const file = await put('loop-free.mp3');
     const loopA = path.join(music, 'loop-a.mp3');
     const loopB = path.join(music, 'loop-b.mp3');
-    if (!(await symlink(loopB, loopA).then(() => symlink(loopA, loopB)).then(() => true, () => false))) return t.skip('file links are not allowed here');
-    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [loopA] }), 'unverifiable');
-    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths: () => [loopB] }), 'unverifiable');
-    assert.ok(existsSync(file));
+    if (!((await link(loopB, loopA)) && await link(loopA, loopB))) return t.skip('file links are not allowed here');
+    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [loopA, `${'x'.repeat(5000)}.mp3`] }), 'removed');
   });
 
   it('looks at the queue once more right before deleting', async () => {

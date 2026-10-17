@@ -27,10 +27,17 @@ export interface SongFileCheck {
   otherSongPaths: () => Promise<string[]>;
   /** File paths a bot has playing or queued. */
   queuedPaths?: () => string[];
+  /** Told which file could not be identified, when the outcome is 'unverifiable'. */
+  onUnverifiable?: (file: string, reason: string) => void;
 }
 
 /** A file whose identity cannot be told reliably: anything about it is unknown, so it is kept. */
-class UnknownIdentity extends Error {}
+class UnknownIdentity extends Error {
+  constructor(readonly file: string, readonly reason: string) { super(`${reason}: ${file}`); }
+}
+
+/** Lookup errors that mean the path names no file at all. */
+const NO_FILE = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG', 'EINVAL']);
 
 /** A file's identity, the same under any spelling, link or letter case; null when it does not exist. */
 async function identityOf(file: string): Promise<string | null> {
@@ -38,13 +45,15 @@ async function identityOf(file: string): Promise<string | null> {
   try {
     const info = await stat(file, { bigint: true });
     // Some network and FUSE filesystems report no file ids.
-    if (info.ino === 0n) throw new UnknownIdentity();
+    if (info.ino === 0n) throw new UnknownIdentity(file, 'no file id');
     return `${info.dev}:${info.ino}`;
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT' || code === 'ENOTDIR') return null;
+    if (err instanceof UnknownIdentity) throw err;
+    const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
+    // A path that cannot name a file (missing, a link loop, an invalid name) is not this file.
+    if (NO_FILE.has(code)) return null;
     // Permission, I/O and other errors: unknown, not "not shared".
-    throw err instanceof UnknownIdentity ? err : new UnknownIdentity();
+    throw new UnknownIdentity(file, code);
   }
 }
 
@@ -85,9 +94,17 @@ let libraryFiles: Promise<unknown> = Promise.resolve();
  * call `removeSongFileIfUnused` from inside a task: it takes the lock itself.
  */
 export function withLibraryFileLock<T>(task: () => Promise<T>): Promise<T> {
-  const run = libraryFiles.then(task, task);
+  pending++;
+  const run = libraryFiles.then(task, task).finally(() => { pending--; });
   libraryFiles = run.catch(() => undefined);
   return run;
+}
+
+let pending = 0;
+
+/** Tasks holding or waiting for the library file lock. */
+export function libraryFileTasks(): number {
+  return pending;
 }
 
 /**
@@ -106,8 +123,9 @@ export function removeSongFileIfUnused(check: SongFileCheck): Promise<SongFileOu
     try {
       return await decideAndRemove(check);
     } catch (err) {
-      if (err instanceof UnknownIdentity) return 'unverifiable';
-      throw err;
+      if (!(err instanceof UnknownIdentity)) throw err;
+      check.onUnverifiable?.(err.file, err.reason);
+      return 'unverifiable';
     }
   });
 }

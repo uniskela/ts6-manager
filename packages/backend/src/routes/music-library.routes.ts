@@ -35,6 +35,8 @@ import { randomUUID } from 'crypto';
 import rateLimit from 'express-rate-limit';
 
 const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+/** Uploads in progress; the scan skips them. */
+const UPLOADING_PREFIX = '.uploading-';
 const ALLOWED_EXTENSIONS = ['.mp3', '.wav', '.flac', '.ogg', '.opus', '.m4a', '.aac', '.wma', '.webm'];
 /** Cap Apple Music → YouTube matches for library info / import previews. */
 const APPLE_MUSIC_INFO_CAP = 100;
@@ -241,8 +243,9 @@ const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, MUSIC_DIR),
   filename: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    // A temporary name the scan ignores; the upload is published under the library lock.
-    cb(null, `${randomUUID()}${ext}.uploading`);
+    // A temporary name the scan ignores (it keeps the extension for probing);
+    // the upload is published under the library lock.
+    cb(null, `${UPLOADING_PREFIX}${randomUUID()}${ext}`);
   },
 });
 
@@ -368,7 +371,7 @@ musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: 
     const created: unknown[] = [];
 
     for (const entry of entries) {
-      if (!entry.isFile()) continue;
+      if (!entry.isFile() || entry.name.startsWith(UPLOADING_PREFIX)) continue;
       const ext = path.extname(entry.name).toLowerCase();
       if (!ALLOWED_EXTENSIONS.includes(ext)) continue;
       const filePath = path.join(MUSIC_DIR, entry.name);
@@ -408,7 +411,9 @@ musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: 
         continue;
       }
 
-      const stat = fs.statSync(filePath);
+      // Removals do not wait for a scan, so a listed file can be gone by now.
+      const stat = fs.statSync(filePath, { throwIfNoEntry: false });
+      if (!stat) continue;
       let songData: {
         title: string;
         artist: string | null;
@@ -508,7 +513,7 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
     }
 
     // Publish the file under its final name together with its row.
-    const finalPath = file.path.replace(/\.uploading$/, '');
+    const finalPath = path.join(path.dirname(file.path), path.basename(file.path).slice(UPLOADING_PREFIX.length));
     const song = await withLibraryFileLock(async () => {
       fs.renameSync(file.path, finalPath);
       try {
@@ -533,7 +538,7 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
     res.status(201).json(song);
   } catch (err) {
     // A failed upload leaves no temporary file behind (it was never published).
-    if (req.file?.path.endsWith('.uploading')) fs.rm(req.file.path, { force: true }, () => undefined);
+    if (req.file && path.basename(req.file.path).startsWith(UPLOADING_PREFIX)) fs.rm(req.file.path, { force: true }, () => undefined);
     next(err);
   }
 });
@@ -576,6 +581,7 @@ musicLibraryRoutes.delete('/songs/:id', musicWriteLimiter, async (req: Request, 
           select: { filePath: true },
         })).map((row: { filePath: string }) => row.filePath),
         queuedPaths: () => queuedSongFiles(req.app.locals.voiceBotManager),
+        onUnverifiable: (file, reason) => console.warn(`[MusicLibrary] Could not identify ${file} (${reason}); keeping the file of removed song ${id}`),
       });
       if (outcome !== 'removed' && outcome !== 'missing') console.log(`[MusicLibrary] Kept the file of removed song ${id} (${outcome})`);
     } catch (err) {

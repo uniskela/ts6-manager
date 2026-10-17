@@ -5,7 +5,7 @@ import path from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
 import express, { type Express } from 'express';
 import { errorHandler } from '../middleware/error-handler.js';
-import { withLibraryFileLock } from '../voice/audio/library-files.js';
+import { libraryFileTasks, withLibraryFileLock } from '../voice/audio/library-files.js';
 import { CACHE_DIR_NAME } from '../voice/audio/media-cache.js';
 
 // music-library.routes creates MUSIC_DIR on import; keep it out of /data in tests.
@@ -92,7 +92,7 @@ function holdLibraryLock(): () => void {
 }
 
 const waitFor = async (check: () => boolean) => {
-  for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  for (let i = 0; i < 2000 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 10));
 };
 
 function file(name: string, content = 'audio'): string {
@@ -203,7 +203,8 @@ describe('deleting a song', () => {
     const library = fakeLibrary([]);
     const release = holdLibraryLock();
     const scanning = request(app(library.prisma), '/scan', { method: 'POST' });
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await waitFor(() => libraryFileTasks() >= 2);
+    assert.equal(libraryFileTasks(), 2, 'the scan waits for the lock');
     assert.deepEqual(library.songs, [], 'nothing adopted while the lock is held');
     fs.rmSync(doomed);
     release();
@@ -222,9 +223,10 @@ describe('deleting a song', () => {
     const names = () => fs.readdirSync(musicDir);
     const release = holdLibraryLock();
     const uploading = upload();
-    await waitFor(() => names().some((n) => n.endsWith('.mp3.uploading')));
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    assert.ok(names().every((n) => n.endsWith('.uploading')), 'not published while the lock is held');
+    await waitFor(() => libraryFileTasks() >= 2);
+    assert.equal(libraryFileTasks(), 2, 'the upload waits for the lock');
+    assert.equal(names().length, 1);
+    assert.match(names()[0], /^\.uploading-.+\.mp3$/, 'not published while the lock is held, and keeps its extension');
     assert.deepEqual(library.songs, []);
     release();
     assert.equal((await uploading).status, 201);

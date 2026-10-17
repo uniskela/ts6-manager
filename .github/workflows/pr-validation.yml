@@ -138,6 +138,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build common package
+        run: pnpm --filter @ts6/common build
+
       - name: Run media cache and library file tests
         working-directory: packages/backend
         run: pnpm exec tsx --test src/voice/audio/media-cache.test.ts src/voice/audio/library-files.test.ts src/routes/music-library.delete-song.test.ts
