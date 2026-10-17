@@ -445,6 +445,54 @@ describe('media egress proxy', () => {
     }
   });
 
+  it('forwards bytes a client sends before the tunnel is ready, in order, and refuses too many', async () => {
+    let unblock!: () => void;
+    const blocked = new Promise<void>((resolve) => { unblock = resolve; });
+    const proxy = new MediaEgressProxy({ ...permitLocal, resolve: async () => { await blocked; return ['127.0.0.1']; }, log: () => {} });
+    try {
+      const job = await proxy.issue(60_000);
+      const port = proxyPort(job.proxyUrl);
+      const auth = `Proxy-Authorization: ${credentials(job.proxyUrl)}`;
+      const socket = net.connect(port, '127.0.0.1');
+      await once(socket, 'connect');
+      // The request and early data in several pieces, before the proxy has resolved anything.
+      socket.write(`CONNECT media.test:${echoPort} HTTP/1.1\r\n${auth}\r\n\r\none-`);
+      await new Promise((r) => setTimeout(r, 10));
+      socket.write('two-');
+      await new Promise((r) => setTimeout(r, 10));
+      socket.write('three');
+      let text = '';
+      socket.on('data', (chunk) => { text += chunk.toString('latin1'); });
+      unblock();
+      for (let i = 0; i < 100 && !text.endsWith('one-two-three'); i++) await new Promise((r) => setTimeout(r, 5));
+      assert.match(text, /^HTTP\/1\.1 200 [^\r]*\r\n\r\none-two-three$/);
+      socket.destroy();
+
+    } finally {
+      await proxy.close();
+    }
+    // A resolver that never answers keeps the tunnel in setup while the client floods it.
+    const stalled = new MediaEgressProxy({
+      ...permitLocal,
+      resolve: (_host, signal) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('cancelled')))),
+      log: () => {},
+    });
+    try {
+      const job = await stalled.issue(60_000);
+      const flood = net.connect(proxyPort(job.proxyUrl), '127.0.0.1');
+      await once(flood, 'connect');
+      flood.on('error', () => {});
+      flood.write(`CONNECT slow.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`);
+      flood.write(Buffer.alloc(70_000));
+      const closed = await Promise.race([once(flood, 'close').then(() => true), new Promise((r) => setTimeout(() => r(false), 2_000))]);
+      assert.equal(closed, true, 'more than 64 KiB before the tunnel closes the connection');
+      for (let i = 0; i < 50 && stalled.activeConnections > 0; i++) await new Promise((r) => setTimeout(r, 5));
+      assert.equal(stalled.activeConnections, 0);
+    } finally {
+      await stalled.close();
+    }
+  });
+
   it('redacts the job token from text', async () => {
     const proxy = new MediaEgressProxy({ log: () => {} });
     try {
