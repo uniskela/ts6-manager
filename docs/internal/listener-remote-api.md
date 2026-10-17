@@ -163,6 +163,13 @@ A 429 from a rate limit carries `Retry-After` with the whole seconds left in
 that window (at least 1). A pending link resolution answers 429 with
 `Retry-After: 60`. A full queue is not a rate limit: it answers 409
 `queue_full`, with no `Retry-After`.
+
+**Change in 1.11.2:** a full queue answered 429 `rate_limited` with
+`Retry-After: 60` before. Clients that waited and retried on that 429 should
+treat 409 `queue_full` as "no room now" and let the listener try again later;
+it is not retried automatically. The bundled listener page already shows the
+message and keeps the session. A second pending link is still 429
+`rate_limited`.
 URL resolution permits one pending job per bot and four across the remote
 service. A pasted link has two minutes, including the URL check, to resolve
 and download; the work is cancelled when that deadline passes (504 `timeout`),

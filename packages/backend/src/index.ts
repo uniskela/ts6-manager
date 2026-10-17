@@ -191,7 +191,8 @@ async function main() {
     const closed = new Promise<void>((resolve) => server.close(() => resolve()));
     server.closeIdleConnections();
     await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref())]);
-    await stopListenerRemoteRefusals();
+    // Bounded too: a stuck database write must not hold up shutdown.
+    await Promise.race([stopListenerRemoteRefusals(), new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref())]);
     await prisma.$disconnect();
     process.exit(0);
   };
