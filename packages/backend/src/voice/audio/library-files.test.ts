@@ -142,7 +142,9 @@ describe('removeSongFileIfUnused', () => {
       const unreadable = path.join(locked, 'theirs.mp3');
       assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [unreadable], onUnverifiable }), 'unverifiable');
       assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths: () => [unreadable], onUnverifiable }), 'unverifiable');
-      assert.deepEqual(reported, ['EACCES', 'EACCES']);
+      // The removed song's own file cannot be looked up either.
+      assert.equal(await removeSongFileIfUnused({ filePath: unreadable, musicDir: music, otherSongPaths: none, onUnverifiable }), 'unverifiable');
+      assert.deepEqual(reported, ['EACCES', 'EACCES', 'EACCES']);
       assert.ok(existsSync(file));
     } finally {
       await chmod(locked, 0o700);

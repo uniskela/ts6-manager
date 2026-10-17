@@ -159,7 +159,7 @@ async function decideAndRemove(check: SongFileCheck): Promise<SongFileOutcome> {
   if (!check.filePath.trim()) return 'missing';
   // As written: normalising `..` before links are followed could name another file.
   const given = check.filePath;
-  const entry = await lstat(given).catch(() => null);
+  const entry = await lstat(given).catch((err: unknown) => lookupFailed(given, err));
   if (!entry) return 'missing';
   const target = await identityOf(given);
   if (!target) return 'missing';
