@@ -368,6 +368,83 @@ describe('media egress proxy', () => {
     }
   });
 
+  it('frees a connection at once when its client leaves or its job ends during setup', async () => {
+    // DNS that only finishes when cancelled.
+    const hanging = (_host: string, signal: AbortSignal) => new Promise<string[]>((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
+    });
+    const proxy = new MediaEgressProxy({ ...permitLocal, resolve: hanging, log: () => {} });
+    const settle = async () => { for (let i = 0; i < 50 && proxy.activeConnections > 0; i++) await new Promise((r) => setTimeout(r, 5)); };
+    try {
+      const job = await proxy.issue(60_000);
+      const port = proxyPort(job.proxyUrl);
+      const auth = `Proxy-Authorization: ${credentials(job.proxyUrl)}`;
+      for (const request of [`CONNECT media.test:443 HTTP/1.1\r\n${auth}\r\n\r\n`, `GET http://media.test/a HTTP/1.1\r\nHost: media.test\r\n${auth}\r\n\r\n`]) {
+        const socket = net.connect(port, '127.0.0.1');
+        await once(socket, 'connect');
+        socket.write(request);
+        for (let i = 0; i < 50 && proxy.activeConnections === 0; i++) await new Promise((r) => setTimeout(r, 5));
+        assert.equal(proxy.activeConnections, 1);
+        socket.destroy();
+        await settle();
+        assert.equal(proxy.activeConnections, 0, 'released when the client left');
+      }
+      const pending = raw(port, `CONNECT media.test:443 HTTP/1.1\r\n${auth}\r\n\r\n`);
+      for (let i = 0; i < 50 && proxy.activeConnections === 0; i++) await new Promise((r) => setTimeout(r, 5));
+      job.release();
+      await settle();
+      assert.equal(proxy.activeConnections, 0, 'released when the job ended');
+      assert.notEqual(statusOf((await pending).text), 200);
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('stops waiting for an upstream proxy that never answers when the job ends', async () => {
+    const silent = net.createServer(() => { /* accepts and never answers */ });
+    silent.listen(0, '127.0.0.1');
+    await once(silent, 'listening');
+    const proxy = new MediaEgressProxy({
+      upstream: { host: '127.0.0.1', port: (silent.address() as net.AddressInfo).port },
+      resolve: async () => ['93.184.215.14'],
+      log: () => {},
+    });
+    try {
+      const job = await proxy.issue(60_000);
+      const pending = raw(proxyPort(job.proxyUrl), `CONNECT media.test:443 HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`);
+      await new Promise((r) => setTimeout(r, 50));
+      assert.equal(proxy.activeConnections, 1);
+      job.release();
+      for (let i = 0; i < 50 && proxy.activeConnections > 0; i++) await new Promise((r) => setTimeout(r, 5));
+      assert.equal(proxy.activeConnections, 0);
+      assert.notEqual(statusOf((await pending).text), 200);
+    } finally {
+      await proxy.close();
+      silent.close();
+    }
+  });
+
+  it('answers 502 to an upstream protocol upgrade and frees the connection', async () => {
+    const origin = net.createServer((socket) => {
+      socket.once('data', () => socket.write('HTTP/1.1 101 Switching Protocols\r\nUpgrade: other\r\nConnection: Upgrade\r\n\r\n'));
+    });
+    origin.listen(0, '127.0.0.1');
+    await once(origin, 'listening');
+    const port = (origin.address() as net.AddressInfo).port;
+    const proxy = new MediaEgressProxy({ ...permitLocal, resolve: async () => ['127.0.0.1'], log: () => {} });
+    try {
+      const job = await proxy.issue(60_000);
+      const reply = await raw(proxyPort(job.proxyUrl), `GET http://media.test:${port}/ HTTP/1.1\r\nHost: media.test\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`);
+      assert.equal(statusOf(reply.text), 502);
+      reply.socket.destroy();
+      for (let i = 0; i < 50 && proxy.activeConnections > 0; i++) await new Promise((r) => setTimeout(r, 5));
+      assert.equal(proxy.activeConnections, 0);
+    } finally {
+      await proxy.close();
+      origin.close();
+    }
+  });
+
   it('redacts the job token from text', async () => {
     const proxy = new MediaEgressProxy({ log: () => {} });
     try {

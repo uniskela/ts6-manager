@@ -31,8 +31,8 @@ export interface UpstreamProxy {
 export interface MediaEgressProxyOptions {
   /** Outbound proxy the approved connections are chained through (by IP address). */
   upstream?: UpstreamProxy;
-  /** DNS lookup; tests replace it. */
-  resolve?: (host: string) => Promise<string[]>;
+  /** DNS lookup, abandoned when `signal` aborts; tests replace it. */
+  resolve?: (host: string, signal: AbortSignal) => Promise<string[]>;
   /** Tests only: addresses to allow despite the policy (local test servers). */
   permitAddress?: (address: string) => boolean;
   /** Tests only: ports to allow besides 80 and 443. */
@@ -107,9 +107,13 @@ const tokenKey = (token: string) => createHash('sha256').update(token).digest('h
  * threadpool and has no timeout: slow names must not hold up file and crypto
  * work elsewhere in the backend. IPv4 answers come first.
  */
-async function systemResolve(host: string): Promise<string[]> {
+async function systemResolve(host: string, signal: AbortSignal): Promise<string[]> {
   const resolver = new Resolver({ timeout: 4_000, tries: 2 });
-  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+  const cancel = () => resolver.cancel();
+  signal.addEventListener('abort', cancel, { once: true });
+  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)])
+    .finally(() => signal.removeEventListener('abort', cancel));
+  if (signal.aborted) throw new Refused(410, 'cancelled');
   const answers = [
     ...(v4.status === 'fulfilled' ? v4.value : []),
     ...(v6.status === 'fulfilled' ? v6.value : []),
@@ -130,7 +134,7 @@ export class MediaEgressProxy {
   /** Connections being set up or open, across all jobs. */
   private active = 0;
   private readonly limits: MediaEgressLimits;
-  private readonly resolve: (host: string) => Promise<string[]>;
+  private readonly resolve: (host: string, signal: AbortSignal) => Promise<string[]>;
   private readonly log: (message: string) => void;
 
   constructor(private readonly options: MediaEgressProxyOptions = {}) {
@@ -187,6 +191,30 @@ export class MediaEgressProxy {
   /** Jobs that currently hold a token (for tests and diagnostics). */
   get activeJobs(): number {
     return this.jobs.size;
+  }
+
+  /** Connections being set up or open across all jobs (for tests and diagnostics). */
+  get activeConnections(): number {
+    return this.active;
+  }
+
+  /**
+   * A signal for one connection's setup: aborted when the job is revoked or the
+   * client goes away, so DNS, connecting and upstream negotiation stop at once.
+   */
+  private setupSignal(state: JobState, client: net.Socket): { signal: AbortSignal; done: () => void } {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    state.abort.signal.addEventListener('abort', abort, { once: true });
+    client.once('close', abort);
+    if (state.revoked || client.destroyed) abort();
+    return {
+      signal: controller.signal,
+      done: () => {
+        state.abort.signal.removeEventListener('abort', abort);
+        client.off('close', abort);
+      },
+    };
   }
 
   async close(): Promise<void> {
@@ -275,18 +303,19 @@ export class MediaEgressProxy {
   }
 
   /** Resolve the host and keep only the addresses the policy allows. */
-  private async approvedAddresses(host: string): Promise<string[]> {
+  private async approvedAddresses(host: string, signal: AbortSignal): Promise<string[]> {
     const literal = host.replace(/^\[|\]$/g, '');
     let answers: string[];
     if (net.isIP(literal)) {
       answers = [literal];
     } else {
       try {
-        answers = await this.resolve(literal);
+        answers = await this.resolve(literal, signal);
       } catch {
-        throw new Refused(502, 'did not resolve');
+        throw signal.aborted ? new Refused(410, 'cancelled') : new Refused(502, 'did not resolve');
       }
     }
+    if (signal.aborted) throw new Refused(410, 'cancelled');
     const approved: string[] = [];
     let reason = 'did not resolve';
     for (const address of answers) {
@@ -342,7 +371,7 @@ export class MediaEgressProxy {
       (upstream.authorization ? `Proxy-Authorization: ${upstream.authorization}\r\n` : '') + '\r\n',
     );
     try {
-      return { socket, head: await readConnectResponse(socket, this.limits.connectMs) };
+      return { socket, head: await readConnectResponse(socket, this.limits.connectMs, signal) };
     } catch (err) {
       socket.destroy();
       throw err;
@@ -373,30 +402,49 @@ export class MediaEgressProxy {
     }
     const target = parseAuthority(req.url ?? '');
     let release = () => {};
+    const setup = this.setupSignal(state, client);
+    // Read while the tunnel is set up, so a client that leaves is noticed at once
+    // (a CONNECT socket arrives paused). Anything it sends early is kept, within a bound.
+    const early: Buffer[] = [head];
+    let earlyBytes = head.length;
+    const collect = (chunk: Buffer) => {
+      earlyBytes += chunk.length;
+      if (earlyBytes > 65_536) client.destroy();
+      else early.push(chunk);
+    };
+    const gone = () => client.destroy();
+    client.on('data', collect);
+    client.once('end', gone);
     try {
       if (!target) throw new Refused(400, 'malformed target');
       this.checkPort(target.port);
       release = this.admit(state);
-      const addresses = await this.approvedAddresses(target.host);
-      const { socket, head: early } = await this.connectAny(addresses, target.port, state.abort.signal);
-      if (state.revoked || client.destroyed) {
+      const addresses = await this.approvedAddresses(target.host, setup.signal);
+      const { socket, head: upstreamEarly } = await this.connectAny(addresses, target.port, setup.signal);
+      if (setup.signal.aborted || client.destroyed) {
         socket.destroy();
         client.destroy();
         release();
         return;
       }
+      client.off('data', collect);
+      client.off('end', gone);
       this.track(state, release, [client, socket]);
       socket.on('error', () => socket.destroy());
       client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      if (early.length) client.write(early);
-      if (head.length) socket.write(head);
+      if (upstreamEarly.length) client.write(upstreamEarly);
+      for (const chunk of early) if (chunk.length) socket.write(chunk);
       socket.pipe(client);
       client.pipe(socket);
     } catch (err) {
       release();
       const refused = err instanceof Refused ? err : new Refused(502, 'could not connect');
-      this.refuse(state, target?.host ?? '?', refused.reason);
+      if (refused.status !== 410) this.refuse(state, target?.host ?? '?', refused.reason);
+      client.off('data', collect);
+      client.off('end', gone);
       client.end(`HTTP/1.1 ${refused.status} ${http.STATUS_CODES[refused.status] ?? 'Error'}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`);
+    } finally {
+      setup.done();
     }
   }
 
@@ -412,6 +460,7 @@ export class MediaEgressProxy {
       url = new URL(req.url ?? '');
     } catch { /* refused below */ }
     let release = () => {};
+    const setup = this.setupSignal(state, req.socket);
     try {
       if (!url || url.protocol !== 'http:' || !url.hostname || url.username || url.password) {
         throw new Refused(400, 'only absolute http:// URLs and CONNECT are forwarded');
@@ -424,10 +473,15 @@ export class MediaEgressProxy {
       const port = url.port ? Number(url.port) : 80;
       this.checkPort(port);
       release = this.admit(state);
-      const addresses = await this.approvedAddresses(url.hostname);
+      const addresses = await this.approvedAddresses(url.hostname, setup.signal);
       // Directly, or through an upstream proxy as a tunnel to the approved address, so the
       // request keeps its own Host for name-based hosting.
-      const { socket, head } = await this.connectAny(addresses, port, state.abort.signal);
+      const { socket, head } = await this.connectAny(addresses, port, setup.signal);
+      if (setup.signal.aborted) {
+        socket.destroy();
+        release();
+        return;
+      }
       if (head.length) socket.unshift(head);
       const headers: http.OutgoingHttpHeaders = {};
       const listed = new Set(String(req.headers.connection ?? '').toLowerCase().split(',').map((h) => h.trim()));
@@ -449,6 +503,14 @@ export class MediaEgressProxy {
         if (!res.headersSent) res.writeHead(502, { Connection: 'close' }).end();
         else res.destroy();
       };
+      // Media downloads never switch protocols; an upgrade is answered 502 and closed.
+      out.on('upgrade', (_upgradeRes, upgraded) => {
+        upgraded.destroy();
+        socket.destroy();
+        fail();
+      });
+      // Upstream gone before any response: the client is answered rather than left waiting.
+      out.on('close', () => { if (!res.headersSent) fail(); });
       out.on('response', (upstreamRes) => {
         const status = upstreamRes.statusCode ?? 0;
         if (status < 200 || status > 599) {
@@ -478,9 +540,11 @@ export class MediaEgressProxy {
     } catch (err) {
       release();
       const refused = err instanceof Refused ? err : new Refused(502, 'could not connect');
-      this.refuse(state, url?.hostname ?? '?', refused.reason);
+      if (refused.status !== 410) this.refuse(state, url?.hostname ?? '?', refused.reason);
       if (!res.headersSent) res.writeHead(refused.status, { Connection: 'close' });
       res.end();
+    } finally {
+      setup.done();
     }
   }
 }
@@ -495,12 +559,16 @@ export function parseAuthority(value: string): { host: string; port: number } | 
 }
 
 /** Read an upstream proxy's CONNECT response; returns bytes received after it. */
-function readConnectResponse(socket: net.Socket, timeoutMs: number): Promise<Buffer> {
+function readConnectResponse(socket: net.Socket, timeoutMs: number, signal: AbortSignal): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     let buffered = Buffer.alloc(0);
     const timer = setTimeout(() => finish(new Refused(504, 'upstream proxy timed out')), timeoutMs);
+    const onAbort = () => finish(new Refused(410, 'cancelled'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) queueMicrotask(onAbort);
     const finish = (err?: Error, rest?: Buffer) => {
       clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
       socket.off('data', onData);
       socket.off('error', onError);
       socket.off('close', onClose);
