@@ -140,7 +140,7 @@ jobs:
 
       - name: Run media cache tests
         working-directory: packages/backend
-        run: pnpm exec tsx --test src/voice/audio/media-cache.test.ts
+        run: pnpm exec tsx --test src/voice/audio/media-cache.test.ts src/voice/audio/library-files.test.ts
 
   sidecar:
     name: Go sidecar test and vet

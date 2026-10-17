@@ -25,7 +25,7 @@ import {
   youtubeIdFromFilename,
 } from '../voice/audio/metadata.js';
 import { loadMaxPlaylistImport } from '../utils/app-settings.js';
-import { removeSongFileIfUnused } from '../voice/audio/library-files.js';
+import { removeSongFileIfUnused, withLibraryFileLock } from '../voice/audio/library-files.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import multer from 'multer';
 import path from 'path';
@@ -351,96 +351,123 @@ musicLibraryRoutes.get('/songs/search', async (req: Request, res: Response, next
 // POST /scan — Import audio files already present under MUSIC_DIR
 musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: Response, next) => {
   try {
-    const prisma = req.app.locals.prisma;
-    const configId = parseInt(req.params.configId as string);
+    // Adopting files runs under the library file lock, so a removal cannot delete a file
+    // between its last reference check and a new song taking it up.
+    const result = await withLibraryFileLock(async () => {
+      const prisma = req.app.locals.prisma;
+      const configId = parseInt(req.params.configId as string);
 
-    const existing = await prisma.song.findMany({
-      where: { serverConfigId: configId },
-    });
-    const knownByPath = new Map<string, (typeof existing)[number]>(
-      existing.map((s: (typeof existing)[number]) => [s.filePath, s]),
-    );
+      const existing = await prisma.song.findMany({
+        where: { serverConfigId: configId },
+      });
+      const knownByPath = new Map<string, (typeof existing)[number]>(
+        existing.map((s: (typeof existing)[number]) => [s.filePath, s]),
+      );
 
-    const entries = fs.readdirSync(MUSIC_DIR, { withFileTypes: true });
-    let imported = 0;
-    let updated = 0;
-    const created: unknown[] = [];
+      const entries = fs.readdirSync(MUSIC_DIR, { withFileTypes: true });
+      let imported = 0;
+      let updated = 0;
+      const created: unknown[] = [];
 
-    for (const entry of entries) {
-      if (!entry.isFile()) continue;
-      const ext = path.extname(entry.name).toLowerCase();
-      if (!ALLOWED_EXTENSIONS.includes(ext)) continue;
-      const filePath = path.join(MUSIC_DIR, entry.name);
-      const ytId = youtubeIdFromFilename(entry.name);
-      const known = knownByPath.get(filePath);
+      for (const entry of entries) {
+        if (!entry.isFile()) continue;
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!ALLOWED_EXTENSIONS.includes(ext)) continue;
+        const filePath = path.join(MUSIC_DIR, entry.name);
+        const ytId = youtubeIdFromFilename(entry.name);
+        const known = knownByPath.get(filePath);
 
-      if (known) {
-        // Repair rows that were scanned as local with a bare YouTube id title.
-        const needsRepair =
-          ytId &&
-          (known.source === 'local' ||
-            looksLikeYouTubeIdTitle(known.title) ||
-            !known.sourceUrl);
-        if (needsRepair && ytId) {
-          const enriched = await enrichYouTubeIdFile(filePath, ytId);
-          const confirmed = enriched.title !== ytId;
-          if (
-            confirmed &&
-            (enriched.title !== known.title ||
-              known.source !== 'youtube' ||
-              !known.sourceUrl)
-          ) {
-            const song = await prisma.song.update({
-              where: { id: known.id },
-              data: {
-                title: enriched.title,
-                artist: enriched.artist ?? known.artist,
-                duration: enriched.duration ?? known.duration,
-                source: 'youtube',
-                sourceUrl: enriched.sourceUrl,
-              },
-            });
-            updated++;
-            created.push(song);
+        if (known) {
+          // Repair rows that were scanned as local with a bare YouTube id title.
+          const needsRepair =
+            ytId &&
+            (known.source === 'local' ||
+              looksLikeYouTubeIdTitle(known.title) ||
+              !known.sourceUrl);
+          if (needsRepair && ytId) {
+            const enriched = await enrichYouTubeIdFile(filePath, ytId);
+            const confirmed = enriched.title !== ytId;
+            if (
+              confirmed &&
+              (enriched.title !== known.title ||
+                known.source !== 'youtube' ||
+                !known.sourceUrl)
+            ) {
+              const song = await prisma.song.update({
+                where: { id: known.id },
+                data: {
+                  title: enriched.title,
+                  artist: enriched.artist ?? known.artist,
+                  duration: enriched.duration ?? known.duration,
+                  source: 'youtube',
+                  sourceUrl: enriched.sourceUrl,
+                },
+              });
+              updated++;
+              created.push(song);
+            }
           }
+          continue;
         }
-        continue;
-      }
 
-      const stat = fs.statSync(filePath);
-      let songData: {
-        title: string;
-        artist: string | null;
-        duration: number | null;
-        filePath: string;
-        source: string;
-        sourceUrl: string | null;
-        fileSize: number;
-        serverConfigId: number;
-      };
+        const stat = fs.statSync(filePath);
+        let songData: {
+          title: string;
+          artist: string | null;
+          duration: number | null;
+          filePath: string;
+          source: string;
+          sourceUrl: string | null;
+          fileSize: number;
+          serverConfigId: number;
+        };
 
-      if (ytId) {
-        const enriched = await enrichYouTubeIdFile(filePath, ytId);
-        // Only mark as youtube when yt-dlp returned a real title (avoids false positives).
-        const confirmed =
-          enriched.title !== ytId && enriched.source === 'youtube' && !!enriched.sourceUrl;
-        if (confirmed) {
-          songData = {
-            title: enriched.title,
-            artist: enriched.artist,
-            duration: enriched.duration,
-            filePath,
-            source: enriched.source,
-            sourceUrl: enriched.sourceUrl,
-            fileSize: stat.size,
-            serverConfigId: configId,
-          };
+        if (ytId) {
+          const enriched = await enrichYouTubeIdFile(filePath, ytId);
+          // Only mark as youtube when yt-dlp returned a real title (avoids false positives).
+          const confirmed =
+            enriched.title !== ytId && enriched.source === 'youtube' && !!enriched.sourceUrl;
+          if (confirmed) {
+            songData = {
+              title: enriched.title,
+              artist: enriched.artist,
+              duration: enriched.duration,
+              filePath,
+              source: enriched.source,
+              sourceUrl: enriched.sourceUrl,
+              fileSize: stat.size,
+              serverConfigId: configId,
+            };
+          } else {
+            const fromName = parseTitleArtistFromFilename(entry.name);
+            songData = {
+              title: fromName.title,
+              artist: fromName.artist,
+              duration: enriched.duration,
+              filePath,
+              source: 'local',
+              sourceUrl: null,
+              fileSize: stat.size,
+              serverConfigId: configId,
+            };
+          }
         } else {
+          const tags = await probeAudioTags(filePath);
           const fromName = parseTitleArtistFromFilename(entry.name);
+          const title = tags.title || fromName.title;
+          const artist = tags.artist || fromName.artist;
+          let duration = tags.duration ?? null;
+          if (duration == null) {
+            try {
+              duration = await getAudioDuration(filePath);
+            } catch {
+              /* ignore */
+            }
+          }
           songData = {
-            title: fromName.title,
-            artist: fromName.artist,
-            duration: enriched.duration,
+            title,
+            artist,
+            duration,
             filePath,
             source: 'local',
             sourceUrl: null,
@@ -448,37 +475,15 @@ musicLibraryRoutes.post('/scan', heavyMusicOpLimiter, async (req: Request, res: 
             serverConfigId: configId,
           };
         }
-      } else {
-        const tags = await probeAudioTags(filePath);
-        const fromName = parseTitleArtistFromFilename(entry.name);
-        const title = tags.title || fromName.title;
-        const artist = tags.artist || fromName.artist;
-        let duration = tags.duration ?? null;
-        if (duration == null) {
-          try {
-            duration = await getAudioDuration(filePath);
-          } catch {
-            /* ignore */
-          }
-        }
-        songData = {
-          title,
-          artist,
-          duration,
-          filePath,
-          source: 'local',
-          sourceUrl: null,
-          fileSize: stat.size,
-          serverConfigId: configId,
-        };
+
+        const song = await prisma.song.create({ data: songData });
+        created.push(song);
+        imported++;
       }
 
-      const song = await prisma.song.create({ data: songData });
-      created.push(song);
-      imported++;
-    }
-
-    res.json({ imported, updated, songs: created });
+      return { imported, updated, songs: created };
+    });
+    res.json(result);
   } catch (err) { next(err); }
 });
 
@@ -515,14 +520,17 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
   } catch (err) { next(err); }
 });
 
-/** True when a bot has this file playing or queued. */
-function songFileQueued(manager: VoiceBotManager | undefined, resolved: string): boolean {
+/** Files the bots have playing or queued. */
+function queuedSongFiles(manager: VoiceBotManager | undefined): string[] {
+  const files: string[] = [];
   for (const { id } of manager?.listBots() ?? []) {
     const bot = manager?.getBot(id);
-    const items = [bot?.nowPlaying, ...(bot?.queue.getAll() ?? [])];
-    if (items.some((item) => item?.filePath && path.resolve(item.filePath) === resolved)) return true;
+    if (!bot) continue;
+    for (const item of [bot.nowPlaying, ...bot.queue.getAll()]) {
+      if (item?.filePath) files.push(item.filePath);
+    }
   }
-  return false;
+  return files;
 }
 
 // DELETE /songs/:id — Delete song
@@ -533,19 +541,29 @@ musicLibraryRoutes.delete('/songs/:id', musicWriteLimiter, async (req: Request, 
     const song = await prisma.song.findUnique({ where: { id } });
     if (!song) throw new AppError(404, 'Song not found');
 
-    await prisma.song.delete({ where: { id } });
+    try {
+      await prisma.song.delete({ where: { id } });
+    } catch (err) {
+      // Removed by a concurrent request in the meantime.
+      if ((err as { code?: unknown }).code === 'P2025') throw new AppError(404, 'Song not found');
+      throw err;
+    }
     // The file goes too, unless something else still uses it (see removeSongFileIfUnused).
     try {
-      await removeSongFileIfUnused({
+      const outcome = await removeSongFileIfUnused({
         filePath: song.filePath,
         musicDir: MUSIC_DIR,
-        otherSongPaths: async (basename) => (await prisma.song.findMany({
-          where: { id: { not: id }, filePath: { endsWith: basename } },
+        otherSongPaths: async () => (await prisma.song.findMany({
+          where: { id: { not: id } },
           select: { filePath: true },
         })).map((row: { filePath: string }) => row.filePath),
-        inUse: (resolved) => songFileQueued(req.app.locals.voiceBotManager, resolved),
+        queuedPaths: () => queuedSongFiles(req.app.locals.voiceBotManager),
       });
-    } catch { /* the song is gone; a file that could not be removed stays */ }
+      if (outcome !== 'removed' && outcome !== 'missing') console.log(`[MusicLibrary] Kept the file of removed song ${id} (${outcome})`);
+    } catch (err) {
+      // The song is gone; a file that could not be removed stays and is logged.
+      console.warn(`[MusicLibrary] Could not remove the file of song ${id}: ${(err as NodeJS.ErrnoException).code ?? (err as Error).name}`);
+    }
     res.json({ success: true });
   } catch (err) { next(err); }
 });

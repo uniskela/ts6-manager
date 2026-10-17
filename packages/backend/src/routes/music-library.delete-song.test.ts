@@ -6,7 +6,6 @@ import { after, beforeEach, describe, it } from 'node:test';
 import express, { type Express } from 'express';
 import { errorHandler } from '../middleware/error-handler.js';
 import { CACHE_DIR_NAME } from '../voice/audio/media-cache.js';
-import { removeSongFileIfUnused } from '../voice/audio/library-files.js';
 
 // music-library.routes creates MUSIC_DIR on import; keep it out of /data in tests.
 const musicDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-delete-song-'));
@@ -36,8 +35,8 @@ function fakeLibrary(rows: Row[], playlistSongs: Array<{ playlistId: number; son
           entries = entries.filter((e) => e.songId !== where.id);
           return {};
         },
-        findMany: async ({ where }: { where: { id: { not: number }; filePath: { endsWith: string } } }) =>
-          songs.filter((s) => s.id !== where.id.not && s.filePath.endsWith(where.filePath.endsWith)).map((s) => ({ filePath: s.filePath })),
+        findMany: async ({ where }: { where: { id: { not: number } } }) =>
+          songs.filter((s) => s.id !== where.id.not).map((s) => ({ filePath: s.filePath })),
       },
     },
   };
@@ -125,7 +124,8 @@ describe('deleting a song', () => {
     const track = file('spelled.mp3');
     const library = fakeLibrary([
       { id: 30, filePath: track, serverConfigId: 1, title: 'A' },
-      { id: 31, filePath: path.join(musicDir, '.', 'sub', '..', 'spelled.mp3'), serverConfigId: 2, title: 'B' },
+      // Written as stored by hand, not normalised.
+      { id: 31, filePath: `${musicDir}${path.sep}.${path.sep}sub${path.sep}..${path.sep}spelled.mp3`, serverConfigId: 2, title: 'B' },
     ]);
     assert.equal(await remove(app(library.prisma), 30), 200);
     assert.ok(fs.existsSync(track));
@@ -151,28 +151,21 @@ describe('deleting a song', () => {
     assert.equal(await remove(server, 51), 200);
     assert.equal(await remove(server, 999), 404);
   });
-});
 
-describe('removeSongFileIfUnused', () => {
-  it('never deletes outside the music folder, or through a link into the cache', async () => {
-    const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-elsewhere-'));
-    try {
-      const outside = path.join(elsewhere, 'outside.mp3');
-      fs.writeFileSync(outside, 'x');
-      const none = async () => [] as string[];
-      assert.equal(await removeSongFileIfUnused({ filePath: outside, musicDir, otherSongPaths: none }), 'outside-music-folder');
-      assert.ok(fs.existsSync(outside));
-
-      const cached = file(path.join(CACHE_DIR_NAME, 'v2', `${'b'.repeat(64)}.0123456789abcdef.opus`));
-      const link = path.join(musicDir, 'link-to-cache.opus');
-      const linked = await fs.promises.symlink(cached, link).then(() => true, () => false);
-      if (linked) {
-        assert.equal(await removeSongFileIfUnused({ filePath: link, musicDir, otherSongPaths: none }), 'cache');
-        assert.ok(fs.existsSync(link) && fs.existsSync(cached));
-      }
-      assert.equal(await removeSongFileIfUnused({ filePath: path.join(musicDir, 'nope.mp3'), musicDir, otherSongPaths: none }), 'missing');
-    } finally {
-      fs.rmSync(elsewhere, { recursive: true, force: true });
-    }
+  it('answers 404 to the second of two removals of one song', async () => {
+    const lone = file('twice.mp3');
+    const library = fakeLibrary([{ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' }]);
+    const deleteOnce = library.prisma.song.delete;
+    let calls = 0;
+    library.prisma.song.delete = async (args: { where: { id: number } }) => {
+      calls++;
+      if (calls === 2) throw Object.assign(new Error('Record to delete does not exist.'), { code: 'P2025' });
+      return deleteOnce(args);
+    };
+    const server = app(library.prisma);
+    // The second request found the row before the first one removed it.
+    library.prisma.song.findUnique = async () => ({ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' });
+    assert.equal(await remove(server, 60), 200);
+    assert.equal(await remove(server, 60), 404);
   });
 });
