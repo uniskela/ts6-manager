@@ -361,9 +361,12 @@ musicLibraryRoutes.get('/songs/search', async (req: Request, res: Response, next
   } catch (err) { next(err); }
 });
 
-/** SQLite write conflicts surface from Prisma as P2034 or a "database is locked" error. */
+/**
+ * SQLite write conflicts surface from Prisma as P2034 or a "database is locked"
+ * error; P2028 is a transaction that could not start in time behind another one.
+ */
 function isWriteConflict(err: any): boolean {
-  return err?.code === 'P2034' || /database is locked|SQLITE_BUSY/i.test(String(err?.message ?? ''));
+  return err?.code === 'P2034' || err?.code === 'P2028' || /database is locked|SQLITE_BUSY/i.test(String(err?.message ?? ''));
 }
 
 /**

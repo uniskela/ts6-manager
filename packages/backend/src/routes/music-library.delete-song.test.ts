@@ -225,6 +225,21 @@ describe('deleting a song', () => {
     assert.deepEqual(library.songs.map((s) => path.basename(s.filePath)), ['scan-kept.mp3']);
   });
 
+  it('retries adopting a scanned file when the database is busy', async () => {
+    file('busy.mp3');
+    const library = fakeLibrary([]);
+    const run = library.prisma.$transaction;
+    let attempts = 0;
+    library.prisma.$transaction = async (work) => {
+      if (++attempts === 1) throw Object.assign(new Error('Transaction API error: Unable to start a transaction in the given time.'), { code: 'P2028' });
+      return run(work);
+    };
+    const res = await request(app(library.prisma), '/scan', { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.equal(attempts, 2);
+    assert.deepEqual(library.songs.map((s) => path.basename(s.filePath)), ['busy.mp3']);
+  });
+
   it('publishes an upload under the library file lock, and leaves nothing behind when that fails', async () => {
     const library = fakeLibrary([]);
     const upload = () => {
