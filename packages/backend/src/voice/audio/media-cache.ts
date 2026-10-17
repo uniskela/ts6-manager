@@ -161,7 +161,9 @@ const FFPROBE_MISSING = 'New downloads need ffprobe, which was not found. Instal
  * cleanly. A command that does not finish within `timeoutMs` is killed and
  * counts as a failure.
  */
-export function runFfprobeCheck(command = 'ffprobe', args = ['-version'], timeoutMs = 10_000): Promise<void> {
+export function runFfprobeCheck(
+  command = 'ffprobe', args = ['-version'], timeoutMs = 10_000, onStart?: (pid: number | undefined) => void,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let settled = false;
     const settle = (err?: Error) => {
@@ -171,6 +173,7 @@ export function runFfprobeCheck(command = 'ffprobe', args = ['-version'], timeou
       if (err) reject(err); else resolve();
     };
     const proc = spawn(command, args, { shell: false, stdio: 'ignore' }); // NOSONAR: found on PATH like the other ffprobe calls
+    onStart?.(proc.pid);
     const timer = setTimeout(() => {
       proc.kill('SIGKILL');
       settle(new MediaCacheError('ffprobe did not answer in time.'));
