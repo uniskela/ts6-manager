@@ -147,6 +147,20 @@ describe('listener remote refusal totals', () => {
     assert.deepEqual(order, ['write 1: address:a=n=1', 'write 2: address:b=n=2']);
   });
 
+  it('says in the log, rather than losing silently, a refusal that arrives after the last flush', async () => {
+    const { prisma, writes } = fakePrisma();
+    const logs: string[] = [];
+    const audit = new ListenerRemoteRefusalAudit(prisma, { log: (m) => logs.push(m) });
+    const stop = audit.start();
+    audit.record({ kind: 'auth_failed', source: 'address:a' });
+    await stop();
+    audit.record({ kind: 'auth_failed', source: 'address:late' });
+    audit.record({ kind: 'denied', source: 'listener:late' });
+    await tick();
+    assert.equal(writes.length, 1, 'only the last window was written');
+    assert.equal(logs.filter((line) => line.includes('after the last audit flush')).length, 1);
+  });
+
   it('never throws and logs only the kind of storage error', async () => {
     const logs: string[] = [];
     const audit = new ListenerRemoteRefusalAudit({

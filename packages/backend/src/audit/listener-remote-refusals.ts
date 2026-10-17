@@ -122,6 +122,9 @@ export class ListenerRemoteRefusalAudit {
   private readonly pendingWrites = new Set<Promise<boolean>>();
   /** The flush in progress; flushes run one after another, and stop waits for them. */
   private flushing: Promise<void> = Promise.resolve();
+  /** Set by stop: the last totals are written, and later refusals can only be counted in the log. */
+  private stopped = false;
+  private lateRefusals = 0;
   private timer?: NodeJS.Timeout;
   private readonly windowMs: number;
   private readonly sourcesPerWindow: number;
@@ -137,17 +140,23 @@ export class ListenerRemoteRefusalAudit {
 
   /** Flush every window; returns a stop function that flushes what is left. */
   start(): () => Promise<void> {
-    this.timer = setInterval(() => void this.flush(), this.windowMs);
+    this.timer = setInterval(() => { this.flush().catch(() => { /* logged inside */ }); }, this.windowMs);
     this.timer.unref();
     return async () => {
       clearInterval(this.timer);
       await this.flush();
+      this.stopped = true;
       await Promise.all(this.pendingWrites);
     };
   }
 
   /** Count one refusal. Synchronous and never throws. */
   record(event: RefusalEvent): void {
+    if (this.stopped) {
+      // After the last flush (shutdown): the database is closing, so only the log can say so.
+      if (++this.lateRefusals === 1) this.log('[audit] A listener remote refusal arrived after the last audit flush during shutdown and was not recorded');
+      return;
+    }
     try {
       const at = this.now();
       const key = [event.kind, event.source, event.connectionId ?? '', event.virtualServerId ?? '', event.botId ?? '', event.detail ?? ''].join('|');

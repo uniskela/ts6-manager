@@ -188,10 +188,9 @@ async function main() {
     wss.close();
     // Stop taking requests, then write the last refusal totals before the database closes.
     // Wait briefly for requests in flight; long-lived connections must not hold up shutdown.
-    await Promise.race([
-      new Promise<void>((resolve) => server.close(() => resolve())),
-      new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref()),
-    ]);
+    const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+    server.closeIdleConnections();
+    await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref())]);
     await stopListenerRemoteRefusals();
     await prisma.$disconnect();
     process.exit(0);
