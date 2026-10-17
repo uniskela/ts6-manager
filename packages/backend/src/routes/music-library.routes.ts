@@ -377,14 +377,14 @@ function isWriteConflict(err: any): boolean {
 async function adoptScannedFile(prisma: any, configId: number, filePath: string, data: Record<string, unknown>) {
   for (let attempt = 1; ; attempt++) {
     try {
-      return await prisma.$transaction(async (tx: any) => {
+      return await prisma.$transaction(async (tx: any) => { // NOSONAR: retries run one after another
         if (!fs.existsSync(filePath)) return null;
         const taken = await tx.song.findFirst({ where: { serverConfigId: configId, filePath } });
         return taken ? null : tx.song.create({ data });
       });
     } catch (err) {
       if (attempt >= 3 || !isWriteConflict(err)) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
+      await new Promise((resolve) => setTimeout(resolve, 50 * attempt)); // NOSONAR: back off before the next attempt
     }
   }
 }
