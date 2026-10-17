@@ -562,8 +562,8 @@ export class MediaCache {
    * Cross-process lock, to avoid two processes downloading the same source at
    * once (within one process the flight map does that). It is best effort, and
    * correctness never depends on it: publication is atomic and published media
-   * is never removed, so a race on the lock can at worst cause one duplicate
-   * download.
+   * is never removed, so races on the lock can only cause duplicate
+   * downloads (bandwidth, time and duplicate files on disk), never a wrong entry.
    *
    * The owner keeps the lock file open and refreshes it every minute through
    * that handle. A lock untouched for three minutes, or one left by an earlier
@@ -611,7 +611,11 @@ export class MediaCache {
         };
       }
       const held = await lstat(file).catch(() => null);
-      if (!held) continue;
+      if (!held) {
+        // Gone already, or (on Windows) pending delete: wait a moment instead of spinning.
+        await delay(50, signal);
+        continue;
+      }
       const owner = await readLockOwner(file);
       const gone = owner?.host === this.host && owner.instance !== this.instance && (owner.pid === process.pid || !this.isAlive(owner.pid));
       if (gone || this.now() - held.mtimeMs > LOCK_STALE_MS) {
