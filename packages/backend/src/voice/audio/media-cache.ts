@@ -126,9 +126,7 @@ export function probeAudio(filePath: string, timeoutMs = 30_000): Promise<ProbeR
     proc.on('error', (err) => {
       clearTimeout(timer);
       const code = (err as NodeJS.ErrnoException).code;
-      reject(new MediaCacheError(code === 'ENOENT'
-        ? 'New downloads need ffprobe, which was not found. Install FFmpeg (it includes ffprobe) and make sure the backend can find it on its PATH; songs already in the library keep playing.'
-        : `ffprobe could not run (${code ?? err.name}).`));
+      reject(new MediaCacheError(code === 'ENOENT' ? FFPROBE_MISSING : `ffprobe could not run (${code ?? err.name}).`));
     });
     proc.on('close', (code) => {
       clearTimeout(timer);
@@ -156,23 +154,47 @@ export function parseProbe(json: string): ProbeResult {
   };
 }
 
-let ffprobeFound: Promise<void> | undefined;
+const FFPROBE_MISSING = 'New downloads need ffprobe, which was not found. Install FFmpeg (it includes ffprobe) and make sure the backend can find it on its PATH; songs already in the library keep playing.';
 
 /**
- * Fail at once when ffprobe is missing, before anything is downloaded. A
- * success is remembered; a failure is checked again next time.
+ * Run `command args` (by default `ffprobe -version`) and resolve when it exits
+ * cleanly. A command that does not finish within `timeoutMs` is killed and
+ * counts as a failure.
  */
-export function ensureFfprobe(): Promise<void> {
-  ffprobeFound ??= new Promise<void>((resolve, reject) => {
-    const proc = spawn('ffprobe', ['-version'], { shell: false, stdio: 'ignore' }); // NOSONAR: found on PATH like the other ffprobe calls
-    proc.on('error', (err) => reject(new MediaCacheError((err as NodeJS.ErrnoException).code === 'ENOENT'
-      ? 'New downloads need ffprobe, which was not found. Install FFmpeg (it includes ffprobe) and make sure the backend can find it on its PATH; songs already in the library keep playing.'
-      : `ffprobe could not run (${(err as NodeJS.ErrnoException).code ?? err.name}).`)));
-    proc.on('close', (code) => (code === 0 ? resolve() : reject(new MediaCacheError('ffprobe could not run.'))));
+export function runFfprobeCheck(command = 'ffprobe', args = ['-version'], timeoutMs = 10_000): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const settle = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (err) reject(err); else resolve();
+    };
+    const proc = spawn(command, args, { shell: false, stdio: 'ignore' }); // NOSONAR: found on PATH like the other ffprobe calls
+    const timer = setTimeout(() => {
+      proc.kill('SIGKILL');
+      settle(new MediaCacheError('ffprobe did not answer in time.'));
+    }, timeoutMs);
+    proc.on('error', (err) => {
+      const code = (err as NodeJS.ErrnoException).code;
+      settle(new MediaCacheError(code === 'ENOENT' ? FFPROBE_MISSING : `ffprobe could not run (${code ?? err.name}).`));
+    });
+    proc.on('close', (code) => settle(code === 0 ? undefined : new MediaCacheError('ffprobe could not run.')));
   });
-  ffprobeFound.catch(() => { ffprobeFound = undefined; });
-  return ffprobeFound;
 }
+
+/** Remembers the first success of `check`; after a failure, the next call checks again. */
+export function rememberSuccess(check: () => Promise<void>): () => Promise<void> {
+  let current: Promise<void> | undefined;
+  return () => {
+    const attempt = (current ??= check());
+    attempt.catch(() => { if (current === attempt) current = undefined; });
+    return attempt;
+  };
+}
+
+/** Fail at once when ffprobe is missing or hangs, before anything is downloaded. */
+export const ensureFfprobe = rememberSuccess(() => runFfprobeCheck());
 
 /**
  * A cached track must be audio with a readable, positive length; there is no

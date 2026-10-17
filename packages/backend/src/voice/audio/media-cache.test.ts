@@ -6,7 +6,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import {
   CACHE_DIR_NAME, MediaCache, MediaCacheError, cacheKey, probeAudio, canonicalUrl, checkProbe, checkStagedFile,
-  identityFromInfo, parseManifest, parseProbe, renameWithRetry, type StagedDownload,
+  identityFromInfo, parseManifest, parseProbe, rememberSuccess, renameWithRetry, runFfprobeCheck, type StagedDownload,
 } from './media-cache.js';
 
 const audioProbe = async () => ({ hasAudio: true, durationSec: 100 });
@@ -26,6 +26,35 @@ function untilOrAbort(gate: Promise<unknown>, signal: AbortSignal): Promise<void
   });
 }
 
+
+describe('ffprobe check', () => {
+  const node = process.execPath;
+
+  it('passes when the command exits cleanly and fails otherwise', async () => {
+    await runFfprobeCheck(node, ['-e', 'process.exit(0)']);
+    await assert.rejects(runFfprobeCheck(node, ['-e', 'process.exit(3)']), /ffprobe could not run/);
+    await assert.rejects(runFfprobeCheck('ts6-no-such-ffprobe-command'), /need ffprobe, which was not found/);
+  });
+
+  it('kills a command that does not answer and reports it', async () => {
+    const started = Date.now();
+    await assert.rejects(runFfprobeCheck(node, ['-e', 'setTimeout(() => {}, 60000)'], 300), /did not answer in time/);
+    assert.ok(Date.now() - started < 10_000);
+  });
+
+  it('remembers a success, and checks again after a failure', async () => {
+    let calls = 0;
+    const outcomes = [false, true];
+    const check = rememberSuccess(async () => {
+      const ok = outcomes[calls++] ?? true;
+      if (!ok) throw new MediaCacheError('ffprobe did not answer in time.');
+    });
+    await assert.rejects(check(), /did not answer/);
+    await Promise.all([check(), check()]);
+    await check();
+    assert.equal(calls, 2, 'one failed check, then one shared successful check');
+  });
+});
 
 describe('source identity', () => {
   it('canonicalises the requested URL without changing path or query', () => {
