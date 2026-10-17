@@ -48,9 +48,20 @@ describe('ffprobe check', () => {
   });
 
   it('kills a command that does not answer and reports it', async () => {
-    const started = Date.now();
-    await assert.rejects(runFfprobeCheck(node, ['-e', 'setTimeout(() => {}, 60000)'], 300), /did not answer in time/);
-    assert.ok(Date.now() - started < 10_000);
+    const dir = await mkdtemp(path.join(tmpdir(), 'ts6-ffprobe-check-'));
+    try {
+      const pidFile = path.join(dir, 'pid');
+      const hang = `require('fs').writeFileSync(process.argv[1], String(process.pid)); setTimeout(() => {}, 60000);`;
+      const started = Date.now();
+      await assert.rejects(runFfprobeCheck(node, ['-e', hang, pidFile], 3000), /did not answer in time/);
+      assert.ok(Date.now() - started < 15_000);
+      const pid = Number(await readFile(pidFile, 'utf8'));
+      const alive = () => { try { process.kill(pid, 0); return true; } catch { return false; } };
+      for (let i = 0; i < 100 && alive(); i++) await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.equal(alive(), false, 'the command was killed');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('remembers a success, and checks again after a failure', async () => {
