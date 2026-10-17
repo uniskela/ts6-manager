@@ -16,6 +16,17 @@ function linkFolder(target: string, at: string): Promise<void> {
   return symlink(target, at, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
+/**
+ * Create a file link; false only when Windows refuses it for lack of privileges.
+ * Any other failure is a broken test setup and fails the test.
+ */
+function fileLink(target: string, at: string): Promise<boolean> {
+  return symlink(target, at).then(() => true, (err: NodeJS.ErrnoException) => {
+    if (process.platform === 'win32' && (err.code === 'EPERM' || err.code === 'EACCES')) return false;
+    throw err;
+  });
+}
+
 /** Settles with `gate`, or rejects when `signal` aborts; the listener is removed either way. */
 function untilOrAbort(gate: Promise<unknown>, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -115,7 +126,7 @@ describe('download verification', () => {
     assert.equal(checked.size, 5);
   });
 
-  it('refuses anything else', async () => {
+  it('refuses anything else', async (t) => {
     const staging = path.join(dir, 'staging');
     await mkdir(staging);
     await mkdir(path.join(staging, 'sub'));
@@ -126,7 +137,8 @@ describe('download verification', () => {
     await writeFile(path.join(staging, 'sub', 'c.opus'), 'audio');
     await writeFile(path.join(dir, 'outside.opus'), 'audio');
     // File links need extra privileges on Windows; without them that case is not tested there.
-    const fileLink = await symlink(path.join(dir, 'outside.opus'), path.join(staging, 'link.opus')).then(() => true, () => false);
+    const linked = await fileLink(path.join(dir, 'outside.opus'), path.join(staging, 'link.opus'));
+    if (!linked) t.diagnostic('file links need extra privileges on this Windows runner; the link case is not tested');
     const cases: Array<[string, string[]]> = [
       ['no file', []],
       ['two files', [path.join(staging, 'a.opus'), path.join(staging, 'b.opus')]],
@@ -136,7 +148,7 @@ describe('download verification', () => {
       ['outside staging', [path.join(dir, 'outside.opus')]],
       ['missing', [path.join(staging, 'gone.opus')]],
     ];
-    if (fileLink) cases.push(['link leading outside', [path.join(staging, 'link.opus')]]);
+    if (linked) cases.push(['link leading outside', [path.join(staging, 'link.opus')]]);
     for (const [label, reported] of cases) {
       await assert.rejects(checkStagedFile(staging, reported), MediaCacheError, label);
     }
