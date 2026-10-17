@@ -81,7 +81,7 @@ function normalizeTargetId(id: string | number | null | undefined): string | nul
   return s;
 }
 
-function buildRow(input: BaseEventInput & {
+export function buildRow(input: BaseEventInput & {
   operationId: string;
   outcome: AdminAuditOutcome;
   resultCode?: AdminAuditResultCode | null;
@@ -223,6 +223,19 @@ export async function markPartial(
   });
 }
 
+/** Listener remote refusal codes and the result each one records. */
+const LISTENER_REMOTE_RESULTS: Readonly<Record<string, AdminAuditResultCode>> = {
+  invalid_access: 'invalid_access',
+  permission_denied: 'permission_denied',
+  rate_limited: 'rate_limited',
+  queue_full: 'queue_full',
+  invalid_request: 'invalid_request',
+  not_found: 'not_found',
+  cancelled: 'cancelled',
+  timeout: 'timeout',
+  unavailable: 'unavailable',
+};
+
 /** Map unknown errors to allow-listed result codes (no message leakage). */
 export function classifyRemoteError(err: unknown): {
   outcome: 'failure' | 'unknown';
@@ -231,6 +244,13 @@ export function classifyRemoteError(err: unknown): {
   const name = err && typeof err === 'object' && 'name' in err ? String((err as { name: unknown }).name) : '';
   const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : '';
   const message = err instanceof Error ? err.message.toLowerCase() : '';
+
+  // A listener remote refusal carries its own code; the queue was not changed.
+  if (name === 'ListenerRemoteError') {
+    const auditCode = (err as { auditCode?: unknown }).auditCode;
+    const key = typeof auditCode === 'string' ? auditCode : code;
+    return { outcome: 'failure', resultCode: LISTENER_REMOTE_RESULTS[key] ?? 'unknown' };
+  }
 
   if (
     name === 'TimeoutError'

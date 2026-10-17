@@ -225,7 +225,14 @@ Asking again within a couple of seconds is ignored, and nothing is sent while th
 - **Put it behind a reverse proxy and check `TRUST_PROXY`.** Opening a link and requests without a valid session are limited per client address (per /64 network for IPv6), so the backend must see real client addresses; signed-in listeners are limited individually. The stock Docker images set a default; behind an outer proxy, or outside the images, set `TRUST_PROXY` or every listener appears to come from the proxy and shares one limit. See [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits) for the recommended values and for what to turn off in proxy logs.
 - **Run one backend.** Links, sessions and limits live in memory; a restart ends every session.
 - **Revoke access.** An administrator can end all remote sessions for a bot, or one listener's, with `POST /api/listener-remote-admin/bots/<bot id>/revoke` using the normal admin sign-in. Pass `{"uid": "<TeamSpeak unique ID>"}` to revoke one person and omit it to revoke everyone; the response is `{"revoked": <count>}`. There is no button for this in the web UI yet.
-- **Audit.** Issuing a link, adding a song or link, and revoking are recorded in the audit history with an anonymous fingerprint for listeners, never the link, session or pasted URL.
+- **Audit.** Issuing a link, adding a song or link, and revoking are recorded in the audit history with an anonymous fingerprint for listeners, never the link, session or pasted URL. Refusals are recorded as totals per 5 minutes rather than one entry per request:
+  - refused or expired access and rate limits get one entry per source (a hashed address or listener fingerprint), written when the 5 minutes end;
+  - a permission denial or a full queue is written at once with the listener's fingerprint, the bot and the command, and its entry shows how many followed in the same 5 minutes;
+  - each kind keeps at most 50 sources per window; the rest are added to one combined entry, so no total is lost;
+  - refused access and rate-limit entries are kept within their own budget of 10,000, so a flood of requests cannot push other audit history out;
+  - malformed requests, disallowed links and missing songs are only counted in the server log.
+
+  The target column shows the total, for example `n=12;bot=4;add`.
 
 The remote cannot reach any other part of the manager: its session does not authenticate administrator pages or APIs.
 

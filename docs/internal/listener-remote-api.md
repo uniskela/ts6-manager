@@ -73,6 +73,15 @@ Pasted URLs use the existing SSRF validator without the admin LAN allowlist,
 followed by the normal media URL pipeline. URLs containing userinfo are
 rejected.
 
+Order of checks for `/queue` and `/requests` (cheapest first): body schema and,
+for links, URL syntax (no I/O) → authentication → authorization (`add`) →
+queue room → the request's own check (song lookup; link-request limit and
+destination check) → audit attempt opened → resolve → authorization again →
+stop check and queue room again → queue. Refusals before the attempt are kept
+in `ListenerRemoteRefusalAudit` (bounded per-window totals; 401, 403, 429 and
+full queues), routine 400/404 refusals are only counted, and refusals after
+the attempt is opened complete that attempt with a specific result code.
+
 ## Administrative revocation
 
 `POST /api/listener-remote-admin/bots/:botId/revoke`, with the normal admin

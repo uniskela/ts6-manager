@@ -11,3 +11,4 @@ export {
 } from './writer.js';
 export { startAuditRetention, runAuditRetentionOnce, resolveStalePendingAttempts } from './retention.js';
 export { listAuditEvents } from './query.js';
+export { ListenerRemoteRefusalAudit, type RefusalEvent, type RefusalKind } from './listener-remote-refusals.js';

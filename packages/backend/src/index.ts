@@ -17,7 +17,7 @@ import type { JwtPayload } from '@ts6/common';
 import fs from 'fs';
 import path from 'path';
 import { startIptvAutoRefresh } from './iptv/iptv-scheduler.js';
-import { startAuditRetention } from './audit/index.js';
+import { ListenerRemoteRefusalAudit, startAuditRetention } from './audit/index.js';
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
 import { startMediaEgress } from './voice/egress/media-egress.js';
@@ -146,6 +146,10 @@ async function main() {
   const musicCommandHandler = new MusicCommandHandler(prisma, voiceBotManager);
   const listenerRemote = new ListenerRemoteService();
   app.locals.listenerRemote = listenerRemote;
+  // Bounded audit totals for refused listener remote requests.
+  const listenerRemoteRefusals = new ListenerRemoteRefusalAudit(prisma);
+  app.locals.listenerRemoteRefusals = listenerRemoteRefusals;
+  const stopListenerRemoteRefusals = listenerRemoteRefusals.start();
   app.locals.eventBridge = botEngine.getEventBridge();
   musicCommandHandler.setListenerRemote(listenerRemote);
   musicCommandHandler.setEventBridge(botEngine.getEventBridge());
@@ -176,6 +180,7 @@ async function main() {
     console.log('\n[TS6 WebUI] Shutting down...');
     stopIptvAutoRefresh();
     stopAuditRetention();
+    await stopListenerRemoteRefusals();
     await activityJournal.stop();
 
     await voiceBotManager.stopAll();

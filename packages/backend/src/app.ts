@@ -38,7 +38,8 @@ import { setupRoutes } from './routes/setup.routes.js';
 import { settingsRoutes } from './routes/settings.routes.js';
 import { auditRoutes } from './routes/audit.routes.js';
 import { activityJournalRoutes } from './routes/activity-journal.routes.js';
-import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard, listenerRemoteListenerKey } from './routes/listener-remote.routes.js';
+import { listenerRemoteRoutes, listenerRemoteAdminRoutes, listenerRemoteIpGuard, listenerRemoteListenerKey, recordRefusal } from './routes/listener-remote.routes.js';
+import { ListenerRemoteError } from './voice/listener-remote.js';
 import { clientRateKey } from './utils/client-address.js';
 import { BoundedRateLimitStore } from './utils/rate-windows.js';
 
@@ -70,6 +71,11 @@ export function createApp(): Express {
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many remote requests', code: 'rate_limited' },
+    // Counted in the bounded listener remote audit totals; the response is unchanged.
+    handler: (req: express.Request, res: express.Response, _next: express.NextFunction, options: { statusCode: number; message: unknown }) => {
+      recordRefusal(req, res, new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests'), 'limiter');
+      res.status(options.statusCode).send(options.message);
+    },
   } as const;
   const remoteAddressLimiter = rateLimit({
     ...remoteLimit,

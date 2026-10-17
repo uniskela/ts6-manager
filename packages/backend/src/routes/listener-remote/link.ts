@@ -12,20 +12,54 @@ export const LINK_DEADLINE_MS = 120_000;
 /** How often a resolving link checks that its session is still live. */
 const SESSION_CHECK_MS = 2_000;
 
+/** Longest the destination check before a link is accepted for work may take. */
+const LINK_CHECK_MS = 15_000;
+
+const notAllowed = (): never => fail(400, 'invalid_request', 'This media URL is not allowed.');
+
+/** Refuse a link that is not plain http(s) or carries credentials. No I/O. */
+export function checkListenerUrl(url: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return notAllowed();
+  }
+  if ((parsed.protocol !== 'http:' && parsed.protocol !== 'https:') || parsed.username || parsed.password) notAllowed();
+}
+
+/**
+ * Checks before a link is accepted for work: the session's link-request limit,
+ * then the destination (a DNS lookup), within its own short deadline.
+ */
+export async function checkListenerLink(req: Request, url: string): Promise<void> {
+  service(req).checkRequest(bearer(req));
+  checkListenerUrl(url);
+  const signal = AbortSignal.timeout(LINK_CHECK_MS);
+  let valid: boolean;
+  try {
+    valid = (await abortable(validateUrl(url), signal)).valid;
+  } catch {
+    fail(504, 'timeout', 'The media link took too long to load.');
+  }
+  if (!valid) notAllowed();
+}
+
 /** Overrides for tests; production uses the defaults above. */
 export interface ListenerLinkTimings { deadlineMs?: number; sessionCheckMs?: number }
 
 /**
- * Resolve one pasted media link to a queue item for the listener's bot. It
- * counts against the session's request limit, and at most one link per bot
- * and four in total resolve at a time. The work is cancelled, and its slots
- * released, when the deadline passes, the client disconnects or the session
- * ends; cancellation stops the resolver and downloader processes.
+ * Resolve one pasted media link, already passed by `checkListenerLink`, to a
+ * queue item for the listener's bot. At most one link per bot and four in total
+ * resolve at a time. The work is cancelled, and its slots released, when the
+ * deadline passes, the client disconnects or the session ends; cancellation
+ * stops the resolver and downloader processes.
  */
 export async function resolveListenerLink(req: Request, binding: ListenerRemoteBinding, url: string): Promise<QueueItem> {
+  // Repeated here so this function never resolves a link with credentials, whoever calls it.
+  checkListenerUrl(url);
   const session = bearer(req);
   const remote = service(req);
-  remote.checkRequest(session);
   const timings: ListenerLinkTimings = req.app.locals.listenerLinkTimings ?? {};
   const controller = new AbortController();
   const { signal } = controller;
@@ -35,7 +69,7 @@ export async function resolveListenerLink(req: Request, binding: ListenerRemoteB
   const disconnected = () => {
     if (!req.res?.writableEnded) abort(503, 'unavailable', 'Listener remote is unavailable.');
   };
-  // The deadline and the checks cover the URL check's DNS lookup too; the finally block clears them.
+  // The finally block clears the deadline and the session checks.
   const deadline = setTimeout(() => abort(504, 'timeout', 'The media link took too long to load.'), timings.deadlineMs ?? LINK_DEADLINE_MS);
   const sessionCheck = setInterval(() => {
     if (!remote.sessionRateKey(session)) abort(401, 'invalid_access', 'Listener access is invalid or expired.');
@@ -45,10 +79,6 @@ export async function resolveListenerLink(req: Request, binding: ListenerRemoteB
     // `close` is not emitted again, so a client that left during the earlier lookups is caught here.
     if (req.res?.destroyed || req.socket?.destroyed) disconnected();
     else req.res?.once('close', disconnected);
-    const parsed = new URL(url);
-    if (parsed.username || parsed.password || !(await abortable(validateUrl(url), signal)).valid) {
-      fail(400, 'invalid_request', 'This media URL is not allowed.');
-    }
     pending = resolvingBots.get(remote);
     if (!pending) { pending = new Set(); resolvingBots.set(remote, pending); }
     if (pending.has(binding.botId) || pending.size >= 4) {
