@@ -144,8 +144,9 @@ export class ListenerRemoteRefusalAudit {
     this.timer.unref();
     return async () => {
       clearInterval(this.timer);
-      await this.flush();
+      // Before the last flush, so nothing recorded while it writes is left behind unnoticed.
       this.stopped = true;
+      await this.flush();
       await Promise.all(this.pendingWrites);
     };
   }

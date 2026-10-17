@@ -161,6 +161,26 @@ describe('listener remote refusal totals', () => {
     assert.equal(logs.filter((line) => line.includes('after the last audit flush')).length, 1);
   });
 
+  it('logs a refusal recorded while the last flush is still writing', async () => {
+    let release!: () => void;
+    const slow = new Promise<void>((resolve) => { release = resolve; });
+    const rows: any[] = [];
+    const logs: string[] = [];
+    const audit = new ListenerRemoteRefusalAudit({ adminAuditEvent: {
+      createMany: async ({ data }: { data: any[] }) => { await slow; rows.push(...data); return { count: data.length }; },
+      updateMany: async () => ({ count: 1 }),
+    } } as any, { log: (m) => logs.push(m) });
+    const stop = audit.start();
+    audit.record({ kind: 'auth_failed', source: 'address:a' });
+    const stopping = stop();
+    await tick();
+    audit.record({ kind: 'auth_failed', source: 'address:during-flush' });
+    release();
+    await stopping;
+    assert.deepEqual(rows.map((row) => row.actorUsername), ['address:a']);
+    assert.ok(logs.some((line) => line.includes('after the last audit flush')), 'not lost silently');
+  });
+
   it('never throws and logs only the kind of storage error', async () => {
     const logs: string[] = [];
     const audit = new ListenerRemoteRefusalAudit({
