@@ -40,7 +40,7 @@ export function httpOnlyFormat(selector: string): string {
 /** The caller's arguments with every `-f` selector restricted to HTTP protocols. */
 export function withHttpOnlyFormats(args: readonly string[]): string[] {
   // Joined spellings would skip the filter; callers pass `-f <selector>`.
-  if (args.some((arg) => /^--format=/.test(arg) || /^-f./.test(arg))) throw new Error('Pass yt-dlp formats as -f <selector>');
+  if (args.some((arg) => arg.startsWith('--format=') || (arg.startsWith('-f') && arg.length > 2 && !arg.startsWith('--')))) throw new Error('Pass yt-dlp formats as -f <selector>');
   return args.map((arg, i) => (i > 0 && (args[i - 1] === '-f' || args[i - 1] === '--format') ? httpOnlyFormat(arg) : arg));
 }
 

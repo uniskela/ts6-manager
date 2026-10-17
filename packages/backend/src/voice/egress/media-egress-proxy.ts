@@ -218,7 +218,7 @@ export class MediaEgressProxy {
   }
 
   async close(): Promise<void> {
-    for (const key of [...this.jobs.keys()]) this.revoke(key);
+    for (const key of this.jobs.keys()) this.revoke(key);
     const server = this.server;
     this.server = undefined;
     this.listening = undefined;
@@ -346,7 +346,7 @@ export class MediaEgressProxy {
         signal.removeEventListener('abort', onAbort);
         if (err) {
           s.destroy();
-          reject(err);
+          reject(err instanceof Error ? err : new Refused(502, 'could not connect'));
         } else {
           resolve(s);
         }
@@ -384,7 +384,8 @@ export class MediaEgressProxy {
     for (const address of addresses) {
       if (signal.aborted) break;
       try {
-        return await this.connect(address, port, signal);
+        // One address after another, on purpose: stop at the first that connects.
+        return await this.connect(address, port, signal); // NOSONAR: sequential by design
       } catch (err) {
         lastErr = err;
       }
@@ -462,14 +463,7 @@ export class MediaEgressProxy {
     let release = () => {};
     const setup = this.setupSignal(state, req.socket);
     try {
-      if (!url || url.protocol !== 'http:' || !url.hostname || url.username || url.password) {
-        throw new Refused(400, 'only absolute http:// URLs and CONNECT are forwarded');
-      }
-      // Media downloads only read. A body without framing the upstream request keeps would be sent raw.
-      if (req.method !== 'GET' && req.method !== 'HEAD') throw new Refused(405, 'only GET and HEAD are forwarded');
-      if (req.headers['transfer-encoding'] || Number(req.headers['content-length'] ?? 0) > 0) {
-        throw new Refused(400, 'request body not allowed');
-      }
+      assertForwardable(req, url);
       const port = url.port ? Number(url.port) : 80;
       this.checkPort(port);
       release = this.admit(state);
@@ -484,59 +478,16 @@ export class MediaEgressProxy {
         return;
       }
       if (head.length) socket.unshift(head);
-      const headers: http.OutgoingHttpHeaders = {};
-      const listed = new Set(String(req.headers.connection ?? '').toLowerCase().split(',').map((h) => h.trim()));
-      for (const [name, value] of Object.entries(req.headers)) {
-        if (!HOP_HEADERS.has(name) && !listed.has(name) && value !== undefined) headers[name] = value;
-      }
-      headers.host = url.host;
-      headers.connection = 'close';
       // Revoking the job closes both sides; the upstream connection is used for this request only.
       this.track(state, release, [socket], [req.socket]);
       const out = http.request({
         createConnection: () => socket,
         method: req.method,
         path: `${url.pathname}${url.search}`,
-        headers,
+        headers: originHeaders(req, url),
         setHost: false,
       });
-      const fail = () => {
-        if (!res.headersSent) res.writeHead(502, { Connection: 'close' }).end();
-        else res.destroy();
-      };
-      // Media downloads never switch protocols; an upgrade is answered 502 and closed.
-      out.on('upgrade', (_upgradeRes, upgraded) => {
-        upgraded.destroy();
-        socket.destroy();
-        fail();
-      });
-      // Upstream gone before any response: the client is answered rather than left waiting.
-      out.on('close', () => { if (!res.headersSent) fail(); });
-      out.on('response', (upstreamRes) => {
-        const status = upstreamRes.statusCode ?? 0;
-        if (status < 200 || status > 599) {
-          upstreamRes.destroy();
-          fail();
-          return;
-        }
-        const back: http.OutgoingHttpHeaders = { connection: 'close' };
-        for (const [name, value] of Object.entries(upstreamRes.headers)) {
-          if (!HOP_HEADERS.has(name) && value !== undefined) back[name] = value;
-        }
-        try {
-          res.writeHead(status, back);
-        } catch {
-          upstreamRes.destroy();
-          res.destroy();
-          return;
-        }
-        // A response cut off upstream is cut off here too, not left hanging.
-        upstreamRes.on('error', () => res.destroy());
-        upstreamRes.on('close', () => { if (!upstreamRes.complete) res.destroy(); });
-        upstreamRes.pipe(res);
-      });
-      out.on('error', fail);
-      res.on('close', () => out.destroy());
+      relayResponse(out, socket, res);
       req.pipe(out);
     } catch (err) {
       release();
@@ -550,9 +501,75 @@ export class MediaEgressProxy {
   }
 }
 
+/** Refuse anything but a plain GET or HEAD for an absolute http:// URL. */
+function assertForwardable(req: http.IncomingMessage, url: URL | undefined): asserts url is URL {
+  if (url?.protocol !== 'http:' || !url.hostname || url.username || url.password) {
+    throw new Refused(400, 'only absolute http:// URLs and CONNECT are forwarded');
+  }
+  // Media downloads only read. A body without framing the upstream request keeps would be sent raw.
+  if (req.method !== 'GET' && req.method !== 'HEAD') throw new Refused(405, 'only GET and HEAD are forwarded');
+  if (req.headers['transfer-encoding'] || Number(req.headers['content-length'] ?? 0) > 0) {
+    throw new Refused(400, 'request body not allowed');
+  }
+}
+
+/** The client's headers without hop-by-hop ones, for one request on its own connection. */
+function originHeaders(req: http.IncomingMessage, url: URL): http.OutgoingHttpHeaders {
+  const headers: http.OutgoingHttpHeaders = {};
+  const listed = new Set(String(req.headers.connection ?? '').toLowerCase().split(',').map((h) => h.trim()));
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (!HOP_HEADERS.has(name) && !listed.has(name) && value !== undefined) headers[name] = value;
+  }
+  headers.host = url.host;
+  headers.connection = 'close';
+  return headers;
+}
+
+/**
+ * Pass the upstream response back. An invalid status, an upgrade or an
+ * upstream that closes early gets a 502; a body cut off upstream is cut off
+ * here too, never left hanging.
+ */
+function relayResponse(out: http.ClientRequest, socket: net.Socket, res: http.ServerResponse): void {
+  const fail = () => {
+    if (res.headersSent) res.destroy();
+    else res.writeHead(502, { Connection: 'close' }).end();
+  };
+  out.on('upgrade', (_upgradeRes, upgraded) => {
+    upgraded.destroy();
+    socket.destroy();
+    fail();
+  });
+  out.on('close', () => { if (!res.headersSent) fail(); });
+  out.on('error', fail);
+  res.on('close', () => out.destroy());
+  out.on('response', (upstreamRes) => {
+    const status = upstreamRes.statusCode ?? 0;
+    if (status < 200 || status > 599) {
+      upstreamRes.destroy();
+      fail();
+      return;
+    }
+    const back: http.OutgoingHttpHeaders = { connection: 'close' };
+    for (const [name, value] of Object.entries(upstreamRes.headers)) {
+      if (!HOP_HEADERS.has(name) && value !== undefined) back[name] = value;
+    }
+    try {
+      res.writeHead(status, back);
+    } catch {
+      upstreamRes.destroy();
+      res.destroy();
+      return;
+    }
+    upstreamRes.on('error', () => res.destroy());
+    upstreamRes.on('close', () => { if (!upstreamRes.complete) res.destroy(); });
+    upstreamRes.pipe(res);
+  });
+}
+
 /** Parse a CONNECT target (`host:port`, `[v6]:port`). */
 export function parseAuthority(value: string): { host: string; port: number } | null {
-  const match = value.match(/^(\[[0-9a-fA-F:.]+\]|[^:[\]/\s]+):(\d{1,5})$/);
+  const match = /^(\[[0-9a-fA-F:.]+\]|[^:[\]/\s]+):(\d{1,5})$/.exec(value);
   if (!match) return null;
   const port = Number(match[2]);
   if (port < 1 || port > 65535) return null;

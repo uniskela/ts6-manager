@@ -40,9 +40,8 @@ export function parseUpstreamProxy(value: string | undefined): UpstreamProxy | u
   if (url.protocol !== 'http:' || !url.hostname || (url.pathname !== '/' && url.pathname !== '') || url.search || url.hash) {
     throw new Error('MEDIA_UPSTREAM_PROXY must be an http://host:port URL');
   }
-  const authorization = url.username || url.password
-    ? `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString('base64')}`
-    : undefined;
+  const credentials = `${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`;
+  const authorization = url.username || url.password ? `Basic ${Buffer.from(credentials).toString('base64')}` : undefined;
   return { host: url.hostname.replace(/^\[|\]$/g, ''), port: url.port ? Number(url.port) : 80, authorization };
 }
 
@@ -130,7 +129,8 @@ function isYouTubeTarget(target: string): boolean {
   if (/^ytsearch\d*:/.test(target)) return true;
   try {
     const url = new URL(target);
-    const host = url.hostname.toLowerCase().replace(/\.+$/, '');
+    let host = url.hostname.toLowerCase();
+    while (host.endsWith('.')) host = host.slice(0, -1);
     return url.protocol === 'https:' && !url.username && !url.password &&
       (host === 'youtu.be' || host === 'youtube.com' || host.endsWith('.youtube.com'));
   } catch {

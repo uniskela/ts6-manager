@@ -14,23 +14,23 @@ export const MEDIA_EGRESS_PORTS: ReadonlySet<number> = new Set([80, 443]);
 /** Special-purpose ranges (RFC 6890 registries) that are never a public media host. */
 const reserved = new BlockList();
 for (const [ip, prefix] of [
-  ['192.0.0.0', 24], // IETF protocol assignments
-  ['192.0.2.0', 24], // documentation
-  ['192.88.99.0', 24], // deprecated 6to4 relay anycast
-  ['198.18.0.0', 15], // benchmarking
-  ['198.51.100.0', 24], // documentation
-  ['203.0.113.0', 24], // documentation
-  ['240.0.0.0', 4], // reserved, including broadcast
+  ['192.0.0.0', 24], // NOSONAR: IETF protocol assignments (denied)
+  ['192.0.2.0', 24], // NOSONAR: documentation (denied)
+  ['192.88.99.0', 24], // NOSONAR: deprecated 6to4 relay anycast (denied)
+  ['198.18.0.0', 15], // NOSONAR: benchmarking (denied)
+  ['198.51.100.0', 24], // NOSONAR: documentation (denied)
+  ['203.0.113.0', 24], // NOSONAR: documentation (denied)
+  ['240.0.0.0', 4], // NOSONAR: reserved, including broadcast (denied)
 ] as const) { // NOSONAR: Fixed reserved ranges define the egress denylist.
   reserved.addSubnet(ip, prefix, 'ipv4');
 }
 for (const [ip, prefix] of [
-  ['100::', 64], // discard
-  ['2001::', 23], // IETF protocol assignments, including Teredo, benchmarking and ORCHID
-  ['2001:db8::', 32], // documentation
-  ['3fff::', 20], // documentation
-  ['64:ff9b:1::', 48], // local-use NAT64: the IPv4 address can sit anywhere, so it cannot be checked
-  ['fec0::', 10], // deprecated site-local
+  ['100::', 64], // NOSONAR: discard (denied)
+  ['2001::', 23], // NOSONAR: IETF protocol assignments, including Teredo, benchmarking and ORCHID (denied)
+  ['2001:db8::', 32], // NOSONAR: documentation (denied)
+  ['3fff::', 20], // NOSONAR: documentation (denied)
+  ['64:ff9b:1::', 48], // NOSONAR: local-use NAT64; the IPv4 address can sit anywhere, so it cannot be checked (denied)
+  ['fec0::', 10], // NOSONAR: deprecated site-local (denied)
 ] as const) { // NOSONAR: Fixed reserved ranges define the egress denylist.
   reserved.addSubnet(ip, prefix, 'ipv6');
 }
@@ -42,7 +42,7 @@ export function ipv6Bytes(address: string): number[] | null {
   const zone = text.indexOf('%');
   if (zone >= 0) text = text.slice(0, zone);
   const tail: number[] = [];
-  const dotted = text.match(/:(\d+\.\d+\.\d+\.\d+)$/);
+  const dotted = /:(\d+\.\d+\.\d+\.\d+)$/.exec(text);
   if (dotted) {
     tail.push(...dotted[1].split('.').map(Number));
     text = text.slice(0, -dotted[1].length) + '0:0';

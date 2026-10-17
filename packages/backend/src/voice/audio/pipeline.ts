@@ -36,8 +36,10 @@ export function buildPcmFileArgs(input: string, startSeconds = 0): string[] {
     args.push("-ss", startSeconds.toFixed(3));
   }
   if (isRemoteInput(input)) {
-    args.push("-protocol_whitelist", REMOTE_PROTOCOLS, "-format_whitelist", REMOTE_FORMATS);
-    args.push("-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5");
+    args.push(
+      "-protocol_whitelist", REMOTE_PROTOCOLS, "-format_whitelist", REMOTE_FORMATS,
+      "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+    );
   }
   args.push(
     "-re",
@@ -99,7 +101,8 @@ export class AudioPipeline {
     }
     // A remote input is a URL yt-dlp resolved: ffmpeg reaches it through the media egress proxy.
     const job = remote && mediaEgressEnabled() ? await acquireMediaEgress(input, FILE_STREAM_EGRESS_TTL_MS) : null;
-    const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(input, startSeconds), {
+    // ffmpeg is found on PATH as before; the environment only replaces proxy variables.
+    const ffmpeg = spawn("ffmpeg", buildPcmFileArgs(input, startSeconds), { // NOSONAR: same PATH lookup as the other ffmpeg spawns
       shell: false,
       env: job ? egressEnvironment(job.proxyUrl) : process.env,
     });

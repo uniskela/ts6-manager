@@ -91,7 +91,8 @@ const RESOLVE_TIMEOUT_MS = 90_000;
  */
 export function assertResolvedMediaPort(url: string, site: string): void {
   const parsed = new URL(url);
-  const port = parsed.port ? Number(parsed.port) : parsed.protocol === 'https:' ? 443 : 80;
+  const defaultPort = parsed.protocol === 'https:' ? 443 : 80;
+  const port = parsed.port ? Number(parsed.port) : defaultPort;
   if (!MEDIA_EGRESS_PORTS.has(port)) throw new VideoSourceFailedError(`${site} media URL blocked: port ${port} is not allowed`);
 }
 
