@@ -11,9 +11,6 @@ export interface Binding {
 }
 
 export class ListenerRemoteError extends Error {
-  /** Audit result when it differs from `code` (a full queue answers `rate_limited` but is audited as `queue_full`). */
-  public auditCode?: string;
-
   /** `retryAfter`: whole seconds until a rate limit's window resets. */
   constructor(public readonly status: number, public readonly code: string, message: string, public readonly retryAfter?: number) {
     super(message);

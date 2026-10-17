@@ -247,9 +247,7 @@ export function classifyRemoteError(err: unknown): {
 
   // A listener remote refusal carries its own code; the queue was not changed.
   if (name === 'ListenerRemoteError') {
-    const auditCode = (err as { auditCode?: unknown }).auditCode;
-    const key = typeof auditCode === 'string' ? auditCode : code;
-    return { outcome: 'failure', resultCode: LISTENER_REMOTE_RESULTS[key] ?? 'unknown' };
+    return { outcome: 'failure', resultCode: LISTENER_REMOTE_RESULTS[code] ?? 'unknown' };
   }
 
   if (

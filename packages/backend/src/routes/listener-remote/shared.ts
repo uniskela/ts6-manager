@@ -70,7 +70,7 @@ export function recordRefusal(req: Request, res: Response, err: ListenerRemoteEr
     audit.record({ kind: 'auth_failed', source: addressSource(req), detail });
   } else if (err.status === 403 && listener) {
     audit.record({ kind: 'denied', source: listener, ...context, detail: command ?? detail });
-  } else if (err.status === 429 && err.auditCode === 'queue_full' && listener) {
+  } else if (err.code === 'queue_full' && listener) {
     audit.record({ kind: 'capacity', source: listener, ...context, detail });
   } else if (err.status === 429) {
     audit.record({ kind: 'rate_limited', source: listener ?? listenerRateSource(res) ?? addressSource(req), ...context, detail });
@@ -113,7 +113,7 @@ export function endpoint(fn: (req: Request, res: Response) => Promise<void>) {
   };
 }
 
-/** Seconds until a rate window resets; 429s without a window (full queue, pending link) keep 60. */
+/** Seconds until a rate window resets; 429s without a window (a pending link) keep 60. */
 function retryAfter(err: ListenerRemoteError): string {
   return String(err.retryAfter ?? 60);
 }

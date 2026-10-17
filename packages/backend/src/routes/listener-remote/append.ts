@@ -1,6 +1,6 @@
 import type { Request } from 'express';
 import { runRemoteAudited } from '../../audit/index.js';
-import { ListenerRemoteError, type Binding as ListenerRemoteBinding } from '../../voice/listener-remote.js';
+import type { Binding as ListenerRemoteBinding } from '../../voice/listener-remote.js';
 import type { PlayQueue, QueueItem } from '../../voice/playlist/queue.js';
 import { startOrAppendMediaItem } from '../../voice/commands/queue.js';
 import { MediaSessionConflictError } from '../../voice/media-session.js';
@@ -14,14 +14,12 @@ const MAX_QUEUE_ITEMS = 5000;
 
 export type ListenerAppendAction = 'listener.remote.queue_add' | 'listener.remote.request';
 
-/** Fail with 429 when a listener request would grow the bot's queue past its limits. */
+/** Fail with 409 `queue_full` when a listener request would grow the bot's queue past its limits. */
 export function assertQueueRoom(bot: { queue: Pick<PlayQueue, 'upcomingCount' | 'length'> }): void {
   // Count what is still to play: tracks already played stay in the queue and must not use up the limit.
   // The total is capped separately so listener requests cannot grow one queue without bound.
   if (bot.queue.upcomingCount >= MAX_UPCOMING_TRACKS || bot.queue.length >= MAX_QUEUE_ITEMS) {
-    const full = new ListenerRemoteError(429, 'rate_limited', 'The queue is full.');
-    full.auditCode = 'queue_full';
-    throw full;
+    fail(409, 'queue_full', 'The queue is full.');
   }
 }
 
@@ -57,7 +55,7 @@ function assertNotStopped(bot: ListenerBot, arrival: ArrivalSnapshot): void {
  * Authorize, audit, resolve and queue one listener item.
  *
  * The cheap refusals come first and are counted in the bounded refusal totals
- * rather than audited one by one: permission (403), a full queue (429) and
+ * rather than audited one by one: permission (403), a full queue (409) and
  * the request's own `precheck` (a missing song, a disallowed link, the link
  * limit). Only a request that is about to do real work opens an audit attempt.
  * Authorization runs again after `resolveItem`, because resolving can take long

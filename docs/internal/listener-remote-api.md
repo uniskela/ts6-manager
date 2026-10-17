@@ -102,7 +102,8 @@ Errors are `{error: string, code: string}` with static, credential-free text.
 Codes: `invalid_request` (400), `invalid_access` (401; missing, consumed,
 expired, revoked or departed access), `permission_denied` (403), `not_found`
 (404; song/bot), `cancelled` (409; stopped or cleared while resolving),
-`rate_limited` (429), `unavailable` (503), `timeout` (504; a pasted link took
+`queue_full` (409; the bot's queue has no room), `rate_limited` (429),
+`unavailable` (503), `timeout` (504; a pasted link took
 longer than two minutes to load). The remote surface never returns resolver,
 Query, database or credential-bearing exception text.
 
@@ -159,8 +160,9 @@ limiters and the sign-in limiter use bounded stores with the same policy; the
 sign-in store holds 100,000 entries.
 
 A 429 from a rate limit carries `Retry-After` with the whole seconds left in
-that window (at least 1). A full queue or a pending link resolution answers 429
-with `Retry-After: 60`.
+that window (at least 1). A pending link resolution answers 429 with
+`Retry-After: 60`. A full queue is not a rate limit: it answers 409
+`queue_full`, with no `Retry-After`.
 URL resolution permits one pending job per bot and four across the remote
 service. A pasted link has two minutes, including the URL check, to resolve
 and download; the work is cancelled when that deadline passes (504 `timeout`),

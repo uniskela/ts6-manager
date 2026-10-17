@@ -154,6 +154,14 @@ describe('listener remote client', () => {
     await assert.rejects(() => queueRemoteSong(9), (error: unknown) => error instanceof RemoteHttpError && error.status === 401);
   });
 
+  it('reports a full queue as 409 queue_full and keeps the session', async () => {
+    await exchangeRemoteToken(token);
+    globalThis.fetch = (async () => json({ error: 'The queue is full.', code: 'queue_full' }, 409)) as typeof fetch;
+    await assert.rejects(() => queueRemoteSong(9), (error: unknown) => error instanceof RemoteHttpError
+      && error.status === 409 && error.code === 'queue_full' && error.message === 'The queue is full.');
+    assert.equal(remoteSession()?.session, session);
+  });
+
   it('rejects pasted URLs that the contract will not accept', async () => {
     await exchangeRemoteToken(token);
     assert.equal(remoteMediaUrlError('https://user:pass@example.com/a'), 'This media URL is not allowed.');

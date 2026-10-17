@@ -208,3 +208,13 @@ describe('admin audit writer privacy', () => {
     assert.equal(rows[0].operationId, rows[1].operationId);
   });
 });
+
+describe('classifyRemoteError for listener remote refusals', () => {
+  it('records a full queue as queue_full and a pending link as rate_limited', async () => {
+    const { ListenerRemoteError } = await import('../voice/listener-remote.js');
+    const { classifyRemoteError } = await import('./writer.js');
+    assert.deepEqual(classifyRemoteError(new ListenerRemoteError(409, 'queue_full', 'The queue is full.')), { outcome: 'failure', resultCode: 'queue_full' });
+    assert.deepEqual(classifyRemoteError(new ListenerRemoteError(429, 'rate_limited', 'A media request is already pending.')), { outcome: 'failure', resultCode: 'rate_limited' });
+    assert.deepEqual(classifyRemoteError(new ListenerRemoteError(409, 'cancelled', 'Playback was stopped.')), { outcome: 'failure', resultCode: 'cancelled' });
+  });
+});

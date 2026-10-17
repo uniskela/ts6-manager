@@ -240,8 +240,9 @@ describe('listener remote HTTP security boundary', () => {
     f.queue.addMany(Array.from({ length: 499 }, (_, n) => track(1000 + n)));
     assert.equal(f.queue.upcomingCount, 500);
     const full = await f.request('/queue', { session, body: { songId: 11 } });
-    assert.equal(full.status, 429);
-    assert.deepEqual(await full.json(), { error: 'The queue is full.', code: 'rate_limited' });
+    assert.equal(full.status, 409);
+    assert.deepEqual(await full.json(), { error: 'The queue is full.', code: 'queue_full' });
+    assert.equal(full.headers.get('retry-after'), null, 'a full queue is not a rate limit');
     assert.equal(f.queue.upcomingCount, 500);
   }));
 
@@ -253,7 +254,7 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(f.queue.upcomingCount, 499);
     const responses = await Promise.all(Array.from({ length: 8 }, () => f.request('/queue', { session, body: { songId: 11 } })));
     const statuses = responses.map(response => response.status).sort((a, b) => a - b);
-    assert.deepEqual(statuses, [200, 429, 429, 429, 429, 429, 429, 429]);
+    assert.deepEqual(statuses, [200, 409, 409, 409, 409, 409, 409, 409]);
     assert.equal(f.queue.upcomingCount, 500);
   }));
 
@@ -277,7 +278,7 @@ describe('listener remote HTTP security boundary', () => {
       conflict();
     };
     const full = await f.request('/queue', { session, body: { songId: 11 } });
-    assert.equal(full.status, 429);
+    assert.equal(full.status, 409);
     assert.equal(f.queue.upcomingCount, 500);
   }));
 
@@ -290,7 +291,7 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
     assert.equal(f.queue.length, 5000);
     const full = await f.request('/queue', { session, body: { songId: 11 } });
-    assert.equal(full.status, 429);
+    assert.equal(full.status, 409);
     assert.equal(f.queue.length, 5000);
   }));
 
@@ -349,7 +350,7 @@ describe('listener remote HTTP security boundary', () => {
   it('refuses a full queue before any audit attempt and totals it', async () => using(async f => {
     const { session } = await f.exchange();
     for (let i = 0; i < 500; i++) f.queue.add({ ...item, id: `filler-${i}` });
-    for (let i = 0; i < 2; i++) assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 429);
+    for (let i = 0; i < 2; i++) assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 409);
     assert.deepEqual(f.audit, []);
     await f.flushRefusals();
     const rows = f.refusalRows.map((row: any) => row.action ?? row.data?.targetId);

@@ -129,7 +129,7 @@ describe('listener remote address guard', () => {
     assert.equal(refused.headers.get('retry-after'), '45');
     assert.equal(refused.headers.get('cache-control'), 'no-store');
     assert.equal((await f.request('/thrown/7')).headers.get('retry-after'), '7');
-    // 429s without a rate window (a full queue, a pending link) keep the previous value.
+    // 429s without a rate window (a pending link) keep the previous value.
     assert.equal((await f.request('/thrown/none')).headers.get('retry-after'), '60');
   }));
 });

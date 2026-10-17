@@ -37,8 +37,8 @@ async function request(downloadTrack: () => Promise<QueueItem>): Promise<Request
 describe('listener remote helpers', () => {
   it('assertQueueRoom limits upcoming tracks and the whole queue', () => {
     assert.doesNotThrow(() => assertQueueRoom({ queue: { upcomingCount: 499, length: 4999 } }));
-    rejects(() => assertQueueRoom({ queue: { upcomingCount: 500, length: 500 } }), 429, 'rate_limited');
-    rejects(() => assertQueueRoom({ queue: { upcomingCount: 0, length: 5000 } }), 429, 'rate_limited');
+    rejects(() => assertQueueRoom({ queue: { upcomingCount: 500, length: 500 } }), 409, 'queue_full');
+    rejects(() => assertQueueRoom({ queue: { upcomingCount: 0, length: 5000 } }), 409, 'queue_full');
   });
 
   it('resolveListenerLink rejects links with credentials before resolving', async () => {
