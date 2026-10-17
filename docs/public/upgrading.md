@@ -118,14 +118,21 @@ What changes, and what does not:
 - **The cache holds the files of songs downloaded from now on.** Library songs, playlists and queues point into it, so do not delete or move `.ts6-media-cache`. Tracks that are played without being added to the library are kept there too, and the Library's **Scan** does not list them.
 - **The cache is not cleaned up automatically.** It grows with every new source played or downloaded; only leftovers of interrupted downloads are removed.
 - **Removing a song keeps files that are still in use.** A song's file is deleted with it only when no other song on any server uses the same file and no bot has it queued. Files in the download cache are never deleted when a song is removed; they stay for other songs and requests that share them. Files outside the music folder, and files whose identity the filesystem cannot report reliably (some network shares), are never deleted. The checks compare files by their filesystem id, so they assume a single backend uses the music folder and that the filesystem keeps file ids stable; some FUSE or Docker Desktop file shares do not, so keep backups if your music folder is on one. Uploads are written under a temporary `.uploading-…` name first; one can be left behind only if the backend stops mid-upload, and you can delete it.
-- **Rolling back** to 1.11.1 is safe: older versions ignore the cache folder.
+- **Rolling back to 1.11.1 needs care.** 1.11.1 starts on the same database, but it does not protect shared cache files. See *Rolling back to 1.11.1* below.
 
-**Back up before upgrading.** Stop the backend and copy both the database volume (`ts6webui.db` and any journal or WAL files) and the music folder.
+**Back up before upgrading, and again before rolling back.** Stop the backend and copy both the database volume (`ts6webui.db` and any journal or WAL files) and the music folder, including `.ts6-media-cache`.
 
 - Docker (split stack and all-in-one): the `backend-data` and `music-data` volumes.
 - Native install: the `data/` folder and `MUSIC_DIR`.
 
 Keep the backup until you have checked the upgrade.
+
+**Rolling back to 1.11.1.** There is no schema change, so a 1.11.1 backend starts on a 1.11.2 database, and songs added under 1.11.2 keep playing from the cache. However, 1.11.1 does not know about the cache, or about the 1.11.2 checks that keep files still in use:
+
+- **In 1.11.1, removing a song always deletes its file.** Songs downloaded or added from links under 1.11.2 have their files in `.ts6-media-cache`, and one cached file can be shared by songs on several servers. Removing any of those songs in 1.11.1 deletes the shared file, and every other song that uses it stops playing. While running 1.11.1, do not remove songs that were added from links under 1.11.2.
+- **Keep `.ts6-media-cache` where it is.** Do not delete, move or rename it during the rollback. Library songs, playlists and queues point into it, and 1.11.2 uses it again when you upgrade.
+- **Back up before rolling back**, as described above, so you can return to either version.
+- **If a cached file was deleted anyway**, restore the music folder and the database from a backup taken before the removal. Alternatively, after upgrading to 1.11.2 again, download each affected song again from its original link on the **Media Library → Library** page; this updates the existing entry in place.
 
 **Refreshing older downloads (optional, manual).** You do not need to do anything. If you want an older song re-downloaded and checked, the safe procedure is:
 
