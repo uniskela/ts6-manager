@@ -14,14 +14,20 @@ describe('runInOrderWithin', () => {
     const order: string[] = [];
     let release!: () => void;
     const slow = new Promise<void>((resolve) => { release = resolve; });
-    const done = await runInOrderWithin([
-      async () => { order.push('flush started'); await slow; order.push('flush finished'); },
-      async () => { order.push('disconnect'); },
-    ], 20);
-    assert.equal(done, false);
-    assert.deepEqual(order, ['flush started'], 'the disconnect did not start while the flush was running');
-    release();
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(order, ['flush started', 'flush finished', 'disconnect']);
+    // The helper's deadline timer is unreferenced (it must not keep a backend alive); keep the test's loop alive.
+    const keepAlive = setInterval(() => {}, 1_000);
+    try {
+      const done = await runInOrderWithin([
+        async () => { order.push('flush started'); await slow; order.push('flush finished'); },
+        async () => { order.push('disconnect'); },
+      ], 20);
+      assert.equal(done, false);
+      assert.deepEqual(order, ['flush started'], 'the disconnect did not start while the flush was running');
+      release();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(order, ['flush started', 'flush finished', 'disconnect']);
+    } finally {
+      clearInterval(keepAlive);
+    }
   });
 });
