@@ -21,6 +21,7 @@ import { ListenerRemoteRefusalAudit, startAuditRetention } from './audit/index.j
 import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js';
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
 import { startMediaEgress } from './voice/egress/media-egress.js';
+import { runInOrderWithin } from './utils/ordered-shutdown.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -191,9 +192,10 @@ async function main() {
     const closed = new Promise<void>((resolve) => server.close(() => resolve()));
     server.closeIdleConnections();
     await Promise.race([closed, new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref())]);
-    // Bounded too: a stuck database write must not hold up shutdown.
-    await Promise.race([stopListenerRemoteRefusals(), new Promise<void>((resolve) => setTimeout(resolve, 5_000).unref())]);
-    await prisma.$disconnect();
+    // Write the last refusal totals, then close the database, under one deadline: a stuck
+    // write must not hold up shutdown, and the database is never closed under a running write.
+    const done = await runInOrderWithin([stopListenerRemoteRefusals, () => prisma.$disconnect()], 5_000);
+    if (!done) console.warn('[TS6 WebUI] Shutdown: audit totals or the database did not finish within 5 s; exiting anyway');
     process.exit(0);
   };
 
