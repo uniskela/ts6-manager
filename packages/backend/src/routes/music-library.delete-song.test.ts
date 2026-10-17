@@ -150,6 +150,7 @@ describe('deleting a song', () => {
 
   it('recognises the same file under a different spelling of its path', async () => {
     const track = file('spelled.mp3');
+    fs.mkdirSync(path.join(musicDir, 'sub'));
     const library = fakeLibrary([
       { id: 30, filePath: track, serverConfigId: 1, title: 'A' },
       // Written as stored by hand, not normalised.
@@ -203,11 +204,14 @@ describe('deleting a song', () => {
     const library = fakeLibrary([]);
     const release = holdLibraryLock();
     const scanning = request(app(library.prisma), '/scan', { method: 'POST' });
-    await waitFor(() => libraryFileTasks() >= 2);
-    assert.equal(libraryFileTasks(), 2, 'the scan waits for the lock');
-    assert.deepEqual(library.songs, [], 'nothing adopted while the lock is held');
-    fs.rmSync(doomed);
-    release();
+    try {
+      await waitFor(() => libraryFileTasks() >= 2);
+      assert.equal(libraryFileTasks(), 2, 'the scan waits for the lock');
+      assert.deepEqual(library.songs, [], 'nothing adopted while the lock is held');
+      fs.rmSync(doomed);
+    } finally {
+      release();
+    }
     const res = await scanning;
     assert.equal(res.status, 200);
     assert.deepEqual(library.songs.map((s) => path.basename(s.filePath)), ['scan-kept.mp3']);
@@ -223,12 +227,15 @@ describe('deleting a song', () => {
     const names = () => fs.readdirSync(musicDir);
     const release = holdLibraryLock();
     const uploading = upload();
-    await waitFor(() => libraryFileTasks() >= 2);
-    assert.equal(libraryFileTasks(), 2, 'the upload waits for the lock');
-    assert.equal(names().length, 1);
-    assert.match(names()[0], /^\.uploading-.+\.mp3$/, 'not published while the lock is held, and keeps its extension');
-    assert.deepEqual(library.songs, []);
-    release();
+    try {
+      await waitFor(() => libraryFileTasks() >= 2);
+      assert.equal(libraryFileTasks(), 2, 'the upload waits for the lock');
+      assert.equal(names().length, 1);
+      assert.match(names()[0], /^\.uploading-.+\.mp3$/, 'not published while the lock is held, and keeps its extension');
+      assert.deepEqual(library.songs, []);
+    } finally {
+      release();
+    }
     assert.equal((await uploading).status, 201);
     assert.equal(library.songs.length, 1);
     assert.deepEqual(names(), [path.basename(library.songs[0].filePath)]);

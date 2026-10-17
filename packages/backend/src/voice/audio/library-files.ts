@@ -1,4 +1,5 @@
-import { lstat, realpath, rm, stat } from 'node:fs/promises';
+import { rmSync, statSync } from 'node:fs';
+import { lstat, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { CACHE_DIR_NAME } from './media-cache.js';
 
@@ -36,24 +37,49 @@ class UnknownIdentity extends Error {
   constructor(readonly file: string, readonly reason: string) { super(`${reason}: ${file}`); }
 }
 
-/** Lookup errors that mean the path names no file at all. */
-const NO_FILE = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG', 'EINVAL']);
+/**
+ * Lookup errors that mean the path names no file at all. Windows also reports
+ * EINVAL for some existing files (cloud placeholders, some drives), so there
+ * it means "unknown".
+ */
+const NO_FILE = new Set(['ENOENT', 'ENOTDIR', 'ELOOP', 'ENAMETOOLONG', ...(process.platform === 'win32' ? [] : ['EINVAL'])]);
 
-/** A file's identity, the same under any spelling, link or letter case; null when it does not exist. */
+function identityFrom(file: string, info: { dev: bigint; ino: bigint }): string {
+  // Some network and FUSE filesystems report no file ids.
+  if (info.ino === 0n) throw new UnknownIdentity(file, 'no file id');
+  return `${info.dev}:${info.ino}`;
+}
+
+function lookupFailed(file: string, err: unknown): null {
+  if (err instanceof UnknownIdentity) throw err;
+  const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
+  // A path that cannot name a file (missing, a link loop, an invalid name) is not this file.
+  if (NO_FILE.has(code)) return null;
+  // Permission, I/O and other errors: unknown, not "not shared".
+  throw new UnknownIdentity(file, code);
+}
+
+/**
+ * A file's identity, the same under any spelling, link or letter case; null
+ * when it does not exist. Paths are used as written, never normalised first:
+ * `link/../x` follows the link, as the filesystem does.
+ */
 async function identityOf(file: string): Promise<string | null> {
   if (!file.trim()) return null;
   try {
-    const info = await stat(file, { bigint: true });
-    // Some network and FUSE filesystems report no file ids.
-    if (info.ino === 0n) throw new UnknownIdentity(file, 'no file id');
-    return `${info.dev}:${info.ino}`;
+    return identityFrom(file, await stat(file, { bigint: true }));
   } catch (err) {
-    if (err instanceof UnknownIdentity) throw err;
-    const code = (err as NodeJS.ErrnoException).code ?? 'unknown error';
-    // A path that cannot name a file (missing, a link loop, an invalid name) is not this file.
-    if (NO_FILE.has(code)) return null;
-    // Permission, I/O and other errors: unknown, not "not shared".
-    throw new UnknownIdentity(file, code);
+    return lookupFailed(file, err);
+  }
+}
+
+/** `identityOf` without awaiting, for the last check before deleting. */
+function identityOfNow(file: string): string | null {
+  if (!file.trim()) return null;
+  try {
+    return identityFrom(file, statSync(file, { bigint: true }));
+  } catch (err) {
+    return lookupFailed(file, err);
   }
 }
 
@@ -76,7 +102,7 @@ async function within(folder: string, dir: string): Promise<boolean> {
 /** Identities of `paths`, a few at a time; missing files are skipped. */
 async function identities(paths: string[]): Promise<Set<string>> {
   const found = new Set<string>();
-  const unique = [...new Set(paths.filter((p) => p.trim()).map((p) => path.resolve(p)))];
+  const unique = [...new Set(paths.filter((p) => p.trim()))];
   for (let i = 0; i < unique.length; i += 32) {
     const batch = await Promise.all(unique.slice(i, i + 32).map(identityOf)); // NOSONAR: bounded batches
     for (const id of batch) if (id) found.add(id);
@@ -86,6 +112,7 @@ async function identities(paths: string[]): Promise<Set<string>> {
 
 /** One lock for everything that adds library songs for existing files, or deletes them. */
 let libraryFiles: Promise<unknown> = Promise.resolve();
+let pending = 0;
 
 /**
  * Run `task` alone with respect to other library file changes: a scan or an
@@ -100,7 +127,6 @@ export function withLibraryFileLock<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-let pending = 0;
 
 /** Tasks holding or waiting for the library file lock. */
 export function libraryFileTasks(): number {
@@ -132,12 +158,14 @@ export function removeSongFileIfUnused(check: SongFileCheck): Promise<SongFileOu
 
 async function decideAndRemove(check: SongFileCheck): Promise<SongFileOutcome> {
   if (!check.filePath.trim()) return 'missing';
-  const given = path.resolve(check.filePath);
+  // As written: normalising `..` before links are followed could name another file.
+  const given = check.filePath;
   const entry = await lstat(given).catch(() => null);
   if (!entry) return 'missing';
   const target = await identityOf(given);
   if (!target) return 'missing';
-  const musicDir = path.resolve(check.musicDir);
+  const musicDir = check.musicDir;
+  // Where the cache puts its folder.
   const cacheDir = path.join(musicDir, CACHE_DIR_NAME);
   // Where the entry itself sits (its folder, links resolved) and where its target is.
   const entryFolder = await realpath(path.dirname(given));
@@ -148,9 +176,13 @@ async function decideAndRemove(check: SongFileCheck): Promise<SongFileOutcome> {
 
   if ((await identities(await check.otherSongPaths())).has(target)) return 'shared';
   if ((await identities(check.queuedPaths?.() ?? [])).has(target)) return 'in-use';
-  // Queued meanwhile? Playback is not under this lock; look once more right before deleting.
-  if ((await identities(check.queuedPaths?.() ?? [])).has(target)) return 'in-use';
-
-  await rm(given, { force: true });
+  // Queueing does not take this lock. The last look at the queue and the
+  // deletion run without yielding, so nothing can be queued in between. An
+  // item queued afterwards, from a song row read before it was removed, finds
+  // no file and fails to play.
+  const queued = check.queuedPaths?.() ?? [];
+  if (queued.some((file) => identityOfNow(file) === target)) return 'in-use';
+  if (identityOfNow(given) !== target) return 'missing';
+  rmSync(given, { force: true });
   return 'removed';
 }

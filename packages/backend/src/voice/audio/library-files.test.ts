@@ -45,6 +45,7 @@ describe('removeSongFileIfUnused', () => {
 
   it('keeps a file another song names under a different spelling', async () => {
     const file = await put('track.mp3');
+    await mkdir(path.join(music, 'x'));
     const other = `${music}${path.sep}.${path.sep}x${path.sep}..${path.sep}track.mp3`;
     assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [other] }), 'shared');
     assert.ok(existsSync(file));
@@ -156,11 +157,41 @@ describe('removeSongFileIfUnused', () => {
     assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: async () => [loopA, `${'x'.repeat(5000)}.mp3`] }), 'removed');
   });
 
+  it('follows links before "..", as the filesystem does', async (t) => {
+    // Windows resolves ".." in a path before following links, so there is no difference to test.
+    if (process.platform === 'win32') return t.skip('".." is resolved by name on Windows');
+    const deep = path.join(music, 'sub', 'deep');
+    await mkdir(deep, { recursive: true });
+    const track = await put(path.join('sub', 'track.mp3'));
+    await put('track.mp3', 'a different file');
+    if (!(await link(deep, path.join(music, 'link'), true))) return t.skip('folder links are not allowed here');
+    // music/link/../track.mp3 is music/sub/track.mp3, not music/track.mp3.
+    const viaLink = `${music}${path.sep}link${path.sep}..${path.sep}track.mp3`;
+    assert.equal(await removeSongFileIfUnused({ filePath: track, musicDir: music, otherSongPaths: async () => [viaLink] }), 'shared');
+    assert.equal(await removeSongFileIfUnused({ filePath: viaLink, musicDir: music, otherSongPaths: async () => [track] }), 'shared');
+    assert.equal(await removeSongFileIfUnused({ filePath: viaLink, musicDir: music, otherSongPaths: none }), 'removed');
+    assert.equal(existsSync(track), false);
+    assert.ok(existsSync(path.join(music, 'track.mp3')), 'the file with the normalised name is untouched');
+  });
+
   it('looks at the queue once more right before deleting', async () => {
     const file = await put('late.mp3');
     let looks = 0;
     const queuedPaths = () => (++looks > 1 ? [file] : []);
     assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths }), 'in-use');
+    assert.ok(existsSync(file));
+  });
+
+  it('keeps a file queued while other queued files are being looked up', async () => {
+    const file = await put('raced.mp3');
+    const others = Array.from({ length: 64 }, (_, i) => path.join(music, `other-${i}.mp3`));
+    for (const other of others) await writeFile(other, 'x');
+    const queue = [...others];
+    // Something queues the song while the removal is busy with the other files.
+    setImmediate(() => queue.push(file));
+    const queuedPaths = () => [...queue];
+    const outcome = await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths });
+    assert.equal(outcome, 'in-use');
     assert.ok(existsSync(file));
   });
 
