@@ -486,7 +486,7 @@ describe('listener remote HTTP security boundary', () => {
   });
 
   it('does not count administrator route errors as listener refusals', async () => using(async f => {
-    assert.notEqual((await f.request('/bots/not-a-number/revoke', { admin: true, method: 'POST', body: {} })).status, 200);
+    assert.equal((await f.request('/bots/not-a-number/revoke', { admin: true, method: 'POST', body: {} })).status, 400);
     const refusals = f.app.locals.listenerRemoteRefusals as { validation: number; unavailable: number };
     assert.equal(refusals.validation + refusals.unavailable, 0);
     await f.flushRefusals();
