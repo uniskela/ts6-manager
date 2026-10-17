@@ -25,6 +25,7 @@ import {
   youtubeIdFromFilename,
 } from '../voice/audio/metadata.js';
 import { loadMaxPlaylistImport } from '../utils/app-settings.js';
+import { removeSongFileIfUnused } from '../voice/audio/library-files.js';
 import type { VoiceBotManager } from '../voice/voice-bot-manager.js';
 import multer from 'multer';
 import path from 'path';
@@ -514,6 +515,16 @@ musicLibraryRoutes.post('/upload', musicWriteLimiter, upload.single('file'), asy
   } catch (err) { next(err); }
 });
 
+/** True when a bot has this file playing or queued. */
+function songFileQueued(manager: VoiceBotManager | undefined, resolved: string): boolean {
+  for (const { id } of manager?.listBots() ?? []) {
+    const bot = manager?.getBot(id);
+    const items = [bot?.nowPlaying, ...(bot?.queue.getAll() ?? [])];
+    if (items.some((item) => item?.filePath && path.resolve(item.filePath) === resolved)) return true;
+  }
+  return false;
+}
+
 // DELETE /songs/:id — Delete song
 musicLibraryRoutes.delete('/songs/:id', musicWriteLimiter, async (req: Request, res: Response, next) => {
   try {
@@ -522,14 +533,19 @@ musicLibraryRoutes.delete('/songs/:id', musicWriteLimiter, async (req: Request, 
     const song = await prisma.song.findUnique({ where: { id } });
     if (!song) throw new AppError(404, 'Song not found');
 
-    // Remove file from disk
-    try {
-      if (fs.existsSync(song.filePath)) {
-        fs.unlinkSync(song.filePath);
-      }
-    } catch { /* ignore file deletion failure */ }
-
     await prisma.song.delete({ where: { id } });
+    // The file goes too, unless something else still uses it (see removeSongFileIfUnused).
+    try {
+      await removeSongFileIfUnused({
+        filePath: song.filePath,
+        musicDir: MUSIC_DIR,
+        otherSongPaths: async (basename) => (await prisma.song.findMany({
+          where: { id: { not: id }, filePath: { endsWith: basename } },
+          select: { filePath: true },
+        })).map((row: { filePath: string }) => row.filePath),
+        inUse: (resolved) => songFileQueued(req.app.locals.voiceBotManager, resolved),
+      });
+    } catch { /* the song is gone; a file that could not be removed stays */ }
     res.json({ success: true });
   } catch (err) { next(err); }
 });
