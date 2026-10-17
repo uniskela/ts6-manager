@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants, createReadStream } from 'node:fs';
-import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -117,7 +117,7 @@ export interface ProbeResult { hasAudio: boolean; durationSec: number | null }
 /** Run ffprobe on a local file; rejects when ffprobe is missing or fails. */
 export function probeAudio(filePath: string, timeoutMs = 30_000): Promise<ProbeResult> {
   return new Promise((resolve, reject) => {
-    const proc = spawn('ffprobe', [
+    const proc = spawn('ffprobe', [ // NOSONAR: ffprobe is found on PATH like every other ffprobe call in the backend
       '-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', filePath,
     ], { shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
@@ -438,7 +438,12 @@ export class MediaCache {
       const created: Flight<P> = { controller, waiters: 0, listeners: new Set(), promise: Promise.resolve('') };
       const report: ProgressListener<P> = (progress) => {
         for (const listener of created.listeners) {
-          try { listener(progress); } catch { /* one listener's error must not stop the download */ }
+          try {
+            listener(progress);
+          } catch {
+            // One request's progress handler must not stop the shared download.
+            this.log('[MediaCache] A download progress handler failed');
+          }
         }
       };
       created.promise = this.produce(key, (dir, jobSignal) => download(dir, jobSignal, report), controller.signal)
@@ -516,7 +521,7 @@ export class MediaCache {
       format: FORMAT,
       key,
       kind: result.kind,
-      extractor: result.extractor.replace(/[^A-Za-z0-9_]/g, '').slice(0, 64),
+      extractor: result.extractor.replace(/\W/g, '').slice(0, 64),
       file: name,
       size: staged.size,
       sha256: await sha256File(staged.file),
@@ -576,54 +581,60 @@ export class MediaCache {
     const me: LockOwner = { host: this.host, pid: process.pid, instance: this.instance, token: randomBytes(16).toString('hex') };
     for (;;) {
       signal.throwIfAborted();
-      let handle: Awaited<ReturnType<typeof open>> | undefined;
-      try {
-        handle = await open(file, 'wx');
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        // On Windows a lock removed while another process still has it open is pending
-        // delete, and creating it again fails with EPERM until that process closes it.
-        if (code !== 'EEXIST' && !(code === 'EPERM' && process.platform === 'win32')) throw err;
-      }
-      if (handle) {
-        const owned = handle;
-        let mine: Awaited<ReturnType<typeof owned.stat>>;
-        try {
-          await owned.writeFile(JSON.stringify(me));
-          mine = await owned.stat();
-        } catch (err) {
-          // A lock without an owner record would hold others back for minutes.
-          const created = await owned.stat().catch(() => null);
-          await owned.close().catch(() => undefined);
-          if (created) await removeIfSame(file, created, false).catch(() => false);
-          throw err;
-        }
-        const heartbeat = setInterval(() => {
-          const at = new Date(this.now());
-          owned.utimes(at, at).catch(() => undefined);
-        }, LOCK_HEARTBEAT_MS);
-        heartbeat.unref();
-        return async () => {
-          clearInterval(heartbeat);
-          await owned.close().catch(() => undefined);
-          // Same file and still our record: an inode number can be reused by a newer lock.
-          if ((await readLockOwner(file))?.token === me.token) await removeIfSame(file, mine, false);
-        };
-      }
-      const held = await lstat(file).catch(() => null);
-      if (!held) {
-        // Gone already, or (on Windows) pending delete: wait a moment instead of spinning.
-        await delay(50, signal);
-        continue;
-      }
-      const owner = await readLockOwner(file);
-      const gone = owner?.host === this.host && owner.instance !== this.instance && (owner.pid === process.pid || !this.isAlive(owner.pid));
-      if (gone || this.now() - held.mtimeMs > LOCK_STALE_MS) {
-        if (await removeIfSame(file, held)) this.log(`[MediaCache] Took over a stale download lock (${key.slice(0, 12)})`);
-        continue;
-      }
-      await delay(500, signal);
+      const handle = await createLockFile(file);
+      if (handle) return this.holdLock(file, handle, me);
+      // Waiting, polling or taking over, one step per pass. NOSONAR: sequential by design.
+      await this.waitForLock(file, key, signal); // NOSONAR: polling a lock is sequential by design
     }
+  }
+
+  /** Record ownership in a just-created lock and keep it fresh; returns its release. */
+  private async holdLock(file: string, owned: FileHandle, me: LockOwner): Promise<() => Promise<void>> {
+    let mine: Awaited<ReturnType<FileHandle['stat']>>;
+    try {
+      await owned.writeFile(JSON.stringify(me));
+      mine = await owned.stat();
+    } catch (err) {
+      // A lock without an owner record would hold others back for minutes.
+      const created = await owned.stat().catch(() => null);
+      await owned.close().catch(() => undefined);
+      if (created) await removeIfSame(file, created, false).catch(() => false);
+      throw err;
+    }
+    const heartbeat = setInterval(() => {
+      const at = new Date(this.now());
+      owned.utimes(at, at).catch(() => undefined);
+    }, LOCK_HEARTBEAT_MS);
+    heartbeat.unref();
+    return async () => {
+      clearInterval(heartbeat);
+      await owned.close().catch(() => undefined);
+      // Same file and still our record: an inode number can be reused by a newer lock. A lock
+      // that cannot be removed (Windows pending delete) is left for the sweep; the download
+      // itself already succeeded.
+      try {
+        if ((await readLockOwner(file))?.token === me.token) await removeIfSame(file, mine, false);
+      } catch {
+        this.log('[MediaCache] A download lock could not be removed; it will be cleaned up later');
+      }
+    };
+  }
+
+  /** One pass while another holds the lock: take over a stale lock, or wait. */
+  private async waitForLock(file: string, key: string, signal: AbortSignal): Promise<void> {
+    const held = await lstat(file).catch(() => null);
+    if (!held) {
+      // Gone already, or (on Windows) pending delete: wait a moment instead of spinning.
+      await delay(50, signal);
+      return;
+    }
+    const owner = await readLockOwner(file);
+    const gone = owner?.host === this.host && owner.instance !== this.instance && (owner.pid === process.pid || !this.isAlive(owner.pid));
+    if (gone || this.now() - held.mtimeMs > LOCK_STALE_MS) {
+      if (await removeIfSame(file, held).catch(() => false)) this.log(`[MediaCache] Took over a stale download lock (${key.slice(0, 12)})`);
+      return;
+    }
+    await delay(500, signal);
   }
 
   /**
@@ -635,25 +646,12 @@ export class MediaCache {
     await this.init();
     await this.assertLayout();
     const now = this.now();
-    const staging = path.join(this.v2, 'staging');
-    for (const name of await readdir(staging).catch(() => [] as string[])) {
-      if (!STAGING_RE.test(name)) continue;
-      const info = await lstat(path.join(staging, name)).catch(() => null);
-      if (info?.isDirectory() && !info.isSymbolicLink() && now - info.mtimeMs > STAGING_STALE_MS) {
-        await rm(path.join(staging, name), { recursive: true, force: true }).catch(() => undefined);
-      }
-    }
-    const locks = path.join(this.v2, 'locks');
-    for (const name of await readdir(locks).catch(() => [] as string[])) {
-      if (!LOCK_RE.test(name)) continue;
-      const info = await lstat(path.join(locks, name)).catch(() => null);
-      if (info?.isFile() && now - info.mtimeMs > LOCK_STALE_MS) await removeIfSame(path.join(locks, name), info).catch(() => false);
-    }
-    for (const name of await readdir(this.v2).catch(() => [] as string[])) {
-      if (!SIDE_FILE_RE.test(name)) continue;
-      const info = await lstat(path.join(this.v2, name)).catch(() => null);
-      if (info?.isFile() && now - info.mtimeMs > STAGING_STALE_MS) await rm(path.join(this.v2, name), { force: true }).catch(() => undefined);
-    }
+    await sweepFolder(path.join(this.v2, 'staging'), STAGING_RE, (info) => info.isDirectory() && now - info.mtimeMs > STAGING_STALE_MS,
+      (file) => rm(file, { recursive: true, force: true }));
+    await sweepFolder(path.join(this.v2, 'locks'), LOCK_RE, (info) => info.isFile() && now - info.mtimeMs > LOCK_STALE_MS,
+      (file, info) => removeIfSame(file, info));
+    await sweepFolder(this.v2, SIDE_FILE_RE, (info) => info.isFile() && now - info.mtimeMs > STAGING_STALE_MS,
+      (file) => rm(file, { force: true }));
   }
 }
 
@@ -672,6 +670,36 @@ async function removeIfSame(file: string, examined: { dev: number; ino: number; 
   if (!now || now.dev !== examined.dev || now.ino !== examined.ino || (unchanged && now.mtimeMs !== examined.mtimeMs)) return false;
   await rm(file, { force: true });
   return true;
+}
+
+type Stats = import('node:fs').Stats;
+
+/** Create a lock file, or return null when another process holds it. */
+async function createLockFile(file: string): Promise<FileHandle | null> {
+  try {
+    return await open(file, 'wx');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    // On Windows a lock removed while another process still has it open is pending
+    // delete, and creating it again fails with EPERM until that process closes it.
+    if (code === 'EEXIST' || (code === 'EPERM' && process.platform === 'win32')) return null;
+    throw err;
+  }
+}
+
+/** Remove entries of `dir` whose names match and which `due` accepts; links are never followed. */
+async function sweepFolder(
+  dir: string,
+  names: RegExp,
+  due: (info: Stats) => boolean,
+  remove: (file: string, info: Stats) => Promise<unknown>,
+): Promise<void> {
+  for (const name of await readdir(dir).catch(() => [] as string[])) {
+    if (!names.test(name)) continue;
+    const file = path.join(dir, name);
+    const info = await lstat(file).catch(() => null); // NOSONAR: one entry after another, on purpose
+    if (info && !info.isSymbolicLink() && due(info)) await remove(file, info).catch(() => undefined); // NOSONAR: sequential clean-up
+  }
 }
 
 async function readLockOwner(file: string): Promise<LockOwner | null> {

@@ -11,6 +11,17 @@ import {
 
 const audioProbe = async () => ({ hasAudio: true, durationSec: 100 });
 
+/** Settles with `gate`, or rejects when `signal` aborts; the listener is removed either way. */
+function untilOrAbort(gate: Promise<unknown>, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    gate.then(() => { signal.removeEventListener('abort', onAbort); resolve(); },
+      (err) => { signal.removeEventListener('abort', onAbort); reject(err); });
+  });
+}
+
+
 describe('source identity', () => {
   it('canonicalises the requested URL without changing path or query', () => {
     assert.equal(canonicalUrl('HTTPS://Media.Example.COM:443/A/B?x=1&Y=2#frag'), 'https://media.example.com/A/B?x=1&Y=2');
@@ -229,6 +240,7 @@ describe('media cache', () => {
     const a = cache.fetch(key, download, { signal: first.signal });
     const b = cache.fetch(key, download, { signal: second.signal });
     for (let i = 0; i < 100 && !jobSignal; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(jobSignal, 'the download started');
     first.abort(new Error('first left'));
     await assert.rejects(a, /first left/);
     assert.equal(jobSignal?.aborted, false, 'another request still waits');
@@ -241,8 +253,9 @@ describe('media cache', () => {
     let otherSignal: AbortSignal | undefined;
     const never = new Promise<void>(() => {});
     const only = new AbortController();
-    const c = cache.fetch(otherKey, async (staging, signal) => { otherSignal = signal; return writer({ n: 0 }, Promise.race([never, new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))]))(staging, signal); }, { signal: only.signal });
+    const c = cache.fetch(otherKey, async (staging, signal) => { otherSignal = signal; return writer({ n: 0 }, untilOrAbort(never, signal))(staging, signal); }, { signal: only.signal });
     for (let i = 0; i < 100 && !otherSignal; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(otherSignal, 'the download started');
     only.abort(new Error('left'));
     await assert.rejects(c, /left/);
     assert.equal(otherSignal?.aborted, true, 'the download stops when nobody waits');
@@ -308,12 +321,13 @@ describe('media cache', () => {
     let started = 0;
     const slow = async (staging: string, signal: AbortSignal) => {
       started++;
-      await Promise.race([gate, new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))]);
+      await untilOrAbort(gate, signal);
       return writer({ n: 0 })(staging, signal);
     };
     const first = new AbortController();
     const a = cache.fetch(key, slow, { signal: first.signal });
     for (let i = 0; i < 100 && !started; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(started, 'the download started');
     first.abort(new Error('gone'));
     const b = cache.fetch(key, writer({ n: 0 }));
     await assert.rejects(a, /gone/);
@@ -335,6 +349,7 @@ describe('media cache', () => {
     };
     const a = cache.fetch<number>(key, download, { onProgress: (p) => seen.push(`a${p}`) });
     for (let i = 0; i < 100 && !started; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(started, 'the download started');
     const b = cache.fetch<number>(key, download, { onProgress: (p) => seen.push(`b${p}`) });
     await new Promise((r) => setTimeout(r, 10));
     release();
@@ -381,6 +396,7 @@ describe('media cache', () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const running = cache.fetch(otherKey, writer({ n: 0 }, gate));
     for (let i = 0; i < 100 && !existsSync(otherLock); i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(existsSync(otherLock), 'the lock was taken');
     // Another process takes the lock over meanwhile (a new file at that path); finishing must not remove it.
     await rm(otherLock);
     await writeFile(otherLock, JSON.stringify({ host: 'host-b', pid: 7, instance: 'b', token: 'theirs' }));
@@ -426,6 +442,7 @@ describe('media cache', () => {
     const leaving = new AbortController();
     const a = cache.fetch<number>(key, download, { onProgress: shared, signal: leaving.signal });
     for (let i = 0; i < 100 && !started; i++) await new Promise((r) => setTimeout(r, 5));
+    assert.ok(started, 'the download started');
     const b = cache.fetch<number>(key, download, { onProgress: shared });
     leaving.abort(new Error('a left'));
     await assert.rejects(a, /a left/);

@@ -436,6 +436,26 @@ export function spotifySearchQueryFromOg(html: string): string {
  * output must hold exactly one item; a client that returns no downloadable
  * formats is skipped, so the download can use the next one.
  */
+/**
+ * The one metadata record in yt-dlp's output, or undefined when there is none.
+ * Output that did not fit, or a record that does not parse, cannot prove there
+ * is only one item; more than one item is a playlist or a multi-item page.
+ */
+function singleMetadataRecord(stdout: string, truncated: boolean): Record<string, unknown> | undefined {
+  if (truncated) throw new MediaCacheError("The link's metadata is too large.");
+  const records: Record<string, unknown>[] = [];
+  for (const line of stdout.split("\n")) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      records.push(JSON.parse(line) as Record<string, unknown>);
+    } catch {
+      throw new MediaCacheError("The link's metadata could not be read.");
+    }
+  }
+  if (records.length > 1) throw new MediaCacheError("The link is not a single track.");
+  return records[0];
+}
+
 /** True when the metadata offers something to download besides storyboard images. */
 function hasPlayableFormat(info: Record<string, unknown>): boolean {
   if (typeof info.url === "string" && info.ext !== "mhtml") return true;
@@ -465,20 +485,7 @@ async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Re
     lastCode = infoResult.code;
     lastStderr = infoResult.stderr;
 
-    // Output that did not fit, or a record that does not parse, cannot prove there is only one item.
-    if (infoResult.stdoutTruncated) throw new MediaCacheError("The link's metadata is too large.");
-    const records: Record<string, unknown>[] = [];
-    for (const line of infoResult.stdout.split("\n")) {
-      if (!line.trim().startsWith("{")) continue;
-      try {
-        records.push(JSON.parse(line) as Record<string, unknown>);
-      } catch {
-        throw new MediaCacheError("The link's metadata could not be read.");
-      }
-    }
-    // More than one item means a playlist or a multi-item page, never one track.
-    if (records.length > 1) throw new MediaCacheError("The link is not a single track.");
-    const info = records[0];
+    const info = singleMetadataRecord(infoResult.stdout, infoResult.stdoutTruncated);
     if (!info || typeof info.id !== "string") continue;
     if (hasPlayableFormat(info)) return info;
   }
