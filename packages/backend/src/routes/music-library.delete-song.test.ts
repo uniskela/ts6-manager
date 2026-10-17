@@ -207,12 +207,14 @@ describe('deleting a song', () => {
     assert.deepEqual(library.songs, []);
   });
 
-  it('answers 404 to song and server ids that are not numbers', async () => {
+  it('answers 404 to song and server ids that are not plain whole numbers', async () => {
     const kept = file('kept.mp3');
     const library = fakeLibrary([{ id: 80, filePath: kept, serverConfigId: 1, title: 'Kept' }]);
     const server = app(library.prisma);
-    assert.equal((await request(server, '/servers/1/music-library/songs/80abc', { method: 'DELETE' })).status, 404);
-    assert.equal((await request(server, '/servers/x/music-library/songs/80', { method: 'DELETE' })).status, 404);
+    for (const route of ['/servers/1/music-library/songs/80abc', '/servers/x/music-library/songs/80',
+      '/servers/1e0/music-library/songs/80', '/servers/1/music-library/songs/0x50', '/servers/1/music-library/songs/8e1']) {
+      assert.equal((await request(server, route, { method: 'DELETE' })).status, 404, route);
+    }
     assert.deepEqual(library.songs.map((s) => s.id), [80]);
     assert.ok(existsSync(kept));
   });
@@ -221,7 +223,8 @@ describe('deleting a song', () => {
     const lone = file('twice.mp3');
     const library = fakeLibrary([{ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' }]);
     const server = app(library.prisma);
-    // The second request found the row before the first one removed it.
+    // The second request found the row before the first one removed it: the scoped
+    // lookup is replaced so that it always finds the row, and only the delete sees it gone.
     library.prisma.song.findFirst = async () => ({ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' });
     assert.equal(await remove(server, 60), 200);
     assert.equal(await remove(server, 60), 404);

@@ -592,15 +592,22 @@ function queuedSongFiles(manager: VoiceBotManager | undefined): string[] {
   return files;
 }
 
+/** A route id written as a plain positive whole number ("12", not "1e1", "0x0c" or "12abc"); otherwise null. */
+function positiveId(raw: unknown): number | null {
+  if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) return null;
+  const n = Number(raw);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 // DELETE /songs/:id — Delete song
 musicLibraryRoutes.delete('/songs/:id', musicWriteLimiter, async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const configId = Number(req.params.configId);
-    const id = Number(req.params.id);
+    const configId = positiveId(req.params.configId);
+    const id = positiveId(req.params.id);
     // Only songs of the server in the URL: another server's song is "not found" and nothing is removed.
     const scope = { id, serverConfigId: configId };
-    const song = Number.isSafeInteger(id) && Number.isSafeInteger(configId)
+    const song = id !== null && configId !== null
       ? await prisma.song.findFirst({ where: scope })
       : null;
     if (!song) throw new AppError(404, 'Song not found');
