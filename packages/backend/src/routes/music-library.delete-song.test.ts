@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import fs, { existsSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, describe, it } from 'node:test';
@@ -32,19 +32,21 @@ function fakeLibrary(rows: Row[], playlistSongs: Array<{ playlistId: number; son
       // No isolation is needed in memory: run the work with the same client.
       $transaction: async <T>(work: (tx: unknown) => Promise<T>): Promise<T> => work(library.prisma),
       song: {
-        findUnique: async ({ where }: { where: { id: number } }) => songs.find((s) => s.id === where.id) ?? null,
-        delete: async ({ where }: { where: { id: number } }) => {
-          songs = songs.filter((s) => s.id !== where.id);
-          entries = entries.filter((e) => e.songId !== where.id);
-          return {};
+        deleteMany: async ({ where }: { where: { id: number; serverConfigId: number } }) => {
+          const gone = songs.filter((s) => s.id === where.id && s.serverConfigId === where.serverConfigId).map((s) => s.id);
+          songs = songs.filter((s) => !gone.includes(s.id));
+          entries = entries.filter((e) => !gone.includes(e.songId));
+          return { count: gone.length };
         },
         findMany: async ({ where }: { where: { id?: { not: number }; filePath?: { not: string }; serverConfigId?: number } }) =>
           songs.filter((s) =>
             (where.id === undefined || s.id !== where.id.not)
             && (where.filePath === undefined || s.filePath !== where.filePath.not)
             && (where.serverConfigId === undefined || s.serverConfigId === where.serverConfigId)),
-        findFirst: async ({ where }: { where: { serverConfigId: number; filePath: string } }) =>
-          songs.find((s) => s.serverConfigId === where.serverConfigId && s.filePath === where.filePath) ?? null,
+        findFirst: async ({ where }: { where: { serverConfigId: number; id?: number; filePath?: string } }) =>
+          songs.find((s) => s.serverConfigId === where.serverConfigId
+            && (where.id === undefined || s.id === where.id)
+            && (where.filePath === undefined || s.filePath === where.filePath)) ?? null,
         create: async ({ data }: { data: Omit<Row, 'id'> }) => {
           const row = { ...data, id: 1000 + songs.length };
           songs.push(row);
@@ -65,7 +67,7 @@ function app(prisma: unknown, queued: string[] = []): Express {
     getBot: () => ({ nowPlaying: null, queue: { getAll: () => queued.map((filePath, i) => ({ id: String(i), filePath })) } }),
   };
   server.use((req, _res, next) => { (req as any).user = { id: 1, username: 'admin', role: 'admin' }; next(); });
-  server.use('/', musicLibraryRoutes);
+  server.use('/servers/:configId/music-library', musicLibraryRoutes);
   server.use(errorHandler);
   return server;
 }
@@ -88,8 +90,9 @@ async function request(server: Express, route: string, init: RequestInit): Promi
   }
 }
 
-async function remove(server: Express, id: number): Promise<number> {
-  return (await request(server, `/songs/${id}`, { method: 'DELETE' })).status;
+/** Remove song `id` through the music library of server `configId`. */
+async function remove(server: Express, id: number, configId = 1): Promise<number> {
+  return (await request(server, `/servers/${configId}/music-library/songs/${id}`, { method: 'DELETE' })).status;
 }
 
 /** Holds the library file lock until the returned function is called. */
@@ -125,7 +128,7 @@ describe('deleting a song', () => {
     assert.equal(await remove(server, 1), 200);
     assert.ok(fs.existsSync(shared), 'still used on server two');
     assert.deepEqual(library.songs.map((s) => s.id), [2]);
-    assert.equal(await remove(server, 2), 200);
+    assert.equal(await remove(server, 2, 2), 200);
     assert.equal(fs.existsSync(shared), false, 'the last song took its file with it');
   });
 
@@ -151,7 +154,7 @@ describe('deleting a song', () => {
     ]);
     const server = app(library.prisma);
     assert.equal(await remove(server, 20), 200);
-    assert.equal(await remove(server, 21), 200);
+    assert.equal(await remove(server, 21, 2), 200);
     assert.ok(fs.existsSync(cached), 'cache files are managed by the cache');
     assert.deepEqual(library.songs, []);
   });
@@ -189,19 +192,37 @@ describe('deleting a song', () => {
     assert.equal(await remove(server, 999), 404);
   });
 
+  it('removes nothing when the song belongs to another server', async () => {
+    const theirs = file('other-server.mp3');
+    const library = fakeLibrary(
+      [{ id: 70, filePath: theirs, serverConfigId: 2, title: 'Server two only' }],
+      [{ playlistId: 7, songId: 70 }],
+    );
+    const server = app(library.prisma);
+    assert.equal(await remove(server, 70, 1), 404, 'same answer as an unknown song');
+    assert.deepEqual(library.songs.map((s) => s.id), [70], 'the row stays');
+    assert.deepEqual(library.entries, [{ playlistId: 7, songId: 70 }], 'its playlist entries stay');
+    assert.ok(existsSync(theirs), 'its file stays');
+    assert.equal(await remove(server, 70, 2), 200, 'its own server can remove it');
+    assert.deepEqual(library.songs, []);
+  });
+
+  it('answers 404 to song and server ids that are not numbers', async () => {
+    const kept = file('kept.mp3');
+    const library = fakeLibrary([{ id: 80, filePath: kept, serverConfigId: 1, title: 'Kept' }]);
+    const server = app(library.prisma);
+    assert.equal((await request(server, '/servers/1/music-library/songs/80abc', { method: 'DELETE' })).status, 404);
+    assert.equal((await request(server, '/servers/x/music-library/songs/80', { method: 'DELETE' })).status, 404);
+    assert.deepEqual(library.songs.map((s) => s.id), [80]);
+    assert.ok(existsSync(kept));
+  });
+
   it('answers 404 to the second of two removals of one song', async () => {
     const lone = file('twice.mp3');
     const library = fakeLibrary([{ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' }]);
-    const deleteOnce = library.prisma.song.delete;
-    let calls = 0;
-    library.prisma.song.delete = async (args: { where: { id: number } }) => {
-      calls++;
-      if (calls === 2) throw Object.assign(new Error('Record to delete does not exist.'), { code: 'P2025' });
-      return deleteOnce(args);
-    };
     const server = app(library.prisma);
     // The second request found the row before the first one removed it.
-    library.prisma.song.findUnique = async () => ({ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' });
+    library.prisma.song.findFirst = async () => ({ id: 60, filePath: lone, serverConfigId: 1, title: 'Twice' });
     assert.equal(await remove(server, 60), 200);
     assert.equal(await remove(server, 60), 404);
   });
@@ -211,7 +232,7 @@ describe('deleting a song', () => {
     const doomed = file('scan-doomed.mp3');
     const library = fakeLibrary([]);
     const release = holdLibraryLock();
-    const scanning = request(app(library.prisma), '/scan', { method: 'POST' });
+    const scanning = request(app(library.prisma), '/servers/1/music-library/scan', { method: 'POST' });
     try {
       await waitFor(() => libraryFileTasks() >= 2);
       assert.equal(libraryFileTasks(), 2, 'the scan waits for the lock');
@@ -234,7 +255,7 @@ describe('deleting a song', () => {
       if (++attempts === 1) throw Object.assign(new Error('Transaction API error: Unable to start a transaction in the given time.'), { code: 'P2028' });
       return run(work);
     };
-    const res = await request(app(library.prisma), '/scan', { method: 'POST' });
+    const res = await request(app(library.prisma), '/servers/1/music-library/scan', { method: 'POST' });
     assert.equal(res.status, 200);
     assert.equal(attempts, 2);
     assert.deepEqual(library.songs.map((s) => path.basename(s.filePath)), ['busy.mp3']);
@@ -245,7 +266,7 @@ describe('deleting a song', () => {
     const upload = () => {
       const form = new FormData();
       form.append('file', new Blob(['not really audio']), 'Artist - Song.mp3');
-      return request(app(library.prisma), '/upload', { method: 'POST', body: form });
+      return request(app(library.prisma), '/servers/1/music-library/upload', { method: 'POST', body: form });
     };
     const names = () => fs.readdirSync(musicDir);
     const release = holdLibraryLock();
