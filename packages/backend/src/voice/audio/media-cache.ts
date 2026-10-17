@@ -580,12 +580,24 @@ export class MediaCache {
       try {
         handle = await open(file, 'wx');
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+        const code = (err as NodeJS.ErrnoException).code;
+        // On Windows a lock removed while another process still has it open is pending
+        // delete, and creating it again fails with EPERM until that process closes it.
+        if (code !== 'EEXIST' && !(code === 'EPERM' && process.platform === 'win32')) throw err;
       }
       if (handle) {
         const owned = handle;
-        await owned.writeFile(JSON.stringify(me));
-        const mine = await owned.stat();
+        let mine: Awaited<ReturnType<typeof owned.stat>>;
+        try {
+          await owned.writeFile(JSON.stringify(me));
+          mine = await owned.stat();
+        } catch (err) {
+          // A lock without an owner record would hold others back for minutes.
+          const created = await owned.stat().catch(() => null);
+          await owned.close().catch(() => undefined);
+          if (created) await removeIfSame(file, created, false).catch(() => false);
+          throw err;
+        }
         const heartbeat = setInterval(() => {
           const at = new Date(this.now());
           owned.utimes(at, at).catch(() => undefined);
@@ -594,7 +606,8 @@ export class MediaCache {
         return async () => {
           clearInterval(heartbeat);
           await owned.close().catch(() => undefined);
-          await removeIfSame(file, mine, false);
+          // Same file and still our record: an inode number can be reused by a newer lock.
+          if ((await readLockOwner(file))?.token === me.token) await removeIfSame(file, mine, false);
         };
       }
       const held = await lstat(file).catch(() => null);
