@@ -60,8 +60,9 @@ describe('buildPcmFileArgs', () => {
       assert.equal(calls[0].env.no_proxy, undefined);
       await new AudioPipeline().toPcmFileStream('/data/music/local.mp3');
       assert.equal(calls[1].env.https_proxy, process.env.https_proxy, 'a local file gets no proxy');
-      proc.emit('close', 0);
     } finally {
+      // Releases the job's proxy token even when an assertion failed.
+      proc.emit('close', 0);
       spawn.mock.restore();
       syncBuiltinESMExports();
       if (previous === undefined) delete process.env.MEDIA_EGRESS_PROXY; else process.env.MEDIA_EGRESS_PROXY = previous;

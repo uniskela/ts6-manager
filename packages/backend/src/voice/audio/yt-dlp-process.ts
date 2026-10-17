@@ -87,7 +87,10 @@ export async function spawnYtDlp(
   const release = () => job?.release();
   proc.once('close', release);
   proc.once('error', release);
-  proc.stdin.on('error', () => { /* yt-dlp exited before reading its configuration */ });
+  proc.stdin.once('error', (err: NodeJS.ErrnoException) => {
+    // EPIPE: yt-dlp exited before reading its configuration, which its exit code reports.
+    if (err.code !== 'EPIPE') console.warn(`[yt-dlp] Could not pass the job configuration (${err.code ?? err.name})`);
+  });
   proc.stdin.end(job ? `--proxy ${job.proxyUrl}\n` : '');
   // Output is kept as a tail, which can cut a token: anything shaped like the job proxy is removed too.
   const redact = (text: string) => (job ? job.redact(text) : text).replace(/[0-9a-f]{8,64}@127\.0\.0\.1:\d+/g, '***@127.0.0.1');

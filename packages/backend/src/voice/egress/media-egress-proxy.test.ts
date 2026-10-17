@@ -36,6 +36,12 @@ async function raw(port: number, request: string, until = /\r\n\r\n/): Promise<{
 
 const statusOf = (text: string) => Number(/^HTTP\/1\.1 (\d{3})/.exec(text)?.[1] ?? 0);
 
+/** Wait, within a bound, until the proxy holds `count` connections. */
+async function untilConnections(proxy: MediaEgressProxy, count: number): Promise<void> {
+  for (let i = 0; i < 400 && proxy.activeConnections !== count; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(proxy.activeConnections, count);
+}
+
 describe('media egress proxy', () => {
   let echo: net.Server;
   let echoPort: number;
@@ -346,13 +352,13 @@ describe('media egress proxy', () => {
       const port = proxyPort(job.proxyUrl);
       const request = `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`;
       const first = raw(port, request);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await untilConnections(proxy, 1);
       const second = await raw(port, request);
       assert.equal(statusOf(second.text), 429, 'refused while the first is still resolving');
       // Another job is limited by the shared cap too.
       const other = await proxy.issue(60_000);
       const third = raw(port, `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(other.proxyUrl)}\r\n\r\n`);
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await untilConnections(proxy, 2);
       const yetAnother = await proxy.issue(60_000);
       const fourth = await raw(port, `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(yetAnother.proxyUrl)}\r\n\r\n`);
       assert.equal(statusOf(fourth.text), 429, 'the cap across jobs applies');
@@ -412,8 +418,7 @@ describe('media egress proxy', () => {
     try {
       const job = await proxy.issue(60_000);
       const pending = raw(proxyPort(job.proxyUrl), `CONNECT media.test:443 HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`);
-      await new Promise((r) => setTimeout(r, 50));
-      assert.equal(proxy.activeConnections, 1);
+      await untilConnections(proxy, 1);
       job.release();
       for (let i = 0; i < 50 && proxy.activeConnections > 0; i++) await new Promise((r) => setTimeout(r, 5));
       assert.equal(proxy.activeConnections, 0);
