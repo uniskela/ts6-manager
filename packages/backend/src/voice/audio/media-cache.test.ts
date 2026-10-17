@@ -116,6 +116,7 @@ describe('download verification', () => {
   it('requires audio with a readable, positive length that matches the metadata', () => {
     assert.deepEqual(parseProbe('{"streams":[{"codec_type":"video"},{"codec_type":"audio"}],"format":{"duration":"212.4"}}'), { hasAudio: true, durationSec: 212.4 });
     assert.equal(parseProbe('{"streams":[{"codec_type":"audio"}],"format":{"duration":"N/A"}}').durationSec, null);
+    assert.equal(parseProbe('{"streams":[{"codec_type":"audio","duration":"98.5"}],"format":{"duration":"N/A"}}').durationSec, 98.5, 'the audio stream\'s length when the container has none');
     assert.equal(checkProbe({ hasAudio: true, durationSec: 212 }, 214), 212);
     assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 3600 }, 3900), 'within 10%');
     assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 5 }, 14), 'within 10 seconds');
@@ -433,9 +434,13 @@ describe('media cache', () => {
     assert.equal(calls.n, 1);
     assert.equal(existsSync(lock), false);
 
-    // On Windows a lock file cannot be replaced while its owner still has it open (it stays
-    // pending delete), so another process can never take it over mid-download there.
-    if (process.platform === 'win32') return;
+  });
+
+  // On Windows a lock file cannot be replaced while its owner still has it open (it stays
+  // pending delete), so another process can never take it over mid-download there.
+  it('releases only its own lock when another process took it over mid-download', { skip: process.platform === 'win32' ? 'an open lock file stays pending delete on Windows' : false }, async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {}, hostname: 'host-a', instanceId: 'now' });
+    await cache.init();
     const otherKey = cacheKey({ kind: 'youtube', videoId: 'ccccccccccc' });
     const otherLock = path.join(music, CACHE_DIR_NAME, 'v2', 'locks', `${otherKey}.lock`);
     let release!: () => void;
@@ -548,6 +553,17 @@ describe('media cache', () => {
     } finally {
       await handle.close();
     }
+  });
+
+  it('downloads nothing when ffprobe is missing', async () => {
+    const calls = { n: 0 };
+    const cache = new MediaCache(music, {
+      probe: audioProbe,
+      probeReady: async () => { throw new MediaCacheError('New downloads need ffprobe, which was not found.'); },
+      log: () => {},
+    });
+    await assert.rejects(cache.fetch(key, writer(calls)), /need ffprobe/);
+    assert.equal(calls.n, 0);
   });
 
   it('sweeps only its own leftovers', async () => {

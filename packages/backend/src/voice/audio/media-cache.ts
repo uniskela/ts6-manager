@@ -118,7 +118,7 @@ export interface ProbeResult { hasAudio: boolean; durationSec: number | null }
 export function probeAudio(filePath: string, timeoutMs = 30_000): Promise<ProbeResult> {
   return new Promise((resolve, reject) => {
     const proc = spawn('ffprobe', [ // NOSONAR: ffprobe is found on PATH like every other ffprobe call in the backend
-      '-v', 'error', '-show_entries', 'stream=codec_type:format=duration', '-of', 'json', filePath,
+      '-v', 'error', '-show_entries', 'stream=codec_type,duration:format=duration', '-of', 'json', filePath,
     ], { shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
     let out = '';
     const timer = setTimeout(() => proc.kill('SIGKILL'), timeoutMs);
@@ -143,12 +143,35 @@ export function probeAudio(filePath: string, timeoutMs = 30_000): Promise<ProbeR
 }
 
 export function parseProbe(json: string): ProbeResult {
-  const data = JSON.parse(json) as { streams?: Array<{ codec_type?: string }>; format?: { duration?: string } };
-  const duration = Number(data.format?.duration);
-  return {
-    hasAudio: (data.streams ?? []).some((s) => s.codec_type === 'audio'),
-    durationSec: Number.isFinite(duration) && duration > 0 ? duration : null,
+  const data = JSON.parse(json) as { streams?: Array<{ codec_type?: string; duration?: string }>; format?: { duration?: string } };
+  const audio = (data.streams ?? []).find((s) => s.codec_type === 'audio');
+  const positive = (value: string | undefined) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? n : null;
   };
+  return {
+    hasAudio: Boolean(audio),
+    // The container's length, or the audio stream's when the container does not give one.
+    durationSec: positive(data.format?.duration) ?? positive(audio?.duration),
+  };
+}
+
+let ffprobeFound: Promise<void> | undefined;
+
+/**
+ * Fail at once when ffprobe is missing, before anything is downloaded. A
+ * success is remembered; a failure is checked again next time.
+ */
+export function ensureFfprobe(): Promise<void> {
+  ffprobeFound ??= new Promise<void>((resolve, reject) => {
+    const proc = spawn('ffprobe', ['-version'], { shell: false, stdio: 'ignore' }); // NOSONAR: found on PATH like the other ffprobe calls
+    proc.on('error', (err) => reject(new MediaCacheError((err as NodeJS.ErrnoException).code === 'ENOENT'
+      ? 'New downloads need ffprobe, which was not found. Install FFmpeg (it includes ffprobe) and make sure the backend can find it on its PATH; songs already in the library keep playing.'
+      : `ffprobe could not run (${(err as NodeJS.ErrnoException).code ?? err.name}).`)));
+    proc.on('close', (code) => (code === 0 ? resolve() : reject(new MediaCacheError('ffprobe could not run.'))));
+  });
+  ffprobeFound.catch(() => { ffprobeFound = undefined; });
+  return ffprobeFound;
 }
 
 /**
@@ -255,6 +278,8 @@ export type ProgressListener<P> = (progress: P) => void;
 
 export interface MediaCacheOptions {
   probe?: (file: string) => Promise<ProbeResult>;
+  /** Checked before a download starts; defaults to `ensureFfprobe` unless `probe` is replaced. */
+  probeReady?: () => Promise<void>;
   now?: () => number;
   log?: (message: string) => void;
   /** Tests: identify this process differently. */
@@ -329,6 +354,7 @@ export class MediaCache {
   private readonly checking = new Map<string, Promise<boolean>>();
   private ready?: Promise<void>;
   private readonly probe: (file: string) => Promise<ProbeResult>;
+  private readonly probeReady: () => Promise<void>;
   private readonly now: () => number;
   private readonly log: (message: string) => void;
   private readonly instance: string;
@@ -339,6 +365,7 @@ export class MediaCache {
     this.root = path.join(musicDir, CACHE_DIR_NAME);
     this.v2 = path.join(this.root, 'v2');
     this.probe = options.probe ?? probeAudio;
+    this.probeReady = options.probeReady ?? (options.probe ? async () => {} : ensureFfprobe);
     this.now = options.now ?? Date.now;
     this.log = options.log ?? ((message) => console.warn(message));
     this.instance = options.instanceId ?? PROCESS_INSTANCE;
@@ -446,6 +473,9 @@ export class MediaCache {
     // Cancelled while the cache was checked: no result, even for a hit.
     signal?.throwIfAborted();
     if (hit) return hit;
+    // Nothing is downloaded when the file could not be checked afterwards.
+    await this.probeReady();
+    signal?.throwIfAborted();
     let flight = this.flights.get(key) as Flight<P> | undefined;
     // A flight whose last waiter left is finishing its clean-up; it is not joined.
     if (!flight || flight.controller.signal.aborted) {
