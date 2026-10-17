@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -449,6 +449,22 @@ describe('media cache', () => {
     release();
     await b;
     assert.deepEqual(seen, [90], 'the remaining request still gets progress');
+  });
+
+  it('reports a stale lock it cannot remove instead of retrying without pause', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await cache.init();
+    const locks = path.join(music, CACHE_DIR_NAME, 'v2', 'locks');
+    const lock = path.join(locks, `${key}.lock`);
+    await writeFile(lock, JSON.stringify({ host: 'other-host', pid: 1, instance: 'x', token: 't' }));
+    const past = new Date(Date.now() - 10 * 60_000);
+    await utimes(lock, past, past);
+    await chmod(locks, 0o555);
+    try {
+      await assert.rejects(cache.fetch(key, writer({ n: 0 })), /stale download lock could not be removed/);
+    } finally {
+      await chmod(locks, 0o755);
+    }
   });
 
   it('sweeps only its own leftovers', async () => {

@@ -631,8 +631,20 @@ export class MediaCache {
     const owner = await readLockOwner(file);
     const gone = owner?.host === this.host && owner.instance !== this.instance && (owner.pid === process.pid || !this.isAlive(owner.pid));
     if (gone || this.now() - held.mtimeMs > LOCK_STALE_MS) {
-      if (await removeIfSame(file, held).catch(() => false)) this.log(`[MediaCache] Took over a stale download lock (${key.slice(0, 12)})`);
-      return;
+      let removed = false;
+      try {
+        removed = await removeIfSame(file, held);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code;
+        // Windows: briefly in use or pending delete; anything else will not go away by retrying.
+        if (!(process.platform === 'win32' && (code === 'EPERM' || code === 'EBUSY'))) {
+          throw new MediaCacheError(`A stale download lock could not be removed (${code ?? 'error'}); check the cache folder's permissions.`);
+        }
+      }
+      if (removed) {
+        this.log(`[MediaCache] Took over a stale download lock (${key.slice(0, 12)})`);
+        return;
+      }
     }
     await delay(500, signal);
   }
