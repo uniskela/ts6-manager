@@ -84,7 +84,7 @@ resolving slot is taken. One 120-second deadline, the
 session checks and the client-disconnect check cover a link from its slot
 reservation to the end of its download. Refusals before the attempt are kept
 in `ListenerRemoteRefusalAudit` (bounded per-window totals; 401, 403, 429 and
-full queues), routine 400/404 and unavailable or timed-out 503/504 refusals are
+409 `queue_full`), routine 400/404 and unavailable or timed-out 503/504 refusals are
 only counted in the log, and refusals after the attempt is opened complete that
 attempt with a specific result code.
 
