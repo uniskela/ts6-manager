@@ -1,6 +1,6 @@
 import { parseDownloadProgress, type ProgressUpdate } from './download-progress.js';
 import { spawnYtDlp, ytDlpTarget } from './yt-dlp-process.js';
-import { cacheKey, identityFromInfo, MAX_CACHE_FILE_BYTES, mediaCacheFor } from './media-cache.js';
+import { cacheKey, identityFromInfo, MAX_CACHE_FILE_BYTES, MediaCacheError, mediaCacheFor } from './media-cache.js';
 import path from "path";
 import fs from "fs";
 
@@ -432,6 +432,11 @@ export function spotifySearchQueryFromOg(html: string): string {
  * Download audio from a YouTube URL using yt-dlp.
  * Always canonicalizes Music URLs to www.youtube.com/watch?v=… first.
  */
+/**
+ * Metadata for one track, trying the YouTube player clients in turn. The
+ * output must hold exactly one item; a client that returns no downloadable
+ * formats is skipped, so the download can use the next one.
+ */
 async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
   let lastCode: number | null = null;
   let lastStderr = "";
@@ -453,20 +458,21 @@ async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Re
     lastCode = infoResult.code;
     lastStderr = infoResult.stderr;
 
-    if (!infoResult.stdout.trim()) continue;
-
-    try {
-      const jsonLine = infoResult.stdout
-        .trim()
-        .split("\n")
-        .find((l) => l.trim().startsWith("{"));
-      const parsedInfo = JSON.parse(jsonLine || infoResult.stdout) as Record<string, unknown>;
-      if (parsedInfo && typeof parsedInfo.id === "string") {
-        return parsedInfo;
+    const records: Record<string, unknown>[] = [];
+    for (const line of infoResult.stdout.split("\n")) {
+      if (!line.trim().startsWith("{")) continue;
+      try {
+        records.push(JSON.parse(line) as Record<string, unknown>);
+      } catch {
+        lastStderr = infoResult.stderr || infoResult.stdout;
       }
-    } catch {
-      lastStderr = infoResult.stderr || infoResult.stdout;
     }
+    // More than one item means a playlist or a multi-item page, never one track.
+    if (records.length > 1) throw new MediaCacheError("The link is not a single track.");
+    const info = records[0];
+    if (!info || typeof info.id !== "string") continue;
+    const hasFormats = (Array.isArray(info.formats) && info.formats.length > 0) || typeof info.url === "string";
+    if (hasFormats) return info;
   }
 
   throw new Error(formatYtDlpFailure("yt-dlp info failed", lastCode, lastStderr));
@@ -567,16 +573,18 @@ export async function downloadYouTube(
     url: mediaUrl,
   };
 
-  const filePath = await mediaCacheFor(outputDir).fetch(cacheKey(identity), async (stagingDir, jobSignal) => {
+  const filePath = await mediaCacheFor(outputDir).fetch<ProgressUpdate>(cacheKey(identity), async (stagingDir, jobSignal, report) => {
     const infoFile = path.join(stagingDir, "info.json");
-    await fs.promises.writeFile(infoFile, JSON.stringify(parsedInfo), { flag: "wx" });
-    const reportedPaths = await ytDlpDownloadAudio(infoFile, stagingDir, mediaUrl, onProgress, jobSignal);
+    // Private: it can hold signed media links and, with cookies configured, cookie values.
+    await fs.promises.writeFile(infoFile, JSON.stringify(parsedInfo), { flag: "wx", mode: 0o600 });
+    const reportedPaths = await ytDlpDownloadAudio(infoFile, stagingDir, mediaUrl, report, jobSignal);
     return {
       reportedPaths,
       expectedDurationSec: duration > 0 ? duration : null,
+      kind: identity.kind,
       extractor: String(parsedInfo.extractor_key),
     };
-  }, signal);
+  }, { signal, onProgress });
 
   return { filePath, info };
 }

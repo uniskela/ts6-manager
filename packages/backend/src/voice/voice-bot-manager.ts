@@ -74,10 +74,14 @@ export class VoiceBotManager extends EventEmitter {
 
   async start(): Promise<void> {
     sweepStreamTempFiles();
-    // Leftovers of interrupted downloads, inside the download cache only.
-    void mediaCacheFor(process.env.MUSIC_DIR || '/data/music').sweep().catch((err: Error) => {
-      console.warn(`[MediaCache] ${err.message}`);
-    });
+    // Leftovers of interrupted downloads, inside the download cache only: now and every hour.
+    const sweepCache = () => {
+      void mediaCacheFor(process.env.MUSIC_DIR || '/data/music').sweep().catch((err: Error) => {
+        console.warn(`[MediaCache] ${err.message}`);
+      });
+    };
+    sweepCache();
+    setInterval(sweepCache, 60 * 60_000).unref();
     const maxVideoDurationSec = await loadMaxVideoDuration(this.prisma);
     const parsedAutoStop = parseAutoStopEmptySeconds(process.env.BOT_AUTO_STOP_EMPTY_SECONDS);
 

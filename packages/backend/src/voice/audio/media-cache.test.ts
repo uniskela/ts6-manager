@@ -103,6 +103,7 @@ describe('download verification', () => {
     assert.doesNotThrow(() => checkProbe({ hasAudio: true, durationSec: 30 }, null), 'no announced length');
     assert.throws(() => checkProbe({ hasAudio: false, durationSec: 200 }, 200), MediaCacheError);
     assert.throws(() => checkProbe({ hasAudio: true, durationSec: 30 }, 214), MediaCacheError);
+    assert.throws(() => checkProbe({ hasAudio: true, durationSec: null }, 214), MediaCacheError, 'an announced length must be confirmed');
   });
 
   it('retries replacing a manifest that is briefly in use (Windows), and gives up on other errors', async () => {
@@ -150,13 +151,14 @@ describe('media cache', () => {
   const key = cacheKey({ kind: 'youtube', videoId: 'abcdefghijk' });
 
   /** A download that writes one audio file and reports it. */
-  const writer = (calls: { n: number }, gate?: Promise<void>) => async (staging: string, signal: AbortSignal): Promise<StagedDownload> => {
+  const writer = (calls: { n: number }, gate?: Promise<void>) => async (staging: string, signal: AbortSignal, report?: (p: number) => void): Promise<StagedDownload> => {
     calls.n++;
+    report?.(50);
     await gate;
     signal.throwIfAborted();
     const file = path.join(staging, 'media.opus');
     await writeFile(file, 'opus audio bytes');
-    return { reportedPaths: [file], expectedDurationSec: 100, extractor: 'Youtube' };
+    return { reportedPaths: [file], expectedDurationSec: 100, kind: 'youtube', extractor: 'Youtube' };
   };
 
   it('publishes a verified download with its manifest and reuses it', async () => {
@@ -222,8 +224,8 @@ describe('media cache', () => {
     const download = async (staging: string, signal: AbortSignal) => { jobSignal = signal; return writer(calls, gate)(staging, signal); };
     const first = new AbortController();
     const second = new AbortController();
-    const a = cache.fetch(key, download, first.signal);
-    const b = cache.fetch(key, download, second.signal);
+    const a = cache.fetch(key, download, { signal: first.signal });
+    const b = cache.fetch(key, download, { signal: second.signal });
     for (let i = 0; i < 100 && !jobSignal; i++) await new Promise((r) => setTimeout(r, 5));
     first.abort(new Error('first left'));
     await assert.rejects(a, /first left/);
@@ -237,7 +239,7 @@ describe('media cache', () => {
     let otherSignal: AbortSignal | undefined;
     const never = new Promise<void>(() => {});
     const only = new AbortController();
-    const c = cache.fetch(otherKey, async (staging, signal) => { otherSignal = signal; return writer({ n: 0 }, Promise.race([never, new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))]))(staging, signal); }, only.signal);
+    const c = cache.fetch(otherKey, async (staging, signal) => { otherSignal = signal; return writer({ n: 0 }, Promise.race([never, new Promise<void>((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))]))(staging, signal); }, { signal: only.signal });
     for (let i = 0; i < 100 && !otherSignal; i++) await new Promise((r) => setTimeout(r, 5));
     only.abort(new Error('left'));
     await assert.rejects(c, /left/);
@@ -251,14 +253,137 @@ describe('media cache', () => {
     const cache = new MediaCache(music, { probe: audioProbe, log: () => {}, now: () => now });
     await cache.init();
     const lock = path.join(music, CACHE_DIR_NAME, 'v2', 'locks', `${key}.lock`);
-    await writeFile(lock, '{"pid":1}');
+    await writeFile(lock, JSON.stringify({ host: 'other-host', pid: 1, instance: 'other', token: 't' }));
     const calls = { n: 0 };
     const pending = cache.fetch(key, writer(calls));
     await new Promise((r) => setTimeout(r, 50));
     assert.equal(calls.n, 0, 'waits while the lock is held');
-    now += 21 * 60_000;
+    now += 4 * 60_000;
     assert.ok(await pending);
     assert.equal(calls.n, 1);
+  });
+
+  it('does not use a cache whose folders are links, and cleans up nothing through them', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await cache.init();
+    const outside = path.join(music, 'elsewhere');
+    await mkdir(outside);
+    const old = path.join(outside, 'a'.repeat(32));
+    await mkdir(old);
+    const past = new Date(Date.now() - 2 * 60 * 60_000);
+    await utimes(old, past, past);
+    const staging = path.join(music, CACHE_DIR_NAME, 'v2', 'staging');
+    await rm(staging, { recursive: true });
+    await symlink(outside, staging);
+    const fresh = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await assert.rejects(fresh.sweep(), /link where a folder belongs/);
+    await assert.rejects(fresh.fetch(key, writer({ n: 0 })), /link where a folder belongs/);
+    assert.ok(existsSync(old), 'nothing outside the cache was removed');
+  });
+
+  it('builds its folder under a temporary name, so no unmarked folder is left', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await cache.init();
+    assert.deepEqual((await readdir(music)).sort(), [CACHE_DIR_NAME]);
+    assert.equal(await readFile(path.join(music, CACHE_DIR_NAME, 'OWNER'), 'utf8'), 'ts6-manager media cache\nformat=2\n');
+  });
+
+  it('starts nothing for a request cancelled while the cache was being checked', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await cache.init();
+    const controller = new AbortController();
+    const calls = { n: 0 };
+    const pending = cache.fetch(key, writer(calls), { signal: controller.signal });
+    controller.abort(new Error('left early'));
+    await assert.rejects(pending, /left early/);
+    assert.equal(calls.n, 0);
+  });
+
+  it('does not join a download that is being cancelled, and keeps a newer one in the map', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = 0;
+    const slow = async (staging: string, signal: AbortSignal) => {
+      started++;
+      await Promise.race([gate, new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason)))]);
+      return writer({ n: 0 })(staging, signal);
+    };
+    const first = new AbortController();
+    const a = cache.fetch(key, slow, { signal: first.signal });
+    for (let i = 0; i < 100 && !started; i++) await new Promise((r) => setTimeout(r, 5));
+    first.abort(new Error('gone'));
+    const b = cache.fetch(key, writer({ n: 0 }));
+    await assert.rejects(a, /gone/);
+    release();
+    assert.ok(existsSync(await b), 'the new request got its own download');
+  });
+
+  it('passes progress to every request waiting for the same download', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const seen: string[] = [];
+    let started = false;
+    const download = async (staging: string, signal: AbortSignal, report: (p: number) => void) => {
+      started = true;
+      await gate;
+      report(75);
+      return writer({ n: 0 })(staging, signal);
+    };
+    const a = cache.fetch<number>(key, download, { onProgress: (p) => seen.push(`a${p}`) });
+    for (let i = 0; i < 100 && !started; i++) await new Promise((r) => setTimeout(r, 5));
+    const b = cache.fetch<number>(key, download, { onProgress: (p) => seen.push(`b${p}`) });
+    await new Promise((r) => setTimeout(r, 10));
+    release();
+    await Promise.all([a, b]);
+    assert.ok(seen.includes('a75') && seen.includes('b75'), seen.join());
+  });
+
+  it('removes its own files when publishing fails, and keeps an earlier entry', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await cache.init();
+    const v2 = path.join(music, CACHE_DIR_NAME, 'v2');
+    // A folder where the manifest belongs makes the final rename fail.
+    await mkdir(path.join(v2, `${key}.json`));
+    await writeFile(path.join(v2, `${key}.json`, 'keep'), 'x');
+    await assert.rejects(cache.fetch(key, writer({ n: 0 })));
+    const left = (await readdir(v2)).filter((n) => n !== 'locks' && n !== 'staging').sort();
+    assert.deepEqual(left, [`${key}.json`], 'no orphaned media or temporary manifest');
+  });
+
+  it('treats an entry whose content changed but not its size as absent', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    const file = await cache.fetch(key, writer({ n: 0 }));
+    const later = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    assert.equal(await later.lookup(key), file);
+    await writeFile(file, 'OPUS AUDIO BYTES');
+    const fresh = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    assert.equal(await fresh.lookup(key), null);
+  });
+
+  it('takes over a lock left by an earlier run on this host at once, and releases only its own lock', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {}, hostname: 'host-a', instanceId: 'now' });
+    await cache.init();
+    const lock = path.join(music, CACHE_DIR_NAME, 'v2', 'locks', `${key}.lock`);
+    // Same host and PID (a restarted container), different instance: the old run is gone.
+    await writeFile(lock, JSON.stringify({ host: 'host-a', pid: process.pid, instance: 'before-restart', token: 'old' }));
+    const calls = { n: 0 };
+    assert.ok(await cache.fetch(key, writer(calls)));
+    assert.equal(calls.n, 1);
+    assert.equal(existsSync(lock), false);
+
+    const otherKey = cacheKey({ kind: 'youtube', videoId: 'ccccccccccc' });
+    const otherLock = path.join(music, CACHE_DIR_NAME, 'v2', 'locks', `${otherKey}.lock`);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const running = cache.fetch(otherKey, writer({ n: 0 }, gate));
+    for (let i = 0; i < 100 && !existsSync(otherLock); i++) await new Promise((r) => setTimeout(r, 5));
+    // Another process takes the lock over meanwhile; finishing must not remove its lock.
+    await writeFile(otherLock, JSON.stringify({ host: 'host-b', pid: 7, instance: 'b', token: 'theirs' }));
+    release();
+    await running;
+    assert.match(await readFile(otherLock, 'utf8'), /theirs/);
   });
 
   it('sweeps only its own leftovers', async () => {

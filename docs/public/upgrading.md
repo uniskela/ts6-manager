@@ -113,6 +113,8 @@ What changes, and what does not:
 - **A link to a site other than YouTube is cached per exact link.** The same track pasted with a different link is downloaded separately.
 - **ffprobe is required.** It ships with ffmpeg in the Docker images. A native install without `ffprobe` on its `PATH` cannot download new songs; the Runtime / media check shows whether it is available.
 - **A folder named `.ts6-media-cache` that TS6 Manager did not create** is left alone, and downloads fail with a message asking you to rename or move it.
+- **The cache holds the files of songs downloaded from now on.** Library songs, playlists and queues point into it, so do not delete or move `.ts6-media-cache`. Tracks that are played without being added to the library are kept there too, and the Library's **Scan** does not list them.
+- **The cache is not cleaned up automatically.** It grows with every new source played or downloaded; only leftovers of interrupted downloads are removed.
 - **Rolling back** to 1.11.1 is safe: older versions ignore the cache folder.
 
 **Back up before upgrading.** Stop the backend and copy both the database volume (`ts6webui.db` and any journal or WAL files) and the music folder.
@@ -125,9 +127,9 @@ Keep the backup until you have checked the upgrade.
 **Refreshing older downloads (optional, manual).** You do not need to do anything. If you want an older song re-downloaded and checked, the safe procedure is:
 
 1. Make the backup above.
-2. In **Media Library → Library**, add the song again from its original link. The new copy goes into the cache.
-3. Check that the new entry plays.
-4. Then remove the old entry if you no longer want it. Removing a song deletes its file. If the same file is used on several servers, removing it on one affects the others, so check first ([#478](https://github.com/uniskela/ts6-manager/issues/478)).
+2. In **Media Library → Library**, download the song again from its original link. The existing entry is updated in place to use the new, checked copy in the cache; do not remove it.
+3. Check that the entry plays.
+4. The old file stays in the music folder, now unused by that entry. Do not use **Remove** on the song to get rid of it: that deletes the song's current file. Before moving an old file away, make sure no other entry uses it; the same file can be shared by songs on several servers ([#478](https://github.com/uniskela/ts6-manager/issues/478)).
 5. Files in the music folder that no song uses are never touched by TS6 Manager. You can move them to an archive folder yourself.
 
 A tool that lists older downloads and refreshes them in bulk is planned for a later release.
