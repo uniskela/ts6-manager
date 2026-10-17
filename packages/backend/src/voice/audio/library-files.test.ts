@@ -182,16 +182,20 @@ describe('removeSongFileIfUnused', () => {
     assert.ok(existsSync(file));
   });
 
-  it('keeps a file queued while other queued files are being looked up', async () => {
+  it('keeps a file queued after the first look at the queue', async () => {
     const file = await put('raced.mp3');
     const others = Array.from({ length: 64 }, (_, i) => path.join(music, `other-${i}.mp3`));
     for (const other of others) await writeFile(other, 'x');
     const queue = [...others];
-    // Something queues the song while the removal is busy with the other files.
-    setImmediate(() => queue.push(file));
-    const queuedPaths = () => [...queue];
-    const outcome = await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths });
-    assert.equal(outcome, 'in-use');
+    let looks = 0;
+    const queuedPaths = () => {
+      const snapshot = [...queue];
+      // Something queues the song while the removal is still busy with the first look.
+      if (++looks === 1) setImmediate(() => queue.push(file));
+      return snapshot;
+    };
+    assert.equal(await removeSongFileIfUnused({ filePath: file, musicDir: music, otherSongPaths: none, queuedPaths }), 'in-use');
+    assert.equal(looks, 2, 'only the last look saw it');
     assert.ok(existsSync(file));
   });
 

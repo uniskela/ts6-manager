@@ -127,7 +127,6 @@ export function withLibraryFileLock<T>(task: () => Promise<T>): Promise<T> {
   return run;
 }
 
-
 /** Tasks holding or waiting for the library file lock. */
 export function libraryFileTasks(): number {
   return pending;
@@ -182,7 +181,7 @@ async function decideAndRemove(check: SongFileCheck): Promise<SongFileOutcome> {
   // no file and fails to play.
   const queued = check.queuedPaths?.() ?? [];
   if (queued.some((file) => identityOfNow(file) === target)) return 'in-use';
-  if (identityOfNow(given) !== target) return 'missing';
+  if (identityOfNow(given) !== target) throw new UnknownIdentity(given, 'replaced during the check');
   rmSync(given, { force: true });
   return 'removed';
 }
