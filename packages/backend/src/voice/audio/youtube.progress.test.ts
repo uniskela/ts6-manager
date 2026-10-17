@@ -18,10 +18,12 @@ const path = require('node:path');
 const args = process.argv.slice(2);
 if (args.includes('--dump-json')) {
   if (args.at(-2) !== '--') process.exit(9);
-  // The first player client returns no formats (as under a bot check); the next one does.
+  // The first player client returns only storyboard images (as under a bot check); the next one has audio.
   const first = args.includes('youtube:player_client=tv_embedded,web,default');
   fs.appendFileSync(path.join(path.dirname(process.argv[1]), 'info-calls'), first ? 'first\\n' : 'next\\n');
-  const formats = first ? [] : [{ format_id: '251', url: 'https://media.test/a', protocol: 'https' }];
+  const formats = first
+    ? [{ format_id: 'sb0', ext: 'mhtml', protocol: 'mhtml', format_note: 'storyboard' }]
+    : [{ format_id: '251', url: 'https://media.test/a', protocol: 'https' }];
   console.log(JSON.stringify({ id: 'abcdefghijk', extractor_key: 'Youtube', title: 'Fixture', duration: 1, formats }));
 } else {
   // The download runs from the saved info document, into the job's staging folder.
@@ -49,7 +51,7 @@ if (args.includes('--dump-json')) {
     const cached = await downloadYouTube('https://www.youtube.com/watch?v=abcdefghijk', dir, () => assert.fail('cached file should not download'));
     assert.equal(cached.filePath, result.filePath);
     const { readFile: read } = await import('node:fs/promises');
-    assert.match(await read(path.join(dir, 'info-calls'), 'utf8'), /^first\nnext\n/, 'a client without formats is skipped');
+    assert.match(await read(path.join(dir, 'info-calls'), 'utf8'), /^first\nnext\n/, 'a client with only storyboards is skipped');
   } finally {
     setMediaCacheForTests(dir, undefined);
     if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;
@@ -74,6 +76,31 @@ for (const id of ['one', 'two']) {
     process.env.YT_DLP_PATH = executable;
     setMediaCacheForTests(dir, new MediaCache(dir, { probe: async () => ({ hasAudio: true, durationSec: 1 }), log: () => {} }));
     await assert.rejects(downloadYouTube('https://media.test/page', dir), /not a single track/);
+  } finally {
+    setMediaCacheForTests(dir, undefined);
+    if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;
+    else process.env.YT_DLP_PATH = previousYtDlpPath;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('refuses metadata it cannot read in full', { skip: process.platform === 'win32' }, async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'ts6-meta-'));
+  const previousYtDlpPath = process.env.YT_DLP_PATH;
+  try {
+    const executable = path.join(dir, 'yt-dlp');
+    await writeFile(executable, `#!${process.execPath}
+const mode = require('node:fs').readFileSync(${JSON.stringify(path.join(dir, 'mode'))}, 'utf8');
+if (mode === 'broken') { console.log('{"id": "one", "extractor_key": "Generic"'); }
+else { process.stdout.write('{"id":"big","extractor_key":"Generic","pad":"' + 'x'.repeat(9 * 1024 * 1024) + '"}\\n'); }
+`);
+    await chmod(executable, 0o755);
+    process.env.YT_DLP_PATH = executable;
+    setMediaCacheForTests(dir, new MediaCache(dir, { probe: async () => ({ hasAudio: true, durationSec: 1 }), log: () => {} }));
+    await writeFile(path.join(dir, 'mode'), 'broken');
+    await assert.rejects(downloadYouTube('https://media.test/page', dir), /could not be read/);
+    await writeFile(path.join(dir, 'mode'), 'huge');
+    await assert.rejects(downloadYouTube('https://media.test/page', dir), /too large/);
   } finally {
     setMediaCacheForTests(dir, undefined);
     if (previousYtDlpPath === undefined) delete process.env.YT_DLP_PATH;

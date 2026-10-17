@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { constants as fsConstants, createReadStream } from 'node:fs';
-import { link, lstat, mkdir, open, readdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -210,7 +210,9 @@ export interface Manifest {
 export function parseManifest(text: string, key: string): Manifest | null {
   let data: Partial<Manifest>;
   try {
-    data = JSON.parse(text) as Partial<Manifest>;
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    data = parsed as Partial<Manifest>;
   } catch {
     return null;
   }
@@ -294,17 +296,22 @@ function processAlive(pid: number): boolean {
 /** A lock's owner. */
 interface LockOwner { host: string; pid: number; instance: string; token: string }
 
+/** One id per process: cache objects in one process never treat each other's locks as abandoned. */
+const PROCESS_INSTANCE = randomBytes(16).toString('hex');
+
 /** A lock untouched for this long belongs to a job that is gone; owners refresh it every minute. */
 const LOCK_STALE_MS = 3 * 60_000;
 const LOCK_HEARTBEAT_MS = 60_000;
-const SIDE_FILE_RE = /^[0-9a-f]{64}\.(?:json\.[0-9a-f]{16}\.tmp|lock\.[0-9a-f]{16}\.stale)$/;
+const SIDE_FILE_RE = /^[0-9a-f]{64}\.json\.[0-9a-f]{16}\.tmp$/;
 
 export class MediaCache {
   readonly root: string;
   private readonly v2: string;
   private readonly flights = new Map<string, Flight<unknown>>();
-  /** Entries whose checksum was confirmed in this process: key → file, size and mtime. */
+  /** Entries whose checksum was confirmed in this process: key → fingerprint of manifest and file. */
   private readonly verified = new Map<string, string>();
+  /** Checksum checks in progress, shared by concurrent lookups of the same entry. */
+  private readonly checking = new Map<string, Promise<boolean>>();
   private ready?: Promise<void>;
   private readonly probe: (file: string) => Promise<ProbeResult>;
   private readonly now: () => number;
@@ -319,7 +326,7 @@ export class MediaCache {
     this.probe = options.probe ?? probeAudio;
     this.now = options.now ?? Date.now;
     this.log = options.log ?? ((message) => console.warn(message));
-    this.instance = options.instanceId ?? randomBytes(16).toString('hex');
+    this.instance = options.instanceId ?? PROCESS_INSTANCE;
     this.host = options.hostname ?? hostname();
     this.isAlive = options.isAlive ?? processAlive;
   }
@@ -339,9 +346,12 @@ export class MediaCache {
         try {
           await writeFile(path.join(building, 'OWNER'), OWNER_MARKER, { flag: 'wx' });
           await rename(building, this.root);
-        } catch {
-          // Another process created it first; only the folder this call built is removed.
+        } catch (err) {
+          // Only the folder this call built is removed.
           await rm(building, { recursive: true, force: true });
+          // Another process created it first; anything else is a real failure.
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'EEXIST' && code !== 'ENOTEMPTY' && code !== 'EPERM') throw err;
         }
       }
       const owner = await lstat(path.join(this.root, 'OWNER')).catch(() => null);
@@ -349,8 +359,12 @@ export class MediaCache {
       if (content !== OWNER_MARKER) {
         throw new MediaCacheError(`The folder ${CACHE_DIR_NAME} in the music folder was not created by TS6 Manager; rename or move it so downloads can use the cache.`);
       }
-      for (const dir of [this.v2, path.join(this.v2, 'locks'), path.join(this.v2, 'staging')]) {
-        await mkdir(dir).catch((err: NodeJS.ErrnoException) => { if (err.code !== 'EEXIST') throw err; });
+      // Each folder is checked before anything is created inside it.
+      await this.assertLayout(['']);
+      await mkdir(this.v2).catch((err: NodeJS.ErrnoException) => { if (err.code !== 'EEXIST') throw err; });
+      await this.assertLayout(['', 'v2']);
+      for (const dir of ['locks', 'staging']) {
+        await mkdir(path.join(this.v2, dir)).catch((err: NodeJS.ErrnoException) => { if (err.code !== 'EEXIST') throw err; });
       }
       await this.assertLayout();
     })();
@@ -362,8 +376,7 @@ export class MediaCache {
    * The cache folder and its sub-folders must be real folders, not links or
    * junctions, so nothing the cache writes or cleans up can land outside it.
    */
-  private async assertLayout(): Promise<void> {
-    const parts = ['', 'v2', path.join('v2', 'locks'), path.join('v2', 'staging')];
+  private async assertLayout(parts = ['', 'v2', path.join('v2', 'locks'), path.join('v2', 'staging')]): Promise<void> {
     const realRoot = await realpath(this.root);
     for (const part of parts) {
       const dir = path.join(this.root, part);
@@ -377,6 +390,7 @@ export class MediaCache {
   async lookup(key: string): Promise<string | null> {
     if (!KEY_RE.test(key)) return null;
     await this.init();
+    await this.assertLayout(['', 'v2']);
     const manifestPath = path.join(this.v2, `${key}.json`);
     const manifestInfo = await lstat(manifestPath).catch(() => null);
     if (!manifestInfo?.isFile()) return null;
@@ -385,10 +399,15 @@ export class MediaCache {
     const file = path.join(this.v2, manifest.file);
     const info = await lstat(file).catch(() => null);
     if (!info?.isFile() || info.size !== manifest.size) return null;
-    // The content is checked once per process (and again if the file changes).
-    const fingerprint = `${manifest.file}:${info.size}:${info.mtimeMs}`;
+    // The content is checked once per process, and again whenever the manifest or the file changes.
+    const fingerprint = fileFingerprint(manifest.sha256, info);
     if (this.verified.get(key) !== fingerprint) {
-      if ((await sha256File(file)) !== manifest.sha256) return null;
+      let check = this.checking.get(fingerprint);
+      if (!check) {
+        check = sha256File(file).then((sum) => sum === manifest.sha256).finally(() => this.checking.delete(fingerprint));
+        this.checking.set(fingerprint, check);
+      }
+      if (!(await check)) return null;
       this.verified.set(key, fingerprint);
     }
     return file;
@@ -409,8 +428,9 @@ export class MediaCache {
     if (!KEY_RE.test(key)) throw new MediaCacheError('Invalid cache key.');
     signal?.throwIfAborted();
     const hit = await this.lookup(key);
-    if (hit) return hit;
+    // Cancelled while the cache was checked: no result, even for a hit.
     signal?.throwIfAborted();
+    if (hit) return hit;
     let flight = this.flights.get(key) as Flight<P> | undefined;
     // A flight whose last waiter left is finishing its clean-up; it is not joined.
     if (!flight || flight.controller.signal.aborted) {
@@ -430,13 +450,15 @@ export class MediaCache {
     }
     const current = flight;
     current.waiters++;
-    if (onProgress) current.listeners.add(onProgress);
+    // One registration per request, even when requests share a callback.
+    const listener: ProgressListener<P> | undefined = onProgress ? (progress) => onProgress(progress) : undefined;
+    if (listener) current.listeners.add(listener);
     let left = false;
     const leave = (cancelled: boolean) => {
       if (left) return;
       left = true;
       current.waiters--;
-      if (onProgress) current.listeners.delete(onProgress);
+      if (listener) current.listeners.delete(listener);
       if (cancelled && current.waiters === 0) current.controller.abort(new MediaCacheError('Download cancelled.'));
     };
     try {
@@ -524,8 +546,7 @@ export class MediaCache {
         await rm(temporary, { force: true }).catch(() => undefined);
       }
     }
-    const published = await lstat(target);
-    this.verified.set(key, `${name}:${published.size}:${published.mtimeMs}`);
+    this.verified.set(key, fileFingerprint(manifest.sha256, await lstat(target)));
     return target;
   }
 
@@ -538,62 +559,54 @@ export class MediaCache {
   }
 
   /**
-   * Cross-process lock (within one process the flight map is enough). The owner
-   * refreshes it every minute; a lock older than three minutes, or one left by
-   * an earlier run of a process on this host, is taken over. Integrity never
-   * depends on the lock: publication is atomic, so a lost lock can at worst
-   * cause one duplicate download.
+   * Cross-process lock, to avoid two processes downloading the same source at
+   * once (within one process the flight map does that). It is best effort, and
+   * correctness never depends on it: publication is atomic and published media
+   * is never removed, so a race on the lock can at worst cause one duplicate
+   * download.
+   *
+   * The owner keeps the lock file open and refreshes it every minute through
+   * that handle. A lock untouched for three minutes, or one left by an earlier
+   * run of a process on this host, is taken over. Removing a lock (release,
+   * takeover, sweep) only removes the file it examined: its inode must still be
+   * at that path.
    */
   private async lock(key: string, signal: AbortSignal): Promise<() => Promise<void>> {
     const file = path.join(this.v2, 'locks', `${key}.lock`);
     const me: LockOwner = { host: this.host, pid: process.pid, instance: this.instance, token: randomBytes(16).toString('hex') };
     for (;;) {
       signal.throwIfAborted();
+      let handle: Awaited<ReturnType<typeof open>> | undefined;
       try {
-        const handle = await open(file, 'wx');
-        try { await handle.writeFile(JSON.stringify(me)); } finally { await handle.close(); }
+        handle = await open(file, 'wx');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      }
+      if (handle) {
+        const owned = handle;
+        await owned.writeFile(JSON.stringify(me));
+        const mine = await owned.stat();
         const heartbeat = setInterval(() => {
           const at = new Date(this.now());
-          utimes(file, at, at).catch(() => undefined);
+          owned.utimes(at, at).catch(() => undefined);
         }, LOCK_HEARTBEAT_MS);
         heartbeat.unref();
         return async () => {
           clearInterval(heartbeat);
-          const owner = await readLockOwner(file);
-          // Only our own lock is removed; another process may have taken it over.
-          if (owner?.token === me.token) await rm(file, { force: true });
+          await owned.close().catch(() => undefined);
+          await removeIfSame(file, mine, false);
         };
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       }
       const held = await lstat(file).catch(() => null);
       if (!held) continue;
       const owner = await readLockOwner(file);
       const gone = owner?.host === this.host && owner.instance !== this.instance && (owner.pid === process.pid || !this.isAlive(owner.pid));
       if (gone || this.now() - held.mtimeMs > LOCK_STALE_MS) {
-        await this.takeOver(file, owner);
+        if (await removeIfSame(file, held)) this.log(`[MediaCache] Took over a stale download lock (${key.slice(0, 12)})`);
         continue;
       }
       await delay(500, signal);
     }
-  }
-
-  /** Move a stale lock aside (only one process can), then remove it if it was the one judged stale. */
-  private async takeOver(file: string, judged: LockOwner | null): Promise<void> {
-    const aside = `${file}.${randomBytes(8).toString('hex')}.stale`;
-    try {
-      await rename(file, aside);
-    } catch {
-      return; // Someone else took it over first.
-    }
-    const moved = await readLockOwner(aside);
-    if (judged && moved?.token !== judged.token) {
-      // It was replaced between the check and the move: put it back if the place is still free.
-      await link(aside, file).catch(() => undefined);
-    } else {
-      this.log(`[MediaCache] Took over a stale download lock (${path.basename(file).slice(0, 12)})`);
-    }
-    await rm(aside, { force: true }).catch(() => undefined);
   }
 
   /**
@@ -615,9 +628,9 @@ export class MediaCache {
     }
     const locks = path.join(this.v2, 'locks');
     for (const name of await readdir(locks).catch(() => [] as string[])) {
-      const stale = LOCK_RE.test(name) || SIDE_FILE_RE.test(name);
-      const info = stale ? await lstat(path.join(locks, name)).catch(() => null) : null;
-      if (info?.isFile() && now - info.mtimeMs > LOCK_STALE_MS) await rm(path.join(locks, name), { force: true }).catch(() => undefined);
+      if (!LOCK_RE.test(name)) continue;
+      const info = await lstat(path.join(locks, name)).catch(() => null);
+      if (info?.isFile() && now - info.mtimeMs > LOCK_STALE_MS) await removeIfSame(path.join(locks, name), info).catch(() => false);
     }
     for (const name of await readdir(this.v2).catch(() => [] as string[])) {
       if (!SIDE_FILE_RE.test(name)) continue;
@@ -625,6 +638,23 @@ export class MediaCache {
       if (info?.isFile() && now - info.mtimeMs > STAGING_STALE_MS) await rm(path.join(this.v2, name), { force: true }).catch(() => undefined);
     }
   }
+}
+
+/** File identity and content markers: a replaced or edited file gets a different fingerprint. */
+function fileFingerprint(sha256: string, info: { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number }): string {
+  return `${sha256}:${info.dev}:${info.ino}:${info.size}:${info.mtimeMs}:${info.ctimeMs}`;
+}
+
+/**
+ * Remove `file` only if it is still the file examined: same device and inode,
+ * and (unless `unchanged` is false, for the owner's own refreshed lock) not
+ * modified since. A file replaced at that path in between is kept.
+ */
+async function removeIfSame(file: string, examined: { dev: number; ino: number; mtimeMs: number }, unchanged = true): Promise<boolean> {
+  const now = await lstat(file).catch(() => null);
+  if (!now || now.dev !== examined.dev || now.ino !== examined.ino || (unchanged && now.mtimeMs !== examined.mtimeMs)) return false;
+  await rm(file, { force: true });
+  return true;
 }
 
 async function readLockOwner(file: string): Promise<LockOwner | null> {

@@ -313,7 +313,7 @@ async function runYtDlp(
   signal?: AbortSignal,
   /** What the run fetches, when no URL follows `--` (a download from a saved info document). */
   target?: string,
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
+): Promise<{ code: number | null; stdout: string; stderr: string; stdoutTruncated: boolean }> {
   signal?.throwIfAborted();
   // Own process group on POSIX; Windows has no process groups to kill, so it keeps the old behaviour.
   const group = process.platform !== "win32";
@@ -347,8 +347,11 @@ async function runYtDlp(
         if (progress) onProgress(progress);
       }
     };
+    let stdoutTruncated = false;
     proc.stdout.on("data", (chunk: Buffer) => {
-      stdout = (stdout + chunk.toString()).slice(-8 * 1024 * 1024);
+      const joined = stdout + chunk.toString();
+      if (joined.length > 8 * 1024 * 1024) stdoutTruncated = true;
+      stdout = joined.slice(-8 * 1024 * 1024);
       consumeProgress('stdout', chunk);
     });
     proc.stderr.on("data", (chunk: Buffer) => {
@@ -358,7 +361,7 @@ async function runYtDlp(
     proc.on("close", (code) => {
       finished();
       if (signal?.aborted) reject(signal.reason);
-      else resolve({ code, stdout: redact(stdout), stderr: redact(stderr) });
+      else resolve({ code, stdout: redact(stdout), stderr: redact(stderr), stdoutTruncated });
     });
     proc.on("error", (err) => {
       finished();
@@ -429,14 +432,18 @@ export function spotifySearchQueryFromOg(html: string): string {
 }
 
 /**
- * Download audio from a YouTube URL using yt-dlp.
- * Always canonicalizes Music URLs to www.youtube.com/watch?v=… first.
- */
-/**
  * Metadata for one track, trying the YouTube player clients in turn. The
  * output must hold exactly one item; a client that returns no downloadable
  * formats is skipped, so the download can use the next one.
  */
+/** True when the metadata offers something to download besides storyboard images. */
+function hasPlayableFormat(info: Record<string, unknown>): boolean {
+  if (typeof info.url === "string" && info.ext !== "mhtml") return true;
+  if (!Array.isArray(info.formats)) return false;
+  return info.formats.some((format: { ext?: unknown; protocol?: unknown; format_note?: unknown }) =>
+    format?.ext !== "mhtml" && format?.protocol !== "mhtml" && format?.format_note !== "storyboard");
+}
+
 async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
   let lastCode: number | null = null;
   let lastStderr = "";
@@ -458,21 +465,22 @@ async function ytDlpDumpJson(mediaUrl: string, signal?: AbortSignal): Promise<Re
     lastCode = infoResult.code;
     lastStderr = infoResult.stderr;
 
+    // Output that did not fit, or a record that does not parse, cannot prove there is only one item.
+    if (infoResult.stdoutTruncated) throw new MediaCacheError("The link's metadata is too large.");
     const records: Record<string, unknown>[] = [];
     for (const line of infoResult.stdout.split("\n")) {
       if (!line.trim().startsWith("{")) continue;
       try {
         records.push(JSON.parse(line) as Record<string, unknown>);
       } catch {
-        lastStderr = infoResult.stderr || infoResult.stdout;
+        throw new MediaCacheError("The link's metadata could not be read.");
       }
     }
     // More than one item means a playlist or a multi-item page, never one track.
     if (records.length > 1) throw new MediaCacheError("The link is not a single track.");
     const info = records[0];
     if (!info || typeof info.id !== "string") continue;
-    const hasFormats = (Array.isArray(info.formats) && info.formats.length > 0) || typeof info.url === "string";
-    if (hasFormats) return info;
+    if (hasPlayableFormat(info)) return info;
   }
 
   throw new Error(formatYtDlpFailure("yt-dlp info failed", lastCode, lastStderr));

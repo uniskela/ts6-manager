@@ -140,6 +140,8 @@ describe('download verification', () => {
       assert.equal(parseManifest(JSON.stringify(bad), key), null, JSON.stringify(bad));
     }
     assert.equal(parseManifest('{', key), null);
+    assert.equal(parseManifest('null', key), null);
+    assert.equal(parseManifest('[]', key), null);
   });
 });
 
@@ -379,11 +381,57 @@ describe('media cache', () => {
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const running = cache.fetch(otherKey, writer({ n: 0 }, gate));
     for (let i = 0; i < 100 && !existsSync(otherLock); i++) await new Promise((r) => setTimeout(r, 5));
-    // Another process takes the lock over meanwhile; finishing must not remove its lock.
+    // Another process takes the lock over meanwhile (a new file at that path); finishing must not remove it.
+    await rm(otherLock);
     await writeFile(otherLock, JSON.stringify({ host: 'host-b', pid: 7, instance: 'b', token: 'theirs' }));
     release();
     await running;
     assert.match(await readFile(otherLock, 'utf8'), /theirs/);
+  });
+
+  it('creates nothing outside the cache when a sub-folder is a link', async () => {
+    const root = path.join(music, CACHE_DIR_NAME);
+    await mkdir(root);
+    await writeFile(path.join(root, 'OWNER'), 'ts6-manager media cache\nformat=2\n');
+    const outside = path.join(music, 'elsewhere');
+    await mkdir(outside);
+    await symlink(outside, path.join(root, 'v2'));
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await assert.rejects(cache.init(), /link where a folder belongs/);
+    assert.deepEqual(await readdir(outside), [], 'no locks or staging folder were created through the link');
+  });
+
+  it('gives no result to a request cancelled while a cache hit was checked', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    await cache.fetch(key, writer({ n: 0 }));
+    const controller = new AbortController();
+    const pending = new MediaCache(music, { probe: audioProbe, log: () => {} }).fetch(key, writer({ n: 0 }), { signal: controller.signal });
+    controller.abort(new Error('left'));
+    await assert.rejects(pending, /left/);
+  });
+
+  it('keeps progress for a request when another request with the same callback leaves', async () => {
+    const cache = new MediaCache(music, { probe: audioProbe, log: () => {} });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = false;
+    const seen: number[] = [];
+    const shared = (p: number) => seen.push(p);
+    const download = async (staging: string, signal: AbortSignal, report: (p: number) => void) => {
+      started = true;
+      await gate;
+      report(90);
+      return writer({ n: 0 })(staging, signal);
+    };
+    const leaving = new AbortController();
+    const a = cache.fetch<number>(key, download, { onProgress: shared, signal: leaving.signal });
+    for (let i = 0; i < 100 && !started; i++) await new Promise((r) => setTimeout(r, 5));
+    const b = cache.fetch<number>(key, download, { onProgress: shared });
+    leaving.abort(new Error('a left'));
+    await assert.rejects(a, /a left/);
+    release();
+    await b;
+    assert.deepEqual(seen, [90], 'the remaining request still gets progress');
   });
 
   it('sweeps only its own leftovers', async () => {
