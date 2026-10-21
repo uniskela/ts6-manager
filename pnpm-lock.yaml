@@ -2035,8 +2035,8 @@ packages:
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
 
-  '@tanstack/query-core@5.104.1':
-    resolution: {integrity: sha512-TiRghcrGkUTE+M4JBxvpPSpBhxvIzQairw+cksrHYGr+2uwC77yW1SY9nYxnYRYOppvucf8rEg6b5byoz4rTpw==}
+  '@tanstack/query-core@5.104.3':
+    resolution: {integrity: sha512-DZY9TuJAOgU3UyHUhXb4CcTYEHNZszlwkPg4VViIwTxOKzLprPUU+rbaPZQd3srqkGOtpaDdKpW972UV/LKlcg==}
 
   '@tanstack/react-query@5.104.3':
     resolution: {integrity: sha512-5Ts1ImwJKqoJgPkLxl9WrPQy1JEoEmti3MaaODCfBamHUGFk57IFrc+AIksPq+BAm10EsroX56qm398Z42LG7w==}
@@ -5082,7 +5082,7 @@ snapshots:
 
   '@hookform/resolvers@3.10.0(react-hook-form@7.90.0(@types/react@18.3.28)(react@18.3.1))':
     dependencies:
-      react-hook-form: 7.89.0(@types/react@18.3.28)(react@18.3.1)
+      react-hook-form: 7.90.0(@types/react@18.3.28)(react@18.3.1)
 
   '@isaacs/cliui@9.0.0': {}
 
@@ -5129,7 +5129,7 @@ snapshots:
 
   '@playwright/test@1.64.1':
     dependencies:
-      playwright: 1.63.0
+      playwright: 1.64.1
 
   '@prisma/client@6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)':
     optionalDependencies:
@@ -5879,11 +5879,11 @@ snapshots:
 
   '@standard-schema/spec@1.1.0': {}
 
-  '@tanstack/query-core@5.104.1': {}
+  '@tanstack/query-core@5.104.3': {}
 
   '@tanstack/react-query@5.104.3(react@18.3.1)':
     dependencies:
-      '@tanstack/query-core': 5.104.1
+      '@tanstack/query-core': 5.104.3
       react: 18.3.1
 
   '@tanstack/react-table@8.21.3(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
@@ -6043,7 +6043,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-beta.27
       '@types/babel__core': 7.20.5
       react-refresh: 0.17.0
-      vite: 6.4.3(@types/node@22.20.5)(jiti@1.21.7)(terser@5.51.2)(tsx@4.23.15)
+      vite: 6.4.4(@types/node@22.20.5)(jiti@1.21.7)(terser@5.51.2)(tsx@4.23.15)
     transitivePeerDependencies:
       - supports-color
 
@@ -6123,7 +6123,7 @@ snapshots:
       caniuse-lite: 1.0.30001814
       fraction.js: 5.3.4
       picocolors: 1.1.1
-      postcss: 8.5.28
+      postcss: 8.5.30
       postcss-value-parser: 4.2.0
 
   available-typed-arrays@1.0.7:
@@ -7355,13 +7355,13 @@ snapshots:
 
   playwright@1.64.1:
     dependencies:
-      playwright-core: 1.63.0
+      playwright-core: 1.64.1
 
   possible-typed-array-names@1.1.0: {}
 
   postcss-import@15.1.0(postcss@8.5.30):
     dependencies:
-      postcss: 8.5.28
+      postcss: 8.5.30
       postcss-value-parser: 4.2.0
       read-cache: 1.0.0
       resolve: 1.22.12
@@ -7369,19 +7369,19 @@ snapshots:
   postcss-js@4.1.0(postcss@8.5.30):
     dependencies:
       camelcase-css: 2.0.1
-      postcss: 8.5.28
+      postcss: 8.5.30
 
   postcss-load-config@6.0.1(jiti@1.21.7)(postcss@8.5.30)(tsx@4.23.15):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       jiti: 1.21.7
-      postcss: 8.5.28
+      postcss: 8.5.30
       tsx: 4.23.15
 
   postcss-nested@6.2.0(postcss@8.5.30):
     dependencies:
-      postcss: 8.5.28
+      postcss: 8.5.30
       postcss-selector-parser: 6.1.4
 
   postcss-selector-parser@6.1.4:
@@ -7909,7 +7909,7 @@ snapshots:
       normalize-path: 3.0.0
       object-hash: 3.0.0
       picocolors: 1.1.1
-      postcss: 8.5.28
+      postcss: 8.5.30
       postcss-import: 15.1.0(postcss@8.5.30)
       postcss-js: 4.1.0(postcss@8.5.30)
       postcss-load-config: 6.0.1(jiti@1.21.7)(postcss@8.5.30)(tsx@4.23.15)
@@ -8105,7 +8105,7 @@ snapshots:
       debug: 4.4.3
       pretty-bytes: 6.1.1
       tinyglobby: 0.2.15
-      vite: 6.4.3(@types/node@22.20.5)(jiti@1.21.7)(terser@5.51.2)(tsx@4.23.15)
+      vite: 6.4.4(@types/node@22.20.5)(jiti@1.21.7)(terser@5.51.2)(tsx@4.23.15)
       workbox-build: 7.4.1(@types/babel__core@7.20.5)
       workbox-window: 7.4.1
     transitivePeerDependencies:
@@ -8116,7 +8116,7 @@ snapshots:
       esbuild: 0.25.12
       fdir: 6.5.0(picomatch@4.0.4)
       picomatch: 4.0.4
-      postcss: 8.5.28
+      postcss: 8.5.30
       rollup: 4.64.0
       tinyglobby: 0.2.15
     optionalDependencies:
