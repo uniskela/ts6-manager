@@ -132,7 +132,7 @@ If CI fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`, close the PR without merge
 - [ ] Confirm tag `vX.Y.Z`, GitHub Release, GHCR publish, native sidecar archives, and Docker Hub mirror (if secrets set) from the Release Please workflow
 
 <!-- adhd-hub:project-agent:start -->
-<!-- adhd-hub:guidance-version:6 -->
+<!-- adhd-hub:guidance-version:8 -->
 ## ADHD Hub continuity
 
 For substantial work in this project:
@@ -174,16 +174,26 @@ For substantial work in this project:
   resolved context where possible. Create/register only after the workspace is
   authorized as a Hub project.
 - **One thread = one independently finishable outcome** (not the whole repo).
-  Before updating a thread, compare new work to that thread's Goal; if it does
-  not advance the same outcome, use another thread or create one.
+  Size the Goal to what the agent can finish (e.g. open a review-ready PR).
+  A Goal that includes merge/deploy stays open/paused until that is done — do
+  not auto-split every PR into a second thread. Before updating a thread,
+  compare new work to that thread's Goal; if it does not advance the same
+  outcome, use another thread or create one.
 - Known thread → `upsert_progress(thread_id=...)` with compact structured state
   (goal / focus / ≤3 next / blocked if any / resume); omit ritual `content`.
   Do not silently attach to an unrelated open thread.
 - `check_overlap` only before potentially new work; reuse only when the Goal
   matches. Different goal → separate thread (`force_new_thread` if needed).
-- When leaving mid-task, checkpoint then `pause_thread(thread_id, next_step=...)`
-  with one concrete resume action. `mark_done` only the known completed thread
-  — never close unrelated overlap results.
+- End-of-task (checkpoint first if Hub state is stale): `completion.ready`
+  reflects stored state only (not PR/CI/merge), so it can block `mark_done`
+  but never approve it alone. `mark_done` on that thread only when `ready` is
+  `true` or absent **and** the Goal is done with nothing remaining (optional
+  final checkpoint first). `ready == false` (even if the Goal looks done) or
+  any remaining work (review, draft PR, CI, merge, deploy, verify, or a next
+  action — even if `ready == true`) → `upsert_progress` (record it in
+  `next_steps`) then `pause_thread(thread_id, next_step=...)` — do **not**
+  `mark_done`. If `mark_done` is denied/rejected for unfinished work:
+  do not retry; checkpoint + `pause_thread` and continue the normal response.
 - If Hub guidance looks stale (session_digest guidance status, or doctor),
   mention it once, keep using the current MCP contract, and recommend
   `adhd-hub setup . --refresh` and `adhd-hub sync-project .` (or

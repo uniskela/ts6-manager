@@ -1,6 +1,6 @@
 ---
 name: adhd-hub-session
-hub_skill_version: 6
+hub_skill_version: 9
 description: >-
   ADHD Progress Hub continuity protocol for substantial coding work. Use the
   operator's adhd-hub MCP when starting/resuming meaningful project work,
@@ -38,7 +38,7 @@ Use the forge mailbox only when forge issue-write access is available and the au
 1. Open or update a GitHub/Gitea issue titled `[ADHD] <short summary>` using an identity on the operator's **Inbox authors** allowlist (otherwise the Hub will ignore it). Title prefix is enough; do not treat label application as required.
 2. Optional labels when the forge token can set them: `adhd-hub`, `project:<slug>` when known, and `source:codex` / `source:chatgpt` / `source:cursor` / `source:claude` / `source:claude-code`. Cursor Cloud often cannot set labels (`Resource not accessible by integration`) — skip them and keep the `[ADHD]` title.
 3. Put a short Goal / Focus / Next / Resume cue in the issue body (or Now / Done / Next / Return cue). Forge issues must be safe for the repository's visibility: never include credentials, tokens, customer or personal data, private hostnames/IPs, absolute local workspace paths, transcripts, secrets/env contents, or other machine-specific/private infrastructure details. Prefer repository-relative paths and summaries.
-4. Recommended: append a one-line Made-with footer under a non-imported heading (e.g. `## Attribution`) so it does not land in Resume: `Made with [ADHD Progress Hub](https://github.com/uniskela/adhd-hub)`. Skip if already present; do not paste full `PROGRESS.md`. See [docs/forge-issue-inbox.md](https://github.com/uniskela/adhd-hub/blob/main/docs/forge-issue-inbox.md).
+4. Recommended: append a one-line Made-with footer under a non-imported heading (e.g. `## Attribution`) so it does not land in Resume: `Made with [ADHD Progress Hub](https://github.com/uniskela/adhd-hub)`. Skip if already present; do not paste full `PROGRESS.md`. See [docs/public/forge-issue-inbox.md](https://github.com/uniskela/adhd-hub/blob/main/docs/public/forge-issue-inbox.md).
 5. Tell the operator the Hub will import the issue on its next inbox poll (or when they click **Import issue inbox**). After a successful import, the Hub closes it with label `adhd-hub-synced`; it is not deleted.
 
 Prefer Hub MCP whenever it is available. Do not invent Hub thread ids, progress, or continuity state after a forge-only write. Never claim a Hub write succeeded when it did not.
@@ -63,6 +63,8 @@ honest — never invent “current” without a local check.
 
 A thread is not the whole project, the whole repository, one chat session, or every implementation subtask.
 
+Size the Goal to an outcome the responsible agent can finish (e.g. implement X and open a review-ready PR). A Goal that includes merge/deploy must stay open/paused while review, CI, or merge remains. Do not auto-create a second thread for every PR.
+
 Keep the same thread when implementing, testing, documenting, or reviewing the same outcome.
 
 Create or switch threads when the definition of done changes, work moves to another independent feature/release/deployment, another issue/PR is a separately finishable outcome, or the previous outcome is already complete.
@@ -72,7 +74,7 @@ Before updating an existing thread, compare the new work with that thread's **Go
 ## Session start / resume
 
 1. `resolve_project` with `workspace_path` and `create_if_missing=false` (lookup only). Do not implicitly create unfamiliar projects. Use `create_if_missing=true` or `register_workspace` only after the workspace is authorized to be registered.
-2. `session_digest` with the same `workspace_path` / short `query` for the task. Prefer compact fields: id, title, goal, status, focus, ≤3 next, blocked, resume. Read `guidance.status` / `guidance.hint` when present.
+2. `session_digest` with the same `workspace_path` / short `query` for the task. Prefer compact fields: id, title, goal, status, focus, ≤3 next, blocked, resume, `completion`. Read `guidance.status` / `guidance.hint` when present.
 3. If resuming a known thread, reuse its `thread_id`. Otherwise `check_overlap` and compare candidates by **Goal**, not merely project name.
 4. Reuse a candidate only if current work advances the same finishable outcome. Otherwise create a separate thread.
 5. Use `list_reminders(due_only=true)` only when reminders are relevant.
@@ -85,7 +87,7 @@ At meaningful checkpoints, call `upsert_progress` with the **explicit** `thread_
 - `focus` — exactly one startable action
 - `next_steps` — max 3
 - `blocked_reason` — only when actually blocked (omit otherwise)
-- `resume_step` — one concrete re-entry instruction
+- `resume_step` — one concrete re-entry instruction: name what to open, run or check first ("Open service.py, finish the failing sync test, then run pytest", not "Continue later")
 - omit `content` on routine checkpoints; never write “Thread upserted from …” as note text
 - optional short `content` only for a rare human-meaningful event (decision, blocker, ship)
 
@@ -93,13 +95,21 @@ Do not checkpoint trivial events. Prefer updating structured active state over r
 
 Then `pause_thread(thread_id, next_step=...)` when leaving mid-task so resume is concrete.
 
+Checkpoint, pause and digest responses carry an advisory `return_cue` (`quality`: `missing` / `vague` / `concrete`, plus a short `hint`). It never blocks a save, pause or `mark_done`. When it is not `concrete` and you know the real first action from this session, send one improved `resume_step`; `return_cue.suggestion` only echoes the thread's own Focus/Next. Do not invent files or commands to satisfy it, and do not loop on it.
+
 ## Context switch
 
 Checkpoint the current thread, then switch to or create the other thread. Do not change the old thread's Goal to mean different work.
 
-## Finished
+## Finished / leave unfinished
 
-`mark_done(thread_id=...)` only when that thread's Goal is satisfied. Never close unrelated overlap hits. Soft-close with `dismiss_thread`. Final notes without opening work: `upsert_progress(create_thread_if_missing=false)`.
+Checkpoint first if Hub state looks stale. `completion.ready` only reflects stored state (status, pause, `next_steps`, blocker, Goal present) — it cannot see PR/CI/merge/deploy state — so it can block `mark_done` but never approve it alone:
+
+- Call `mark_done(thread_id=...)` for that thread only when **both** hold: `completion.ready` is `true` or absent, **and** the Goal is clearly satisfied with no meaningful work remaining. Optional final checkpoint first.
+- Otherwise — `completion.ready == false` (even if the Goal looks satisfied), or any meaningful work remains (review, draft PR, CI, merge, deploy, verify, next action) even when `completion.ready == true` — `upsert_progress` (record the remaining actions in `next_steps`) then `pause_thread(thread_id, next_step=...)`. Do **not** call `mark_done`.
+- If `mark_done` is denied/rejected because work remains: **do not retry** unchanged. Inspect the reason, checkpoint, `pause_thread`, and continue the normal response (continuity failure is not a fatal agent failure).
+
+Never close unrelated overlap hits. Soft-close with `dismiss_thread`. Final notes without opening work: `upsert_progress(create_thread_if_missing=false)`.
 
 ## Remind later
 
