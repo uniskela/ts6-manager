@@ -31,11 +31,15 @@ Discord → TeamSpeak: exactly one of those six bots is the **active receiver** 
 
 Why not a TeamSpeak identity per Discord user in 1.12.0: six Discord applications is already the operator cost of 5+1; a matching TS pool is a later owner decision, not a silent extra.
 
-Why not a seventh receive-only bot: the operator cost stays six. Receiver death therefore requires failover. Preferred election: overflow, then slot 0…4. A `receiveGeneration` allows only one bot to hold human subscriptions. Failure tears those subscriptions down before the successor subscribes. No healthy bot → Discord → TeamSpeak fails closed.
+Why not a seventh receive-only bot: the operator cost stays six. Receiver death therefore requires failover.
+
+`[TS] Others` joins Discord only while overflow is non-empty. With 0 TeamSpeak users, slot 0 is the receiver and keeps its application name. With 1–5, receive is a connected slot bot (slot 0 first). With 6+, overflow is preferred.
+
+A `receiveGeneration` is checked on subscribe **and** immediately before each Discord frame enters the TeamSpeak mixer. Failure tears subscriptions down, increments the generation, then elects. Stale callbacks drop. No healthy bot → Discord → TeamSpeak fails closed.
 
 ### 4. Map TeamSpeak people by uniqueId
 
-Slots are keyed by the TeamSpeak unique identity, not the display name. A rename keeps the slot. A reconnect within the hold window keeps the slot. Display names only affect the Discord nickname.
+Slots are keyed by the TeamSpeak unique identity, not the display name. A rename keeps the slot. A reconnect within the hold window keeps the slot. Display names become `[TS] Username`, truncated to Discord’s 32-character nick limit, keeping the `[TS] ` prefix. Missing Change Nickname is a warning, not a bridge stop.
 
 ### 5. D1 must prove both directions before D3/D4
 
@@ -87,7 +91,7 @@ Do not merge or publish any of these without explicit owner approval.
 
 Administrator-only page. Viewers cannot change settings. Per-server access applies. In-page notice that audio crosses Discord and TeamSpeak. Token inputs are write-only and blank on read. No secrets in browser responses.
 
-Onboarding is six official bots → invite/permissions → channel authorisation → compose profile + secret → token validation without joining voice → disclosure → Start. D6 records which consoles were actually tested; any claimed console not in the run is unverified.
+Onboarding is six official bots → invite/permissions (including Change Nickname) → channel authorisation → compose profile + secret → token validation without joining voice → disclosure → Start. D6 records which consoles were actually tested; any claimed console not in the run is unverified.
 
 ## Out of scope
 

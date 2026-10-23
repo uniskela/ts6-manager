@@ -12,7 +12,7 @@ Companion spec: [superpowers/specs/2026-10-23-discord-voice-bridge-design.md](su
 
 - Two-way audio between one administrator-approved Discord voice channel and one administrator-approved TeamSpeak channel.
 - TeamSpeak → Discord: up to five official bots named `[TS] Username`, plus one `[TS] Others` overflow bot.
-- Discord → TeamSpeak: exactly one of the six bots is the active receiver and forwards human Discord audio to one shared TeamSpeak client. Overflow is preferred; failover elects another of the six.
+- Discord → TeamSpeak: exactly one of the six bots is the active receiver. Overflow is preferred only while `[TS] Others` is in the channel; otherwise a slot bot (slot 0 when the TeamSpeak channel is empty).
 - Native TS6 Manager admin page for enablement, mapping, pool size (default five), overflow, status, participants, gain, mute, start/stop/restart, and redacted diagnostics.
 - Isolated worker image (Node 24) in official compose behind profile `discord-bridge`. Default `docker compose up` does not start it. `DISCORD_BRIDGE_URL` is unset unless that profile is on.
 - Official Discord applications only. Six bot tokens per mapped session. The receiver is elected from those six. No self-bots.
@@ -85,7 +85,17 @@ The receiver is one of the six bots. If that bot’s Discord connection dies, Di
 
 Keep six applications. Do not add a seventh.
 
-**Preferred order** (first healthy wins): overflow (`[TS] Others`), then slot 0 … slot 4. An admin may pin a preferred bot; failover still walks this list and skips the dead one.
+**Who is in the Discord channel**
+
+Six identities are always configured. Not all six sit in the voice channel.
+
+- A slot bot joins only while it has an assigned TeamSpeak uniqueId (or it is the idle receiver — below).
+- The overflow bot joins only while it carries at least one overflow uniqueId. It uses the nick `[TS] Others` only then. When overflow empties, it leaves the channel after receive has moved off it. Do not keep an empty `[TS] Others` in the channel.
+- **0 TeamSpeak users:** no `[TS] Username` and no `[TS] Others`. Slot 0 stays in the channel as the receiver and keeps its Discord application name (no `[TS]` nick).
+- **1–5 TeamSpeak users:** those slot bots are in the channel as `[TS] Username`. Receive is elected from those in-channel slot bots (slot 0 first). Overflow is not in the channel.
+- **6+ TeamSpeak users:** overflow joins as `[TS] Others` and becomes the preferred receiver. Slot bots stay. If receive was on a slot, bump generation, tear down, then move receive to overflow.
+
+**Preferred order** (first healthy *eligible* wins): overflow if it is in the channel, then slot 0 … slot 4. An admin may pin a preferred eligible bot; failover still walks this list. Do not elect overflow when it is not allowed in the channel.
 
 **Exactly one active receiver**
 
@@ -93,18 +103,28 @@ Keep six applications. Do not add a seventh.
 - Only that generation may subscribe to human Discord users.
 - Every other bot is send-only: no human subscriptions, `selfDeaf` allowed.
 
+**Generation fencing**
+
+Check `receiveGeneration` in both places:
+
+1. When opening a human subscription.
+2. Immediately before each decoded Discord frame is mixed into the shared TeamSpeak client.
+
+A stale generation drops the frame. It must not reach TeamSpeak. Subscribe-time checks alone are not enough: a callback can fire after teardown.
+
 **On receiver failure**
 
 1. Increment `receiveGeneration`. The old bot must drop every human subscription immediately (teardown before election).
-2. Elect the next healthy bot in the preferred order.
+2. Elect the next healthy eligible bot in the preferred order.
 3. The new receiver connects (or reuses its existing voice connection), stays undeafened for receive, and subscribes to humans only.
-4. The old bot, if it returns, is send-only until it wins a later election. It must not resubscribe.
+4. The old bot, if it returns, is send-only until it wins a later election. It must not resubscribe. Its in-flight decode callbacks fail the mixer fence and are dropped.
 5. If no bot is healthy, Discord → TeamSpeak fails closed. TeamSpeak → Discord continues on whatever slot/overflow connections remain.
 
 **Duplicate-receiver prevention**
 
 - Two bots must never both have human subscriptions.
 - A subscribe attempt from a bot whose generation is stale is rejected and torn down.
+- A mixer-fence miss is logged without secrets and counted. D1 kills the receiver **while a Discord user is speaking** and checks that TeamSpeak hears one copy, not two.
 - Health/status shows `receiver: <bot slot>` and the generation. D1 and D6 must catch two receivers.
 
 A non-receiver slot failure does not move receive. A receiver failure always elects; it is not “the receive bot stayed up”.
@@ -151,7 +171,7 @@ D3 and D4 do not start until all of the following are recorded here as evidence 
 4. No bridge-induced duplicate audio and no feedback in either direction.
 5. Token-redacted logs, loopback health, and a CPU / RSS / speak-to-hear measurement.
 6. Connection order, DAVE transitions, and decrypt recovery as in the receive table below.
-7. Killing the active receiver elects exactly one successor; the old bot’s human subscriptions are gone before the new ones start.
+7. Killing the active receiver **while a Discord user is speaking** elects exactly one successor; mixer-fence drops stale frames; TeamSpeak hears one copy.
 
 D1 lab compose, if any, binds to `127.0.0.1` only and is not part of default `up`.
 
@@ -162,7 +182,7 @@ D1 lab compose, if any, binds to `127.0.0.1` only and is not part of default `up
 | TS6 S2C speaker parse | | |
 | Two simultaneous TS speakers → two Discord bots, independently, no crosstalk | | |
 | Discord → TS via the elected receiver | | |
-| Receiver failover: one successor, no overlapping subscriptions | | |
+| Receiver failover during active Discord speech: one successor; mixer fence drops stale frames; no duplicate TS audio | | |
 | No duplicate audio / no feedback | | |
 | CPU / RSS / one-way speak-to-hear | | |
 
@@ -174,6 +194,7 @@ D1 must also record these Discord receive cases (still unproven until filled):
 | Join order B: human already in channel, then receive bot joins (#11653 welcome at transition 0) | | |
 | DAVE transition: welcome, later transition, reconnect | | |
 | Recovery after a decrypt error (session recovers, or fail closed and escalate) | | |
+| Mixer fence: stale `receiveGeneration` frames never enter the TS mix | | |
 | Node 24 image: native Opus loads | | |
 | Node 24 image: native DAVE (`@snazzah/davey`) loads | | |
 | `opusscript` fallback smoke if native Opus fails | | |
@@ -183,7 +204,8 @@ If any row fails, stop. Owner decides. Do not open D3/D4. Do not ship mixed-only
 ## Bridge-D3 — identity and slots
 
 - Persistent `uniqueId → slot` mapping. Rename, disconnect, and reconnect do not allocate a new slot while the mapping is held.
-- Discord nick is `[TS] ` plus the current TeamSpeak display name, truncated to Discord’s limit.
+- Discord nick is `[TS] ` plus the current TeamSpeak display name. Discord nicknames are **32 characters**. Keep the five-character `[TS] ` prefix and truncate the display-name part so the whole nick is ≤32 (Discord’s length, UTF-16 code units). Do not omit the prefix to fit a longer name.
+- Each bot needs **Change Nickname**. If a nick update fails (missing permission, 50013, rate limit after `Retry-After`): keep the previous nick or the application name, log a non-secret warning, and do not stop the bridge or the slot. Retry when permission appears or on the next assign/rename. Do not busy-loop.
 - Duplicate TeamSpeak names are allowed; uniqueId still decides the slot.
 - Nickname updates honour Discord rate limits: wait `Retry-After`, drop intermediate names, never busy-loop.
 - A **non-receiver** slot failure does not tear down the other slots, overflow, the active receiver, or the shared TeamSpeak client. That slot reconnects; its uniqueId is held or moved only by the reassignment rules, never duplicated.
@@ -193,7 +215,7 @@ If any row fails, stop. Owner decides. Do not open D3/D4. Do not ship mixed-only
 
 ## Bridge-D4 — overflow
 
-- Eight TeamSpeak users produce five slot bots and one overflow bot carrying the other three.
+- Eight TeamSpeak users produce five slot bots and one overflow bot carrying the other three. `[TS] Others` is in the Discord channel only while that mix is non-empty.
 - Simultaneous overflow speakers are mixed. Peak-limit or attenuate; do not clip from a naive sum.
 - Individual ↔ overflow transitions occur at a 20 ms frame boundary: remove the uniqueId from the old destination, then add it to the new one. The bridge must not play that uniqueId on both destinations and must not insert a silence gap of its own between those two frames.
 - This does **not** promise zero packet loss. Packets already dropped by Discord, TeamSpeak, or the network stay dropped. The duty is no **bridge-induced** duplication or gap.
@@ -207,8 +229,8 @@ Administrator-only. Viewer cannot change settings. Per-server access applies. Se
 Onboarding, in this order (the page and public docs must match):
 
 1. **Six official Discord applications.** Create six bots. Intents: Guilds, Guild Voice States. Privileged message-content is not required.
-2. **Invite and permissions.** Invite all six to the guild. Each needs View Channel, Connect, Speak, and Use Voice Activity on the approved voice channel. No administrator permission.
-3. **Channel authorisation.** Admin selects one Discord guild + voice channel and one TeamSpeak server + channel. The worker verifies membership and those permissions before Start. Fail closed if any bot cannot see or join the channel.
+2. **Invite and permissions.** Invite all six to the guild. Each needs View Channel, Connect, Speak, Use Voice Activity, and **Change Nickname** on the approved guild/channel. No administrator permission. Missing Change Nickname does not block Start; nicks then stay at the application name (see D3).
+3. **Channel authorisation.** Admin selects one Discord guild + voice channel and one TeamSpeak server + channel. The worker verifies membership and Connect/Speak/View before Start. Fail closed if any bot cannot see or join the channel.
 4. **Docker profile.** Operator enables compose profile `discord-bridge`, sets `DISCORD_BRIDGE_URL` and `DISCORD_BRIDGE_SECRET`, and starts the worker. Default `up` does not do this. The UI must say so when the worker is unreachable.
 5. **Credential validation.** Admin pastes six tokens (write-only). The worker logs in each bot, checks guild membership and channel permission, and reports pass/fail per slot **without** joining voice until Start. A failed token blocks enable.
 6. **Disclosure.** The page states that audio crosses Discord and TeamSpeak. Operators should repeat that in the mapped channels.
@@ -236,7 +258,8 @@ Required before the curated v1.12.0 release PR:
 - **Discord desktop**
 - Console Discord: test **Xbox** and **PlayStation** if both are claimed. Fill the table. A claimed console that was not in the run is **unverified** and must not be advertised as tested.
 - DAVE connect, transition, reconnect, and the #11653 join-order case
-- Receiver failover (kill the active receiver; one successor; no duplicate receiver)
+- Receiver failover during active speech (one successor; mixer fence; no duplicate TS audio)
+- Idle overflow: `[TS] Others` absent with 0 and with 1–5 TeamSpeak users; slot 0 receives when the TS channel is empty
 - Both audio directions
 - Five slots plus overflow
 - Audio isolation (no crosstalk, no duplicate, no feedback)
