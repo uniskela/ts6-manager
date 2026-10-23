@@ -14,7 +14,7 @@ Do not downgrade to a single-bot or mixed-only product. If a gate fails, stop an
 
 ### 1. Isolated Node 24 worker, not the sidecar and not the backend process
 
-Pinned stack: `discord.js@14.27.0`, `@discordjs/voice@0.19.0` (`engines.node >= 22.12.0`, DAVE via `@snazzah/davey@0.1.12`), worker image **Node 24**. The manager stays on Node 20 / pnpm 9. Live DAVE receive is a D1 proof, not claimed here. The Go sidecar is send-only WebRTC for music and video; TeamSpeak 6.0.0-beta5 rejects `sendrecv`.
+Candidate stack: `discord.js@14.27.0`, `@discordjs/voice@0.19.2` (`engines.node >= 22.12.0`, DAVE via `@snazzah/davey@0.1.12`), `@discordjs/opus@0.10.0`, worker image **Node 24**. 0.19.2 has the receive-path padding fix; [discordjs/discord.js#11653](https://github.com/discordjs/discord.js/issues/11653) is still open on 0.19.2 (welcome at transition 0). The manager stays on Node 20 / pnpm 9. Untested DAVE receive is not proven. The Go sidecar is send-only WebRTC for music and video; TeamSpeak 6.0.0-beta5 rejects `sendrecv`.
 
 Why not in-process: Node 20 cannot run that DAVE stack, and a crash would take music with it.
 Why not Go: would rewrite the proven TS3 UDP client and DAVE.
@@ -27,11 +27,11 @@ This is a new optional service. Do not import clusterzx/ts6-manager#76 Discord/S
 ### 3. 5+1 Discord identities, one shared TeamSpeak client
 
 TeamSpeak → Discord: five official bots named `[TS] Username`, plus `[TS] Others` for everyone else.
-Discord → TeamSpeak: one designated Discord receive bot forwards human Discord audio to one shared TeamSpeak client.
+Discord → TeamSpeak: exactly one of those six bots is the **active receiver** and forwards human Discord audio to one shared TeamSpeak client.
 
 Why not a TeamSpeak identity per Discord user in 1.12.0: six Discord applications is already the operator cost of 5+1; a matching TS pool is a later owner decision, not a silent extra.
 
-The receive bot is one of those six applications. It subscribes only to human Discord users. It never subscribes to slot bots, overflow, or its own playback.
+Why not a seventh receive-only bot: the operator cost stays six. Receiver death therefore requires failover. Preferred election: overflow, then slot 0…4. A `receiveGeneration` allows only one bot to hold human subscriptions. Failure tears those subscriptions down before the successor subscribes. No healthy bot → Discord → TeamSpeak fails closed.
 
 ### 4. Map TeamSpeak people by uniqueId
 
@@ -39,18 +39,18 @@ Slots are keyed by the TeamSpeak unique identity, not the display name. A rename
 
 ### 5. D1 must prove both directions before D3/D4
 
-D1 is not a mixed-only lab. It must show **two TeamSpeak users speaking at the same time** independently routed to two official Discord bots with no crosstalk, and Discord → TeamSpeak through the designated receive bot with no bridge-induced duplicate audio or feedback. D3 and D4 do not open until that evidence is written into the contract.
+D1 is not a mixed-only lab. It must show **two TeamSpeak users speaking at the same time** independently routed to two official Discord bots with no crosstalk, and Discord → TeamSpeak through the elected receiver. It must also run both join orders, DAVE transitions, decrypt recovery, receiver failover, and the Node 24 native-addon smoke. D3 and D4 do not open until that evidence is written into the contract. Untested reception is not proven.
 
 ### 6. Off by default, fail closed
 
-Default compose does not start the worker (profile `discord-bridge`). `DISCORD_BRIDGE_URL` stays unset. No mapping, missing token, or unverifiable channel membership means the worker does not join either platform. Compose starting limits: 1 CPU / 512 MiB.
+Default compose does not start the worker (profile `discord-bridge`). `DISCORD_BRIDGE_URL` stays unset. No mapping, missing token, or unverifiable channel membership means the worker does not join either platform. Compose starting limits: 1 CPU / 512 MiB. The Dockerfile is a pinned Node 24 digest; CI must load native Opus and DAVE, and must test `opusscript` if native Opus fails. DAVE has no fallback.
 
 ## Approach
 
 Backend (Node 20) stores encrypted tokens and mappings, enforces admin/per-server access, and talks to the worker over an internal URL plus bearer secret (`DISCORD_BRIDGE_URL`, `DISCORD_BRIDGE_SECRET`). The worker joins Discord (DAVE) and TeamSpeak (copied tslib TS3 UDP). PCM exists only in the worker process. The worker does not read bot tokens from compose environment in production.
 
 ```text
-Discord humans ──DAVE──▶ receive bot ──PCM──▶ shared TS client ──▶ TeamSpeak channel
+Discord humans ──DAVE──▶ elected receiver ──PCM──▶ shared TS client ──▶ TeamSpeak channel
 TeamSpeak users ──TS3──▶ worker slots ──DAVE──▶ five [TS] Username bots
                          worker overflow ──DAVE──▶ [TS] Others
 ```
@@ -79,13 +79,15 @@ Incoming TeamSpeak S2C voice is documented as `VId u16 + speaker CId u16 + codec
 | Bridge-D3 | Five slots, persistent mapping, rename, rate limits, reconnect, reassignment | D1 proof + D2 |
 | Bridge-D4 | Overflow mix and individual ↔ overflow transitions | D3 |
 | Bridge-D5 | Native admin UI | D2 API; merge after D4 |
-| Bridge-D6 | TS6 + Discord desktop + one console; reconnect, isolation, latency, security, #442 regression | D4 + D5 |
+| Bridge-D6 | TS6 + Discord desktop + each claimed console (untested = unverified); reconnect, isolation, latency, security, #442 regression | D4 + D5 |
 
 Do not merge or publish any of these without explicit owner approval.
 
 ## UI
 
 Administrator-only page. Viewers cannot change settings. Per-server access applies. In-page notice that audio crosses Discord and TeamSpeak. Token inputs are write-only and blank on read. No secrets in browser responses.
+
+Onboarding is six official bots → invite/permissions → channel authorisation → compose profile + secret → token validation without joining voice → disclosure → Start. D6 records which consoles were actually tested; any claimed console not in the run is unverified.
 
 ## Out of scope
 
