@@ -63,4 +63,4 @@ These **do not apply immediately**. They queue a pending action; you Approve/Rej
 - Issues are linked via label `project:<slug>` and links inside `PROGRESS.md` / issue body.
 - Give a project a durable purpose in its description; put the temporary, verb-led work in a thread title instead.
 - Keep one concrete `Now` action and one `Return cue` at the top of active project progress. Record only decisions that change later work, then link to the fuller context.
-- Use the [ADHD-friendly writing guide](https://github.com/uniskela/adhd-hub/blob/main/docs/writing.md) for concise progress, plan, decision, and handoff templates.
+- Use the [ADHD-friendly writing guide](https://github.com/uniskela/adhd-hub/blob/main/docs/public/writing.md) for concise progress, plan, decision, and handoff templates.

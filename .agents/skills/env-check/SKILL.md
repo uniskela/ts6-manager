@@ -75,4 +75,4 @@ When `RUNTIME_ENV: LOCAL_WORKSPACE` (including local Docker / localhost):
 2. **Runtime env** → choose tests, credentials, tooling constraints, and whether local skill CLIs are expected
 3. Prefer Hub MCP whenever it is available, on either runtime
 
-See also: `adhd-hub-session` (full Hub protocol), [docs/forge-issue-inbox.md](https://github.com/uniskela/adhd-hub/blob/main/docs/forge-issue-inbox.md).
+See also: `adhd-hub-session` (full Hub protocol), [docs/public/forge-issue-inbox.md](https://github.com/uniskela/adhd-hub/blob/main/docs/public/forge-issue-inbox.md).
