@@ -87,10 +87,11 @@ describe("participant churn leaves no per-identity state behind", () => {
     let peak = 0;
     for (let n = 1; n <= 2000; n++) {
       ts.addUser(n);
+      await settle(); // the directory event is applied asynchronously, so the person has a slot before they speak
       ts.emit("voice", voice(100 + n));
       peak = Math.max(peak, rt.status().t2d.routedIdentities);
       ts.removeUser(n);
-      if (n % 100 === 0) await settle();
+      await settle();
     }
     await settle();
     assert.ok(peak >= 1, "speakers were routed, so the bound below is meaningful");
