@@ -12,10 +12,13 @@
     "pretypecheck": "node scripts/sync-tslib.mjs",
     "typecheck": "tsc --noEmit",
     "pretest": "node scripts/sync-tslib.mjs",
-    "test": "tsx --test $(find src -name '*.test.ts' | sort)",
+    "test": "tsx --test --test-force-exit --test-timeout=120000 $(find src -name '*.test.ts' | sort)",
     "smoke:deps": "tsx src/lab/smoke-deps.ts",
-    "lab:ts-live": "node scripts/sync-tslib.mjs && tsx src/lab/ts-live.ts",
-    "lab:live": "node scripts/sync-tslib.mjs && tsx src/lab/live.ts"
+    "lab:ts-live": "tsx src/lab/ts-live.ts",
+    "lab:live": "tsx src/lab/live.ts",
+    "prelab:ts-live": "node scripts/sync-tslib.mjs",
+    "prelab:live": "node scripts/sync-tslib.mjs",
+    "churn": "node --expose-gc --import tsx src/lab/churn.ts"
   },
   "dependencies": {
     "@discordjs/opus": "0.10.0",
