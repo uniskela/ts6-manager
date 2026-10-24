@@ -77,3 +77,26 @@ describe("excluded TeamSpeak clients (a MusicBot) take no slot and never push a 
     await rt.stop();
   });
 });
+
+describe("participant churn leaves no per-identity state behind", () => {
+  const voice = (clid: number) => Buffer.concat([Buffer.from([0, 1, clid >> 8, clid & 0xff, 5]), Buffer.from([0xf8, 0xff, 0xfe])]);
+
+  it("2 000 people joining, speaking and leaving keep routing evidence and decoders bounded", async () => {
+    const { ts, rt, settle } = build(new Set());
+    await rt.start();
+    let peak = 0;
+    for (let n = 1; n <= 2000; n++) {
+      ts.addUser(n);
+      ts.emit("voice", voice(100 + n));
+      peak = Math.max(peak, rt.status().t2d.routedIdentities);
+      ts.removeUser(n);
+      if (n % 100 === 0) await settle();
+    }
+    await settle();
+    assert.ok(peak >= 1, "speakers were routed, so the bound below is meaningful");
+    assert.ok(peak <= 6, `routing evidence for at most the people present at once (peak ${peak})`);
+    assert.equal(rt.status().t2d.routedIdentities, 0, "everyone left, nothing remains");
+    assert.equal(rt.status().t2d.decoders, 0);
+    await rt.stop();
+  });
+});

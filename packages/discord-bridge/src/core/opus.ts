@@ -25,12 +25,17 @@ interface ScriptEncoder {
 
 function createNative(channels: number): OpusCodec {
   const { OpusEncoder } = require("@discordjs/opus") as { OpusEncoder: new (rate: number, channels: number) => NativeEncoder };
-  const enc = new OpusEncoder(SAMPLE_RATE, channels);
+  let enc: NativeEncoder | null = new OpusEncoder(SAMPLE_RATE, channels);
+  const live = () => {
+    if (!enc) throw new Error("opus codec is disposed");
+    return enc;
+  };
   return {
     name: "native",
-    encode: (pcm) => Buffer.from(enc.encode(pcm)),
-    decode: (packet) => Buffer.from(enc.decode(packet)),
-    dispose: () => undefined,
+    encode: (pcm) => Buffer.from(live().encode(pcm)),
+    decode: (packet) => Buffer.from(live().decode(packet)),
+    // The addon has no explicit free: dropping the only reference lets its finalizer release the state.
+    dispose: () => void (enc = null),
   };
 }
 
@@ -39,12 +44,19 @@ function createScript(channels: number): OpusCodec {
     new (rate: number, channels: number, app: number): ScriptEncoder;
     Application: { AUDIO: number };
   };
-  const enc = new OpusScript(SAMPLE_RATE, channels, OpusScript.Application.AUDIO);
+  let enc: ScriptEncoder | null = new OpusScript(SAMPLE_RATE, channels, OpusScript.Application.AUDIO);
+  const live = () => {
+    if (!enc) throw new Error("opus codec is disposed");
+    return enc;
+  };
   return {
     name: "opusscript",
-    encode: (pcm) => Buffer.from(enc.encode(pcm, pcm.length / (2 * channels))),
-    decode: (packet) => Buffer.from(enc.decode(packet)),
-    dispose: () => enc.delete(),
+    encode: (pcm) => Buffer.from(live().encode(pcm, pcm.length / (2 * channels))),
+    decode: (packet) => Buffer.from(live().decode(packet)),
+    dispose: () => {
+      enc?.delete();
+      enc = null;
+    },
   };
 }
 

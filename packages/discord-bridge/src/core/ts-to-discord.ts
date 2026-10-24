@@ -18,7 +18,7 @@ export type RouteResult =
   | { kind: "slot"; bot: BotId; uniqueId: string }
   | { kind: "overflow"; uniqueId: string }
   | { kind: "end"; uniqueId: string }
-  | { kind: "dropped"; reason: "malformed" | "unknown-speaker" | "excluded" | "not-in-channel" | "own-voice" | "undecodable" | "unsupported-frame" };
+  | { kind: "dropped"; reason: "malformed" | "unknown-speaker" | "excluded" | "not-in-channel" | "own-voice" | "undecodable" | "unsupported-frame" | "disposed" };
 
 /** A decoder unused for this long is released; the sweep runs at most this often. */
 const DECODER_IDLE_MS = 5_000;
@@ -45,6 +45,7 @@ export class TsToDiscordPipeline {
   private overflowEncoder: OpusCodec | null = null;
   private overflowActive = false;
   private lastSweepMs = 0;
+  private disposed = false;
   /** Packets the decoder or framing rejected; each one was dropped and the speaker's decoder reset. */
   decodeErrors = 0;
   encodeErrors = 0;
@@ -57,6 +58,7 @@ export class TsToDiscordPipeline {
   constructor(private readonly o: Options) {}
 
   onVoice(data: Buffer, nowMs: number): RouteResult {
+    if (this.disposed) return { kind: "dropped", reason: "disposed" };
     const pkt = parseS2CVoice(data);
     if (!pkt) return { kind: "dropped", reason: "malformed" };
     if (pkt.clid === this.o.ownClid()) return { kind: "dropped", reason: "own-voice" };
@@ -117,6 +119,7 @@ export class TsToDiscordPipeline {
 
   /** Call every 20 ms. Mixes the overflow speakers and plays them on the overflow bot. */
   tickOverflow(nowMs: number): void {
+    if (this.disposed) return;
     this.sweepIdle(nowMs);
     const mixed = this.overflowMixer.tick();
     const sink = this.o.sinks.get("overflow");
@@ -158,6 +161,17 @@ export class TsToDiscordPipeline {
   forget(uniqueId: string): void {
     this.disposeDecoder(uniqueId);
     this.overflowMixer.flush((s) => s === uniqueId);
+    for (const [bot, m] of this.routed) {
+      m.delete(uniqueId);
+      if (m.size === 0) this.routed.delete(bot);
+    }
+  }
+
+  /** Identities with routing evidence right now; bounded by who is present, not by who ever spoke. */
+  get routedIdentities(): number {
+    const ids = new Set<string>();
+    for (const m of this.routed.values()) for (const id of m.keys()) ids.add(id);
+    return ids.size;
   }
 
   private disposeDecoder(uniqueId: string): void {
@@ -178,9 +192,15 @@ export class TsToDiscordPipeline {
     m.set(uniqueId, (m.get(uniqueId) ?? 0) + frames);
   }
 
+  /** Terminal: discard everything queued, release every codec, and refuse all further audio. */
   dispose(): void {
+    this.disposed = true;
+    this.overflowMixer.flush(); // queued frames and partial tails: none may be played after shutdown
     for (const d of this.decoders.values()) d.codec.dispose();
     this.decoders.clear();
     this.overflowEncoder?.dispose();
+    this.overflowEncoder = null;
+    this.overflowActive = false;
+    this.routed.clear();
   }
 }

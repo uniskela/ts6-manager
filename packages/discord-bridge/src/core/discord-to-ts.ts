@@ -44,6 +44,7 @@ export class DiscordToTsPipeline {
   private speaking = false;
   private idleTicks = 0;
   private lastSweepMs = 0;
+  private disposed = false;
   selfSourceDrops = 0;
   framesSent = 0;
   /** Packets the decoder rejected; each one was dropped and that user's decoder replaced. */
@@ -67,6 +68,7 @@ export class DiscordToTsPipeline {
   }
 
   onDiscordOpus(bot: BotId, generation: number, userId: string, opus: Buffer, nowMs: number): void {
+    if (this.disposed) return;
     if (this.o.bridgeUserIds().has(userId)) {
       this.selfSourceDrops += 1;
       return;
@@ -130,6 +132,7 @@ export class DiscordToTsPipeline {
 
   /** Call every 20 ms. */
   tick(nowMs: number): void {
+    if (this.disposed) return;
     this.sweepIdle(nowMs);
     const mixed = this.mixer.tick();
     if (!mixed) {
@@ -167,9 +170,14 @@ export class DiscordToTsPipeline {
     return this.mixer.droppedAdmit;
   }
 
+  /** Terminal: discard everything queued, release every codec, and refuse all further audio. */
   dispose(): void {
+    this.disposed = true;
+    this.mixer.flush();
     for (const d of this.decoders.values()) d.codec.dispose();
     this.decoders.clear();
     this.encoder?.dispose();
+    this.encoder = null;
+    this.speaking = false;
   }
 }

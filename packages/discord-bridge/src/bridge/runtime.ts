@@ -492,7 +492,7 @@ export class BridgeRuntime extends EventEmitter {
       duplicateReceivers: this.election.duplicateReceivers(),
       d2t: { framesSent: this.d2t.framesSent, selfSourceDrops: this.d2t.selfSourceDrops, fenceDroppedAtMix: this.d2t.fenceDroppedAtMix, daveDropped: this.d2t.daveDropped, decodeErrors: this.d2t.decodeErrors, decoders: this.d2t.decoderCount, transitLatencyMs: this.d2t.transitLatency.summary() },
       t2dOverflowLatencyMs: this.t2d.overflowLatency.summary(),
-      t2d: { decodeErrors: this.t2d.decodeErrors, unsupportedFrames: this.t2d.unsupportedFrames },
+      t2d: { decodeErrors: this.t2d.decodeErrors, unsupportedFrames: this.t2d.unsupportedFrames, decoders: this.t2d.decoderCount, routedIdentities: this.t2d.routedIdentities },
     };
   }
 }
