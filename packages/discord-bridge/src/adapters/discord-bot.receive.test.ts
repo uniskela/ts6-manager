@@ -1,0 +1,136 @@
+import assert from "node:assert/strict";
+import { PassThrough } from "node:stream";
+import { describe, it } from "node:test";
+import type { BotId } from "../core/ids.js";
+import { preferredOrder } from "../core/ids.js";
+import { ReceiveSupervisor } from "../core/receive-supervisor.js";
+import { ReceiverElection } from "../core/receiver-election.js";
+import { talk, testBot, tick, waitFor } from "../testing/fake-voice.js";
+
+function newElection() {
+  const election = new ReceiverElection(preferredOrder(5));
+  election.setState("slot-0", { healthy: true, inChannel: true });
+  return election;
+}
+
+describe("receive lifecycle (real VoiceReceiver and SpeakingMap)", () => {
+  it("a human who is already talking when the bot takes over is received without a new speaking-start event", async () => {
+    const election = newElection();
+    const got: Buffer[] = [];
+    const t = testBot("slot-0", election, { onHumanOpus: (_b: BotId, _g: number, _u: string, o: Buffer) => got.push(o) });
+    const h = await t.join({ receive: true }); // undeafened and listening, but not the elected receiver yet
+    h.mapUser("human", 2222);
+    let starts = 0;
+    h.conn.receiver.speaking.on("start", () => starts++);
+    const stopTalking = talk(h, "human");
+    await waitFor(() => h.conn.receiver.speaking.users.has("human"), 1000, "human is speaking on this connection");
+    assert.equal(starts, 1, "the only speaking-start happened before takeover");
+
+    election.reconcile("takeover"); // this bot is now elected: takeover while the human is mid-sentence
+    assert.equal(t.bot.startReceive(election.generation), true);
+    await waitFor(() => got.length >= 3, 1500, "frames from the already-speaking human");
+    assert.equal(starts, 1, "no new speaking-start was needed");
+    stopTalking();
+    await t.bot.destroy();
+  });
+
+  it("a human already talking before the bot even finished joining is picked up once reception starts", async () => {
+    const election = newElection();
+    election.reconcile("start");
+    const got: Buffer[] = [];
+    const t = testBot("slot-0", election, { onHumanOpus: (_b: BotId, _g: number, _u: string, o: Buffer) => got.push(o) });
+    const h = await t.join({ receive: true });
+    h.mapUser("human", 3333);
+    const stopTalking = talk(h, "human");
+    await tick(150); // speech began, nobody was listening yet
+    assert.equal(t.bot.startReceive(election.generation), true);
+    await waitFor(() => got.length >= 3, 1500, "frames");
+    stopTalking();
+    await t.bot.destroy();
+  });
+
+  it("after a decrypt failure the subscription is restored while the human keeps talking (no new speaking-start)", async () => {
+    const election = newElection();
+    election.reconcile("start");
+    const got: Buffer[] = [];
+    const t = testBot("slot-0", election, { onHumanOpus: (_b: BotId, _g: number, _u: string, o: Buffer) => got.push(o) });
+    const h = await t.join({ receive: true });
+    h.mapUser("human", 4444);
+    t.bot.startReceive(election.generation);
+    let starts = 0;
+    h.conn.receiver.speaking.on("start", () => starts++);
+    const stopTalking = talk(h, "human");
+    await waitFor(() => got.length >= 2, 1500, "audio flowing");
+    const startsBefore = starts;
+
+    h.davey.decryptError = new Error("DecryptionFailed"); // an MLS epoch the bot cannot read: the stream is destroyed
+    await waitFor(() => t.bot.decryptErrors >= 1, 1500, "decrypt failure observed");
+    h.davey.decryptError = null; // the epoch is readable again, but the human never paused
+    const seen = got.length;
+    await waitFor(() => got.length > seen + 2, 1500, "audio restored without a speaking-start event");
+    assert.equal(starts, startsBefore, "recovery did not depend on a new speaking-start event");
+    stopTalking();
+    await t.bot.destroy();
+  });
+
+  it("repeated decrypt failures fail closed: subscriptions stop and bounded recovery is requested", async () => {
+    const election = newElection();
+    election.reconcile("start");
+    const got: Buffer[] = [];
+    const t = testBot("slot-0", election, { onHumanOpus: (_b: BotId, _g: number, _u: string, o: Buffer) => got.push(o) });
+    const h = await t.join({ receive: true });
+    h.mapUser("human", 5555);
+    t.bot.startReceive(election.generation);
+    const recoveries: string[] = [];
+    const openAtRequest: number[] = [];
+    t.bot.on("recoveryRequested", (r: string) => {
+      recoveries.push(r);
+      openAtRequest.push(t.bot.openSubscriptions);
+    });
+    h.davey.decryptError = new Error("DecryptionFailed");
+    const stopTalking = talk(h, "human");
+    await waitFor(() => recoveries.length > 0, 3000, "recovery requested after repeated failures");
+    stopTalking();
+    assert.equal(recoveries.length, 1, "one bounded recovery request, not a storm");
+    assert.deepEqual(openAtRequest, [0], "failed closed: no subscription is open when recovery is requested");
+    await t.bot.destroy();
+  });
+});
+
+describe("ReceiveSupervisor rejects stale callbacks after replacement", () => {
+  function supervisor(errorThreshold = 3) {
+    const election = newElection();
+    election.reconcile("start");
+    const frames: number[] = [];
+    const rejoins: string[] = [];
+    const src = new PassThrough({ objectMode: true });
+    const sup = new ReceiveSupervisor({
+      bot: "slot-0",
+      generation: election.generation,
+      election,
+      subscribe: () => src,
+      activeSpeakers: () => [],
+      onFrame: (_u, o) => frames.push(o[0]),
+      onNeedRecovery: (r) => rejoins.push(r),
+      errorThreshold,
+    });
+    return { sup, src, frames, rejoins };
+  }
+
+  it("a frame arriving after closeAll never reaches the pipeline", () => {
+    const { sup, src, frames } = supervisor();
+    sup.open("h1");
+    sup.closeAll();
+    src.emit("data", Buffer.from([9])); // a stale callback from the replaced receiver
+    assert.deepEqual(frames, []);
+  });
+
+  it("a stream error that surfaces after closeAll does not request recovery", async () => {
+    const { sup, src, rejoins } = supervisor(1);
+    sup.open("h1");
+    src.destroy(new Error("late decrypt error")); // 'error' is emitted on the next tick
+    sup.closeAll();
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(rejoins, []);
+  });
+});

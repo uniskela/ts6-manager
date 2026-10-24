@@ -57,6 +57,8 @@ export interface DiscordBotOptions {
   bridgeUserIds: () => ReadonlySet<string>;
   /** Resolve the join target. Defaults to this bot's own discord.js guild and its voice adapter. */
   voiceTarget?: () => Promise<VoiceTarget>;
+  /** A human's receive stream closed: release anything held for that user (decoders). */
+  onHumanClosed?: (bot: BotId, userId: string) => void;
   timing?: Partial<BotTiming>;
   /**
    * Scopes this bot's `@discordjs/voice` connection group. All bots of one bridge session share a
@@ -332,25 +334,30 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (!conn || this.selfDeaf || !this.o.election.admitSubscribe(this.o.id, generation)) return false;
     this.stopReceive();
     const receiver = conn.receiver;
+    // Never subscribe to a bridge bot (including this one): that would re-forward bridge audio.
+    const isHuman = (userId: string) => !this.o.bridgeUserIds().has(userId) && userId !== this.userId;
     const sup: ReceiveSupervisor = new ReceiveSupervisor({
       bot: this.o.id,
       generation,
       election: this.o.election,
       subscribe: (userId) => receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: 200 } }),
+      activeSpeakers: () => [...receiver.speaking.users.keys()].filter(isHuman),
       onFrame: (userId, opus, gen) => {
         if (this.supervisor !== sup || !this.observeDave()) return; // stale reception or DAVE unavailable
         this.o.onHumanOpus(this.o.id, gen, userId, opus);
       },
-      onNeedRejoin: (reason) => void this.rejoin(reason),
+      onUserClosed: (userId) => this.o.onHumanClosed?.(this.o.id, userId),
+      onNeedRecovery: (reason) => {
+        if (this.supervisor === sup) this.requestRecovery(reason);
+      },
       log: (m) => this.o.log.warn(`${this.o.id} ${m}`),
     });
     this.supervisor = sup;
     this.receiveOnSpeaking = (userId) => {
-      // Never subscribe to a bridge bot (including this one): that would re-forward bridge audio.
-      if (this.o.bridgeUserIds().has(userId) || userId === this.userId) return;
-      sup.open(userId);
+      if (isHuman(userId)) sup.open(userId);
     };
     receiver.speaking.on("start", this.receiveOnSpeaking);
+    sup.start(); // opens everyone already speaking: a start event is never the only trigger
     return true;
   }
 
@@ -368,6 +375,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   get decryptErrors(): number {
     return this.supervisor?.decryptErrors ?? 0;
+  }
+
+  /** Reception failed closed after repeated decrypt failures: ask for a recovery, once per failure. */
+  private requestRecovery(reason: string): void {
+    this.stopReceive();
+    this.emit("recoveryRequested", reason);
+    void this.rejoin(reason);
   }
 
   /** Rebuild the voice connection to re-run the MLS/DAVE handshake after repeated decrypt failures. */

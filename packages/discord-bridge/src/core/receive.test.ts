@@ -22,7 +22,7 @@ describe("ReceiveSupervisor", () => {
       bot: "slot-0", generation: election.generation, election,
       subscribe: () => new PassThrough(),
       onFrame: (u, _o, g) => frames.push([u, g]),
-      onNeedRejoin: () => undefined,
+      activeSpeakers: () => [], onNeedRecovery: () => undefined,
     });
     assert.equal(sup.open("h1"), true);
     assert.equal(sup.open("h1"), false, "no duplicate stream for the same user");
@@ -38,7 +38,7 @@ describe("ReceiveSupervisor", () => {
     const sup = new ReceiveSupervisor({
       bot: "slot-0", generation: stale, election,
       subscribe: () => { throw new Error("must not subscribe"); },
-      onFrame: () => undefined, onNeedRejoin: () => undefined,
+      onFrame: () => undefined, activeSpeakers: () => [], onNeedRecovery: () => undefined,
     });
     assert.equal(sup.open("h1"), false);
     assert.equal(election.status().subscribeRejections, 1);
@@ -53,7 +53,7 @@ describe("ReceiveSupervisor", () => {
     const sup = new ReceiveSupervisor({
       bot: "slot-0", generation: election.generation, election,
       subscribe: () => { const s = new PassThrough(); streams.push(s); return s; },
-      onFrame: () => undefined, onNeedRejoin: () => void rejoin++, now: () => (t += 100),
+      onFrame: () => undefined, activeSpeakers: () => [], onNeedRecovery: () => void rejoin++, now: () => (t += 100),
     });
     for (let i = 0; i < 3; i++) {
       assert.equal(sup.open("h1"), true);
@@ -71,7 +71,7 @@ describe("ReceiveSupervisor", () => {
     const src = new PassThrough({ objectMode: true });
     const sup = new ReceiveSupervisor({
       bot: "slot-0", generation: election.generation, election, subscribe: () => src,
-      onFrame: (_u, _o, g) => got.push(g), onNeedRejoin: () => undefined,
+      onFrame: (_u, _o, g) => got.push(g), activeSpeakers: () => [], onNeedRecovery: () => undefined,
     });
     sup.open("h1");
     src.write(Buffer.from([1]));

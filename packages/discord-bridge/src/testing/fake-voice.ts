@@ -139,7 +139,7 @@ export interface ReadyHandle {
 export function makeReady(conn: VoiceConnection, o: { userId?: string; protocolVersion?: number; ready?: boolean } = {}): ReadyHandle {
   const davey = new FakeDavey();
   davey.ready = o.ready ?? true;
-  const dave = new DAVESession(o.protocolVersion ?? 1, o.userId ?? "bot", "channel", {});
+  const dave = new DAVESession(o.protocolVersion ?? 1, o.userId ?? "bot", "channel", { decryptionFailureTolerance: 1 });
   (dave as unknown as { session: FakeDavey }).session = davey;
   const secretKey = randomBytes(32);
   const networking = new FakeNetworking(dave, secretKey);
@@ -182,6 +182,17 @@ export function makeReady(conn: VoiceConnection, o: { userId?: string; protocolV
 
 /** The player pads the end of every resource with Opus silence frames; they are never DAVE-encrypted. */
 export const isSilence = (p: Buffer) => p.equals(Buffer.from([0xf8, 0xff, 0xfe]));
+
+/** A human who talks continuously: one packet every 20 ms, with no pause and so no new speaking-start event. */
+export function talk(h: ReadyHandle, userId: string, opusFor: (n: number) => Buffer = (n) => Buffer.from([0xfc, n & 0xff, 1, 1])): () => number {
+  let n = 0;
+  const timer = setInterval(() => h.udp(userId, opusFor(n++)), 20);
+  timer.unref();
+  return () => {
+    clearInterval(timer);
+    return n;
+  };
+}
 
 export const tick = (ms = 0) => new Promise<void>((r) => setTimeout(r, ms));
 
