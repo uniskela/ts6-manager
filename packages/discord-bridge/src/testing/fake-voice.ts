@@ -66,6 +66,8 @@ export interface FakeAdapter {
   /** Payloads this adapter was asked to send (this client's gateway only). */
   sent: { op: number; d: { guild_id: string; channel_id: string | null } }[];
   destroyed: boolean;
+  /** Called after every join (non-leave) payload this adapter sends. */
+  onJoin?: () => void;
 }
 
 /** One Discord client's voice adapter. Each bot must get its own and only ever use its own. */
@@ -76,7 +78,9 @@ export function fakeAdapter(name: string): FakeAdapter {
     destroyed: false,
     creator: () => ({
       sendPayload: (payload: unknown) => {
-        a.sent.push(payload as FakeAdapter["sent"][number]);
+        const p = payload as FakeAdapter["sent"][number];
+        a.sent.push(p);
+        if (p.d.channel_id !== null) a.onJoin?.();
         return true;
       },
       destroy: () => {
@@ -136,10 +140,14 @@ export interface ReadyHandle {
 }
 
 /** Drive a real VoiceConnection to Ready with a DAVE session on top of the fake native session. */
-export function makeReady(conn: VoiceConnection, o: { userId?: string; protocolVersion?: number; ready?: boolean } = {}): ReadyHandle {
-  const davey = new FakeDavey();
+export function makeReady(
+  conn: VoiceConnection,
+  o: { userId?: string; protocolVersion?: number; ready?: boolean; reuse?: ReadyHandle } = {},
+): ReadyHandle {
+  // `reuse` simulates a "recovery" that handed back the very same DAVE session (a stale one).
+  const davey = o.reuse?.davey ?? new FakeDavey();
   davey.ready = o.ready ?? true;
-  const dave = new DAVESession(o.protocolVersion ?? 1, o.userId ?? "bot", "channel", { decryptionFailureTolerance: 1 });
+  const dave = o.reuse?.dave ?? new DAVESession(o.protocolVersion ?? 1, o.userId ?? "bot", "channel", { decryptionFailureTolerance: 1 });
   (dave as unknown as { session: FakeDavey }).session = davey;
   const secretKey = randomBytes(32);
   const networking = new FakeNetworking(dave, secretKey);
@@ -213,14 +221,28 @@ export interface TestBot {
   adapter: FakeAdapter;
   /** Handles for every connection this bot has opened, oldest first. */
   ready: ReadyHandle[];
-  /** Join and drive the new connection to Ready (DAVE established unless told otherwise). */
-  join(o?: { receive?: boolean; ready?: boolean; protocolVersion?: number }): Promise<ReadyHandle>;
+  /** When false, new connections stay in Signalling (a join that never completes). */
+  autoReady: boolean;
+  /** Make the next connections come up with the previous session's DAVE object (a stale session). */
+  reuseDave: boolean;
+  /** Join and wait until the new connection is Ready with DAVE established. */
+  join(o?: { receive?: boolean; protocolVersion?: number }): Promise<ReadyHandle>;
+  latest(): ReadyHandle;
 }
 
 export function testBot(
   id: BotId,
   election: ReceiverElection,
-  o: { guildId?: string; sessionId?: string; onHumanOpus?: (bot: BotId, gen: number, user: string, opus: Buffer) => void; userId?: string; bridgeUserIds?: () => ReadonlySet<string> } = {},
+  o: {
+    guildId?: string;
+    sessionId?: string;
+    onHumanOpus?: (bot: BotId, gen: number, user: string, opus: Buffer) => void;
+    onHumanClosed?: (bot: BotId, user: string) => void;
+    userId?: string;
+    bridgeUserIds?: () => ReadonlySet<string>;
+    timing?: Partial<import("../adapters/discord-bot.js").BotTiming>;
+    protocolVersion?: number;
+  } = {},
 ): TestBot {
   const adapter = fakeAdapter(id);
   const guildId = o.guildId ?? "guild-1";
@@ -232,9 +254,10 @@ export function testBot(
     election,
     log: quietLog,
     onHumanOpus: o.onHumanOpus ?? (() => undefined),
+    onHumanClosed: o.onHumanClosed,
     bridgeUserIds: o.bridgeUserIds ?? (() => new Set()),
     voiceTarget: async () => ({ guildId, channelId: "channel-1", adapterCreator: adapter.creator }),
-    timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150 },
+    timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150, ...o.timing },
     sessionId: o.sessionId ?? randomUUID(),
   });
   bot.userId = o.userId ?? `user-${id}`;
@@ -242,19 +265,22 @@ export function testBot(
     bot,
     adapter,
     ready: [],
+    autoReady: true,
+    reuseDave: false,
+    latest: () => t.ready[t.ready.length - 1],
     async join(opts = {}) {
-      const before = bot.voiceConnection;
-      const joining = bot.join({ receive: opts.receive ?? false });
-      joining.catch(() => undefined);
-      const conn = await waitFor(() => (bot.voiceConnection && bot.voiceConnection !== before ? bot.voiceConnection : bot.voiceConnection?.state.status === "ready" ? bot.voiceConnection : null), 1000, `${id} connection`);
-      let handle = t.ready.find((h) => h.conn === conn);
-      if (!handle && (opts.ready ?? true)) {
-        handle = makeReady(conn, { userId: bot.userId, protocolVersion: opts.protocolVersion });
-        t.ready.push(handle);
-      }
-      await joining;
-      return handle ?? t.ready[t.ready.length - 1];
+      const joined = bot.join({ receive: opts.receive ?? false });
+      joined.catch(() => undefined);
+      await joined;
+      return t.latest();
     },
   };
+  // Every join payload brings that connection up, the way Discord's voice server update would.
+  adapter.onJoin = () =>
+    queueMicrotask(() => {
+      const conn = bot.voiceConnection;
+      if (!t.autoReady || !conn || conn.state.status !== "signalling" || t.ready.some((h) => h.conn === conn)) return;
+      t.ready.push(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion, reuse: t.reuseDave ? t.latest() : undefined }));
+    });
   return t;
 }
