@@ -25,6 +25,11 @@ interface Options {
   out: TsVoiceOut;
   /** Discord user ids of the bridge's own bots. Their audio is never forwarded. */
   bridgeUserIds: () => ReadonlySet<string>;
+  /**
+   * Is DAVE established on that bot's live connection right now. Checked at push and again at every
+   * mix, because the election's flag is only as fresh as the adapter's watchdog. Absent means yes.
+   */
+  daveLive?: (bot: BotId) => boolean;
 }
 
 /**
@@ -44,10 +49,21 @@ export class DiscordToTsPipeline {
   /** Packets the decoder rejected; each one was dropped and that user's decoder replaced. */
   decodeErrors = 0;
   encodeErrors = 0;
+  /** Frames dropped because DAVE was not established on the live connection at push or mix time. */
+  daveDropped = 0;
   readonly transitLatency = new LatencyStats();
 
   constructor(private readonly o: Options) {
-    this.mixer = new FrameMixer<Meta>((m) => o.election.admitFrame(m.bot, m.generation));
+    this.mixer = new FrameMixer<Meta>((m) => this.admit(m.bot, m.generation));
+  }
+
+  private admit(bot: BotId, generation: number): boolean {
+    if (!this.o.election.admitFrame(bot, generation)) return false;
+    if (this.o.daveLive && !this.o.daveLive(bot)) {
+      this.daveDropped += 1;
+      return false;
+    }
+    return true;
   }
 
   onDiscordOpus(bot: BotId, generation: number, userId: string, opus: Buffer, nowMs: number): void {
@@ -55,7 +71,7 @@ export class DiscordToTsPipeline {
       this.selfSourceDrops += 1;
       return;
     }
-    if (!this.o.election.admitFrame(bot, generation)) return;
+    if (!this.admit(bot, generation)) return;
     const pcm = this.decode(userId, opus, nowMs);
     if (pcm) this.mixer.push(userId, pcm, { bot, generation }, nowMs);
   }

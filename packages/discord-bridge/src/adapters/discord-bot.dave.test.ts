@@ -165,3 +165,48 @@ describe("DAVE loss in the election and the TeamSpeak mix", () => {
     assert.equal(election.fail("slot-0", "dead"), "slot-2");
   });
 });
+
+describe("the packet is checked again at the moment it leaves, not only when it is prepared", () => {
+  it("a packet prepared before DAVE was lost is not dispatched, with no further sendOpus to notice the loss", async () => {
+    const election = new ReceiverElection(preferredOrder(5));
+    const t = testBot("slot-0", election, { timing: { watchdogMs: 5000 } }); // the watchdog cannot be what saves us
+    const h = await t.join();
+    const prepare = h.networking.prepareAudioPacket.bind(h.networking);
+    let lost = false;
+    h.networking.prepareAudioPacket = (opus: Buffer) => {
+      const packet = prepare(opus);
+      if (!lost) {
+        lost = true;
+        h.setDave({ protocolVersion: 0 }); // lost between the player's prepare and its next dispatch
+      }
+      return packet;
+    };
+    t.bot.sendOpus(Buffer.from([0xfc, 42, 42, 42]));
+    await waitFor(() => lost, 1000, "the first packet was prepared");
+    await tick(120); // several player ticks
+    assert.equal(h.dave.protocolVersion, 0);
+    assert.equal(h.networking.wire.length, 0, "nothing at all was dispatched after DAVE was lost");
+    await t.bot.destroy();
+  });
+
+  it("a packet encrypted under one DAVE session is not sent under a different one", async () => {
+    const election = new ReceiverElection(preferredOrder(5));
+    const t = testBot("slot-0", election, { timing: { watchdogMs: 5000 } });
+    const h = await t.join();
+    const prepare = h.networking.prepareAudioPacket.bind(h.networking);
+    let swapped = false;
+    h.networking.prepareAudioPacket = (opus: Buffer) => {
+      const packet = prepare(opus);
+      if (!swapped) {
+        swapped = true;
+        h.replaceDave(); // an MLS reset: established again, but a different session
+      }
+      return packet;
+    };
+    t.bot.sendOpus(Buffer.from([0xfc, 43, 43, 43]));
+    await waitFor(() => swapped, 1000, "the first packet was prepared");
+    await tick(120);
+    assert.equal(h.networking.wire.filter((p) => !isSilence(p)).length, 0, "the stale packet never left");
+    await t.bot.destroy();
+  });
+});

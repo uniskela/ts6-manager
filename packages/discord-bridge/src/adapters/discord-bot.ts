@@ -348,8 +348,9 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const prepare = conn.prepareAudioPacket.bind(conn);
     conn.prepareAudioPacket = (buffer) => {
       if (!this.sendAllowed(conn)) return undefined;
+      const under = this.currentDave(conn); // the session in force when encryption starts, not when it ends
       const packet = prepare(buffer);
-      this.preparedFor = this.currentDave(conn);
+      this.preparedFor = under;
       return packet;
     };
     // The player prepares on one tick and dispatches on the next. DAVE can be lost in between, so
@@ -374,6 +375,17 @@ export class DiscordBot extends EventEmitter implements BotPort {
       this.refusePlaintext(conn, userId);
       return parse(buffer, mode, nonce, secretKey, userId);
     };
+  }
+
+  /**
+   * Is DAVE established on the live connection right now. For the pipelines' last boundary before
+   * TeamSpeak: it reads the connection, not a cached flag, and leaves the reaction to a microtask so
+   * it can be called from inside a mix tick without re-entering the pipeline.
+   */
+  daveEstablished(): boolean {
+    const ok = this.enforced();
+    if (!ok) queueMicrotask(() => this.observeDave());
+    return ok;
   }
 
   private sendAllowed(conn: VoiceConnection): boolean {

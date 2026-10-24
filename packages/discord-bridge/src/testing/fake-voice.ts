@@ -137,6 +137,8 @@ export interface ReadyHandle {
   udp(userId: string, opus: Buffer, o?: { dave?: boolean }): void;
   /** Change the MLS/DAVE state the way a transition would. */
   setDave(o: { protocolVersion?: number; ready?: boolean }): void;
+  /** Replace the DAVE session with a new, established one (an MLS reset): anything encrypted under the old one is stale. */
+  replaceDave(): DAVESession;
 }
 
 /** Drive a real VoiceConnection to Ready with a DAVE session on top of the fake native session. */
@@ -184,6 +186,12 @@ export function makeReady(
     setDave(s) {
       if (s.protocolVersion !== undefined) dave.protocolVersion = s.protocolVersion;
       if (s.ready !== undefined) davey.ready = s.ready;
+    },
+    replaceDave() {
+      const next = new DAVESession(1, o.userId ?? "bot", "channel", { decryptionFailureTolerance: 1 });
+      (next as unknown as { session: FakeDavey }).session = new FakeDavey();
+      (networking.state as { dave: DAVESession }).dave = next;
+      return next;
     },
   };
 }

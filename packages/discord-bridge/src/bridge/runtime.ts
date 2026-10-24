@@ -23,6 +23,8 @@ export interface BotPort extends DiscordSendSink {
   setNickname(nick: string | null): Promise<void>;
   startReceive(generation: number): boolean;
   stopReceive(): void;
+  /** Is DAVE established on the live connection right now (read from the connection, not cached). Absent means yes. */
+  daveEstablished?(): boolean;
   on(event: "unhealthy", cb: (reason: string) => void): unknown;
   off(event: "unhealthy", cb: (reason: string) => void): unknown;
 }
@@ -123,6 +125,7 @@ export class BridgeRuntime extends EventEmitter {
       codecFactory: o.codecFactory,
       out: o.ts,
       bridgeUserIds: () => new Set([...o.bots.values()].map((b) => b.userId).filter(Boolean)),
+      daveLive: (bot) => o.bots.get(bot)?.daveEstablished?.() ?? true,
     });
 
     // Teardown happens before the successor is elected: drop subscriptions and queued frames now.
@@ -464,7 +467,7 @@ export class BridgeRuntime extends EventEmitter {
       overflowMembers: this.router.overflowMembers().length,
       election: this.election.status(),
       duplicateReceivers: this.election.duplicateReceivers(),
-      d2t: { framesSent: this.d2t.framesSent, selfSourceDrops: this.d2t.selfSourceDrops, fenceDroppedAtMix: this.d2t.fenceDroppedAtMix, decodeErrors: this.d2t.decodeErrors, decoders: this.d2t.decoderCount, transitLatencyMs: this.d2t.transitLatency.summary() },
+      d2t: { framesSent: this.d2t.framesSent, selfSourceDrops: this.d2t.selfSourceDrops, fenceDroppedAtMix: this.d2t.fenceDroppedAtMix, daveDropped: this.d2t.daveDropped, decodeErrors: this.d2t.decodeErrors, decoders: this.d2t.decoderCount, transitLatencyMs: this.d2t.transitLatency.summary() },
       t2dOverflowLatencyMs: this.t2d.overflowLatency.summary(),
       t2d: { decodeErrors: this.t2d.decodeErrors, unsupportedFrames: this.t2d.unsupportedFrames },
     };
