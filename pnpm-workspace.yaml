@@ -1,2 +1,4 @@
 packages:
   - "packages/*"
+  # Bridge-D1 lab keeps its own lockfile and Node 24 toolchain (native Opus/DAVE addons).
+  - "!packages/discord-bridge"

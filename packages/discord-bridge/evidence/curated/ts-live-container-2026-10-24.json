@@ -1,0 +1,120 @@
+{
+  "at": "2026-10-24T05:44:45.281Z",
+  "node": "v24.22.1",
+  "checks": [
+    {
+      "id": "ts-s2c-parse",
+      "title": "Live TS6 S2C voice packets parse to speaker CId and uniqueId",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "codec ids seen 5; layout VId u16 + CId u16 + codec u8 + Opus confirmed against 6.0.0-beta13"
+    },
+    {
+      "id": "two-speakers-two-bots",
+      "title": "Two simultaneous speakers routed to two separate bots, each carrying exactly one tone",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "Discord sinks are simulated recorders. Each bot's dominant tone is >100x the other (Goertzel). Per-bot: [{\"bot\":\"slot-0\",\"speakers\":1,\"frames\":75},{\"bot\":\"slot-1\",\"speakers\":1,\"frames\":75}]"
+    },
+    {
+      "id": "no-duplicate",
+      "title": "No uniqueId delivered to more than one destination",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "each speaker uniqueId appears under exactly one bot in the routing table"
+    },
+    {
+      "id": "overflow-eight",
+      "title": "Eight TeamSpeak users: five slot bots plus an overflow mix of the other three",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "overflow members 3; overflow carries tones 1050/1200/1350 Hz; all five slots carried audio"
+    },
+    {
+      "id": "d2t-send-path",
+      "title": "Mixed Discord-side audio is received by another TeamSpeak client from the one shared bridge client",
+      "result": "PASS",
+      "provenance": "LIVE-TS6+SYNTHETIC-SPEAKERS",
+      "notes": "listener heard 75 frames from bridge clid 1; both 500 Hz and 1500 Hz are in the single mix. Discord input is simulated."
+    }
+  ],
+  "data": {
+    "bridgeClientId": 1,
+    "channelId": 1,
+    "phaseA": {
+      "parseSamples": [
+        {
+          "clid": 2,
+          "codec": 5,
+          "uid": "dc5TKV2J1gNGnoPMQ25dX0IPPP2OrrpvxommcWeJM54="
+        },
+        {
+          "clid": 3,
+          "codec": 5,
+          "uid": "83HxUCHMeM8vAEHOVoeCMSJYoLPtXGGdoRPfOCC3efY="
+        },
+        {
+          "clid": 2,
+          "codec": 5,
+          "uid": "dc5TKV2J1gNGnoPMQ25dX0IPPP2OrrpvxommcWeJM54="
+        }
+      ],
+      "perBot": [
+        {
+          "bot": "slot-0",
+          "speakers": 1,
+          "frames": 75
+        },
+        {
+          "bot": "slot-1",
+          "speakers": 1,
+          "frames": 75
+        }
+      ],
+      "dropped": {}
+    },
+    "toneIsolation": [
+      {
+        "bot": "slot-0",
+        "f440": 0.0397843913547507,
+        "f1000": 3.0884105338510417e-09
+      },
+      {
+        "bot": "slot-1",
+        "f440": 9.2776807847568e-09,
+        "f1000": 0.039333623773170845
+      }
+    ],
+    "phaseB": {
+      "overflowMembers": 3,
+      "overflowFrames": 68,
+      "overflowLatencyMs": {
+        "n": 68,
+        "p50": 29.07843700000376,
+        "p95": 54.53296799999953,
+        "max": 77.31469700000889
+      }
+    },
+    "ingressLatencyMs": {
+      "n": 150,
+      "p50": 1.1187449999997625,
+      "p95": 1.9275029999989783,
+      "max": 6.056485999997676
+    },
+    "resources": {
+      "cpuAvgPercent": 4.2,
+      "cpuMaxPercent": 98.7,
+      "rssAvgMb": 100.7,
+      "rssMaxMb": 111.9,
+      "samples": 219
+    },
+    "opus": "native"
+  },
+  "environment": {
+    "image": "ts6-discord-bridge-lab:d1 (node:24-bookworm@sha256:6449e19d...)",
+    "node": "v24.22.1",
+    "ts_server": "teamspeaksystems/teamspeak6-server:6.0.0-beta13 (loopback/internal Docker network only)",
+    "speakers": "SYNTHETIC TeamSpeak clients (same TS3 UDP client), Discord sinks SIMULATED",
+    "limits": "--cpus 1 --memory 512m"
+  }
+}

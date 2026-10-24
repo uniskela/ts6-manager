@@ -1,0 +1,33 @@
+{
+  "name": "@ts6/discord-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bridge-D1 lab: isolated Node 24 Discord <-> TeamSpeak voice bridge feasibility proof. Not part of the pnpm workspace and not shipped.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "sync:tslib": "node scripts/sync-tslib.mjs",
+    "pretypecheck": "node scripts/sync-tslib.mjs",
+    "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/sync-tslib.mjs",
+    "test": "tsx --test $(find src -name '*.test.ts' | sort)",
+    "smoke:deps": "tsx src/lab/smoke-deps.ts",
+    "lab:ts-live": "node scripts/sync-tslib.mjs && tsx src/lab/ts-live.ts",
+    "lab:live": "node scripts/sync-tslib.mjs && tsx src/lab/live.ts"
+  },
+  "dependencies": {
+    "@discordjs/opus": "0.10.0",
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "0.1.12",
+    "discord.js": "14.27.0",
+    "opusscript": "0.1.1",
+    "libsodium-wrappers-sumo": "0.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}
