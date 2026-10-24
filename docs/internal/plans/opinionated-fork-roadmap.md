@@ -1,6 +1,6 @@
 # Opinionated TS6 Manager Fork Roadmap
 
-Continuation of `clusterzx/ts6-manager` as `uniskela/ts6-manager` — **core-focused** (no Discord/SSO/full i18n absorption).
+Continuation of `clusterzx/ts6-manager` as `uniskela/ts6-manager` — **core-focused** (no SSO or full i18n absorption of upstream suites). Discord voice is a first-party optional v1.12.0 feature, not an import of upstream PR #76.
 
 Community bug reports and PRs that informed this work are listed in [CREDITS.md](../../../CREDITS.md).
 
@@ -43,7 +43,11 @@ Do **not** fold these into opportunistic drive-by PRs; schedule them as dedicate
 - Publishing sidecar `:9800` to the host
 - Dropping `SIDECAR_SECRET` or softening required `ENCRYPTION_KEY`
 - Upstream [#55](https://github.com/clusterzx/ts6-manager/issues/55) scheduled container restart (we don’t manage TS containers)
-- SSO ([#71](https://github.com/clusterzx/ts6-manager/issues/71)), Discord bridge ([#65](https://github.com/clusterzx/ts6-manager/issues/65)), PR [#76](https://github.com/clusterzx/ts6-manager/pull/76) suite — already excluded by this fork’s core focus
+- SSO ([#71](https://github.com/clusterzx/ts6-manager/issues/71)) and the rest of PR [#76](https://github.com/clusterzx/ts6-manager/pull/76) (SAML/MFA, full i18n, and that PR’s Discord implementation) — still excluded
+
+### First-party Discord voice (v1.12.0)
+
+Specified in [discord-voice-bridge.md](../discord-voice-bridge.md). Optional, disabled by default. Do not import clusterzx #76 Discord code. Do not fold into v1.11.2 (#460).
 
 ### Follow-up feature PRs
 
