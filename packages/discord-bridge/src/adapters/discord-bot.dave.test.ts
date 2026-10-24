@@ -4,7 +4,7 @@ import { AudioPlayerStatus } from "@discordjs/voice";
 import type { BotId } from "../core/ids.js";
 import { preferredOrder } from "../core/ids.js";
 import { ReceiverElection } from "../core/receiver-election.js";
-import { DAVE_MAGIC, isSilence, testBot, tick, waitFor } from "../testing/fake-voice.js";
+import { DAVE_MAGIC, isSilence, talk, testBot, tick, waitFor, type ReadyHandle } from "../testing/fake-voice.js";
 
 const opus = (n: number) => Buffer.from([0xfc, n, n, n]);
 const isDave = (p: Buffer) => p.subarray(0, 4).equals(DAVE_MAGIC);
@@ -65,18 +65,22 @@ describe("DAVE enforcement on the receive boundary (real VoiceReceiver)", () => 
     return { election, t, h, got };
   }
 
+  const admitted = (h: ReadyHandle) => talk(h, "human", () => opus(7));
+
   it("delivers a DAVE-decrypted human frame while DAVE is established (control)", async () => {
     const { t, h, got } = await receiving();
-    h.udp("human", opus(7));
+    const stop = admitted(h); // identity is resolved in the background, so the speaker keeps talking until admitted
     await waitFor(() => got.length > 0, 1000, "first frame");
+    stop();
     assert.deepEqual(got[0], opus(7));
     await t.bot.destroy();
   });
 
   it("protocol 0: a plaintext packet is dropped, never decoded or queued, and reception is invalidated", async () => {
     const { t, h, got } = await receiving();
-    h.udp("human", opus(1));
+    const stop = admitted(h);
     await waitFor(() => got.length > 0, 1000, "first frame");
+    stop();
     h.setDave({ protocolVersion: 0 });
     h.udp("human", opus(9), { dave: false });
     h.udp("human", opus(9), { dave: false });
@@ -88,6 +92,10 @@ describe("DAVE enforcement on the receive boundary (real VoiceReceiver)", () => 
 
   it("an established session in davey passthrough mode does not accept plaintext", async () => {
     const { t, h, got } = await receiving();
+    const stop = admitted(h); // identify the speaker first, or the plaintext below would be dropped for the wrong reason
+    await waitFor(() => got.length > 0, 1000, "an encrypted frame");
+    stop();
+    await tick(200); // the speaker stops, so the plaintext packet below starts a fresh speaking period
     h.davey.passthrough = true; // the transition window in which davey would let plaintext through
     h.udp("human", opus(8), { dave: false });
     await tick(60);

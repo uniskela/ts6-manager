@@ -167,10 +167,11 @@ describe("every reconnect entry point spends the same budget (receive failures, 
       for (let i = 0; i < 3; i++) {
         const user = `human-${round}-${i}`;
         h.mapUser(user, 100 + round * 10 + i);
-        h.udp(user, Buffer.from([0xf8, 0xff, 0xfe]));
-        await tick(0);
-        const stream = h.conn.receiver.subscriptions.get(user);
-        assert.ok(stream, "an active receive subscription");
+        // The speaker is identified in the background and only then subscribed to: keep talking until that happened.
+        const stream = await waitFor(() => {
+          h.udp(user, Buffer.from([0xf8, 0xff, 0xfe]));
+          return h.conn.receiver.subscriptions.get(user);
+        }, 1000, "an active receive subscription");
         stream.destroy(new Error("DecryptionFailed"));
         await tick(0);
       }
