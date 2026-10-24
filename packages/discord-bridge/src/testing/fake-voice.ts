@@ -228,6 +228,10 @@ export interface TestBot {
   /** Join and wait until the new connection is Ready with DAVE established. */
   join(o?: { receive?: boolean; protocolVersion?: number }): Promise<ReadyHandle>;
   latest(): ReadyHandle;
+  /** Bring the bot's current Signalling connection up now (a held connection finally completing). */
+  completePending(): ReadyHandle | null;
+  /** While set, target resolution waits for it (a slow guild/channel lookup). */
+  holdTarget(): () => void;
 }
 
 export function testBot(
@@ -242,6 +246,7 @@ export function testBot(
     bridgeUserIds?: () => ReadonlySet<string>;
     timing?: Partial<import("../adapters/discord-bot.js").BotTiming>;
     protocolVersion?: number;
+    now?: () => number;
   } = {},
 ): TestBot {
   const adapter = fakeAdapter(id);
@@ -256,11 +261,15 @@ export function testBot(
     onHumanOpus: o.onHumanOpus ?? (() => undefined),
     onHumanClosed: o.onHumanClosed,
     bridgeUserIds: o.bridgeUserIds ?? (() => new Set()),
-    voiceTarget: async () => ({ guildId, channelId: "channel-1", adapterCreator: adapter.creator }),
-    timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150, ...o.timing },
+    voiceTarget: async () => {
+      if (targetGate) await targetGate;
+      return { guildId, channelId: "channel-1", adapterCreator: adapter.creator };
+    },
+    timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150, ...(o.now ? { now: o.now } : {}), ...o.timing },
     sessionId: o.sessionId ?? randomUUID(),
   });
   bot.userId = o.userId ?? `user-${id}`;
+  let targetGate: Promise<void> | null = null;
   const t: TestBot = {
     bot,
     adapter,
@@ -268,6 +277,21 @@ export function testBot(
     autoReady: true,
     reuseDave: false,
     latest: () => t.ready[t.ready.length - 1],
+    completePending() {
+      const conn = bot.voiceConnection;
+      if (!conn || conn.state.status !== "signalling" || t.ready.some((h) => h.conn === conn)) return null;
+      const h = makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion });
+      t.ready.push(h);
+      return h;
+    },
+    holdTarget() {
+      let release!: () => void;
+      targetGate = new Promise<void>((r) => (release = r));
+      return () => {
+        targetGate = null;
+        release();
+      };
+    },
     async join(opts = {}) {
       const joined = bot.join({ receive: opts.receive ?? false });
       joined.catch(() => undefined);

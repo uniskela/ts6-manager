@@ -19,6 +19,8 @@ import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
+import { JoinCancelled } from "../core/join-errors.js";
+import { RebuildBudget } from "../core/rebuild-budget.js";
 import { registerSecret, safeError, type Logger } from "../core/redact.js";
 import { ReceiveSupervisor } from "../core/receive-supervisor.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
@@ -42,9 +44,16 @@ export interface BotTiming {
   watchdogMs: number;
   /** How long DAVE may stay unavailable (an MLS transition) before the bot is declared unhealthy. */
   daveGraceMs: number;
-  /** Fresh-session recoveries allowed inside the window before the bot is declared unhealthy. */
+  /**
+   * The one budget for failure-driven reconnects: this many connection rebuild attempts per window,
+   * whichever path asks (gateway destruction, a poisoned DAVE session, DAVE lost for good, a failed
+   * join, a refused rejoin, the runtime's own retries). Planned joins are free. It recovers by time
+   * only. When it is spent, `join()` rejects with `RebuildBudgetExhausted` and builds nothing.
+   */
   maxRecoveries: number;
   recoveryWindowMs: number;
+  /** Clock for the budget (tests inject one). */
+  now?: () => number;
 }
 
 export interface DiscordBotOptions {
@@ -108,8 +117,18 @@ export class DiscordBot extends EventEmitter implements BotPort {
   /** Joins run one at a time per bot; `abortJoin` cuts a pending one short when the connection is discarded. */
   private joinLock: Promise<void> = Promise.resolve();
   private abortJoin: AbortController | null = null;
-  private recovering = false;
-  private readonly recoveryTimes: number[] = [];
+  /**
+   * The intent a join was submitted under. `leave()` and `destroy()` end it, so every join submitted
+   * before them is cancelled at its next checkpoint, including one still waiting for the target.
+   */
+  private epoch = 0;
+  /** The last connection failed and has not been replaced by a Ready one yet: the next join is a rebuild. */
+  private failed = false;
+  /** The DAVE session that was poisoned. The replacement must be a different object. */
+  private poisonedDave: object | null = null;
+  /** The DAVE session the packet waiting for dispatch was encrypted under. */
+  private preparedFor: object | null = null;
+  private readonly budget: RebuildBudget;
   /**
    * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
    * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
@@ -125,6 +144,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     super();
     registerSecret(o.token);
     this.timing = { ...DEFAULT_TIMING, ...o.timing };
+    this.budget = new RebuildBudget(this.timing.maxRecoveries, this.timing.recoveryWindowMs, this.timing.now);
     this.voiceGroup = `ts6-bridge:${o.sessionId ?? PROCESS_SESSION_ID}:${o.id}`;
     this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
@@ -181,23 +201,72 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /**
    * Join the approved voice channel. A receiver must be undeafened; senders deafen themselves.
-   * `freshSince` demands a DAVE session different from that one (used by recovery).
+   *
+   * Cancellable by `leave()`/`destroy()` at every asynchronous boundary. A join that follows a
+   * failure is a rebuild and spends the one budget before it does anything else, so no caller can
+   * reconnect faster than the budget allows.
    */
-  join(opts: { receive: boolean; freshSince?: object | null }): Promise<void> {
-    if (this.stopped) return Promise.reject(new Error("bot is stopped; it never joins again"));
-    const run = this.joinLock.then(() => this.joinNow(opts));
+  join(opts: { receive: boolean }): Promise<void> {
+    if (this.stopped) return Promise.reject(new JoinCancelled("bot is stopped; it never joins again"));
+    const epoch = this.epoch; // captured now, not when the join gets its turn
+    const run = this.joinLock.then(() => this.joinNow(opts, epoch));
     this.joinLock = run.catch(() => undefined);
     return run;
   }
 
-  private async joinNow(opts: { receive: boolean; freshSince?: object | null }): Promise<void> {
+  /**
+   * Throws when this join must stop: its intent ended (cancelled, never a failure), or the
+   * connection it is working on is no longer the live one (a failure). A connection that a
+   * cancelled join created is destroyed here, so a late join never leaves resources behind.
+   */
+  private checkpoint(epoch: number, conn?: VoiceConnection): void {
+    if (this.stopped || this.epoch !== epoch) {
+      if (conn) this.destroyQuietly(conn);
+      throw new JoinCancelled();
+    }
+    if (conn && conn !== this.connection) throw new Error("join aborted: the connection was discarded");
+  }
+
+  private destroyQuietly(conn: VoiceConnection): void {
+    try {
+      if (conn.state.status !== VoiceConnectionStatus.Destroyed) conn.destroy();
+    } catch {
+      /* already destroyed */
+    }
+  }
+
+  /** A connection broke without us asking: the next join must build it again, and that costs a token. */
+  private noteUnplannedRebuild(): void {
+    if (this.failed) return; // this attempt already paid
+    this.failed = true;
+    this.spendRebuild();
+  }
+
+  private spendRebuild(): void {
+    this.budget.spend();
+    this.rejoins += 1;
+  }
+
+  private async joinNow(opts: { receive: boolean }, epoch: number): Promise<void> {
+    this.checkpoint(epoch);
+    if (this.failed) this.spendRebuild();
     const target = await this.resolveTarget();
-    if (this.stopped) throw new Error("bot is stopped; it never joins again");
+    this.checkpoint(epoch);
     this.selfDeaf = !opts.receive;
     let conn = this.connection;
-    if (conn) {
-      conn.rejoin({ channelId: target.channelId, selfDeaf: this.selfDeaf, selfMute: false });
-    } else {
+    if (conn && conn.state.status === VoiceConnectionStatus.Destroyed) {
+      // The library cannot revive a destroyed connection, and `rejoin()` on one only returns false.
+      this.discardConnection();
+      conn = null;
+      this.noteUnplannedRebuild();
+    }
+    if (conn && !conn.rejoin({ channelId: target.channelId, selfDeaf: this.selfDeaf, selfMute: false })) {
+      this.o.log.warn(`${this.o.id} the library refused a rejoin; building a new connection`);
+      this.discardConnection();
+      conn = null;
+      this.noteUnplannedRebuild();
+    }
+    if (!conn) {
       const squatter = getVoiceConnection(target.guildId, this.voiceGroup);
       if (squatter && squatter.state.status !== VoiceConnectionStatus.Destroyed) {
         throw new Error(`voice group ${this.voiceGroup} is already in use by another bot instance; refusing to share a connection`);
@@ -219,7 +288,9 @@ export class DiscordBot extends EventEmitter implements BotPort {
       created.on("stateChange", (_o, n) => {
         // Only an unexpected change on the live connection is a failure; our own teardown detaches first.
         if (created !== this.connection) return;
-        if (n.status === VoiceConnectionStatus.Disconnected || n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`);
+        if (n.status === VoiceConnectionStatus.Disconnected) this.markUnhealthy(`voice ${n.status}`);
+        // Destroyed cannot be revived: drop it so the next join builds a new connection and DAVE session.
+        else if (n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`, { fresh: true });
       });
       created.on("error", (e) => this.o.log.warn(`${this.o.id} voice error: ${safeError(e)}`));
     }
@@ -229,16 +300,25 @@ export class DiscordBot extends EventEmitter implements BotPort {
     try {
       await entersState(conn, VoiceConnectionStatus.Ready, abort.signal);
     } catch (e) {
-      throw conn !== this.connection || this.stopped ? new Error("join aborted: the connection was discarded") : e;
+      this.checkpoint(epoch, conn); // cancelled on purpose, or the connection was discarded under us
+      this.failed = true;
+      this.discardConnection(); // never retry on a connection that did not come up
+      throw e;
     } finally {
       clearTimeout(timer);
       if (this.abortJoin === abort) this.abortJoin = null;
     }
-    await this.requireDave(conn);
-    if (opts.freshSince !== undefined && opts.freshSince !== null && this.currentDave(conn) === opts.freshSince) {
+    this.checkpoint(epoch, conn);
+    await this.requireDave(conn, epoch);
+    this.checkpoint(epoch, conn);
+    if (this.poisonedDave && this.currentDave(conn) === this.poisonedDave) {
+      this.failed = true;
       this.discardConnection();
       throw new Error("recovery did not produce a fresh DAVE session");
     }
+    // No await below: nothing can cancel the join between the last checkpoint and these assignments.
+    this.poisonedDave = null;
+    this.failed = false;
     this.daveOk = true;
     this.healthy = true;
     this.clearGraceTimer();
@@ -266,7 +346,21 @@ export class DiscordBot extends EventEmitter implements BotPort {
    */
   private installDaveGuards(conn: VoiceConnection): void {
     const prepare = conn.prepareAudioPacket.bind(conn);
-    conn.prepareAudioPacket = (buffer) => (this.sendAllowed(conn) ? prepare(buffer) : undefined);
+    conn.prepareAudioPacket = (buffer) => {
+      if (!this.sendAllowed(conn)) return undefined;
+      const packet = prepare(buffer);
+      this.preparedFor = this.currentDave(conn);
+      return packet;
+    };
+    // The player prepares on one tick and dispatches on the next. DAVE can be lost in between, so
+    // the prepared packet is re-checked against the live session when it is about to leave.
+    const dispatch = conn.dispatchAudio.bind(conn);
+    conn.dispatchAudio = () => {
+      const preparedFor = this.preparedFor;
+      this.preparedFor = null;
+      if (!this.sendAllowed(conn) || preparedFor === null || preparedFor !== this.currentDave(conn)) return false;
+      return dispatch();
+    };
     const play = conn.playOpusPacket.bind(conn);
     conn.playOpusPacket = (buffer) => (this.sendAllowed(conn) ? play(buffer) : undefined);
     // `parsePacket` is private in the typings but is the single place a received packet is decrypted.
@@ -316,7 +410,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.clearGraceTimer();
     this.graceTimer = setTimeout(() => {
       this.graceTimer = null;
-      if (!this.daveOk) this.markUnhealthy("DAVE unavailable after the grace window");
+      if (!this.daveOk) this.markUnhealthy("DAVE unavailable after the grace window", { fresh: true });
     }, this.timing.daveGraceMs);
     this.graceTimer.unref();
   }
@@ -341,16 +435,17 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.player.stop(true);
   }
 
-  /** Enforce DAVE: wait for an established session, otherwise leave and fail closed. */
-  private async requireDave(conn: VoiceConnection): Promise<void> {
+  /** Enforce DAVE: wait for an established session, otherwise drop the connection and fail closed. */
+  private async requireDave(conn: VoiceConnection, epoch: number): Promise<void> {
     const deadline = Date.now() + this.timing.daveWaitMs;
     while (Date.now() < deadline) {
-      if (conn !== this.connection || this.stopped) throw new Error("join aborted: the connection was discarded");
+      this.checkpoint(epoch, conn);
       if (daveEnforced(readDaveInfo(conn))) return;
       await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
     const info = readDaveInfo(conn);
-    this.leave();
+    this.failed = true;
+    this.discardConnection();
     throw new Error(`DAVE not negotiated (protocolVersion=${info?.protocolVersion ?? "n/a"}, ready=${info?.ready ?? false}); failing closed`);
   }
 
@@ -423,61 +518,40 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.supervisor?.decryptErrors ?? 0;
   }
 
-  /** Reception failed closed after repeated decrypt failures: ask for a recovery, once per failure. */
+  /**
+   * Reception failed closed after repeated decrypt failures: the DAVE session is poisoned. Fence
+   * everything received so far, drop the connection and report at once. The runtime elects a
+   * successor in the same turn and is the only thing that rebuilds this bot, through `join()` and
+   * its budget; nothing here waits for a replacement connection.
+   */
   private requestRecovery(reason: string): void {
     this.stopReceive();
     this.emit("recoveryRequested", reason);
-    void this.recover(reason);
+    this.o.election.daveLost(this.o.id, `recovery: ${reason}`);
+    this.o.log.warn(`${this.o.id} DAVE session poisoned (${reason}); the connection will be rebuilt by the next join`);
+    this.markUnhealthy(`DAVE session poisoned: ${reason}`, { fresh: true, force: true });
   }
 
-  /**
-   * Recover a poisoned DAVE session. `rejoin()` on a Ready connection only re-sends the voice state
-   * and does not restart MLS, so recovery destroys the connection and joins on a new one, which
-   * builds a new Networking and a new DAVE session. It then verifies the session is a different
-   * object. Bounded: after `maxRecoveries` inside the window the bot is declared unhealthy so the
-   * runtime can fail over instead of looping.
-   */
-  async recover(reason: string): Promise<void> {
-    if (this.recovering || this.stopped) return;
-    const now = Date.now();
-    while (this.recoveryTimes.length && now - this.recoveryTimes[0] > this.timing.recoveryWindowMs) this.recoveryTimes.shift();
-    if (this.recoveryTimes.length >= this.timing.maxRecoveries) {
-      this.markUnhealthy(`DAVE recovery limit reached (${this.timing.maxRecoveries} in ${this.timing.recoveryWindowMs} ms)`, { fresh: true });
-      return;
-    }
-    this.recoveryTimes.push(now);
-    this.recovering = true;
-    this.rejoins += 1;
-    this.o.log.warn(`${this.o.id} recovering DAVE with a fresh voice session: ${reason}`);
-    try {
-      const receive = !this.selfDeaf;
-      const before = this.connection ? this.currentDave(this.connection) : null;
-      this.healthy = false;
-      this.o.election.daveLost(this.o.id, `recovery: ${reason}`); // fences everything received so far
-      this.discardConnection();
-      await this.join({ receive, freshSince: before });
-    } catch (e) {
-      this.markUnhealthy(`recovery failed: ${safeError(e)}`, { fresh: true, force: true });
-    } finally {
-      this.recovering = false;
-    }
-  }
-
-  /** `force` reports even when the bot already has no connection (a failed rebuild must still be heard). */
+  /** `force` reports even when the bot already has no connection. */
   markUnhealthy(reason: string, opts: { fresh?: boolean; force?: boolean } = {}): void {
     if (this.stopped) return;
     if (!opts.force && !this.healthy && !this.connection) return;
     this.healthy = false;
+    this.failed = true;
     this.stopReceive();
     this.o.log.warn(`${this.o.id} unhealthy: ${reason}`);
     // After a DAVE failure the next join must build a new session, not reuse the poisoned one.
-    if (opts.fresh) this.discardConnection();
+    if (opts.fresh) {
+      if (this.connection) this.poisonedDave = this.currentDave(this.connection) ?? this.poisonedDave;
+      this.discardConnection();
+    }
     this.emit("unhealthy", reason);
   }
 
   /** Hard-kill the voice connection (used by the receiver-kill scenario). */
   kill(reason: string): void {
     this.leave();
+    this.failed = true;
     this.emit("unhealthy", reason);
   }
 
@@ -489,6 +563,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const conn = this.connection;
     this.connection = null;
     this.daveOk = false;
+    this.preparedFor = null;
     this.abortJoin?.abort();
     this.stopReceive(conn);
     this.dropOutbound();
@@ -500,8 +575,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
     }
   }
 
-  /** Leave the channel on purpose. The bot can join again later. */
+  /**
+   * Leave the channel on purpose. The bot can join again later. Every join submitted before this
+   * call is cancelled, including one that is still resolving its target. `failed` is kept: a bot
+   * that failed still pays for its next rebuild even if it was told to leave in between.
+   */
   leave(): void {
+    this.epoch += 1;
     if (this.watchdog) clearInterval(this.watchdog);
     this.watchdog = null;
     this.clearGraceTimer();

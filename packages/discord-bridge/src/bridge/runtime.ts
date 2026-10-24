@@ -2,6 +2,8 @@ import { EventEmitter } from "node:events";
 import type { ClientDirectory, DirectoryEvent } from "../core/client-directory.js";
 import { DiscordToTsPipeline } from "../core/discord-to-ts.js";
 import { preferredOrder, slotBotId, type BotId } from "../core/ids.js";
+import { isJoinCancelled } from "../core/join-errors.js";
+import { isRebuildBudgetExhausted } from "../core/rebuild-budget.js";
 import { OVERFLOW_NICKNAME, tsNickname } from "../core/nickname.js";
 import type { OpusCodec } from "../core/opus.js";
 import { ReceiverElection } from "../core/receiver-election.js";
@@ -344,16 +346,30 @@ export class BridgeRuntime extends EventEmitter {
     const attempt = (async () => {
       try {
         await bot.join({ receive: id === "overflow" || id === this.election.receiver });
-        if (!this.live()) return;
+        if (!this.live()) {
+          bot.leave(); // a join that finished after stop() must not leave a connection behind
+          return;
+        }
         this.inChannel.add(id);
         this.retryAttempts.delete(id);
         this.election.setState(id, { healthy: bot.healthy, inChannel: true });
         this.schedule(() => this.sync(`joined ${id}`));
       } catch (e) {
         if (!this.live()) return;
-        this.o.log.warn(`${id} could not join: ${e instanceof Error ? e.message : String(e)}`);
-        this.election.setState(id, { healthy: false, inChannel: false });
-        this.scheduleRetry(id);
+        if (isJoinCancelled(e)) {
+          // Told to leave while joining (not a failure, nothing to retry). Re-evaluate: if the bot is
+          // wanted again by now, this attempt was the one in flight and nobody else would start it.
+          this.schedule(() => this.sync(`join cancelled ${id}`));
+        } else if (isRebuildBudgetExhausted(e)) {
+          // The bot's one rebuild budget is spent. No retry loop: wake once, when it frees.
+          this.o.log.warn(`${id} reconnect refused: ${e.message}`);
+          this.election.setState(id, { healthy: false, inChannel: false });
+          this.scheduleWake(id, e.retryInMs);
+        } else {
+          this.o.log.warn(`${id} could not join: ${e instanceof Error ? e.message : String(e)}`);
+          this.election.setState(id, { healthy: false, inChannel: false });
+          this.scheduleRetry(id);
+        }
       } finally {
         this.inflightJoins.delete(id);
       }
@@ -374,6 +390,17 @@ export class BridgeRuntime extends EventEmitter {
       this.retryTimers.delete(id);
       this.schedule(() => this.sync(`retry ${id}`));
     }, delay);
+    timer.unref();
+    this.retryTimers.set(id, timer);
+  }
+
+  /** One wake-up when the bot's rebuild budget frees. Attempt counting is the bot's business, not ours. */
+  private scheduleWake(id: BotId, inMs: number): void {
+    this.clearRetryTimer(id);
+    const timer = setTimeout(() => {
+      this.retryTimers.delete(id);
+      this.schedule(() => this.sync(`budget free ${id}`));
+    }, Math.min(Math.max(inMs, 1) + 20, 2 ** 31 - 1));
     timer.unref();
     this.retryTimers.set(id, timer);
   }
