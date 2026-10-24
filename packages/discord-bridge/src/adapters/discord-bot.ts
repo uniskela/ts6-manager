@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import {
   AudioPlayerStatus,
@@ -8,6 +9,7 @@ import {
   createAudioPlayer,
   createAudioResource,
   entersState,
+  getVoiceConnection,
   joinVoiceChannel,
   type AudioPlayer,
   type DiscordGatewayAdapterCreator,
@@ -52,7 +54,15 @@ export interface DiscordBotOptions {
   /** Resolve the join target. Defaults to this bot's own discord.js guild and its voice adapter. */
   voiceTarget?: () => Promise<VoiceTarget>;
   timing?: Partial<BotTiming>;
+  /**
+   * Scopes this bot's `@discordjs/voice` connection group. All bots of one bridge session share a
+   * value; it defaults to one id per process. Two sessions in one process must use different ids.
+   */
+  sessionId?: string;
 }
+
+/** Fallback so two bridges started in one process never share a connection group by accident. */
+const PROCESS_SESSION_ID = randomUUID();
 
 const REQUIRED = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
 const DEFAULT_TIMING: BotTiming = { readyMs: 20_000, daveWaitMs: 10_000, pollMs: 200 };
@@ -76,6 +86,12 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private receiveOnSpeaking: ((userId: string) => void) | null = null;
   private selfDeaf = true;
   private readonly timing: BotTiming;
+  /**
+   * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
+   * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
+   * bridge session and bot identity, and it stays the same across rejoins.
+   */
+  readonly voiceGroup: string;
   userId = "";
   healthy = false;
   framesSent = 0;
@@ -85,6 +101,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     super();
     registerSecret(o.token);
     this.timing = { ...DEFAULT_TIMING, ...o.timing };
+    this.voiceGroup = `ts6-bridge:${o.sessionId ?? PROCESS_SESSION_ID}:${o.id}`;
     this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
@@ -145,9 +162,14 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (this.connection) {
       this.connection.rejoin({ channelId: target.channelId, selfDeaf: this.selfDeaf, selfMute: false });
     } else {
+      const squatter = getVoiceConnection(target.guildId, this.voiceGroup);
+      if (squatter && squatter.state.status !== VoiceConnectionStatus.Destroyed) {
+        throw new Error(`voice group ${this.voiceGroup} is already in use by another bot instance; refusing to share a connection`);
+      }
       this.connection = joinVoiceChannel({
         channelId: target.channelId,
         guildId: target.guildId,
+        group: this.voiceGroup,
         adapterCreator: target.adapterCreator,
         selfDeaf: this.selfDeaf,
         selfMute: false,

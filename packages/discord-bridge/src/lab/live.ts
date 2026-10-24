@@ -5,6 +5,7 @@
  * It never invents a result: human-observed checks are recorded only when the operator attests them
  * with `mark <check-id> pass|fail <note>`.
  */
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { DiscordBot } from "../adapters/discord-bot.js";
 import { TsSession } from "../adapters/ts-session.js";
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   const election = new ReceiverElection(ids);
   const bots = new Map<BotId, BotPort>();
   const concrete = new Map<BotId, DiscordBot>();
+  const sessionId = randomUUID(); // scopes every bot's voice connection group to this bridge session
   for (const id of ids) {
     const bot = new DiscordBot({
       id,
@@ -51,6 +53,7 @@ async function main(): Promise<void> {
       channelId: cfg.channelId,
       election,
       log,
+      sessionId,
       onHumanOpus: (b, g, u, o) => runtime?.onHumanOpus(b, g, u, o),
       bridgeUserIds: () => new Set([...concrete.values()].map((c) => c.userId).filter(Boolean)),
     });
