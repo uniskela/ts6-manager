@@ -134,3 +134,82 @@ describe("ReceiveSupervisor rejects stale callbacks after replacement", () => {
     assert.deepEqual(rejoins, []);
   });
 });
+
+describe("only verified humans are subscribed and forwarded (real VoiceReceiver)", () => {
+  async function receiver(o: { lookup?: (id: string) => Promise<{ bot: boolean } | null> } = {}) {
+    const election = newElection();
+    election.reconcile("start");
+    const got: string[] = [];
+    const t = testBot("slot-0", election, { userLookup: o.lookup, onHumanOpus: (_b: BotId, _g: number, user: string) => got.push(user) });
+    const h = await t.join({ receive: true });
+    return { election, t, h, got };
+  }
+
+  it("another Discord bot that is already speaking is never subscribed or forwarded", async () => {
+    const { election, t, h, got } = await receiver();
+    const other = "123456789012345678";
+    t.bot.client.users.cache.set(other, { id: other, bot: true } as never); // a known non-bridge bot account
+    h.mapUser(other, 1111);
+    const stop = talk(h, other);
+    t.bot.startReceive(election.generation);
+    await tick(150);
+    stop();
+    assert.deepEqual(got, [], "nothing from the other bot reached the pipeline");
+    assert.equal(t.bot.openSubscriptions, 0, "and no subscription was ever opened for it");
+    await t.bot.destroy();
+  });
+
+  it("a bot that starts speaking after reception began is excluded on the speaking-start path too", async () => {
+    const { election, t, h, got } = await receiver({ lookup: async (id) => ({ bot: id === "bot-user" }) });
+    t.bot.startReceive(election.generation);
+    h.mapUser("bot-user", 2222);
+    h.mapUser("human", 3333);
+    const stopBot = talk(h, "bot-user");
+    const stopHuman = talk(h, "human");
+    await waitFor(() => got.includes("human"), 1500, "the verified human is forwarded");
+    stopBot();
+    stopHuman();
+    assert.ok(!got.includes("bot-user"), "the bot is not");
+    assert.equal(t.bot.openSubscriptions <= 1, true);
+    await t.bot.destroy();
+  });
+
+  it("fails closed while identity is unknown, then admits once it is established as human", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const { election, t, h, got } = await receiver({
+      lookup: async () => {
+        await gate; // member metadata is not available yet
+        return { bot: false };
+      },
+    });
+    h.mapUser("late-known", 4444);
+    const stop = talk(h, "late-known");
+    t.bot.startReceive(election.generation);
+    await tick(120);
+    assert.deepEqual(got, [], "no audio from an unresolved identity");
+    assert.equal(t.bot.openSubscriptions, 0);
+    release();
+    await waitFor(() => got.length > 2, 1500, "admitted once the identity resolved");
+    stop();
+    await t.bot.destroy();
+  });
+
+  it("stays closed for an identity that cannot be established, and does not hammer the lookup", async () => {
+    let calls = 0;
+    const { election, t, h, got } = await receiver({
+      lookup: async () => {
+        calls += 1;
+        throw new Error("REST unavailable");
+      },
+    });
+    h.mapUser("unknown", 5555);
+    const stop = talk(h, "unknown");
+    t.bot.startReceive(election.generation);
+    await tick(400);
+    stop();
+    assert.deepEqual(got, []);
+    assert.ok(calls <= 2, `lookups are rate limited (saw ${calls} in 400 ms)`);
+    await t.bot.destroy();
+  });
+});

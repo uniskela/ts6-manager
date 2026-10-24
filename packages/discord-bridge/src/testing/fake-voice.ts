@@ -255,6 +255,8 @@ export function testBot(
     timing?: Partial<import("../adapters/discord-bot.js").BotTiming>;
     protocolVersion?: number;
     now?: () => number;
+    /** Stands in for Discord's REST user lookup. Default: every user is a human. */
+    userLookup?: (userId: string) => Promise<{ bot: boolean } | null>;
   } = {},
 ): TestBot {
   const adapter = fakeAdapter(id);
@@ -275,6 +277,7 @@ export function testBot(
     },
     timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150, ...(o.now ? { now: o.now } : {}), ...o.timing },
     sessionId: o.sessionId ?? randomUUID(),
+    userLookup: o.userLookup ?? (async () => ({ bot: false })),
   });
   bot.userId = o.userId ?? `user-${id}`;
   let targetGate: Promise<void> | null = null;

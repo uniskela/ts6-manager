@@ -19,6 +19,7 @@ import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
+import { HumanFilter, type DiscordUserInfo } from "../core/human-filter.js";
 import { JoinCancelled } from "../core/join-errors.js";
 import { RebuildBudget } from "../core/rebuild-budget.js";
 import { registerSecret, safeError, type Logger } from "../core/redact.js";
@@ -69,6 +70,11 @@ export interface DiscordBotOptions {
   bridgeUserIds: () => ReadonlySet<string>;
   /** Resolve the join target. Defaults to this bot's own discord.js guild and its voice adapter. */
   voiceTarget?: () => Promise<VoiceTarget>;
+  /**
+   * Ask Discord whether a user is a bot (default: the REST user lookup). Resolve `null` or reject when
+   * it cannot be established; the user then stays excluded. Tests inject this; production does not.
+   */
+  userLookup?: (userId: string) => Promise<DiscordUserInfo | null>;
   /** A human's receive stream closed: release anything held for that user (decoders). */
   onHumanClosed?: (bot: BotId, userId: string) => void;
   timing?: Partial<BotTiming>;
@@ -129,6 +135,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   /** The DAVE session the packet waiting for dispatch was encrypted under. */
   private preparedFor: object | null = null;
   private readonly budget: RebuildBudget;
+  private readonly humans: HumanFilter;
   /**
    * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
    * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
@@ -147,6 +154,14 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.budget = new RebuildBudget(this.timing.maxRecoveries, this.timing.recoveryWindowMs, this.timing.now);
     this.voiceGroup = `ts6-bridge:${o.sessionId ?? PROCESS_SESSION_ID}:${o.id}`;
     this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+    this.humans = new HumanFilter({
+      cached: (id) => {
+        const u = this.client.users.cache.get(id);
+        return u && typeof u.bot === "boolean" ? { bot: u.bot } : undefined; // a partial user is not an answer
+      },
+      lookup: o.userLookup ?? ((id) => this.lookupUser(id)),
+      excluded: (id) => this.o.bridgeUserIds().has(id) || id === this.userId,
+    });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
   }
@@ -155,6 +170,20 @@ export class DiscordBot extends EventEmitter implements BotPort {
     await this.client.login(this.o.token);
     await new Promise<void>((resolve) => (this.client.isReady() ? resolve() : this.client.once("clientReady", () => resolve())));
     this.userId = this.client.user!.id;
+  }
+
+  /** REST lookup of one user (needs no privileged intent). Bounded by a timeout. */
+  private async lookupUser(userId: string): Promise<DiscordUserInfo | null> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      const user = await Promise.race([
+        this.client.users.fetch(userId),
+        new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("user lookup timed out")), 5_000))),
+      ]);
+      return typeof user.bot === "boolean" ? { bot: user.bot } : null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Verify guild membership and channel permissions without joining voice. */
@@ -487,8 +516,9 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (!conn || this.selfDeaf || !this.o.election.admitSubscribe(this.o.id, generation)) return false;
     this.stopReceive();
     const receiver = conn.receiver;
-    // Never subscribe to a bridge bot (including this one): that would re-forward bridge audio.
-    const isHuman = (userId: string) => !this.o.bridgeUserIds().has(userId) && userId !== this.userId;
+    // Only users Discord has told us are not bots: never a bridge bot (that would re-forward bridge
+    // audio), never another bot account, never someone we cannot identify yet.
+    const isHuman = (userId: string) => this.humans.isHuman(userId);
     const sup: ReceiveSupervisor = new ReceiveSupervisor({
       bot: this.o.id,
       generation,
