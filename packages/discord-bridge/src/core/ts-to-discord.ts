@@ -65,7 +65,10 @@ export class TsToDiscordPipeline {
 
     if (dest === "overflow") {
       let dec = this.decoders.get(client.uniqueId);
-      if (!dec) this.decoders.set(client.uniqueId, (dec = this.o.codecFactory()));
+      if (!dec) {
+        dec = this.o.codecFactory();
+        this.decoders.set(client.uniqueId, dec);
+      }
       this.overflowMixer.push(client.uniqueId, dec.decode(pkt.opus), null, nowMs);
       this.count("overflow", client.uniqueId);
       return { kind: "overflow", uniqueId: client.uniqueId };
@@ -106,7 +109,10 @@ export class TsToDiscordPipeline {
 
   private count(bot: BotId, uniqueId: string): void {
     let m = this.routed.get(bot);
-    if (!m) this.routed.set(bot, (m = new Map()));
+    if (!m) {
+      m = new Map();
+      this.routed.set(bot, m);
+    }
     m.set(uniqueId, (m.get(uniqueId) ?? 0) + 1);
   }
 

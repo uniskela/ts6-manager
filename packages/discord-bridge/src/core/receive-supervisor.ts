@@ -70,7 +70,7 @@ export class ReceiveSupervisor {
 
   closeAll(): void {
     this.closed = true;
-    for (const [userId, s] of [...this.streams]) {
+    for (const [userId, s] of this.streams) {
       this.release(userId, s);
       s.destroy();
     }

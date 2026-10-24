@@ -48,7 +48,10 @@ export class DiscordToTsPipeline {
     }
     if (!this.o.election.admitFrame(bot, generation)) return;
     let dec = this.decoders.get(userId);
-    if (!dec) this.decoders.set(userId, (dec = this.o.codecFactory()));
+    if (!dec) {
+      dec = this.o.codecFactory();
+      this.decoders.set(userId, dec);
+    }
     let pcm: Buffer;
     try {
       pcm = dec.decode(opus);

@@ -35,7 +35,10 @@ export class FrameMixer<M> {
       return;
     }
     let q = this.queues.get(source);
-    if (!q) this.queues.set(source, (q = []));
+    if (!q) {
+      q = [];
+      this.queues.set(source, q);
+    }
     q.push({ pcm, meta, arrivedMs });
     while (q.length > this.maxQueued) {
       q.shift();
@@ -45,7 +48,7 @@ export class FrameMixer<M> {
 
   /** Drop everything queued for sources matching the predicate (teardown). */
   flush(match: (source: string) => boolean = () => true): void {
-    for (const key of [...this.queues.keys()]) if (match(key)) this.queues.delete(key);
+    for (const key of this.queues.keys()) if (match(key)) this.queues.delete(key);
   }
 
   sourceCount(): number {

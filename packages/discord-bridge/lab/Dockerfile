@@ -5,7 +5,8 @@
 # Base is pinned by digest so the Node 24 + glibc toolchain is reproducible. The build installs the
 # lockfile exactly, compiles the native Opus addon, then gates on typecheck, unit tests and the
 # native Opus/DAVE smoke. A failing gate fails the build.
-FROM node:24-bookworm@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
+# node:24-bookworm (v24.22.1) at this digest; the digest alone fixes the image.
+FROM node@sha256:6449e19d8184d84062525b6a7524def03146c2cb04a7f08b076680d0e8e4240a
 
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
     CI=true
@@ -25,9 +26,9 @@ COPY tsconfig.base.json /app/tsconfig.base.json
 RUN node scripts/sync-tslib.mjs \
  && pnpm run typecheck \
  && pnpm test \
- && pnpm run smoke:deps
-
-RUN mkdir -p evidence && chown -R node:node /app/packages/discord-bridge/evidence
+ && pnpm run smoke:deps \
+ && mkdir -p evidence \
+ && chown -R node:node /app/packages/discord-bridge/evidence
 USER node
 # The lab never listens on a port. Control is stdin/stdout only.
 CMD ["pnpm", "run", "smoke:deps"]

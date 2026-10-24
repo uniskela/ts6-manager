@@ -6,7 +6,7 @@ import { MAX_QUEUED_FRAMES } from "./constants.js";
  * frames faster than the 20 ms player tick the oldest frames are dropped, so latency cannot grow.
  */
 export class FrameFeed extends Readable {
-  private queue: Buffer[] = [];
+  private readonly queue: Buffer[] = [];
   private wanted = false;
   private finishing = false;
   dropped = 0;

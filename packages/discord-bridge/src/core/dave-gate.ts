@@ -19,9 +19,9 @@ const NETWORKING_READY = 4;
 
 export function readDaveInfo(connection: MaybeVoiceConnection): DaveInfo | null {
   const st = connection.state;
-  if (!st || st.status !== "ready") return null;
+  if (st?.status !== "ready") return null;
   const net = st.networking?.state;
-  if (!net || net.code !== NETWORKING_READY || !net.dave) return null;
+  if (net?.code !== NETWORKING_READY || !net.dave) return null;
   return { protocolVersion: net.dave.protocolVersion ?? 0, ready: net.dave.session?.ready === true };
 }
 

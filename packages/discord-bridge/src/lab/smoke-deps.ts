@@ -20,7 +20,7 @@ function opusRoundTrip(kind: "native" | "opusscript"): string {
   const dec = createOpusCodec(kind);
   for (let i = 0; i < 10; i++) frames.push(dec.decode(codec.encode(toneFrame(1000, i * 960))));
   const pcm = Buffer.concat(frames);
-  if (!(goertzelPower(pcm, 1000) > goertzelPower(pcm, 3300) * 100)) throw new Error("tone lost in round trip");
+  if (goertzelPower(pcm, 1000) <= goertzelPower(pcm, 3300) * 100) throw new Error("tone lost in round trip");
   return `${codec.name}, ${enc.length}-byte packets, 1 kHz survives a 10-frame round trip`;
 }
 
@@ -51,7 +51,7 @@ attempt("voice-report", "@discordjs/voice dependency report shows DAVE + Opus + 
     if (!report.includes(needle)) throw new Error(`report is missing "${needle}"`);
   }
   if (/@snazzah\/davey: not found/.test(report)) throw new Error("DAVE library not found");
-  return report.split("\n").filter((l) => /^- /.test(l) && !/not found/.test(l)).join("; ");
+  return report.split("\n").filter((l) => l.startsWith("- ") && !l.includes("not found")).join("; ");
 });
 
 ev.data.dependencyReport = report;

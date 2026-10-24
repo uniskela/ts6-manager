@@ -90,13 +90,13 @@ export class BridgeRuntime extends EventEmitter {
       this.d2t.flush();
     });
     this.election.on("elected", ({ bot, generation }: { bot: BotId; generation: number }) => {
-      this.enqueue(() => this.startReceiving(bot, generation));
+      this.schedule(() => this.startReceiving(bot, generation));
     });
     for (const bot of o.bots.values()) {
-      bot.on("unhealthy", (reason) => this.enqueue(async () => this.onBotUnhealthy(bot.id, reason)));
+      bot.on("unhealthy", (reason) => this.schedule(async () => this.onBotUnhealthy(bot.id, reason)));
     }
     o.ts.on("voice", (data) => this.t2d.onVoice(data, this.now()));
-    o.ts.on("directory", (e) => this.enqueue(async () => this.onDirectory(e)));
+    o.ts.on("directory", (e) => this.schedule(async () => this.onDirectory(e)));
   }
 
   /** Called by the bot adapters for each human Opus packet. */
@@ -122,6 +122,11 @@ export class BridgeRuntime extends EventEmitter {
     for (const bot of this.o.bots.values()) bot.leave();
     this.t2d.dispose();
     this.d2t.dispose();
+  }
+
+  /** Fire-and-forget form of `enqueue` for event handlers; failures are already logged by the queue. */
+  private schedule(fn: () => Promise<void>): void {
+    this.enqueue(fn).catch(() => undefined);
   }
 
   /** Run `fn` after everything queued before it; errors are logged, never thrown into the caller. */
@@ -189,14 +194,20 @@ export class BridgeRuntime extends EventEmitter {
     for (const id of leaving) {
       this.o.bots.get(id)?.leave();
       this.inChannel.delete(id);
-      void this.o.bots.get(id)?.setNickname(null);
+      this.o.bots.get(id)?.setNickname(null).catch(() => undefined);
     }
   }
 
   private async applyNickname(id: BotId, idleSlot0: boolean): Promise<void> {
     const bot = this.o.bots.get(id)!;
-    if (id === "overflow") return void (await bot.setNickname(OVERFLOW_NICKNAME));
-    if (idleSlot0 && id === "slot-0") return void (await bot.setNickname(null));
+    if (id === "overflow") {
+      await bot.setNickname(OVERFLOW_NICKNAME);
+      return;
+    }
+    if (idleSlot0 && id === "slot-0") {
+      await bot.setNickname(null);
+      return;
+    }
     const uid = this.router.slotOccupant(Number(id.slice(5)));
     const name = uid ? this.o.ts.directory.inChannel(this.o.ts.channelId).find((c) => c.uniqueId === uid)?.nickname : undefined;
     await bot.setNickname(tsNickname(name ?? "Unknown"));
@@ -219,7 +230,7 @@ export class BridgeRuntime extends EventEmitter {
     return {
       receiver: this.election.receiver,
       generation: this.election.generation,
-      inChannel: [...this.inChannel].sort(),
+      inChannel: [...this.inChannel].sort((a, b) => a.localeCompare(b)),
       slots: Array.from({ length: this.slotCount }, (_, i) => this.router.slotOccupant(i) !== null),
       overflowMembers: this.router.overflowMembers().length,
       election: this.election.status(),

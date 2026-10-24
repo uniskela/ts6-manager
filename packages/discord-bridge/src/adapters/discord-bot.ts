@@ -79,7 +79,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     try {
       const guild = await this.client.guilds.fetch(this.o.guildId);
       const channel = await guild.channels.fetch(this.o.channelId);
-      if (!channel || !channel.isVoiceBased()) return { ok: false, reason: "not a voice channel" };
+      if (!channel?.isVoiceBased()) return { ok: false, reason: "not a voice channel" };
       const me = await guild.members.fetchMe();
       const perms = channel.permissionsFor(me);
       const missing = REQUIRED.filter((p) => !perms?.has(p));

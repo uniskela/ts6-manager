@@ -124,7 +124,7 @@ async function main(): Promise<void> {
     provenance: "LIVE-TS6+SYNTHETIC-SPEAKERS",
     notes: `codec ids seen ${[...new Set(parseSamples.map((p) => p.codec))].join(",")}; layout VId u16 + CId u16 + codec u8 + Opus confirmed against 6.0.0-beta13`,
   });
-  const bots = perBot.map((p) => p.bot).sort();
+  const bots = perBot.map((p) => p.bot).sort((a, b) => a.localeCompare(b));
   const tonePower = bots.map((bot) => ({ bot, f440: goertzelPower(decoded(bot), 440), f1000: goertzelPower(decoded(bot), 1000) }));
   const clean =
     bots.length === 2 &&

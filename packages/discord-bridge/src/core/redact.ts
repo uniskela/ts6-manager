@@ -1,6 +1,6 @@
 /** Discord bot token shape: base64(user id) . timestamp . hmac. */
 const DISCORD_TOKEN = /[A-Za-z0-9_-]{23,30}\.[A-Za-z0-9_-]{5,8}\.[A-Za-z0-9_-]{25,}/g;
-const BEARER = /Bearer\s+[A-Za-z0-9._~+/=-]+/gi;
+const BEARER = /Bearer\s+[\w.~+/=-]+/gi;
 const KEY_VALUE = /\b(token|secret|password|identity|private_?key|authorization)\b(["']?\s*[:=]\s*["']?)([^\s"',;}]+)/gi;
 
 const known = new Set<string>();
