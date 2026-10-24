@@ -61,11 +61,13 @@ export class ClientDirectory {
       }
       case "notifyclientmoved": {
         const entries = cmd.groups ?? [cmd.params];
+        const first = cmd.params;
         for (const e of entries) {
           const clid = parseInt(e.clid || "0", 10);
           const client = this.byClid.get(clid);
           if (client) {
-            client.channelId = parseInt(e.ctid || "0", 10);
+            // ctid is sent once on the first entry of a piped list; later entries inherit it.
+            client.channelId = parseInt(e.ctid || first.ctid || "0", 10);
             events.push({ type: "move", client });
           }
         }

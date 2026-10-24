@@ -203,6 +203,49 @@ describe("ClientDirectory", () => {
   });
 });
 
+describe("ClientDirectory grouped notifications", () => {
+  it("a piped notifyclientmoved gives every entry the shared destination channel", () => {
+    const d = new ClientDirectory();
+    for (const [clid, uid] of [["2", "uidA"], ["3", "uidB"], ["4", "uidC"]]) {
+      d.ingest({ name: "notifycliententerview", params: { ctid: "1", clid, client_unique_identifier: uid, client_nickname: uid } });
+    }
+    // The server sends ctid only on the first entry of a piped list; later entries inherit it.
+    const events = d.ingest({
+      name: "notifyclientmoved",
+      params: { ctid: "9", clid: "2" },
+      groups: [{ ctid: "9", clid: "2" }, { clid: "3" }, { clid: "4" }],
+    });
+    assert.equal(events.length, 3);
+    assert.deepEqual(events.map((e) => e.client.channelId), [9, 9, 9]);
+    assert.deepEqual(d.inChannel(9).map((c) => c.uniqueId).sort(), ["uidA", "uidB", "uidC"]);
+    assert.deepEqual(d.inChannel(1), []);
+  });
+
+  it("a piped notifyclientmoved with its own ctid per entry keeps each destination", () => {
+    const d = new ClientDirectory();
+    for (const [clid, uid] of [["2", "uidA"], ["3", "uidB"]]) {
+      d.ingest({ name: "notifycliententerview", params: { ctid: "1", clid, client_unique_identifier: uid, client_nickname: uid } });
+    }
+    d.ingest({ name: "notifyclientmoved", params: { ctid: "5", clid: "2" }, groups: [{ ctid: "5", clid: "2" }, { ctid: "6", clid: "3" }] });
+    assert.equal(d.byClientId(2)!.channelId, 5);
+    assert.equal(d.byClientId(3)!.channelId, 6);
+  });
+
+  it("a piped notifycliententerview with a mixed ctid keeps each entry's own channel", () => {
+    const d = new ClientDirectory();
+    d.ingest({
+      name: "notifycliententerview",
+      params: { ctid: "5", clid: "2", client_unique_identifier: "uidA", client_nickname: "A" },
+      groups: [
+        { ctid: "5", clid: "2", client_unique_identifier: "uidA", client_nickname: "A" },
+        { ctid: "7", clid: "3", client_unique_identifier: "uidB", client_nickname: "B" },
+        { clid: "4", client_unique_identifier: "uidC", client_nickname: "C" },
+      ],
+    });
+    assert.deepEqual([2, 3, 4].map((c) => d.byClientId(c)!.channelId), [5, 7, 5]);
+  });
+});
+
 function recordingSink() {
   const frames: Buffer[] = [];
   let ended = 0;
