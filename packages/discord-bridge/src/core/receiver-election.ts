@@ -6,6 +6,11 @@ export interface BotState {
   healthy: boolean;
   /** The bot is allowed to be in the Discord channel (carries a uniqueId or is the idle receiver). */
   inChannel: boolean;
+  /**
+   * The bot's DAVE session is currently established. While false, no frame from this bot is admitted
+   * and it is not elected. A transition can clear it briefly without the bot being unhealthy.
+   */
+  dave: boolean;
 }
 
 export interface ElectionStatus {
@@ -32,7 +37,7 @@ export class ReceiverElection extends EventEmitter {
 
   constructor(private readonly order: readonly BotId[]) {
     super();
-    for (const id of order) this.states.set(id, { healthy: false, inChannel: false });
+    for (const id of order) this.states.set(id, { healthy: false, inChannel: false, dave: true });
   }
 
   get generation(): number {
@@ -58,10 +63,20 @@ export class ReceiverElection extends EventEmitter {
     return !!s && s.healthy && s.inChannel;
   }
 
+  /** Can this bot be handed receive duty: eligible and DAVE established. */
+  private electable(bot: BotId): boolean {
+    return this.eligible(bot) && this.states.get(bot)!.dave;
+  }
+
+  /** The holder's reception is usable right now (DAVE established). */
+  private receivingAllowed(bot: BotId): boolean {
+    return this.holder === bot && this.states.get(bot)?.dave === true;
+  }
+
   /** First healthy and eligible bot in preferred order, honouring an admin pin. */
   private pick(exclude?: BotId): BotId | null {
     const list = this.pinned ? [this.pinned, ...this.order.filter((b) => b !== this.pinned)] : [...this.order];
-    for (const b of list) if (b !== exclude && this.eligible(b)) return b;
+    for (const b of list) if (b !== exclude && this.electable(b)) return b;
     return null;
   }
 
@@ -107,9 +122,40 @@ export class ReceiverElection extends EventEmitter {
     }
   }
 
+  /**
+   * DAVE became unavailable for `bot` (an MLS transition, a downgrade, a decrypt-state reset).
+   * Frames and sends from it stop immediately. If it is the receiver, the generation is bumped so
+   * everything received before the loss is stale, reception is torn down, and the holder is kept
+   * for the caller's grace window: `daveRestored` re-activates it, `fail` replaces it.
+   */
+  daveLost(bot: BotId, reason: string): void {
+    const s = this.states.get(bot);
+    if (!s) throw new Error(`unknown bot ${bot}`);
+    if (!s.dave) return;
+    s.dave = false;
+    if (this.holder === bot) {
+      this.gen += 1;
+      this.subs.set(bot, 0);
+      this.emit("teardown", { bot, generation: this.gen, reason: `dave lost:${reason}` });
+    }
+  }
+
+  /** DAVE is established again. A holder resumes receiving under a fresh generation. */
+  daveRestored(bot: BotId): void {
+    const s = this.states.get(bot);
+    if (!s) throw new Error(`unknown bot ${bot}`);
+    if (s.dave) return;
+    s.dave = true;
+    if (this.holder === bot && this.eligible(bot)) {
+      this.gen += 1;
+      this.subs.set(bot, 0);
+      this.emit("elected", { bot, generation: this.gen, reason: "dave restored" });
+    }
+  }
+
   /** Subscribe-time fence. A stale or non-holder bot is rejected and told to tear down. */
   admitSubscribe(bot: BotId, generation: number): boolean {
-    const ok = this.holder === bot && generation === this.gen;
+    const ok = this.receivingAllowed(bot) && generation === this.gen;
     if (!ok) {
       this.subscribeRejections += 1;
       this.emit("subscribeRejected", { bot, generation, current: this.gen });
@@ -123,7 +169,7 @@ export class ReceiverElection extends EventEmitter {
 
   /** Mix-time fence: called immediately before a decoded frame is mixed into TeamSpeak. */
   admitFrame(bot: BotId, generation: number): boolean {
-    const ok = this.holder === bot && generation === this.gen;
+    const ok = this.receivingAllowed(bot) && generation === this.gen;
     if (!ok) this.fenceDrops += 1;
     return ok;
   }

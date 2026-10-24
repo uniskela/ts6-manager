@@ -38,6 +38,10 @@ export interface BotTiming {
   daveWaitMs: number;
   /** Poll interval while waiting for DAVE. */
   pollMs: number;
+  /** How often a joined bot re-reads the live DAVE state (the library has no event for it). */
+  watchdogMs: number;
+  /** How long DAVE may stay unavailable (an MLS transition) before the bot is declared unhealthy. */
+  daveGraceMs: number;
 }
 
 export interface DiscordBotOptions {
@@ -64,8 +68,12 @@ export interface DiscordBotOptions {
 /** Fallback so two bridges started in one process never share a connection group by accident. */
 const PROCESS_SESSION_ID = randomUUID();
 
+interface ParsingReceiver {
+  parsePacket(buffer: Buffer, mode: string, nonce: Buffer, secretKey: Uint8Array, userId: string): Buffer | null;
+}
+
 const REQUIRED = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
-const DEFAULT_TIMING: BotTiming = { readyMs: 20_000, daveWaitMs: 10_000, pollMs: 200 };
+const DEFAULT_TIMING: BotTiming = { readyMs: 20_000, daveWaitMs: 10_000, pollMs: 200, watchdogMs: 100, daveGraceMs: 5_000 };
 /** A feed with no frame for this long ends the current speech turn. */
 const TURN_GAP_MS = 120;
 
@@ -86,6 +94,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private receiveOnSpeaking: ((userId: string) => void) | null = null;
   private selfDeaf = true;
   private readonly timing: BotTiming;
+  /** Last observed DAVE state of the live connection (true only after an established session). */
+  private daveOk = false;
+  private watchdog: NodeJS.Timeout | null = null;
+  private graceTimer: NodeJS.Timeout | null = null;
   /**
    * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
    * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
@@ -176,6 +188,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
         daveEncryption: true,
         decryptionFailureTolerance: 36,
       });
+      this.installDaveGuards(this.connection);
       this.connection.subscribe(this.player);
       this.connection.on("stateChange", (_o, n) => {
         if (n.status === VoiceConnectionStatus.Disconnected || n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`);
@@ -184,9 +197,101 @@ export class DiscordBot extends EventEmitter implements BotPort {
     }
     await entersState(this.connection, VoiceConnectionStatus.Ready, this.timing.readyMs);
     await this.requireDave();
+    this.daveOk = true;
     this.healthy = true;
+    this.clearGraceTimer();
+    this.watchdog ??= setInterval(() => this.observeDave(), this.timing.watchdogMs);
+    this.watchdog.unref();
     this.o.election.setState(this.o.id, { healthy: true });
+    this.o.election.daveRestored(this.o.id); // no-op unless a previous session had lost DAVE
     this.emit("healthy");
+  }
+
+  private enforced(conn: VoiceConnection | null = this.connection): boolean {
+    return conn !== null && daveEnforced(readDaveInfo(conn));
+  }
+
+  /**
+   * The library passes media through unencrypted at protocol 0, while the MLS group is not ready,
+   * and (inside davey's transition window) at protocol 1. The bridge requires an established DAVE
+   * session at every boundary, so these guards sit on the two places audio crosses the connection:
+   * the packet about to be encrypted for sending and the packet just received for decryption.
+   */
+  private installDaveGuards(conn: VoiceConnection): void {
+    const prepare = conn.prepareAudioPacket.bind(conn);
+    conn.prepareAudioPacket = (buffer) => (this.sendAllowed(conn) ? prepare(buffer) : undefined);
+    const play = conn.playOpusPacket.bind(conn);
+    conn.playOpusPacket = (buffer) => (this.sendAllowed(conn) ? play(buffer) : undefined);
+    // `parsePacket` is private in the typings but is the single place a received packet is decrypted.
+    const receiver = conn.receiver as unknown as ParsingReceiver;
+    const parse = receiver.parsePacket.bind(receiver);
+    receiver.parsePacket = (buffer, mode, nonce, secretKey, userId) => {
+      if (conn !== this.connection || !this.enforced(conn)) {
+        queueMicrotask(() => this.observeDave());
+        return null; // dropped: VoiceReceiver does not push a null packet
+      }
+      this.refusePlaintext(conn, userId);
+      return parse(buffer, mode, nonce, secretKey, userId);
+    };
+  }
+
+  private sendAllowed(conn: VoiceConnection): boolean {
+    if (conn === this.connection && this.enforced(conn)) return true;
+    queueMicrotask(() => this.observeDave()); // never stop the player from inside its own tick
+    return false;
+  }
+
+  /** An established session must not accept unencrypted media, even in davey's transition window. */
+  private refusePlaintext(conn: VoiceConnection, userId: string): void {
+    const state = conn.state;
+    if (state.status !== VoiceConnectionStatus.Ready) return;
+    const session = (state.networking.state as { dave?: { session?: { canPassthrough?(u: string): boolean; setPassthroughMode?(on: boolean, expiry?: number): void } } }).dave?.session;
+    if (session?.canPassthrough?.(userId)) session.setPassthroughMode?.(false, 0);
+  }
+
+  /** Read the live DAVE state and act on a change. Returns whether DAVE is established now. */
+  private observeDave(): boolean {
+    if (!this.connection) return false;
+    const ok = this.enforced();
+    if (ok === this.daveOk) return ok;
+    this.daveOk = ok;
+    if (!this.healthy) return ok; // a join in progress is governed by requireDave
+    if (ok) this.handleDaveRestored();
+    else this.handleDaveLost();
+    return ok;
+  }
+
+  private handleDaveLost(): void {
+    this.o.log.warn(`${this.o.id} DAVE unavailable: stopping send and receive until it is established again`);
+    this.dropOutbound();
+    this.stopReceive();
+    this.o.election.daveLost(this.o.id, "dave unavailable");
+    this.clearGraceTimer();
+    this.graceTimer = setTimeout(() => {
+      this.graceTimer = null;
+      if (!this.daveOk) this.markUnhealthy("DAVE unavailable after the grace window");
+    }, this.timing.daveGraceMs);
+    this.graceTimer.unref();
+  }
+
+  private handleDaveRestored(): void {
+    this.clearGraceTimer();
+    this.o.log.info(`${this.o.id} DAVE established again`);
+    this.o.election.daveRestored(this.o.id);
+  }
+
+  private clearGraceTimer(): void {
+    if (this.graceTimer) clearTimeout(this.graceTimer);
+    this.graceTimer = null;
+  }
+
+  /** Discard everything buffered for playback now (not drained, unlike `endSpeech`). */
+  private dropOutbound(): void {
+    if (this.turnTimer) clearTimeout(this.turnTimer);
+    this.turnTimer = null;
+    this.feed?.destroy();
+    this.feed = null;
+    this.player.stop(true);
   }
 
   /** Enforce DAVE: wait for an established session, otherwise leave and fail closed. */
@@ -203,7 +308,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /** The TeamSpeak speaker assigned to this bot: Opus passthrough, one turn per stretch of speech. */
   sendOpus(frame: Buffer): void {
-    if (!this.healthy || !daveEnforced(readDaveInfo(this.connection!))) return;
+    if (!this.healthy || !this.observeDave()) return;
     if (!this.feed || this.feed.destroyed) {
       this.feed = new FrameFeed();
       this.player.play(createAudioResource(this.feed, { inputType: StreamType.Opus }));
@@ -227,16 +332,19 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (!conn || this.selfDeaf || !this.o.election.admitSubscribe(this.o.id, generation)) return false;
     this.stopReceive();
     const receiver = conn.receiver;
-    this.supervisor = new ReceiveSupervisor({
+    const sup: ReceiveSupervisor = new ReceiveSupervisor({
       bot: this.o.id,
       generation,
       election: this.o.election,
       subscribe: (userId) => receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: 200 } }),
-      onFrame: (userId, opus, gen) => this.o.onHumanOpus(this.o.id, gen, userId, opus),
+      onFrame: (userId, opus, gen) => {
+        if (this.supervisor !== sup || !this.observeDave()) return; // stale reception or DAVE unavailable
+        this.o.onHumanOpus(this.o.id, gen, userId, opus);
+      },
       onNeedRejoin: (reason) => void this.rejoin(reason),
       log: (m) => this.o.log.warn(`${this.o.id} ${m}`),
     });
-    const sup = this.supervisor;
+    this.supervisor = sup;
     this.receiveOnSpeaking = (userId) => {
       // Never subscribe to a bridge bot (including this one): that would re-forward bridge audio.
       if (this.o.bridgeUserIds().has(userId) || userId === this.userId) return;
@@ -293,6 +401,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
   }
 
   leave(): void {
+    if (this.watchdog) clearInterval(this.watchdog);
+    this.watchdog = null;
+    this.clearGraceTimer();
+    this.daveOk = false;
     this.stopReceive();
     this.endSpeech();
     this.healthy = false;

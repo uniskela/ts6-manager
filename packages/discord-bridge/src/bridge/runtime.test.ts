@@ -6,6 +6,7 @@ import { preferredOrder, type BotId } from "../core/ids.js";
 import { tsNickname } from "../core/nickname.js";
 import { createOpusCodec } from "../core/opus.js";
 import { toneFrame } from "../core/pcm.js";
+import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger } from "../core/redact.js";
 import { BridgeRuntime, type BotPort } from "./runtime.js";
 
@@ -214,6 +215,52 @@ describe("BridgeRuntime idle-overflow and receiver rules (simulated Discord, orc
     bots.get("slot-0")!.die();
     await settle();
     assert.equal(rt.election.admitFrame("slot-0", gen), false);
+    await rt.stop();
+  });
+});
+
+describe("DAVE transition at the receiver while audio is queued (simulated Discord, orchestration level)", () => {
+  async function buildWithElection() {
+    const ts = new FakeTs();
+    const election = new ReceiverElection(preferredOrder(5));
+    const bots = new Map<BotId, FakeBot>();
+    for (const id of preferredOrder(5)) bots.set(id, new FakeBot(id, `discord-${id}`));
+    const rt = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log: quiet });
+    const settle = () => rt.enqueue(async () => undefined).then(() => rt.enqueue(async () => undefined));
+    await rt.start();
+    ts.addUser(1);
+    await settle();
+    return { ts, bots, rt, election, settle };
+  }
+
+  it("flushes queued frames, stops receiving, and never forwards stale audio after DAVE returns", async () => {
+    const { ts, bots, rt, election, settle } = await buildWithElection();
+    const receiver = rt.status().receiver!;
+    const gen = rt.status().generation;
+    const enc = createOpusCodec("auto");
+    for (let f = 0; f < 3; f++) rt.onHumanOpus(receiver, gen, "human", enc.encode(toneFrame(440, f * 960)));
+
+    election.daveLost(receiver, "mls transition"); // what the bot does the moment DAVE is unavailable
+    await settle();
+    assert.equal(bots.get(receiver)!.receiving, null, "reception is torn down");
+    const before = ts.out.length;
+    for (let t = 0; t < 4; t++) rt.d2t.tick(t * 20);
+    assert.equal(ts.out.length - before, 0, "frames queued before the loss are never mixed into TeamSpeak");
+    rt.onHumanOpus(receiver, gen, "human", enc.encode(toneFrame(440, 3 * 960))); // a late callback from the old reception
+    rt.d2t.tick(100);
+    assert.equal(ts.out.length - before, 0, "late callbacks from the invalidated reception are fenced");
+
+    election.daveRestored(receiver);
+    await settle();
+    assert.equal(rt.status().receiver, receiver, "the holder is kept through the transition");
+    assert.ok(rt.status().generation > gen);
+    assert.equal(bots.get(receiver)!.receiving, rt.status().generation, "reception resumed under the fresh generation");
+    rt.onHumanOpus(receiver, gen, "human", enc.encode(toneFrame(440, 4 * 960)));
+    rt.d2t.tick(140);
+    assert.equal(ts.out.length - before, 0, "the old generation stays fenced after the restore");
+    rt.onHumanOpus(receiver, rt.status().generation, "human", enc.encode(toneFrame(440, 5 * 960)));
+    rt.d2t.tick(160);
+    assert.equal(ts.out.length - before, 1, "new reception flows");
     await rt.stop();
   });
 });

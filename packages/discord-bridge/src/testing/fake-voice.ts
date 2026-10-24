@@ -223,7 +223,7 @@ export function testBot(
     onHumanOpus: o.onHumanOpus ?? (() => undefined),
     bridgeUserIds: o.bridgeUserIds ?? (() => new Set()),
     voiceTarget: async () => ({ guildId, channelId: "channel-1", adapterCreator: adapter.creator }),
-    timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5 },
+    timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150 },
     sessionId: o.sessionId ?? randomUUID(),
   });
   bot.userId = o.userId ?? `user-${id}`;
