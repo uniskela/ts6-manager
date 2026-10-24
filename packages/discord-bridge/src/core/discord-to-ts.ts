@@ -4,6 +4,11 @@ import { LatencyStats } from "./metrics.js";
 import type { OpusCodec } from "./opus.js";
 import type { ReceiverElection } from "./receiver-election.js";
 
+/** A decoder unused for this long is released; the sweep runs at most this often; the map is capped. */
+const DECODER_IDLE_MS = 5_000;
+const DECODER_SWEEP_MS = 1_000;
+const MAX_DECODERS = 256;
+
 interface Meta {
   bot: BotId;
   generation: number;
@@ -29,12 +34,16 @@ interface Options {
  */
 export class DiscordToTsPipeline {
   private readonly mixer: FrameMixer<Meta>;
-  private readonly decoders = new Map<string, OpusCodec>();
+  private readonly decoders = new Map<string, { codec: OpusCodec; lastUsedMs: number }>();
   private encoder: OpusCodec | null = null;
   private speaking = false;
   private idleTicks = 0;
+  private lastSweepMs = 0;
   selfSourceDrops = 0;
   framesSent = 0;
+  /** Packets the decoder rejected; each one was dropped and that user's decoder replaced. */
+  decodeErrors = 0;
+  encodeErrors = 0;
   readonly transitLatency = new LatencyStats();
 
   constructor(private readonly o: Options) {
@@ -47,27 +56,65 @@ export class DiscordToTsPipeline {
       return;
     }
     if (!this.o.election.admitFrame(bot, generation)) return;
-    let dec = this.decoders.get(userId);
-    if (!dec) {
-      dec = this.o.codecFactory();
-      this.decoders.set(userId, dec);
-    }
-    let pcm: Buffer;
-    try {
-      pcm = dec.decode(opus);
-    } catch {
-      return; // a corrupt packet must not take the receiver down
-    }
-    this.mixer.push(userId, pcm, { bot, generation }, nowMs);
+    const pcm = this.decode(userId, opus, nowMs);
+    if (pcm) this.mixer.push(userId, pcm, { bot, generation }, nowMs);
   }
 
-  /** Teardown of a bot's subscriptions: drop everything it queued. */
+  private decode(userId: string, opus: Buffer, nowMs: number): Buffer | null {
+    let entry = this.decoders.get(userId);
+    if (!entry) {
+      if (this.decoders.size >= MAX_DECODERS) this.evictOldest();
+      entry = { codec: this.o.codecFactory(), lastUsedMs: nowMs };
+      this.decoders.set(userId, entry);
+    }
+    entry.lastUsedMs = nowMs;
+    try {
+      return entry.codec.decode(opus);
+    } catch {
+      this.decodeErrors += 1; // a corrupt packet must not take the receiver down
+      this.release(userId, false);
+      return null;
+    }
+  }
+
+  /** Release a user's decoder; `finish` pads their partial tail so the last samples are still heard. */
+  private release(userId: string, finish: boolean): void {
+    if (finish) this.mixer.endSource(userId);
+    this.decoders.get(userId)?.codec.dispose();
+    this.decoders.delete(userId);
+  }
+
+  private evictOldest(): void {
+    let oldest: string | null = null;
+    let at = Number.POSITIVE_INFINITY;
+    for (const [id, e] of this.decoders) {
+      if (e.lastUsedMs < at) {
+        at = e.lastUsedMs;
+        oldest = id;
+      }
+    }
+    if (oldest !== null) this.release(oldest, true);
+  }
+
+  /** A human's receive stream closed or they left: free their decoder now. */
+  releaseUser(userId: string): void {
+    this.release(userId, true);
+  }
+
+  get decoderCount(): number {
+    return this.decoders.size;
+  }
+
+  /** Teardown of a bot's subscriptions: drop everything it queued and release every decoder. */
   flush(): void {
     this.mixer.flush();
+    for (const e of this.decoders.values()) e.codec.dispose();
+    this.decoders.clear();
   }
 
   /** Call every 20 ms. */
   tick(nowMs: number): void {
+    this.sweepIdle(nowMs);
     const mixed = this.mixer.tick();
     if (!mixed) {
       if (this.speaking && ++this.idleTicks >= 3) {
@@ -78,10 +125,26 @@ export class DiscordToTsPipeline {
     }
     this.idleTicks = 0;
     this.speaking = true;
-    this.encoder ??= this.o.codecFactory();
-    this.o.out.sendVoice(this.encoder.encode(mixed.pcm));
+    let packet: Buffer;
+    try {
+      this.encoder ??= this.o.codecFactory();
+      packet = this.encoder.encode(mixed.pcm);
+    } catch {
+      this.encodeErrors += 1;
+      this.encoder?.dispose();
+      this.encoder = null; // rebuilt on the next tick
+      return;
+    }
+    this.o.out.sendVoice(packet);
     this.framesSent += 1;
     this.transitLatency.record(nowMs - mixed.oldestArrivedMs);
+  }
+
+  /** Release decoders of users that went quiet without a close notification. */
+  private sweepIdle(nowMs: number): void {
+    if (nowMs - this.lastSweepMs < DECODER_SWEEP_MS) return;
+    this.lastSweepMs = nowMs;
+    for (const [userId, e] of [...this.decoders]) if (nowMs - e.lastUsedMs > DECODER_IDLE_MS) this.release(userId, true);
   }
 
   get fenceDroppedAtMix(): number {
@@ -89,7 +152,7 @@ export class DiscordToTsPipeline {
   }
 
   dispose(): void {
-    for (const d of this.decoders.values()) d.dispose();
+    for (const d of this.decoders.values()) d.codec.dispose();
     this.decoders.clear();
     this.encoder?.dispose();
   }

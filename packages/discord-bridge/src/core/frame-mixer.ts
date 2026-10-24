@@ -1,4 +1,4 @@
-import { MAX_QUEUED_FRAMES } from "./constants.js";
+import { FRAME_BYTES, MAX_QUEUED_FRAMES } from "./constants.js";
 import { mixFrames } from "./pcm.js";
 
 export interface QueuedFrame<M> {
@@ -18,11 +18,21 @@ export interface MixResult<M> {
 /**
  * Per-source bounded queues mixed once per 20 ms tick. `admit` runs again at mix time, so a frame
  * queued under a stale generation is dropped even if it passed the check when it arrived.
+ *
+ * Decoders hand over whatever one packet holds (10 ms, 20 ms, 40 ms, ...). `push` cuts that into whole
+ * 20 ms frames and keeps the remainder until the next packet, so nothing is truncated and no gap is
+ * padded in. A partial tail is zero-padded only by `endSource`, when the speaker has really ended.
  */
 export class FrameMixer<M> {
   private readonly queues = new Map<string, QueuedFrame<M>[]>();
+  /** Samples of an unfinished 20 ms frame, per source. */
+  private readonly tails = new Map<string, { buf: Buffer; arrivedMs: number; meta: M }>();
   droppedOverflow = 0;
   droppedAdmit = 0;
+  /** PCM that was not whole stereo samples. */
+  droppedMalformed = 0;
+  /** Partial frames that were zero-padded because their speaker ended. */
+  paddedTails = 0;
 
   constructor(
     private readonly admit: (meta: M) => boolean = () => true,
@@ -34,21 +44,56 @@ export class FrameMixer<M> {
       this.droppedAdmit += 1;
       return;
     }
+    if (pcm.length === 0 || pcm.length % 4 !== 0) {
+      this.droppedMalformed += 1;
+      return;
+    }
+    const tail = this.tails.get(source);
+    const data = tail ? Buffer.concat([tail.buf, pcm]) : pcm;
+    const firstArrived = tail?.arrivedMs ?? arrivedMs;
+    const whole = Math.floor(data.length / FRAME_BYTES);
+    const rest = data.subarray(whole * FRAME_BYTES);
+    if (rest.length > 0) this.tails.set(source, { buf: Buffer.from(rest), arrivedMs, meta });
+    else this.tails.delete(source);
+    if (whole === 0) return;
     let q = this.queues.get(source);
     if (!q) {
       q = [];
       this.queues.set(source, q);
     }
-    q.push({ pcm, meta, arrivedMs });
-    while (q.length > this.maxQueued) {
+    for (let i = 0; i < whole; i++) q.push({ pcm: data.subarray(i * FRAME_BYTES, (i + 1) * FRAME_BYTES), meta, arrivedMs: i === 0 ? firstArrived : arrivedMs });
+    // Bound latency by dropping the oldest, but never frames of the packet that was just pushed.
+    const limit = Math.max(this.maxQueued, whole);
+    while (q.length > limit) {
       q.shift();
       this.droppedOverflow += 1;
     }
   }
 
+  /** The speaker ended: pad its partial tail to a whole frame (counted) so the last samples are heard. */
+  endSource(source: string): void {
+    const tail = this.tails.get(source);
+    if (!tail) return;
+    this.tails.delete(source);
+    if (!this.admit(tail.meta)) {
+      this.droppedAdmit += 1;
+      return;
+    }
+    const padded = Buffer.alloc(FRAME_BYTES);
+    tail.buf.copy(padded);
+    let q = this.queues.get(source);
+    if (!q) {
+      q = [];
+      this.queues.set(source, q);
+    }
+    q.push({ pcm: padded, meta: tail.meta, arrivedMs: tail.arrivedMs });
+    this.paddedTails += 1;
+  }
+
   /** Drop everything queued for sources matching the predicate (teardown). */
   flush(match: (source: string) => boolean = () => true): void {
-    for (const key of this.queues.keys()) if (match(key)) this.queues.delete(key);
+    for (const key of [...this.queues.keys()]) if (match(key)) this.queues.delete(key);
+    for (const key of [...this.tails.keys()]) if (match(key)) this.tails.delete(key);
   }
 
   sourceCount(): number {

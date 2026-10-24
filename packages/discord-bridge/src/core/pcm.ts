@@ -18,8 +18,10 @@ export function monoToStereo(mono: Buffer): Buffer {
 export function mixFrames(frames: readonly Buffer[]): Buffer {
   const acc = new Int32Array(FRAME_SAMPLES * CHANNELS);
   for (const f of frames) {
-    const n = Math.min(acc.length, Math.floor(f.length / 2));
-    for (let i = 0; i < n; i++) acc[i] += f.readInt16LE(i * 2);
+    // The mixer segments decoded audio into whole frames; anything else here is a bug, and mixing it
+    // would silently truncate or pad.
+    if (f.length !== FRAME_BYTES) throw new RangeError(`mixFrames needs ${FRAME_BYTES}-byte frames, got ${f.length}`);
+    for (let i = 0; i < acc.length; i++) acc[i] += f.readInt16LE(i * 2);
   }
   let peak = 0;
   for (let i = 0; i < acc.length; i++) peak = Math.max(peak, Math.abs(acc[i]));
