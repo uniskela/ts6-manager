@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import { daveEnforced, readDaveInfo } from "./dave-gate.js";
+import { MAX_QUEUED_FRAMES } from "./constants.js";
 import { FrameFeed } from "./frame-feed.js";
 import { preferredOrder } from "./ids.js";
 import { ReceiveSupervisor } from "./receive-supervisor.js";
@@ -89,6 +90,35 @@ describe("FrameFeed", () => {
     feed.on("data", (b: Buffer) => got.push(b[0]));
     await new Promise((r) => setImmediate(r));
     assert.deepEqual(got, [7, 8, 9]);
+  });
+  it("counts the stream's own buffer: a stalled consumer never holds more than the budget, oldest dropped first", async () => {
+    const feed = new FrameFeed(); // default budget
+    feed.read(); // the consumer has attached, so the stream starts filling its own buffer too
+    for (let i = 0; i < 100; i++) feed.offer(Buffer.from([i]));
+    assert.ok(feed.queued <= MAX_QUEUED_FRAMES && feed.readableLength <= 1, `retained ${feed.queued} frames (${feed.readableLength} in the stream)`);
+    assert.equal(feed.dropped, 100 - MAX_QUEUED_FRAMES);
+    const got: number[] = [];
+    for (let b = feed.read(); b !== null; b = feed.read()) got.push((b as Buffer)[0]);
+    await new Promise((r) => setImmediate(r));
+    for (let b = feed.read(); b !== null; b = feed.read()) got.push((b as Buffer)[0]);
+    assert.deepEqual(got, [96, 97, 98, 99], "only the newest frames survive; stale audio is not played");
+  });
+  it("keeps the budget while a polling consumer (the AudioPlayer's pattern) falls behind", async () => {
+    const feed = new FrameFeed();
+    const got: number[] = [];
+    feed.on("readable", () => {
+      // Consume one frame per 'readable', like a player that takes a packet per tick.
+      const b = feed.read();
+      if (b) got.push((b as Buffer)[0]);
+    });
+    for (let i = 0; i < 60; i++) {
+      feed.offer(Buffer.from([i]));
+      assert.ok(feed.queued <= MAX_QUEUED_FRAMES, `retained ${feed.queued} at frame ${i}`);
+    }
+    await new Promise((r) => setImmediate(r));
+    for (let b = feed.read(); b !== null; b = feed.read()) got.push((b as Buffer)[0]);
+    assert.ok(got.every((v, i) => i === 0 || v > got[i - 1]), "order is preserved");
+    assert.equal(got.at(-1), 59, "the newest frame is the last one delivered");
   });
   it("ends after finish()", async () => {
     const feed = new FrameFeed();

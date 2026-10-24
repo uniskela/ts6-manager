@@ -2,7 +2,7 @@
   "scripts/test-verify.test.mjs": 4,
   "src/adapters/discord-bot.dave.test.ts": 13,
   "src/adapters/discord-bot.isolation.test.ts": 5,
-  "src/adapters/discord-bot.lifecycle.test.ts": 10,
+  "src/adapters/discord-bot.lifecycle.test.ts": 11,
   "src/adapters/discord-bot.receive.test.ts": 10,
   "src/adapters/discord-bot.recovery.test.ts": 8,
   "src/adapters/ts-session.test.ts": 2,
@@ -15,7 +15,7 @@
   "src/core/core.test.ts": 30,
   "src/core/human-filter.test.ts": 6,
   "src/core/rebuild-budget.test.ts": 4,
-  "src/core/receive.test.ts": 7,
+  "src/core/receive.test.ts": 9,
   "src/lab/config.test.ts": 3,
   "src/lab/dave-library.test.ts": 3
 }

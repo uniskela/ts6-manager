@@ -187,3 +187,21 @@ describe("one budget for every connection rebuild (real VoiceConnection)", () =>
     await t.bot.destroy();
   });
 });
+
+describe("playback keeps a true latency bound (real AudioPlayer)", () => {
+  it("a burst of 100 frames is not heard as 400 ms of stale audio: only the newest few frames are sent, newest last", async () => {
+    const t = testBot("slot-0", newElection());
+    const h = await t.join();
+    const tag = (n: number) => Buffer.from([0xfc, n, 7, 7]);
+    t.bot.sendOpus(tag(0)); // the player starts and the stream is being consumed
+    await waitFor(() => h.networking.wire.some((p) => !isSilence(p)), 1000, "playback started");
+    h.networking.wire.length = 0;
+    for (let n = 1; n <= 100; n++) t.bot.sendOpus(tag(n));
+    await tick(400);
+    const heard = h.networking.wire.filter((p) => !isSilence(p));
+    assert.ok(heard.length <= 6, `at most the budget plus the frames already being prepared were sent (heard ${heard.length})`);
+    assert.ok(heard.length >= 1, "the newest audio is still played");
+    assert.ok(!heard.some((p) => p.includes(Buffer.from([40, 7, 7]))), "audio from early in the burst is never heard");
+    await t.bot.destroy();
+  });
+});
