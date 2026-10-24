@@ -8,7 +8,7 @@ import { OVERFLOW_NICKNAME, tsNickname } from "../core/nickname.js";
 import type { OpusCodec } from "../core/opus.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import type { Logger } from "../core/redact.js";
-import { SlotRouter } from "../core/slot-router.js";
+import { SlotRouter, type SlotChange } from "../core/slot-router.js";
 import { TsToDiscordPipeline, type DiscordSendSink } from "../core/ts-to-discord.js";
 
 export interface BotPort extends DiscordSendSink {
@@ -192,7 +192,7 @@ export class BridgeRuntime extends EventEmitter {
     if (this.lifecycle === "running") return;
     this.lifecycle = "running";
     for (const c of this.o.ts.directory.inChannel(this.o.ts.channelId)) {
-      if (c.clid !== this.o.ts.clientId) this.router.join(c.uniqueId);
+      if (c.clid !== this.o.ts.clientId && !this.isExcluded(c)) this.router.join(c.uniqueId);
     }
     this.ticker = setInterval(() => {
       if (this.lifecycle !== "running") return;
@@ -277,10 +277,33 @@ export class BridgeRuntime extends EventEmitter {
     void done.then(() => this.tracked.delete(done));
   }
 
+  /** Query clients and configured MusicBots are not people: they take no slot and never cause overflow. */
+  private isExcluded(c: { uniqueId: string; isQuery: boolean }): boolean {
+    return c.isQuery || (this.o.excludedUniqueIds?.has(c.uniqueId) ?? false);
+  }
+
+  /**
+   * Re-apply the exclusion list after it changed: clients that are now excluded give up their place
+   * (the longest-waiting human is promoted into a freed slot) and clients no longer excluded take one.
+   */
+  refreshExclusions(): Promise<void> {
+    return this.enqueue(async () => {
+      if (!this.live()) return;
+      const present = this.o.ts.directory.inChannel(this.o.ts.channelId).filter((c) => c.clid !== this.o.ts.clientId);
+      const changes: SlotChange[] = [];
+      for (const c of present) changes.push(...(this.isExcluded(c) ? this.router.leave(c.uniqueId) : this.router.join(c.uniqueId)));
+      for (const c of changes) {
+        this.t2d.forget(c.uniqueId);
+        this.emit("slotChange", c);
+      }
+      await this.sync("exclusions changed");
+    });
+  }
+
   private async onDirectory(e: DirectoryEvent): Promise<void> {
     const ownChannel = this.o.ts.channelId;
     const uid = e.client.uniqueId;
-    if (e.client.clid === this.o.ts.clientId || e.client.isQuery) return;
+    if (e.client.clid === this.o.ts.clientId || this.isExcluded(e.client)) return;
     const present = e.type !== "leave" && e.client.channelId === ownChannel;
     const changes = present ? this.router.join(uid) : this.router.leave(uid);
     for (const c of changes) {

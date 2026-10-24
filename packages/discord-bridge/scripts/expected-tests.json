@@ -7,6 +7,7 @@
   "src/adapters/discord-bot.recovery.test.ts": 8,
   "src/adapters/ts-session.test.ts": 2,
   "src/bridge/runtime.dave.test.ts": 3,
+  "src/bridge/runtime.exclusion.test.ts": 4,
   "src/bridge/runtime.lifecycle.test.ts": 13,
   "src/bridge/runtime.race.test.ts": 12,
   "src/bridge/runtime.recovery.test.ts": 7,
