@@ -55,6 +55,7 @@ async function main(): Promise<void> {
       log,
       sessionId,
       onHumanOpus: (b, g, u, o) => runtime?.onHumanOpus(b, g, u, o),
+      onHumanClosed: (b, u) => runtime?.onHumanClosed(b, u),
       bridgeUserIds: () => new Set([...concrete.values()].map((c) => c.userId).filter(Boolean)),
     });
     concrete.set(id, bot);

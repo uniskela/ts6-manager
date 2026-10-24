@@ -1,92 +1,22 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
-import { ClientDirectory } from "../core/client-directory.js";
 import { preferredOrder, type BotId } from "../core/ids.js";
 import { tsNickname } from "../core/nickname.js";
 import { createOpusCodec } from "../core/opus.js";
 import { toneFrame } from "../core/pcm.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger } from "../core/redact.js";
-import { BridgeRuntime, type BotPort } from "./runtime.js";
+import { FakeBot, FakeTs, settle as settleRuntime } from "../testing/fake-runtime.js";
+import { BridgeRuntime } from "./runtime.js";
 
 const quiet = createLogger("test", () => undefined);
-
-class FakeBot extends EventEmitter implements BotPort {
-  healthy = false;
-  deaf = true;
-  inVoice = false;
-  receiving: number | null = null;
-  nick: string | null = null;
-  sent: Buffer[] = [];
-  log: string[] = [];
-  constructor(readonly id: BotId, readonly userId: string) {
-    super();
-  }
-  async join(o: { receive: boolean }) {
-    this.inVoice = true;
-    this.healthy = true;
-    this.deaf = !o.receive;
-    this.log.push(`join(receive=${o.receive})`);
-  }
-  leave() {
-    this.inVoice = false;
-    this.healthy = false;
-    this.receiving = null;
-    this.log.push("leave");
-  }
-  async setNickname(n: string | null) {
-    this.nick = n;
-  }
-  startReceive(g: number) {
-    this.receiving = g;
-    this.log.push(`startReceive(${g})`);
-    return true;
-  }
-  stopReceive() {
-    this.receiving = null;
-    this.log.push("stopReceive");
-  }
-  sendOpus(f: Buffer) {
-    this.sent.push(f);
-  }
-  endSpeech() {}
-  /** Simulates the Discord connection dying. */
-  die() {
-    this.healthy = false;
-    this.inVoice = false;
-    this.receiving = null;
-    this.emit("unhealthy", "connection lost");
-  }
-}
-
-class FakeTs extends EventEmitter {
-  directory = new ClientDirectory();
-  clientId = 1;
-  channelId = 1;
-  out: Buffer[] = [];
-  stops = 0;
-  sendVoice(o: Buffer) {
-    this.out.push(o);
-  }
-  sendVoiceStop() {
-    this.stops++;
-  }
-  addUser(n: number, name = `User${n}`) {
-    const params = { ctid: "1", clid: String(100 + n), client_unique_identifier: `uid${n}`, client_nickname: name };
-    for (const ev of this.directory.ingest({ name: "notifycliententerview", params })) this.emit("directory", ev);
-  }
-  removeUser(n: number) {
-    for (const ev of this.directory.ingest({ name: "notifyclientleftview", params: { clid: String(100 + n) } })) this.emit("directory", ev);
-  }
-}
 
 async function build() {
   const ts = new FakeTs();
   const bots = new Map<BotId, FakeBot>();
   for (const id of preferredOrder(5)) bots.set(id, new FakeBot(id, `discord-${id}`));
   const rt = new BridgeRuntime({ ts, bots, codecFactory: () => createOpusCodec("auto"), log: quiet });
-  const settle = () => rt.enqueue(async () => undefined).then(() => rt.enqueue(async () => undefined));
+  const settle = () => settleRuntime(rt);
   return { ts, bots, rt, settle };
 }
 
@@ -226,7 +156,7 @@ describe("DAVE transition at the receiver while audio is queued (simulated Disco
     const bots = new Map<BotId, FakeBot>();
     for (const id of preferredOrder(5)) bots.set(id, new FakeBot(id, `discord-${id}`));
     const rt = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log: quiet });
-    const settle = () => rt.enqueue(async () => undefined).then(() => rt.enqueue(async () => undefined));
+    const settle = () => settleRuntime(rt);
     await rt.start();
     ts.addUser(1);
     await settle();
