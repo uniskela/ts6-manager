@@ -11,7 +11,7 @@
   "src/bridge/runtime.race.test.ts": 12,
   "src/bridge/runtime.recovery.test.ts": 7,
   "src/bridge/runtime.test.ts": 11,
-  "src/core/audio-robustness.test.ts": 17,
+  "src/core/audio-robustness.test.ts": 22,
   "src/core/core.test.ts": 30,
   "src/core/human-filter.test.ts": 6,
   "src/core/rebuild-budget.test.ts": 4,

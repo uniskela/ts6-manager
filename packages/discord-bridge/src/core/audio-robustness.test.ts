@@ -6,7 +6,7 @@ import { DiscordToTsPipeline } from "./discord-to-ts.js";
 import { FrameMixer } from "./frame-mixer.js";
 import { preferredOrder } from "./ids.js";
 import { createOpusCodec, type OpusCodec } from "./opus.js";
-import { splitOpusPacket } from "./opus-packet.js";
+import { opusFrames, splitOpusPacket } from "./opus-packet.js";
 import { mixFrames, toneFrame } from "./pcm.js";
 import { ReceiverElection } from "./receiver-election.js";
 import { SlotRouter } from "./slot-router.js";
@@ -105,6 +105,80 @@ describe("longer Opus packets (real Opus)", () => {
   });
 });
 
+/** A code-3 packet carrying `payloads` as frames of the given CELT configuration (16 = 2.5 ms, 17 = 5, 18 = 10). */
+function code3(config: number, payloads: Buffer[], vbr: boolean, stereo = 1): Buffer {
+  const lengthBytes = (n: number) => (n < 252 ? [n] : [252 + (n & 3), (n - (252 + (n & 3))) >> 2]);
+  const head = [(config << 3) | (stereo << 2) | 3, (vbr ? 0x80 : 0) | payloads.length];
+  const lengths = vbr ? payloads.slice(0, -1).flatMap((f) => lengthBytes(f.length)) : [];
+  return Buffer.concat([Buffer.from([...head, ...lengths]), ...payloads]);
+}
+
+describe("sub-20 ms constituent frames are repacketised into 20 ms packets", () => {
+  const unwrap = (r: ReturnType<typeof splitOpusPacket>) => {
+    assert.equal(r.kind, "frames");
+    return r.kind === "frames" ? r.frames : [];
+  };
+
+  it("the reviewer's valid 4 x 10 ms packet becomes two 20 ms packets that each decode to 20 ms", () => {
+    const packet = Buffer.from("f704fffefffefffefffe", "hex");
+    const out = unwrap(splitOpusPacket(packet));
+    assert.equal(out.length, 2);
+    for (const f of out) assert.equal(createOpusCodec("native").decode(f).length, FRAME_BYTES, "20 ms of audio each");
+    assert.deepEqual(out.map((f) => f.toString("hex")), ["f5fffefffe", "f5fffefffe"], "the same two-frame packets the reviewer decoded");
+  });
+
+  it("real 10 ms Opus frames glued into one packet come out as decodable 20 ms packets with their payloads and order intact", () => {
+    const codec = createOpusCodec("native");
+    const tens = [1, 2, 3, 4, 5, 6].map((n) => codec.encode(toneFrame(300 * n, 0).subarray(0, HALF)));
+    assert.ok(tens.every((p) => (p[0] & 3) === 0), "the encoder emits single-frame packets");
+    const packet = code3(tens[0][0] >> 3, tens.map((p) => p.subarray(1)), true);
+    const out = unwrap(splitOpusPacket(packet));
+    assert.equal(out.length, 3);
+    const decoder = createOpusCodec("native");
+    for (const f of out) assert.equal(decoder.decode(f).length, FRAME_BYTES);
+    assert.deepEqual(out.flatMap((f) => opusFrames(f)!), tens.map((p) => p.subarray(1)), "payload bytes and order are preserved");
+  });
+
+  it("every combination of frame length, count and layout keeps frame boundaries and payload bytes (seeded)", () => {
+    let seed = 7;
+    const rand = (n: number) => ((seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32) * n | 0;
+    for (let round = 0; round < 300; round++) {
+      const config = 16 + rand(3); // 2.5, 5 or 10 ms
+      const per = [8, 4, 2][config - 16]; // frames per 20 ms
+      const groups = 1 + rand(Math.min(6, Math.floor(48 / per)));
+      const vbr = rand(2) === 1;
+      const same = rand(5) === 0 ? 250 + rand(60) : rand(40); // CBR frames are all one length; 250+ exercises two-byte lengths
+      const payloads = Array.from({ length: groups * per }, () => Buffer.from(Array.from({ length: vbr ? (rand(5) === 0 ? 250 + rand(60) : rand(40)) : same }, () => rand(256))));
+      const packet = code3(config, payloads, vbr);
+      if (groups * per * [2.5, 5, 10][config - 16] > 120) continue;
+      const result = splitOpusPacket(packet);
+      if (groups * per * [2.5, 5, 10][config - 16] === 20) {
+        assert.deepEqual(unwrap(result), [packet], "an exact 20 ms packet is untouched");
+        continue;
+      }
+      const out = unwrap(result);
+      assert.equal(out.length, groups, `round ${round}: one packet per 20 ms`);
+      const back: Buffer[] = [];
+      for (const o of out) {
+        assert.equal(o[0] >> 3, config, "same configuration");
+        assert.equal((o[0] >> 2) & 1, 1, "same channel layout");
+        const inner = opusFrames(o)!;
+        assert.equal(inner.length, per, `round ${round}: ${per} frames in each output packet`);
+        back.push(...inner);
+      }
+      assert.deepEqual(back, payloads, `round ${round}: payload bytes and boundaries preserved`);
+    }
+  });
+
+  it("still reports what cannot be carried: a single short frame, a count that does not fill 20 ms, one 40/60 ms frame", () => {
+    const frame = Buffer.from([1, 2, 3]);
+    assert.deepEqual(splitOpusPacket(code3(18, [frame, frame, frame], true)), { kind: "unsupported", durationMs: 30 });
+    assert.deepEqual(splitOpusPacket(Buffer.from([(18 << 3) | 0, 1, 2, 3])), { kind: "unsupported", durationMs: 10 });
+    assert.deepEqual(splitOpusPacket(Buffer.from([(2 << 3) | 0, 1, 2, 3])), { kind: "unsupported", durationMs: 40 }); // SILK 40 ms
+    assert.deepEqual(splitOpusPacket(Buffer.from([(3 << 3) | 0, 1, 2, 3])), { kind: "unsupported", durationMs: 60 }); // SILK 60 ms
+  });
+});
+
 function recordingSink() {
   const frames: Buffer[] = [];
   const sink: DiscordSendSink = { sendOpus: (f) => frames.push(f), endSpeech: () => undefined };
@@ -147,6 +221,15 @@ describe("TeamSpeak to Discord slot path with longer packets", () => {
     const got = sinks.get("slot-0")!.frames;
     assert.equal(got.length, 2);
     for (const f of got) assert.equal(createOpusCodec("native").decode(f).length, FRAME_BYTES);
+  });
+
+  it("a valid 4 x 10 ms packet reaches the slot bot as two 20 ms packets and is not counted as unsupported", () => {
+    const { pipe, sinks } = tsSetup(1);
+    pipe.onVoice(voicePacket(10, Buffer.from("f704fffefffefffefffe", "hex")), 0);
+    const got = sinks.get("slot-0")!.frames;
+    assert.equal(got.length, 2);
+    for (const f of got) assert.equal(createOpusCodec("native").decode(f).length, FRAME_BYTES);
+    assert.equal(pipe.unsupportedFrames, 0);
   });
 
   it("an unsupported duration is dropped and counted, never forwarded as a wrong-length frame", () => {
