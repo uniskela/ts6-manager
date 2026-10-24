@@ -12,8 +12,8 @@ export interface TsVoicePacket {
 /**
  * Parse the decrypted body of an S2C Voice packet: VId u16, speaker CId u16, codec u8, Opus.
  * Returns null for anything malformed or for codecs the bridge does not carry.
- * D1 note: the existing client emits Voice and VoiceWhisper through the same event, so a
- * whisper cannot be told apart here. That is a recorded D2 requirement.
+ * Whisper exclusion happens before this parser: `TsSession` receives the transport packet type from
+ * the TS3 client and drops VoiceWhisper, so only channel voice reaches here.
  */
 export function parseS2CVoice(data: Buffer): TsVoicePacket | null {
   if (data.length < 5) return null;

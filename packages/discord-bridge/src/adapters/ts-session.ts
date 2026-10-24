@@ -2,6 +2,9 @@ import { EventEmitter } from "node:events";
 import { ClientDirectory } from "../core/client-directory.js";
 import { generateIdentity, Ts3Client } from "./tslib.js";
 
+/** Transport packet types the TS3 UDP client reports for incoming voice. */
+const TS_PACKET_VOICE = 0;
+
 export interface TsSessionOptions {
   host: string;
   port: number;
@@ -12,14 +15,26 @@ export interface TsSessionOptions {
   channelPassword?: string;
 }
 
-/** One TeamSpeak connection using the existing TS3 UDP client. Emits `voice` (decrypted S2C body). */
+/**
+ * One TeamSpeak connection using the existing TS3 UDP client. Emits `voice` (decrypted S2C body) for
+ * channel voice only. The Bridge-K contract approves channel voice, so VoiceWhisper packets (and any
+ * packet whose kind the transport did not report) are dropped and counted in `whisperDropped`.
+ */
 export class TsSession extends EventEmitter {
   readonly client = new Ts3Client();
   readonly directory = new ClientDirectory();
+  /** Non-channel voice packets dropped at the transport boundary. */
+  whisperDropped = 0;
 
   constructor(private readonly opts: TsSessionOptions) {
     super();
-    this.client.on("voice", (data: Buffer) => this.emit("voice", data));
+    this.client.on("voice", (data: Buffer, packetType?: number) => {
+      if (packetType !== TS_PACKET_VOICE) {
+        this.whisperDropped += 1;
+        return;
+      }
+      this.emit("voice", data);
+    });
     this.client.on("command", (cmd: Parameters<ClientDirectory["ingest"]>[0]) => {
       for (const ev of this.directory.ingest(cmd)) this.emit("directory", ev);
     });
