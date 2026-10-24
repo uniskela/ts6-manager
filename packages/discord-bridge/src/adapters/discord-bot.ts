@@ -10,9 +10,10 @@ import {
   entersState,
   joinVoiceChannel,
   type AudioPlayer,
+  type DiscordGatewayAdapterCreator,
   type VoiceConnection,
 } from "@discordjs/voice";
-import { Client, GatewayIntentBits, PermissionFlagsBits, type Guild, type VoiceBasedChannel } from "discord.js";
+import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
@@ -20,6 +21,22 @@ import { registerSecret, safeError, type Logger } from "../core/redact.js";
 import { ReceiveSupervisor } from "../core/receive-supervisor.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
 import type { BotPort } from "../bridge/runtime.js";
+
+/** Where a bot joins and which gateway adapter carries its voice signalling. */
+export interface VoiceTarget {
+  guildId: string;
+  channelId: string;
+  adapterCreator: DiscordGatewayAdapterCreator;
+}
+
+export interface BotTiming {
+  /** How long a join waits for the voice connection to become Ready. */
+  readyMs: number;
+  /** How long a Ready connection may take to establish DAVE before the bot leaves (fail closed). */
+  daveWaitMs: number;
+  /** Poll interval while waiting for DAVE. */
+  pollMs: number;
+}
 
 export interface DiscordBotOptions {
   id: BotId;
@@ -32,10 +49,13 @@ export interface DiscordBotOptions {
   onHumanOpus: (bot: BotId, generation: number, userId: string, opus: Buffer) => void;
   /** Ids of the bridge's own bots, never subscribed to. */
   bridgeUserIds: () => ReadonlySet<string>;
+  /** Resolve the join target. Defaults to this bot's own discord.js guild and its voice adapter. */
+  voiceTarget?: () => Promise<VoiceTarget>;
+  timing?: Partial<BotTiming>;
 }
 
 const REQUIRED = [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.Connect, PermissionFlagsBits.Speak];
-const DAVE_WAIT_MS = 10_000;
+const DEFAULT_TIMING: BotTiming = { readyMs: 20_000, daveWaitMs: 10_000, pollMs: 200 };
 /** A feed with no frame for this long ends the current speech turn. */
 const TURN_GAP_MS = 120;
 
@@ -55,6 +75,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private supervisor: ReceiveSupervisor | null = null;
   private receiveOnSpeaking: ((userId: string) => void) | null = null;
   private selfDeaf = true;
+  private readonly timing: BotTiming;
   userId = "";
   healthy = false;
   framesSent = 0;
@@ -63,6 +84,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   constructor(private readonly o: DiscordBotOptions) {
     super();
     registerSecret(o.token);
+    this.timing = { ...DEFAULT_TIMING, ...o.timing };
     this.client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
@@ -108,18 +130,25 @@ export class DiscordBot extends EventEmitter implements BotPort {
     }
   }
 
+  private async resolveTarget(): Promise<VoiceTarget> {
+    if (this.o.voiceTarget) return this.o.voiceTarget();
+    const guild = await this.client.guilds.fetch(this.o.guildId);
+    const channel = await guild.channels.fetch(this.o.channelId);
+    if (!channel?.isVoiceBased()) throw new Error("not a voice channel");
+    return { guildId: guild.id, channelId: channel.id, adapterCreator: guild.voiceAdapterCreator };
+  }
+
   /** Join the approved voice channel. A receiver must be undeafened; senders deafen themselves. */
   async join(opts: { receive: boolean }): Promise<void> {
-    const guild: Guild = await this.client.guilds.fetch(this.o.guildId);
-    const channel = (await guild.channels.fetch(this.o.channelId)) as VoiceBasedChannel;
+    const target = await this.resolveTarget();
     this.selfDeaf = !opts.receive;
     if (this.connection) {
-      this.connection.rejoin({ channelId: channel.id, selfDeaf: this.selfDeaf, selfMute: false });
+      this.connection.rejoin({ channelId: target.channelId, selfDeaf: this.selfDeaf, selfMute: false });
     } else {
       this.connection = joinVoiceChannel({
-        channelId: channel.id,
-        guildId: guild.id,
-        adapterCreator: guild.voiceAdapterCreator,
+        channelId: target.channelId,
+        guildId: target.guildId,
+        adapterCreator: target.adapterCreator,
         selfDeaf: this.selfDeaf,
         selfMute: false,
         daveEncryption: true,
@@ -131,7 +160,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
       });
       this.connection.on("error", (e) => this.o.log.warn(`${this.o.id} voice error: ${safeError(e)}`));
     }
-    await entersState(this.connection, VoiceConnectionStatus.Ready, 20_000);
+    await entersState(this.connection, VoiceConnectionStatus.Ready, this.timing.readyMs);
     await this.requireDave();
     this.healthy = true;
     this.o.election.setState(this.o.id, { healthy: true });
@@ -140,10 +169,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /** Enforce DAVE: wait for an established session, otherwise leave and fail closed. */
   private async requireDave(): Promise<void> {
-    const deadline = Date.now() + DAVE_WAIT_MS;
+    const deadline = Date.now() + this.timing.daveWaitMs;
     while (Date.now() < deadline) {
       if (daveEnforced(readDaveInfo(this.connection!))) return;
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
     const info = readDaveInfo(this.connection!);
     this.leave();
@@ -261,6 +290,11 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   get playerStatus(): AudioPlayerStatus {
     return this.player.state.status;
+  }
+
+  /** The live voice connection, for diagnostics and tests. */
+  get voiceConnection(): VoiceConnection | null {
+    return this.connection;
   }
 
   get daveInfo() {
