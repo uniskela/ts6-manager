@@ -15,6 +15,9 @@ async function twoBots() {
   const b = testBot("slot-1", election, { sessionId });
   const ha = await a.join();
   const hb = await b.join();
+  // The library keys connections by (group, guild) and its default group is shared, so without a
+  // per-bot group the second bot is handed the first bot's connection and never gets its own.
+  assert.notEqual(a.bot.voiceConnection, b.bot.voiceConnection, "the second bot must not be handed the first bot's connection");
   return { election, a, b, ha, hb };
 }
 
@@ -76,7 +79,9 @@ describe("two bots in one guild keep separate voice connections (real @discordjs
     const s1 = testBot("slot-0", election, { sessionId: "session-one" });
     const s2 = testBot("slot-0", election, { sessionId: "session-two" });
     const h1 = await s1.join();
-    const h2 = await s2.join();
+    await s2.join();
+    assert.notEqual(s1.bot.voiceConnection, s2.bot.voiceConnection, "a second session must not be handed the first session's connection");
+    const h2 = s2.latest();
     assert.notEqual(h1.conn, h2.conn);
     assert.notEqual(h1.conn.joinConfig.group, h2.conn.joinConfig.group);
     await s1.bot.destroy();
