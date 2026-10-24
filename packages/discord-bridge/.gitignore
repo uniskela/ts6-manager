@@ -1,0 +1,4 @@
+.vendor/
+node_modules/
+evidence/*.json
+!evidence/curated/*.json
