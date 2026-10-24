@@ -5,8 +5,10 @@
 # Two stages. Everything that needs a registry (corepack/pnpm, the lockfile install, the native Opus
 # addon compile) happens in `build`, which also gates on typecheck, unit tests and the native
 # Opus/DAVE smoke. `runtime` receives the finished tree and runs preinstalled executables directly:
-# it contains no package manager, never resolves or downloads a package, and nothing it runs writes
-# to a root-owned path (node_modules, .vendor and src stay root-owned and read-only to the user).
+# the Node base image still ships npm and corepack, but the entrypoint never invokes them, nothing
+# resolves or downloads a package, and nothing it runs writes to a root-owned path (node_modules,
+# .vendor and src stay root-owned and read-only to the user). The test gate is scripts/run-tests.mjs,
+# which also fails on a truncated, partial or skipped run, not only on a non-zero exit.
 #
 # Base is pinned by digest so the Node 24 + glibc toolchain is reproducible. Both stages use the same
 # digest, so the addon built in `build` loads against the same glibc in `runtime`.
@@ -32,7 +34,7 @@ COPY tsconfig.base.json /app/tsconfig.base.json
 # Gates. Executables are called directly so the build exercises the same entry points as runtime.
 RUN node scripts/sync-tslib.mjs \
  && ./node_modules/.bin/tsc --noEmit \
- && ./node_modules/.bin/tsx --test --test-force-exit --test-timeout=120000 $(find src -name '*.test.ts' | sort) \
+ && node scripts/run-tests.mjs \
  && ./node_modules/.bin/tsx src/lab/smoke-deps.ts \
  && rm -rf evidence \
  && mkdir evidence
