@@ -8,16 +8,19 @@ This package is the isolated Node 24 proof of concept for the Discord ↔ TeamSp
 
 **Independent review remediation (this branch).** The first independent review of `4548dc0` returned NO-GO. The defects it found are fixed in place and listed in [Review remediation](#review-remediation). Everything verified since is **simulated against the real library classes, native addons, or a real TS6 server with synthetic speakers. None of it is live Discord evidence.** The code is ready for a new independent review. It is not ready for, and has not had, live Discord testing.
 
+**Second independent review (Codex, reviewed HEAD `d890b5d`).** It returned NO-GO for controlled live testing and for D1 acceptance, with twelve findings (F1 to F12). All are addressed on this branch and listed in [Re-review remediation](#re-review-remediation), with the reviewer's own reproduction probes re-run against the old and the new code. The simulated, native and TS6-laboratory evidence is again **not** live Discord evidence, and the D1 gate is still not met.
+
 ## What is in the lab
 
 | Path | Purpose |
 |---|---|
 | `src/core/` | Pure routing logic: TS S2C packet parser, `SlotRouter` (uniqueId → one destination), `ReceiverElection` (`receiveGeneration` fence, DAVE-aware electability), `FrameMixer` (bounded, peak-limited, whole 20 ms frames, admission re-checked at mix time), `opus-packet` (RFC 6716 framing), both pipelines (decoders released on leave, close and idle), nickname rules, DAVE gate, receive supervisor, token redaction |
 | `src/bridge/runtime.ts` | `BridgeRuntime`: one shared TeamSpeak client + six Discord identities (5 slots + overflow), idle-overflow rules, teardown-before-election, successor activation ahead of reconnects, `created → running → stopping → stopped` lifecycle |
-| `src/adapters/` | `TsSession` (existing TS3 UDP client, channel voice only) and `DiscordBot` (discord.js + `@discordjs/voice`: per-bot connection group, DAVE enforced at every boundary, fresh-session recovery) |
+| `src/adapters/` | `TsSession` (existing TS3 UDP client, channel voice only) and `DiscordBot` (discord.js + `@discordjs/voice`: per-bot connection group, DAVE enforced at every boundary, rebuild-on-failure with one budget, human-only receive filter) |
 | `src/testing/` | Test harness that drives the **real** `VoiceConnection`, `AudioPlayer`, `VoiceReceiver`, `SpeakingMap` and `DAVESession`, faking only the native davey session, the gateway adapter and the UDP/WebSocket networking (simulated Discord, never live) |
 | `src/lab/` | `smoke-deps` (native Opus/DAVE), `ts-live` (real TS6 server), `churn` (native decoder churn and memory), `live` (real Discord, operator-driven), library repro test |
-| `lab/Dockerfile` | Two stages, Node 24 pinned by digest. The build stage installs and runs typecheck, all tests and the native smoke as gates. The runtime stage copies the installed tree read-only, runs as `node`, and runs the preinstalled `tsx` with no package manager and no network |
+| `lab/Dockerfile` | Two stages, Node 24 pinned by digest. The build stage installs and runs typecheck, all tests and the native smoke as gates. The runtime stage copies the installed tree read-only, runs as `node`, and runs the preinstalled `tsx` with no network. The base image still ships npm and corepack, but nothing at runtime invokes a package manager (the entrypoint is the local `tsx`) |
+| `scripts/run-tests.mjs` | The test runner (`pnpm test`): runs `node --test` without a forced exit, writes a machine-readable report, and **fails** on any failed, skipped, cancelled or timed-out test, a file that reported nothing, or a count that differs from `scripts/expected-tests.json` (`--update` after reviewing a deliberate change) |
 | `scripts/sync-tslib.mjs` | Copies `packages/backend/src/voice/tslib` into git-ignored `.vendor/` (the backend copy stays the source of truth; `--check` detects drift) |
 | `scripts/container-runtime-test.sh` | Network-independent runtime check of the lab image: `--network none`, read-only root, `--cap-drop ALL`, unprivileged, vendored code not writable |
 
@@ -36,17 +39,17 @@ Host (Node ≥ 22.12, pnpm 9.15.9):
 cd packages/discord-bridge
 pnpm install --frozen-lockfile --ignore-workspace
 pnpm run typecheck          # syncs .vendor/tslib first
-pnpm test                   # 128 tests (real @discordjs/voice classes, simulated Discord), no network, no credentials
+pnpm test                   # 187 tests in 21 files, verified complete (real @discordjs/voice classes, simulated Discord), no network, no credentials
 pnpm run smoke:deps         # native Opus + DAVE + opusscript on the running Node
-pnpm run churn              # native Opus decoders under 30 000 participants joining and leaving (needs --expose-gc, set by the script)
+pnpm run churn              # native Opus codecs under 40 000 participants joining and leaving, both directions (needs --expose-gc, set by the script)
 ```
 
 Node 24 container (the actual target image; build context is the repo root):
 
 ```bash
-docker build -f packages/discord-bridge/lab/Dockerfile -t ts6-discord-bridge-lab:d1-r1 .
-docker run --rm --network none ts6-discord-bridge-lab:d1-r1      # re-runs the native smoke, offline
-packages/discord-bridge/scripts/container-runtime-test.sh ts6-discord-bridge-lab:d1-r1
+docker build -f packages/discord-bridge/lab/Dockerfile -t ts6-discord-bridge-lab:d1-r2 .
+docker run --rm --network none ts6-discord-bridge-lab:d1-r2      # re-runs the native smoke, offline
+packages/discord-bridge/scripts/container-runtime-test.sh ts6-discord-bridge-lab:d1-r2
 ```
 
 The image is never published. The build needs the registry once (`pnpm install --frozen-lockfile`, in the build stage only). The runtime stage never touches a registry or a package manager: on the reviewed baseline the same `docker run --network none` failed because corepack tried to download pnpm at start (`EAI_AGAIN registry.npmjs.org`).
@@ -59,7 +62,7 @@ docker run -d --name ts6-d1-lab --network d1-lab --memory 512m \
   -e TSSERVER_LICENSE_ACCEPTED=accept teamspeaksystems/teamspeak6-server:6.0.0-beta13
 sleep 9
 docker run --name d1-ts-live --network d1-lab --cpus 1 --memory 512m -e TS_LAB_HOST=ts6-d1-lab \
-  ts6-discord-bridge-lab:d1-r1 src/lab/ts-live.ts
+  ts6-discord-bridge-lab:d1-r2 src/lab/ts-live.ts
 docker cp d1-ts-live:/app/packages/discord-bridge/evidence/. ./evidence/   # raw evidence file(s)
 docker rm -f d1-ts-live ts6-d1-lab && docker network rm d1-lab
 ```
@@ -103,13 +106,15 @@ Labels: **LIVE** = real Discord and real TeamSpeak, real participants. **LIVE-TS
 | Join order A: receive bot first, human speaks | NOT-RUN | | needs Discord |
 | Join order B: human first, then receive bot joins (#11653) | NOT-RUN | | The #11653 mechanism **is reproduced** in the pinned `0.19.2` code (below). Whether Discord actually triggers it is unproven. |
 | DAVE transition: welcome, later transition, reconnect | NOT-RUN | | |
-| Recovery after a decrypt error | SIMULATED PASS | SIMULATED | Subscriptions are restored deterministically while the human keeps talking. After repeated failures reception stops and a bounded recovery builds a **fresh voice connection and DAVE session** (a `rejoin()` on a Ready connection does not redo the MLS handshake); recovery is verified to be fresh and gives up after a limit so the runtime can fail over. **Live: NOT-RUN.** |
+| Recovery after a decrypt error | SIMULATED PASS | SIMULATED | Subscriptions are restored deterministically while the human keeps talking. After repeated failures the adapter fences reception and reports the bot unhealthy at once; the runtime, the only automatic reconnector, elects a successor in the same turn and rebuilds a **fresh voice connection and DAVE session** in the background (a `rejoin()` on a Ready connection does not redo the MLS handshake; a destroyed connection is never reused). Every failure-driven rebuild, from any entry point, spends one sliding-window budget, so a bot that keeps failing stays out of service until time frees the budget. **Live: NOT-RUN.** |
 | Already-speaking human when a receiver takes over or joins | SIMULATED PASS | SIMULATED | Continuous speech with no new speaking-start event is received, because the supervisor reconciles against the speakers the receiver already knows instead of waiting for an event. **Whether Discord sends SSRC mappings for humans already speaking when the bot joins is unknown. Live: NOT-RUN.** |
 | Two bots in one guild: separate connections, players and receivers | SIMULATED PASS | SIMULATED, real library classes | Unique group per bot and bridge session; destroying one bot does not touch the other. **Live: NOT-RUN.** |
-| DAVE never falls back to plaintext, including mid-transition | SIMULATED PASS | SIMULATED, real `DAVESession` | Enforced on outbound packets, on inbound decrypt, and for queued and playing audio; losing DAVE flushes and invalidates reception; a short grace window precedes failing over. **A real DAVE transition: NOT-RUN.** |
+| DAVE never falls back to plaintext, including mid-transition | SIMULATED PASS | SIMULATED, real `DAVESession` | Enforced on outbound packets (re-checked at the last Discord dispatch, after the packet was prepared), on inbound decrypt, for queued and playing audio, and again when frames are mixed into TeamSpeak (before the watchdog has noticed); losing DAVE flushes and invalidates reception; a short grace window precedes failing over. **A real DAVE transition: NOT-RUN.** |
 | Whisper packets are excluded | SIMULATED PASS | SIMULATED packets through the **real** `Ts3Client` parser | Voice and VoiceWhisper packet types are distinguished and only Voice is forwarded; a missing type fails closed. **Real TS6 server whispering to the bridge client: NOT-RUN.** |
+| Only verified humans are forwarded | SIMULATED PASS | SIMULATED, real `VoiceReceiver` | A speaker is subscribed only when Discord says they are not a bot (cache, else a bounded background REST lookup); bridge bots, other bot accounts and unidentified users stay excluded (fail closed). **A real Discord user lookup: NOT-RUN.** |
+| Playback latency is bounded | SIMULATED PASS | SIMULATED, real `AudioPlayer` | One budget of 4 frames (about 80 ms) covers the private queue and the stream's own buffer, oldest dropped first; a 100-frame burst sends at most six frames on the wire. |
 | Malformed Opus does not stop other speakers | SIMULATED PASS | SIMULATED, native Opus | Contained at the network callback; the packet is dropped, the decoder reset, other speakers continue. |
-| Bounded decoder memory under participant churn | PASS | NATIVE | 40 000 distinct participants through the real native decoder (`pnpm run churn`): per-user decoders 0 after close, at most 256 live without close notifications. A 200 000-participant run held RSS flat on the close path (163.8 to 165.8 MB) and stepped once by about 28 MB on the idle-sweep path before plateauing, so there is no per-participant growth. RSS steps of tens of MB occur at random in steady state, so the pass limit is 64 MB over the post-warm-up window. That is well under a missed release, which costs about 47 KB per participant. |
+| Bounded decoder memory under participant churn | PASS | NATIVE | 40 000 distinct participants through the real native decoder (`pnpm run churn`): per-user decoders 0 after close, at most 256 live without close notifications. The TeamSpeak to Discord direction (40 000 overflow guests) ends with 0 decoders, 0 routing entries (peak 1), no live codec after `dispose()` and nothing created or sent afterwards; RSS grew 0.1 MB after warm-up (`churn-native-r2-2026-10-25.json`). A 200 000-participant run held RSS flat on the close path (163.8 to 165.8 MB) and stepped once by about 28 MB on the idle-sweep path before plateauing, so there is no per-participant growth. RSS steps of tens of MB occur at random in steady state, so the pass limit is 64 MB over the post-warm-up window. That is well under a missed release, which costs about 47 KB per participant. |
 | Lab image: offline, read-only, unprivileged runtime | PASS | NATIVE, container | `scripts/container-runtime-test.sh`: 9 of 9 checks. The baseline image fails the same run (`EAI_AGAIN registry.npmjs.org`). |
 | Mixer fence: stale `receiveGeneration` frames never enter the TS mix | PASS | SIMULATED | Checked on push and again on every mix tick. |
 | Node 24 image: native Opus loads | PASS | NATIVE | `@discordjs/opus 0.10.0`, round trip keeps a 1 kHz tone |
@@ -125,6 +130,8 @@ Raw files: `evidence/curated/`.
 | `churn-native-2026-10-24.json`, `churn-native-200k-2026-10-24.json` | Native decoder churn and memory (40 000 and 200 000 participants, RSS recorded every 10 % of the run) |
 | `image-runtime-d1-r1-2026-10-24.txt`, `image-runtime-baseline-d1-2026-10-24.txt` | `container-runtime-test.sh` output for the new and the baseline image |
 | `remediation-red-green-2026-10-24.json` | Per-test red/green results, see [Review remediation](#review-remediation) |
+| `remediation2-red-green-2026-10-25.json` | The second reviewer's own probes run against `d890b5d` and the fixed code, see [Re-review remediation](#re-review-remediation) |
+| `ts-live-container-r2-2026-10-25.json`, `smoke-deps-r2-2026-10-25.json`, `image-runtime-d1-r2-2026-10-25.txt`, `churn-native-r2-2026-10-25.json` | TS6 laboratory (5 of 5 PASS), native smoke, offline image check (9 of 9) and churn (3 of 3 PASS) after the second remediation, image `ts6-discord-bridge-lab:d1-r2` |
 
 ### Measurements (TeamSpeak side only)
 
@@ -176,13 +183,43 @@ Results on the baseline, 122 test results: **52 behavioural reds** (the defect i
 
 On the fixed code: typecheck clean and 128 of 128 tests pass, repeatedly. The fixes are in the PR as separate `chore(discord-bridge)` commits.
 
+## Re-review remediation
+
+The second independent review (of `d890b5d`) numbered its findings F1 to F12. Priority 1 are the lifecycle defects, priority 2 the audio and isolation ones.
+
+| # | Finding | Fix | Regression tests |
+|---|---|---|---|
+| F1 | A voice connection destroyed by the gateway was reused, so the bot never reconnected | A destroyed or failed connection is discarded and a new one is built with a new DAVE session, in the same per-bot group; `rejoin()` returning false counts as failure | `discord-bot.lifecycle.test.ts` (11) |
+| F2 | A join waiting on target resolution survived `stop()` and completed afterwards | An intent epoch bumped only by `leave()` and `destroy()`; checked after every `await` of a join; a cancelled join destroys what it created; the runtime also leaves a late join for ports that cannot be fenced | `discord-bot.lifecycle.test.ts`, `runtime.recovery.test.ts` (seeded interleavings, a stubborn port) |
+| F3 | A fresh DAVE recovery held the receiver role while its replacement connection was built | The runtime is the only automatic reconnector. On a poisoned DAVE session the adapter fences reception and reports at once; the successor is elected in the same turn and the rebuild runs in the background; a repaired bot returns as a sender, never as the receiver | `runtime.recovery.test.ts` (asserts the election at the moment of the report) |
+| F4 | Recovery bypassed the recovery budget | One sliding-window budget (`maxRecoveries` per `recoveryWindowMs`) for every failure-driven rebuild: receive errors, gateway destruction, DAVE loss, direct joins and runtime retries. An attempt counts whether or not it reaches Ready; success refunds nothing; only time frees it; planned joins and leaves are free. Exhaustion is a typed error (`REBUILD_BUDGET_EXHAUSTED`, `retryInMs`) and the runtime wakes once when it expires | `rebuild-budget.test.ts` (4), `discord-bot.lifecycle.test.ts`, `runtime.recovery.test.ts` |
+| F5 | DAVE was not re-checked at the final Discord dispatch or the final TeamSpeak mix | `dispatchAudio` is wrapped and refuses a packet prepared under a different or lost DAVE session; the mixer's admission reads live DAVE at push and at every mix (`daveDropped` counter) | `discord-bot.dave.test.ts`, `runtime.dave.test.ts` (3) |
+| F6 | Other bot accounts were subscribed to and forwarded | `HumanFilter`: admit only users known to be human (cache, else bounded background lookup with a retry cooldown); bridge ids and self excluded; unknown stays excluded | `human-filter.test.ts` (6), `discord-bot.receive.test.ts` (4) |
+| F7 | Playback retained about 20 frames (400 ms) of stale audio | `FrameFeed` stream buffer is one object and one budget of 4 covers it and the private queue; oldest dropped first | `receive.test.ts` (2), `discord-bot.lifecycle.test.ts` (real `AudioPlayer` on the wire) |
+| F8 | A valid 4 x 10 ms Opus packet was dropped | Sub-20 ms constituents that fill 20 ms (2 x 10, 4 x 5, 8 x 2.5) are regrouped byte for byte without re-encoding; what cannot be carried stays unsupported and counted (see limits) | `audio-robustness.test.ts` (5, including a 300-packet seeded property run and native decode) |
+| F9 | An excluded MusicBot took slot-0 and pushed a human to overflow | One exclusion predicate (query client or excluded unique id) for initial population and every directory event; `refreshExclusions()` re-applies a changed list | `runtime.exclusion.test.ts` (4) |
+| F10 | `dispose()` left queued audio and could recreate codecs | Terminal on both pipelines: mixers flushed, codecs released and nulled, further audio refused (`disposed` drop); a disposed codec throws | `cleanup.test.ts` (4) |
+| F11 | Routing telemetry kept an entry per identity that ever spoke (40 000 in the probe) | `forget()` removes the identity; `status().t2d.routedIdentities` and `decoders` make the bound observable | `cleanup.test.ts` (2), `runtime.exclusion.test.ts` (2 000-person churn), `pnpm run churn` |
+| F12 | `--test-force-exit` could report a truncated run as success | `scripts/run-tests.mjs`: no forced exit, per-test timeout, a machine-readable report, fails on failed, skipped, cancelled or timed-out tests, files that reported nothing, and count mismatches. The truncation was reproduced with the TAP reporter piped: `core.test.ts` (30 tests) reported 19, 24 or 27 on several of 12 runs, always with exit code 0. The image build gate uses the same runner | `test-verify.test.mjs` (4) and end-to-end negative runs (a corrupted count, a skipped test) |
+
+### Re-review evidence
+
+The reviewer's probes (read first, local only, no network) were run unmodified against `d890b5d` and against the fixed code (`evidence/curated/remediation2-red-green-2026-10-25.json`). On `d890b5d` all twelve reproduce. On the fixed code the symptom is gone for nine of them (same probe, behavioural). Two cannot run as written: F3's probe calls `DiscordBot.recover()`, which no longer exists, so it is covered by the `runtime.recovery.test.ts` test instead (mutation-checked, but not runnable against `d890b5d`); and F4's probe assumes a subscription on the first packet, which F6 deliberately changes, so a shim that keeps the speaker talking until subscribed was used: `d890b5d` built 5 connections with `maxRecoveries=1`, the fixed code builds 2 (the first plus one rebuild) and stays out of service. F12 is not probe based.
+
+Tests were also mutation-checked: each fix was disabled in turn and a test failed (the exceptions are two redundant defences that duplicate another, which a test of the combined removal does catch). Two tests I wrote first were vacuous, and mutation or an added assertion found them: a failover test that passed even if the handler did nothing, and a churn test that never routed a speaker.
+
+On the fixed code: typecheck clean and **187 of 187 tests in 21 files** pass in the verified runner (every discovered file reported, none skipped), the native smoke passes, the churn lab passes 3 of 3, the lab image builds clean (its build gate runs typecheck, the verified suite and the smoke), `container-runtime-test.sh` passes 9 of 9 offline, read-only and unprivileged, and the TS6 beta13 laboratory passes 5 of 5 with synthetic speakers. All of that is simulated, native or TS6-synthetic, **not live Discord**.
+
 ## Known limitations
 
 - No live Discord run: no bot tokens, test guild or participants were available. No live DAVE, join-order, transition, recovery or failover result exists.
 - No real TeamSpeak human speakers. TS-side live evidence uses synthetic speakers on a real TS6 server.
 - `DiscordBot` is now exercised against the real `@discordjs/voice` classes with the network edge faked, and `lab:live` is typechecked only. That is simulation. The first live run may still find defects in either.
-- **Slot passthrough drops TeamSpeak Opus it cannot carry.** A single 40 ms or 60 ms frame, or sub-20 ms frames that do not add up to 20 ms, cannot be sent on a Discord slot without re-encoding. They are dropped and counted (`unsupportedFrames`), not forwarded as if they were 20 ms and not transcoded. Multi-frame packets that sum to 20 ms multiples are split into 20 ms packets. If real TeamSpeak clients send such frames this will show up as a counter, and D2 must decide whether to transcode.
+- **Slot passthrough drops TeamSpeak Opus it cannot carry.** A single 40 ms or 60 ms frame (indivisible), a lone sub-20 ms frame, or a packet whose sub-20 ms frames do not fill whole 20 ms packets (for example three 10 ms frames) cannot be sent on a Discord slot without re-encoding. They are dropped and counted (`unsupportedFrames`), not forwarded as if they were 20 ms and not transcoded. Multi-frame packets that fill 20 ms multiples, including 2 x 10, 4 x 5 and 8 x 2.5 ms constituents, are regrouped without re-encoding. If real TeamSpeak clients send such frames this will show up as a counter, and D2 must decide whether to transcode.
 - The overflow path decodes then re-encodes, so it is not affected by the unsupported-frame limit.
+- **Fail-closed identity costs the start of a new speaker.** A Discord user the bridge has never seen is excluded until a background user lookup answers, so the first moments of that user's first utterance (about one lookup round trip, or longer if the lookup keeps failing) are not forwarded. Once known they are admitted at once, and a lookup that fails is retried only after a cooldown. Whether the real lookup behaves as the simulation does is NOT-RUN.
+- **The rebuild budget is a safety stop, not a repair.** A bot that exhausts it stays out of service until the window slides; if all six fail together the bridge is down until then. The limits (`maxRecoveries`, `recoveryWindowMs`) are lab defaults chosen without live data.
+- The exclusion list is an option of the runtime; the lab does not read it from configuration, and `refreshExclusions()` is only exercised by tests.
 - No consoles (Xbox/PlayStation) tested.
 - No lab CI workflow was added; the checks above run locally and inside the lab image build. D2 decides CI.
 - Echo for people present in both rooms is out of scope (as in the contract).
@@ -190,6 +227,6 @@ On the fixed code: typecheck clean and 128 of 128 tests pass, repeatedly. The fi
 ## GO/NO-GO
 
 - **D1 gate (contract): NO-GO / not met.** Required live rows are NOT-RUN, so D3/D4 must not start on the strength of this PR.
-- **After remediation:** the defects the review found are fixed and covered by simulated, native-addon and TS6-laboratory evidence. **Ready for a new independent Codex/Claude review. Not ready for live Discord testing until that review passes.** D2 to D6 have not started.
+- **After both remediations:** the defects the two reviews found are fixed and covered by simulated, native-addon and TS6-laboratory evidence. **Code readiness: GO for a third independent review. Not ready for live Discord testing until that review passes.** D2 to D6 have not started. **D1 acceptance: NO-GO** (the live Discord rows are NOT-RUN).
 - **Feasibility signals so far: GO to continue.** The pinned stack installs and its native Opus and DAVE addons run on Node 24; TeamSpeak-side parsing, per-speaker routing, overflow mixing and the shared-client send path work against a real TS6 server; the receiver election and generation fence behave as specified in simulation.
 - **Next action (owner):** provide the live prerequisites above, or authorise a different test setup, then run `lab:live` and fill the NOT-RUN rows. If join order B shows #11653, stop and decide: wait for upstream, carry a documented patch, or change library.
