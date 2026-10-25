@@ -1,0 +1,5 @@
+# No zod 3.x release remediates CVE-2023-54404. Trivy marks 4.6.6 as the
+# fix, but that is a major and only advances .max()/.length()/.size() checks
+# before element parsing. Unbounded containers stay unchanged. Stay on zod 3
+# for 1.11.x rather than taking a Zod 4 migration in a patch.
+CVE-2023-54404
