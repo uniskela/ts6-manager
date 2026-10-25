@@ -5,6 +5,7 @@ import { createOpusCodec } from "../core/opus.js";
 import { toneFrame } from "../core/pcm.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger } from "../core/redact.js";
+import { TS_CODEC_OPUS_VOICE } from "../core/constants.js";
 import { FakeBot, FakeTs, settle } from "../testing/fake-runtime.js";
 import { tick, waitFor } from "../testing/fake-voice.js";
 import { BridgeRuntime } from "./runtime.js";
@@ -209,14 +210,104 @@ describe("network callback boundary (failures the pipelines do not contain thems
     assert.equal(rt.status().callbackErrors, 1);
     await rt.stop();
   });
+});
 
-  it("a failure inside the 20 ms ticker does not escape as an uncaught exception", async () => {
-    const { ts, rt } = buildBroken();
-    await rt.start();
-    ts.addUser(1);
-    await settle(rt);
-    rt.onHumanOpus(rt.status().receiver as BotId, rt.status().generation, "human", Buffer.from([1, 2, 3]));
-    await tick(80); // several ticker intervals; an escaped throw would fail the whole test run
-    await rt.stop();
+describe("the 20 ms ticker's exception boundary (failures injected into what the ticker itself runs)", () => {
+  const enc = createOpusCodec("auto");
+
+  async function started(users: number) {
+    const ctx = build();
+    await ctx.rt.start();
+    for (let i = 1; i <= users; i++) ctx.ts.addUser(i);
+    await settle(ctx.rt);
+    return ctx;
+  }
+
+  /** The elected receiver keeps sending valid Discord audio, one frame per 20 ms, until stopped. */
+  function discordHumanTalks(rt: BridgeRuntime): () => void {
+    let n = 0;
+    const timer = setInterval(() => {
+      const status = rt.status();
+      rt.onHumanOpus(status.receiver as BotId, status.generation, "human", enc.encode(toneFrame(440, n++ * 960)));
+    }, 20);
+    return () => clearInterval(timer);
+  }
+
+  /** TeamSpeak client `clid` keeps sending valid channel voice until stopped. */
+  function teamSpeakTalks(ts: FakeTs, clid: number): () => void {
+    let n = 0;
+    const timer = setInterval(() => {
+      const header = Buffer.alloc(5);
+      header.writeUInt16BE(n & 0xffff, 0);
+      header.writeUInt16BE(clid, 2);
+      header[4] = TS_CODEC_OPUS_VOICE;
+      ts.emit("voice", Buffer.concat([header, enc.encode(toneFrame(440, n++ * 960))]));
+    }, 20);
+    return () => clearInterval(timer);
+  }
+
+  /** Replace `target[method]` by a function that throws on its first call and delegates afterwards. */
+  function failOnce<T extends object>(target: T, method: keyof T & string, error: Error): { fired: () => boolean } {
+    const original = (target[method] as unknown as (...a: unknown[]) => unknown).bind(target);
+    let fired = false;
+    (target as Record<string, unknown>)[method] = (...args: unknown[]) => {
+      if (!fired) {
+        fired = true;
+        throw error;
+      }
+      return original(...args);
+    };
+    return { fired: () => fired };
+  }
+
+  it("a throw from the Discord-to-TeamSpeak tick is counted, the runtime stays up, and later audio is still sent", async () => {
+    const { ts, rt } = await started(1);
+    const stopTalking = discordHumanTalks(rt);
+    try {
+      const failure = failOnce(rt.d2t, "tick", new Error("injected: d2t.tick"));
+      await waitFor(() => failure.fired(), 1500, "the ticker to run the injected failure");
+      await waitFor(() => rt.status().callbackErrors === 1, 500, "the failure to be counted");
+      assert.equal(rt.status().state, "running");
+      const sentAtFailure = ts.out.length;
+      await waitFor(() => ts.out.length >= sentAtFailure + 3, 1500, "valid audio to reach TeamSpeak after the failure");
+      assert.equal(rt.status().callbackErrors, 1, "one injected failure, one counted error, no further errors");
+    } finally {
+      stopTalking();
+      await rt.stop();
+    }
+  });
+
+  it("a throw from the TeamSpeak-to-Discord overflow tick is counted, the runtime stays up, and later overflow audio is still sent", async () => {
+    const { ts, bots, rt } = await started(6); // the sixth person is on overflow
+    const stopTalking = teamSpeakTalks(ts, 106);
+    try {
+      const failure = failOnce(rt.t2d, "tickOverflow", new Error("injected: t2d.tickOverflow"));
+      await waitFor(() => failure.fired(), 1500, "the ticker to run the injected failure");
+      await waitFor(() => rt.status().callbackErrors === 1, 500, "the failure to be counted");
+      assert.equal(rt.status().state, "running");
+      const sentAtFailure = bots.get("overflow")!.sent.length;
+      await waitFor(() => bots.get("overflow")!.sent.length >= sentAtFailure + 3, 1500, "valid overflow audio to reach the overflow bot after the failure");
+      assert.equal(rt.status().callbackErrors, 1);
+    } finally {
+      stopTalking();
+      await rt.stop();
+    }
+  });
+
+  it("a TeamSpeak transport that throws while the tick sends is counted, and the next frames are sent", async () => {
+    const { ts, rt } = await started(1);
+    const stopTalking = discordHumanTalks(rt);
+    try {
+      const failure = failOnce(ts, "sendVoice", new Error("injected: sendVoice"));
+      await waitFor(() => failure.fired(), 1500, "the tick to try to send");
+      await waitFor(() => rt.status().callbackErrors === 1, 500, "the failure to be counted");
+      assert.equal(rt.status().state, "running");
+      const sentAtFailure = ts.out.length;
+      await waitFor(() => ts.out.length >= sentAtFailure + 3, 1500, "later frames to reach TeamSpeak");
+      assert.equal(rt.status().callbackErrors, 1);
+    } finally {
+      stopTalking();
+      await rt.stop();
+    }
   });
 });

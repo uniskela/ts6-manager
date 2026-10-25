@@ -102,11 +102,13 @@
     "present before the bridge starts: five humans still get five slots and nobody overflows"
   ],
   "src/bridge/runtime.lifecycle.test.ts": [
+    "a TeamSpeak transport that throws while the tick sends is counted, and the next frames are sent",
     "a failed reconnect is retried with a bounded backoff and then given up on",
-    "a failure inside the 20 ms ticker does not escape as an uncaught exception",
     "a failure while handling a Discord frame is contained and counted",
     "a failure while handling a TeamSpeak voice packet does not throw out of the UDP callback",
     "a pending reconnect does not hold the queue: a new TeamSpeak user still gets a bot promptly",
+    "a throw from the Discord-to-TeamSpeak tick is counted, the runtime stays up, and later audio is still sent",
+    "a throw from the TeamSpeak-to-Discord overflow tick is counted, the runtime stays up, and later overflow audio is still sent",
     "activates the healthy successor while the failed bot's reconnect is still pending",
     "activates the successor before any unrelated reconnect is attempted",
     "cancels work that is still queued and aborts a join that is in flight, promptly",
