@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/container-security.yml'
       - '.gitattributes'
+      - '.trivyignore'
       - '.yt-dlp-version'
       - 'Dockerfile.backend'
       - 'Dockerfile.frontend'
@@ -26,6 +27,7 @@ on:
     paths:
       - '.github/workflows/container-security.yml'
       - '.gitattributes'
+      - '.trivyignore'
       - '.yt-dlp-version'
       - 'Dockerfile.backend'
       - 'Dockerfile.frontend'
@@ -172,8 +174,13 @@ jobs:
 
       # trivy-action v0.36.0 defaults to Trivy v0.70.0. Pin the current
       # scanner binary separately while keeping the action commit SHA pinned.
+      # Inventory omits trivyignores. Trivy still auto-loads .trivyignore
+      # unless ignorefile is set, so /dev/null keeps accepted-risk CVEs in
+      # the uploaded JSON artifact. Gate and table steps still honor the file.
       - name: Record full vulnerability inventory
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_IGNOREFILE: /dev/null
         with:
           version: v0.75.0
           scan-type: image
@@ -185,7 +192,6 @@ jobs:
           ignore-unfixed: false
           exit-code: '0'
           timeout: 10m
-          trivyignores: .trivyignore
 
       - name: Show all high and critical findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
