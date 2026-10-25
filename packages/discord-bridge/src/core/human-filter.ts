@@ -9,9 +9,14 @@
  * - At most `maxPending` lookups are unsettled at once. A lookup over the limit is refused, not
  *   queued: the speaker stays excluded and is looked up when they are next asked about (the receive
  *   supervisor asks again while they speak). Nothing is remembered for a refused speaker.
- * - A lookup that is still unsettled after `lookupTimeoutMs` is given up on for that user (they go on
+ * - A lookup that is still unsettled after `lookupTimeoutMs` is counted as timed out (its user goes on
  *   a cooldown) but keeps its slot until the lookup really settles, so a lookup function that never
- *   settles can use up the slots but cannot make the filter hold more than `maxPending` of them.
+ *   settles can use up the slots but cannot make the filter hold more than `maxPending` of them. The
+ *   slot is tied to the lookup's own promise, so the lookup must be the request itself and must not
+ *   be raced against a timer of its own (that frees the slot while the request is still out).
+ * - A user has at most one lookup out. While it is unsettled, timed out or not, the user is not looked
+ *   up again, so one user whose request stalls cannot fill the other slots. If it answers late, the
+ *   answer is used.
  * - A failed or timed out user is asked about again only after a cooldown that doubles with each
  *   consecutive failure, from `retryMs` up to `maxRetryMs`.
  * - Remembered answers and cooldowns are capped at `maxEntries` each, oldest first.
@@ -71,7 +76,7 @@ interface Lookup {
 export class HumanFilter {
   private readonly known = new Map<string, DiscordUserInfo>();
   private readonly cooldown = new Map<string, { until: number; failures: number }>();
-  /** The lookup in its timeout window for each user: what stops a user being asked twice at once. */
+  /** The unsettled, uncancelled lookup of each user, timed out or not: what stops a user being asked twice at once. */
   private readonly active = new Map<string, Lookup>();
   /** Every lookup that has started and not settled: what the cap counts. */
   private readonly unsettled = new Set<Lookup>();
@@ -124,13 +129,15 @@ export class HumanFilter {
     );
   }
 
-  /** The timeout of a lookup: the user waits out a cooldown; the lookup keeps its slot until it settles. */
+  /**
+   * The timeout of a lookup: counted as a failure and the user goes on a cooldown, which applies once
+   * the lookup settles. The lookup keeps its slot, and stays the user's one lookup, until it settles.
+   */
   private giveUp(lookup: Lookup): void {
     lookup.timer = undefined;
     if (lookup.cancelled) return;
     lookup.timedOut = true;
     this.timedOut += 1;
-    this.active.delete(lookup.userId);
     this.fail(lookup.userId);
   }
 

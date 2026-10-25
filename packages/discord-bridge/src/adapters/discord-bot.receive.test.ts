@@ -260,3 +260,115 @@ describe("only verified humans are subscribed and forwarded (real VoiceReceiver)
     await t.bot.destroy();
   });
 });
+
+describe("the production identity lookup (real discord.js UserManager, REST requests the test settles)", () => {
+  interface RestCall {
+    route: string;
+    method: string;
+    settled: boolean;
+    resolve(user: unknown): void;
+    reject(error: Error): void;
+  }
+
+  /**
+   * Replaces the REST transport the real `UserManager.fetch` and `REST.get` call into: every request
+   * is a promise only the test settles. `max` is the most requests ever unsettled at once.
+   */
+  function controlledRest(bot: { client: { rest: unknown } }) {
+    const calls: RestCall[] = [];
+    let unsettled = 0;
+    let max = 0;
+    (bot.client.rest as { request: (o: { fullRoute: string; method: string }) => Promise<unknown> }).request = (o) =>
+      new Promise((resolve, reject) => {
+        unsettled += 1;
+        max = Math.max(max, unsettled);
+        const done = (settle: () => void) => {
+          if (call.settled) return;
+          call.settled = true;
+          unsettled -= 1;
+          settle();
+        };
+        const call: RestCall = { route: o.fullRoute, method: o.method, settled: false, resolve: (u) => done(() => resolve(u)), reject: (e) => done(() => reject(e)) };
+        calls.push(call);
+      });
+    return { calls, unsettled: () => unsettled, max: () => max };
+  }
+
+  /** What Discord's `GET /users/{id}` returns. */
+  const apiUser = (id: string, bot: boolean) => ({ id, username: `user${id.slice(-3)}`, discriminator: "0", global_name: null, avatar: null, bot });
+  const speakerId = (n: number) => `1000000000000000${String(n).padStart(2, "0")}`; // a snowflake-shaped string, built as text
+
+  async function receiver(o: { identityLookup?: NonNullable<Parameters<typeof testBot>[2]>["identityLookup"] } = {}) {
+    const election = newElection();
+    election.reconcile("start");
+    const got: string[] = [];
+    const t = testBot("slot-0", election, { productionLookup: true, identityLookup: o.identityLookup, onHumanOpus: (_b: BotId, _g: number, user: string) => got.push(user) });
+    const rest = controlledRest(t.bot);
+    const h = await t.join({ receive: true });
+    t.bot.startReceive(election.generation);
+    const stops: (() => number)[] = [];
+    const speak = (n: number) => {
+      h.mapUser(speakerId(n), 7000 + n);
+      stops.push(talk(h, speakerId(n)));
+    };
+    const cleanUp = async () => {
+      for (const stop of stops) stop();
+      for (const call of rest.calls) call.reject(new Error("test over"));
+      await t.bot.destroy();
+    };
+    return { t, rest, got, speak, cleanUp };
+  }
+
+  it("with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)", async () => {
+    // The reviewer's scenario: every request stalls. A wrapper timeout that freed the slot let each batch start eight more.
+    const { t, rest, got, speak, cleanUp } = await receiver();
+    try {
+      for (let batch = 0; batch < 3; batch++) {
+        for (let i = 0; i < 8; i++) speak(batch * 8 + i);
+        await tick(batch < 2 ? 5_300 : 300); // past the old 5 s wrapper timeout, and past the filter's own 6 s by the third batch
+      }
+      assert.equal(rest.calls.length, 8, `requests started (${rest.calls.length})`);
+      assert.ok(rest.max() <= 8, `at most eight unsettled at once (saw ${rest.max()})`);
+      assert.deepEqual(rest.calls.map((c) => `${c.method} ${c.route}`), Array.from({ length: 8 }, (_, i) => `GET /users/${speakerId(i)}`), "the real UserManager asked for the first eight speakers");
+      const stats = t.bot.identityLookups;
+      assert.equal(stats.pending, 8, "the filter still counts every request that is out");
+      assert.equal(stats.stalled, 8, "all eight are past the filter's timeout, and still hold their slots");
+      assert.ok(stats.refused > 0, "the later batches were refused");
+      assert.equal(t.bot.openSubscriptions, 0);
+      assert.deepEqual(got, [], "nobody unidentified was forwarded");
+    } finally {
+      await cleanUp();
+    }
+  });
+
+  it("a slot is released only when its REST request settles; then only a positive human answer admits, and the next speakers are looked up within the cap", async () => {
+    const { t, rest, got, speak, cleanUp } = await receiver({ identityLookup: { lookupTimeoutMs: 40, retryMs: 40, maxRetryMs: 80 } });
+    try {
+      for (let i = 0; i < 24; i++) speak(i);
+      await waitFor(() => rest.calls.length === 8, 1000, "the first eight requests");
+      await tick(300); // many filter timeouts and cooldowns later
+      assert.equal(rest.calls.length, 8, "a timed-out lookup does not free its slot or start a second request");
+      assert.equal(t.bot.identityLookups.stalled, 8);
+      assert.equal(got.length, 0, "nobody is forwarded while unidentified");
+
+      // Settle the eight: two humans, two bots, two errors, and two that stay stalled.
+      const [h1, h2, b1, b2, e1, e2] = rest.calls;
+      h1.resolve(apiUser(speakerId(0), false));
+      h2.resolve(apiUser(speakerId(1), false));
+      b1.resolve(apiUser(speakerId(2), true));
+      b2.resolve(apiUser(speakerId(3), true));
+      e1.reject(new Error("503 Service Unavailable"));
+      e2.reject(new Error("socket hang up"));
+      await waitFor(() => got.includes(speakerId(0)) && got.includes(speakerId(1)), 1500, "the two humans to be forwarded once identified");
+      await waitFor(() => rest.calls.length > 8, 1500, "freed slots to be used for speakers still waiting");
+      await tick(300);
+      assert.ok(rest.max() <= 8, `never more than eight unsettled (saw ${rest.max()})`);
+      assert.ok(rest.unsettled() <= 8);
+      assert.equal(t.bot.identityLookups.pending, rest.unsettled(), "the filter's count is the real number of requests out");
+      assert.deepEqual(new Set(got), new Set([speakerId(0), speakerId(1)]), "bots, failed lookups and the unanswered stay excluded");
+      assert.equal(t.bot.openSubscriptions, 2);
+    } finally {
+      await cleanUp();
+    }
+  });
+});

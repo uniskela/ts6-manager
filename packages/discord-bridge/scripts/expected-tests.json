@@ -80,6 +80,7 @@
     "a frame arriving after closeAll never reaches the pipeline",
     "a human already talking before the bot even finished joining is picked up once reception starts",
     "a human who is already talking when the bot takes over is received without a new speaking-start event",
+    "a slot is released only when its REST request settles; then only a positive human answer admits, and the next speakers are looked up within the cap",
     "a stream error that surfaces after closeAll does not request recovery",
     "after a decrypt failure the subscription is restored while the human keeps talking (no new speaking-start)",
     "an answer that arrives after the bot left, or after the human left the channel, admits nobody",
@@ -87,7 +88,8 @@
     "fails closed while identity is unknown, then admits once it is established as human",
     "repeated decrypt failures fail closed: subscriptions stop and bounded recovery is requested",
     "speakers whose identity lookups never settle cannot make the bot hold more than the cap, and a known human is still forwarded",
-    "stays closed for an identity that cannot be established, and does not hammer the lookup"
+    "stays closed for an identity that cannot be established, and does not hammer the lookup",
+    "with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)"
   ],
   "src/adapters/discord-bot.recovery.test.ts": [
     "a connection that drops by itself is still reported",
@@ -239,6 +241,7 @@
     "a late answer for a user that was forgotten is dropped",
     "a lookup that throws synchronously is a failure and does not leak a slot",
     "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
+    "a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots",
     "admits a cached human and rejects a cached bot",
     "dispose() stops every timer and refuses to start another lookup",
     "does not queue what it refused: nothing starts when a slot frees unless that speaker is asked about again",

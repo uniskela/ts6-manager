@@ -270,6 +270,9 @@ export function testBot(
     now?: () => number;
     /** Stands in for Discord's REST user lookup. Default: every user is a human. */
     userLookup?: (userId: string) => Promise<{ bot: boolean } | null>;
+    /** Use the bot's own lookup (the real discord.js `UserManager.fetch`) instead of a stand-in. */
+    productionLookup?: boolean;
+    identityLookup?: import("../adapters/discord-bot.js").DiscordBotOptions["identityLookup"];
   } = {},
 ): TestBot {
   const adapter = fakeAdapter(id);
@@ -290,7 +293,8 @@ export function testBot(
     },
     timing: { readyMs: 500, daveWaitMs: 300, pollMs: 5, watchdogMs: 5, daveGraceMs: 150, ...(o.now ? { now: o.now } : {}), ...o.timing },
     sessionId: o.sessionId ?? randomUUID(),
-    userLookup: o.userLookup ?? (async () => ({ bot: false })),
+    userLookup: o.productionLookup ? undefined : (o.userLookup ?? (async () => ({ bot: false }))),
+    identityLookup: o.identityLookup,
   });
   bot.userId = o.userId ?? `user-${id}`;
   let targetGate: Promise<void> | null = null;

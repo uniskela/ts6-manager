@@ -19,7 +19,7 @@ import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
-import { HumanFilter, type DiscordUserInfo } from "../core/human-filter.js";
+import { HumanFilter, type DiscordUserInfo, type HumanFilterOptions } from "../core/human-filter.js";
 import { JoinCancelled } from "../core/join-errors.js";
 import { RebuildBudget } from "../core/rebuild-budget.js";
 import { registerSecret, safeError, type Logger } from "../core/redact.js";
@@ -76,6 +76,8 @@ export interface DiscordBotOptions {
    * it cannot be established; the user then stays excluded. Tests inject this; production does not.
    */
   userLookup?: (userId: string) => Promise<DiscordUserInfo | null>;
+  /** Limits and timing of the identity lookups (`HumanFilter` defaults: 8 unsettled, 6 s timeout, 5 s to 60 s cooldown). */
+  identityLookup?: Pick<HumanFilterOptions, "maxPending" | "lookupTimeoutMs" | "retryMs" | "maxRetryMs">;
   /** A human's receive stream closed: release anything held for that user (decoders). */
   onHumanClosed?: (bot: BotId, userId: string) => void;
   timing?: Partial<BotTiming>;
@@ -169,6 +171,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
       },
       lookup: o.userLookup ?? ((id) => this.lookupUser(id)),
       excluded: (id) => this.o.bridgeUserIds().has(id) || id === this.userId,
+      ...o.identityLookup,
     });
     // A human who leaves our channel is forgotten, so an identity answer that arrives afterwards cannot bring them back.
     this.client.on("voiceStateUpdate", (before, after) => {
@@ -184,18 +187,20 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.userId = this.client.user!.id;
   }
 
-  /** REST lookup of one user (needs no privileged intent). Bounded by a timeout. */
+  /**
+   * REST lookup of one user (needs no privileged intent). The returned promise settles exactly when
+   * the REST request does, and is deliberately not raced against a timer: the `HumanFilter` owns the
+   * timeout, the cooldown and the count of requests out, and it can only keep that count honest if
+   * the promise it holds is the request itself. (A race here once let the filter free a slot while
+   * the request it stood for was still out: 24 requests unsettled against a cap of 8.)
+   *
+   * discord.js aborts each attempt after its REST timeout (15 s) and retries it up to 3 times, and
+   * all user lookups wait in one rate-limit queue, so a request normally settles, but nothing here
+   * bounds how long. A request that never settles keeps its slot until the test session restarts.
+   */
   private async lookupUser(userId: string): Promise<DiscordUserInfo | null> {
-    let timer: NodeJS.Timeout | undefined;
-    try {
-      const user = await Promise.race([
-        this.client.users.fetch(userId),
-        new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error("user lookup timed out")), 5_000))),
-      ]);
-      return typeof user.bot === "boolean" ? { bot: user.bot } : null;
-    } finally {
-      clearTimeout(timer);
-    }
+    const user = await this.client.users.fetch(userId);
+    return typeof user.bot === "boolean" ? { bot: user.bot } : null;
   }
 
   /** Verify guild membership and channel permissions without joining voice. */

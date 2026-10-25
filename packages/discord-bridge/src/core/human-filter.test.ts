@@ -155,12 +155,32 @@ describe("HumanFilter bounds the lookups it has outstanding (R3)", () => {
     assert.deepEqual(c.started, ["slow"], "a second lookup cannot pile up behind a stalled one");
     c.advance(5000);
     c.f.isHuman("slow");
-    assert.deepEqual(c.started, ["slow"], "and the cooldown would not have allowed another for the same user anyway");
+    assert.deepEqual(c.started, ["slow"], "and the same user is not looked up again while their lookup is out");
     c.settle("slow", { bot: false });
     await tick();
     assert.equal(c.f.stats().pending, 0);
     assert.equal(c.f.isHuman("other"), false);
     assert.deepEqual(c.started, ["slow", "other"], "the slot is free once the stalled lookup finished");
+  });
+
+  it("a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots", async () => {
+    const c = controlled({ maxPending: 4, lookupTimeoutMs: 20, retryMs: 10, maxRetryMs: 10 });
+    c.f.isHuman("stuck");
+    for (let i = 0; i < 6; i++) {
+      await sleep(40); // past the timeout, and the cooldown it starts
+      c.advance(1000);
+      assert.equal(c.f.isHuman("stuck"), false);
+    }
+    assert.deepEqual(c.started, ["stuck"], "one request for the user, however often they are asked about");
+    assert.equal(c.f.stats().pending, 1);
+    assert.equal(c.f.stats().timedOut, 1, "the one lookup timed out once");
+    c.f.isHuman("someone-else");
+    assert.deepEqual(c.started, ["stuck", "someone-else"], "the other slots are still free for other users");
+    c.settle("stuck", null); // it finally settles, without an answer
+    await tick();
+    c.advance(1000);
+    c.f.isHuman("stuck");
+    assert.deepEqual(c.started, ["stuck", "someone-else", "stuck"], "and only then is the user looked up again");
   });
 
   it("retries a failing user on a doubling cooldown that is capped, and forgets the failures after a success", async () => {
