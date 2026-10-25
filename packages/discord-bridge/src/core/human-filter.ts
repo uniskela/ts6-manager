@@ -117,13 +117,8 @@ export class HumanFilter {
     this.active.set(userId, lookup);
     lookup.timer = setTimeout(() => this.giveUp(lookup), this.lookupTimeoutMs);
     lookup.timer.unref();
-    let asked: Promise<DiscordUserInfo | null>;
-    try {
-      asked = Promise.resolve(this.o.lookup(userId));
-    } catch (e) {
-      asked = Promise.reject(e);
-    }
-    asked.then(
+    // The executor turns a lookup that throws synchronously into a rejection, like any other failed lookup.
+    new Promise<DiscordUserInfo | null>((resolve) => resolve(this.o.lookup(userId))).then(
       (info) => this.settled(lookup, info),
       () => this.settled(lookup, null),
     );
