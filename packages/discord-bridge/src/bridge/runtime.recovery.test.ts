@@ -224,3 +224,35 @@ describe("every reconnect entry point spends the same budget (receive failures, 
     await r.cleanup();
   });
 });
+
+describe("an exhausted budget costs exactly one wake-up (real DiscordBot, real VoiceConnection)", () => {
+  it("repeated refusals and repeated syncs keep one timer per bot, and the window expiring causes exactly one attempt", async () => {
+    const r = realRuntime({ users: 1, timing: { maxRecoveries: 1, recoveryWindowMs: 500, readyMs: 300 } });
+    try {
+      await r.rt.start();
+      await r.rt.idle();
+      const t = r.tests.get("slot-0")!;
+
+      t.latest().conn.destroy(false); // failure 1: the one allowed rebuild
+      await waitFor(() => t.ready.length === 2 && t.bot.healthy, 2000, "the one allowed rebuild");
+      await r.rt.idle();
+      const spentAt = Date.now();
+      t.latest().conn.destroy(false); // failure 2: refused
+      await waitFor(() => r.rt.status().scheduledReconnects === 1, 1000, "a wake-up for the spent budget");
+
+      for (let i = 0; i < 6; i++) await r.rt.refreshExclusions(); // six more syncs, each asks slot-0 to join again and is refused
+      await r.rt.idle();
+      assert.equal(r.rt.status().scheduledReconnects, 1, "refusals replace the wake-up, they do not stack");
+      assert.equal(t.ready.length, 2, "no connection while the budget is spent");
+
+      await waitFor(() => t.ready.length === 3 && t.bot.healthy, 3000, "the attempt once the window slid");
+      assert.ok(Date.now() - spentAt >= 450, "not before the spent token left the window");
+      await r.rt.idle();
+      assert.equal(r.rt.status().scheduledReconnects, 0, "and nothing is left scheduled");
+      await tick(150);
+      assert.equal(t.ready.length, 3, "exactly one connection was built by the wake-up, and none after it");
+    } finally {
+      await r.cleanup();
+    }
+  });
+});

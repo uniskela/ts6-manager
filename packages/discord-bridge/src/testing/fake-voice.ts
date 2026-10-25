@@ -66,6 +66,10 @@ export interface FakeAdapter {
   /** Payloads this adapter was asked to send (this client's gateway only). */
   sent: { op: number; d: { guild_id: string; channel_id: string | null } }[];
   destroyed: boolean;
+  /** Refuse the next N payloads: `sendPayload` returns false, as it does when the gateway is unavailable. */
+  refuseNext: number;
+  /** While set, creating the adapter for a new connection throws (a connection that cannot be constructed). */
+  failCreate: Error | null;
   /** Called after every join (non-leave) payload this adapter sends. */
   onJoin?: () => void;
 }
@@ -76,17 +80,26 @@ export function fakeAdapter(name: string): FakeAdapter {
     name,
     sent: [],
     destroyed: false,
-    creator: () => ({
-      sendPayload: (payload: unknown) => {
-        const p = payload as FakeAdapter["sent"][number];
-        a.sent.push(p);
-        if (p.d.channel_id !== null) a.onJoin?.();
-        return true;
-      },
-      destroy: () => {
-        a.destroyed = true;
-      },
-    }),
+    refuseNext: 0,
+    failCreate: null,
+    creator: () => {
+      if (a.failCreate) throw a.failCreate;
+      return {
+        sendPayload: (payload: unknown) => {
+          if (a.refuseNext > 0) {
+            a.refuseNext -= 1;
+            return false;
+          }
+          const p = payload as FakeAdapter["sent"][number];
+          a.sent.push(p);
+          if (p.d.channel_id !== null) a.onJoin?.();
+          return true;
+        },
+        destroy: () => {
+          a.destroyed = true;
+        },
+      };
+    },
   };
   return a;
 }

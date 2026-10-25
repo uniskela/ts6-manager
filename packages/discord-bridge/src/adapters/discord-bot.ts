@@ -48,8 +48,9 @@ export interface BotTiming {
   /**
    * The one budget for failure-driven reconnects: this many connection rebuild attempts per window,
    * whichever path asks (gateway destruction, a poisoned DAVE session, DAVE lost for good, a failed
-   * join, a refused rejoin, the runtime's own retries). Planned joins are free. It recovers by time
-   * only. When it is spent, `join()` rejects with `RebuildBudgetExhausted` and builds nothing.
+   * join, a refused rejoin, a connection that cannot be constructed, the runtime's own retries).
+   * Planned joins are free. It recovers by time only. When it is spent, `join()` rejects with
+   * `RebuildBudgetExhausted` and builds nothing.
    */
   maxRecoveries: number;
   recoveryWindowMs: number;
@@ -128,8 +129,15 @@ export class DiscordBot extends EventEmitter implements BotPort {
    * before them is cancelled at its next checkpoint, including one still waiting for the target.
    */
   private epoch = 0;
-  /** The last connection failed and has not been replaced by a Ready one yet: the next join is a rebuild. */
-  private failed = false;
+  /**
+   * A connection failed since the last join that reached Ready: the next attempt that rejoins or
+   * builds a connection owes one recovery token. This is only the debt. Whether a given attempt has
+   * paid is that attempt's own business (`joinNow`), never inferred from this flag, which a
+   * connection event can change at any moment, including from inside `rejoin()`.
+   */
+  private rebuildOwed = false;
+  /** Counts every failure, so an attempt can tell that one happened while it was waiting. */
+  private failures = 0;
   /** The DAVE session that was poisoned. The replacement must be a different object. */
   private poisonedDave: object | null = null;
   /** The DAVE session the packet waiting for dispatch was encrypted under. */
@@ -231,8 +239,9 @@ export class DiscordBot extends EventEmitter implements BotPort {
   /**
    * Join the approved voice channel. A receiver must be undeafened; senders deafen themselves.
    *
-   * Cancellable by `leave()`/`destroy()` at every asynchronous boundary. A join that follows a
-   * failure is a rebuild and spends the one budget before it does anything else, so no caller can
+   * Cancellable by `leave()`/`destroy()` at every asynchronous boundary. A join that rejoins or
+   * builds a connection while a failure is owed spends one token of the one budget first, and what is
+   * owed is read after the target is resolved, not when the join was submitted, so no caller can
    * reconnect faster than the budget allows.
    */
   join(opts: { receive: boolean }): Promise<void> {
@@ -264,65 +273,53 @@ export class DiscordBot extends EventEmitter implements BotPort {
     }
   }
 
-  /** A connection broke without us asking: the next join must build it again, and that costs a token. */
-  private noteUnplannedRebuild(): void {
-    if (this.failed) return; // this attempt already paid
-    this.failed = true;
-    this.spendRebuild();
-  }
-
-  private spendRebuild(): void {
-    this.budget.spend();
-    this.rejoins += 1;
+  /** A connection broke without us asking: until a join reaches Ready, the next attempt owes a recovery token. */
+  private noteFailure(): void {
+    this.rebuildOwed = true;
+    this.failures += 1;
   }
 
   private async joinNow(opts: { receive: boolean }, epoch: number): Promise<void> {
     this.checkpoint(epoch);
-    if (this.failed) this.spendRebuild();
+    // Refuse early, before a lookup that would be wasted. This is only a shortcut: the charge below is what counts.
+    if (this.rebuildOwed) this.budget.assertAvailable();
     const target = await this.resolveTarget();
     this.checkpoint(epoch);
+    // Nothing read before the await above is trusted from here on: the connection may have been
+    // destroyed or dropped while the target was being resolved. This attempt pays at most one token,
+    // at the first moment it rejoins or builds a connection while a failure is owed, and the debt it
+    // pays is read now, not when the attempt started.
+    let paid = false;
+    const charge = (): void => {
+      if (paid || !this.rebuildOwed) return;
+      this.budget.spend(); // throws RebuildBudgetExhausted before anything is rejoined or created
+      this.rejoins += 1;
+      paid = true;
+    };
     this.selfDeaf = !opts.receive;
     let conn = this.connection;
     if (conn && conn.state.status === VoiceConnectionStatus.Destroyed) {
       // The library cannot revive a destroyed connection, and `rejoin()` on one only returns false.
       this.discardConnection();
       conn = null;
-      this.noteUnplannedRebuild();
+      this.noteFailure();
     }
-    if (conn && !conn.rejoin({ channelId: target.channelId, selfDeaf: this.selfDeaf, selfMute: false })) {
-      this.o.log.warn(`${this.o.id} the library refused a rejoin; building a new connection`);
-      this.discardConnection();
-      conn = null;
-      this.noteUnplannedRebuild();
+    if (conn) {
+      charge();
+      // The library can report Disconnected from inside `rejoin()` and then return false; both signal
+      // the same failure, and the one `charge` above or below covers them.
+      if (!conn.rejoin({ channelId: target.channelId, selfDeaf: this.selfDeaf, selfMute: false })) {
+        this.o.log.warn(`${this.o.id} the library refused a rejoin; building a new connection`);
+        this.discardConnection();
+        conn = null;
+        this.noteFailure();
+      }
     }
     if (!conn) {
-      const squatter = getVoiceConnection(target.guildId, this.voiceGroup);
-      if (squatter && squatter.state.status !== VoiceConnectionStatus.Destroyed) {
-        throw new Error(`voice group ${this.voiceGroup} is already in use by another bot instance; refusing to share a connection`);
-      }
-      const created = joinVoiceChannel({
-        channelId: target.channelId,
-        guildId: target.guildId,
-        group: this.voiceGroup,
-        adapterCreator: target.adapterCreator,
-        selfDeaf: this.selfDeaf,
-        selfMute: false,
-        daveEncryption: true,
-        decryptionFailureTolerance: 36,
-      });
-      conn = created;
-      this.connection = created;
-      this.installDaveGuards(created);
-      created.subscribe(this.player);
-      created.on("stateChange", (_o, n) => {
-        // Only an unexpected change on the live connection is a failure; our own teardown detaches first.
-        if (created !== this.connection) return;
-        if (n.status === VoiceConnectionStatus.Disconnected) this.markUnhealthy(`voice ${n.status}`);
-        // Destroyed cannot be revived: drop it so the next join builds a new connection and DAVE session.
-        else if (n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`, { fresh: true });
-      });
-      created.on("error", (e) => this.o.log.warn(`${this.o.id} voice error: ${safeError(e)}`));
+      charge();
+      conn = this.buildConnection(target);
     }
+    const settled = this.failures; // a failure after this point happened while the join was completing
     const abort = new AbortController();
     this.abortJoin = abort;
     const timer = setTimeout(() => abort.abort(), this.timing.readyMs);
@@ -330,7 +327,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
       await entersState(conn, VoiceConnectionStatus.Ready, abort.signal);
     } catch (e) {
       this.checkpoint(epoch, conn); // cancelled on purpose, or the connection was discarded under us
-      this.failed = true;
+      this.noteFailure();
       this.discardConnection(); // never retry on a connection that did not come up
       throw e;
     } finally {
@@ -340,14 +337,20 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.checkpoint(epoch, conn);
     await this.requireDave(conn, epoch);
     this.checkpoint(epoch, conn);
+    if (this.failures !== settled) {
+      // The connection failed after it was built, while this join was waiting (a drop the library may
+      // have repaired by itself). The failure was already reported; do not report health over it.
+      this.discardConnection();
+      throw new Error("the connection failed while the join was completing");
+    }
     if (this.poisonedDave && this.currentDave(conn) === this.poisonedDave) {
-      this.failed = true;
+      this.noteFailure();
       this.discardConnection();
       throw new Error("recovery did not produce a fresh DAVE session");
     }
     // No await below: nothing can cancel the join between the last checkpoint and these assignments.
     this.poisonedDave = null;
-    this.failed = false;
+    this.rebuildOwed = false;
     this.daveOk = true;
     this.healthy = true;
     this.clearGraceTimer();
@@ -356,6 +359,51 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.o.election.setState(this.o.id, { healthy: true });
     this.o.election.daveRestored(this.o.id); // no-op unless a previous session had lost DAVE
     this.emit("healthy");
+  }
+
+  /**
+   * Create and wire a new connection. Anything that goes wrong here is a failed attempt: the debt is
+   * recorded and a half-built connection is destroyed, so retrying construction in a loop is paid for
+   * like any other rebuild instead of looking like a series of planned joins.
+   */
+  private buildConnection(target: VoiceTarget): VoiceConnection {
+    let created: VoiceConnection | null = null;
+    try {
+      const squatter = getVoiceConnection(target.guildId, this.voiceGroup);
+      if (squatter && squatter.state.status !== VoiceConnectionStatus.Destroyed) {
+        throw new Error(`voice group ${this.voiceGroup} is already in use by another bot instance; refusing to share a connection`);
+      }
+      const fresh = joinVoiceChannel({
+        channelId: target.channelId,
+        guildId: target.guildId,
+        group: this.voiceGroup,
+        adapterCreator: target.adapterCreator,
+        selfDeaf: this.selfDeaf,
+        selfMute: false,
+        daveEncryption: true,
+        decryptionFailureTolerance: 36,
+      });
+      created = fresh;
+      this.connection = fresh;
+      this.installDaveGuards(fresh);
+      fresh.subscribe(this.player);
+      fresh.on("stateChange", (_o, n) => {
+        // Only an unexpected change on the live connection is a failure; our own teardown detaches first.
+        if (fresh !== this.connection) return;
+        if (n.status === VoiceConnectionStatus.Disconnected) this.markUnhealthy(`voice ${n.status}`);
+        // Destroyed cannot be revived: drop it so the next join builds a new connection and DAVE session.
+        else if (n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`, { fresh: true });
+      });
+      fresh.on("error", (e) => this.o.log.warn(`${this.o.id} voice error: ${safeError(e)}`));
+      return fresh;
+    } catch (e) {
+      this.noteFailure();
+      if (created) {
+        if (this.connection === created) this.discardConnection();
+        else this.destroyQuietly(created);
+      }
+      throw e;
+    }
   }
 
   private currentDave(conn: VoiceConnection): object | null {
@@ -485,7 +533,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
       await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
     const info = readDaveInfo(conn);
-    this.failed = true;
+    this.noteFailure();
     this.discardConnection();
     throw new Error(`DAVE not negotiated (protocolVersion=${info?.protocolVersion ?? "n/a"}, ready=${info?.ready ?? false}); failing closed`);
   }
@@ -579,7 +627,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (this.stopped) return;
     if (!opts.force && !this.healthy && !this.connection) return;
     this.healthy = false;
-    this.failed = true;
+    this.noteFailure();
     this.stopReceive();
     this.o.log.warn(`${this.o.id} unhealthy: ${reason}`);
     // After a DAVE failure the next join must build a new session, not reuse the poisoned one.
@@ -593,7 +641,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   /** Hard-kill the voice connection (used by the receiver-kill scenario). */
   kill(reason: string): void {
     this.leave();
-    this.failed = true;
+    this.noteFailure();
     this.emit("unhealthy", reason);
   }
 
@@ -619,7 +667,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /**
    * Leave the channel on purpose. The bot can join again later. Every join submitted before this
-   * call is cancelled, including one that is still resolving its target. `failed` is kept: a bot
+   * call is cancelled, including one that is still resolving its target. The debt is kept: a bot
    * that failed still pays for its next rebuild even if it was told to leave in between.
    */
   leave(): void {

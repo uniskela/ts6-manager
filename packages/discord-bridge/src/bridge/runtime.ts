@@ -483,6 +483,8 @@ export class BridgeRuntime extends EventEmitter {
     return {
       state: this.lifecycle,
       callbackErrors: this.callbackErrors,
+      /** Reconnects waiting on a timer (a backoff retry or a budget wake-up); at most one per bot. */
+      scheduledReconnects: this.retryTimers.size,
       receiver: this.election.receiver,
       generation: this.election.generation,
       inChannel: [...this.inChannel].sort((a, b) => a.localeCompare(b)),

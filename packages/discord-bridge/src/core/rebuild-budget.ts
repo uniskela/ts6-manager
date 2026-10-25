@@ -2,11 +2,12 @@
  * The one budget for failure-driven reconnects of a Discord bot.
  *
  * Every automatic reason to build a connection again (the gateway destroyed it, the DAVE session
- * was poisoned, DAVE never came back, a join failed, the library refused a rejoin) spends a token
- * here, whichever code path asks. Planned joins (first join, join after a deliberate leave) are not
- * charged. A token is spent when an attempt starts, so an attempt that never reaches Ready still
- * counts, and a successful join does not refund it: the cost of a flapping connection is the
- * number of attempts, not the number of failures.
+ * was poisoned, DAVE never came back, a join failed, the library refused a rejoin, a connection
+ * could not be constructed) spends a token here, whichever code path asks. Planned joins (first
+ * join, join after a deliberate leave, a rejoin the gateway accepts) are not charged. A token is
+ * spent by the attempt that is about to rejoin or build a connection after a failure, one per
+ * attempt, so an attempt that never reaches Ready still counts, and a successful join does not
+ * refund it: the cost of a flapping connection is the number of attempts, not the number of failures.
  *
  * It is a sliding window. Tokens expire `windowMs` after they were spent, and that is the only way
  * the budget recovers. There is no manual reset and no reset on success, so no loop can spin a
@@ -43,12 +44,17 @@ export class RebuildBudget {
     while (this.spent.length > 0 && t - this.spent[0] >= this.windowMs) this.spent.shift();
   }
 
-  /** Spend one token for an attempt that is about to start, or throw with when the next one is allowed. */
-  spend(): void {
+  /** Throw with when the next attempt is allowed if the budget is spent; spends nothing. */
+  assertAvailable(): void {
     this.expire();
     if (this.spent.length >= this.max) {
       throw new RebuildBudgetExhausted(this.nextFreeInMs(), this.max, this.windowMs);
     }
+  }
+
+  /** Spend one token for an attempt that is about to start, or throw with when the next one is allowed. */
+  spend(): void {
+    this.assertAvailable();
     this.spent.push(this.now());
   }
 
