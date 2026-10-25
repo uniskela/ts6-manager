@@ -46,10 +46,11 @@ export function parseUpstreamProxy(value: string | undefined): UpstreamProxy | u
 }
 
 const PROXY_VARIABLE = /(^|_)proxy$/i;
+const OUTBOUND_PROXY = /^(https?|ftp|all|no)_proxy$/i;
 
-/** Proxy variables in the backend's environment that media jobs no longer use. */
+/** Outbound proxy variables in the backend's environment that media jobs no longer use. */
 export function ignoredProxyVariables(env: NodeJS.ProcessEnv = process.env): string[] {
-  return Object.keys(env).filter((name) => PROXY_VARIABLE.test(name) && name.toUpperCase() !== 'MEDIA_EGRESS_PROXY' && env[name]);
+  return Object.keys(env).filter((name) => OUTBOUND_PROXY.test(name) && env[name]);
 }
 
 /**
@@ -112,7 +113,7 @@ export async function startMediaEgress(log: Pick<Console, 'log' | 'warn'> = cons
     log.warn('[MediaEgress] DISABLED by MEDIA_EGRESS_PROXY=off. Media downloads connect directly and are not checked at connection time; only YouTube links and searches are accepted until it is switched back on.');
     return;
   }
-  const ignored = ignoredProxyVariables().filter((name) => name.toUpperCase() !== 'MEDIA_UPSTREAM_PROXY');
+  const ignored = ignoredProxyVariables();
   if (ignored.length > 0 && !process.env.MEDIA_UPSTREAM_PROXY) {
     log.warn(`[MediaEgress] ${ignored.join(', ')} is set but media downloads no longer use it. Set MEDIA_UPSTREAM_PROXY if downloads must go through an outbound proxy.`);
   }

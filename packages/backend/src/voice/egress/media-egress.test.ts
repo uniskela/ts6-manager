@@ -55,6 +55,21 @@ describe('media egress settings', () => {
   it('names proxy variables that media jobs ignore', () => {
     assert.deepEqual(ignoredProxyVariables({ HTTP_PROXY: 'x', no_proxy: 'y', MEDIA_EGRESS_PROXY: 'on', PATH: '/' }).sort(), ['HTTP_PROXY', 'no_proxy']);
   });
+
+  it('does not treat the image TRUST_PROXY default as an unused outbound proxy', () => {
+    for (const trust of ['loopback', 'private-peer']) {
+      assert.deepEqual(
+        ignoredProxyVariables({
+          TRUST_PROXY: trust,
+          SIDECAR_URL: 'http://127.0.0.1:9800',
+          SIDECAR_EGRESS_PROXY: 'on',
+          MEDIA_EGRESS_PROXY: 'on',
+        }),
+        [],
+        trust,
+      );
+    }
+  });
 });
 
 describe('media egress jobs', () => {
@@ -93,6 +108,26 @@ describe('media egress jobs', () => {
     const warnings: string[] = [];
     await startMediaEgress({ log: () => {}, warn: (m: string) => warnings.push(m) });
     assert.match(warnings.join('\n'), /DISABLED by MEDIA_EGRESS_PROXY=off/);
+  });
+
+  it('starts cleanly with the container TRUST_PROXY default', async () => {
+    delete process.env.MEDIA_EGRESS_PROXY;
+    delete process.env.MEDIA_UPSTREAM_PROXY;
+    const before = { trust: process.env.TRUST_PROXY, https: process.env.HTTPS_PROXY, http: process.env.HTTP_PROXY };
+    process.env.TRUST_PROXY = 'loopback';
+    delete process.env.HTTPS_PROXY;
+    delete process.env.HTTP_PROXY;
+    try {
+      const warnings: string[] = [];
+      const logs: string[] = [];
+      await startMediaEgress({ log: (m: string) => logs.push(m), warn: (m: string) => warnings.push(m) });
+      assert.deepEqual(warnings, []);
+      assert.deepEqual(logs, ['[MediaEgress] enforcing (upstream: none)']);
+    } finally {
+      if (before.trust === undefined) delete process.env.TRUST_PROXY; else process.env.TRUST_PROXY = before.trust;
+      if (before.https === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = before.https;
+      if (before.http === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = before.http;
+    }
   });
 
   it('warns at start-up about proxy variables it no longer uses', async () => {
