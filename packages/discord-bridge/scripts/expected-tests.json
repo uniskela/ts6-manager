@@ -1,20 +1,34 @@
 {
   "scripts/run-tests.fixture.test.mjs": [
     "--update records test names, and a second run against them is accepted",
+    "--update refuses a file that registers two tests and terminates after the first, and keeps the previous list",
+    "--update refuses a test process that exits with status zero before it reports, and keeps the previous list",
     "--update refuses to record an unexpected reported file and leaves the expected list untouched",
+    "a normal run rejects a corrupted expected list instead of trusting it",
+    "a normal run rejects an incomplete list that matches what the unfinished run reported",
     "accepts a fixture that matches exactly (control)",
     "exits nonzero when a test file outside the discovered set registers tests that pass",
     "exits nonzero when a test was renamed or swapped, although the count is unchanged"
   ],
   "scripts/test-verify.test.mjs": [
     "accepts a complete, green run",
+    "accepts exactly what --update writes",
     "counts a name that is reported twice as two tests",
     "fails a failed, skipped, todo or cancelled test",
+    "fails a failing or skipped suite even when every test in it passed",
+    "fails a file summary that disagrees with the results reported for it",
+    "fails a file that never reported node:test's end-of-file summary, although every expected test passed",
+    "fails a file that node:test reported as a whole, whether it passed or failed",
     "fails a reported file that was never discovered or expected, even though every test in it passed",
+    "fails a result node:test never registered",
+    "fails a run whose event stream was cut short, or whose end node:test never reported or reported as failed",
     "fails a test file that is not in the expected list, and one that vanished",
+    "fails a test that was registered and scheduled but never reported, even when the expected list agrees with the run",
     "fails a test that was replaced by another with the same count",
     "fails a truncated report even though nothing failed (the forced-exit symptom)",
-    "fails when the discovered, expected and reported files are not exactly the same set"
+    "fails when the discovered, expected and reported files are not exactly the same set",
+    "records only leaf tests, never suites or files reported as a whole",
+    "reports an unreadable, misshapen or reordered list and trusts none of it"
   ],
   "src/adapters/discord-bot.budget.test.ts": [
     "an exhausted budget stops all failure-driven connection creation, and time alone frees one attempt",

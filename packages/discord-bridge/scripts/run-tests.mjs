@@ -1,22 +1,26 @@
 #!/usr/bin/env node
 /**
- * Runs every test file and then verifies that the run is exactly what was expected: the files
+ * Runs every test file and then verifies the run (see scripts/test-verify.mjs): first that it is
+ * complete by node:test's own account (every file reached its end, every registered test reported,
+ * the event stream was not cut short), then that it is exactly what was expected: the files
  * discovered, the files listed in scripts/expected-tests.json and the files that reported results
  * are the same set, each reports exactly its listed tests, and none failed, was skipped, todo or
  * cancelled. Exit code zero from node:test alone is not accepted.
  *
  *   node scripts/run-tests.mjs            run and verify
  *   node scripts/run-tests.mjs --update   run, then rewrite scripts/expected-tests.json (review the diff:
- *                                         a renamed test shows up as one name removed and one added)
+ *                                         a renamed test shows up as one name removed and one added).
+ *                                         The completeness checks apply in full: a run that is not
+ *                                         complete is refused and the previous list is left as it was.
  *
  * No --test-force-exit: it exits 0 after a truncated report. Tests must close what they open.
  */
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { byCodeUnit, namesByFile, verify } from "./test-verify.mjs";
+import { byCodeUnit, namesByFile, readManifest, verify } from "./test-verify.mjs";
 
 const root = join(fileURLToPath(import.meta.url), "..", "..");
 const expectedPath = join(root, "scripts", "expected-tests.json");
@@ -60,29 +64,39 @@ const deadline = setTimeout(() => {
 
 child.on("exit", (code, signal) => {
   clearTimeout(deadline);
-  let events = [];
+  let records = [];
   try {
-    events = readFileSync(resultsFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    records = readFileSync(resultsFile, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l));
   } catch {
-    /* no results file: verification below reports every file as not run */
+    /* no results file: verification below reports the run as truncated and every file as not run */
   }
   rmSync(work, { recursive: true, force: true });
   const problems = [];
   if (code !== 0) problems.push(`node:test exited with ${signal ?? code}`);
 
   if (update) {
-    const names = namesByFile(events);
-    const r = verify({ events, expected: names, discovered });
+    const names = namesByFile(records);
+    const r = verify({ records, expected: names, discovered });
     problems.push(...r.problems);
     if (problems.length === 0) {
-      writeFileSync(expectedPath, `${JSON.stringify(names, null, 2)}\n`);
-      process.stdout.write(`\nupdated ${relative(root, expectedPath)}: ${events.length} tests in ${Object.keys(names).length} files\n`);
+      // Written beside the list and renamed over it, so the previous list survives anything short of success.
+      const next = `${expectedPath}.next`;
+      writeFileSync(next, `${JSON.stringify(names, null, 2)}\n`);
+      renameSync(next, expectedPath);
+      process.stdout.write(`\nupdated ${relative(root, expectedPath)}: ${r.total} tests in ${Object.keys(names).length} files\n`);
     }
   } else {
-    const expected = JSON.parse(readFileSync(expectedPath, "utf8"));
-    const r = verify({ events, expected, discovered });
+    let text = "";
+    try {
+      text = readFileSync(expectedPath, "utf8");
+    } catch {
+      problems.push(`MANIFEST ${relative(root, expectedPath)} cannot be read`);
+    }
+    const manifest = readManifest(text);
+    problems.push(...manifest.problems);
+    const r = verify({ records, expected: manifest.expected, discovered });
     problems.push(...r.problems);
-    if (problems.length === 0) process.stdout.write(`\nverified: ${r.total} tests in ${r.files} files, none failed, skipped, todo or cancelled\n`);
+    if (problems.length === 0) process.stdout.write(`\nverified: ${r.total} tests in ${r.files} files, complete, none failed, skipped, todo or cancelled\n`);
   }
   if (problems.length) {
     process.stderr.write(`\nTEST RUN NOT ACCEPTED:\n${problems.map((p) => `  - ${p}`).join("\n")}\n`);

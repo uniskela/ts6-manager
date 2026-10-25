@@ -81,6 +81,58 @@ describe("the real test command refuses a run that does not match what was expec
     assert.equal(readFileSync(join(root, "scripts", "expected-tests.json"), "utf8"), before);
   });
 
+  // The reviewer's two reproductions: --update exited 0 and wrote what an unfinished run happened to report.
+  const exitsInFirstTest = `import { it } from "node:test";\nit("one", () => { process.exit(0); });\nit("two", () => {});\n`;
+  const exitsAfterFirstTest = `import { it } from "node:test";\nit("one", () => { setImmediate(() => process.exit(0)); });\nit("two", async () => { await new Promise((r) => setTimeout(r, 200)); });\n`;
+
+  it("--update refuses a test process that exits with status zero before it reports, and keeps the previous list", () => {
+    const root = fixture({ files: { "src/a.test.ts": exitsInFirstTest }, expected: { "src/a.test.ts": ["one", "two"] } });
+    const before = readFileSync(join(root, "scripts", "expected-tests.json"), "utf8");
+    const r = run(root, ["--update"]);
+    assert.notEqual(r.code, 0, `--update accepted a run that ended early:\n${r.out}`);
+    assert.match(r.out, /TEST RUN NOT ACCEPTED/);
+    assert.match(r.out, /INCOMPLETE src\/a\.test\.ts/);
+    assert.match(r.out, /FILE WRAPPER src\/a\.test\.ts/);
+    assert.doesNotMatch(r.out, /updated scripts/);
+    assert.equal(readFileSync(join(root, "scripts", "expected-tests.json"), "utf8"), before);
+  });
+
+  it("--update refuses a file that registers two tests and terminates after the first, and keeps the previous list", () => {
+    const root = fixture({ files: { "src/a.test.ts": exitsAfterFirstTest }, expected: { "src/a.test.ts": ["one", "two"] } });
+    const before = readFileSync(join(root, "scripts", "expected-tests.json"), "utf8");
+    const r = run(root, ["--update"]);
+    assert.notEqual(r.code, 0, `--update accepted a run that never ran its second test:\n${r.out}`);
+    assert.match(r.out, /INCOMPLETE src\/a\.test\.ts/);
+    assert.match(r.out, /NEVER FINISHED src\/a\.test\.ts: "two"/);
+    assert.equal(readFileSync(join(root, "scripts", "expected-tests.json"), "utf8"), before);
+  });
+
+  it("a normal run rejects an incomplete list that matches what the unfinished run reported", () => {
+    // What the old --update wrote for the second reproduction: the file looks complete against it.
+    const root = fixture({ files: { "src/a.test.ts": exitsAfterFirstTest }, expected: { "src/a.test.ts": ["one"] } });
+    const r = run(root);
+    assert.notEqual(r.code, 0, `a normal run accepted an unfinished file:\n${r.out}`);
+    assert.match(r.out, /INCOMPLETE src\/a\.test\.ts/);
+    assert.match(r.out, /NEVER FINISHED src\/a\.test\.ts: "two"/);
+    assert.doesNotMatch(r.out, /verified:/);
+    // And once the file runs to the end, the list is still wrong: the test it left out is reported.
+    writeFileSync(join(root, "src", "a.test.ts"), suite("one", "two"));
+    const full = run(root);
+    assert.notEqual(full.code, 0, full.out);
+    assert.match(full.out, /UNEXPECTED TEST src\/a\.test\.ts: "two"/);
+  });
+
+  it("a normal run rejects a corrupted expected list instead of trusting it", () => {
+    for (const text of ["{ not json", '{"src/a.test.ts": "one"}', '{"src/a.test.ts": ["two", "one"]}', "[]"]) {
+      const root = fixture({ files: { "src/a.test.ts": suite("one", "two") }, expected: {} });
+      writeFileSync(join(root, "scripts", "expected-tests.json"), text);
+      const r = run(root);
+      assert.notEqual(r.code, 0, `${text}\n${r.out}`);
+      assert.match(r.out, /MANIFEST /, text);
+      assert.doesNotMatch(r.out, /verified:/, text);
+    }
+  });
+
   it("--update records test names, and a second run against them is accepted", () => {
     const root = fixture({ files: { "src/a.test.ts": suite("one", "two") }, expected: {} });
     const u = run(root, ["--update"]);
