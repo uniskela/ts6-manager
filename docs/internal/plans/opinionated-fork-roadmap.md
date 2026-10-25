@@ -58,6 +58,25 @@ Specified in [discord-voice-bridge.md](../discord-voice-bridge.md). Optional, di
 See upstream issue/PR triage in the agent plan for additional skip notes.
 
 
+## 2026-10-25 ecosystem scout: proposed release placements
+
+The read-only scout surveyed **48 forks** and reported **24 candidate findings** (19 fork changes, one upstream PR and four upstream issues). The source report is a *triage input*, **not** proof a defect still exists on current `main` or permission to import fork code. The ADHD-formatted [master issue #508](https://github.com/uniskela/ts6-manager/issues/508) tracks every F01–F24 finding. See the [detailed scout release plan](2026-10-25-ecosystem-scout-roadmap.md) for gates and original-source pointers.
+
+**Release sequencing / scope invariants:**
+
+- **v1.11.2 (#460): no scout changes.** The owner determines release readiness and whether another 1.11.x patch is possible before a `feat:` commit alters Release Please sequencing.
+- **Proposed v1.11.3 (or next eligible patch), [#505](https://github.com/uniskela/ts6-manager/issues/505):** F01, F09–F13 — SSH listener, queue/start race, nginx DNS redeploy, permission diagnostics, voice-listener cleanup, upload correctness. Each requires a current-main reproduction or narrow contract test.
+- **v1.12.0 ([#442](https://github.com/uniskela/ts6-manager/issues/442), [#502](https://github.com/uniskela/ts6-manager/issues/502)):** listener remote + first-party Discord voice only as already specified. F24 is **stream preset/1080p DASH verification**, not new scope. Bridge-D1 real-world evidence and independent review are still required; #504 stays draft until its gates pass. PIN/PWA remains separately deferred to [#464](https://github.com/uniskela/ts6-manager/issues/464).
+- **Proposed v1.12.1–1.12.x, [#506](https://github.com/uniskela/ts6-manager/issues/506):** F02, F03, F14, F15, F23 (stabilization, safe SSH host-key repin, React Router 7 through #477, CI and video queue QoL); F07, F08, F16 only after real YouTube/network evidence and explicit security decisions. Coordinate F16 with isolated fetcher #476 and checking proxy #479.
+- **v1.13.0, [#297](https://github.com/uniskela/ts6-manager/issues/297):** F17 connection history/offline GeoIP evaluated inside Community Insights with retention/privacy gates and no implicit raw-IP persistence.
+- **v1.14.0, [#299](https://github.com/uniskela/ts6-manager/issues/299):** existing join-protection/observe-only commitments unchanged; country data from F17 is optional, not an enforcement prerequisite.
+- **Proposed v1.15.0, [#507](https://github.com/uniskela/ts6-manager/issues/507):** F04, F06, F18, F21 — NVENC CUDA filtering (requires #463 hardware evidence), remote video seek/pause, nonduplicative stream prefetch/jitter diagnostics, and bounded Bot Flow loop node.
+- **v1.16.0+ research, #507:** F05 direct video/NACK/VP9 and F22 whisper-to-listeners require isolated feasibility/permission/protocol studies before any release commitment.
+- **Do not adopt:** F19 Chromium/noVNC YouTube cookie-refresh sidecar and F20 generic admin AI MCP/OpenAPI gateway; preserve the narrow, reviewed integrations policy in #303 instead.
+
+**General gate:** one independent, attributable PR per fix/feature, evidence and regression tests against current `main`, no silent SSH pin reset, no SSRF/egress bypass, bounded resources, verified hardware claims, and no automatic release/merge. This section records *plans only*; it does not imply the changes are implemented.
+
+
 ## Beta13 / v1.6.0 ecosystem review (2026-09-19)
 
 Reviewed current main and recent activity in uniskela (v1.5.2), clusterzx
