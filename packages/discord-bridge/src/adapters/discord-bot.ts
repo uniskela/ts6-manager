@@ -170,6 +170,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
       lookup: o.userLookup ?? ((id) => this.lookupUser(id)),
       excluded: (id) => this.o.bridgeUserIds().has(id) || id === this.userId,
     });
+    // A human who leaves our channel is forgotten, so an identity answer that arrives afterwards cannot bring them back.
+    this.client.on("voiceStateUpdate", (before, after) => {
+      if (before.channelId === this.o.channelId && after.channelId !== before.channelId) this.humans.forget(before.id);
+    });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
   }
@@ -600,6 +604,11 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.supervisor = null;
   }
 
+  /** Identity lookups for speakers the client has not seen: how many are out, stalled or were refused by the cap. */
+  get identityLookups() {
+    return this.humans.stats();
+  }
+
   get openSubscriptions(): number {
     return this.supervisor?.openCount ?? 0;
   }
@@ -676,6 +685,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.watchdog = null;
     this.clearGraceTimer();
     this.healthy = false;
+    this.humans.reset(); // the session ended: identity lookups still out can no longer change anything
     this.discardConnection();
   }
 
@@ -683,6 +693,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   async destroy(): Promise<void> {
     this.stopped = true;
     this.leave();
+    this.humans.dispose();
     await this.client.destroy();
   }
 

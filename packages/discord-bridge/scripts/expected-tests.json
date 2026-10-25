@@ -68,9 +68,11 @@
     "a human who is already talking when the bot takes over is received without a new speaking-start event",
     "a stream error that surfaces after closeAll does not request recovery",
     "after a decrypt failure the subscription is restored while the human keeps talking (no new speaking-start)",
+    "an answer that arrives after the bot left, or after the human left the channel, admits nobody",
     "another Discord bot that is already speaking is never subscribed or forwarded",
     "fails closed while identity is unknown, then admits once it is established as human",
     "repeated decrypt failures fail closed: subscriptions stop and bounded recovery is requested",
+    "speakers whose identity lookups never settle cannot make the bot hold more than the cap, and a known human is still forwarded",
     "stays closed for an identity that cannot be established, and does not hammer the lookup"
   ],
   "src/adapters/discord-bot.recovery.test.ts": [
@@ -216,11 +218,21 @@
     "two simultaneous speakers land on two different bots with no crosstalk (tone analysis)"
   ],
   "src/core/human-filter.test.ts": [
+    "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
+    "a late answer after the timeout is still used for a user who did not leave",
+    "a late answer for a user that was forgotten is dropped",
+    "a lookup that throws synchronously is a failure and does not leak a slot",
+    "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
     "admits a cached human and rejects a cached bot",
+    "dispose() stops every timer and refuses to start another lookup",
+    "does not queue what it refused: nothing starts when a slot frees unless that speaker is asked about again",
     "is bounded under many distinct users",
+    "known identities are still answered while every lookup slot is stuck",
     "never admits a user the lookup says is a bot",
     "never admits the bridge's own identities or itself, whatever the cache says",
     "rejects an unknown user until the lookup says human, then admits",
+    "reset() ends the session: answers that arrive afterwards are dropped, and the slots come back as the lookups settle",
+    "retries a failing user on a doubling cooldown that is capped, and forgets the failures after a success",
     "stays closed when the lookup fails or finds nothing, and retries only after the cooldown"
   ],
   "src/core/rebuild-budget.test.ts": [

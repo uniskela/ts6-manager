@@ -93,6 +93,7 @@ async function main(): Promise<void> {
     receiveSubscriptions: Object.fromEntries([...concrete].map(([id, b]) => [id, b.openSubscriptions])),
     decryptErrors: Object.fromEntries([...concrete].map(([id, b]) => [id, b.decryptErrors])),
     recoveries: Object.fromEntries([...concrete].map(([id, b]) => [id, b.rejoins])),
+    identityLookups: Object.fromEntries([...concrete].map(([id, b]) => [id, b.identityLookups])),
   });
 
   const rl = createInterface({ input: process.stdin });

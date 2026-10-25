@@ -145,6 +145,53 @@ describe("only verified humans are subscribed and forwarded (real VoiceReceiver)
     return { election, t, h, got };
   }
 
+  it("speakers whose identity lookups never settle cannot make the bot hold more than the cap, and a known human is still forwarded", async () => {
+    const { election, t, h, got } = await receiver({ lookup: () => new Promise(() => undefined) });
+    t.bot.startReceive(election.generation);
+    const stops: (() => number)[] = [];
+    for (let i = 0; i < 25; i++) {
+      h.mapUser(`stranger-${i}`, 5000 + i);
+      stops.push(talk(h, `stranger-${i}`));
+    }
+    await tick(200);
+    assert.ok(t.bot.identityLookups.pending <= 8, `at most the cap is out (saw ${t.bot.identityLookups.pending})`);
+    assert.ok(t.bot.identityLookups.refused > 0, "the rest were refused rather than queued");
+    assert.equal(t.bot.openSubscriptions, 0, "and every one of them stays excluded");
+    assert.equal(got.length, 0, "nothing from them reached the pipeline");
+
+    t.bot.client.users.cache.set("friend", { id: "friend", bot: false } as never); // the client already knows this one
+    h.mapUser("friend", 9000);
+    stops.push(talk(h, "friend"));
+    await waitFor(() => got.includes("friend"), 1500, "the known human is forwarded although every lookup slot is stuck");
+    assert.ok(!got.some((u) => u.startsWith("stranger")));
+    for (const stop of stops) stop();
+    await t.bot.destroy();
+  });
+
+  it("an answer that arrives after the bot left, or after the human left the channel, admits nobody", async () => {
+    const answers = new Map<string, (v: { bot: boolean }) => void>();
+    const { election, t, h, got } = await receiver({ lookup: (id) => new Promise((resolve) => answers.set(id, resolve)) });
+    t.bot.startReceive(election.generation);
+    h.mapUser("departs", 6001);
+    h.mapUser("session-ends", 6002);
+    const stops = [talk(h, "departs"), talk(h, "session-ends")];
+    await waitFor(() => answers.size === 2, 1000, "both lookups started");
+
+    // The human leaves our channel (a voice state update from Discord), then the answer arrives.
+    t.bot.client.emit("voiceStateUpdate", { id: "departs", channelId: "channel-1" } as never, { id: "departs", channelId: null } as never);
+    answers.get("departs")!({ bot: false });
+    // The bot's session ends, then the other answer arrives.
+    t.bot.leave();
+    answers.get("session-ends")!({ bot: false });
+    await tick(20);
+
+    assert.equal(t.bot.identityLookups.pending, 0, "both slots came back");
+    assert.equal(t.bot.identityLookups.remembered, 0, "and nothing was remembered from the late answers");
+    assert.equal(got.length, 0);
+    for (const stop of stops) stop();
+    await t.bot.destroy();
+  });
+
   it("another Discord bot that is already speaking is never subscribed or forwarded", async () => {
     const { election, t, h, got } = await receiver();
     const other = "123456789012345678";
