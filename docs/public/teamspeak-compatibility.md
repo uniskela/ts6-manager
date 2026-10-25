@@ -8,6 +8,8 @@ teamspeaksystems/teamspeak6-server:6.0.0-beta13
 
 Older versions are not intentionally blocked, and manually provisioned WebQuery keys remain supported.
 
+The TeamSpeak client 6.0.0-beta5 needs ts6-manager 1.11.2 or newer for viewers; see [Troubleshooting](troubleshooting.md#teamspeak-600-beta5-never-answers-a-stream). The server baseline above is unchanged.
+
 ## Recommended beta13 Query settings
 
 Configure these variables on the **TeamSpeak server/container**, not the TS6 Manager container:
