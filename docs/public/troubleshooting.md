@@ -198,6 +198,16 @@ WEBRTC_NAT1TO1_IP=127.0.0.1,192.168.1.20
 
 `WEBRTC_BIND_IP=0.0.0.0` publishes the port on every host interface. To publish it only on the LAN address, set `WEBRTC_BIND_IP` to that address and use the address in place of `127.0.0.1` too. Recreate the sidecar afterwards (`docker compose -f docker-compose.pr-test.yml up -d sidecar`), then start watching again.
 
+## TeamSpeak 6.0.0-beta5 never answers a stream
+
+The bot starts streaming and the web UI preview plays, but nobody can watch in the TeamSpeak client. The client receives the stream offer and never answers it. A client trace stops at `HandleRemoteOffer ENTRY`. People who tried to watch can still be listed as viewers.
+
+This is not [stuck on "Connecting..."](#teamspeak-client-stuck-on-connecting). There the client answers the offer, then cannot reach an advertised address, and the sidecar log ends with `TeamSpeak viewer never connected`.
+
+Sidecars before 1.11.2 mark the stream's audio and video as send-and-receive (`a=sendrecv`). The TeamSpeak 6.0.0-beta5 client does not answer that offer. Older clients did. Every older sidecar sends the same offer, so downgrading does not help.
+
+Upgrade ts6-manager to 1.11.2 or newer, including the media sidecar. That sidecar offers send-only media (`a=sendonly`), which beta5 answers. A Docker sidecar follows the image tag. Replace a [native sidecar](native-sidecar.md#version-compatibility) with the 1.11.2 archive.
+
 ## Appearance custom CSS made the UI unusable
 
 Custom CSS is browser-local. Open:

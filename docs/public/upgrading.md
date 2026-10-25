@@ -90,6 +90,10 @@ Cloud metadata addresses stay blocked even when listed.
 
 ### Upgrading to 1.11.2
 
+#### TeamSpeak client 6.0.0-beta5
+
+- **Viewers.** The TeamSpeak client 6.0.0-beta5 does not answer a stream offer from a sidecar older than 1.11.2, so nobody can watch while the web preview still plays. Upgrade the media sidecar with the backend to 1.11.2 or newer. See [Troubleshooting](troubleshooting.md#teamspeak-600-beta5-never-answers-a-stream).
+
 #### Media downloads go through a checking proxy
 
 **Breaking change for some setups** (an outbound proxy set through `HTTP_PROXY`/`HTTPS_PROXY`, or media on your local network). Every media download (yt-dlp for music and video, and ffmpeg playing a track URL yt-dlp resolved) now connects through a checking proxy inside the backend; see [Security — Media downloads](security.md#media-downloads). There is no schema change and no Compose change. Most links work as before. These changes may affect you:
