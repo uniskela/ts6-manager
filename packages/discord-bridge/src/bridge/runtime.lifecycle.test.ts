@@ -311,3 +311,111 @@ describe("the 20 ms ticker's exception boundary (failures injected into what the
     }
   });
 });
+
+describe("the 20 ms ticker has one exception boundary per direction (a direction that keeps failing does not stop the other)", () => {
+  const enc = createOpusCodec("auto");
+
+  function built(log = quiet) {
+    const ts = new FakeTs();
+    const bots = new Map<BotId, FakeBot>();
+    for (const id of preferredOrder(5)) bots.set(id, new FakeBot(id, `discord-${id}`, []));
+    const rt = new BridgeRuntime({ ts, bots, election: new ReceiverElection(preferredOrder(5)), codecFactory: () => createOpusCodec("auto"), log, retry: { baseMs: 5, maxMs: 20, maxAttempts: 3 } });
+    return { ts, bots, rt };
+  }
+
+  /** Replace `target[method]` by one that throws on every call, and count the calls. */
+  function failAlways<T extends object>(target: T, method: keyof T & string): { calls: () => number } {
+    let calls = 0;
+    (target as Record<string, unknown>)[method] = () => {
+      calls += 1;
+      throw new Error(`injected: ${method} fails every time`);
+    };
+    return { calls: () => calls };
+  }
+
+  function every20ms(fn: (n: number) => void): () => void {
+    let n = 0;
+    const timer = setInterval(() => fn(n++), 20);
+    return () => clearInterval(timer);
+  }
+
+  const tsVoice = (clid: number, n: number) => {
+    const header = Buffer.alloc(5);
+    header.writeUInt16BE(n & 0xffff, 0);
+    header.writeUInt16BE(clid, 2);
+    header[4] = TS_CODEC_OPUS_VOICE;
+    return Buffer.concat([header, enc.encode(toneFrame(440, n * 960))]);
+  };
+
+  it("an overflow tick that throws on every tick does not stop Discord audio reaching TeamSpeak", async () => {
+    const { ts, rt } = built();
+    await rt.start();
+    for (let i = 1; i <= 6; i++) ts.addUser(i);
+    await settle(rt);
+    const broken = failAlways(rt.t2d, "tickOverflow");
+    const stop = every20ms((n) => {
+      const s = rt.status();
+      rt.onHumanOpus(s.receiver as BotId, s.generation, "human", enc.encode(toneFrame(440, n * 960)));
+    });
+    try {
+      const sentBefore = ts.out.length;
+      await waitFor(() => broken.calls() >= 15 && ts.out.length >= sentBefore + 10, 3000, "Discord audio to keep reaching TeamSpeak while the overflow tick keeps failing");
+      assert.equal(rt.status().state, "running");
+      const errors = rt.status().tickErrors;
+      assert.ok(errors.tsToDiscord >= 15, `every overflow failure is counted (${errors.tsToDiscord})`);
+      assert.equal(errors.discordToTs, 0, "and none is blamed on the other direction");
+    } finally {
+      stop();
+      await rt.stop();
+    }
+  });
+
+  it("a Discord-to-TeamSpeak mix tick that throws on every tick does not stop TeamSpeak audio reaching the overflow bot", async () => {
+    const { ts, bots, rt } = built();
+    await rt.start();
+    for (let i = 1; i <= 6; i++) ts.addUser(i); // the sixth person is on overflow
+    await settle(rt);
+    const broken = failAlways(rt.d2t, "tick");
+    const stop = every20ms((n) => ts.emit("voice", tsVoice(106, n)));
+    try {
+      const overflow = bots.get("overflow")!;
+      const sentBefore = overflow.sent.length;
+      await waitFor(() => broken.calls() >= 15 && overflow.sent.length >= sentBefore + 10, 3000, "overflow audio to keep reaching Discord while the mix tick keeps failing");
+      assert.equal(rt.status().state, "running");
+      const errors = rt.status().tickErrors;
+      assert.ok(errors.discordToTs >= 15, `every mix failure is counted (${errors.discordToTs})`);
+      assert.equal(errors.tsToDiscord, 0);
+    } finally {
+      stop();
+      await rt.stop();
+    }
+  });
+
+  it("failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime", async () => {
+    const lines: string[] = [];
+    const { ts, rt } = built(createLogger("test", (l) => lines.push(l)));
+    await rt.start();
+    ts.addUser(1);
+    await settle(rt);
+    const t2d = failAlways(rt.t2d, "tickOverflow");
+    const d2t = failAlways(rt.d2t, "tick");
+    try {
+      await waitFor(() => t2d.calls() >= 40 && d2t.calls() >= 40, 4000, "forty failing ticks in each direction");
+    } finally {
+      await rt.stop();
+    }
+    const { tsToDiscord, discordToTs } = rt.status().tickErrors;
+    assert.equal(tsToDiscord, t2d.calls(), "each overflow failure counted once");
+    assert.equal(discordToTs, d2t.calls(), "each mix failure counted once");
+    const logged = (site: string) => lines.filter((l) => l.includes(site)).length;
+    // The first five at each site, then one line each time that site's count reaches a power of two.
+    const bound = (n: number) => 5 + Math.max(0, Math.floor(Math.log2(n)) - 2);
+    assert.ok(logged("TeamSpeak to Discord overflow") <= bound(tsToDiscord), `overflow lines ${logged("TeamSpeak to Discord overflow")} for ${tsToDiscord} failures`);
+    assert.ok(logged("Discord to TeamSpeak mix") <= bound(discordToTs), `mix lines ${logged("Discord to TeamSpeak mix")} for ${discordToTs} failures`);
+    assert.ok(logged("TeamSpeak to Discord overflow") >= 5 && logged("Discord to TeamSpeak mix") >= 5, "the first failures at each site are logged");
+    assert.ok(lines.every((l) => !l.includes("    at ")), "no stack traces in the log");
+    const after = [t2d.calls(), d2t.calls()];
+    await tick(100);
+    assert.deepEqual([t2d.calls(), d2t.calls()], after, "after stop() the ticker runs neither direction");
+  });
+});

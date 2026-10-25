@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { CallbackErrors, type CallbackSite } from "../core/callback-errors.js";
 import type { ClientDirectory, DirectoryEvent } from "../core/client-directory.js";
 import { DiscordToTsPipeline } from "../core/discord-to-ts.js";
 import { preferredOrder, slotBotId, type BotId } from "../core/ids.js";
@@ -99,13 +100,15 @@ export class BridgeRuntime extends EventEmitter {
   private ticker: NodeJS.Timeout | null = null;
   private lifecycle: RuntimeState = "created";
   private stopping: Promise<void> | null = null;
-  private callbackErrors = 0;
+  /** Failures caught at the network and timer boundaries, per site, with bounded logging. */
+  private readonly callbackErrors: CallbackErrors;
   private readonly now: () => number;
   private readonly slotCount: number;
   private readonly retry: RetryPolicy;
 
   constructor(private readonly o: RuntimeOptions) {
     super();
+    this.callbackErrors = new CallbackErrors((line) => o.log.warn(line));
     this.slotCount = o.slotCount ?? 5;
     this.now = o.now ?? (() => performance.now());
     this.retry = { ...DEFAULT_RETRY, ...o.retry };
@@ -165,11 +168,8 @@ export class BridgeRuntime extends EventEmitter {
     return this.lifecycle === "created" || this.lifecycle === "running";
   }
 
-  private noteCallbackError(where: string, e: unknown): void {
-    this.callbackErrors += 1;
-    if (this.callbackErrors <= 5 || this.callbackErrors % 100 === 0) {
-      this.o.log.warn(`${where} callback failed (${this.callbackErrors} so far): ${e instanceof Error ? e.message : String(e)}`);
-    }
+  private noteCallbackError(where: CallbackSite, e: unknown): void {
+    this.callbackErrors.note(where, e);
   }
 
   /** Called by the bot adapters for each human Opus packet. */
@@ -197,11 +197,17 @@ export class BridgeRuntime extends EventEmitter {
     this.ticker = setInterval(() => {
       if (this.lifecycle !== "running") return;
       const t = this.now();
+      // One boundary per direction: a failure in one, even on every tick, must not stop the other.
       try {
         this.t2d.tickOverflow(t);
+      } catch (e) {
+        this.noteCallbackError("tick: TeamSpeak to Discord overflow", e);
+      }
+      if (this.lifecycle !== "running") return;
+      try {
         this.d2t.tick(t);
       } catch (e) {
-        this.noteCallbackError("20 ms tick", e);
+        this.noteCallbackError("tick: Discord to TeamSpeak mix", e);
       }
     }, 20);
     await this.enqueue(() => this.sync("start"));
@@ -482,7 +488,9 @@ export class BridgeRuntime extends EventEmitter {
   status() {
     return {
       state: this.lifecycle,
-      callbackErrors: this.callbackErrors,
+      callbackErrors: this.callbackErrors.total,
+      /** Failures of the 20 ms ticker, per direction (also counted in `callbackErrors`). */
+      tickErrors: { tsToDiscord: this.callbackErrors.count("tick: TeamSpeak to Discord overflow"), discordToTs: this.callbackErrors.count("tick: Discord to TeamSpeak mix") },
       /** Reconnects waiting on a timer (a backoff retry or a budget wake-up); at most one per bot. */
       scheduledReconnects: this.retryTimers.size,
       receiver: this.election.receiver,
