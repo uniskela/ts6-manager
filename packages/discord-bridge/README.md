@@ -20,7 +20,7 @@ This package is the isolated Node 24 proof of concept for the Discord ↔ TeamSp
 | `src/testing/` | Test harness that drives the **real** `VoiceConnection`, `AudioPlayer`, `VoiceReceiver`, `SpeakingMap` and `DAVESession`, faking only the native davey session, the gateway adapter and the UDP/WebSocket networking (simulated Discord, never live) |
 | `src/lab/` | `smoke-deps` (native Opus/DAVE), `ts-live` (real TS6 server), `churn` (native decoder churn and memory), `live` (real Discord, operator-driven), library repro test |
 | `lab/Dockerfile` | Two stages, Node 24 pinned by digest. The build stage installs and runs typecheck, all tests and the native smoke as gates. The runtime stage copies the installed tree read-only, runs as `node`, and runs the preinstalled `tsx` with no network. The base image still ships npm and corepack, but nothing at runtime invokes a package manager (the entrypoint is the local `tsx`) |
-| `scripts/run-tests.mjs` | The test runner (`pnpm test`): runs `node --test` without a forced exit, writes a machine-readable report, and **fails** on any failed, skipped, cancelled or timed-out test, a file that reported nothing, or a count that differs from `scripts/expected-tests.json` (`--update` after reviewing a deliberate change) |
+| `scripts/run-tests.mjs` | The test runner (`pnpm test`): runs `node --test` without a forced exit, writes a machine-readable report, and **fails** on any failed, skipped, cancelled or timed-out test and unless the files discovered, the files listed in `scripts/expected-tests.json` and the files that reported results are one set, each reporting exactly its listed test names (`--update` after reviewing a deliberate change; it refuses to record a run that does not pass these checks) |
 | `scripts/sync-tslib.mjs` | Copies `packages/backend/src/voice/tslib` into git-ignored `.vendor/` (the backend copy stays the source of truth; `--check` detects drift) |
 | `scripts/container-runtime-test.sh` | Network-independent runtime check of the lab image: `--network none`, read-only root, `--cap-drop ALL`, unprivileged, vendored code not writable |
 
@@ -39,7 +39,7 @@ Host (Node ≥ 22.12, pnpm 9.15.9):
 cd packages/discord-bridge
 pnpm install --frozen-lockfile --ignore-workspace
 pnpm run typecheck          # syncs .vendor/tslib first
-pnpm test                   # 187 tests in 21 files, verified complete (real @discordjs/voice classes, simulated Discord), no network, no credentials
+pnpm test                   # 219 tests in 23 files, verified complete (real @discordjs/voice classes, simulated Discord), no network, no credentials
 pnpm run smoke:deps         # native Opus + DAVE + opusscript on the running Node
 pnpm run churn              # native Opus codecs under 40 000 participants joining and leaving, both directions (needs --expose-gc, set by the script)
 ```
@@ -47,9 +47,9 @@ pnpm run churn              # native Opus codecs under 40 000 participants joini
 Node 24 container (the actual target image; build context is the repo root):
 
 ```bash
-docker build -f packages/discord-bridge/lab/Dockerfile -t ts6-discord-bridge-lab:d1-r2 .
-docker run --rm --network none ts6-discord-bridge-lab:d1-r2      # re-runs the native smoke, offline
-packages/discord-bridge/scripts/container-runtime-test.sh ts6-discord-bridge-lab:d1-r2
+docker build -f packages/discord-bridge/lab/Dockerfile -t ts6-discord-bridge-lab:d1-r3 .
+docker run --rm --network none ts6-discord-bridge-lab:d1-r3      # re-runs the native smoke, offline
+packages/discord-bridge/scripts/container-runtime-test.sh ts6-discord-bridge-lab:d1-r3
 ```
 
 The image is never published. The build needs the registry once (`pnpm install --frozen-lockfile`, in the build stage only). The runtime stage never touches a registry or a package manager: on the reviewed baseline the same `docker run --network none` failed because corepack tried to download pnpm at start (`EAI_AGAIN registry.npmjs.org`).
@@ -62,7 +62,7 @@ docker run -d --name ts6-d1-lab --network d1-lab --memory 512m \
   -e TSSERVER_LICENSE_ACCEPTED=accept teamspeaksystems/teamspeak6-server:6.0.0-beta13
 sleep 9
 docker run --name d1-ts-live --network d1-lab --cpus 1 --memory 512m -e TS_LAB_HOST=ts6-d1-lab \
-  ts6-discord-bridge-lab:d1-r2 src/lab/ts-live.ts
+  ts6-discord-bridge-lab:d1-r3 src/lab/ts-live.ts
 docker cp d1-ts-live:/app/packages/discord-bridge/evidence/. ./evidence/   # raw evidence file(s)
 docker rm -f d1-ts-live ts6-d1-lab && docker network rm d1-lab
 ```
@@ -130,6 +130,8 @@ Raw files: `evidence/curated/`.
 | `churn-native-2026-10-24.json`, `churn-native-200k-2026-10-24.json` | Native decoder churn and memory (40 000 and 200 000 participants, RSS recorded every 10 % of the run) |
 | `image-runtime-d1-r1-2026-10-24.txt`, `image-runtime-baseline-d1-2026-10-24.txt` | `container-runtime-test.sh` output for the new and the baseline image |
 | `remediation-red-green-2026-10-24.json` | Per-test red/green results, see [Review remediation](#review-remediation) |
+| `remediation3-red-green-2026-10-25.json` | Before and after reproductions of the third review's R1 to R4, see [Third review remediation](#third-review-remediation) |
+| `ts-live-container-r3-2026-10-25.json`, `smoke-deps-r3-2026-10-25.json`, `image-runtime-d1-r3-2026-10-25.txt`, `churn-native-r3-2026-10-25.json` | TS6 laboratory (5 of 5 PASS), native smoke, offline image check (9 of 9) and churn (3 of 3 PASS) after the third remediation, image `ts6-discord-bridge-lab:d1-r3` |
 | `remediation2-red-green-2026-10-25.json` | The second reviewer's own probes run against `d890b5d` and the fixed code, see [Re-review remediation](#re-review-remediation) |
 | `ts-live-container-r2-2026-10-25.json`, `smoke-deps-r2-2026-10-25.json`, `image-runtime-d1-r2-2026-10-25.txt`, `churn-native-r2-2026-10-25.json` | TS6 laboratory (5 of 5 PASS), native smoke, offline image check (9 of 9) and churn (3 of 3 PASS) after the second remediation, image `ts6-discord-bridge-lab:d1-r2` |
 
@@ -210,6 +212,37 @@ Tests were also mutation-checked: each fix was disabled in turn and a test faile
 
 On the fixed code: typecheck clean and **187 of 187 tests in 21 files** pass in the verified runner (every discovered file reported, none skipped), the native smoke passes, the churn lab passes 3 of 3, the lab image builds clean (its build gate runs typecheck, the verified suite and the smoke), `container-runtime-test.sh` passes 9 of 9 offline, read-only and unprivileged, and the TS6 beta13 laboratory passes 5 of 5 with synthetic speakers. All of that is simulated, native or TS6-synthetic, **not live Discord**.
 
+## Third review remediation
+
+The third independent review (of `0256a3b`) confirmed F1, F2, F3 and F5 to F11 and found F4 and F12 only partly fixed, plus two new findings. They are numbered R1 to R4 in the reviewer's order.
+
+| # | Finding | Fix | Regression tests |
+|---|---|---|---|
+| R1 (P1) | A failure-driven rebuild could bypass the recovery budget: a rejoin the gateway refuses (the library emits Disconnected from inside `rejoin()` and then returns false) and a connection destroyed while the join waited for its target both rebuilt without a charge. At `maxRecoveries=1`: six connections, zero tokens charged, bot healthy | The cause was one mutable flag doing two jobs, "a rebuild is owed" and "this attempt already paid". The debt (`rebuildOwed`) is now only set by failures and cleared only by a join that reaches Ready. Each attempt pays at most one token, through a local `charge()` at the first moment it rejoins or builds a connection, after the last await, reading the debt then. A construction failure is a failure: the half-built connection is destroyed and the debt recorded. A failure that arrives while a join waits for Ready or DAVE fails that join. `assertAvailable()` keeps the early refusal before a wasted lookup | `discord-bot.budget.test.ts` (8, real `VoiceConnection` and real `rejoin()`), `runtime.recovery.test.ts` (one wake-up per bot, one attempt when the window slides) |
+| R2 (P2) | The test verifier checked counts but not the reported files: an out-of-tree file that registered passing tests was accepted and the runner exited 0 | The files expected, discovered and reported must be one set (`UNEXPECTED FILE`), and the reported test names must be exactly the expected names (`NOT REPORTED`, `UNEXPECTED TEST`), because replacing one test by another leaves the count unchanged. `expected-tests.json` lists names. The reporter gets the package root from the runner instead of looking for a directory name | `test-verify.test.mjs` (8), `run-tests.fixture.test.mjs` (5, the real command in throwaway packages: exit status and messages) |
+| R3 (P2) | `HumanFilter` bounded what it remembered but not the lookups it had pending: 100 distinct speakers with a lookup that never settles left 100 pending | At most `maxPending` (8) lookups are unsettled at once; the rest are refused, not queued, and stay excluded. A lookup past its timeout puts the user on a cooldown that doubles per failure up to a cap, but keeps its slot until it really settles. `forget` (a human left our channel) and `reset` (`leave()`) cancel lookups, so a late answer cannot re-admit anyone; `destroy()` disposes. `stats()` and `DiscordBot.identityLookups` expose pending, stalled, refused, timed out and failed counts | `human-filter.test.ts` (16), `discord-bot.receive.test.ts` (+2) |
+| R4 (P2) | The ticker exception test threw during input decoding, before the ticker; with the ticker's catch removed it still passed | Three tests inject a one-shot failure into `d2t.tick`, `t2d.tickOverflow` and a TeamSpeak `sendVoice` that throws inside the tick, with valid audio flowing: the callback error counter rises by exactly one, the runtime stays `running`, later audio still reaches TeamSpeak or the overflow bot. The production boundary is unchanged | `runtime.lifecycle.test.ts` (3, replacing one) |
+| Sonar | `javascript:S2871` (a bare `.sort()`) on `run-tests.mjs` drove the new-code reliability rating to D | A true positive. Replaced by an explicit UTF-16 code-unit comparator, which orders strings exactly as the default did and does not depend on the locale | `run-tests.fixture.test.mjs` |
+
+### Third review evidence
+
+Reproductions (`evidence/curated/remediation3-red-green-2026-10-25.json`) were run in a clean extract of `0256a3b`, with only the test harness replaced:
+
+| | Before (`0256a3b`) | After |
+|---|---|---|
+| R1 A, refused rejoin, `maxRecoveries=1` | second failure rebuilt again: 3 connections | second failure refused (`REBUILD_BUDGET_EXHAUSTED`): 2 connections, 1 token |
+| R1 B, destroyed during the lookup, 5 rounds | 6 connections, 0 tokens charged, bot healthy | 2 connections, 1 token, 4 refusals |
+| R1 C, construction throws, 6 attempts | 6 attempts, 0 tokens | 2 attempts, 1 token, 4 refusals |
+| R2, out-of-tree file registers a passing test | `verified: 2 tests in 2 files`, exit 0 | `UNEXPECTED FILE extra/sneaky.mjs`, exit 1 |
+| R3, 100 distinct speakers, lookup never settles | 100 started, 100 pending | 8 started, 8 pending, 92 refused, 0 admitted |
+| R4, ticker's catch removed | old test passes | 3 new tests fail |
+
+Test identities (R2): in three full runs the 196 existing test titles were identical as sets, none repeated within a file, and the five that contain digit runs are literal text. Titles are therefore a stable identity. A title that embeds a time, an id or a random value must not be written, because it would fail the next run.
+
+Mutation checks: removing the `maxPending` cap fails 3 tests; applying late identity answers regardless of cancellation fails 3; removing the bot's `forget` and `reset` calls fails the bot-level test; removing the ticker's catch fails all 3 R4 tests; disabling the in-join failure check fails its test.
+
+On the fixed code: typecheck clean, **219 of 219 tests in 23 files** in the verified runner on three consecutive runs (node:test also reports 219 pass, 0 fail, 0 cancelled, 0 skipped, 0 todo), native smoke 4 of 4, churn 3 of 3, clean (`--no-cache`) image build whose gate re-ran the verified 219, `container-runtime-test.sh` 9 of 9 offline, read-only and unprivileged, the TS6 beta13 laboratory 5 of 5 with synthetic speakers, and the backend tslib tests 28 of 28 (the one file that needs the workspace package `@ts6/common` was run from a scratch copy with it built). All simulated, native or TS6-synthetic, **not live Discord**.
+
 ## Known limitations
 
 - No live Discord run: no bot tokens, test guild or participants were available. No live DAVE, join-order, transition, recovery or failover result exists.
@@ -217,7 +250,8 @@ On the fixed code: typecheck clean and **187 of 187 tests in 21 files** pass in 
 - `DiscordBot` is now exercised against the real `@discordjs/voice` classes with the network edge faked, and `lab:live` is typechecked only. That is simulation. The first live run may still find defects in either.
 - **Slot passthrough drops TeamSpeak Opus it cannot carry.** A single 40 ms or 60 ms frame (indivisible), a lone sub-20 ms frame, or a packet whose sub-20 ms frames do not fill whole 20 ms packets (for example three 10 ms frames) cannot be sent on a Discord slot without re-encoding. They are dropped and counted (`unsupportedFrames`), not forwarded as if they were 20 ms and not transcoded. Multi-frame packets that fill 20 ms multiples, including 2 x 10, 4 x 5 and 8 x 2.5 ms constituents, are regrouped without re-encoding. If real TeamSpeak clients send such frames this will show up as a counter, and D2 must decide whether to transcode.
 - The overflow path decodes then re-encodes, so it is not affected by the unsupported-frame limit.
-- **Fail-closed identity costs the start of a new speaker.** A Discord user the bridge has never seen is excluded until a background user lookup answers, so the first moments of that user's first utterance (about one lookup round trip, or longer if the lookup keeps failing) are not forwarded. Once known they are admitted at once, and a lookup that fails is retried only after a cooldown. Whether the real lookup behaves as the simulation does is NOT-RUN.
+- **Fail-closed identity costs the start of a new speaker.** A Discord user the bridge has never seen is excluded until a background user lookup answers, so the first moments of that user's first utterance (about one lookup round trip, or longer if the lookup keeps failing) are not forwarded. Once known they are admitted at once. This is deliberate: the bot-exclusion policy is not relaxed to hide it. The lookups are bounded (at most 8 unsettled per bot); while all 8 are out, a further unknown speaker is not looked up until a slot frees and they are next heard, and a lookup that fails or times out is retried only after a doubling cooldown (5 s up to 60 s). A lookup function that never settles holds its slot for good, so the bot would stop admitting new unknown speakers (fail closed) until it does; `identityLookups.stalled` shows it. The real lookup is discord.js's REST user fetch, which has its own request timeout, so this is not expected. Whether the real lookup behaves as the simulation does is NOT-RUN.
+- **The ticker has one catch for both of its operations.** If `t2d.tickOverflow` throws, `d2t.tick` is skipped for that tick (both run again on the next). A failure that repeats on every tick would stop the Discord to TeamSpeak mix as well as the overflow one while the error counter climbs. The R4 tests pin the existing boundary and do not change it.
 - **The rebuild budget is a safety stop, not a repair.** A bot that exhausts it stays out of service until the window slides; if all six fail together the bridge is down until then. The limits (`maxRecoveries`, `recoveryWindowMs`) are lab defaults chosen without live data.
 - The exclusion list is an option of the runtime; the lab does not read it from configuration, and `refreshExclusions()` is only exercised by tests.
 - No consoles (Xbox/PlayStation) tested.
@@ -227,6 +261,6 @@ On the fixed code: typecheck clean and **187 of 187 tests in 21 files** pass in 
 ## GO/NO-GO
 
 - **D1 gate (contract): NO-GO / not met.** Required live rows are NOT-RUN, so D3/D4 must not start on the strength of this PR.
-- **After both remediations:** the defects the two reviews found are fixed and covered by simulated, native-addon and TS6-laboratory evidence. **Code readiness: GO for a third independent review. Not ready for live Discord testing until that review passes.** D2 to D6 have not started. **D1 acceptance: NO-GO** (the live Discord rows are NOT-RUN).
+- **After the third remediation:** the defects the three reviews found are fixed and covered by simulated, native-addon and TS6-laboratory evidence. **Code readiness: GO for a fourth independent review. Not ready for live Discord testing until that review passes.** D2 to D6 have not started. **D1 acceptance: NO-GO** (the live Discord rows are NOT-RUN).
 - **Feasibility signals so far: GO to continue.** The pinned stack installs and its native Opus and DAVE addons run on Node 24; TeamSpeak-side parsing, per-speaker routing, overflow mixing and the shared-client send path work against a real TS6 server; the receiver election and generation fence behave as specified in simulation.
 - **Next action (owner):** provide the live prerequisites above, or authorise a different test setup, then run `lab:live` and fill the NOT-RUN rows. If join order B shows #11653, stop and decide: wait for upstream, carry a documented patch, or change library.
