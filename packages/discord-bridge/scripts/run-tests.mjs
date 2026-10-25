@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Runs every test file and then verifies that the run is complete: every discovered file reported,
- * each with its expected number of tests, none failed, skipped, todo or cancelled. Exit code zero
- * from node:test alone is not accepted.
+ * Runs every test file and then verifies that the run is exactly what was expected: the files
+ * discovered, the files listed in scripts/expected-tests.json and the files that reported results
+ * are the same set, each reports exactly its listed tests, and none failed, was skipped, todo or
+ * cancelled. Exit code zero from node:test alone is not accepted.
  *
  *   node scripts/run-tests.mjs            run and verify
- *   node scripts/run-tests.mjs --update   run, then rewrite scripts/expected-tests.json (review the diff)
+ *   node scripts/run-tests.mjs --update   run, then rewrite scripts/expected-tests.json (review the diff:
+ *                                         a renamed test shows up as one name removed and one added)
  *
  * No --test-force-exit: it exits 0 after a truncated report. Tests must close what they open.
  */
@@ -14,7 +16,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { verify } from "./test-verify.mjs";
+import { byCodeUnit, namesByFile, verify } from "./test-verify.mjs";
 
 const root = join(fileURLToPath(import.meta.url), "..", "..");
 const expectedPath = join(root, "scripts", "expected-tests.json");
@@ -27,12 +29,12 @@ function discover(dir, match, out = []) {
     const p = join(dir, name);
     if (statSync(p).isDirectory()) {
       if (name !== "node_modules" && name !== ".vendor") discover(p, match, out);
-    } else if (match(name)) out.push(relative(root, p).split("\\").join("/"));
+    } else if (match(name)) out.push(relative(root, p).replaceAll("\\", "/"));
   }
   return out;
 }
 
-const discovered = [...discover(join(root, "src"), (n) => n.endsWith(".test.ts")), ...discover(join(root, "scripts"), (n) => n.endsWith(".test.mjs"))].sort();
+const discovered = [...discover(join(root, "src"), (n) => n.endsWith(".test.ts")), ...discover(join(root, "scripts"), (n) => n.endsWith(".test.mjs"))].sort(byCodeUnit);
 const work = mkdtempSync(join(tmpdir(), "d1-tests-"));
 const resultsFile = join(work, "results.jsonl");
 
@@ -49,7 +51,7 @@ const child = spawn(
     `--test-reporter-destination=${resultsFile}`,
     ...discovered,
   ],
-  { cwd: root, stdio: "inherit" },
+  { cwd: root, stdio: "inherit", env: { ...process.env, D1_TEST_ROOT: root } },
 );
 const deadline = setTimeout(() => {
   process.stderr.write(`\ntest run exceeded ${RUN_DEADLINE_MS} ms; killing it\n`);
@@ -69,13 +71,12 @@ child.on("exit", (code, signal) => {
   if (code !== 0) problems.push(`node:test exited with ${signal ?? code}`);
 
   if (update) {
-    const counts = {};
-    for (const e of events) counts[e.file] = (counts[e.file] ?? 0) + 1;
-    const r = verify({ events, expected: counts, discovered });
+    const names = namesByFile(events);
+    const r = verify({ events, expected: names, discovered });
     problems.push(...r.problems);
     if (problems.length === 0) {
-      writeFileSync(expectedPath, `${JSON.stringify(Object.fromEntries(Object.entries(counts).sort(([a], [b]) => a.localeCompare(b))), null, 2)}\n`);
-      process.stdout.write(`\nupdated ${relative(root, expectedPath)}: ${events.length} tests in ${Object.keys(counts).length} files\n`);
+      writeFileSync(expectedPath, `${JSON.stringify(names, null, 2)}\n`);
+      process.stdout.write(`\nupdated ${relative(root, expectedPath)}: ${events.length} tests in ${Object.keys(names).length} files\n`);
     }
   } else {
     const expected = JSON.parse(readFileSync(expectedPath, "utf8"));
