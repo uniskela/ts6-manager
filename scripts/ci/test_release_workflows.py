@@ -243,6 +243,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
                         environment = environment.get("name", "")
                     self.assertNotEqual(environment, "dockerhub-description")
 
+    def test_container_security_inventory_keeps_accepted_risks(self):
+        wf = workflow("container-security.yml")
+        steps = {step["name"]: step for step in wf["jobs"]["scan"]["steps"]}
+        inventory = steps["Record full vulnerability inventory"]
+        table = steps["Show all high and critical findings"]
+        gate = steps["Gate on fixable high and critical findings"]
+        self.assertNotIn("trivyignores", inventory.get("with", {}))
+        self.assertEqual(inventory.get("env", {}).get("TRIVY_IGNOREFILE"), "/dev/null")
+        self.assertEqual(table["with"]["trivyignores"], ".trivyignore")
+        self.assertEqual(gate["with"]["trivyignores"], ".trivyignore")
+        for event in ("pull_request", "push"):
+            self.assertIn(".trivyignore", wf["on"][event]["paths"])
+
     def test_missing_description_credentials_skip_with_a_warning(self):
         detect = next(step for step in self.description["jobs"]["update"]["steps"] if step.get("id") == "hub")
         self.assertEqual(
