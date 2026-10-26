@@ -1,4 +1,10 @@
 {
+  "scripts/run-live-container.test.mjs": [
+    "exits 2 when a required variable is MISSING",
+    "exits 2 when the env file is missing",
+    "exits 2 when the env file is not mode 0600",
+    "prints SET/MISSING only, never token values, and does not start live without --confirm"
+  ],
   "scripts/run-tests.fixture.test.mjs": [
     "--update records test names, and a second run against them is accepted",
     "--update refuses a file that registers two tests and terminates after the first, and keeps the previous list",
@@ -29,6 +35,9 @@
     "fails when the discovered, expected and reported files are not exactly the same set",
     "records only leaf tests, never suites or files reported as a whole",
     "reports an unreadable, misshapen or reordered list and trusts none of it"
+  ],
+  "scripts/verify-invite-permissions.test.mjs": [
+    "accepts mask 103810048 and rejects the previous Administrator-including integer"
   ],
   "src/adapters/discord-bot.budget.test.ts": [
     "an exhausted budget stops all failure-driven connection creation, and time alone frees one attempt",

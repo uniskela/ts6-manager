@@ -84,6 +84,16 @@ D1_DISCORD_GUILD_ID=… D1_DISCORD_CHANNEL_ID=… D1_TS_HOST=… pnpm run lab:li
 
 Without them `lab:live` prints each missing variable as `MISSING`, records nothing, and exits 2. Tokens are registered with the redactor, never printed, and the runner refuses to start unless all six tokens log in, are six distinct applications, and pass the guild/channel permission check (fail closed).
 
+The hardened container helper defaults to presence-only (`SET`/`MISSING`, no connections). Live start needs an explicit `--confirm` after the operator approves it:
+
+```bash
+packages/discord-bridge/scripts/run-live-container.sh
+# after approval:
+packages/discord-bridge/scripts/run-live-container.sh --confirm
+```
+
+The image tag is `ts6-discord-bridge-lab:d1-<shortsha>` unless `D1_LAB_IMAGE` is set. Evidence is bind-mounted to gitignored `lab/evidence/` (`0700`). `lab/.env` must be mode `0600` and is not committed.
+
 ### Invite helper (no tokens)
 
 The six applications already exist. This helper only prints official OAuth2 bot invite URLs. It does not read tokens, join Discord, or claim that a bot was authorised.

@@ -2,3 +2,4 @@
 node_modules/
 evidence/*.json
 !evidence/curated/*.json
+lab/evidence/
