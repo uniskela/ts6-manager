@@ -73,16 +73,18 @@ interface Entry {
  * never rejects: a failed request, or a `start` that throws, resolves `null`.
  */
 function begin(start: (userId: string) => Promise<DiscordUserInfo | null>, userId: string): Promise<DiscordUserInfo | null> {
-  let answer: Promise<DiscordUserInfo | null>;
-  try {
-    answer = Promise.resolve(start(userId));
-  } catch {
-    return Promise.resolve(null);
-  }
-  return answer.then(
-    (info) => (info && typeof info.bot === "boolean" ? { bot: info.bot } : null),
-    () => null,
-  );
+  // The executor runs now and is not kept; a `start` that throws synchronously becomes a rejection.
+  // The handlers below are module functions, not closures: a closure created here would share this
+  // scope with the executor, and so keep `start` until the request settles.
+  return new Promise<DiscordUserInfo | null>((resolve) => resolve(start(userId))).then(answerOf, noAnswer);
+}
+
+function answerOf(info: DiscordUserInfo | null): DiscordUserInfo | null {
+  return info && typeof info.bot === "boolean" ? { bot: info.bot } : null;
+}
+
+function noAnswer(): null {
+  return null;
 }
 
 /**
