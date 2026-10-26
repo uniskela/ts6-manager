@@ -151,3 +151,99 @@ describe("IdentityRequests: owning a request and waiting for its answer are sepa
     assert.ok(r.request("u8", start, () => undefined), "a slot frees only by settlement");
   });
 });
+
+describe("IdentityRequests: a subscription cancelled while its request is settling is not called", () => {
+  it("A cancels B during settlement: B never runs", async () => {
+    const r = new IdentityRequests();
+    const { settle, start, heard, listen } = controlled();
+    let b: ReturnType<IdentityRequests["request"]> = null;
+    r.request("u", start, (info) => {
+      listen("A")(info);
+      b!.cancel();
+    });
+    b = r.request("u", start, listen("B"));
+    settle.get("u")!({ bot: false });
+    await tick();
+    assert.deepEqual(heard, ["A:false"]);
+  });
+
+  it("A cancels B twice during settlement: still no B, and later subscribers are unaffected", async () => {
+    const r = new IdentityRequests();
+    const { settle, start, heard, listen } = controlled();
+    let b: ReturnType<IdentityRequests["request"]> = null;
+    r.request("u", start, (info) => {
+      listen("A")(info);
+      b!.cancel();
+      b!.cancel();
+    });
+    b = r.request("u", start, listen("B"));
+    r.request("u", start, listen("C"));
+    settle.get("u")!({ bot: true });
+    await tick();
+    assert.deepEqual(heard, ["A:true", "C:true"]);
+  });
+
+  it("cancelling after the answer was delivered is harmless, and repeated cancellation is idempotent", async () => {
+    const r = new IdentityRequests();
+    const { settle, start, heard, listen } = controlled();
+    const a = r.request("u", start, listen("A"))!;
+    const b = r.request("u", start, (info) => {
+      listen("B")(info);
+      a.cancel(); // A already ran
+      a.cancel();
+    })!;
+    settle.get("u")!(null);
+    await tick();
+    a.cancel();
+    b.cancel();
+    b.cancel();
+    assert.deepEqual(heard, ["A:null", "B:null"]);
+    assert.deepEqual({ ...r.stats() }, { pending: 0, stalled: 0, subscribers: 0, refused: 0, shared: 1, started: 1, settled: 1 });
+  });
+
+  it("a throwing first subscriber does not keep the answer from an active one after it", async () => {
+    const r = new IdentityRequests();
+    const { settle, start, heard, listen } = controlled();
+    r.request("u", start, () => {
+      throw new Error("subscriber failed");
+    });
+    r.request("u", start, listen("B"));
+    settle.get("u")!({ bot: false });
+    await tick();
+    assert.deepEqual(heard, ["B:false"]);
+  });
+
+  it("uncancelled subscribers each receive exactly one answer, and the request is counted until it settles", async () => {
+    const r = new IdentityRequests();
+    const { settle, start, heard, listen } = controlled();
+    for (const who of ["A", "B", "C", "D"]) r.request("u", start, listen(who));
+    const cancelled = r.request("u", start, listen("X"))!;
+    cancelled.cancel();
+    await tick();
+    assert.deepEqual({ pending: r.stats().pending, subscribers: r.stats().subscribers, settled: r.stats().settled }, { pending: 1, subscribers: 4, settled: 0 }, "cancelling one does not uncount the request");
+    settle.get("u")!({ bot: false });
+    await tick();
+    settle.get("u")!({ bot: true }); // a second resolve of the same promise changes nothing
+    await tick();
+    assert.deepEqual(heard, ["A:false", "B:false", "C:false", "D:false"]);
+    assert.deepEqual({ pending: r.stats().pending, settled: r.stats().settled }, { pending: 0, settled: 1 });
+  });
+
+  it("a subscriber that asks again during settlement starts a new request and is not answered by the settled one", async () => {
+    const r = new IdentityRequests({ maxPending: 1 });
+    const { settle, start, heard, listen } = controlled();
+    r.request("u", start, (info) => {
+      listen("A")(info);
+      assert.ok(r.request("u", start, listen("again")), "the settled request freed its slot first");
+    });
+    r.request("u", start, listen("B"));
+    settle.get("u")!({ bot: false });
+    await tick();
+    assert.deepEqual(heard, ["A:false", "B:false"], "the new subscription is not dispatched by the old settlement");
+    assert.deepEqual({ pending: r.stats().pending, subscribers: r.stats().subscribers, started: r.stats().started }, { pending: 1, subscribers: 1, started: 2 });
+    assert.equal(r.request("v", start, listen("v")), null, "the cap still counts the new request");
+    settle.get("u")!({ bot: true });
+    await tick();
+    assert.deepEqual(heard, ["A:false", "B:false", "again:true"]);
+  });
+});

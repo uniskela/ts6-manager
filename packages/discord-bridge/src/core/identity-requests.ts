@@ -55,7 +55,11 @@ export interface IdentityRequestStats {
 
 /** A caller's interest in one request's answer. */
 export interface IdentitySubscription {
-  /** Stop waiting: the callback is dropped and never called. The request itself carries on, counted. */
+  /**
+   * Stop waiting: the callback is dropped and never called, even when the request is already settling
+   * and other subscribers' callbacks are running. After the callback ran, or a second time, it does
+   * nothing. The request itself carries on, counted.
+   */
   cancel(): void;
 }
 
@@ -148,9 +152,14 @@ export class IdentityRequests {
   private finish(userId: string, entry: Entry, info: DiscordUserInfo | null): void {
     if (this.out.get(userId) === entry) this.out.delete(userId);
     this.settled += 1;
-    const subscribers = [...entry.subscribers];
-    entry.subscribers.clear();
-    for (const notify of subscribers) {
+    // Walk the live set, not a copy, so a subscription cancelled by an earlier callback (a filter
+    // disposed from inside one, say) is skipped: `Set` iteration does not visit a deleted entry. Each
+    // one leaves the set before it is called, which makes delivery exactly once and a later
+    // `cancel()` a no-op. Nothing can join this set any more: the entry left `out` above, and
+    // subscriptions are only ever added through `out`, so asking again from a callback starts a new
+    // request instead of being answered by this one.
+    for (const notify of entry.subscribers) {
+      entry.subscribers.delete(notify);
       try {
         notify(info);
       } catch {

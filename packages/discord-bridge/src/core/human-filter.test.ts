@@ -407,6 +407,26 @@ describe("HumanFilter subscriptions: a reset, disposed or replaced filter is not
     assert.equal(c.requests.stats().subscribers, 0);
   });
 
+  it("a filter disposed by an earlier subscriber during settlement is not called by that settlement", async () => {
+    const c = controlled();
+    const b = c.another();
+    const calls: string[] = [];
+    const bSettled = (b as unknown as { settled: (...args: unknown[]) => void }).settled.bind(b);
+    (b as unknown as { settled: (...args: unknown[]) => void }).settled = (...args) => {
+      calls.push("B");
+      bSettled(...args);
+    };
+    c.requests.request("u", () => Promise.resolve(null), () => {
+      calls.push("A");
+      b.dispose();
+    });
+    assert.equal(b.isHuman("u"), false);
+    assert.deepEqual(c.started, [], "B subscribed to the request A's caller started");
+    await tick();
+    assert.deepEqual(calls, ["A"], "B's settlement handler is not invoked after B was disposed");
+    assert.deepEqual({ waiting: b.stats().waiting, size: b.size }, { waiting: 0, size: 0 });
+  });
+
   it("the stats report the registry's subscriber count alongside pending and stalled", () => {
     const c = controlled({ maxPending: 8 });
     c.f.isHuman("a");
