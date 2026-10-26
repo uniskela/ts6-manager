@@ -12,7 +12,7 @@ jobs:
         shell: bash
         run: |
           echo '=== imports, module loaders, and resolver integrations ==='
-          git grep -nE 'from [\x27\x22]zod|require\([\x27\x22]zod|import\([\x27\x22]zod|zodResolver|ZodError' -- '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' || true
+          git grep -n -i 'zod' -- '*.ts' '*.tsx' '*.js' '*.mjs' '*.cjs' || true
           echo '=== Zod 3 migration hot spots ==='
           git grep -nE '\.(errors|formErrors|deepPartial|nonstrict|errorMap|superRefine|transform|default|safeParse|strict|passthrough|flatten|format)\(|z\.(record|function|nativeEnum|coerce|intersection|any|unknown)\(' -- packages/backend/src packages/frontend/src packages/common || true
           echo '=== dependency declarations ==='
