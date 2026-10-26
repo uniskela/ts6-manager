@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { HumanFilter, type DiscordUserInfo } from "./human-filter.js";
+import { IdentityRequests } from "./identity-requests.js";
 
 const tick = () => new Promise<void>((r) => setImmediate(r));
 
@@ -25,6 +26,7 @@ function filter(o: {
     now: () => now,
     retryMs: o.retryMs ?? 1000,
     maxEntries: o.maxEntries ?? 1000,
+    requests: new IdentityRequests(),
   });
   return { f, lookups, advance: (ms: number) => (now += ms) };
 }
@@ -89,27 +91,38 @@ describe("HumanFilter admits only users known to be human (fail closed)", () => 
   });
 });
 
-/** A lookup the test settles by hand, so "never settles", "settles late" and "settles after teardown" are all expressible. */
-function controlled(o: { maxPending?: number; lookupTimeoutMs?: number; retryMs?: number; maxRetryMs?: number; maxEntries?: number } = {}) {
+/**
+ * A lookup the test settles by hand, so "never settles", "settles late" and "settles after teardown"
+ * are all expressible. `requests` is the process-wide registry stand-in; pass one to share it between
+ * filters (a bot and its replacement).
+ */
+function controlled(o: { maxPending?: number; lookupTimeoutMs?: number; retryMs?: number; maxRetryMs?: number; maxEntries?: number; requests?: IdentityRequests } = {}) {
   let now = 0;
   const started: string[] = [];
   const pending = new Map<string, { resolve: (v: DiscordUserInfo | null) => void; reject: (e: Error) => void }[]>();
-  const f = new HumanFilter({
-    cached: () => undefined,
-    lookup: (id) => {
-      started.push(id);
-      return new Promise<DiscordUserInfo | null>((resolve, reject) => pending.set(id, [...(pending.get(id) ?? []), { resolve, reject }]));
-    },
-    excluded: () => false,
-    now: () => now,
-    retryMs: o.retryMs ?? 1000,
-    maxRetryMs: o.maxRetryMs ?? 8000,
-    maxEntries: o.maxEntries ?? 4,
-    maxPending: o.maxPending ?? 4,
-    lookupTimeoutMs: o.lookupTimeoutMs ?? 20,
-  });
+  const lookupTimeoutMs = o.lookupTimeoutMs ?? 20;
+  const requests = o.requests ?? new IdentityRequests({ maxPending: o.maxPending ?? 4, stallMs: lookupTimeoutMs });
+  const make = () =>
+    new HumanFilter({
+      cached: () => undefined,
+      lookup: (id) => {
+        started.push(id);
+        return new Promise<DiscordUserInfo | null>((resolve, reject) => pending.set(id, [...(pending.get(id) ?? []), { resolve, reject }]));
+      },
+      excluded: () => false,
+      now: () => now,
+      retryMs: o.retryMs ?? 1000,
+      maxRetryMs: o.maxRetryMs ?? 8000,
+      maxEntries: o.maxEntries ?? 4,
+      requests,
+      lookupTimeoutMs,
+    });
+  const f = make();
   return {
     f,
+    /** Another filter on the same registry and the same lookup (a replacement bot in the same process). */
+    another: make,
+    requests,
     started,
     advance: (ms: number) => (now += ms),
     settle: (id: string, v: DiscordUserInfo | null) => pending.get(id)?.shift()?.resolve(v),
@@ -206,14 +219,7 @@ describe("HumanFilter bounds the lookups it has outstanding (R3)", () => {
     c.settle("y", { bot: false });
     await tick();
     assert.equal(c.f.isHuman("y"), true);
-    c.f.forget("y");
-    c.f.isHuman("y");
-    c.fail("y");
-    await tick();
-    const startedBefore = c.started.length;
-    c.advance(1000);
-    c.f.isHuman("y");
-    assert.equal(c.started.length, startedBefore + 1, "after a success the next failure starts from the base cooldown again");
+    assert.equal(c.f.size, 1, "the success replaced the cooldown and its failure count: one remembered identity, no cooldown");
   });
 
   it("a lookup that throws synchronously is a failure and does not leak a slot", async () => {
@@ -225,7 +231,7 @@ describe("HumanFilter bounds the lookups it has outstanding (R3)", () => {
         throw new Error("boom");
       },
       excluded: () => false,
-      maxPending: 1,
+      requests: new IdentityRequests({ maxPending: 1 }),
     });
     assert.equal(f.isHuman("a"), false);
     await tick();
@@ -241,7 +247,7 @@ describe("HumanFilter bounds the lookups it has outstanding (R3)", () => {
       cached: (id) => (cached && id === "known" ? { bot: false } : undefined),
       lookup: () => new Promise(() => undefined),
       excluded: () => false,
-      maxPending: 1,
+      requests: new IdentityRequests({ maxPending: 1 }),
     });
     f.isHuman("stuck");
     assert.equal(f.isHuman("known"), false);
@@ -250,18 +256,7 @@ describe("HumanFilter bounds the lookups it has outstanding (R3)", () => {
   });
 });
 
-describe("HumanFilter late answers cannot revive anyone (R3)", () => {
-  it("a late answer for a user that was forgotten is dropped", async () => {
-    const c = controlled();
-    c.f.isHuman("gone");
-    c.f.forget("gone");
-    c.settle("gone", { bot: false });
-    await tick();
-    assert.equal(c.f.size, 0, "nothing was remembered");
-    assert.equal(c.f.stats().pending, 0, "and the slot was released");
-    assert.equal(c.f.isHuman("gone"), false, "the departed user is unknown again, not admitted");
-  });
-
+describe("HumanFilter late answers, resets and replacement (R1)", () => {
   it("a late answer after the timeout is still used for a user who did not leave", async () => {
     const c = controlled({ lookupTimeoutMs: 20 });
     c.f.isHuman("late");
@@ -272,31 +267,78 @@ describe("HumanFilter late answers cannot revive anyone (R3)", () => {
     assert.equal(c.f.isHuman("late"), true);
   });
 
-  it("reset() ends the session: answers that arrive afterwards are dropped, and the slots come back as the lookups settle", async () => {
+  it("reset() ends the session: answers that arrive afterwards are dropped, and the slots come back only as the requests settle", async () => {
     const c = controlled({ maxPending: 2 });
     c.f.isHuman("a");
     c.f.isHuman("b");
     c.f.reset();
     assert.equal(c.f.stats().pending, 2, "unsettled lookups still count: the bound is on real outstanding work");
+    assert.equal(c.f.stats().waiting, 0, "although this filter no longer waits on them");
+    c.f.isHuman("a");
+    c.f.isHuman("c");
+    assert.deepEqual(c.started, ["a", "b"], "asking again joins a's request still out, and c finds the cap still full");
     c.settle("a", { bot: false });
     c.settle("b", { bot: false });
     await tick();
-    assert.equal(c.f.size, 0, "nothing from the ended session was recorded");
-    assert.equal(c.f.stats().pending, 0);
-    assert.equal(c.f.isHuman("a"), false);
+    assert.equal(c.f.size, 1, "only a, asked about again after the reset, was recorded; b's answer belonged to the ended session");
+    assert.equal(c.f.isHuman("b"), false, "b is unknown again");
+    assert.equal(c.f.isHuman("a"), true);
+    assert.equal(c.f.stats().pending, 1, "b's new lookup is the only request out");
   });
 
   it("dispose() stops every timer and refuses to start another lookup", async () => {
     const c = controlled({ lookupTimeoutMs: 20 });
     c.f.isHuman("a");
     c.f.dispose();
+    assert.equal(c.f.stats().pending, 1, "dispose does not pretend to cancel the request: it stays counted");
     await sleep(50);
-    assert.equal(c.f.stats().timedOut, 0, "the timeout of a cancelled lookup never fires");
+    assert.equal(c.f.stats().timedOut, 0, "the timeout of a dropped wait never fires");
     assert.equal(c.f.isHuman("b"), false);
     assert.deepEqual(c.started, ["a"], "no lookup starts after dispose");
+    assert.equal(c.f.stats().pending, 1, "the slot is still held after the timeout would have passed");
     c.settle("a", { bot: false });
     await tick();
+    assert.equal(c.f.stats().pending, 0, "and is released only when the request settles");
     assert.equal(c.f.isHuman("a"), false);
     assert.equal(c.f.size, 0);
+  });
+
+  it("timeout, cooldown, reset and dispose never free a slot or start a second request for the same user", async () => {
+    const c = controlled({ maxPending: 2, lookupTimeoutMs: 10, retryMs: 10, maxRetryMs: 10 });
+    c.f.isHuman("u");
+    await sleep(30); // timed out, and the cooldown it started has passed
+    c.advance(100);
+    c.f.isHuman("u");
+    c.f.reset();
+    c.f.isHuman("u"); // a new wait joins the request still out
+    const replacement = c.another();
+    replacement.isHuman("u");
+    c.f.dispose();
+    replacement.isHuman("u");
+    assert.deepEqual(c.started, ["u"], "one request for u through timeout, cooldown, reset, a replacement filter and dispose");
+    assert.equal(c.requests.stats().pending, 1);
+    assert.ok(c.requests.stats().shared >= 2, "the later asks joined the request instead of starting one");
+    c.settle("u", { bot: false });
+    await tick();
+    assert.equal(c.requests.stats().pending, 0);
+    assert.equal(replacement.isHuman("u"), true, "the replacement, which was waiting on it, uses the answer");
+  });
+
+  it("a replacement filter on the same registry cannot add requests on top of the ones its predecessor left out", async () => {
+    const requests = new IdentityRequests({ maxPending: 4 });
+    const c = controlled({ requests });
+    for (let i = 0; i < 6; i++) c.f.isHuman(`old-${i}`);
+    c.f.dispose(); // the bot is replaced; its requests stay out
+    const next = c.another();
+    for (let i = 0; i < 6; i++) next.isHuman(`new-${i}`);
+    const third = c.another();
+    for (let i = 0; i < 6; i++) third.isHuman(`third-${i}`);
+    assert.equal(c.started.length, 4, `requests started across three filters (${c.started.join(", ")})`);
+    assert.equal(requests.stats().pending, 4);
+    assert.equal(next.stats().refused + third.stats().refused, 12, "the replacements were refused, not queued");
+    c.settle("old-0", null);
+    await tick();
+    assert.equal(next.isHuman("new-0"), false);
+    assert.equal(c.started.length, 5, "a slot frees only when a request settles, and then one new request may start");
   });
 });

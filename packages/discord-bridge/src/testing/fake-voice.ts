@@ -14,6 +14,7 @@ import { EventEmitter } from "node:events";
 import { DAVESession, type DiscordGatewayAdapterCreator, type VoiceConnection } from "@discordjs/voice";
 import { ClientUser, type Client } from "discord.js";
 import { DiscordBot } from "../adapters/discord-bot.js";
+import { IdentityRequests } from "../core/identity-requests.js";
 import type { BotId } from "../core/ids.js";
 import { createLogger } from "../core/redact.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
@@ -263,6 +264,8 @@ export interface TestBot {
   voice(userId: string, channelId: string | null, o?: { member?: { bot: boolean } }): void;
   /** When true (the default), `mapUser` on this bot's connections also puts the user in the bot's channel. */
   autoVoice: boolean;
+  /** The process-scoped identity request registry this bot was given. */
+  identityRequests: IdentityRequests | undefined;
 }
 
 /** A guild in the client's cache, and the client's own user, as discord.js has them after READY. */
@@ -297,10 +300,17 @@ export function testBot(
     /** Use the bot's own lookup (the real discord.js `UserManager.fetch`) instead of a stand-in. */
     productionLookup?: boolean;
     identityLookup?: import("../adapters/discord-bot.js").DiscordBotOptions["identityLookup"];
+    /**
+     * The identity request registry. Default: a fresh one per bot, so a test's stalled requests do
+     * not reach the next test. "process" gives the bot the production default, the process-wide one.
+     */
+    identityRequests?: IdentityRequests | "process";
   } = {},
 ): TestBot {
   const adapter = fakeAdapter(id);
   const guildId = o.guildId ?? "guild-1";
+  // Production uses the same 6 s for the filter's timeout and the registry's stall threshold; a test that shortens one shortens both.
+  const identityRequests = o.identityRequests === "process" ? undefined : (o.identityRequests ?? new IdentityRequests({ stallMs: o.identityLookup?.lookupTimeoutMs }));
   const bot = new DiscordBot({
     id,
     token: `token-${id}`,
@@ -319,6 +329,7 @@ export function testBot(
     sessionId: o.sessionId ?? randomUUID(),
     userLookup: o.productionLookup ? undefined : (o.userLookup ?? (async () => ({ bot: false }))),
     identityLookup: o.identityLookup,
+    identityRequests,
   });
   bot.userId = o.userId ?? `user-${id}`;
   seedGuild(bot.client, guildId, bot.userId);
@@ -340,6 +351,7 @@ export function testBot(
     autoReady: true,
     reuseDave: false,
     autoVoice: true,
+    identityRequests,
     voice: (userId, channelId, vo) => voiceStateUpdate(bot.client, guildId, userId, channelId, vo),
     latest: () => t.ready[t.ready.length - 1],
     completePending() {

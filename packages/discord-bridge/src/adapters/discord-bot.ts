@@ -20,6 +20,7 @@ import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
 import { HumanFilter, type DiscordUserInfo, type HumanFilterOptions } from "../core/human-filter.js";
+import { processIdentityRequests, type IdentityRequests } from "../core/identity-requests.js";
 import { JoinCancelled } from "../core/join-errors.js";
 import { RebuildBudget } from "../core/rebuild-budget.js";
 import { registerSecret, safeError, type Logger } from "../core/redact.js";
@@ -81,8 +82,14 @@ export interface DiscordBotOptions {
    * it cannot be established; the user then stays excluded. Tests inject this; production does not.
    */
   userLookup?: (userId: string) => Promise<DiscordUserInfo | null>;
-  /** Limits and timing of the identity lookups (`HumanFilter` defaults: 8 unsettled, 6 s timeout, 5 s to 60 s cooldown). */
-  identityLookup?: Pick<HumanFilterOptions, "maxPending" | "lookupTimeoutMs" | "retryMs" | "maxRetryMs">;
+  /** Timing of the identity lookups (`HumanFilter` defaults: 6 s timeout, 5 s to 60 s cooldown). */
+  identityLookup?: Pick<HumanFilterOptions, "lookupTimeoutMs" | "retryMs" | "maxRetryMs">;
+  /**
+   * Where identity requests are counted and capped. Default: the one registry of the process (8
+   * unsettled, one per user), shared by every bot so that replacing a bot cannot add requests on top
+   * of those its predecessors left out. Tests inject their own.
+   */
+  identityRequests?: IdentityRequests;
   /** A human's receive stream closed: release anything held for that user (decoders). */
   onHumanClosed?: (bot: BotId, userId: string) => void;
   timing?: Partial<BotTiming>;
@@ -178,15 +185,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
       },
       lookup: o.userLookup ?? ((id) => this.lookupUser(id)),
       excluded: (id) => this.excluded(id),
+      requests: o.identityRequests ?? processIdentityRequests,
       ...o.identityLookup,
     });
     // Leaving the source channel (disconnecting or moving) ends the user's admission at once. discord.js
     // updates the guild's voice-state cache before it emits this, so every later check agrees.
     this.client.on("voiceStateUpdate", (before, after) => {
-      if (before.channelId === this.o.channelId && after.channelId !== this.o.channelId) {
-        this.admission?.revoke(after.id);
-        this.humans.forget(after.id);
-      }
+      if (before.channelId === this.o.channelId && after.channelId !== this.o.channelId) this.admission?.revoke(after.id);
     });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
@@ -209,14 +214,15 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /**
    * REST lookup of one user (needs no privileged intent). The returned promise settles exactly when
-   * the REST request does, and is deliberately not raced against a timer: the `HumanFilter` owns the
-   * timeout, the cooldown and the count of requests out, and it can only keep that count honest if
-   * the promise it holds is the request itself. (A race here once let the filter free a slot while
-   * the request it stood for was still out: 24 requests unsettled against a cap of 8.)
+   * the REST request does, and is deliberately not raced against a timer: the identity request
+   * registry counts the request until this promise settles, and can only keep that count honest if
+   * the promise it holds is the request itself. (A race here once freed a slot while the request it
+   * stood for was still out: 24 requests unsettled against a cap of 8.)
    *
    * discord.js aborts each attempt after its REST timeout (15 s) and retries it up to 3 times, and
-   * all user lookups wait in one rate-limit queue, so a request normally settles, but nothing here
-   * bounds how long. A request that never settles keeps its slot until the test session restarts.
+   * all user lookups of one client wait in one sequential route queue, so a request normally settles,
+   * but nothing here bounds how long, and neither `Client.destroy()` nor dropping the promise cancels
+   * it. A request that never settles keeps its process-wide slot until the process exits.
    */
   private async lookupUser(userId: string): Promise<DiscordUserInfo | null> {
     const user = await this.client.users.fetch(userId);
@@ -651,7 +657,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return admission !== undefined && admission.userId === userId && this.admission !== null && this.admission.valid(admission);
   }
 
-  /** Identity lookups for speakers the client has not seen: how many are out, stalled or were refused by the cap. */
+  /**
+   * Identity lookups for speakers the client has not seen. `pending` and `stalled` are the requests
+   * out in the whole process (the registry's count, the real number); the rest is this bot's view.
+   */
   get identityLookups() {
     return this.humans.stats();
   }
@@ -737,7 +746,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.watchdog = null;
     this.clearGraceTimer();
     this.healthy = false;
-    this.humans.reset(); // the session ended: identity lookups still out can no longer change anything
+    this.humans.reset(); // the session ended: what it knew is dropped (requests still out stay counted until they settle)
     this.discardConnection();
   }
 

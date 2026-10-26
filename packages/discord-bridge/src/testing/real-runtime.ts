@@ -7,6 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type { BotTiming } from "../adapters/discord-bot.js";
 import { BridgeRuntime, type BotPort, type RetryPolicy } from "../bridge/runtime.js";
+import { IdentityRequests } from "../core/identity-requests.js";
 import { preferredOrder, type BotId } from "../core/ids.js";
 import { createOpusCodec } from "../core/opus.js";
 import { toneFrame } from "../core/pcm.js";
@@ -24,12 +25,15 @@ export function realRuntime(
   const ts = new FakeTs();
   for (let i = 1; i <= (o.users ?? 2); i++) ts.addUser(i);
   const sessionId = randomUUID();
+  // One registry for all six bots, as the process-wide default is in production.
+  const identityRequests = new IdentityRequests();
   let rt!: BridgeRuntime;
   const tests = new Map<BotId, TestBot>(
     preferredOrder(5).map((id) => [
       id,
       testBot(id, election, {
         sessionId,
+        identityRequests,
         timing: o.timing,
         now: o.now,
         onHumanOpus: (b, g, u, op, a) => rt.onHumanOpus(b, g, u, op, a),
@@ -52,6 +56,7 @@ export function realRuntime(
     ts,
     election,
     tests,
+    identityRequests,
     async cleanup() {
       await rt.stop();
       for (const t of tests.values()) await t.bot.destroy();
