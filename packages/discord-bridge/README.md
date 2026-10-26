@@ -24,7 +24,7 @@ This package is the isolated Node 24 proof of concept for the Discord ↔ TeamSp
 | `src/bridge/runtime.ts` | `BridgeRuntime`: one shared TeamSpeak client + six Discord identities (5 slots + overflow), idle-overflow rules, teardown-before-election, successor activation ahead of reconnects, `created → running → stopping → stopped` lifecycle |
 | `src/adapters/` | `TsSession` (existing TS3 UDP client, channel voice only) and `DiscordBot` (discord.js + `@discordjs/voice`: per-bot connection group, DAVE enforced at every boundary, rebuild-on-failure with one budget, human-only receive filter) |
 | `src/testing/` | Test harness that drives the **real** `VoiceConnection`, `AudioPlayer`, `VoiceReceiver`, `SpeakingMap` and `DAVESession`, faking only the native davey session, the gateway adapter and the UDP/WebSocket networking (simulated Discord, never live) |
-| `src/lab/` | `smoke-deps` (native Opus/DAVE), `ts-live` (real TS6 server), `churn` (native decoder churn and memory), `live` (real Discord, operator-driven), library repro test |
+| `src/lab/` | `smoke-deps` (native Opus/DAVE), `ts-live` (real TS6 server), `churn` (native decoder churn and memory), `setup` (invite URLs from application ids, no tokens), `live` (real Discord, operator-driven), library repro test |
 | `lab/Dockerfile` | Two stages, Node 24 pinned by digest. The build stage installs and runs typecheck, all tests and the native smoke as gates. The runtime stage copies the installed tree read-only, runs as `node`, and runs the preinstalled `tsx` with no network. The base image still ships npm and corepack, but nothing at runtime invokes a package manager (the entrypoint is the local `tsx`) |
 | `scripts/run-tests.mjs` | The test runner (`pnpm test`): runs `node --test` without a forced exit, writes a machine-readable report, and **fails** unless node:test's own records show the run finished (every file sent its end-of-file summary, every registered test reported, no file reported as a whole, the event stream reached its end), on any failed, skipped, cancelled or timed-out test, and unless the files discovered, the files listed in `scripts/expected-tests.json` and the files that reported results are one set, each reporting exactly its listed test names (`--update` after reviewing a deliberate change; it refuses to record a run that does not pass these checks) |
 | `scripts/sync-tslib.mjs` | Copies `packages/backend/src/voice/tslib` into git-ignored `.vendor/` (the backend copy stays the source of truth; `--check` detects drift) |
@@ -83,6 +83,24 @@ D1_DISCORD_GUILD_ID=… D1_DISCORD_CHANNEL_ID=… D1_TS_HOST=… pnpm run lab:li
 ```
 
 Without them `lab:live` prints each missing variable as `MISSING`, records nothing, and exits 2. Tokens are registered with the redactor, never printed, and the runner refuses to start unless all six tokens log in, are six distinct applications, and pass the guild/channel permission check (fail closed).
+
+### Invite helper (no tokens)
+
+The six applications already exist. This helper only prints official OAuth2 bot invite URLs. It does not read tokens, join Discord, or claim that a bot was authorised.
+
+```bash
+cd packages/discord-bridge
+pnpm run lab:setup -- \
+  --slot-0 <app-id> --slot-1 <app-id> --slot-2 <app-id> \
+  --slot-3 <app-id> --slot-4 <app-id> --overflow <app-id> \
+  --guild <optional-guild-id>
+```
+
+The permission integer is `103810048`, checked against `discord.js` `PermissionFlagsBits` (View Channel, Connect, Speak, Use Voice Activity, Change Nickname). Duplicate or non-snowflake IDs are rejected. `--guild` pre-selects that server (`disable_guild_select=true`); omit it to pick the private test guild in the browser. Each bot must be authorised separately by a server owner/administrator.
+
+`--open` is opt-in and opens **one** link at a time after Enter. Do not pass it unless you want the helper to launch a browser. Env fallbacks: `D1_DISCORD_APP_ID_SLOT_0`…`_4`, `D1_DISCORD_APP_ID_OVERFLOW`, `D1_DISCORD_GUILD_ID`.
+
+The helper marks application IDs and generated URLs as done. Authorisation and role permissions stay `unknown` until you check them in Discord.
 
 ### Operator procedure for the live proof
 

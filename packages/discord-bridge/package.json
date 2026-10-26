@@ -17,6 +17,7 @@
     "smoke:deps": "tsx src/lab/smoke-deps.ts",
     "lab:ts-live": "tsx src/lab/ts-live.ts",
     "lab:live": "tsx src/lab/live.ts",
+    "lab:setup": "tsx src/lab/setup.ts",
     "prelab:ts-live": "node scripts/sync-tslib.mjs",
     "prelab:live": "node scripts/sync-tslib.mjs",
     "churn": "node --expose-gc --import tsx src/lab/churn.ts"

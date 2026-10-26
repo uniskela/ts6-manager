@@ -363,5 +363,21 @@
     "recovers by re-initialising when the last transition id is non-zero",
     "reproduces #11653: after a welcome at transition 0, persistent decrypt failures throw instead of recovering",
     "returns audio untouched on a protocol-0 (non-DAVE) session, which is why the bridge enforces DAVE itself"
+  ],
+  "src/lab/invite.test.ts": [
+    "accepts six distinct application ids and does not claim Discord verified the invites",
+    "does not treat bot tokens in the environment as application ids",
+    "ignores a lone -- so pnpm can forward flags",
+    "matches discord.js PermissionFlagsBits and the approved integer, without Administrator",
+    "omits guild lock when no guild id is given",
+    "opens one URL at a time, only after each prompt",
+    "prints URLs and never echoes a token from the environment",
+    "reads CLI ids over env and leaves --open off unless requested",
+    "refuses a drifted PermissionFlagsBits table",
+    "refuses a table that includes Administrator in the OR",
+    "rejects a duplicate application id",
+    "rejects an invalid application id and an invalid guild id",
+    "treats a missing guild as skipped, not as a generated success",
+    "uses the bot scope and the validated mask, and pre-selects a guild when given"
   ]
 }
