@@ -4,12 +4,6 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 ENV_FILE="${D1_ENV_FILE:-$ROOT/packages/discord-bridge/lab/.env}"
-if [ -n "${D1_LAB_IMAGE:-}" ]; then
-  IMG="$D1_LAB_IMAGE"
-else
-  sha="$(git -C "$ROOT" rev-parse --short=7 HEAD)"
-  IMG="ts6-discord-bridge-lab:d1-${sha}"
-fi
 APP=/app/packages/discord-bridge
 NET="${D1_TS_NET:-d1-ts-lab}"
 REQUIRED=(
@@ -54,6 +48,16 @@ internal="$(docker network inspect -f '{{.Internal}}' "$NET")"
 if [ "$internal" = "true" ]; then
   echo "lab network $NET is internal; Discord would be unreachable" >&2
   exit 2
+fi
+if [ -n "${D1_LAB_IMAGE:-}" ]; then
+  IMG="$D1_LAB_IMAGE"
+else
+  sha="$(git -C "$ROOT" rev-parse --short=7 HEAD 2>/dev/null || true)"
+  if [ -z "$sha" ]; then
+    echo "set D1_LAB_IMAGE (not a git checkout)" >&2
+    exit 2
+  fi
+  IMG="ts6-discord-bridge-lab:d1-${sha}"
 fi
 
 EVID_HOST="${D1_EVIDENCE_DIR:-$ROOT/packages/discord-bridge/lab/evidence}"
