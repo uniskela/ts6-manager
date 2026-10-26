@@ -314,12 +314,15 @@ test('settings sections are URL-backed and restored by browser history', async (
   await page.goto('/settings?tab=appearance&source=copied');
   await expect(page.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('data-state', 'active');
   await expect(page.getByRole('heading', { name: 'Appearance' })).toBeVisible();
+  const initialHistoryLength = await page.evaluate(() => history.length);
 
   await page.getByRole('tab', { name: 'About' }).click();
   await expect(page).toHaveURL('/settings?tab=about&source=copied');
+  await expect.poll(() => page.evaluate(() => history.length)).toBe(initialHistoryLength + 1);
   await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
   await page.getByRole('tab', { name: 'Account' }).click();
   await expect(page).toHaveURL('/settings?tab=account&source=copied');
+  await expect.poll(() => page.evaluate(() => history.length)).toBe(initialHistoryLength + 2);
 
   await page.goBack();
   await expect(page).toHaveURL('/settings?tab=about&source=copied');
