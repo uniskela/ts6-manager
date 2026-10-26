@@ -25,6 +25,7 @@ import { RebuildBudget } from "../core/rebuild-budget.js";
 import { registerSecret, safeError, type Logger } from "../core/redact.js";
 import { ReceiveSupervisor } from "../core/receive-supervisor.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
+import { VoiceAdmission, type Admission } from "../core/voice-admission.js";
 import type { BotPort } from "../bridge/runtime.js";
 
 /** Where a bot joins and which gateway adapter carries its voice signalling. */
@@ -65,8 +66,12 @@ export interface DiscordBotOptions {
   channelId: string;
   election: ReceiverElection;
   log: Logger;
-  /** Called for each decoded-ready Opus packet from a human while this bot is the admitted receiver. */
-  onHumanOpus: (bot: BotId, generation: number, userId: string, opus: Buffer) => void;
+  /**
+   * Called for each Opus packet from an admitted human while this bot is the admitted receiver. The
+   * admission must travel with the packet: the pipeline re-checks it (`humanAdmitted`) when the frame
+   * is queued and again immediately before it is mixed into TeamSpeak.
+   */
+  onHumanOpus: (bot: BotId, generation: number, userId: string, opus: Buffer, admission: Admission) => void;
   /** Ids of the bridge's own bots, never subscribed to. */
   bridgeUserIds: () => ReadonlySet<string>;
   /** Resolve the join target. Defaults to this bot's own discord.js guild and its voice adapter. */
@@ -146,6 +151,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private preparedFor: object | null = null;
   private readonly budget: RebuildBudget;
   private readonly humans: HumanFilter;
+  /** Who may be heard under the current receive generation; null while not receiving. */
+  private admission: VoiceAdmission | null = null;
   /**
    * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
    * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
@@ -170,12 +177,16 @@ export class DiscordBot extends EventEmitter implements BotPort {
         return u && typeof u.bot === "boolean" ? { bot: u.bot } : undefined; // a partial user is not an answer
       },
       lookup: o.userLookup ?? ((id) => this.lookupUser(id)),
-      excluded: (id) => this.o.bridgeUserIds().has(id) || id === this.userId,
+      excluded: (id) => this.excluded(id),
       ...o.identityLookup,
     });
-    // A human who leaves our channel is forgotten, so an identity answer that arrives afterwards cannot bring them back.
+    // Leaving the source channel (disconnecting or moving) ends the user's admission at once. discord.js
+    // updates the guild's voice-state cache before it emits this, so every later check agrees.
     this.client.on("voiceStateUpdate", (before, after) => {
-      if (before.channelId === this.o.channelId && after.channelId !== before.channelId) this.humans.forget(before.id);
+      if (before.channelId === this.o.channelId && after.channelId !== this.o.channelId) {
+        this.admission?.revoke(after.id);
+        this.humans.forget(after.id);
+      }
     });
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
@@ -185,6 +196,15 @@ export class DiscordBot extends EventEmitter implements BotPort {
     await this.client.login(this.o.token);
     await new Promise<void>((resolve) => (this.client.isReady() ? resolve() : this.client.once("clientReady", () => resolve())));
     this.userId = this.client.user!.id;
+  }
+
+  private excluded(userId: string): boolean {
+    return this.o.bridgeUserIds().has(userId) || userId === this.userId;
+  }
+
+  /** The voice channel the gateway says a user is in now (the guild's voice-state cache), or null. */
+  private channelOf(userId: string): string | null {
+    return this.client.guilds.cache.get(this.o.guildId)?.voiceStates.cache.get(userId)?.channelId ?? null;
   }
 
   /**
@@ -573,18 +593,28 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (!conn || this.selfDeaf || !this.o.election.admitSubscribe(this.o.id, generation)) return false;
     this.stopReceive();
     const receiver = conn.receiver;
-    // Only users Discord has told us are not bots: never a bridge bot (that would re-forward bridge
-    // audio), never another bot account, never someone we cannot identify yet.
-    const isHuman = (userId: string) => this.humans.isHuman(userId);
+    // Heard only while present in the source channel AND known to be human: never a bridge bot (that
+    // would re-forward bridge audio), never another bot account, never someone we cannot identify yet,
+    // never someone who has left. The admissions end with this generation (`stopReceive`).
+    const admission = new VoiceAdmission({
+      channelId: this.o.channelId,
+      channelOf: (userId) => this.channelOf(userId),
+      isHuman: (userId) => this.humans.isHuman(userId),
+      excluded: (userId) => this.excluded(userId),
+      // Deferred: a revocation found during a mix tick must not tear streams down inside that tick.
+      onRevoked: (userId) => queueMicrotask(() => sup.closeUser(userId)),
+    });
     const sup: ReceiveSupervisor = new ReceiveSupervisor({
       bot: this.o.id,
       generation,
       election: this.o.election,
       subscribe: (userId) => receiver.subscribe(userId, { end: { behavior: EndBehaviorType.AfterSilence, duration: 200 } }),
-      activeSpeakers: () => [...receiver.speaking.users.keys()].filter(isHuman),
-      onFrame: (userId, opus, gen) => {
-        if (this.supervisor !== sup || !this.observeDave()) return; // stale reception or DAVE unavailable
-        this.o.onHumanOpus(this.o.id, gen, userId, opus);
+      admit: (userId) => admission.admit(userId),
+      admitted: (a) => admission.valid(a),
+      activeSpeakers: () => receiver.speaking.users.keys(),
+      onFrame: (userId, opus, gen, a) => {
+        if (this.supervisor !== sup || !admission.valid(a) || !this.observeDave()) return; // stale reception, departed user or DAVE unavailable
+        this.o.onHumanOpus(this.o.id, gen, userId, opus, a);
       },
       onUserClosed: (userId) => this.o.onHumanClosed?.(this.o.id, userId),
       onNeedRecovery: (reason) => {
@@ -593,8 +623,9 @@ export class DiscordBot extends EventEmitter implements BotPort {
       log: (m) => this.o.log.warn(`${this.o.id} ${m}`),
     });
     this.supervisor = sup;
+    this.admission = admission;
     this.receiveOnSpeaking = (userId) => {
-      if (isHuman(userId)) sup.open(userId);
+      sup.open(userId);
     };
     receiver.speaking.on("start", this.receiveOnSpeaking);
     sup.start(); // opens everyone already speaking: a start event is never the only trigger
@@ -605,13 +636,29 @@ export class DiscordBot extends EventEmitter implements BotPort {
   stopReceive(from: VoiceConnection | null = this.connection): void {
     if (this.receiveOnSpeaking && from) from.receiver.speaking.off("start", this.receiveOnSpeaking);
     this.receiveOnSpeaking = null;
+    this.admission?.close();
+    this.admission = null;
     this.supervisor?.closeAll();
     this.supervisor = null;
+  }
+
+  /**
+   * The last boundary before TeamSpeak: is this admission the user's current one under this bot's
+   * current receive generation, and are they still in the source channel. Read live, so a frame
+   * queued before a departure, a teardown or a replacement is refused when it comes up to be mixed.
+   */
+  humanAdmitted(userId: string, admission: Admission | undefined): boolean {
+    return admission !== undefined && admission.userId === userId && this.admission !== null && this.admission.valid(admission);
   }
 
   /** Identity lookups for speakers the client has not seen: how many are out, stalled or were refused by the cap. */
   get identityLookups() {
     return this.humans.stats();
+  }
+
+  /** Admissions under the current receive generation (0 while not receiving). */
+  get admittedHumans(): number {
+    return this.admission?.size ?? 0;
   }
 
   get openSubscriptions(): number {

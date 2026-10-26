@@ -9,6 +9,7 @@ import { OVERFLOW_NICKNAME, tsNickname } from "../core/nickname.js";
 import type { OpusCodec } from "../core/opus.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import type { Logger } from "../core/redact.js";
+import type { Admission } from "../core/voice-admission.js";
 import { SlotRouter, type SlotChange } from "../core/slot-router.js";
 import { TsToDiscordPipeline, type DiscordSendSink } from "../core/ts-to-discord.js";
 
@@ -26,6 +27,12 @@ export interface BotPort extends DiscordSendSink {
   stopReceive(): void;
   /** Is DAVE established on the live connection right now (read from the connection, not cached). Absent means yes. */
   daveEstablished?(): boolean;
+  /**
+   * Does this voice admission still let the user be heard: present in the source channel under this
+   * bot's current receive generation, not departed since. The Discord adapter always provides it and
+   * refuses a frame without an admission. Absent (test doubles that do not model Discord voice) means yes.
+   */
+  humanAdmitted?(userId: string, admission: Admission | undefined): boolean;
   on(event: "unhealthy", cb: (reason: string) => void): unknown;
   off(event: "unhealthy", cb: (reason: string) => void): unknown;
 }
@@ -129,6 +136,10 @@ export class BridgeRuntime extends EventEmitter {
       out: o.ts,
       bridgeUserIds: () => new Set([...o.bots.values()].map((b) => b.userId).filter(Boolean)),
       daveLive: (bot) => o.bots.get(bot)?.daveEstablished?.() ?? true,
+      admitted: (bot, userId, admission) => {
+        const port = o.bots.get(bot);
+        return port?.humanAdmitted ? port.humanAdmitted(userId, admission) : true;
+      },
     });
 
     // Teardown happens before the successor is elected: drop subscriptions and queued frames now.
@@ -172,11 +183,11 @@ export class BridgeRuntime extends EventEmitter {
     this.callbackErrors.note(where, e);
   }
 
-  /** Called by the bot adapters for each human Opus packet. */
-  readonly onHumanOpus = (bot: BotId, generation: number, userId: string, opus: Buffer): void => {
+  /** Called by the bot adapters for each human Opus packet, with the voice admission it was received under. */
+  readonly onHumanOpus = (bot: BotId, generation: number, userId: string, opus: Buffer, admission?: Admission): void => {
     if (this.lifecycle !== "running") return;
     try {
-      this.d2t.onDiscordOpus(bot, generation, userId, opus, this.now());
+      this.d2t.onDiscordOpus(bot, generation, userId, opus, this.now(), admission);
     } catch (e) {
       this.noteCallbackError("discord opus", e);
     }
@@ -500,7 +511,7 @@ export class BridgeRuntime extends EventEmitter {
       overflowMembers: this.router.overflowMembers().length,
       election: this.election.status(),
       duplicateReceivers: this.election.duplicateReceivers(),
-      d2t: { framesSent: this.d2t.framesSent, selfSourceDrops: this.d2t.selfSourceDrops, fenceDroppedAtMix: this.d2t.fenceDroppedAtMix, daveDropped: this.d2t.daveDropped, decodeErrors: this.d2t.decodeErrors, decoders: this.d2t.decoderCount, transitLatencyMs: this.d2t.transitLatency.summary() },
+      d2t: { framesSent: this.d2t.framesSent, selfSourceDrops: this.d2t.selfSourceDrops, fenceDroppedAtMix: this.d2t.fenceDroppedAtMix, daveDropped: this.d2t.daveDropped, admissionDropped: this.d2t.admissionDropped, decodeErrors: this.d2t.decodeErrors, decoders: this.d2t.decoderCount, transitLatencyMs: this.d2t.transitLatency.summary() },
       t2dOverflowLatencyMs: this.t2d.overflowLatency.summary(),
       t2d: { decodeErrors: this.t2d.decodeErrors, unsupportedFrames: this.t2d.unsupportedFrames, decoders: this.t2d.decoderCount, routedIdentities: this.t2d.routedIdentities },
     };

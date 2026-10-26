@@ -8,6 +8,11 @@ import { preferredOrder } from "./ids.js";
 import { ReceiveSupervisor } from "./receive-supervisor.js";
 import { ReceiverElection } from "./receiver-election.js";
 
+/** Supervisor tests that are not about admission: every user holds a valid admission. */
+function everyoneAdmitted() {
+  return { admit: (userId: string) => ({ userId, id: 0 }), admitted: () => true };
+}
+
 function electionWith(...bots: ("slot-0" | "slot-1")[]) {
   const e = new ReceiverElection(preferredOrder(5));
   for (const b of bots) e.setState(b, { healthy: true, inChannel: true });
@@ -20,6 +25,7 @@ describe("ReceiveSupervisor", () => {
     const election = electionWith("slot-0");
     const frames: [string, number][] = [];
     const sup = new ReceiveSupervisor({
+      ...everyoneAdmitted(),
       bot: "slot-0", generation: election.generation, election,
       subscribe: () => new PassThrough(),
       onFrame: (u, _o, g) => frames.push([u, g]),
@@ -37,6 +43,7 @@ describe("ReceiveSupervisor", () => {
     const stale = election.generation;
     election.fail("slot-0", "killed");
     const sup = new ReceiveSupervisor({
+      ...everyoneAdmitted(),
       bot: "slot-0", generation: stale, election,
       subscribe: () => { throw new Error("must not subscribe"); },
       onFrame: () => undefined, activeSpeakers: () => [], onNeedRecovery: () => undefined,
@@ -52,6 +59,7 @@ describe("ReceiveSupervisor", () => {
     let t = 0;
     const streams: PassThrough[] = [];
     const sup = new ReceiveSupervisor({
+      ...everyoneAdmitted(),
       bot: "slot-0", generation: election.generation, election,
       subscribe: () => { const s = new PassThrough(); streams.push(s); return s; },
       onFrame: () => undefined, activeSpeakers: () => [], onNeedRecovery: () => void rejoin++, now: () => (t += 100),
@@ -66,11 +74,66 @@ describe("ReceiveSupervisor", () => {
     assert.equal(sup.openCount, 0);
   });
 
+  it("drops a packet whose admission has ended, closes that stream, and re-opens the user only under a new admission", () => {
+    const election = electionWith("slot-0");
+    let current: { userId: string; id: number } | null = { userId: "h1", id: 1 };
+    const valid = new Set<object>([current]);
+    const streams: PassThrough[] = [];
+    const got: number[] = [];
+    const closed: string[] = [];
+    const sup = new ReceiveSupervisor({
+      bot: "slot-0", generation: election.generation, election,
+      subscribe: () => { const s = new PassThrough({ objectMode: true }); streams.push(s); return s; },
+      admit: () => current,
+      admitted: (a) => valid.has(a),
+      onFrame: (_u, _o, _g, a) => got.push(a.id),
+      onUserClosed: (u) => closed.push(u),
+      activeSpeakers: () => [], onNeedRecovery: () => undefined,
+    });
+    assert.equal(sup.open("h1"), true);
+    streams[0].write(Buffer.from([1]));
+    valid.clear(); // the admission ended: the user left
+    streams[0].write(Buffer.from([2]));
+    assert.deepEqual(got, [1], "the packet after the end of the admission was dropped");
+    assert.equal(sup.admissionDropped, 1);
+    assert.equal(sup.openCount, 0, "and the stream was closed");
+    assert.equal(streams[0].destroyed, true);
+    assert.deepEqual(closed, ["h1"]);
+    current = null;
+    assert.equal(sup.open("h1"), false, "not re-opened without an admission");
+    current = { userId: "h1", id: 2 };
+    valid.add(current);
+    assert.equal(sup.open("h1"), true, "re-opened under a new one");
+    assert.equal(sup.admissionOf("h1"), current);
+    streams[1].write(Buffer.from([3]));
+    assert.deepEqual(got, [1, 2]);
+    sup.closeAll();
+  });
+
+  it("closeUser closes one user's stream and leaves the others open", () => {
+    const election = electionWith("slot-0");
+    const sup = new ReceiveSupervisor({
+      ...everyoneAdmitted(),
+      bot: "slot-0", generation: election.generation, election,
+      subscribe: () => new PassThrough(),
+      onFrame: () => undefined, activeSpeakers: () => [], onNeedRecovery: () => undefined,
+    });
+    sup.open("h1");
+    sup.open("h2");
+    sup.closeUser("h1");
+    sup.closeUser("nobody");
+    assert.equal(sup.openCount, 1);
+    assert.equal(sup.admissionOf("h1"), undefined);
+    assert.ok(sup.admissionOf("h2"));
+    sup.closeAll();
+  });
+
   it("delivers frames tagged with the generation they were opened under", () => {
     const election = electionWith("slot-0");
     const got: number[] = [];
     const src = new PassThrough({ objectMode: true });
     const sup = new ReceiveSupervisor({
+      ...everyoneAdmitted(),
       bot: "slot-0", generation: election.generation, election, subscribe: () => src,
       onFrame: (_u, _o, g) => got.push(g), activeSpeakers: () => [], onNeedRecovery: () => undefined,
     });

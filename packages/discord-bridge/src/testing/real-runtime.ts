@@ -32,7 +32,7 @@ export function realRuntime(
         sessionId,
         timing: o.timing,
         now: o.now,
-        onHumanOpus: (b, g, u, op) => rt.onHumanOpus(b, g, u, op),
+        onHumanOpus: (b, g, u, op, a) => rt.onHumanOpus(b, g, u, op, a),
         onHumanClosed: (b, u) => rt.onHumanClosed(b, u),
       }),
     ]),

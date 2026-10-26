@@ -3,6 +3,7 @@ import type { BotId } from "./ids.js";
 import { LatencyStats } from "./metrics.js";
 import type { OpusCodec } from "./opus.js";
 import type { ReceiverElection } from "./receiver-election.js";
+import type { Admission } from "./voice-admission.js";
 
 /** A decoder unused for this long is released; the sweep runs at most this often; the map is capped. */
 const DECODER_IDLE_MS = 5_000;
@@ -12,6 +13,8 @@ const MAX_DECODERS = 256;
 interface Meta {
   bot: BotId;
   generation: number;
+  userId: string;
+  admission: Admission | undefined;
 }
 
 export interface TsVoiceOut {
@@ -30,12 +33,19 @@ interface Options {
    * mix, because the election's flag is only as fresh as the adapter's watchdog. Absent means yes.
    */
   daveLive?: (bot: BotId) => boolean;
+  /**
+   * Does the frame's voice admission still hold: the user is still in the source channel under that
+   * bot's current receive generation and has not left since. Checked at push and again at every mix,
+   * so a frame queued before a departure, teardown or replacement never reaches TeamSpeak.
+   */
+  admitted?: (bot: BotId, userId: string, admission: Admission | undefined) => boolean;
 }
 
 /**
- * Discord to TeamSpeak: one mix into the shared TeamSpeak client. The receiver generation is
- * checked when a frame is pushed and again when it is mixed, so frames from a bot that lost the
- * receiver role never reach TeamSpeak even if their callback fires late.
+ * Discord to TeamSpeak: one mix into the shared TeamSpeak client. The receiver generation, DAVE and
+ * the speaker's voice admission are checked when a frame is pushed and again when it is mixed, so
+ * frames from a bot that lost the receiver role, or from a user who left, never reach TeamSpeak even
+ * if their callback fires late or they were already queued.
  */
 export class DiscordToTsPipeline {
   private readonly mixer: FrameMixer<Meta>;
@@ -52,30 +62,37 @@ export class DiscordToTsPipeline {
   encodeErrors = 0;
   /** Frames dropped because DAVE was not established on the live connection at push or mix time. */
   daveDropped = 0;
+  /** Frames dropped because the speaker's voice admission had ended, at push or mix time. */
+  admissionDropped = 0;
   readonly transitLatency = new LatencyStats();
 
   constructor(private readonly o: Options) {
-    this.mixer = new FrameMixer<Meta>((m) => this.admit(m.bot, m.generation));
+    this.mixer = new FrameMixer<Meta>((m) => this.admit(m));
   }
 
-  private admit(bot: BotId, generation: number): boolean {
-    if (!this.o.election.admitFrame(bot, generation)) return false;
-    if (this.o.daveLive && !this.o.daveLive(bot)) {
+  private admit(m: Meta): boolean {
+    if (!this.o.election.admitFrame(m.bot, m.generation)) return false;
+    if (this.o.admitted && !this.o.admitted(m.bot, m.userId, m.admission)) {
+      this.admissionDropped += 1;
+      return false;
+    }
+    if (this.o.daveLive && !this.o.daveLive(m.bot)) {
       this.daveDropped += 1;
       return false;
     }
     return true;
   }
 
-  onDiscordOpus(bot: BotId, generation: number, userId: string, opus: Buffer, nowMs: number): void {
+  onDiscordOpus(bot: BotId, generation: number, userId: string, opus: Buffer, nowMs: number, admission?: Admission): void {
     if (this.disposed) return;
     if (this.o.bridgeUserIds().has(userId)) {
       this.selfSourceDrops += 1;
       return;
     }
-    if (!this.admit(bot, generation)) return;
+    const meta: Meta = { bot, generation, userId, admission };
+    if (!this.admit(meta)) return;
     const pcm = this.decode(userId, opus, nowMs);
-    if (pcm) this.mixer.push(userId, pcm, { bot, generation }, nowMs);
+    if (pcm) this.mixer.push(userId, pcm, meta, nowMs);
   }
 
   private decode(userId: string, opus: Buffer, nowMs: number): Buffer | null {

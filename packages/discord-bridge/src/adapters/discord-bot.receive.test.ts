@@ -7,6 +7,11 @@ import { ReceiveSupervisor } from "../core/receive-supervisor.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { talk, testBot, tick, waitFor } from "../testing/fake-voice.js";
 
+/** Supervisor tests that are not about admission: every user holds a valid admission. */
+function everyoneAdmitted() {
+  return { admit: (userId: string) => ({ userId, id: 0 }), admitted: () => true };
+}
+
 function newElection() {
   const election = new ReceiverElection(preferredOrder(5));
   election.setState("slot-0", { healthy: true, inChannel: true });
@@ -105,6 +110,7 @@ describe("ReceiveSupervisor rejects stale callbacks after replacement", () => {
     const rejoins: string[] = [];
     const src = new PassThrough({ objectMode: true });
     const sup = new ReceiveSupervisor({
+      ...everyoneAdmitted(),
       bot: "slot-0",
       generation: election.generation,
       election,
@@ -175,21 +181,27 @@ describe("only verified humans are subscribed and forwarded (real VoiceReceiver)
     h.mapUser("departs", 6001);
     h.mapUser("session-ends", 6002);
     const stops = [talk(h, "departs"), talk(h, "session-ends")];
-    await waitFor(() => answers.size === 2, 1000, "both lookups started");
+    try {
+      await waitFor(() => answers.size === 2, 1000, "both lookups started");
 
-    // The human leaves our channel (a voice state update from Discord), then the answer arrives.
-    t.bot.client.emit("voiceStateUpdate", { id: "departs", channelId: "channel-1" } as never, { id: "departs", channelId: null } as never);
-    answers.get("departs")!({ bot: false });
-    // The bot's session ends, then the other answer arrives.
-    t.bot.leave();
-    answers.get("session-ends")!({ bot: false });
-    await tick(20);
+      // The human leaves our channel (a voice state update through discord.js's own handler), then the answer arrives.
+      t.voice("departs", null);
+      answers.get("departs")!({ bot: false });
+      await tick(100);
+      assert.equal(got.length, 0, "the departed human is not heard, although their identity is now known");
+      // The bot's session ends, then the other answer arrives.
+      t.bot.leave();
+      answers.get("session-ends")!({ bot: false });
+      await tick(20);
 
-    assert.equal(t.bot.identityLookups.pending, 0, "both slots came back");
-    assert.equal(t.bot.identityLookups.remembered, 0, "and nothing was remembered from the late answers");
-    assert.equal(got.length, 0);
-    for (const stop of stops) stop();
-    await t.bot.destroy();
+      assert.equal(t.bot.identityLookups.pending, 0, "both requests settled, so both slots came back");
+      assert.equal(t.bot.identityLookups.remembered, 0, "and nothing from the ended session was remembered");
+      assert.equal(t.bot.admittedHumans, 0);
+      assert.equal(got.length, 0);
+    } finally {
+      for (const stop of stops) stop();
+      await t.bot.destroy();
+    }
   });
 
   it("another Discord bot that is already speaking is never subscribed or forwarded", async () => {

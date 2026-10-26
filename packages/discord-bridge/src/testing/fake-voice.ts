@@ -12,10 +12,12 @@
 import { createCipheriv, randomBytes, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { DAVESession, type DiscordGatewayAdapterCreator, type VoiceConnection } from "@discordjs/voice";
+import { ClientUser, type Client } from "discord.js";
 import { DiscordBot } from "../adapters/discord-bot.js";
 import type { BotId } from "../core/ids.js";
 import { createLogger } from "../core/redact.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
+import type { Admission } from "../core/voice-admission.js";
 
 export const DAVE_MAGIC = Buffer.from("DAVE");
 const RTP_OPUS_PAYLOAD_TYPE = 120;
@@ -253,6 +255,28 @@ export interface TestBot {
   completePending(): ReadyHandle | null;
   /** While set, target resolution waits for it (a slow guild/channel lookup). */
   holdTarget(): () => void;
+  /**
+   * Move a user's Discord voice state (null: disconnected), through discord.js's own gateway
+   * handler, so the guild's voice-state cache and the `voiceStateUpdate` event are the real ones.
+   * `member` attaches guild member data, which (as on the real gateway) puts the user in the cache.
+   */
+  voice(userId: string, channelId: string | null, o?: { member?: { bot: boolean } }): void;
+  /** When true (the default), `mapUser` on this bot's connections also puts the user in the bot's channel. */
+  autoVoice: boolean;
+}
+
+/** A guild in the client's cache, and the client's own user, as discord.js has them after READY. */
+export function seedGuild(client: Client, guildId: string, botUserId: string): void {
+  const Ctor = ClientUser as unknown as new (c: Client, data: unknown) => ClientUser; // protected in the typings
+  (client as unknown as { user: ClientUser }).user = new Ctor(client, { id: botUserId, username: "bridge", discriminator: "0", bot: true, avatar: null, global_name: null });
+  (client.guilds as unknown as { _add(d: unknown): unknown })._add({ id: guildId, name: "test guild", channels: [], roles: [], emojis: [], stickers: [], members: [], voice_states: [] });
+}
+
+/** Deliver a VOICE_STATE_UPDATE dispatch to discord.js's own handler. */
+export function voiceStateUpdate(client: Client, guildId: string, userId: string, channelId: string | null, o: { member?: { bot: boolean } } = {}): void {
+  const data: Record<string, unknown> = { guild_id: guildId, channel_id: channelId, user_id: userId, session_id: `s-${userId}`, deaf: false, mute: false, self_deaf: false, self_mute: false, suppress: false, request_to_speak_timestamp: null };
+  if (o.member) data.member = { user: { id: userId, username: `user${userId.slice(-3)}`, discriminator: "0", global_name: null, avatar: null, bot: o.member.bot }, roles: [], joined_at: new Date(0).toISOString(), deaf: false, mute: false };
+  (client as unknown as { actions: { VoiceStateUpdate: { handle(d: unknown): void } } }).actions.VoiceStateUpdate.handle(data);
 }
 
 export function testBot(
@@ -261,7 +285,7 @@ export function testBot(
   o: {
     guildId?: string;
     sessionId?: string;
-    onHumanOpus?: (bot: BotId, gen: number, user: string, opus: Buffer) => void;
+    onHumanOpus?: (bot: BotId, gen: number, user: string, opus: Buffer, admission: Admission) => void;
     onHumanClosed?: (bot: BotId, user: string) => void;
     userId?: string;
     bridgeUserIds?: () => ReadonlySet<string>;
@@ -297,18 +321,31 @@ export function testBot(
     identityLookup: o.identityLookup,
   });
   bot.userId = o.userId ?? `user-${id}`;
+  seedGuild(bot.client, guildId, bot.userId);
   let targetGate: Promise<void> | null = null;
+  const inChannel = (userId: string) => bot.client.guilds.cache.get(guildId)?.voiceStates.cache.get(userId)?.channelId === "channel-1";
+  /** Speakers with an SSRC are in the channel on real Discord; tests that move people say so explicitly. */
+  const withVoice = (h: ReadyHandle): ReadyHandle => {
+    const map = h.mapUser.bind(h);
+    h.mapUser = (userId, ssrc) => {
+      if (t.autoVoice && !inChannel(userId)) t.voice(userId, "channel-1");
+      map(userId, ssrc);
+    };
+    return h;
+  };
   const t: TestBot = {
     bot,
     adapter,
     ready: [],
     autoReady: true,
     reuseDave: false,
+    autoVoice: true,
+    voice: (userId, channelId, vo) => voiceStateUpdate(bot.client, guildId, userId, channelId, vo),
     latest: () => t.ready[t.ready.length - 1],
     completePending() {
       const conn = bot.voiceConnection;
       if (!conn || conn.state.status !== "signalling" || t.ready.some((h) => h.conn === conn)) return null;
-      const h = makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion });
+      const h = withVoice(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion }));
       t.ready.push(h);
       return h;
     },
@@ -332,7 +369,7 @@ export function testBot(
     queueMicrotask(() => {
       const conn = bot.voiceConnection;
       if (!t.autoReady || !conn || conn.state.status !== "signalling" || t.ready.some((h) => h.conn === conn)) return;
-      t.ready.push(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion, reuse: t.reuseDave ? t.latest() : undefined }));
+      t.ready.push(withVoice(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion, reuse: t.reuseDave ? t.latest() : undefined })));
     });
   return t;
 }

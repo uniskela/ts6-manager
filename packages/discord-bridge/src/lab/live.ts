@@ -54,7 +54,7 @@ async function main(): Promise<void> {
       election,
       log,
       sessionId,
-      onHumanOpus: (b, g, u, o) => runtime?.onHumanOpus(b, g, u, o),
+      onHumanOpus: (b, g, u, o, a) => runtime?.onHumanOpus(b, g, u, o, a),
       onHumanClosed: (b, u) => runtime?.onHumanClosed(b, u),
       bridgeUserIds: () => new Set([...concrete.values()].map((c) => c.userId).filter(Boolean)),
     });
