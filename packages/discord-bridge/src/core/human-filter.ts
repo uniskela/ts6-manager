@@ -1,4 +1,4 @@
-import { processIdentityRequests, type DiscordUserInfo, type IdentityRequests } from "./identity-requests.js";
+import { processIdentityRequests, type DiscordUserInfo, type IdentityRequests, type IdentitySubscription } from "./identity-requests.js";
 
 export type { DiscordUserInfo } from "./identity-requests.js";
 
@@ -26,8 +26,11 @@ export type { DiscordUserInfo } from "./identity-requests.js";
  * - A failed or timed out user is asked about again only after a cooldown that doubles with each
  *   consecutive failure, from `retryMs` up to `maxRetryMs`.
  * - Remembered answers and cooldowns are capped at `maxEntries` each, oldest first.
- * - `reset()` (a session ended) and `dispose()` drop what this filter knows and what it was waiting
- *   for. Neither touches the registry: requests still out stay counted until they settle.
+ * - `reset()` (a session ended) and `dispose()` drop what this filter knows and cancel its
+ *   subscriptions to the requests it was waiting for, so a request that never settles does not keep
+ *   a filter (or the bot that owns it) that was reset, disposed or replaced, and never calls it
+ *   back. The requests themselves are untouched: still out, still counted until they settle, and
+ *   another filter asking about the same user subscribes to them instead of starting another.
  *
  * Known limitation: the first moments of a speaker the client has never seen are not forwarded,
  * because they stay excluded while their identity is established (typically one REST round trip,
@@ -61,6 +64,8 @@ export interface HumanFilterStats {
   stalled: number;
   /** Requests this filter is waiting on (each one is also in `pending`). */
   waiting: number;
+  /** Subscriptions to unsettled requests over all callers in the process (the registry's count). */
+  subscribers: number;
   /** Lookups this filter could not start because the process-wide cap was reached. */
   refused: number;
   timedOut: number;
@@ -74,6 +79,8 @@ interface Wait {
   round: number;
   timedOut: boolean;
   timer: NodeJS.Timeout | undefined;
+  /** This filter's subscription to the request; cancelled when the wait is dropped. */
+  subscription: IdentitySubscription | null;
 }
 
 export class HumanFilter {
@@ -118,16 +125,15 @@ export class HumanFilter {
     if (this.disposed || this.waiting.has(userId)) return;
     const cooling = this.cooldown.get(userId);
     if (cooling && this.now() < cooling.until) return;
-    const answer = this.requests.request(userId, this.o.lookup);
-    if (!answer) {
+    const wait: Wait = { userId, round: this.round, timedOut: false, timer: undefined, subscription: null };
+    wait.subscription = this.requests.request(userId, this.o.lookup, (info) => this.settled(wait, info));
+    if (!wait.subscription) {
       this.refused += 1;
       return;
     }
-    const wait: Wait = { userId, round: this.round, timedOut: false, timer: undefined };
     this.waiting.set(userId, wait);
     wait.timer = setTimeout(() => this.giveUp(wait), this.lookupTimeoutMs);
     wait.timer.unref();
-    void answer.then((info) => this.settled(wait, info));
   }
 
   /** The timeout: counted as a failure and the user goes on a cooldown. The wait stays until the request settles. */
@@ -142,6 +148,7 @@ export class HumanFilter {
   private settled(wait: Wait, info: DiscordUserInfo | null): void {
     clearTimeout(wait.timer);
     wait.timer = undefined;
+    wait.subscription = null;
     if (this.waiting.get(wait.userId) === wait) this.waiting.delete(wait.userId);
     if (this.disposed || wait.round !== this.round) return; // from before a reset: this session never asked
     if (info) {
@@ -158,12 +165,18 @@ export class HumanFilter {
   }
 
   /**
-   * The session ended: drop everything this filter knows and is waiting for. Requests still out stay
-   * in the registry, counted, until they settle; asking about one of those users again joins it.
+   * The session ended: drop everything this filter knows and stop waiting. Its subscriptions are
+   * cancelled, so no request still out refers to this filter or calls it back. The requests stay in
+   * the registry, counted, until they settle; asking about one of those users again subscribes to it.
    */
   reset(): void {
     this.round += 1;
-    for (const wait of this.waiting.values()) clearTimeout(wait.timer);
+    for (const wait of this.waiting.values()) {
+      clearTimeout(wait.timer);
+      wait.timer = undefined;
+      wait.subscription?.cancel();
+      wait.subscription = null;
+    }
     this.waiting.clear();
     this.known.clear();
     this.cooldown.clear();
@@ -183,7 +196,7 @@ export class HumanFilter {
 
   stats(): HumanFilterStats {
     const r = this.requests.stats();
-    return { pending: r.pending, stalled: r.stalled, waiting: this.waiting.size, refused: this.refused, timedOut: this.timedOut, failed: this.failed, remembered: this.size };
+    return { pending: r.pending, stalled: r.stalled, waiting: this.waiting.size, subscribers: r.subscribers, refused: this.refused, timedOut: this.timedOut, failed: this.failed, remembered: this.size };
   }
 
   get size(): number {

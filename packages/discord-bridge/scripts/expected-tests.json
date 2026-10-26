@@ -85,6 +85,10 @@
     "receiver failover: the failed receiver's admissions are dead, the successor admits only present humans, and a departure stops TeamSpeak output",
     "repeated leave and rejoin while the request is out: one REST operation, then the answer admits only while present"
   ],
+  "src/adapters/discord-bot.identity-retention.test.ts": [
+    "30 sequential bot/filter replacements, one stalled request: one REST operation, and the old instances are reclaimable",
+    "late settlement after a replacement: the destroyed bot is not called, a revoked admission stays revoked, and the current bot hears the human only after a rejoin"
+  ],
   "src/adapters/discord-bot.isolation.test.ts": [
     "creates distinct VoiceConnection objects, each signalled through its own client's adapter",
     "destroying one bot's connection does not destroy the other's",
@@ -283,27 +287,37 @@
   ],
   "src/core/human-filter.test.ts": [
     "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
+    "30 sequential filter replacements on one never-settling request: one request, no subscriber growth, and the old filters are reclaimable",
     "a late answer after the timeout is still used for a user who did not leave",
     "a lookup that throws synchronously is a failure and does not leak a slot",
     "a replacement filter on the same registry cannot add requests on top of the ones its predecessor left out",
     "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
     "a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots",
     "admits a cached human and rejects a cached bot",
+    "concurrent active filters on one request both learn the answer, and one disposing does not affect the other",
     "dispose() stops every timer and refuses to start another lookup",
     "does not queue what it refused: nothing starts when a slot frees unless that speaker is asked about again",
     "is bounded under many distinct users",
     "known identities are still answered while every lookup slot is stuck",
+    "late settlement reaches only the filter still waiting: a reset or disposed filter learns nothing and is not called",
     "never admits a user the lookup says is a bot",
     "never admits the bridge's own identities or itself, whatever the cache says",
     "rejects an unknown user until the lookup says human, then admits",
     "reset() ends the session: answers that arrive afterwards are dropped, and the slots come back only as the requests settle",
     "retries a failing user on a doubling cooldown that is capped, and forgets the failures after a success",
     "stays closed when the lookup fails or finds nothing, and retries only after the cooldown",
+    "the stats report the registry's subscriber count alongside pending and stalled",
     "timeout, cooldown, reset and dispose never free a slot or start a second request for the same user"
   ],
   "src/core/identity-requests.test.ts": [
+    "30 subscribe-and-cancel rounds on one request that never settles: one request, no subscriber growth, and the callers are reclaimable",
     "a request that rejects, throws synchronously or answers without a boolean resolves null and frees its slot",
-    "holds each request until it settles, one per user, and refuses over the cap without queueing"
+    "an uncancelled caller is reachable from the request until it settles (the control for the test above)",
+    "cancelling a subscription drops the subscriber, and the request stays out and counted",
+    "concurrent subscribers: one cancels, the other still gets the answer; a throwing subscriber does not stop the rest",
+    "holds each request until it settles, one per user, and refuses over the cap without queueing",
+    "the eight-request cap is unchanged by subscriptions and cancellations",
+    "the start function is not kept by an unsettled request"
   ],
   "src/core/rebuild-budget.test.ts": [
     "a budget of zero refuses everything",

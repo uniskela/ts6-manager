@@ -13,7 +13,15 @@
  * - At most `maxPending` requests are unsettled at once in the process. A request over the cap is
  *   refused (the caller gets `null`), not queued.
  * - At most one request per user is unsettled. Asking about a user whose request is still out
- *   returns that same request, whoever started it, and starts nothing.
+ *   subscribes to that same request, whoever started it, and starts nothing.
+ *
+ * Owning a request and waiting for its answer are separate. The registry owns the request (its slot,
+ * its count, the promise). Each caller holds only a subscription, which it can cancel at any time:
+ * cancelling drops the registry's reference to the caller's callback, so a filter or bot that was
+ * reset, disposed or replaced is no longer reachable from a request that has not settled, and is
+ * never called when it does. Cancelling a subscription never cancels or uncounts the request.
+ * Nothing the registry keeps for an unsettled request refers to whoever started it: the `start`
+ * function is called once and not kept.
  *
  * An answer only says whether a Discord account is a bot. It never says the user may be heard: that
  * is the voice admission's decision (`voice-admission.ts`), made separately each time.
@@ -35,6 +43,8 @@ export interface IdentityRequestStats {
   pending: number;
   /** Of those, the ones unsettled for longer than `stallMs`. */
   stalled: number;
+  /** Subscriptions waiting on those requests, over all callers. */
+  subscribers: number;
   /** Requests refused because `maxPending` were unsettled. */
   refused: number;
   /** Asks that joined a request already out for the same user instead of starting another. */
@@ -43,9 +53,47 @@ export interface IdentityRequestStats {
   settled: number;
 }
 
+/** A caller's interest in one request's answer. */
+export interface IdentitySubscription {
+  /** Stop waiting: the callback is dropped and never called. The request itself carries on, counted. */
+  cancel(): void;
+}
+
+type Settled = (info: DiscordUserInfo | null) => void;
+
 interface Entry {
-  answer: Promise<DiscordUserInfo | null>;
   startedAt: number;
+  subscribers: Set<Settled>;
+}
+
+/**
+ * Start a request. Kept out of `IdentityRequests.request` on purpose: closures created in one
+ * function share its scope, so the settlement callback there would otherwise keep `start` (and
+ * whatever `start` refers to, such as a bot) alive until the request settles. The returned promise
+ * never rejects: a failed request, or a `start` that throws, resolves `null`.
+ */
+function begin(start: (userId: string) => Promise<DiscordUserInfo | null>, userId: string): Promise<DiscordUserInfo | null> {
+  let answer: Promise<DiscordUserInfo | null>;
+  try {
+    answer = Promise.resolve(start(userId));
+  } catch {
+    return Promise.resolve(null);
+  }
+  return answer.then(
+    (info) => (info && typeof info.bot === "boolean" ? { bot: info.bot } : null),
+    () => null,
+  );
+}
+
+/**
+ * Add one subscription. Its own function for the same reason as `begin`: the registry's settlement
+ * callback must not share a scope with `onSettled`, or cancelling would not release the subscriber.
+ * A wrapper per subscription, so the same callback subscribed twice is two subscriptions.
+ */
+function subscribe(subscribers: Set<Settled>, onSettled: Settled): IdentitySubscription {
+  const subscriber: Settled = (info) => onSettled(info);
+  subscribers.add(subscriber);
+  return { cancel: () => void subscribers.delete(subscriber) };
 }
 
 export class IdentityRequests {
@@ -65,33 +113,48 @@ export class IdentityRequests {
   }
 
   /**
-   * The unsettled request for this user: the one already out, or a new one from `start`. `null` when
-   * none is out and the cap is reached. The returned promise never rejects: a failed request, or a
-   * `start` that throws, resolves `null`.
+   * Wait for the answer about this user: subscribe to the request already out, or start one with
+   * `start`. `null` when none is out and the cap is reached (nothing started, nothing subscribed).
+   * `onSettled` is called once, asynchronously, when the request settles, unless the subscription
+   * was cancelled first.
    */
-  request(userId: string, start: (userId: string) => Promise<DiscordUserInfo | null>): Promise<DiscordUserInfo | null> | null {
+  request(userId: string, start: (userId: string) => Promise<DiscordUserInfo | null>, onSettled: Settled): IdentitySubscription | null {
+    const entry = this.entryFor(userId, start);
+    return entry ? subscribe(entry.subscribers, onSettled) : null;
+  }
+
+  /** The unsettled request for this user, started now if none is out. `null` over the cap. */
+  private entryFor(userId: string, start: (userId: string) => Promise<DiscordUserInfo | null>): Entry | null {
     const existing = this.out.get(userId);
     if (existing) {
       this.shared += 1;
-      return existing.answer;
+      return existing;
     }
     if (this.out.size >= this.maxPending) {
       this.refused += 1;
       return null;
     }
     this.started += 1;
-    // The async wrapper turns a `start` that throws synchronously into a rejection, like any other failure.
-    const answer = (async () => start(userId))().then(
-      (info) => (info && typeof info.bot === "boolean" ? { bot: info.bot } : null),
-      () => null,
-    );
-    const entry: Entry = { answer, startedAt: this.now() };
+    const entry: Entry = { startedAt: this.now(), subscribers: new Set() };
     this.out.set(userId, entry);
-    void answer.then(() => {
-      if (this.out.get(userId) === entry) this.out.delete(userId);
-      this.settled += 1;
-    });
-    return answer;
+    // This callback stays reachable until the request settles. It refers to the registry and the
+    // entry only; `start` is not captured by any closure here.
+    void begin(start, userId).then((info) => this.finish(userId, entry, info));
+    return entry;
+  }
+
+  private finish(userId: string, entry: Entry, info: DiscordUserInfo | null): void {
+    if (this.out.get(userId) === entry) this.out.delete(userId);
+    this.settled += 1;
+    const subscribers = [...entry.subscribers];
+    entry.subscribers.clear();
+    for (const notify of subscribers) {
+      try {
+        notify(info);
+      } catch {
+        /* one subscriber's failure must not keep the answer from the others */
+      }
+    }
   }
 
   /** Is a request for this user out right now. */
@@ -102,8 +165,12 @@ export class IdentityRequests {
   stats(): IdentityRequestStats {
     const now = this.now();
     let stalled = 0;
-    for (const e of this.out.values()) if (now - e.startedAt >= this.stallMs) stalled += 1;
-    return { pending: this.out.size, stalled, refused: this.refused, shared: this.shared, started: this.started, settled: this.settled };
+    let subscribers = 0;
+    for (const e of this.out.values()) {
+      if (now - e.startedAt >= this.stallMs) stalled += 1;
+      subscribers += e.subscribers.size;
+    }
+    return { pending: this.out.size, stalled, subscribers, refused: this.refused, shared: this.shared, started: this.started, settled: this.settled };
   }
 }
 

@@ -165,6 +165,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private readonly daveEpochs = new DaveSessionEpochs();
   /** The DAVE session epoch the current receive generation is bound to; null while not receiving. */
   private receiveSession: number | null = null;
+  /** The voiceStateUpdate listener on the client, removed by `destroy()` so the client does not keep this bot. */
+  private readonly onVoiceState: (before: { channelId: string | null }, after: { id: string; channelId: string | null }) => void;
   /**
    * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
    * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
@@ -190,16 +192,18 @@ export class DiscordBot extends EventEmitter implements BotPort {
         const u = this.client.users.cache.get(id);
         return u && typeof u.bot === "boolean" ? { bot: u.bot } : undefined; // a partial user is not an answer
       },
-      lookup: o.userLookup ?? ((id) => this.lookupUser(id)),
+      // Not a method of this bot: a request that never settles holds this function, and must not hold the bot.
+      lookup: o.userLookup ?? userLookupVia(this.client),
       excluded: (id) => this.excluded(id),
       requests: o.identityRequests ?? processIdentityRequests,
       ...o.identityLookup,
     });
     // Leaving the source channel (disconnecting or moving) ends the user's admission at once. discord.js
     // updates the guild's voice-state cache before it emits this, so every later check agrees.
-    this.client.on("voiceStateUpdate", (before, after) => {
+    this.onVoiceState = (before, after) => {
       if (before.channelId === this.o.channelId && after.channelId !== this.o.channelId) this.admission?.revoke(after.id);
-    });
+    };
+    this.client.on("voiceStateUpdate", this.onVoiceState);
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
     this.player.on("error", (e) => this.o.log.warn(`${this.o.id} player error: ${safeError(e)}`));
   }
@@ -217,23 +221,6 @@ export class DiscordBot extends EventEmitter implements BotPort {
   /** The voice channel the gateway says a user is in now (the guild's voice-state cache), or null. */
   private channelOf(userId: string): string | null {
     return this.client.guilds.cache.get(this.o.guildId)?.voiceStates.cache.get(userId)?.channelId ?? null;
-  }
-
-  /**
-   * REST lookup of one user (needs no privileged intent). The returned promise settles exactly when
-   * the REST request does, and is deliberately not raced against a timer: the identity request
-   * registry counts the request until this promise settles, and can only keep that count honest if
-   * the promise it holds is the request itself. (A race here once freed a slot while the request it
-   * stood for was still out: 24 requests unsettled against a cap of 8.)
-   *
-   * discord.js aborts each attempt after its REST timeout (15 s) and retries it up to 3 times, and
-   * all user lookups of one client wait in one sequential route queue, so a request normally settles,
-   * but nothing here bounds how long, and neither `Client.destroy()` nor dropping the promise cancels
-   * it. A request that never settles keeps its process-wide slot until the process exits.
-   */
-  private async lookupUser(userId: string): Promise<DiscordUserInfo | null> {
-    const user = await this.client.users.fetch(userId);
-    return typeof user.bot === "boolean" ? { bot: user.bot } : null;
   }
 
   /** Verify guild membership and channel permissions without joining voice. */
@@ -823,6 +810,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.stopped = true;
     this.leave();
     this.humans.dispose();
+    // A destroyed client can stay reachable while a REST request it started is out; it must not keep this bot.
+    this.client.off("voiceStateUpdate", this.onVoiceState);
     await this.client.destroy();
   }
 
@@ -850,3 +839,24 @@ export class DiscordBot extends EventEmitter implements BotPort {
   }
 }
 
+/**
+ * The production identity lookup: the REST user lookup (needs no privileged intent), as a function of
+ * the client alone. The returned promise settles exactly when the REST request does, and is
+ * deliberately not raced against a timer: the identity request registry counts the request until
+ * this promise settles, and can only keep that count honest if the promise it holds is the request
+ * itself. (A race here once freed a slot while the request it stood for was still out: 24 requests
+ * unsettled against a cap of 8.)
+ *
+ * discord.js aborts each attempt after its REST timeout (15 s) and retries it up to 3 times, and all
+ * user lookups of one client wait in one sequential route queue, so a request normally settles, but
+ * nothing here bounds how long, and neither `Client.destroy()` nor dropping the promise cancels it. A
+ * request that never settles keeps its process-wide slot until the process exits, and keeps the
+ * client that started it reachable (its REST manager owns the request). It does not keep the bot:
+ * this function captures only the client, and `destroy()` removes the bot's listener from it.
+ */
+function userLookupVia(client: Client): (userId: string) => Promise<DiscordUserInfo | null> {
+  return async (userId) => {
+    const user = await client.users.fetch(userId);
+    return typeof user.bot === "boolean" ? { bot: user.bot } : null;
+  };
+}

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { HumanFilter, type DiscordUserInfo } from "./human-filter.js";
+import { alive } from "../testing/gc.js";
 import { IdentityRequests } from "./identity-requests.js";
 
 const tick = () => new Promise<void>((r) => setImmediate(r));
@@ -340,5 +341,76 @@ describe("HumanFilter late answers, resets and replacement (R1)", () => {
     await tick();
     assert.equal(next.isHuman("new-0"), false);
     assert.equal(c.started.length, 5, "a slot frees only when a request settles, and then one new request may start");
+  });
+});
+
+describe("HumanFilter subscriptions: a reset, disposed or replaced filter is not held or called by a request still out (finding 2)", () => {
+  it("30 sequential filter replacements on one never-settling request: one request, no subscriber growth, and the old filters are reclaimable", async () => {
+    const c = controlled({ lookupTimeoutMs: 5 });
+    const refs: WeakRef<object>[] = [];
+    // Each replacement in a function of its own, so this test's frame holds none of them.
+    const replace = () => {
+      const f = c.another();
+      assert.equal(f.isHuman("stuck"), false);
+      assert.equal(f.stats().waiting, 1);
+      refs.push(new WeakRef(f));
+      f.dispose();
+    };
+    c.f.dispose();
+    for (let i = 0; i < 30; i++) {
+      replace();
+      assert.equal(c.requests.stats().subscribers, 0, `no subscriber left after replacement ${i + 1}`);
+    }
+    await sleep(20); // past every lookup timeout
+    assert.deepEqual(c.started, ["stuck"], "one underlying request");
+    assert.deepEqual({ pending: c.requests.stats().pending, subscribers: c.requests.stats().subscribers }, { pending: 1, subscribers: 0 });
+    const retained = await alive(refs);
+    assert.equal(retained, 0, `no disposed filter is reachable from the request (${retained} of 30 were)`);
+  });
+
+  it("late settlement reaches only the filter still waiting: a reset or disposed filter learns nothing and is not called", async () => {
+    const c = controlled();
+    const old = c.f;
+    const reset = c.another();
+    const current = c.another();
+    for (const f of [old, reset, current]) assert.equal(f.isHuman("u"), false);
+    assert.equal(c.started.length, 1);
+    assert.equal(c.requests.stats().subscribers, 3);
+    old.dispose();
+    reset.reset();
+    assert.equal(c.requests.stats().subscribers, 1, "only the current filter is still subscribed");
+    c.settle("u", { bot: false });
+    await tick();
+    assert.equal(current.isHuman("u"), true, "the current filter learns the answer");
+    assert.equal(old.size, 0, "the disposed filter learned nothing");
+    assert.equal(reset.size, 0, "nor did the reset one");
+    assert.equal(reset.isHuman("u"), false, "it asks again instead (a new request: the old one has settled)");
+    assert.equal(c.started.length, 2);
+  });
+
+  it("concurrent active filters on one request both learn the answer, and one disposing does not affect the other", async () => {
+    const c = controlled();
+    const a = c.f;
+    const b = c.another();
+    a.isHuman("u");
+    b.isHuman("u");
+    a.isHuman("v");
+    b.isHuman("v");
+    assert.equal(c.started.length, 2, "one request per user, shared");
+    a.dispose();
+    c.settle("u", { bot: false });
+    c.settle("v", { bot: true });
+    await tick();
+    assert.equal(b.isHuman("u"), true);
+    assert.equal(b.isHuman("v"), false, "a bot stays a bot");
+    assert.equal(b.stats().waiting, 0);
+    assert.equal(c.requests.stats().subscribers, 0);
+  });
+
+  it("the stats report the registry's subscriber count alongside pending and stalled", () => {
+    const c = controlled({ maxPending: 8 });
+    c.f.isHuman("a");
+    c.another().isHuman("a");
+    assert.deepEqual({ pending: c.f.stats().pending, waiting: c.f.stats().waiting, subscribers: c.f.stats().subscribers }, { pending: 1, waiting: 1, subscribers: 2 });
   });
 });
