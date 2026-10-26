@@ -57,8 +57,18 @@ describe("run-live-container.sh presence-only", () => {
     assert.match(r.stdout, /D1_DISCORD_TOKEN_SLOT_0: SET/);
     assert.match(r.stdout, /D1_TS_HOST: SET/);
     assert.match(r.stdout, /presence complete/);
+    assert.match(r.stdout, /lab network: d1-ts-lab/);
     assert.equal(r.stdout.includes(secret), false);
     assert.equal(r.stdout.includes("not-a-real-host"), false);
+  });
+
+  it("names the disposable lab network and does not use --internal", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync(script, "utf8");
+    assert.match(src, /d1-ts-lab/);
+    assert.match(src, /--network "\$NET"/);
+    assert.match(src, /Internal/);
+    assert.equal(src.includes("network create --internal"), false);
   });
 
   it("exits 2 when a required variable is MISSING", () => {

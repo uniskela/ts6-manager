@@ -1,8 +1,12 @@
 {
+  "scripts/d1-ts-lab.test.mjs": [
+    "documents isolated names and refuses an unknown command"
+  ],
   "scripts/run-live-container.test.mjs": [
     "exits 2 when a required variable is MISSING",
     "exits 2 when the env file is missing",
     "exits 2 when the env file is not mode 0600",
+    "names the disposable lab network and does not use --internal",
     "prints SET/MISSING only, never token values, and does not start live without --confirm"
   ],
   "scripts/run-tests.fixture.test.mjs": [

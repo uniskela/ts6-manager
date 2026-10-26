@@ -60,7 +60,16 @@ packages/discord-bridge/scripts/container-runtime-test.sh ts6-discord-bridge-lab
 
 The image is never published. The build needs the registry once (`pnpm install --frozen-lockfile`, in the build stage only). The runtime stage never touches a registry or a package manager: on the reviewed baseline the same `docker run --network none` failed because corepack tried to download pnpm at start (`EAI_AGAIN registry.npmjs.org`).
 
-TeamSpeak-side live lab (a real TS6 6.0.0-beta13 server, synthetic speakers, simulated Discord sinks). The server is only on an internal Docker network:
+Disposable TeamSpeak 6 lab for the Discord live proof (not production). Own container, volume and network. The network is a normal bridge so the D1 container can reach Discord; UDP 9987 stays on that network. Host publish is loopback (and Tailscale if bind works) on UDP 19987 — never `0.0.0.0`.
+
+```bash
+packages/discord-bridge/scripts/d1-ts-lab.sh start
+packages/discord-bridge/scripts/d1-ts-lab.sh handshake   # real TS protocol, no Discord
+# D1_TS_HOST=d1-ts6-lab D1_TS_PORT=9987 in lab/.env
+packages/discord-bridge/scripts/d1-ts-lab.sh stop        # removes only d1-ts6-lab, d1-ts6-lab-data, d1-ts-lab
+```
+
+Synthetic TeamSpeak-side lab (real TS6 6.0.0-beta13, simulated Discord sinks). That older `--internal` network is for this synthetic run only and cannot reach Discord:
 
 ```bash
 docker network create --internal d1-lab

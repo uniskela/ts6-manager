@@ -16,6 +16,7 @@
     "test:update-expected": "node scripts/run-tests.mjs --update",
     "smoke:deps": "tsx src/lab/smoke-deps.ts",
     "lab:ts-live": "tsx src/lab/ts-live.ts",
+    "lab:ts-handshake": "tsx src/lab/ts-handshake.ts",
     "lab:live": "tsx src/lab/live.ts",
     "lab:setup": "tsx src/lab/setup.ts",
     "prelab:ts-live": "node scripts/sync-tslib.mjs",

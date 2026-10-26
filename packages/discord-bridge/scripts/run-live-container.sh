@@ -11,6 +11,7 @@ else
   IMG="ts6-discord-bridge-lab:d1-${sha}"
 fi
 APP=/app/packages/discord-bridge
+NET="${D1_TS_NET:-d1-ts-lab}"
 REQUIRED=(
   D1_DISCORD_TOKEN_SLOT_0 D1_DISCORD_TOKEN_SLOT_1 D1_DISCORD_TOKEN_SLOT_2
   D1_DISCORD_TOKEN_SLOT_3 D1_DISCORD_TOKEN_SLOT_4 D1_DISCORD_TOKEN_OVERFLOW
@@ -41,8 +42,18 @@ if [ "$missing" -ne 0 ]; then
 fi
 if [ "$CONFIRM" -ne 1 ]; then
   echo "presence complete. Live Discord connections are not started."
+  echo "lab network: $NET (bridge joins this on --confirm; must not be --internal)"
   echo "After the operator approves the run: $0 --confirm"
   exit 0
+fi
+if ! docker network inspect "$NET" >/dev/null 2>&1; then
+  echo "missing lab network $NET (start packages/discord-bridge/scripts/d1-ts-lab.sh start)" >&2
+  exit 2
+fi
+internal="$(docker network inspect -f '{{.Internal}}' "$NET")"
+if [ "$internal" = "true" ]; then
+  echo "lab network $NET is internal; Discord would be unreachable" >&2
+  exit 2
 fi
 
 EVID_HOST="${D1_EVIDENCE_DIR:-$ROOT/packages/discord-bridge/lab/evidence}"
@@ -64,6 +75,7 @@ restore_evidence() {
 trap restore_evidence EXIT
 
 docker run --rm -i --name d1-live \
+  --network "$NET" \
   --read-only --cap-drop ALL --security-opt no-new-privileges \
   --cpus 1 --memory 512m \
   --tmpfs /tmp \
