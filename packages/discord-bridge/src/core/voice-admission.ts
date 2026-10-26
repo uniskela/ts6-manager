@@ -17,11 +17,20 @@
  * given a new admission, and anything still queued or in flight under the old one is dropped,
  * because it carries the old token. Callers check `valid` at subscription, on every received packet,
  * and again for every queued frame immediately before it is mixed into TeamSpeak.
+ *
+ * Every admission of one instance is also bound to the DAVE session the receive generation started
+ * under (`session`, checked by `sessionLive`). The first check that finds a different session in
+ * force closes the whole instance: every admission ends for good, nothing is admitted again, and the
+ * owner is told (`onSessionEnded`) so it can start a new generation, with new admissions, under the
+ * new session. This is checked on every `admit` and `valid`, so it holds at the same three places,
+ * whether or not anything else has noticed the replacement yet.
  */
 export interface Admission {
   readonly userId: string;
   /** Unique in the process, for diagnostics. Validity is decided by identity of the object, not this number. */
   readonly id: number;
+  /** The DAVE session epoch it was granted under, for diagnostics (validity is still decided by `valid`). */
+  readonly session: number;
 }
 
 export interface VoiceAdmissionOptions {
@@ -35,6 +44,15 @@ export interface VoiceAdmissionOptions {
   excluded: (userId: string) => boolean;
   /** Called once each time an admission is revoked (the user's streams should be closed). */
   onRevoked?: (userId: string) => void;
+  /** The DAVE session epoch this receive generation started under. Default 0. */
+  session?: number;
+  /**
+   * Is that session still the one in force on the live connection. False closes this instance for
+   * good. Absent means always (tests of the admission rules alone).
+   */
+  sessionLive?: () => boolean;
+  /** Called once, when a check finds the session replaced and closes this instance. */
+  onSessionEnded?: () => void;
 }
 
 let nextAdmissionId = 1;
@@ -45,8 +63,20 @@ export class VoiceAdmission {
   /** Admissions granted, and revoked (by departure, a failed re-check or close). */
   granted = 0;
   revoked = 0;
+  /** True once a check found the DAVE session replaced (this instance is then closed). */
+  sessionEnded = false;
 
   constructor(private readonly o: VoiceAdmissionOptions) {}
+
+  /** Is this instance still open under the session it started with. A replaced session closes it here. */
+  private open(): boolean {
+    if (this.closed) return false;
+    if (!this.o.sessionLive || this.o.sessionLive()) return true;
+    this.sessionEnded = true;
+    this.close();
+    this.o.onSessionEnded?.();
+    return false;
+  }
 
   private present(userId: string): boolean {
     return !this.o.excluded(userId) && this.o.channelOf(userId) === this.o.channelId;
@@ -58,7 +88,7 @@ export class VoiceAdmission {
    * looked up.
    */
   admit(userId: string): Admission | null {
-    if (this.closed) return null;
+    if (!this.open()) return null;
     if (!this.present(userId)) {
       this.revoke(userId);
       return null;
@@ -66,16 +96,19 @@ export class VoiceAdmission {
     if (!this.o.isHuman(userId)) return null;
     let admission = this.current.get(userId);
     if (!admission) {
-      admission = Object.freeze({ userId, id: nextAdmissionId++ });
+      admission = Object.freeze({ userId, id: nextAdmissionId++, session: this.o.session ?? 0 });
       this.current.set(userId, admission);
       this.granted += 1;
     }
     return admission;
   }
 
-  /** Is this still the user's current admission, and are they still present. A failed presence check revokes it. */
+  /**
+   * Is this still the user's current admission, under the session it was granted in, and are they
+   * still present. A failed presence check revokes it; a replaced session closes the instance.
+   */
   valid(admission: Admission | undefined): boolean {
-    if (!admission || this.closed || this.current.get(admission.userId) !== admission) return false;
+    if (!admission || !this.open() || this.current.get(admission.userId) !== admission) return false;
     if (!this.present(admission.userId)) {
       this.revoke(admission.userId);
       return false;
@@ -92,6 +125,7 @@ export class VoiceAdmission {
 
   /** The receive generation ended: every admission ends with it, and nothing is admitted again. */
   close(): void {
+    if (this.closed) return;
     this.closed = true;
     this.revoked += this.current.size;
     this.current.clear();

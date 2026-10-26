@@ -40,6 +40,19 @@
     "does not charge intentional operations: a planned join, planned rejoins that the gateway accepts, leave and join",
     "does not report health over a failure that arrived while the join was waiting for DAVE, and the next attempt pays"
   ],
+  "src/adapters/discord-bot.dave-session.test.ts": [
+    "DAVE unavailable, re-initialised during the outage, then established: reception resumes under a fresh admission and the old one stays dead",
+    "after a new DAVE session object (replaceDave): the old admission is permanently rejected, late callbacks under it are refused, and a fresh admission under the new session is heard",
+    "after the library's in-place DAVESession.reinit() (same objects, never unready): the old admission is permanently rejected, late callbacks under it are refused, and a fresh admission under the new session is heard",
+    "bare pipeline: every frame queued under session A is dropped at the mixer after a new DAVE session object (replaceDave), and none is forwarded",
+    "bare pipeline: every frame queued under session A is dropped at the mixer after the library's in-place DAVESession.reinit() (same objects, never unready), and none is forwarded",
+    "fail closed: a session the bot cannot identify (its wrapper cannot be instrumented) admits nobody and forwards nothing",
+    "real runtime: a frame queued under session A is not mixed after session A is replaced by a new DAVE session object (replaceDave)",
+    "real runtime: a frame queued under session A is not mixed after session A is replaced by the library's in-place DAVESession.reinit() (same objects, never unready)",
+    "replacement during receiver failover: the successor binds the session in force, a replacement after it starts receiving ends its admissions, and only it is heard",
+    "replacement during simultaneous speech: nothing under a session A admission is mixed afterwards, and every speaker is heard again under session B",
+    "the old subscription is closed and its stream callbacks are stale; no user ever holds two streams or forwards a packet twice"
+  ],
   "src/adapters/discord-bot.dave.test.ts": [
     "MLS group not ready (epoch transition) while audio is queued and playing: no plaintext media leaves and the buffer is flushed",
     "a bot without DAVE is not elected as a successor",
@@ -260,6 +273,14 @@
     "treats an empty payload as end-of-voice and rejects other codecs and short packets",
     "two simultaneous speakers land on two different bots with no crosstalk (tone analysis)"
   ],
+  "src/core/dave-session.test.ts": [
+    "an epoch never comes back: A, B, then A again is a third epoch",
+    "an in-place reinit of the library's DAVESession keeps the same native object, and is still a new epoch",
+    "counts a re-initialisation before it runs, so a check made during it already sees a new session",
+    "fails closed: no identity when not ready, when a part is missing, or when the wrapper cannot be instrumented",
+    "instruments a wrapper once: one reinit is one change however often the session is read",
+    "one session keeps one epoch; a new Networking, wrapper, native session, reinit or welcome is a new one"
+  ],
   "src/core/human-filter.test.ts": [
     "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
     "a late answer after the timeout is still used for a user who did not leave",
@@ -305,9 +326,11 @@
   ],
   "src/core/voice-admission.test.ts": [
     "a present user who is not a verified human, or is one of the bridge's own identities, is not admitted",
+    "a replaced session is found by admit too, before anyone new is admitted",
     "a validity check that finds the user gone revokes the admission, so it stays dead if they come back",
     "admits a verified human only while the gateway puts them in the source channel, and checks membership before identity",
     "close ends every admission and admits nobody afterwards",
+    "records the session, and the first check that finds it replaced ends every admission for good",
     "revoke ends an admission for good; a return is a new admission and the old one never becomes valid again"
   ],
   "src/lab/config.test.ts": [

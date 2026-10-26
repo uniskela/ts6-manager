@@ -10,7 +10,7 @@ import { ReceiverElection } from "./receiver-election.js";
 
 /** Supervisor tests that are not about admission: every user holds a valid admission. */
 function everyoneAdmitted() {
-  return { admit: (userId: string) => ({ userId, id: 0 }), admitted: () => true };
+  return { admit: (userId: string) => ({ userId, id: 0, session: 0 }), admitted: () => true };
 }
 
 function electionWith(...bots: ("slot-0" | "slot-1")[]) {
@@ -76,7 +76,7 @@ describe("ReceiveSupervisor", () => {
 
   it("drops a packet whose admission has ended, closes that stream, and re-opens the user only under a new admission", () => {
     const election = electionWith("slot-0");
-    let current: { userId: string; id: number } | null = { userId: "h1", id: 1 };
+    let current: { userId: string; id: number; session: number } | null = { userId: "h1", id: 1, session: 0 };
     const valid = new Set<object>([current]);
     const streams: PassThrough[] = [];
     const got: number[] = [];
@@ -101,7 +101,7 @@ describe("ReceiveSupervisor", () => {
     assert.deepEqual(closed, ["h1"]);
     current = null;
     assert.equal(sup.open("h1"), false, "not re-opened without an admission");
-    current = { userId: "h1", id: 2 };
+    current = { userId: "h1", id: 2, session: 0 };
     valid.add(current);
     assert.equal(sup.open("h1"), true, "re-opened under a new one");
     assert.equal(sup.admissionOf("h1"), current);

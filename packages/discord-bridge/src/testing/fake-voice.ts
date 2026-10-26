@@ -155,6 +155,13 @@ export interface ReadyHandle {
   setDave(o: { protocolVersion?: number; ready?: boolean }): void;
   /** Replace the DAVE session with a new, established one (an MLS reset): anything encrypted under the old one is stale. */
   replaceDave(): DAVESession;
+  /**
+   * Re-initialise the live session in place through the library's own `DAVESession.reinit()` (what
+   * an invalid transition or a new epoch 1 does): the same connection, Networking, wrapper and native
+   * session objects, a new MLS session underneath. The fake native session stays ready throughout,
+   * the worst case for anything that only watches availability.
+   */
+  reinitDave(): void;
 }
 
 /** Drive a real VoiceConnection to Ready with a DAVE session on top of the fake native session. */
@@ -208,6 +215,10 @@ export function makeReady(
       (next as unknown as { session: FakeDavey }).session = new FakeDavey();
       (networking.state as { dave: DAVESession }).dave = next;
       return next;
+    },
+    reinitDave() {
+      const live = (networking.state as { dave: DAVESession }).dave;
+      live.reinit();
     },
   };
 }

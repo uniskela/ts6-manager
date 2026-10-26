@@ -17,6 +17,7 @@ import {
 } from "@discordjs/voice";
 import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
+import { DaveSessionEpochs, daveSessionIdentity } from "../core/dave-session.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
 import { HumanFilter, type DiscordUserInfo, type HumanFilterOptions } from "../core/human-filter.js";
@@ -160,6 +161,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private readonly humans: HumanFilter;
   /** Who may be heard under the current receive generation; null while not receiving. */
   private admission: VoiceAdmission | null = null;
+  /** Numbers the DAVE sessions this bot has seen on its connections; an epoch never comes back. */
+  private readonly daveEpochs = new DaveSessionEpochs();
+  /** The DAVE session epoch the current receive generation is bound to; null while not receiving. */
+  private receiveSession: number | null = null;
   /**
    * `@discordjs/voice` keys connections by (group, guildId) and the default group is shared, so two
    * bots in one guild would be handed the same connection. Every bot gets its own group, scoped by
@@ -170,6 +175,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   healthy = false;
   framesSent = 0;
   rejoins = 0;
+  /** Established DAVE sessions replaced by another while receiving (each one ended a receive generation). */
+  daveReplacements = 0;
 
   constructor(private readonly o: DiscordBotOptions) {
     super();
@@ -446,8 +453,22 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return state.status === VoiceConnectionStatus.Ready ? ((state.networking.state as { dave?: object }).dave ?? null) : null;
   }
 
+  /**
+   * DAVE established on this connection, and the session in force can be identified (fail closed:
+   * a session the bot cannot tell apart from the next one is treated as no session).
+   */
   private enforced(conn: VoiceConnection | null = this.connection): boolean {
-    return conn !== null && daveEnforced(readDaveInfo(conn));
+    return conn !== null && daveEnforced(readDaveInfo(conn)) && this.sessionEpoch(conn) !== null;
+  }
+
+  /** The epoch of the DAVE session in force on this connection now, or null when there is none. */
+  private sessionEpoch(conn: VoiceConnection): number | null {
+    return this.daveEpochs.of(daveSessionIdentity(conn));
+  }
+
+  /** Is the session the current receive generation is bound to still the one in force on the live connection. */
+  private receiveSessionHolds(conn: VoiceConnection, epoch: number): boolean {
+    return conn === this.connection && this.sessionEpoch(conn) === epoch;
   }
 
   /**
@@ -480,9 +501,11 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const receiver = conn.receiver as unknown as ParsingReceiver;
     const parse = receiver.parsePacket.bind(receiver);
     receiver.parsePacket = (buffer, mode, nonce, secretKey, userId) => {
-      if (conn !== this.connection || !this.enforced(conn)) {
+      // Dropped (VoiceReceiver does not push a null packet) unless DAVE is established and, while
+      // receiving, it is still the session the receive generation was started under.
+      if (conn !== this.connection || !this.enforced(conn) || (this.receiveSession !== null && !this.receiveSessionHolds(conn, this.receiveSession))) {
         queueMicrotask(() => this.observeDave());
-        return null; // dropped: VoiceReceiver does not push a null packet
+        return null;
       }
       this.refusePlaintext(conn, userId);
       return parse(buffer, mode, nonce, secretKey, userId);
@@ -514,16 +537,44 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (session?.canPassthrough?.(userId)) session.setPassthroughMode?.(false, 0);
   }
 
-  /** Read the live DAVE state and act on a change. Returns whether DAVE is established now. */
+  /**
+   * Read the live DAVE state and act on a change: lost, established again, or (while receiving)
+   * replaced by a different established session. Returns whether DAVE is established now.
+   *
+   * This is the reaction, not the boundary: a replaced session is refused at packet reception and at
+   * the mix by the admission's own session check, whether or not this has run yet.
+   */
   private observeDave(): boolean {
-    if (!this.connection) return false;
-    const ok = this.enforced();
-    if (ok === this.daveOk) return ok;
-    this.daveOk = ok;
-    if (!this.healthy) return ok; // a join in progress is governed by requireDave
-    if (ok) this.handleDaveRestored();
-    else this.handleDaveLost();
+    const conn = this.connection;
+    if (!conn) return false;
+    const ok = this.enforced(conn);
+    if (ok !== this.daveOk) {
+      this.daveOk = ok;
+      if (!this.healthy) return ok; // a join in progress is governed by requireDave
+      if (ok) this.handleDaveRestored();
+      else this.handleDaveLost();
+      return ok;
+    }
+    if (ok && this.healthy && this.admission && (this.admission.isClosed || this.receiveSession === null || !this.receiveSessionHolds(conn, this.receiveSession))) {
+      this.handleDaveReplaced();
+    }
     return ok;
+  }
+
+  /**
+   * The established session the receive generation was bound to was replaced by another established
+   * one. Every admission of the old session has already ended (the first check that saw the change
+   * closed them) or ends here. Reception stops now, which closes every old subscription and makes
+   * their callbacks stale, and the election moves this bot to a new generation: everything queued
+   * under the old one is flushed and fenced, and the new generation subscribes under the new
+   * session, with new admissions. The connection is kept, since the new session is healthy.
+   */
+  private handleDaveReplaced(): void {
+    this.daveReplacements += 1;
+    this.o.log.warn(`${this.o.id} DAVE session replaced: ending every admission of the old session and receiving again under a new generation`);
+    this.stopReceive();
+    this.o.election.daveLost(this.o.id, "dave session replaced");
+    this.o.election.daveRestored(this.o.id);
   }
 
   private handleDaveLost(): void {
@@ -564,7 +615,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const deadline = Date.now() + this.timing.daveWaitMs;
     while (Date.now() < deadline) {
       this.checkpoint(epoch, conn);
-      if (daveEnforced(readDaveInfo(conn))) return;
+      if (this.enforced(conn)) return;
       await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
     const info = readDaveInfo(conn);
@@ -598,6 +649,12 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const conn = this.connection;
     if (!conn || this.selfDeaf || !this.o.election.admitSubscribe(this.o.id, generation)) return false;
     this.stopReceive();
+    // The generation is bound to the DAVE session in force now; with no identifiable session, nobody is heard.
+    const session = this.enforced(conn) ? this.sessionEpoch(conn) : null;
+    if (session === null) {
+      queueMicrotask(() => this.observeDave());
+      return false;
+    }
     const receiver = conn.receiver;
     // Heard only while present in the source channel AND known to be human: never a bridge bot (that
     // would re-forward bridge audio), never another bot account, never someone we cannot identify yet,
@@ -609,6 +666,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
       excluded: (userId) => this.excluded(userId),
       // Deferred: a revocation found during a mix tick must not tear streams down inside that tick.
       onRevoked: (userId) => queueMicrotask(() => sup.closeUser(userId)),
+      session,
+      sessionLive: () => this.receiveSessionHolds(conn, session),
+      // Deferred for the same reason. The admissions are already closed; this starts the new generation.
+      onSessionEnded: () =>
+        queueMicrotask(() => {
+          if (this.admission === admission) this.observeDave();
+        }),
     });
     const sup: ReceiveSupervisor = new ReceiveSupervisor({
       bot: this.o.id,
@@ -619,7 +683,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
       admitted: (a) => admission.valid(a),
       activeSpeakers: () => receiver.speaking.users.keys(),
       onFrame: (userId, opus, gen, a) => {
-        if (this.supervisor !== sup || !admission.valid(a) || !this.observeDave()) return; // stale reception, departed user or DAVE unavailable
+        // DAVE unavailable (or replaced: observing it ends this generation), stale reception, or an ended admission.
+        if (!this.observeDave() || this.supervisor !== sup || !admission.valid(a)) return;
         this.o.onHumanOpus(this.o.id, gen, userId, opus, a);
       },
       onUserClosed: (userId) => this.o.onHumanClosed?.(this.o.id, userId),
@@ -630,6 +695,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     });
     this.supervisor = sup;
     this.admission = admission;
+    this.receiveSession = session;
     this.receiveOnSpeaking = (userId) => {
       sup.open(userId);
     };
@@ -644,6 +710,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.receiveOnSpeaking = null;
     this.admission?.close();
     this.admission = null;
+    this.receiveSession = null;
     this.supervisor?.closeAll();
     this.supervisor = null;
   }
@@ -724,6 +791,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.connection = null;
     this.daveOk = false;
     this.preparedFor = null;
+    this.daveEpochs.forget();
     this.abortJoin?.abort();
     this.stopReceive(conn);
     this.dropOutbound();
@@ -770,4 +838,15 @@ export class DiscordBot extends EventEmitter implements BotPort {
   get daveInfo() {
     return this.connection ? readDaveInfo(this.connection) : null;
   }
+
+  /** The epoch of the DAVE session in force on the live connection (null when none), for diagnostics and tests. */
+  get daveSession(): number | null {
+    return this.connection ? this.sessionEpoch(this.connection) : null;
+  }
+
+  /** The DAVE session epoch the current receive generation is bound to (null while not receiving). */
+  get receiveDaveSession(): number | null {
+    return this.receiveSession;
+  }
 }
+

@@ -9,7 +9,7 @@ import { talk, testBot, tick, waitFor } from "../testing/fake-voice.js";
 
 /** Supervisor tests that are not about admission: every user holds a valid admission. */
 function everyoneAdmitted() {
-  return { admit: (userId: string) => ({ userId, id: 0 }), admitted: () => true };
+  return { admit: (userId: string) => ({ userId, id: 0, session: 0 }), admitted: () => true };
 }
 
 function newElection() {

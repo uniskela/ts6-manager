@@ -89,3 +89,47 @@ describe("VoiceAdmission: identity, membership and continuity are all required",
     assert.equal(a.valid(undefined), false, "and nothing without an admission is ever valid");
   });
 });
+
+describe("VoiceAdmission: every admission is bound to the DAVE session its generation started under", () => {
+  function bound() {
+    const channel = new Map<string, string | null>([["h", "source"], ["k", "source"]]);
+    let live = true;
+    let ended = 0;
+    const a = new VoiceAdmission({
+      channelId: "source",
+      channelOf: (u) => channel.get(u),
+      isHuman: () => true,
+      excluded: () => false,
+      session: 7,
+      sessionLive: () => live,
+      onSessionEnded: () => (ended += 1),
+    });
+    return { a, setLive: (v: boolean) => (live = v), ended: () => ended };
+  }
+
+  it("records the session, and the first check that finds it replaced ends every admission for good", () => {
+    const { a, setLive, ended } = bound();
+    const h = a.admit("h")!;
+    const k = a.admit("k")!;
+    assert.equal(h.session, 7);
+    setLive(false);
+    assert.equal(a.valid(h), false, "rejected at the first check");
+    assert.equal(a.isClosed, true, "the whole generation is closed, not just this user");
+    assert.equal(a.sessionEnded, true);
+    assert.equal(ended(), 1, "the owner is told once");
+    setLive(true); // even if the check would pass again
+    assert.equal(a.valid(h), false, "an admission of a replaced session never becomes valid again");
+    assert.equal(a.valid(k), false);
+    assert.equal(a.admit("h"), null, "and nobody is admitted again in this generation");
+    assert.equal(ended(), 1);
+    assert.equal(a.revoked, 2);
+  });
+
+  it("a replaced session is found by admit too, before anyone new is admitted", () => {
+    const { a, setLive, ended } = bound();
+    setLive(false);
+    assert.equal(a.admit("h"), null);
+    assert.equal(a.granted, 0);
+    assert.equal(ended(), 1);
+  });
+});
