@@ -55,6 +55,23 @@
     "protocol 0: a plaintext packet is dropped, never decoded or queued, and reception is invalidated",
     "resumes encrypted playback once DAVE is established again"
   ],
+  "src/adapters/discord-bot.identity-lifecycle.test.ts": [
+    "R1-A: a human who left while their identity lookup was out is not forwarded when the late answer arrives",
+    "R1-B: leaving and rejoining while the identity request is unsettled does not start a second request for the same user",
+    "R1-C: three successive in-process bot replacements cannot accumulate more than eight unsettled identity requests (24 before)",
+    "a cached bot:false identity does not override a revoked admission: forwarding stops at the departure and the identity stays known",
+    "a departure and a rejoin with no packet or check in between still end the old admission: frames queued before it are not mixed",
+    "a known human whose packets arrive but who is not in the source channel is never subscribed, and is heard once they enter it",
+    "a new receive session invalidates every admission of the old one: queued and late-delivered frames from it are dropped",
+    "a replacement bot instance never honours an admission of the instance it replaced",
+    "eight indefinitely stalled requests: unknown speakers stay excluded, the diagnostics are the real count, and known humans keep speaking",
+    "filter timeout, cooldown, session reset (leave), a new session and dispose (destroy) never release the requests or duplicate them",
+    "frames queued before a departure are dropped at mix; after a rejoin only frames under the new admission reach TeamSpeak",
+    "leaving and rejoining grants a new admission; the old one never becomes valid again",
+    "participant churn: no departed user is ever mixed into TeamSpeak, every present human is, and identity requests stay bounded",
+    "receiver failover: the failed receiver's admissions are dead, the successor admits only present humans, and a departure stops TeamSpeak output",
+    "repeated leave and rejoin while the request is out: one REST operation, then the answer admits only while present"
+  ],
   "src/adapters/discord-bot.isolation.test.ts": [
     "creates distinct VoiceConnection objects, each signalled through its own client's adapter",
     "destroying one bot's connection does not destroy the other's",
@@ -246,8 +263,8 @@
   "src/core/human-filter.test.ts": [
     "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
     "a late answer after the timeout is still used for a user who did not leave",
-    "a late answer for a user that was forgotten is dropped",
     "a lookup that throws synchronously is a failure and does not leak a slot",
+    "a replacement filter on the same registry cannot add requests on top of the ones its predecessor left out",
     "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
     "a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots",
     "admits a cached human and rejects a cached bot",
@@ -258,9 +275,14 @@
     "never admits a user the lookup says is a bot",
     "never admits the bridge's own identities or itself, whatever the cache says",
     "rejects an unknown user until the lookup says human, then admits",
-    "reset() ends the session: answers that arrive afterwards are dropped, and the slots come back as the lookups settle",
+    "reset() ends the session: answers that arrive afterwards are dropped, and the slots come back only as the requests settle",
     "retries a failing user on a doubling cooldown that is capped, and forgets the failures after a success",
-    "stays closed when the lookup fails or finds nothing, and retries only after the cooldown"
+    "stays closed when the lookup fails or finds nothing, and retries only after the cooldown",
+    "timeout, cooldown, reset and dispose never free a slot or start a second request for the same user"
+  ],
+  "src/core/identity-requests.test.ts": [
+    "a request that rejects, throws synchronously or answers without a boolean resolves null and frees its slot",
+    "holds each request until it settles, one per user, and refuses over the cap without queueing"
   ],
   "src/core/rebuild-budget.test.ts": [
     "a budget of zero refuses everything",
@@ -270,14 +292,23 @@
   ],
   "src/core/receive.test.ts": [
     "a stale generation is rejected and tears the supervisor down",
+    "closeUser closes one user's stream and leaves the others open",
     "counts the stream's own buffer: a stalled consumer never holds more than the budget, oldest dropped first",
     "delivers frames tagged with the generation they were opened under",
+    "drops a packet whose admission has ended, closes that stream, and re-opens the user only under a new admission",
     "ends after finish()",
     "is bounded: a burst keeps only the newest frames",
     "keeps the budget while a polling consumer (the AudioPlayer's pattern) falls behind",
     "opens streams only for the admitted generation and counts subscriptions",
     "repeated decrypt errors request a rejoin (DAVE recovery path)",
     "requires an established DAVE session; protocol 0 or a not-ready session is refused"
+  ],
+  "src/core/voice-admission.test.ts": [
+    "a present user who is not a verified human, or is one of the bridge's own identities, is not admitted",
+    "a validity check that finds the user gone revokes the admission, so it stays dead if they come back",
+    "admits a verified human only while the gateway puts them in the source channel, and checks membership before identity",
+    "close ends every admission and admits nobody afterwards",
+    "revoke ends an admission for good; a return is a new admission and the old one never becomes valid again"
   ],
   "src/lab/config.test.ts": [
     "accepts a complete configuration",
