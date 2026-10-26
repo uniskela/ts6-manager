@@ -80,8 +80,8 @@ export class IdentityRequests {
       return null;
     }
     this.started += 1;
-    // The executor turns a `start` that throws synchronously into a rejection, like any other failure.
-    const answer = new Promise<DiscordUserInfo | null>((resolve) => resolve(start(userId))).then(
+    // The async wrapper turns a `start` that throws synchronously into a rejection, like any other failure.
+    const answer = (async () => start(userId))().then(
       (info) => (info && typeof info.bot === "boolean" ? { bot: info.bot } : null),
       () => null,
     );

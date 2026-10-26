@@ -654,7 +654,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
    * queued before a departure, a teardown or a replacement is refused when it comes up to be mixed.
    */
   humanAdmitted(userId: string, admission: Admission | undefined): boolean {
-    return admission !== undefined && admission.userId === userId && this.admission !== null && this.admission.valid(admission);
+    return admission?.userId === userId && this.admission?.valid(admission) === true;
   }
 
   /**
