@@ -14,7 +14,17 @@ Env fallbacks: D1_DISCORD_APP_ID_SLOT_0..4, D1_DISCORD_APP_ID_OVERFLOW, D1_DISCO
 
 function openUrl(url: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn("xdg-open", [url], { stdio: "ignore" });
+    // Absolute path + fixed PATH: avoid a writable PATH hijacking `xdg-open` (S4036).
+    // Do not inherit process.env — lab tokens must not reach the opener.
+    const child = spawn("/usr/bin/xdg-open", [url], {
+      stdio: "ignore",
+      env: {
+        PATH: "/usr/bin:/bin",
+        DISPLAY: process.env.DISPLAY ?? "",
+        WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY ?? "",
+        XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR ?? "",
+      },
+    });
     child.on("error", reject);
     child.on("exit", (code) => (code === 0 ? resolve() : reject(new Error(`xdg-open exited ${code}`))));
   });
