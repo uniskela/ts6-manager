@@ -12,7 +12,10 @@ HOST="$(mktemp -d "${TMPDIR:-/tmp}/d1-beta-mount.XXXXXX")"
 chmod 0755 "$HOST"
 cleanup() {
   docker rm -f d1-private-beta-mount-probe >/dev/null 2>&1 || true
-  rm -rf "$HOST"
+  docker run --rm --user 0 --network none --entrypoint sh \
+    -v "$HOST:/data" "$IMG" -c 'chown -R 0:0 /data' >/dev/null 2>&1 || true
+  chmod -R u+rwX "$HOST" 2>/dev/null || true
+  rm -rf "$HOST" || true
 }
 trap cleanup EXIT
 
