@@ -21,11 +21,9 @@ def compose_config(file: str) -> dict:
         "SIDECAR_SECRET": "dummy",
         "TS6_BETA_TAG": "v0.0.0-beta.0",
         "FRONTEND_URL": "",
-        # Empty beats a checkout .env; compose then uses each file's name: / directory default.
-        "COMPOSE_PROJECT_NAME": "",
     }
     raw = subprocess.check_output(
-        ["docker", "compose", "-f", file, "config", "--format", "json"],
+        ["docker", "compose", "--env-file", os.devnull, "-f", file, "config", "--format", "json"],
         cwd=ROOT,
         env=env,
         text=True,
