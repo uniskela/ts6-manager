@@ -217,3 +217,9 @@ Custom CSS is browser-local. Open:
 Safe mode suspends custom CSS for that page load (and the rest of that document lifetime) without deleting the saved text. Use Appearance → Advanced to **Disable** or **Reset**, then reload without `?safe-ui=1`.
 
 Do not rely on a visible Disable button under hostile CSS — type or bookmark the recovery URL before enabling custom CSS. Clearing site data for the origin also removes the preference, but safe mode is the supported recovery path.
+
+## Beta or prerelease images
+
+If you pinned a `vX.Y.Z-beta.N` or `sha-*` tag and the UI or schema misbehaves, do not switch `latest` on a production compose file. Use `docker compose --env-file .env.beta -f docker-compose.beta.yml` on `main`, point that tester stack back at the previous tag or at stable `v1.11.2`, and restore the volume backup. Keep `.env.beta` private and Git-ignored. See [Beta releases — Rollback](beta.md#rollback).
+
+Discord voice is not part of manager images. A missing Discord bot is expected. See [Discord bridge](discord-bridge.md).

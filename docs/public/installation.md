@@ -11,7 +11,7 @@ TS6 Manager publishes four container images for immutable releases. **GitHub Con
 
 See [Docker Hub](https://hub.docker.com/r/uniskela/ts6-manager). When Hub publish is enabled, versioned Hub tags use the form `uniskela/ts6-manager:backend-1.10.1`.
 
-Release images are published after a Release Please release is created. Ordinary pushes and pull requests do not publish images.
+Release images are published after a Release Please release is created. Ordinary pushes and pull requests do not publish images. Experimental tester images use a separate prerelease channel and must not replace `latest` — see [Beta releases](beta.md).
 
 ## Split stack
 

@@ -81,7 +81,7 @@ The standard compose file keeps sidecar port 9800 internal. The all-in-one image
 
 Production Node images omit npm, npx, pnpm, Corepack, and esbuild build tooling.
 
-CI rebuilds all release images and scans them with Trivy. The release gate fails when a HIGH or CRITICAL finding has an available fix. Unfixed findings remain visible in the full scan inventory rather than being hidden by ignore rules.
+CI rebuilds all release images and scans them with Trivy. The release gate fails when a HIGH or CRITICAL finding has an available fix. Unfixed findings remain visible in the full scan inventory rather than being hidden by ignore rules. Maintainer-approved prereleases reuse the same scan before they reach GHCR; they never move `latest`. See [Beta releases](beta.md).
 
 ## TeamSpeak Query
 
