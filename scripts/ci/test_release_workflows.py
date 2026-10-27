@@ -488,10 +488,16 @@ class PrereleaseWorkflowTests(unittest.TestCase):
             steps = self.prerelease["jobs"][name]["steps"]
             names = [step.get("name") for step in steps]
             self.assertIn("Checkout trusted workflow source", names)
+            self.assertIn("Verify workflow source", names)
             self.assertIn("Keep publish-path guards", names)
             source = steps[names.index("Checkout trusted workflow source")]
             self.assertEqual(source["with"]["ref"], "${{ github.sha }}")
             self.assertNotIn("path", source.get("with", {}))
+            verify = steps[names.index("Verify workflow source")]
+            self.assertIn("git merge-base --is-ancestor", verify["run"])
+            self.assertIn("$WORKFLOW_SHA", verify["run"])
+            self.assertIn("$SOURCE_BRANCH", verify["run"])
+            self.assertLess(names.index("Verify workflow source"), names.index("Keep publish-path guards"))
             keep = steps[names.index("Keep publish-path guards")]
             if keep_run is None:
                 keep_run = keep["run"]

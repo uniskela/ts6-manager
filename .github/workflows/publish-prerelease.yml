@@ -96,6 +96,16 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Verify workflow source
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${SOURCE_BRANCH}:refs/remotes/origin/${SOURCE_BRANCH}"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" "origin/${SOURCE_BRANCH}" \
+            || { echo "workflow source $WORKFLOW_SHA is not reachable from $SOURCE_BRANCH; refusing to execute publish-path guards" >&2; exit 1; }
+
       - name: Keep publish-path guards
         run: |
           set -euo pipefail
@@ -198,6 +208,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Verify workflow source
+        env:
+          SOURCE_BRANCH: ${{ needs.resolve-ref.outputs.source_branch }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${SOURCE_BRANCH}:refs/remotes/origin/${SOURCE_BRANCH}"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" "origin/${SOURCE_BRANCH}" \
+            || { echo "workflow source $WORKFLOW_SHA is not reachable from $SOURCE_BRANCH; refusing to execute publish-path guards" >&2; exit 1; }
 
       - name: Keep publish-path guards
         run: |
@@ -328,6 +348,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Verify workflow source
+        env:
+          SOURCE_BRANCH: ${{ needs.resolve-ref.outputs.source_branch }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${SOURCE_BRANCH}:refs/remotes/origin/${SOURCE_BRANCH}"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" "origin/${SOURCE_BRANCH}" \
+            || { echo "workflow source $WORKFLOW_SHA is not reachable from $SOURCE_BRANCH; refusing to execute publish-path guards" >&2; exit 1; }
 
       - name: Keep publish-path guards
         run: |
@@ -483,6 +513,16 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Verify workflow source
+        env:
+          SOURCE_BRANCH: ${{ needs.resolve-ref.outputs.source_branch }}
+          WORKFLOW_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${SOURCE_BRANCH}:refs/remotes/origin/${SOURCE_BRANCH}"
+          git merge-base --is-ancestor "$WORKFLOW_SHA" "origin/${SOURCE_BRANCH}" \
+            || { echo "workflow source $WORKFLOW_SHA is not reachable from $SOURCE_BRANCH; refusing to execute publish-path guards" >&2; exit 1; }
 
       - name: Keep publish-path guards
         run: |
