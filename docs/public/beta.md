@@ -49,7 +49,7 @@ Each image has `org.opencontainers.image.revision` set to the full commit SHA.
 
 ## Tester install
 
-Use `docker-compose.beta.yml` at the repository root on a host that is not your production TeamSpeak server. The file sets Compose project `ts6-beta` and named volumes `ts6-beta-backend-data` / `ts6-beta-music-data`, so it can sit next to a stable stack in the same directory without sharing data.
+Use `docker-compose.beta.yml` at the repository root once the companion compose pull request has merged. Until then the file is not on `main`. The file sets Compose project `ts6-beta` and named volumes `ts6-beta-backend-data` / `ts6-beta-music-data`, so it can sit next to a stable stack in the same directory without sharing data. Do not invent a compose file or rename the laboratory image.
 
 1. Create a `.env` with new secrets (do not reuse production secrets):
 

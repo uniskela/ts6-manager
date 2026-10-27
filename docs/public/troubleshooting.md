@@ -220,6 +220,6 @@ Do not rely on a visible Disable button under hostile CSS — type or bookmark t
 
 ## Beta or prerelease images
 
-If you pinned a `vX.Y.Z-beta.N` or `sha-*` tag and the UI or schema misbehaves, do not switch `latest` on a production compose file. Point the tester stack back at the previous tag or at stable `v1.11.2` and restore the volume backup. See [Beta releases — Rollback](beta.md#rollback).
+If you pinned a `vX.Y.Z-beta.N` or `sha-*` tag and the UI or schema misbehaves, do not switch `latest` on a production compose file. After `docker-compose.beta.yml` is on `main`, point that tester stack back at the previous tag or at stable `v1.11.2` and restore the volume backup. See [Beta releases — Rollback](beta.md#rollback).
 
 Discord voice is not part of manager images. A missing Discord bot is expected. See [Discord bridge](discord-bridge.md).

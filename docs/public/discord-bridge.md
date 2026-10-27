@@ -14,7 +14,7 @@ Stable TS6 Manager (`v1.11.x`) has no Discord voice integration. There is nothin
 
 ## Bridge-D1 laboratory
 
-A separate in-repo laboratory (`packages/discord-bridge`) can join one Discord voice channel and one TeamSpeak channel for fail-closed DAVE / audio experiments.
+A laboratory (`packages/discord-bridge`) lives on draft PR [#504](https://github.com/uniskela/ts6-manager/pull/504) and is not on `main`. It can join one Discord voice channel and one TeamSpeak channel for fail-closed DAVE / audio experiments.
 
 That program is not a deployment contract:
 
