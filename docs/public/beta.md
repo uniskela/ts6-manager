@@ -49,7 +49,7 @@ Each image has `org.opencontainers.image.revision` set to the full commit SHA.
 
 ## Tester install
 
-Use `docker-compose.beta.yml` at the repository root on a host that is not your production TeamSpeak server.
+Use `docker-compose.beta.yml` at the repository root on a host that is not your production TeamSpeak server. The file sets Compose project `ts6-beta` and named volumes `ts6-beta-backend-data` / `ts6-beta-music-data`, so it can sit next to a stable stack in the same directory without sharing data.
 
 1. Create a `.env` with new secrets (do not reuse production secrets):
 
@@ -60,12 +60,12 @@ echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
 echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env
 ~~~
 
-2. Start and stop the stack yourself. Compose sets `restart: "no"`.
+2. Start and stop the stack yourself. Compose sets `restart: "no"`. The UI is `http://127.0.0.1:13000`. The backend API stays on the Docker network and is not published on the host.
 
 ~~~bash
 docker compose -f docker-compose.beta.yml up -d
 docker compose -f docker-compose.beta.yml ps
-# UI is http://127.0.0.1:3000 — not published on other interfaces
+# UI is http://127.0.0.1:13000 — loopback only, not port 3000
 docker compose -f docker-compose.beta.yml down
 ~~~
 
@@ -83,7 +83,7 @@ Run beta on a separate host or compose project from production.
 
 - **TeamSpeak:** a throwaway virtual server or a dedicated non-production instance. Do not point beta at the production server.
 - **Discord:** if you later test the laboratory bridge, use a private testing guild and the smallest bot permissions the lab README lists. That program is not part of this compose file.
-- **Access:** keep published ports on `127.0.0.1`. Reach them over an existing private path if you need another machine.
+- **Access:** the only published port is the UI on `127.0.0.1:13000`. Reach it over an existing private path if you need another machine. Do not publish the backend.
 - **Resources:** the example limits memory and CPU. Raise them only if the host is dedicated to the test.
 - **Health:** backend `/api/health` (through the UI origin) and sidecar `/health` on the internal network. Record counters you already have (connections, bot state, diagnostics). Do not export secrets.
 - **Control:** start and stop with compose. After a crash, `docker compose -f docker-compose.beta.yml up -d` is a manual recovery, not an invitation to `unless-stopped`.
@@ -107,7 +107,7 @@ Beta schemas may not load in an older image. Back up the SQLite volume before ev
 
 ~~~bash
 docker compose -f docker-compose.beta.yml down
-# copy the backend-data volume, then:
+# copy the ts6-beta-backend-data volume, then:
 #   TS6_BETA_TAG=v1.11.2   # last known stable, or
 #   TS6_BETA_TAG=sha-oldid # previous prerelease commit
 docker compose -f docker-compose.beta.yml up -d
@@ -122,10 +122,10 @@ Stable production stays on `docker-compose.yml` and `v1.11.2` / `latest`. Changi
 The **Publish prerelease images** workflow is `workflow_dispatch` only. It does not run on pull requests.
 
 1. Open **Actions → Publish prerelease images**.
-2. Set `ref` to a 40-character commit SHA that is already in this repository, or to an existing `vX.Y.Z-(alpha|beta|rc).N` tag.
-3. Optionally set `prerelease_tag` (`v1.12.0-beta.1`) when `ref` is a SHA.
-4. Leave `create_github_prerelease` off unless you intend a public GitHub prerelease. If you turn it on, the notes mark the release as prerelease and list unsupported features.
-5. Approve the `prerelease` environment. Untrusted pull request code never sees package-publish credentials.
+2. Set `ref` to a 40-character commit SHA, or to an existing `vX.Y.Z-(alpha|beta|rc).N` tag. The commit must be reachable from `main` (or from an explicitly named, protected `release/*` branch via `source_branch`). Unreviewed pull-request commits are rejected.
+3. Optionally set `prerelease_tag` (`v1.12.0-beta.1`) when `ref` is a SHA. If that git tag or GHCR version already exists for a **different** commit, the workflow fails. Republishing the same commit is allowed.
+4. Leave `create_github_prerelease` off unless you intend a public GitHub prerelease. If you turn it on, the notes mark the release as prerelease and list unsupported features. An existing tag that points at another commit is refused, not reused.
+5. Approve the `prerelease` environment (required reviewers). Untrusted pull request code never sees package-publish credentials.
 
 The workflow then runs the full PR validation suite (typecheck, tests, native sidecar smoke), the container security / Trivy gate, builds on the requested SHA, pushes GHCR, and optionally mirrors to Docker Hub.
 
@@ -147,7 +147,7 @@ Publish a **public** GitHub prerelease and tester announcement only when every l
 | Requested SHA is in this repo and green on the workflow gates | Typecheck, complete tests, sidecar smoke, Trivy | Not run for a public tag |
 | Images exist on GHCR with `sha-*` and the prerelease tag; OCI revision matches the SHA | `docker buildx imagetools inspect` | Not published |
 | Stable `latest` / `1.11` / Hub unsuffixed tags unchanged | Inspect those tags before and after | Not published |
-| Tester compose uses the prerelease tag, loopback binds, no auto-restart | `docker-compose.beta.yml` | Draft PR only |
+| Tester compose uses project `ts6-beta`, isolated volumes, UI on `127.0.0.1:13000`, no auto-restart | `docker-compose.beta.yml` | Draft PR only |
 | Staging TeamSpeak is non-production; no production host is used | Operator confirms | Not started |
 | Recovery list above recorded | Six checks written down | Not started |
 | GitHub release marked prerelease; unsupported features listed | Workflow notes | Off by default |
