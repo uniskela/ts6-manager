@@ -144,7 +144,7 @@ Publish a **public** GitHub prerelease and tester announcement only when every l
 
 | Item | GO | Current |
 |---|---|---|
-| Prerelease workflow merged and environment reviewers set | Workflow exists on `main`; `prerelease` requires a maintainer | Draft PR only |
+| Prerelease workflow merged and environment reviewers set | [publish-prerelease.yml](https://github.com/uniskela/ts6-manager/blob/main/.github/workflows/publish-prerelease.yml) on `main`; `prerelease` requires a maintainer | Merged |
 | Requested SHA is in this repo and green on the workflow gates | Typecheck, complete tests, sidecar smoke, Trivy | Not run for a public tag |
 | Images exist on GHCR with `sha-*` and the prerelease tag; OCI revision matches the SHA | `docker buildx imagetools inspect` | Not published |
 | Stable `latest` / `1.11` / Hub unsuffixed tags unchanged | Inspect those tags before and after | Not published |
@@ -155,7 +155,7 @@ Publish a **public** GitHub prerelease and tester announcement only when every l
 | Discord bridge is **not** advertised as a published image | [Discord bridge](discord-bridge.md) | NO-GO for a registry preview |
 | No tokens, guild ids, private TeamSpeak addresses, or raw logs in the release | Review notes and artifacts | — |
 
-**Public beta is NO-GO.** Tester compose is on `main`. The publishing workflow is still a draft PR. No prerelease images have been published, no dispatch is authorized here, and a public tester announcement is not approved.
+**Public beta is NO-GO.** Tester compose and the publishing workflow are on `main`. No prerelease images have been published, no dispatch is authorized here, and a public tester announcement is not approved.
 
 ## Security verification (workflow)
 
