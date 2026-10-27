@@ -1,0 +1,396 @@
+name: Publish prerelease images
+
+# Maintainer-approved path for experimental manager images.
+# Does not run on pull_request. Does not move stable :latest or X.Y aliases.
+# Discord bridge lab images are not published here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Full 40-character commit SHA, or an existing vX.Y.Z-(alpha|beta|rc).N tag
+        required: true
+        type: string
+      prerelease_tag:
+        description: Optional vX.Y.Z-(alpha|beta|rc).N image/git tag when ref is a SHA
+        required: false
+        type: string
+      create_github_prerelease:
+        description: Create a GitHub prerelease for the prerelease tag
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: prerelease-${{ inputs.ref }}-${{ inputs.prerelease_tag }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/ts6-manager
+  DOCKERHUB_IMAGE: ${{ github.repository_owner }}/ts6-manager
+
+permissions: {}
+
+jobs:
+  resolve-ref:
+    name: Resolve and approve ref
+    if: github.repository == 'uniskela/ts6-manager'
+    runs-on: ubuntu-latest
+    environment: prerelease
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      short_sha: ${{ steps.resolve.outputs.short_sha }}
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - name: Validate prerelease ref
+        env:
+          REF: ${{ inputs.ref }}
+          PRE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -euo pipefail
+          STABLE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+          PRE='^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$'
+          SHA='^[0-9a-f]{40}$'
+          if [[ "$REF" =~ $STABLE ]]; then
+            echo "Stable vX.Y.Z tags use publish-images.yml, got: $REF" >&2
+            exit 1
+          fi
+          if [[ "$REF" =~ $PRE ]]; then
+            :
+          elif [[ "$REF" =~ $SHA ]]; then
+            :
+          else
+            echo "Expected a 40-character commit SHA or vX.Y.Z-(alpha|beta|rc).N, got: $REF" >&2
+            exit 1
+          fi
+          if [ -n "$PRE_TAG" ]; then
+            if ! [[ "$PRE_TAG" =~ $PRE ]]; then
+              echo "prerelease_tag must be vX.Y.Z-(alpha|beta|rc).N, got: $PRE_TAG" >&2
+              exit 1
+            fi
+            if [[ "$REF" =~ $PRE ]] && [ "$REF" != "$PRE_TAG" ]; then
+              echo "ref tag $REF does not match prerelease_tag $PRE_TAG" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Checkout requested ref
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - name: Resolve image tags
+        id: resolve
+        env:
+          REF: ${{ inputs.ref }}
+          PRE_TAG: ${{ inputs.prerelease_tag }}
+        run: |
+          set -euo pipefail
+          PRE='^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$'
+          SHA='^[0-9a-f]{40}$'
+          FULL_SHA="$(git rev-parse HEAD)"
+          if [[ "$REF" =~ $SHA ]] && [ "$FULL_SHA" != "$REF" ]; then
+            echo "Checked-out commit $FULL_SHA does not match requested $REF" >&2
+            exit 1
+          fi
+          TAG=""
+          if [[ "$REF" =~ $PRE ]]; then
+            TAG="$REF"
+          fi
+          if [ -n "$PRE_TAG" ]; then
+            TAG="$PRE_TAG"
+          fi
+          {
+            echo "sha=${FULL_SHA}"
+            echo "short_sha=${FULL_SHA:0:7}"
+            echo "tag=${TAG}"
+            echo "version=${TAG#v}"
+          } >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Typecheck, tests, native smoke
+    needs: resolve-ref
+    permissions:
+      contents: read
+    uses: ./.github/workflows/pr-validation.yml
+    with:
+      ref: ${{ needs.resolve-ref.outputs.sha }}
+
+  security:
+    name: Image security
+    needs: resolve-ref
+    permissions:
+      contents: read
+    uses: ./.github/workflows/container-security.yml
+    with:
+      ref: ${{ needs.resolve-ref.outputs.sha }}
+
+  build-and-push:
+    name: Build ${{ matrix.component }}
+    needs: [resolve-ref, validate, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - component: backend
+            dockerfile: Dockerfile.backend
+          - component: frontend
+            dockerfile: Dockerfile.frontend
+          - component: sidecar
+            dockerfile: Dockerfile.sidecar
+    steps:
+      - name: Checkout requested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Resolve image tags
+        id: tags
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SHORT_SHA: ${{ needs.resolve-ref.outputs.short_sha }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          VERSION: ${{ needs.resolve-ref.outputs.version }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PUSH_HUB=0
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            PUSH_HUB=1
+          else
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; publishing GHCR only"
+          fi
+          {
+            echo "push_hub=${PUSH_HUB}"
+            echo "list<<EOF"
+            echo "${IMAGE_PREFIX}/${COMPONENT}:sha-${SHORT_SHA}"
+            if [ -n "$TAG" ]; then
+              echo "${IMAGE_PREFIX}/${COMPONENT}:${TAG}"
+              echo "${IMAGE_PREFIX}/${COMPONENT}:${VERSION}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.component }}
+          tags: type=raw,value=sha-${{ needs.resolve-ref.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-ref.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.resolve-ref.outputs.version || needs.resolve-ref.outputs.short_sha }}
+
+      - name: Build and push GHCR
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ needs.resolve-ref.outputs.sha }}
+          pull: true
+
+      - name: Mirror to Docker Hub
+        if: steps.tags.outputs.push_hub == '1'
+        continue-on-error: true
+        env:
+          COMPONENT: ${{ matrix.component }}
+          SHORT_SHA: ${{ needs.resolve-ref.outputs.short_sha }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          VERSION: ${{ needs.resolve-ref.outputs.version }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          SUFFIXES=("sha-${SHORT_SHA}")
+          if [ -n "$TAG" ]; then
+            SUFFIXES+=("${TAG}" "${VERSION}")
+          fi
+          for SUFFIX in "${SUFFIXES[@]}"; do
+            SRC="${IMAGE_PREFIX}/${COMPONENT}:${SUFFIX}"
+            DST="${DOCKERHUB_IMAGE}:${COMPONENT}-${SUFFIX}"
+            echo "Mirroring ${SRC} → ${DST}"
+            docker buildx imagetools create --tag "${DST}" "${SRC}"
+          done
+
+  build-all-in-one:
+    name: Build all-in-one
+    needs: [resolve-ref, validate, security]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout requested commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve-ref.outputs.sha }}
+          persist-credentials: false
+
+      - name: Resolve image tags
+        id: tags
+        env:
+          SHORT_SHA: ${{ needs.resolve-ref.outputs.short_sha }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          VERSION: ${{ needs.resolve-ref.outputs.version }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          PUSH_HUB=0
+          if [ -n "${DOCKERHUB_USERNAME:-}" ] && [ -n "${DOCKERHUB_TOKEN:-}" ]; then
+            PUSH_HUB=1
+          else
+            echo "::warning::DOCKERHUB_USERNAME/TOKEN unset; publishing GHCR only"
+          fi
+          {
+            echo "push_hub=${PUSH_HUB}"
+            echo "list<<EOF"
+            echo "${IMAGE_PREFIX}/all-in-one:sha-${SHORT_SHA}"
+            if [ -n "$TAG" ]; then
+              echo "${IMAGE_PREFIX}/all-in-one:${TAG}"
+              echo "${IMAGE_PREFIX}/all-in-one:${VERSION}"
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/all-in-one
+          tags: type=raw,value=sha-${{ needs.resolve-ref.outputs.short_sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.resolve-ref.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.resolve-ref.outputs.version || needs.resolve-ref.outputs.short_sha }}
+
+      - name: Build and push GHCR
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.all-in-one
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ needs.resolve-ref.outputs.sha }}
+          pull: true
+
+      - name: Mirror to Docker Hub
+        if: steps.tags.outputs.push_hub == '1'
+        continue-on-error: true
+        env:
+          SHORT_SHA: ${{ needs.resolve-ref.outputs.short_sha }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          VERSION: ${{ needs.resolve-ref.outputs.version }}
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+          SUFFIXES=("sha-${SHORT_SHA}")
+          if [ -n "$TAG" ]; then
+            SUFFIXES+=("${TAG}" "${VERSION}")
+          fi
+          for SUFFIX in "${SUFFIXES[@]}"; do
+            SRC="${IMAGE_PREFIX}/all-in-one:${SUFFIX}"
+            DST="${DOCKERHUB_IMAGE}:all-in-one-${SUFFIX}"
+            echo "Mirroring ${SRC} → ${DST}"
+            docker buildx imagetools create --tag "${DST}" "${SRC}"
+          done
+
+  make-public:
+    name: Ensure packages are public
+    needs: [build-and-push, build-all-in-one]
+    runs-on: ubuntu-latest
+    if: always() && (needs.build-and-push.result == 'success' || needs.build-all-in-one.result == 'success')
+    permissions:
+      packages: write
+    steps:
+      - name: Set package visibility to public
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          OWNER="${{ github.repository_owner }}"
+          for PKG in ts6-manager/backend ts6-manager/frontend ts6-manager/sidecar ts6-manager/all-in-one; do
+            ENCODED="$(printf '%s' "$PKG" | jq -sRr @uri)"
+            if gh api --method PUT "/user/packages/container/${ENCODED}/visibility" -f visibility=public 2>/dev/null; then
+              echo "OK (user): $PKG"
+              continue
+            fi
+            if gh api --method PUT "/orgs/${OWNER}/packages/container/${ENCODED}/visibility" -f visibility=public 2>/dev/null; then
+              echo "OK (org): $PKG"
+              continue
+            fi
+            echo "::warning::Could not auto-set visibility for $PKG. Set it to Public in the GitHub Packages UI."
+          done
+
+  github-prerelease:
+    name: Create GitHub prerelease
+    needs: [resolve-ref, build-and-push, build-all-in-one]
+    if: inputs.create_github_prerelease && needs.resolve-ref.outputs.tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.resolve-ref.outputs.tag }}
+          SHA: ${{ needs.resolve-ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          NOTES="$(cat <<'EOF'
+          Experimental TS6 Manager prerelease. Not supported for production.
+
+          **Included:** container images for backend, frontend, sidecar, and all-in-one. See the beta guide after this workflow's documentation PR merges.
+
+          **Not included / unsupported:**
+          - Discord voice bridge (laboratory only; not a published product)
+          - Automatic upgrade from or to stable `latest`
+          - Production TeamSpeak or public Discord guild use
+
+          Pin images by the prerelease tag or `sha-*`. Roll back by pointing compose at `v1.11.2` (or another stable tag). Do not promote these tags to `latest`.
+          EOF
+          )"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it unchanged."
+            exit 0
+          fi
+          gh release create "$TAG" --prerelease --target "$SHA" --title "$TAG" --notes "$NOTES"

@@ -48,6 +48,12 @@ on:
     # are caught even when no Docker or dependency files changed.
     - cron: '17 4 * * 1'
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Git commit SHA to check out (prerelease publish path)
+        required: false
+        type: string
 
 concurrency:
   group: container-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -55,6 +61,9 @@ concurrency:
 
 permissions:
   contents: read
+
+env:
+  SCAN_SHA: ${{ inputs.ref || github.sha }}
 
 jobs:
   scan:
@@ -77,6 +86,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SCAN_SHA }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -92,9 +103,9 @@ jobs:
           file: ${{ matrix.dockerfile }}
           load: true
           push: false
-          tags: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          tags: ts6-security-${{ matrix.component }}:${{ env.SCAN_SHA }}
           build-args: |
-            GIT_SHA=${{ github.sha }}
+            GIT_SHA=${{ env.SCAN_SHA }}
           pull: true
 
       - name: Validate minimal frontend runtime
@@ -102,7 +113,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="ts6-security-frontend:${{ github.sha }}"
+          IMAGE="ts6-security-frontend:${{ env.SCAN_SHA }}"
           # Resolve the Compose-only backend hostname for nginx -t.
           docker run --rm --add-host backend:127.0.0.1 --entrypoint nginx "$IMAGE" -t
           # Detect accidental reintroduction of the unused image-filter dependency.
@@ -118,7 +129,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          IMAGE="ts6-security-${{ matrix.component }}:${{ github.sha }}"
+          IMAGE="ts6-security-${{ matrix.component }}:${{ env.SCAN_SHA }}"
           COMPONENT="${{ matrix.component }}"
 
           if [[ "$COMPONENT" == 'backend' ]]; then
@@ -184,7 +195,7 @@ jobs:
         with:
           version: v0.75.0
           scan-type: image
-          image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          image-ref: ts6-security-${{ matrix.component }}:${{ env.SCAN_SHA }}
           scanners: vuln
           format: json
           output: trivy-${{ matrix.component }}.json
@@ -198,7 +209,7 @@ jobs:
         with:
           version: v0.75.0
           scan-type: image
-          image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          image-ref: ts6-security-${{ matrix.component }}:${{ env.SCAN_SHA }}
           scanners: vuln
           format: table
           severity: HIGH,CRITICAL
@@ -211,7 +222,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: trivy-${{ matrix.component }}-${{ github.sha }}
+          name: trivy-${{ matrix.component }}-${{ env.SCAN_SHA }}
           path: trivy-${{ matrix.component }}.json
           if-no-files-found: error
           retention-days: 14
@@ -221,7 +232,7 @@ jobs:
         with:
           version: v0.75.0
           scan-type: image
-          image-ref: ts6-security-${{ matrix.component }}:${{ github.sha }}
+          image-ref: ts6-security-${{ matrix.component }}:${{ env.SCAN_SHA }}
           scanners: vuln
           format: table
           severity: HIGH,CRITICAL

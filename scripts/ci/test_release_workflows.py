@@ -287,5 +287,148 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertEqual(step["if"], "steps.hub.outputs.update_hub == '1'")
 
 
+class PrereleaseWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.prerelease = workflow("publish-prerelease.yml")
+        self.release = workflow("release-please.yml")
+        self.publish = workflow("publish-images.yml")
+        self.validation = workflow("pr-validation.yml")
+        self.security = workflow("container-security.yml")
+
+    def test_dispatch_only_and_not_on_the_stable_path(self):
+        self.assertEqual(set(self.prerelease["on"]), {"workflow_dispatch"})
+        self.assertNotIn("pull_request", self.prerelease["on"])
+        self.assertNotIn("pull_request_target", self.prerelease["on"])
+        self.assertNotIn("push", self.prerelease["on"])
+        self.assertEqual(self.release["jobs"]["publish-images"]["uses"], "./.github/workflows/publish-images.yml")
+        self.assertNotIn("publish-prerelease", yaml.dump(self.release))
+        self.assertNotIn("publish-prerelease", yaml.dump(self.publish))
+
+    def test_requires_maintainer_environment_and_explicit_ref(self):
+        job = self.prerelease["jobs"]["resolve-ref"]
+        self.assertEqual(job["environment"], "prerelease")
+        self.assertEqual(job["if"], "github.repository == 'uniskela/ts6-manager'")
+        inputs = self.prerelease["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["ref"]["required"], "true")
+        self.assertEqual(inputs["create_github_prerelease"]["default"], "false")
+
+    def test_default_permissions_are_empty(self):
+        self.assertEqual(self.prerelease["permissions"], {})
+
+    def test_validate_script_accepts_sha_and_prerelease_only(self):
+        guard = next(
+            step
+            for step in self.prerelease["jobs"]["resolve-ref"]["steps"]
+            if step.get("name") == "Validate prerelease ref"
+        )
+        accepted = {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "v1.12.0-beta.1",
+            "v1.12.0-rc.2",
+            "v2.0.0-alpha.0",
+        }
+        rejected = {
+            "v1.11.2",
+            "v1.12.0",
+            "main",
+            "1.12.0-beta.1",
+            "abc1234",
+            "refs/pull/1/head",
+            "",
+        }
+        for ref in accepted | rejected:
+            with self.subTest(ref=ref):
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "REF": ref, "PRE_TAG": ""},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ref in accepted, result.stderr)
+
+        result = subprocess.run(
+            ["bash", "-c", guard["run"]],
+            env={**os.environ, "REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "PRE_TAG": "v1.12.0-beta.1"},
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(
+            ["bash", "-c", guard["run"]],
+            env={**os.environ, "REF": "v1.12.0-beta.1", "PRE_TAG": "v1.12.0-beta.2"},
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_stable_tag_guard_still_rejects_prereleases(self):
+        guard = next(
+            step
+            for step in self.publish["jobs"]["build-and-push"]["steps"]
+            if step.get("name") == "Validate release tag"
+        )
+        for tag, ok in (("v1.11.2", True), ("v1.12.0-beta.1", False), ("v1.12.0-rc.1", False)):
+            with self.subTest(tag=tag):
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "TAG": tag},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ok)
+
+    def test_publish_waits_for_tests_and_security(self):
+        for name in ("build-and-push", "build-all-in-one"):
+            self.assertEqual(
+                self.prerelease["jobs"][name]["needs"],
+                ["resolve-ref", "validate", "security"],
+            )
+        self.assertEqual(self.prerelease["jobs"]["validate"]["uses"], "./.github/workflows/pr-validation.yml")
+        self.assertEqual(self.prerelease["jobs"]["security"]["uses"], "./.github/workflows/container-security.yml")
+        self.assertEqual(
+            self.prerelease["jobs"]["validate"]["with"]["ref"],
+            "${{ needs.resolve-ref.outputs.sha }}",
+        )
+
+    def test_reusable_gates_accept_a_ref(self):
+        for flow in (self.validation, self.security):
+            self.assertIn("workflow_call", flow["on"])
+            self.assertEqual(flow["on"]["workflow_call"]["inputs"]["ref"]["required"], "false")
+
+    def test_no_stable_alias_promotion(self):
+        text = (ROOT / ".github/workflows" / "publish-prerelease.yml").read_text()
+        self.assertNotIn("major_minor", text)
+        self.assertNotIn("promote-latest", self.prerelease["jobs"])
+        self.assertNotIn("promote-all-in-one-latest", self.prerelease["jobs"])
+        self.assertNotIn("update-dockerhub-description", self.prerelease["jobs"])
+        self.assertNotIn("DOCKERHUB_DESCRIPTION_TOKEN", text)
+        self.assertNotRegex(text, r"IMAGE_PREFIX\}[^ \n]*:latest")
+        for name, job in self.prerelease["jobs"].items():
+            with self.subTest(job=name):
+                self.assertNotIn("latest", name)
+
+    def test_tag_lists_are_sha_and_prerelease_only(self):
+        for job_name in ("build-and-push", "build-all-in-one"):
+            step = next(
+                s
+                for s in self.prerelease["jobs"][job_name]["steps"]
+                if s.get("name") == "Resolve image tags"
+            )
+            script = step["run"]
+            self.assertIn(":sha-${SHORT_SHA}", script)
+            self.assertIn("${TAG}", script)
+            self.assertIn("${VERSION}", script)
+            self.assertNotIn("MAJOR_MINOR", script)
+            self.assertNotIn(":latest", script)
+
+    def test_github_prerelease_is_opt_in_and_marked_prerelease(self):
+        job = self.prerelease["jobs"]["github-prerelease"]
+        self.assertEqual(job["if"], "inputs.create_github_prerelease && needs.resolve-ref.outputs.tag != ''")
+        script = job["steps"][0]["run"]
+        self.assertIn("gh release create", script)
+        self.assertIn("--prerelease", script)
+        self.assertIn("Discord voice bridge", script)
+
+
 if __name__ == "__main__":
     unittest.main()
