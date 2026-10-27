@@ -45,7 +45,7 @@ Host (Node ≥ 22.12, pnpm 9.15.9):
 cd packages/discord-bridge
 pnpm install --frozen-lockfile --ignore-workspace
 pnpm run typecheck          # syncs .vendor/tslib first
-pnpm test                   # 242 tests in 24 files, verified complete (real @discordjs/voice classes, simulated Discord), no network, no credentials
+pnpm test                   # 343 tests in 36 files, verified complete (real @discordjs/voice classes, simulated Discord), no network, no credentials
 pnpm run smoke:deps         # native Opus + DAVE + opusscript on the running Node
 pnpm run churn              # native Opus codecs under 40 000 participants joining and leaving, both directions (needs --expose-gc, set by the script)
 ```
@@ -123,9 +123,11 @@ The helper marks application IDs and generated URLs as done. Authorisation and r
 
 ### Operator procedure for the live proof
 
-Prerequisites (all must be authorised for this test): six official Discord applications invited to a test guild (View Channel, Connect, Speak, Use Voice Activity, Change Nickname), one test voice channel, a TeamSpeak 6 server and channel, and at least two humans on TeamSpeak and two on Discord (including one on Discord desktop who joins **before** the bridge and one who joins **after**).
+Do not start live Discord until the operator authorises that run. Use only the disposable TS6 laboratory and one private Discord testing channel. Remaining D1 acceptance steps, counters, PASS/FAIL and stop procedures: [`lab/ACCEPTANCE.md`](lab/ACCEPTANCE.md).
 
-`lab:live` reads commands on stdin: `status`, `kill-receiver`, `mark <check-id> pass|fail <note>`, `quit`. Results the bridge cannot observe itself (what a human heard) are recorded only when the operator attests them with `mark`, and the evidence file labels them `operator-attested`. Check ids: `live-two-speakers`, `live-d2t`, `live-join-order-a`, `live-join-order-b`, `live-dave-transition`, `live-decrypt-recovery`, `live-kill-receiver`, `live-no-feedback`, `live-latency`.
+Prerequisites (all must be authorised for this test): six official Discord applications invited to a private test guild (View Channel, Connect, Speak, Use Voice Activity, Change Nickname), one private test voice channel, the disposable TeamSpeak 6 laboratory, and the participants named in that run's procedure.
+
+`lab:live` reads commands on stdin: `status`, `kill-receiver`, `mark <check-id> pass|fail <note>`, `write`, `quit`. Results the bridge cannot observe itself (what a human heard) are recorded only when the operator attests them with `mark`, and the evidence file labels them `operator-attested`. Acceptance ids: `live-two-speakers`, `live-d2t`, `live-no-feedback`, `live-kill-receiver`, `live-dave-transition`. Optional extras: `live-join-order-a`, `live-join-order-b`, `live-decrypt-recovery`, `live-latency`.
 
 ## Evidence
 
@@ -411,7 +413,9 @@ Full D1 acceptance still needs independent live tests: two speakers each side, r
 
 ## GO/NO-GO
 
-- **D1 gate (contract): NO-GO / not met.** One-person live smoke passed. Required multi-speaker, failover and membership-transition live rows are still open, so D2–D6 must not start on the strength of this PR.
-- **After the session-epoch repair:** counting `processWelcome` as a new session was a false replacement (fixed). One-person live then held DAVE ready for >5 minutes with `daveReplacements=0`. **D1 acceptance: NO-GO.**
-- **Feasibility signals so far: GO to continue.** The pinned stack installs and its native Opus and DAVE addons run on Node 24; TeamSpeak-side parsing, per-speaker routing, overflow mixing and the shared-client send path work against a real TS6 server; the receiver election and generation fence behave as specified in simulation.
-- **Next action (owner):** provide the live prerequisites above, or authorise a different test setup, then run `lab:live` and fill the NOT-RUN rows. If join order B shows #11653, stop and decide: wait for upstream, carry a documented patch, or change library.
+- **D1 gate (contract): NO-GO / not met.** One-person live smoke passed (DAVE ready 511 s, both directions audible, `daveReplacements=0`). Required multi-speaker, failover and membership-transition live rows are still open. Procedures: [`lab/ACCEPTANCE.md`](lab/ACCEPTANCE.md).
+- **#460 release sequencing:** resolved. `v1.11.2` is merged. That restriction no longer blocks a later D1 merge.
+- **Merge of #504:** still **NO-GO** until the four remaining live rows PASS, an independent security/lifecycle review of that exact HEAD is GO, the PR stays draft until then, and the squash message is `chore:` (this lab must not open a 1.12.0 release).
+- **D2–D6:** must not start on the strength of this PR.
+- **Feasibility signals so far: GO to continue the remaining operator runs.** The pinned stack and native addons run on Node 24; TeamSpeak-side parsing and routing work against the disposable TS6 lab; one-person live DAVE held.
+- **Next action (operator):** authorise and run the four procedures in [`lab/ACCEPTANCE.md`](lab/ACCEPTANCE.md). Do not start them from CI or from this document. After they PASS, request the independent review of that commit.
