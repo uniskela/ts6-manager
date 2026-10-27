@@ -311,6 +311,7 @@ class PrereleaseWorkflowTests(unittest.TestCase):
         inputs = self.prerelease["on"]["workflow_dispatch"]["inputs"]
         self.assertEqual(inputs["ref"]["required"], "true")
         self.assertEqual(inputs["create_github_prerelease"]["default"], "false")
+        self.assertEqual(inputs["source_branch"]["default"], "main")
 
     def test_default_permissions_are_empty(self):
         self.assertEqual(self.prerelease["permissions"], {})
@@ -340,7 +341,7 @@ class PrereleaseWorkflowTests(unittest.TestCase):
             with self.subTest(ref=ref):
                 result = subprocess.run(
                     ["bash", "-c", guard["run"]],
-                    env={**os.environ, "REF": ref, "PRE_TAG": ""},
+                    env={**os.environ, "REF": ref, "PRE_TAG": "", "SOURCE_BRANCH": "main"},
                     capture_output=True,
                     timeout=5,
                 )
@@ -348,14 +349,36 @@ class PrereleaseWorkflowTests(unittest.TestCase):
 
         result = subprocess.run(
             ["bash", "-c", guard["run"]],
-            env={**os.environ, "REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "PRE_TAG": "v1.12.0-beta.1"},
+            env={
+                **os.environ,
+                "REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "PRE_TAG": "v1.12.0-beta.1",
+                "SOURCE_BRANCH": "main",
+            },
             capture_output=True,
             timeout=5,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         result = subprocess.run(
             ["bash", "-c", guard["run"]],
-            env={**os.environ, "REF": "v1.12.0-beta.1", "PRE_TAG": "v1.12.0-beta.2"},
+            env={
+                **os.environ,
+                "REF": "v1.12.0-beta.1",
+                "PRE_TAG": "v1.12.0-beta.2",
+                "SOURCE_BRANCH": "main",
+            },
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        result = subprocess.run(
+            ["bash", "-c", guard["run"]],
+            env={
+                **os.environ,
+                "REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "PRE_TAG": "",
+                "SOURCE_BRANCH": "feature/unreviewed",
+            },
             capture_output=True,
             timeout=5,
         )
@@ -421,12 +444,25 @@ class PrereleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("MAJOR_MINOR", script)
             self.assertNotIn(":latest", script)
 
+    def test_trusted_source_and_collision_guards_are_wired(self):
+        names = [step.get("name") for step in self.prerelease["jobs"]["resolve-ref"]["steps"]]
+        self.assertIn("Require trusted source", names)
+        self.assertIn("Reject tag collisions", names)
+        self.assertIn("Require prerelease environment reviewers", names)
+        text = (ROOT / ".github/workflows" / "publish-prerelease.yml").read_text()
+        self.assertIn("require-ancestor", text)
+        self.assertIn("reject-tag-collision", text)
+        self.assertIn("reject-image-collision", text)
+        self.assertIn("verify-github-release-target", text)
+        self.assertNotIn("leaving it unchanged", text)
+
     def test_github_prerelease_is_opt_in_and_marked_prerelease(self):
         job = self.prerelease["jobs"]["github-prerelease"]
         self.assertEqual(job["if"], "inputs.create_github_prerelease && needs.resolve-ref.outputs.tag != ''")
-        script = job["steps"][0]["run"]
+        script = next(step["run"] for step in job["steps"] if step.get("name") == "Publish GitHub prerelease")
         self.assertIn("gh release create", script)
         self.assertIn("--prerelease", script)
+        self.assertIn("verify-github-release-target", script)
         self.assertIn("Discord voice bridge", script)
 
 

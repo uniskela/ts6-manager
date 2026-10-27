@@ -20,6 +20,11 @@ on:
         required: false
         type: boolean
         default: false
+      source_branch:
+        description: Protected branch the commit must be reachable from (main or release/*)
+        required: false
+        type: string
+        default: main
 
 concurrency:
   group: prerelease-${{ inputs.ref }}-${{ inputs.prerelease_tag }}
@@ -50,11 +55,17 @@ jobs:
         env:
           REF: ${{ inputs.ref }}
           PRE_TAG: ${{ inputs.prerelease_tag }}
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
         run: |
           set -euo pipefail
           STABLE='^v[0-9]+\.[0-9]+\.[0-9]+$'
           PRE='^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$'
           SHA='^[0-9a-f]{40}$'
+          SOURCE='^(main|release/[A-Za-z0-9._-]+)$'
+          if ! [[ "$SOURCE_BRANCH" =~ $SOURCE ]]; then
+            echo "source_branch must be main or release/*, got: $SOURCE_BRANCH" >&2
+            exit 1
+          fi
           if [[ "$REF" =~ $STABLE ]]; then
             echo "Stable vX.Y.Z tags use publish-images.yml, got: $REF" >&2
             exit 1
@@ -78,11 +89,39 @@ jobs:
             fi
           fi
 
+      - name: Load publish-path guards
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: ${{ runner.temp }}/prerelease-workflow
+          sparse-checkout: scripts/ci/prerelease-guards.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Require prerelease environment reviewers
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash "${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh" require-prerelease-reviewers
+
       - name: Checkout requested ref
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require trusted source
+        env:
+          SOURCE_BRANCH: ${{ inputs.source_branch }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          GUARD="${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh"
+          SHA="$(git rev-parse HEAD)"
+          bash "$GUARD" require-ancestor "$SHA" "$SOURCE_BRANCH"
+          bash "$GUARD" require-protected-source "$SOURCE_BRANCH"
 
       - name: Resolve image tags
         id: resolve
@@ -111,6 +150,12 @@ jobs:
             echo "tag=${TAG}"
             echo "version=${TAG#v}"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Reject tag collisions
+        if: steps.resolve.outputs.tag != ''
+        run: |
+          bash "${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh" \
+            reject-tag-collision "${{ steps.resolve.outputs.tag }}" "${{ steps.resolve.outputs.sha }}"
 
   validate:
     name: Typecheck, tests, native smoke
@@ -191,6 +236,24 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load publish-path guards
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: ${{ runner.temp }}/prerelease-workflow
+          sparse-checkout: scripts/ci/prerelease-guards.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Reject image tag collisions
+        if: needs.resolve-ref.outputs.tag != ''
+        run: |
+          bash "${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh" \
+            reject-image-collision "${IMAGE_PREFIX}" \
+            "${{ needs.resolve-ref.outputs.tag }}" \
+            "${{ needs.resolve-ref.outputs.version }}" \
+            "${{ needs.resolve-ref.outputs.sha }}"
 
       - name: Extract labels
         id: meta
@@ -289,6 +352,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Load publish-path guards
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: ${{ runner.temp }}/prerelease-workflow
+          sparse-checkout: scripts/ci/prerelease-guards.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Reject image tag collisions
+        if: needs.resolve-ref.outputs.tag != ''
+        run: |
+          bash "${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh" \
+            reject-image-collision "${IMAGE_PREFIX}" \
+            "${{ needs.resolve-ref.outputs.tag }}" \
+            "${{ needs.resolve-ref.outputs.version }}" \
+            "${{ needs.resolve-ref.outputs.sha }}"
+
       - name: Extract labels
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -369,13 +450,29 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Load publish-path guards
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: ${{ runner.temp }}/prerelease-workflow
+          sparse-checkout: scripts/ci/prerelease-guards.sh
+          sparse-checkout-cone-mode: false
+
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.resolve-ref.outputs.tag }}
           SHA: ${{ needs.resolve-ref.outputs.sha }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+          ACTION="$(bash "${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh" \
+            verify-github-release-target "$TAG" "$SHA")"
+          if [ "$ACTION" = skip ]; then
+            echo "Existing prerelease $TAG already targets $SHA"
+            exit 0
+          fi
           NOTES="$(cat <<'EOF'
           Experimental TS6 Manager prerelease. Not supported for production.
 
@@ -389,8 +486,4 @@ jobs:
           Pin images by the prerelease tag or `sha-*`. Roll back by pointing compose at `v1.11.2` (or another stable tag). Do not promote these tags to `latest`.
           EOF
           )"
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; leaving it unchanged."
-            exit 0
-          fi
           gh release create "$TAG" --prerelease --target "$SHA" --title "$TAG" --notes "$NOTES"
