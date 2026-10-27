@@ -10,8 +10,10 @@ import {
   diffEvents,
   healthcheckOk,
   hostHealthLabel,
+  hostStatusView,
   pushEvent,
   writeAtomicJson,
+  writeBetaStatusFiles,
   type BetaEvent,
   type BetaSnapshotIn,
 } from "./beta-status.js";
@@ -63,11 +65,20 @@ describe("private-beta status", () => {
 
   it("writes status atomically", () => {
     const dir = mkdtempSync(join(tmpdir(), "d1-beta-"));
-    const path = join(dir, "private-beta-status.json");
-    writeAtomicJson(path, { mode: "private-beta" });
-    assert.equal(JSON.parse(readFileSync(path, "utf8")).mode, "private-beta");
-    assert.equal((statSync(path).mode & 0o777).toString(8), "644");
+    const status = buildBetaStatus({ sourceCommit: "abc123", snap: running, events: [], started: true, singleAttempt: true });
+    writeBetaStatusFiles(dir, status);
+    const detailed = join(dir, "private-beta-status.json");
+    const host = join(dir, "host-status.json");
+    assert.equal(JSON.parse(readFileSync(detailed, "utf8")).mode, "private-beta");
+    assert.equal((statSync(detailed).mode & 0o777).toString(8), "600");
+    assert.equal((statSync(host).mode & 0o777).toString(8), "644");
     assert.equal((statSync(dir).mode & 0o777).toString(8), "755");
+    const view = hostStatusView(status);
+    assert.deepEqual(JSON.parse(readFileSync(host, "utf8")), view);
+    assert.equal("events" in view, false);
+    assert.equal("counters" in view, false);
+    writeAtomicJson(join(dir, "other.json"), { mode: "private-beta" });
+    assert.equal((statSync(join(dir, "other.json")).mode & 0o777).toString(8), "600");
   });
 
   it("healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped", () => {

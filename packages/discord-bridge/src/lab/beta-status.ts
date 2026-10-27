@@ -1,8 +1,9 @@
 import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 
 export const PRIVATE_BETA_MODE = "private-beta" as const;
 export const STATUS_FILE = "evidence/private-beta-status.json";
+export const HOST_STATUS_FILE = "evidence/host-status.json";
 export const EVENT_CAP = 200;
 
 export type BetaHealth = "starting" | "ok" | "degraded" | "fail-closed";
@@ -124,16 +125,33 @@ export function buildBetaStatus(input: {
   };
 }
 
-export function writeAtomicJson(path: string, value: unknown): void {
+export function hostStatusView(status: Record<string, unknown>): Record<string, unknown> {
+  return {
+    mode: status.mode,
+    experimental: status.experimental,
+    sourceCommit: status.sourceCommit,
+    at: status.at,
+    state: status.state,
+    health: status.health,
+    daveReady: status.daveReady,
+  };
+}
+
+export function writeAtomicJson(path: string, value: unknown, mode = 0o600): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true });
-  // 0755/0644 so a rootless host user can still read a bind mount owned by container uid 1000.
+  // 0755 so the host can reach host-status.json; detailed files stay 0600.
   chmodSync(dir, 0o755);
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
-  chmodSync(tmp, 0o644);
+  chmodSync(tmp, mode);
   renameSync(tmp, path);
-  chmodSync(path, 0o644);
+  chmodSync(path, mode);
+}
+
+export function writeBetaStatusFiles(dir: string, status: Record<string, unknown>): void {
+  writeAtomicJson(join(dir, "private-beta-status.json"), status, 0o600);
+  writeAtomicJson(join(dir, "host-status.json"), hostStatusView(status), 0o644);
 }
 
 /** Docker HEALTHCHECK: DAVE + receiver, not merely process uptime. Stale files fail. */

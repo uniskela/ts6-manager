@@ -5,12 +5,14 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 LAB="$ROOT/packages/discord-bridge/lab"
-ENV_FILE="${D1_PILOT_ENV_FILE:-$LAB/.env.pilot}"
+CANONICAL_ENV="$LAB/.env.pilot"
+ENV_FILE="${D1_PILOT_ENV_FILE:-$CANONICAL_ENV}"
 COMPOSE_FILE="$LAB/docker-compose.private-pilot.yml"
 PROJECT="d1-private-pilot"
 EVID_HOST="${D1_PILOT_EVIDENCE_DIR:-$LAB/evidence-pilot}"
 CONTAINER_NAME="d1-private-pilot-bridge"
 STATUS_IN_CONTAINER="/app/packages/discord-bridge/evidence/private-beta-status.json"
+HOST_STATUS_FILE="host-status.json"
 REQUIRED=(
   D1_DISCORD_TOKEN_SLOT_0 D1_DISCORD_TOKEN_SLOT_1 D1_DISCORD_TOKEN_SLOT_2
   D1_DISCORD_TOKEN_SLOT_3 D1_DISCORD_TOKEN_SLOT_4 D1_DISCORD_TOKEN_OVERFLOW
@@ -36,16 +38,51 @@ env_file_val() {
   awk -F= -v key="$1" '$1==key {print substr($0, index($0,"=")+1); exit}' "$ENV_FILE"
 }
 
+same_file() {
+  [ -e "$1" ] && [ -e "$2" ] && [ "$(stat -c '%d:%i' "$1")" = "$(stat -c '%d:%i' "$2")" ]
+}
+
+require_source_commit() {
+  if [[ ! "${SOURCE_COMMIT:-}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "set SOURCE_COMMIT to the approved full 40-character SHA" >&2
+    exit 2
+  fi
+}
+
+verify_image_revision() {
+  require_source_commit
+  img="${D1_BRIDGE_IMAGE:?}"
+  if ! docker image inspect "$img" >/dev/null 2>&1; then
+    echo "missing local image $img (run $0 pull)" >&2
+    exit 2
+  fi
+  rev="$(docker image inspect "$img" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+  if [ "$rev" != "$SOURCE_COMMIT" ]; then
+    echo "image revision does not match SOURCE_COMMIT" >&2
+    exit 2
+  fi
+}
+
 compose() {
   D1_BRIDGE_IMAGE="${D1_BRIDGE_IMAGE:?}" SOURCE_COMMIT="${SOURCE_COMMIT:?}" \
     docker compose -p "$PROJECT" -f "$COMPOSE_FILE" "$@"
 }
 
 presence() {
+  if [ ! -f "$CANONICAL_ENV" ]; then
+    echo "missing env file lab/.env.pilot" >&2
+    exit 2
+  fi
   if [ ! -f "$ENV_FILE" ]; then
     echo "missing env file" >&2
     exit 2
   fi
+  if ! same_file "$ENV_FILE" "$CANONICAL_ENV"; then
+    echo "D1_PILOT_ENV_FILE must be the same file as lab/.env.pilot" >&2
+    exit 2
+  fi
+  ENV_FILE="$CANONICAL_ENV"
+  require_source_commit
   mode="$(stat -c '%a' "$ENV_FILE")"
   if [ "$mode" != "600" ]; then
     echo "env file must be mode 0600 (found $mode)" >&2
@@ -94,6 +131,7 @@ pull() {
   presence
   echo "pulling ${D1_BRIDGE_IMAGE} (read-only registry credentials on this host)"
   docker pull "${D1_BRIDGE_IMAGE}"
+  verify_image_revision
 }
 
 up() {
@@ -103,11 +141,7 @@ up() {
     echo "after the operator approves: $0 up --confirm"
     exit 0
   fi
-  SOURCE_COMMIT="${SOURCE_COMMIT:-$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)}"
-  if [ -z "$SOURCE_COMMIT" ]; then
-    echo "set SOURCE_COMMIT" >&2
-    exit 2
-  fi
+  verify_image_revision
   export SOURCE_COMMIT D1_BRIDGE_IMAGE
   mkdir -p "$EVID_HOST"
   chmod 0755 "$EVID_HOST"
@@ -121,7 +155,7 @@ status() {
   if [ "$running" = "true" ]; then
     payload="$(docker exec "$CONTAINER_NAME" cat "$STATUS_IN_CONTAINER" 2>/dev/null || true)"
   fi
-  file="$EVID_HOST/private-beta-status.json"
+  file="$EVID_HOST/$HOST_STATUS_FILE"
   if [ -z "$payload" ] && [ -r "$file" ]; then payload="$(cat "$file")"; fi
   STATUS_JSON="$payload" python3 - "$running" <<'PY'
 import json, os, sys

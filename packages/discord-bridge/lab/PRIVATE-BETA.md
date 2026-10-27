@@ -20,7 +20,7 @@ Acceptance tests A–D may be run in controlled sessions during this beta. Keep 
 | Restart | `restart: "no"`. No compose/container restart loop |
 | Limits | 1 CPU, 512 MB, `cap-drop ALL`, read-only root, `no-new-privileges` |
 | Logs | json-file, 4 MB × 5 files |
-| Status | `scripts/private-beta.sh status` uses `docker exec` while running, then the host bind mount. Leftover files are `health=stale` |
+| Status | `scripts/private-beta.sh status` uses `docker exec` for the detailed file while running. Host monitoring reads only `host-status.json`. Leftover host files are `health=stale` |
 | TeamSpeak | disposable `d1-ts-lab` for this compose. External pilot: [`PRIVATE-PILOT.md`](PRIVATE-PILOT.md) |
 
 DAVE enforcement, receive-generation fencing, human admission and the 3-per-60s rebuild budget are the same as the laboratory runtime. The container is not restarted when that budget is exhausted.
@@ -79,15 +79,13 @@ SIGTERM/SIGINT write a final evidence JSON, stop the runtime, destroy bots and d
 
 ## Monitoring (privacy-safe)
 
-Rootless Docker remaps container uid 1000. The evidence directory is `0755` and the status file `0644` so the host can read the bind mount. `status` prefers `docker exec` while the container is running.
-
-`lab/evidence/private-beta-status.json` is overwritten every 5 s. It has mode, commit, health, receiver slot id, generation, DAVE ready, and counters (`decryptErrors`, `daveReplacements`, `recoveries`, `framesSent`, drops). Lifecycle events are a ring of 200 (`starting`, `bridge_running`, `dave_ready`, `dave_lost`, `receiver_changed`, `generation_changed`, `reconnect_scheduled`, `stopping`).
+Rootless Docker remaps container uid 1000. The evidence directory is `0755` so the host can read **only** `host-status.json` (`0644`: mode, health, `daveReady`, commit, timestamp, state). Detailed status stays `0600` (`private-beta-status.json`: counters and the event ring). Use `docker exec` for that file while the container is running.
 
 Never capture audio, tokens, passwords, encryption material, guild/user names, or host addresses. Do not attach raw logs or `.env` to issues.
 
 On shutdown the runner also writes `evidence/private-beta-*.json` (counters + events + resource averages). Keep A–D `mark` evidence from `lab:live` in separate files.
 
-Log retention: Docker json-file 4 MB × 5 (~20 MB). Evidence directory is local and gitignored.
+Log retention: Docker json-file 4 MB × 5 (~20 MB). After `stop`, ownership is restored to the operator and evidence is `0700`.
 
 ## Rollback
 
@@ -121,7 +119,7 @@ All required:
 2. Phase 2: bounded recovery and fail-closed on encryption loss observed live (not only simulated).
 3. Acceptance C (`live-kill-receiver`) is LIVE PASS, or Phase 3 is explicitly accepted without it by the owner.
 4. `restart: "no"` still in the compose file. No `unless-stopped` / `always`.
-5. Status command works without stdin. Evidence directory is `0700`. `.env` is `0600`.
+5. Status command works without stdin. Host monitoring reads only `host-status.json`. After stop, evidence is `0700`. `.env` is `0600`.
 6. Rollback SHA for the last known-good local image is written down.
 7. Production TeamSpeak is not in `D1_TS_HOST`.
 

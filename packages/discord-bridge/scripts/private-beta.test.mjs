@@ -94,7 +94,7 @@ describe("private-beta.sh", () => {
 
   it("treats a leftover status file as stale when the container is not running", () => {
     const dir = mkdtempSync(join(tmpdir(), "d1-beta-evid-"));
-    writeFileSync(join(dir, "private-beta-status.json"), JSON.stringify({
+    writeFileSync(join(dir, "host-status.json"), JSON.stringify({
       mode: "private-beta",
       health: "ok",
       daveReady: true,

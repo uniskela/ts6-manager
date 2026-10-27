@@ -16,7 +16,7 @@ import {
   buildBetaStatus,
   diffEvents,
   pushEvent,
-  writeAtomicJson,
+  writeBetaStatusFiles,
   type BetaEvent,
   type BetaSnapshotIn,
 } from "./beta-status.js";
@@ -46,7 +46,7 @@ const sampler = new ResourceSampler();
 const ids = preferredOrder(5);
 const events: BetaEvent[] = [];
 const sourceCommit = process.env.D1_SOURCE_COMMIT || "unknown";
-const statusPath = join(process.cwd(), "evidence", "private-beta-status.json");
+const evidenceDir = join(process.cwd(), "evidence");
 
 async function main(): Promise<void> {
   pushEvent(events, "starting", { sourceCommit });
@@ -125,8 +125,8 @@ async function main(): Promise<void> {
     const added = diffEvents(prev, snap, events);
     for (const e of added) log.info(`event ${e.kind}`);
     prev = snap;
-    writeAtomicJson(
-      statusPath,
+    writeBetaStatusFiles(
+      evidenceDir,
       buildBetaStatus({ sourceCommit, snap, events, started: true, singleAttempt: diag.singleAttempt }),
     );
   };
@@ -151,8 +151,8 @@ async function main(): Promise<void> {
       singleAttempt: diag.singleAttempt,
     });
     ev.data.resources = sampler.stop();
-    writeAtomicJson(
-      statusPath,
+    writeBetaStatusFiles(
+      evidenceDir,
       buildBetaStatus({ sourceCommit, snap, events, started: true, singleAttempt: diag.singleAttempt }),
     );
     process.stdout.write(`evidence: ${ev.write("private-beta")}\n`);

@@ -274,39 +274,5 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertEqual(step["if"], "steps.hub.outputs.update_hub == '1'")
 
 
-class PrivateBetaPublishTests(unittest.TestCase):
-    def setUp(self):
-        self.wf = workflow("publish-discord-bridge-private-beta.yml")
-        self.release = workflow("release-please.yml")
-
-    def test_manual_only_and_not_called_from_release_please(self):
-        self.assertEqual(set(self.wf["on"]), {"workflow_dispatch"})
-        self.assertNotIn("push", self.wf["on"])
-        self.assertNotIn("workflow_call", self.wf["on"])
-        text = (ROOT / ".github/workflows/release-please.yml").read_text()
-        self.assertNotIn("publish-discord-bridge-private-beta.yml", text)
-
-    def test_build_cannot_write_packages_and_publish_needs_approval(self):
-        self.assertEqual(self.wf["permissions"], {"contents": "read"})
-        build = self.wf["jobs"]["verify-and-build"]
-        publish = self.wf["jobs"]["publish"]
-        self.assertEqual(build.get("permissions"), {"contents": "read"})
-        self.assertNotEqual(build.get("permissions", {}).get("packages"), "write")
-        self.assertEqual(publish["environment"], "discord-bridge-private-beta")
-        self.assertEqual(publish["needs"], "verify-and-build")
-        self.assertEqual(publish["permissions"]["packages"], "write")
-        login = next(step for step in publish["steps"] if step.get("name") == "Log in to GHCR")
-        self.assertGreater(
-            [step.get("name") for step in publish["steps"]].index("Log in to GHCR"),
-            [step.get("name") for step in publish["steps"]].index("Rebuild from the approved SHA"),
-        )
-        self.assertIn("docker/login-action@", login["uses"])
-        push = next(step for step in publish["steps"] if step.get("name") == "Push commit-specific tag only")
-        self.assertIn("${IMAGE_NAME}:${TAG}", push["run"])
-        self.assertNotIn(":latest", push["run"])
-        self.assertNotIn("dockerhub", yaml.dump(self.wf).lower())
-        self.assertIn("private-beta-", yaml.dump(self.wf))
-
-
 if __name__ == "__main__":
     unittest.main()

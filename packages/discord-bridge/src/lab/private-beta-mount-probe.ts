@@ -1,12 +1,10 @@
 /**
  * Container probe for the evidence bind mount. No Discord, no TeamSpeak, no secrets.
- * Writes a privacy-safe status file and a final file on SIGTERM.
+ * Writes a privacy-safe detailed status (0600) and a minimal host-status (0644).
  */
-import { join } from "node:path";
-import { buildBetaStatus, pushEvent, writeAtomicJson, type BetaEvent } from "./beta-status.js";
+import { buildBetaStatus, pushEvent, writeBetaStatusFiles, type BetaEvent } from "./beta-status.js";
 
 const dir = process.env.D1_EVIDENCE_DIR || "evidence";
-const statusPath = join(dir, "private-beta-status.json");
 const events: BetaEvent[] = [];
 pushEvent(events, "starting");
 
@@ -23,15 +21,15 @@ const snap = {
   d2t: { framesSent: 0, daveDropped: 0, admissionDropped: 0, selfSourceDrops: 0 },
 };
 
-writeAtomicJson(
-  statusPath,
+writeBetaStatusFiles(
+  dir,
   buildBetaStatus({ sourceCommit: process.env.D1_SOURCE_COMMIT || "probe", snap, events, started: true, singleAttempt: true }),
 );
 
 const finish = () => {
   pushEvent(events, "stopping");
-  writeAtomicJson(
-    statusPath,
+  writeBetaStatusFiles(
+    dir,
     buildBetaStatus({
       sourceCommit: process.env.D1_SOURCE_COMMIT || "probe",
       snap: { ...snap, state: "stopped" },

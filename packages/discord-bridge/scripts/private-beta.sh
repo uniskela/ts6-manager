@@ -11,6 +11,7 @@ PROJECT="d1-private-beta"
 NET="${D1_TS_NET:-d1-ts-lab}"
 EVID_HOST="${D1_EVIDENCE_DIR:-$LAB/evidence}"
 STATUS_IN_CONTAINER="/app/packages/discord-bridge/evidence/private-beta-status.json"
+HOST_STATUS_FILE="host-status.json"
 CONTAINER_NAME="d1-private-beta-bridge"
 REQUIRED=(
   D1_DISCORD_TOKEN_SLOT_0 D1_DISCORD_TOKEN_SLOT_1 D1_DISCORD_TOKEN_SLOT_2
@@ -153,7 +154,7 @@ status() {
   if [ "$running" = "true" ]; then
     payload="$(docker exec "$CONTAINER_NAME" cat "$STATUS_IN_CONTAINER" 2>/dev/null || true)"
   fi
-  file="$EVID_HOST/private-beta-status.json"
+  file="$EVID_HOST/$HOST_STATUS_FILE"
   if [ -z "$payload" ] && [ -r "$file" ]; then
     payload="$(cat "$file")"
   fi
