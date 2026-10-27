@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -8,6 +8,8 @@ import {
   buildBetaStatus,
   deriveHealth,
   diffEvents,
+  healthcheckOk,
+  hostHealthLabel,
   pushEvent,
   writeAtomicJson,
   type BetaEvent,
@@ -64,5 +66,19 @@ describe("private-beta status", () => {
     const path = join(dir, "private-beta-status.json");
     writeAtomicJson(path, { mode: "private-beta" });
     assert.equal(JSON.parse(readFileSync(path, "utf8")).mode, "private-beta");
+    assert.equal((statSync(path).mode & 0o777).toString(8), "644");
+    assert.equal((statSync(dir).mode & 0o777).toString(8), "755");
+  });
+
+  it("healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped", () => {
+    const ok = buildBetaStatus({ sourceCommit: "x", snap: running, events: [], started: true, singleAttempt: true });
+    const now = Date.parse(String(ok.at));
+    assert.equal(healthcheckOk(ok, now), true);
+    assert.equal(healthcheckOk({ ...ok, daveReady: false, health: "fail-closed" }, now), false);
+    assert.equal(healthcheckOk({ ...ok, receiver: null, health: "fail-closed" }, now), false);
+    assert.equal(healthcheckOk({ ...ok, state: "running" }, now + 31_000), false);
+    assert.equal(hostHealthLabel(ok, true), "ok");
+    assert.equal(hostHealthLabel(ok, false), "stale");
+    assert.equal(hostHealthLabel(null, false), "absent");
   });
 });

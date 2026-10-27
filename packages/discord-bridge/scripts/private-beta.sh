@@ -9,6 +9,9 @@ ENV_FILE="${D1_ENV_FILE:-$LAB/.env}"
 COMPOSE_FILE="$LAB/docker-compose.private-beta.yml"
 PROJECT="d1-private-beta"
 NET="${D1_TS_NET:-d1-ts-lab}"
+EVID_HOST="${D1_EVIDENCE_DIR:-$LAB/evidence}"
+STATUS_IN_CONTAINER="/app/packages/discord-bridge/evidence/private-beta-status.json"
+CONTAINER_NAME="d1-private-beta-bridge"
 REQUIRED=(
   D1_DISCORD_TOKEN_SLOT_0 D1_DISCORD_TOKEN_SLOT_1 D1_DISCORD_TOKEN_SLOT_2
   D1_DISCORD_TOKEN_SLOT_3 D1_DISCORD_TOKEN_SLOT_4 D1_DISCORD_TOKEN_OVERFLOW
@@ -129,43 +132,70 @@ up() {
     echo "missing local image ts6-discord-bridge-private-beta:$SOURCE_COMMIT (run $0 build)" >&2
     exit 2
   fi
-  mkdir -p "$LAB/evidence"
-  chmod 0700 "$LAB/evidence"
-  docker run --rm --user 0 --network none \
-    -v "$LAB/evidence:/data" --entrypoint chown \
-    "ts6-discord-bridge-private-beta:$SOURCE_COMMIT" -R 1000:1000 /data >/dev/null
+  mkdir -p "$EVID_HOST"
+  # 0755: rootless remaps container uid 1000; host must still be able to traverse the bind mount.
+  chmod 0755 "$EVID_HOST"
+  docker run --rm --user 0 --network none --entrypoint sh \
+    -v "$EVID_HOST:/data" \
+    "ts6-discord-bridge-private-beta:$SOURCE_COMMIT" \
+    -c 'chown -R 1000:1000 /data && chmod 0755 /data' >/dev/null
   echo "starting private-beta image ts6-discord-bridge-private-beta:$SOURCE_COMMIT"
   compose up -d --no-build --no-recreate
 }
 
+container_running() {
+  docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo false
+}
+
 status() {
-  file="$LAB/evidence/private-beta-status.json"
-  if [ -f "$file" ]; then
-    python3 - "$file" <<'PY'
-import json, sys
-p = sys.argv[1]
-s = json.load(open(p, encoding="utf8"))
-print(f"mode={s.get('mode')}")
-print(f"experimental={s.get('experimental')}")
-print(f"sourceCommit={s.get('sourceCommit')}")
-print(f"state={s.get('state')}")
-print(f"health={s.get('health')}")
-print(f"daveReady={s.get('daveReady')}")
-print(f"receiver={s.get('receiver')}")
-print(f"generation={s.get('generation')}")
-print(f"scheduledReconnects={s.get('scheduledReconnects')}")
-c = s.get("counters") or {}
-print(f"decryptErrors={c.get('decryptErrors')}")
-print(f"daveReplacements={c.get('daveReplacements')}")
-print(f"recoveries={c.get('recoveries')}")
-print(f"framesSent={c.get('framesSent')}")
-print(f"events={len(s.get('events') or [])}")
-PY
-  else
-    echo "status file: absent (bridge not running or not yet written)"
+  running="$(container_running)"
+  payload=""
+  if [ "$running" = "true" ]; then
+    payload="$(docker exec "$CONTAINER_NAME" cat "$STATUS_IN_CONTAINER" 2>/dev/null || true)"
   fi
-  if docker inspect d1-private-beta-bridge >/dev/null 2>&1; then
-    docker inspect -f 'container_running={{.State.Running}} restart_policy={{.HostConfig.RestartPolicy.Name}} published_ports={{len .NetworkSettings.Ports}}' d1-private-beta-bridge
+  file="$EVID_HOST/private-beta-status.json"
+  if [ -z "$payload" ] && [ -r "$file" ]; then
+    payload="$(cat "$file")"
+  fi
+  STATUS_JSON="$payload" python3 - "$running" <<'PY'
+import json, os, sys
+running = sys.argv[1] == "true"
+raw = os.environ.get("STATUS_JSON", "").strip()
+s = None
+if raw:
+    try:
+        s = json.loads(raw)
+    except json.JSONDecodeError:
+        s = None
+if not running:
+    health = "stale" if s else "absent"
+elif s is None:
+    health = "absent"
+else:
+    h = s.get("health")
+    health = h if h in ("ok", "degraded", "fail-closed", "starting") else "fail-closed"
+if s:
+    print(f"mode={s.get('mode')}")
+    print(f"experimental={s.get('experimental')}")
+    print(f"sourceCommit={s.get('sourceCommit')}")
+    print(f"state={s.get('state')}")
+    print(f"daveReady={s.get('daveReady')}")
+    print(f"receiver={s.get('receiver')}")
+    print(f"generation={s.get('generation')}")
+    print(f"scheduledReconnects={s.get('scheduledReconnects')}")
+    c = s.get("counters") or {}
+    print(f"decryptErrors={c.get('decryptErrors')}")
+    print(f"daveReplacements={c.get('daveReplacements')}")
+    print(f"recoveries={c.get('recoveries')}")
+    print(f"framesSent={c.get('framesSent')}")
+    print(f"events={len(s.get('events') or [])}")
+else:
+    print("status file: absent")
+print(f"health={health}")
+print(f"container_running={'yes' if running else 'no'}")
+PY
+  if docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+    docker inspect -f 'restart_policy={{.HostConfig.RestartPolicy.Name}} published_ports={{len .NetworkSettings.Ports}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$CONTAINER_NAME"
   else
     echo "container: absent"
   fi
@@ -184,11 +214,12 @@ stop() {
   compose stop
   compose rm -f
   if docker image inspect "ts6-discord-bridge-private-beta:$SOURCE_COMMIT" >/dev/null 2>&1; then
-    docker run --rm --user 0 --network none \
-      -v "$LAB/evidence:/data" --entrypoint chown \
-      "ts6-discord-bridge-private-beta:$SOURCE_COMMIT" -R 0:0 /data >/dev/null || true
+    docker run --rm --user 0 --network none --entrypoint sh \
+      -v "$EVID_HOST:/data" \
+      "ts6-discord-bridge-private-beta:$SOURCE_COMMIT" \
+      -c 'chown -R 0:0 /data' >/dev/null || true
   fi
-  chmod -R u+rwX,go-rwx "$LAB/evidence" || true
+  chmod -R u+rwX,go-rwx "$EVID_HOST" || true
   echo "private-beta stopped. image and evidence kept. ts lab not touched."
 }
 

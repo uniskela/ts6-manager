@@ -30,7 +30,7 @@ COPY packages/discord-bridge/tsconfig.json ./
 COPY packages/discord-bridge/scripts ./scripts
 COPY packages/discord-bridge/src ./src
 # Build-stage only: private-beta.test.mjs reads the compose file. Do not copy lab/ into runtime.
-COPY packages/discord-bridge/lab/docker-compose.private-beta.yml ./lab/docker-compose.private-beta.yml
+COPY packages/discord-bridge/lab/docker-compose.private-beta.yml packages/discord-bridge/lab/docker-compose.private-pilot.yml ./lab/
 COPY tsconfig.base.json /app/tsconfig.base.json
 
 # Gates. Executables are called directly so the build exercises the same entry points as runtime.
@@ -43,7 +43,8 @@ RUN node scripts/sync-tslib.mjs \
 
 FROM ${NODE_IMAGE} AS runtime
 ARG SOURCE_COMMIT=unknown
-LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}" \
+LABEL org.opencontainers.image.source="https://github.com/uniskela/ts6-manager" \
+      org.opencontainers.image.revision="${SOURCE_COMMIT}" \
       ts6.bridge.experimental="true" \
       ts6.bridge.public="false"
 WORKDIR /app/packages/discord-bridge

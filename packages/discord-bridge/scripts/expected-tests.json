@@ -6,7 +6,13 @@
     "compose file is opt-in, pinned, unrestarted and has no published ports",
     "exits 2 when the env file is not mode 0600",
     "prints SET/MISSING only and does not start without --confirm",
-    "refuses an unknown command and requires a SHA for rollback"
+    "refuses an unknown command and requires a SHA for rollback",
+    "treats a leftover status file as stale when the container is not running"
+  ],
+  "scripts/private-pilot.test.mjs": [
+    "compose file has no ports, no restart loop, and does not manage TeamSpeak",
+    "prints SET/MISSING only and does not start without --confirm",
+    "refuses the disposable lab host and a tag-only image"
   ],
   "scripts/run-live-container.test.mjs": [
     "exits 2 when a required variable is MISSING",
@@ -395,6 +401,7 @@
   ],
   "src/lab/beta-status.test.ts": [
     "derives fail-closed when DAVE is down or a duplicate receiver appears",
+    "healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped",
     "records bounded lifecycle events and never copies a secret-shaped field",
     "writes status atomically"
   ],

@@ -20,8 +20,8 @@ Acceptance tests A–D may be run in controlled sessions during this beta. Keep 
 | Restart | `restart: "no"`. No compose/container restart loop |
 | Limits | 1 CPU, 512 MB, `cap-drop ALL`, read-only root, `no-new-privileges` |
 | Logs | json-file, 4 MB × 5 files |
-| Status | `scripts/private-beta.sh status` reads `lab/evidence/private-beta-status.json` (no stdin) |
-| TeamSpeak | disposable `d1-ts-lab` only. Do not use the production server |
+| Status | `scripts/private-beta.sh status` uses `docker exec` while running, then the host bind mount. Leftover files are `health=stale` |
+| TeamSpeak | disposable `d1-ts-lab` for this compose. External pilot: [`PRIVATE-PILOT.md`](PRIVATE-PILOT.md) |
 
 DAVE enforcement, receive-generation fencing, human admission and the 3-per-60s rebuild budget are the same as the laboratory runtime. The container is not restarted when that budget is exhausted.
 
@@ -69,6 +69,8 @@ packages/discord-bridge/scripts/d1-ts-lab.sh stop
 | `health=ok` | status file | running, one receiver, DAVE ready, no duplicate receivers |
 | `health=degraded` | status file | scheduled reconnect, decrypt error, or recovery count > 0 |
 | `health=fail-closed` | status file | no receiver, DAVE not ready, duplicate receiver, or stopping |
+| `health=stale` | host status | leftover file after the container stopped |
+| Docker `healthy` | compose healthcheck | fresh status, DAVE ready, one receiver (`src/lab/private-beta-health.ts`) |
 | container exit | `docker inspect` | process ended; it will **not** come back (`restart: no`) |
 
 On encryption loss the bridge still fails closed (no plaintext). Bounded in-process reconnects happen only when `D1_DAVE_SINGLE_ATTEMPT` is unset. There is no outer restart loop.
@@ -76,6 +78,8 @@ On encryption loss the bridge still fails closed (no plaintext). Bounded in-proc
 SIGTERM/SIGINT write a final evidence JSON, stop the runtime, destroy bots and disconnect TeamSpeak (compose `stop_grace_period: 30s`).
 
 ## Monitoring (privacy-safe)
+
+Rootless Docker remaps container uid 1000. The evidence directory is `0755` and the status file `0644` so the host can read the bind mount. `status` prefers `docker exec` while the container is running.
 
 `lab/evidence/private-beta-status.json` is overwritten every 5 s. It has mode, commit, health, receiver slot id, generation, DAVE ready, and counters (`decryptErrors`, `daveReplacements`, `recoveries`, `framesSent`, drops). Lifecycle events are a ring of 200 (`starting`, `bridge_running`, `dave_ready`, `dave_lost`, `receiver_changed`, `generation_changed`, `reconnect_scheduled`, `stopping`).
 

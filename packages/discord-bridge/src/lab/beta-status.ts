@@ -1,4 +1,4 @@
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 export const PRIVATE_BETA_MODE = "private-beta" as const;
@@ -125,8 +125,32 @@ export function buildBetaStatus(input: {
 }
 
 export function writeAtomicJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  mkdirSync(dir, { recursive: true });
+  // 0755/0644 so a rootless host user can still read a bind mount owned by container uid 1000.
+  chmodSync(dir, 0o755);
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`);
+  chmodSync(tmp, 0o644);
   renameSync(tmp, path);
+  chmodSync(path, 0o644);
+}
+
+/** Docker HEALTHCHECK: DAVE + receiver, not merely process uptime. Stale files fail. */
+export function healthcheckOk(status: Record<string, unknown>, now = Date.now()): boolean {
+  if (status.mode !== PRIVATE_BETA_MODE) return false;
+  const at = Date.parse(String(status.at ?? ""));
+  if (!Number.isFinite(at) || now - at > 30_000) return false;
+  if (status.state !== "running") return false;
+  if (status.daveReady !== true || !status.receiver) return false;
+  return status.health === "ok" || status.health === "degraded";
+}
+
+/** Host `status` must not treat a leftover file as live health after the container stops. */
+export function hostHealthLabel(status: Record<string, unknown> | null, containerRunning: boolean): "ok" | "degraded" | "fail-closed" | "starting" | "stale" | "absent" {
+  if (!containerRunning) return status ? "stale" : "absent";
+  if (!status) return "absent";
+  const h = status.health;
+  if (h === "ok" || h === "degraded" || h === "fail-closed" || h === "starting") return h;
+  return "fail-closed";
 }

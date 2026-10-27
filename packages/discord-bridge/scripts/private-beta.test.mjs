@@ -80,12 +80,36 @@ describe("private-beta.sh", () => {
     assert.match(src, /cpus: "1.0"/);
     assert.match(src, /max-size: "4m"/);
     assert.match(src, /external: true/);
+    assert.match(src, /private-beta-health\.ts/);
     assert.equal(/\n\s+ports:/.test(src), false);
     assert.equal(src.includes("0.0.0.0"), false);
     assert.equal(src.includes("unless-stopped"), false);
     assert.equal(src.includes("restart: always"), false);
     assert.match(sh, /--no-build/);
     assert.match(sh, /do not push/);
+    assert.match(sh, /chmod 0755/);
+    assert.match(sh, /docker exec/);
     assert.equal(sh.includes("docker push"), false);
+  });
+
+  it("treats a leftover status file as stale when the container is not running", () => {
+    const dir = mkdtempSync(join(tmpdir(), "d1-beta-evid-"));
+    writeFileSync(join(dir, "private-beta-status.json"), JSON.stringify({
+      mode: "private-beta",
+      health: "ok",
+      daveReady: true,
+      receiver: "slot-0",
+      state: "running",
+      counters: {},
+    }));
+    const envFile = writeEnv(present);
+    const r = spawnSync("bash", [script, "status"], {
+      encoding: "utf8",
+      env: { ...process.env, D1_ENV_FILE: envFile, D1_EVIDENCE_DIR: dir },
+    });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /health=stale/);
+    assert.match(r.stdout, /container_running=no/);
+    assert.equal(/^health=ok$/m.test(r.stdout), false);
   });
 });

@@ -1,6 +1,6 @@
 # Discord voice bridge: Bridge-D1 lab
 
-**Status: draft feasibility lab. Not for merge. Not shipped. Disabled by default (it is not wired into production compose, images, backend routes or release workflows). Restricted private-beta compose is opt-in only: [`lab/PRIVATE-BETA.md`](lab/PRIVATE-BETA.md).**
+**Status: draft feasibility lab. Not for merge. Not shipped. Disabled by default (it is not wired into production compose, images, backend routes or release workflows). Restricted private-beta compose is opt-in only: [`lab/PRIVATE-BETA.md`](lab/PRIVATE-BETA.md). Production-server pilot (prepared, not authorised): [`lab/PRIVATE-PILOT.md`](lab/PRIVATE-PILOT.md).**
 
 This package is the isolated Node 24 proof of concept for the Discord ↔ TeamSpeak voice bridge defined by the accepted Bridge-K contract ([`docs/internal/discord-voice-bridge.md`](../../docs/internal/discord-voice-bridge.md)). D1 is a feasibility proof of the 5+1 design. It is not a reduced single-bot product.
 

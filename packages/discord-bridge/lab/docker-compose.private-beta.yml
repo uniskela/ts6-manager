@@ -39,13 +39,7 @@ services:
         max-size: "4m"
         max-file: "5"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "const fs=require('fs');const s=JSON.parse(fs.readFileSync('evidence/private-beta-status.json','utf8'));if(s.mode!=='private-beta')process.exit(1);if(Date.now()-Date.parse(s.at)>30000)process.exit(1);process.exit(s.state==='running'?0:1)",
-        ]
+      test: ["CMD", "./node_modules/.bin/tsx", "src/lab/private-beta-health.ts"]
       interval: 15s
       timeout: 5s
       retries: 3
