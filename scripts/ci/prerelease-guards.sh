@@ -75,10 +75,11 @@ inspect_not_found() {
     'manifest unknown|MANIFEST_UNKNOWN|name unknown|NAME_UNKNOWN|not found: manifest|(^|[[:space:]])404([[:space:]]|$)'
 }
 
-inspect_raw() {
+inspect_stdout() {
   local image="$1" err
+  shift
   err="$(mktemp)"
-  if ! docker buildx imagetools inspect --raw "$image" 2>"$err"; then
+  if ! docker buildx imagetools inspect "$@" "$image" 2>"$err"; then
     local msg
     msg="$(cat "$err")"
     rm -f "$err"
@@ -88,13 +89,6 @@ inspect_raw() {
     die "registry inspect failed for $image; refusing to publish"
   fi
   rm -f "$err"
-}
-
-inspect_raw_required() {
-  local image="$1" raw
-  raw="$(inspect_raw "$image")" || die "could not read $image from the registry; refusing to publish"
-  [ -n "$raw" ] || die "registry inspect returned empty for $image; refusing to publish"
-  printf '%s' "$raw"
 }
 
 image_fixture_status() {
@@ -111,74 +105,60 @@ image_present() {
       *) return 1 ;;
     esac
   fi
-  local err rc=0
-  err="$(mktemp)"
-  docker buildx imagetools inspect "$image" >/dev/null 2>"$err" || rc=$?
-  local msg
-  msg="$(cat "$err")"
-  rm -f "$err"
-  [ "$rc" -eq 0 ] && return 0
-  if inspect_not_found "$msg"; then
-    return 1
-  fi
-  die "registry inspect failed for $image; refusing to publish"
+  inspect_stdout "$image" >/dev/null || return 1
 }
 
-revision_from_config() {
-  local image="$1" manifest="$2" cfg cfg_raw
-  cfg="$(printf '%s' "$manifest" | jq -r '.config.digest // empty')"
-  [ -n "$cfg" ] || return 0
-  cfg_raw="$(inspect_raw_required "${image}@${cfg}")"
-  printf '%s' "$cfg_raw" | jq -r '.config.Labels["org.opencontainers.image.revision"] // empty'
-}
-
-revision_from_oci() {
-  local image="$1" raw="$2"
-  if printf '%s' "$raw" | jq -e '(.manifests | type) == "array"' >/dev/null 2>&1; then
-    local digest rev seen=""
-    while IFS= read -r digest; do
-      [ -n "$digest" ] || continue
-      rev="$(revision_from_config "$image" "$(inspect_raw_required "${image}@${digest}")")"
-      [ -n "$rev" ] || continue
-      if [ -z "$seen" ]; then
-        seen="$rev"
-      elif [ "$seen" != "$rev" ]; then
-        die "image $image has conflicting config revisions"
-      fi
-    done < <(printf '%s' "$raw" | jq -r '
-      .manifests[]?
-      | select((.platform.os // "linux") != "unknown")
-      | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
-      | .digest // empty
-    ')
-    printf '%s' "$seen"
-    return 0
-  fi
-  revision_from_config "$image" "$raw"
+revision_from_image_json() {
+  local json="${1:-}" revs count
+  [ -n "$json" ] && [ "$json" != "null" ] || return 0
+  revs="$(printf '%s' "$json" | jq -r '
+    def rev:
+      .config.Labels["org.opencontainers.image.revision"] // empty;
+    if type != "object" then
+      empty
+    elif has("config") then
+      rev
+    else
+      to_entries[]
+      | select((.key | split("/")[0]) != "unknown")
+      | .value
+      | if type == "object" then rev else empty end
+    end
+  ' | grep -v '^$' | sort -u || true)"
+  count="$(printf '%s\n' "$revs" | grep -c . || true)"
+  [ "$count" -le 1 ] || die "image has conflicting config revisions"
+  printf '%s' "$revs"
 }
 
 image_revision() {
-  local image="$1"
+  local image="$1" json
   if [ -n "${PRERELEASE_IMAGE_INSPECT:-}" ]; then
     awk -F'\t' -v img="$image" '$1==img {print $2; exit}' "$PRERELEASE_IMAGE_INSPECT"
     return 0
   fi
-  local raw
-  raw="$(inspect_raw "$image")" || return 0
-  [ -n "$raw" ] || return 0
-  revision_from_oci "$image" "$raw"
+  json="$(inspect_stdout "$image" --format '{{json .Image}}')" || return 0
+  revision_from_image_json "$json"
 }
 
 reject_image_collision() {
-  local prefix="${1:-}" tag="${2:-}" version="${3:-}" sha="${4:-}" short="${5:-}"
+  local prefix="${1:-}" tag="${2:-}" version="${3:-}" sha="${4:-}" short="${5:-}" component="${6:-}"
   [ -n "$prefix" ] || die "image prefix required"
   [[ "$sha" =~ $COMMIT_SHA ]] || die "reject-image-collision expects a 40-character SHA"
   if [ -z "$short" ]; then
     short="${sha:0:7}"
   fi
   [[ "$short" =~ ^[0-9a-f]{7}$ ]] || die "reject-image-collision expects a 7-character short SHA"
-  local component suffix image existing
-  for component in backend frontend sidecar all-in-one; do
+  local components
+  if [ -n "$component" ]; then
+    case "$component" in
+      backend|frontend|sidecar|all-in-one) components="$component" ;;
+      *) die "reject-image-collision unknown component: $component" ;;
+    esac
+  else
+    components="backend frontend sidecar all-in-one"
+  fi
+  local suffix image existing
+  for component in $components; do
     for suffix in "sha-${short}" $tag $version; do
       [ -n "$suffix" ] || continue
       image="${prefix}/${component}:${suffix}"
@@ -214,7 +194,7 @@ verify_github_release_target() {
 }
 
 usage() {
-  die "usage: $0 <validate-source-branch|require-ancestor|require-protected-source|require-prerelease-reviewers|reject-tag-collision|reject-image-collision|verify-github-release-target> [args]"
+  die "usage: $0 <validate-source-branch|require-ancestor|require-protected-source|require-prerelease-reviewers|reject-tag-collision|reject-image-collision|verify-github-release-target|revision-from-image-json> [args]"
 }
 
 main() {
@@ -228,6 +208,7 @@ main() {
     reject-tag-collision) reject_tag_collision "$@" ;;
     reject-image-collision) reject_image_collision "$@" ;;
     verify-github-release-target) verify_github_release_target "$@" ;;
+    revision-from-image-json) revision_from_image_json "$(cat)" ;;
     *) usage ;;
   esac
 }

@@ -463,6 +463,18 @@ class PrereleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("if", step)
             self.assertIn("needs.resolve-ref.outputs.short_sha", step["run"])
             self.assertIn("reject-image-collision", step["run"])
+        matrix_step = next(
+            s
+            for s in self.prerelease["jobs"]["build-and-push"]["steps"]
+            if s.get("name") == "Reject image tag collisions"
+        )
+        self.assertIn("${{ matrix.component }}", matrix_step["run"])
+        aio_step = next(
+            s
+            for s in self.prerelease["jobs"]["build-all-in-one"]["steps"]
+            if s.get("name") == "Reject image tag collisions"
+        )
+        self.assertRegex(aio_step["run"], r"(?m)\ball-in-one\s*$")
         self.assertNotIn("leaving it unchanged", text)
         self.assertNotIn("ref: ${{ inputs.ref }}", text)
         self.assertEqual(

@@ -284,7 +284,8 @@ jobs:
             "${{ needs.resolve-ref.outputs.tag }}" \
             "${{ needs.resolve-ref.outputs.version }}" \
             "${{ needs.resolve-ref.outputs.sha }}" \
-            "${{ needs.resolve-ref.outputs.short_sha }}"
+            "${{ needs.resolve-ref.outputs.short_sha }}" \
+            "${{ matrix.component }}"
 
       - name: Extract labels
         id: meta
@@ -423,7 +424,8 @@ jobs:
             "${{ needs.resolve-ref.outputs.tag }}" \
             "${{ needs.resolve-ref.outputs.version }}" \
             "${{ needs.resolve-ref.outputs.sha }}" \
-            "${{ needs.resolve-ref.outputs.short_sha }}"
+            "${{ needs.resolve-ref.outputs.short_sha }}" \
+            all-in-one
 
       - name: Extract labels
         id: meta

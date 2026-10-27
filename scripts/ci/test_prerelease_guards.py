@@ -1,5 +1,6 @@
 """Regression tests for prerelease SHA/tag collision and ancestry guards."""
 
+import json
 import os
 import stat
 import subprocess
@@ -14,14 +15,14 @@ SHA_A = "a" * 40
 SHA_B = "b" * 40
 
 
-def run_guard(*args, env=None, cwd=None):
+def run_guard(*args, env=None, cwd=None, timeout=20):
     return subprocess.run(
         ["bash", str(GUARD), *args],
         cwd=cwd,
         env=env or os.environ.copy(),
         capture_output=True,
         text=True,
-        timeout=20,
+        timeout=timeout,
     )
 
 
@@ -155,6 +156,23 @@ class PrereleaseGuardTests(unittest.TestCase):
         self.assertIn(SHA_B, conflict.stderr)
         self.assertIn(f"sha-{SHA_A[:7]}", conflict.stderr)
 
+    def test_image_collision_scopes_to_one_component(self):
+        env = self._inspect_env([f"ghcr.io/uniskela/ts6-manager/frontend:v1.12.0-beta.1\t{SHA_B}"])
+        scoped = run_guard(
+            "reject-image-collision",
+            "ghcr.io/uniskela/ts6-manager",
+            "v1.12.0-beta.1",
+            "1.12.0-beta.1",
+            SHA_A,
+            SHA_A[:7],
+            "backend",
+            env=env,
+        )
+        self.assertEqual(scoped.returncode, 0, scoped.stderr)
+        unscoped = self._reject(env)
+        self.assertNotEqual(unscoped.returncode, 0)
+        self.assertIn("frontend", unscoped.stderr)
+
     def test_github_release_refuses_other_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake = Path(tmp)
@@ -253,12 +271,6 @@ import json
 import os
 import sys
 
-CFG = "sha256:" + "c" * 64
-CFG2 = "sha256:" + "e" * 64
-MAN = "sha256:" + "d" * 64
-MAN2 = "sha256:" + "f" * 64
-ATTEST = "sha256:" + "1" * 64
-
 
 def fail(msg):
     print(msg, file=sys.stderr)
@@ -268,15 +280,28 @@ def fail(msg):
 args = sys.argv[1:]
 if args[:3] != ["buildx", "imagetools", "inspect"]:
     fail("unexpected docker invocation: " + " ".join(args))
-raw = "--raw" in args
-image = [a for a in args[3:] if a != "--raw"][0]
+fmt = None
+image = None
+rest = args[3:]
+i = 0
+while i < len(rest):
+    if rest[i] == "--raw":
+        fail("unexpected --raw inspect; use --format {{json .Image}}")
+    if rest[i] == "--format":
+        fmt = rest[i + 1]
+        i += 2
+        continue
+    image = rest[i]
+    i += 1
+if not image:
+    fail("missing image")
 mode = os.environ.get("DOCKER_MOCK_MODE", "absent")
 present = os.environ.get(
     "DOCKER_MOCK_IMAGE",
     "ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1",
 )
 revision = os.environ.get("DOCKER_MOCK_REVISION", "")
-name, _, digest = image.partition("@")
+name = image.split("@", 1)[0]
 
 if mode == "absent":
     fail("ERROR: manifest unknown")
@@ -284,52 +309,41 @@ if mode == "registry-error":
     fail(os.environ.get("DOCKER_MOCK_ERROR", "unauthorized: authentication required"))
 if name != present:
     fail("ERROR: manifest unknown")
-if not raw:
+if not fmt:
     raise SystemExit(0)
+if "{{json .Image}}" not in fmt:
+    fail("unexpected format: " + fmt)
 
 labels = {}
 if mode != "missing-label":
     labels["org.opencontainers.image.revision"] = revision
-config = {"config": {"Labels": labels}}
-manifest = {"schemaVersion": 2, "config": {"digest": CFG}}
-
+single = {"architecture": "amd64", "config": {"Labels": labels}}
 if mode == "multiarch":
-    if not digest:
-        print(
-            json.dumps(
-                {
-                    "schemaVersion": 2,
-                    "manifests": [
-                        {"digest": MAN, "platform": {"os": "linux", "architecture": "amd64"}},
-                        {"digest": MAN2, "platform": {"os": "linux", "architecture": "arm64"}},
-                        {
-                            "digest": ATTEST,
-                            "platform": {"os": "unknown", "architecture": "unknown"},
-                            "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
-                        },
-                    ],
-                    "annotations": {"org.opencontainers.image.revision": "0" * 40},
-                }
-            )
+    print(
+        json.dumps(
+            {
+                "linux/amd64": single,
+                "linux/arm64": {"architecture": "arm64", "config": {"Labels": dict(labels)}},
+                "unknown/unknown": {
+                    "config": {"Labels": {"org.opencontainers.image.revision": "0" * 40}}
+                },
+            }
         )
-    elif digest == MAN:
-        print(json.dumps({"schemaVersion": 2, "config": {"digest": CFG}}))
-    elif digest == MAN2:
-        print(json.dumps({"schemaVersion": 2, "config": {"digest": CFG2}}))
-    elif digest in {CFG, CFG2}:
-        print(json.dumps(config))
-    elif digest == ATTEST:
-        fail("attestation blob should not be inspected")
-    else:
-        fail("ERROR: manifest unknown")
-    raise SystemExit(0)
-
-if not digest:
-    print(json.dumps(manifest))
-elif digest == CFG:
-    print(json.dumps(config))
+    )
+elif mode == "multiarch-conflict":
+    print(
+        json.dumps(
+            {
+                "linux/amd64": single,
+                "linux/arm64": {
+                    "architecture": "arm64",
+                    "config": {"Labels": {"org.opencontainers.image.revision": "b" * 40}},
+                },
+            }
+        )
+    )
 else:
-    fail("ERROR: manifest unknown")
+    print(json.dumps(single))
 """
 
 
@@ -394,6 +408,11 @@ class TestImageInspectDockerMock(unittest.TestCase):
         self.assertNotEqual(annotated_only.returncode, 0)
         self.assertIn("no readable revision", annotated_only.stderr)
 
+    def test_multiarch_conflicting_revisions_block_publish(self):
+        result = self._reject(self._env("multiarch-conflict", SHA_A))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("conflicting config revisions", result.stderr)
+
     def test_short_sha_tag_collision(self):
         result = self._reject(
             self._env("present", SHA_B, f"ghcr.io/uniskela/ts6-manager/backend:sha-{SHA_A[:7]}"),
@@ -403,6 +422,119 @@ class TestImageInspectDockerMock(unittest.TestCase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(f"sha-{SHA_A[:7]}", result.stderr)
+
+
+LIVE_PREFIX = "ghcr.io/uniskela/ts6-manager"
+LIVE_TAG = "v1.11.2"
+LIVE_VERSION = "1.11.2"
+LIVE_REV = "5cc02df35a0fa19b4fccaebd47506aefc8352aa4"
+LIVE_IMAGE = f"{LIVE_PREFIX}/backend:{LIVE_TAG}"
+
+
+def _live_image_json():
+    return subprocess.run(
+        ["docker", "buildx", "imagetools", "inspect", "--format", "{{json .Image}}", LIVE_IMAGE],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+
+def live_registry_available():
+    try:
+        result = _live_image_json()
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and "org.opencontainers.image.revision" in result.stdout
+
+
+class TestRevisionFromImageJson(unittest.TestCase):
+    def _parse(self, payload):
+        return subprocess.run(
+            ["bash", str(GUARD), "revision-from-image-json"],
+            input=payload,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+
+    def test_single_platform_config(self):
+        result = self._parse(
+            json.dumps(
+                {
+                    "architecture": "amd64",
+                    "config": {"Labels": {"org.opencontainers.image.revision": SHA_A}},
+                }
+            )
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, SHA_A)
+
+    def test_multi_platform_map_ignores_unknown_and_conflicts(self):
+        same = self._parse(
+            json.dumps(
+                {
+                    "linux/amd64": {"config": {"Labels": {"org.opencontainers.image.revision": SHA_A}}},
+                    "linux/arm64": {"config": {"Labels": {"org.opencontainers.image.revision": SHA_A}}},
+                    "unknown/unknown": {"config": {"Labels": {"org.opencontainers.image.revision": SHA_B}}},
+                }
+            )
+        )
+        self.assertEqual(same.returncode, 0, same.stderr)
+        self.assertEqual(same.stdout, SHA_A)
+        conflict = self._parse(
+            json.dumps(
+                {
+                    "linux/amd64": {"config": {"Labels": {"org.opencontainers.image.revision": SHA_A}}},
+                    "linux/arm64": {"config": {"Labels": {"org.opencontainers.image.revision": SHA_B}}},
+                }
+            )
+        )
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn("conflicting config revisions", conflict.stderr)
+
+
+@unittest.skipUnless(live_registry_available(), "GHCR image inspect unavailable")
+class TestLiveGhcrRevision(unittest.TestCase):
+    def test_format_image_revision_matches_published_label(self):
+        inspected = _live_image_json()
+        self.assertEqual(inspected.returncode, 0, inspected.stderr)
+        parsed = subprocess.run(
+            ["bash", str(GUARD), "revision-from-image-json"],
+            input=inspected.stdout,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        self.assertEqual(parsed.returncode, 0, parsed.stderr)
+        self.assertEqual(parsed.stdout, LIVE_REV)
+
+    def test_matching_revision_allows_republish(self):
+        result = run_guard(
+            "reject-image-collision",
+            LIVE_PREFIX,
+            LIVE_TAG,
+            LIVE_VERSION,
+            LIVE_REV,
+            LIVE_REV[:7],
+            "backend",
+            timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_conflicting_revision_blocks_publish(self):
+        result = run_guard(
+            "reject-image-collision",
+            LIVE_PREFIX,
+            LIVE_TAG,
+            LIVE_VERSION,
+            SHA_B,
+            LIVE_REV[:7],
+            "backend",
+            timeout=60,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(LIVE_REV, result.stderr)
 
 
 if __name__ == "__main__":
