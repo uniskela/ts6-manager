@@ -58,8 +58,29 @@ describe("run-live-container.sh presence-only", () => {
     assert.match(r.stdout, /D1_TS_HOST: SET/);
     assert.match(r.stdout, /presence complete/);
     assert.match(r.stdout, /lab network: d1-ts-lab/);
+    assert.match(r.stdout, /D1_DAVE_SINGLE_ATTEMPT: MISSING/);
+    assert.match(r.stdout, /dave_single_attempt=off/);
     assert.equal(r.stdout.includes(secret), false);
     assert.equal(r.stdout.includes("not-a-real-host"), false);
+  });
+
+  it("reports D1_DAVE_SINGLE_ATTEMPT SET from the host env without starting live", () => {
+    const file = writeEnv(present);
+    const r = run(file, { D1_DAVE_SINGLE_ATTEMPT: "1" });
+    assert.equal(r.status, 0, r.stderr || r.stdout);
+    assert.match(r.stdout, /D1_DAVE_SINGLE_ATTEMPT: SET/);
+    assert.match(r.stdout, /dave_single_attempt=on/);
+    assert.match(r.stdout, /presence complete/);
+  });
+
+  it("refuses --confirm when single-attempt is not armed", () => {
+    const file = writeEnv(present);
+    const r = spawnSync("bash", [script, "--confirm"], {
+      encoding: "utf8",
+      env: { ...process.env, D1_ENV_FILE: file },
+    });
+    assert.equal(r.status, 2);
+    assert.match(r.stdout, /live start blocked: D1_DAVE_SINGLE_ATTEMPT is MISSING/);
   });
 
   it("names the disposable lab network and does not use --internal", async () => {

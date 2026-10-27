@@ -8,13 +8,14 @@
  * - the `DAVESession` wrapper is swapped for another;
  * - the wrapper re-initialises in place (`DAVESession.reinit()`: an invalid transition, a new epoch 1
  *   or a protocol change). The connection, Networking, wrapper and native session objects all stay
- *   the same; only the MLS session underneath is new. `processWelcome` (joining a group) is counted
- *   the same way.
+ *   the same; only the MLS session underneath is new.
  *
  * `daveSessionIdentity` reads the first two from object identity and counts the third by wrapping
- * the wrapper's own `reinit` and `processWelcome`, counting before the original runs, so a check made
- * during or after a re-initialisation already sees a different session. Commits inside one session
- * (an MLS epoch advancing as members come and go) are the same session and are not counted.
+ * the wrapper's own `reinit`, counting before the original runs, so a check made during or after a
+ * re-initialisation already sees a different session. Welcome and commit on an already-identified
+ * wrapper are the same session: they are how a pending local group becomes established, and how
+ * members are added later. Reception starts only after DAVE is ready, so those handshakes are not
+ * a replacement. A real MLS reset goes through `reinit()` first.
  *
  * Fail closed: when any part cannot be read, or the wrapper cannot be instrumented, there is no
  * identity (`null`), and callers treat DAVE as not established.
@@ -31,7 +32,7 @@ interface Counter {
   n: number;
 }
 
-const COUNTED = ["reinit", "processWelcome"] as const;
+const COUNTED = ["reinit"] as const;
 const counters = new WeakMap<object, Counter>();
 
 /** Count every re-initialisation of this wrapper from now on. `null` when it cannot be instrumented. */

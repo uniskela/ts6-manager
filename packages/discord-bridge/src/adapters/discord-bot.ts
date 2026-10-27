@@ -17,6 +17,7 @@ import {
 } from "@discordjs/voice";
 import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
+import { emptyDaveSnapshot, formatDaveSnapshot, observeDave, observeDaveWs, type DaveSnapshot } from "../core/dave-observe.js";
 import { DaveSessionEpochs, daveSessionIdentity } from "../core/dave-session.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
@@ -177,6 +178,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
   healthy = false;
   framesSent = 0;
   rejoins = 0;
+  /** Privacy-safe MLS negotiation trace for the live wrapper (null when none). */
+  private daveTrace: DaveSnapshot | null = null;
+  /** When the live voice connection last became Ready; used only for elapsedMs diagnostics. */
+  private connectedAt: number | null = null;
   /** Established DAVE sessions replaced by another while receiving (each one ended a receive generation). */
   daveReplacements = 0;
 
@@ -364,6 +369,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
       if (this.abortJoin === abort) this.abortJoin = null;
     }
     this.checkpoint(epoch, conn);
+    this.connectedAt = Date.now();
     await this.requireDave(conn, epoch);
     this.checkpoint(epoch, conn);
     if (this.failures !== settled) {
@@ -415,10 +421,12 @@ export class DiscordBot extends EventEmitter implements BotPort {
       created = fresh;
       this.connection = fresh;
       this.installDaveGuards(fresh);
+      this.watchDave(fresh);
       fresh.subscribe(this.player);
       fresh.on("stateChange", (_o, n) => {
         // Only an unexpected change on the live connection is a failure; our own teardown detaches first.
         if (fresh !== this.connection) return;
+        this.watchDave(fresh);
         if (n.status === VoiceConnectionStatus.Disconnected) this.markUnhealthy(`voice ${n.status}`);
         // Destroyed cannot be revived: drop it so the next join builds a new connection and DAVE session.
         else if (n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`, { fresh: true });
@@ -438,6 +446,16 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private currentDave(conn: VoiceConnection): object | null {
     const state = conn.state;
     return state.status === VoiceConnectionStatus.Ready ? ((state.networking.state as { dave?: object }).dave ?? null) : null;
+  }
+
+  /** DAVE wrapper if present, including before Voice Ready (SelectingProtocol send of opcode 26). */
+  private daveObject(conn: VoiceConnection): object | null {
+    const net = (conn.state as { networking?: { state?: { dave?: object; ws?: object } } }).networking?.state;
+    return net?.dave ?? null;
+  }
+
+  private voiceWs(conn: VoiceConnection): object | null {
+    return (conn.state as { networking?: { state?: { ws?: object } } }).networking?.state?.ws ?? null;
   }
 
   /**
@@ -600,15 +618,52 @@ export class DiscordBot extends EventEmitter implements BotPort {
   /** Enforce DAVE: wait for an established session, otherwise drop the connection and fail closed. */
   private async requireDave(conn: VoiceConnection, epoch: number): Promise<void> {
     const deadline = Date.now() + this.timing.daveWaitMs;
+    let lastLog = 0;
+    this.watchDave(conn);
+    this.logDaveProgress(conn, "wait");
     while (Date.now() < deadline) {
       this.checkpoint(epoch, conn);
-      if (this.enforced(conn)) return;
+      this.watchDave(conn);
+      if (this.enforced(conn)) {
+        this.logDaveProgress(conn, "ready");
+        return;
+      }
+      const now = Date.now();
+      if (now - lastLog >= 2_000) {
+        lastLog = now;
+        this.logDaveProgress(conn, "wait");
+      }
       await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
     const info = readDaveInfo(conn);
+    this.logDaveProgress(conn, "timeout");
     this.noteFailure();
     this.discardConnection();
     throw new Error(`DAVE not negotiated (protocolVersion=${info?.protocolVersion ?? "n/a"}, ready=${info?.ready ?? false}); failing closed`);
+  }
+
+  /** Attach the negotiation trace as soon as the library creates a DAVE wrapper. */
+  private watchDave(conn: VoiceConnection): void {
+    this.daveTrace ??= emptyDaveSnapshot();
+    const ws = this.voiceWs(conn);
+    if (ws) observeDaveWs(ws, () => this.daveTrace ?? emptyDaveSnapshot());
+    const dave = this.daveObject(conn);
+    if (!dave) return;
+    const live = observeDave(dave);
+    if (!live) return;
+    if (live !== this.daveTrace) {
+      const shared = this.daveTrace.wsOut;
+      Object.assign(shared, live.wsOut);
+      live.wsOut = shared;
+    }
+    this.daveTrace = live;
+  }
+
+  private logDaveProgress(conn: VoiceConnection, phase: string): void {
+    const info = readDaveInfo(conn);
+    const trace = this.daveTrace ? formatDaveSnapshot(this.daveTrace) : "no-wrapper";
+    const elapsedMs = this.connectedAt === null ? "n/a" : Date.now() - this.connectedAt;
+    this.o.log.info(`${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} elapsedMs=${elapsedMs} failures=${this.failures} ${trace}`);
   }
 
   /** The TeamSpeak speaker assigned to this bot: Opus passthrough, one turn per stretch of speech. */
@@ -777,6 +832,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const conn = this.connection;
     this.connection = null;
     this.daveOk = false;
+    this.daveTrace = null;
+    this.connectedAt = null;
     this.preparedFor = null;
     this.daveEpochs.forget();
     this.abortJoin?.abort();
@@ -826,6 +883,19 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   get daveInfo() {
     return this.connection ? readDaveInfo(this.connection) : null;
+  }
+
+  /** Privacy-safe MLS negotiation snapshot (categories and integers only). */
+  get daveNegotiation() {
+    return this.daveTrace
+      ? {
+          ...this.daveTrace,
+          events: { ...this.daveTrace.events },
+          wsOut: { ...this.daveTrace.wsOut },
+          elapsedMs: this.connectedAt === null ? null : Date.now() - this.connectedAt,
+          failures: this.failures,
+        }
+      : null;
   }
 
   /** The epoch of the DAVE session in force on the live connection (null when none), for diagnostics and tests. */

@@ -15,7 +15,7 @@ import { ResourceSampler } from "../core/metrics.js";
 import { createOpusCodec } from "../core/opus.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger, safeError } from "../core/redact.js";
-import { loadLabConfig, presenceReport } from "./config.js";
+import { labDaveDiagnostic, loadLabConfig, presenceReport } from "./config.js";
 import { Evidence } from "./evidence.js";
 
 const log = createLogger("d1-live");
@@ -30,6 +30,7 @@ if (!loaded.ok) {
 }
 
 const cfg = loaded.config;
+const diag = labDaveDiagnostic(process.env);
 const ev = new Evidence();
 const sampler = new ResourceSampler();
 const ids = preferredOrder(5);
@@ -54,6 +55,7 @@ async function main(): Promise<void> {
       election,
       log,
       sessionId,
+      timing: diag.timing,
       onHumanOpus: (b, g, u, o, a) => runtime?.onHumanOpus(b, g, u, o, a),
       onHumanClosed: (b, u) => runtime?.onHumanClosed(b, u),
       bridgeUserIds: () => new Set([...concrete.values()].map((c) => c.userId).filter(Boolean)),
@@ -61,7 +63,8 @@ async function main(): Promise<void> {
     concrete.set(id, bot);
     bots.set(id, bot);
   }
-  runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log });
+  runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log, retry: diag.retry });
+  if (diag.singleAttempt) log.info("single-attempt diagnostic: first planned join only; no automatic reconnects");
 
   // Fail closed: every identity must log in and pass the guild/channel permission check first.
   const bad: string[] = [];
@@ -89,9 +92,11 @@ async function main(): Promise<void> {
 
   const snapshot = () => ({
     ...runtime!.status(),
-    dave: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveInfo])),
+      dave: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveInfo])),
+      daveNegotiation: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveNegotiation])),
     receiveSubscriptions: Object.fromEntries([...concrete].map(([id, b]) => [id, b.openSubscriptions])),
     decryptErrors: Object.fromEntries([...concrete].map(([id, b]) => [id, b.decryptErrors])),
+    daveReplacements: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveReplacements])),
     recoveries: Object.fromEntries([...concrete].map(([id, b]) => [id, b.rejoins])),
     identityLookups: Object.fromEntries([...concrete].map(([id, b]) => [id, b.identityLookups])),
   });

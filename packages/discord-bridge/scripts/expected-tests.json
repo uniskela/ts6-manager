@@ -7,7 +7,9 @@
     "exits 2 when the env file is missing",
     "exits 2 when the env file is not mode 0600",
     "names the disposable lab network and does not use --internal",
-    "prints SET/MISSING only, never token values, and does not start live without --confirm"
+    "prints SET/MISSING only, never token values, and does not start live without --confirm",
+    "refuses --confirm when single-attempt is not armed",
+    "reports D1_DAVE_SINGLE_ATTEMPT SET from the host env without starting live"
   ],
   "scripts/run-tests.fixture.test.mjs": [
     "--update records test names, and a second run against them is accepted",
@@ -60,6 +62,7 @@
     "bare pipeline: every frame queued under session A is dropped at the mixer after a new DAVE session object (replaceDave), and none is forwarded",
     "bare pipeline: every frame queued under session A is dropped at the mixer after the library's in-place DAVESession.reinit() (same objects, never unready), and none is forwarded",
     "fail closed: a session the bot cannot identify (its wrapper cannot be instrumented) admits nobody and forwards nothing",
+    "processWelcome after startReceive is not a session replacement; reinit still is",
     "real runtime: a frame queued under session A is not mixed after session A is replaced by a new DAVE session object (replaceDave)",
     "real runtime: a frame queued under session A is not mixed after session A is replaced by the library's in-place DAVESession.reinit() (same objects, never unready)",
     "replacement during receiver failover: the successor binds the session in force, a replacement after it starts receiving ends its admissions, and only it is heard",
@@ -238,6 +241,7 @@
     "rejects PCM that is not whole stereo samples instead of mixing garbage",
     "releasing a user (stream closed) disposes its decoder",
     "reports frames it cannot carry as unsupported, and garbage as invalid, never as a silent pass-through",
+    "slot path: a voice-stop is not a decode error; a malformed Opus packet is",
     "splits a 40/60/120 ms multi-frame packet into whole 20 ms packets that each decode to 960 samples",
     "still reports what cannot be carried: a single short frame, a count that does not fill 20 ms, one 40/60 ms frame",
     "the partial tail is zero-padded only when the speaker ends, and that is counted",
@@ -290,13 +294,21 @@
     "treats an empty payload as end-of-voice and rejects other codecs and short packets",
     "two simultaneous speakers land on two different bots with no crosstalk (tone analysis)"
   ],
+  "src/core/dave-observe.test.ts": [
+    "counts opcode 26 on sendBinaryMessage and ignores other opcodes and payloads",
+    "includes elapsedMs and failure count after voice Ready without payloads",
+    "records a failed welcome without keeping the payload",
+    "stays unready after construct and reinit: that is the live protocolVersion=1 ready=false state",
+    "still lets daveSessionIdentity wrap the same methods afterwards"
+  ],
   "src/core/dave-session.test.ts": [
     "an epoch never comes back: A, B, then A again is a third epoch",
     "an in-place reinit of the library's DAVESession keeps the same native object, and is still a new epoch",
     "counts a re-initialisation before it runs, so a check made during it already sees a new session",
     "fails closed: no identity when not ready, when a part is missing, or when the wrapper cannot be instrumented",
     "instruments a wrapper once: one reinit is one change however often the session is read",
-    "one session keeps one epoch; a new Networking, wrapper, native session, reinit or welcome is a new one"
+    "one session keeps one epoch; a new Networking, wrapper, native session or reinit is a new one",
+    "processWelcome after the session is identified is the same epoch (live welcome:ok#0 is not a replacement)"
   ],
   "src/core/human-filter.test.ts": [
     "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
@@ -370,7 +382,8 @@
   "src/lab/config.test.ts": [
     "accepts a complete configuration",
     "reports missing requirements by name and never returns a value",
-    "requires six distinct tokens"
+    "requires six distinct tokens",
+    "single-attempt diagnostic is off unless D1_DAVE_SINGLE_ATTEMPT=1"
   ],
   "src/lab/dave-library.test.ts": [
     "recovers by re-initialising when the last transition id is non-zero",

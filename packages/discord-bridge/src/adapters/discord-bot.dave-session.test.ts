@@ -258,6 +258,24 @@ describe("DAVE session replacement on the bot: old admissions end for good, the 
     }
   });
 
+  it("processWelcome after startReceive is not a session replacement; reinit still is", async () => {
+    const election = newElection();
+    const t = testBot("slot-0", election);
+    followElection(t, election);
+    const h = await t.join({ receive: true });
+    assert.equal(t.bot.startReceive(election.generation), true);
+    const bound = t.bot.daveSession;
+    h.dave.processWelcome(Buffer.from([0, 0, 0, 0]));
+    await tick(80);
+    assert.equal(t.bot.daveReplacements, 0, "welcome after bind is the same session (live welcome:ok#0)");
+    assert.equal(t.bot.daveSession, bound);
+    assert.equal(t.bot.healthy, true);
+    h.reinitDave();
+    await tick(80);
+    assert.equal(t.bot.daveReplacements, 1);
+    await t.bot.destroy();
+  });
+
   it("fail closed: a session the bot cannot identify (its wrapper cannot be instrumented) admits nobody and forwards nothing", async () => {
     const { election, t, h, pipe, out, admissions, speakFor, mix } = await pipelineReceiver();
     try {

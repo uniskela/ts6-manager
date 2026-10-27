@@ -232,6 +232,19 @@ describe("TeamSpeak to Discord slot path with longer packets", () => {
     assert.equal(pipe.unsupportedFrames, 0);
   });
 
+  it("slot path: a voice-stop is not a decode error; a malformed Opus packet is", () => {
+    const { pipe, sinks } = tsSetup(1);
+    const good = createOpusCodec("native").encode(Buffer.alloc(FRAME_BYTES));
+    assert.equal(pipe.onVoice(voicePacket(10, good), 0).kind, "slot");
+    assert.equal(pipe.onVoice(voicePacket(10, Buffer.alloc(0)), 20).kind, "end");
+    assert.equal(pipe.decodeErrors, 0, "empty Opus is end-of-voice, not a decode failure");
+    assert.equal(pipe.unsupportedFrames, 0);
+    assert.deepEqual(pipe.onVoice(voicePacket(10, Buffer.from([0x03, 0x00])), 40), { kind: "dropped", reason: "undecodable" });
+    assert.equal(pipe.decodeErrors, 1);
+    assert.equal(pipe.unsupportedFrames, 0, "malformed framing is not an unsupported duration");
+    assert.ok(sinks.get("slot-0")!.frames.length >= 1);
+  });
+
   it("an unsupported duration is dropped and counted, never forwarded as a wrong-length frame", () => {
     const { pipe, sinks } = tsSetup(1);
     const ten = createOpusCodec("native").encode(Buffer.alloc(48 * 10 * 4));

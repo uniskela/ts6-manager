@@ -18,6 +18,16 @@ export function presenceReport(env: NodeJS.ProcessEnv): Record<string, "SET" | "
   return Object.fromEntries(REQUIRED.map((k) => [k, env[k] ? "SET" : "MISSING"] as const));
 }
 
+/** Lab-only: first planned join, then stop. Does not change DAVE wait, gates, or plaintext policy. */
+export function labDaveDiagnostic(env: NodeJS.ProcessEnv): {
+  singleAttempt: boolean;
+  timing?: { maxRecoveries: 0 };
+  retry?: { maxAttempts: 1 };
+} {
+  if (env.D1_DAVE_SINGLE_ATTEMPT !== "1") return { singleAttempt: false };
+  return { singleAttempt: true, timing: { maxRecoveries: 0 }, retry: { maxAttempts: 1 } };
+}
+
 export function loadLabConfig(env: NodeJS.ProcessEnv): ConfigResult {
   const missing = REQUIRED.filter((k) => !env[k]);
   const problems: string[] = [];

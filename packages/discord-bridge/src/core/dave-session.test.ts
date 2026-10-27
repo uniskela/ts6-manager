@@ -5,7 +5,7 @@ import { DaveSessionEpochs, daveSessionIdentity } from "./dave-session.js";
 
 /** A connection shaped like a Ready `VoiceConnection`, around the library's real DAVESession wrapper. */
 function readyConnection() {
-  const native = { ready: true, reinit() {}, reset() {}, setPassthroughMode() {}, getSerializedKeyPackage: () => Buffer.alloc(1), processWelcome() {} };
+  const native = { ready: true, reinit() {}, reset() {}, setPassthroughMode() {}, getSerializedKeyPackage: () => Buffer.alloc(1), processWelcome() {}, processCommit() {} };
   const dave = new DAVESession(1, "bot", "channel", {});
   (dave as unknown as { session: object }).session = native;
   const networking = { state: { code: 4, dave } };
@@ -14,7 +14,7 @@ function readyConnection() {
 }
 
 describe("daveSessionIdentity and DaveSessionEpochs: which DAVE session is in force", () => {
-  it("one session keeps one epoch; a new Networking, wrapper, native session, reinit or welcome is a new one", () => {
+  it("one session keeps one epoch; a new Networking, wrapper, native session or reinit is a new one", () => {
     const { conn, networking, dave } = readyConnection();
     const epochs = new DaveSessionEpochs();
     const first = epochs.of(daveSessionIdentity(conn));
@@ -23,19 +23,30 @@ describe("daveSessionIdentity and DaveSessionEpochs: which DAVE session is in fo
 
     dave.reinit(); // the library's own in-place re-initialisation: same objects
     assert.equal(epochs.of(daveSessionIdentity(conn)), 2);
-    (dave as unknown as { processWelcome(p: Buffer): unknown }).processWelcome(Buffer.from([0, 0]));
-    assert.equal(epochs.of(daveSessionIdentity(conn)), 3, "joining a group by welcome");
 
     (dave as unknown as { session: object }).session = { ready: true };
-    assert.equal(epochs.of(daveSessionIdentity(conn)), 4, "a different native session");
+    assert.equal(epochs.of(daveSessionIdentity(conn)), 3, "a different native session");
 
     const other = readyConnection();
     networking.state.dave = other.dave;
-    assert.equal(epochs.of(daveSessionIdentity(conn)), 5, "a different wrapper");
+    assert.equal(epochs.of(daveSessionIdentity(conn)), 4, "a different wrapper");
 
     conn.state.networking = other.networking;
-    assert.equal(epochs.of(daveSessionIdentity(conn)), 6, "a different Networking");
-    assert.equal(epochs.latest, 6);
+    assert.equal(epochs.of(daveSessionIdentity(conn)), 5, "a different Networking");
+    assert.equal(epochs.latest, 5);
+  });
+
+  it("processWelcome after the session is identified is the same epoch (live welcome:ok#0 is not a replacement)", () => {
+    const { conn, dave } = readyConnection();
+    const epochs = new DaveSessionEpochs();
+    assert.equal(epochs.of(daveSessionIdentity(conn)), 1);
+    (dave as unknown as { processWelcome(p: Buffer): unknown }).processWelcome(Buffer.from([0, 0]));
+    (dave as unknown as { processWelcome(p: Buffer): unknown }).processWelcome(Buffer.from([0, 0]));
+    (dave as unknown as { processCommit(p: Buffer): unknown }).processCommit(Buffer.from([0, 0]));
+    (dave as unknown as { processCommit(p: Buffer): unknown }).processCommit(Buffer.from([0, 1]));
+    assert.equal(epochs.of(daveSessionIdentity(conn)), 1, "welcome and commit join/advance the group; they are not reinit");
+    dave.reinit();
+    assert.equal(epochs.of(daveSessionIdentity(conn)), 2);
   });
 
   it("an epoch never comes back: A, B, then A again is a third epoch", () => {
