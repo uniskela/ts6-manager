@@ -1,3 +1,4 @@
+import { noteArrivalGap } from "./arrival-gap.js";
 import { FrameMixer } from "./frame-mixer.js";
 import type { BotId } from "./ids.js";
 import { LatencyStats } from "./metrics.js";
@@ -55,8 +56,12 @@ export class DiscordToTsPipeline {
   private idleTicks = 0;
   private lastSweepMs = 0;
   private disposed = false;
+  private readonly lastArrival = new Map<string, number>();
   selfSourceDrops = 0;
   framesSent = 0;
+  incoming = 0;
+  voiceStops = 0;
+  arrivalGaps = 0;
   /** Packets the decoder rejected; each one was dropped and that user's decoder replaced. */
   decodeErrors = 0;
   encodeErrors = 0;
@@ -85,12 +90,14 @@ export class DiscordToTsPipeline {
 
   onDiscordOpus(bot: BotId, generation: number, userId: string, opus: Buffer, nowMs: number, admission?: Admission): void {
     if (this.disposed) return;
+    this.incoming += 1;
     if (this.o.bridgeUserIds().has(userId)) {
       this.selfSourceDrops += 1;
       return;
     }
     const meta: Meta = { bot, generation, userId, admission };
     if (!this.admit(meta)) return;
+    if (noteArrivalGap(this.lastArrival, userId, nowMs)) this.arrivalGaps += 1;
     const pcm = this.decode(userId, opus, nowMs);
     if (pcm) this.mixer.push(userId, pcm, meta, nowMs);
   }
@@ -114,6 +121,7 @@ export class DiscordToTsPipeline {
 
   /** Release a user's decoder; `finish` pads their partial tail so the last samples are still heard. */
   private release(userId: string, finish: boolean): void {
+    this.lastArrival.delete(userId);
     if (finish) this.mixer.endSource(userId);
     this.decoders.get(userId)?.codec.dispose();
     this.decoders.delete(userId);
@@ -133,6 +141,7 @@ export class DiscordToTsPipeline {
 
   /** A human's receive stream closed or they left: free their decoder now. */
   releaseUser(userId: string): void {
+    this.lastArrival.delete(userId);
     this.release(userId, true);
   }
 
@@ -142,6 +151,7 @@ export class DiscordToTsPipeline {
 
   /** Teardown of a bot's subscriptions: drop everything it queued and release every decoder. */
   flush(): void {
+    this.lastArrival.clear();
     this.mixer.flush();
     for (const e of this.decoders.values()) e.codec.dispose();
     this.decoders.clear();
@@ -155,6 +165,8 @@ export class DiscordToTsPipeline {
     if (!mixed) {
       if (this.speaking && ++this.idleTicks >= 3) {
         this.speaking = false;
+        this.voiceStops += 1;
+        this.lastArrival.clear();
         this.o.out.sendVoiceStop();
       }
       return;
@@ -187,6 +199,14 @@ export class DiscordToTsPipeline {
     return this.mixer.droppedAdmit;
   }
 
+  get mixerOverflow(): number {
+    return this.mixer.droppedOverflow;
+  }
+
+  get paddedTails(): number {
+    return this.mixer.paddedTails;
+  }
+
   /** Terminal: discard everything queued, release every codec, and refuse all further audio. */
   dispose(): void {
     this.disposed = true;
@@ -196,5 +216,6 @@ export class DiscordToTsPipeline {
     this.encoder?.dispose();
     this.encoder = null;
     this.speaking = false;
+    this.lastArrival.clear();
   }
 }

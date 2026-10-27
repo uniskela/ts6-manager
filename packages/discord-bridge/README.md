@@ -383,7 +383,17 @@ On the fixed code: typecheck clean; **298 of 298 tests in 30 files** in the veri
 ## Known limitations
 
 - One-person live Discord ↔ TeamSpeak smoke exists (`evidence/curated/live-one-person-smoke-2026-10-27.json`). It is not D1 acceptance. Multi-speaker, receiver-failover and membership-transition live rows are still open.
-- Occasional short dropouts and about one second of perceived delay were heard in that smoke. Mixer transit (p50 17 ms) does not explain the delay. Do not change codec or buffers until push-to-talk vs voice-activation is compared. The single `t2d.decodeErrors=1` is a malformed slot-path Opus packet, not a voice-stop (`unsupportedFrames=0`).
+- Occasional short dropouts and about one second of perceived delay were heard in that smoke. Mixer transit (p50 17 ms) does not explain the delay. Do not change codec or buffers until push-to-talk vs voice-activation is compared. The single `t2d.decodeErrors=1` is a malformed slot-path Opus packet, not a voice-stop (`unsupportedFrames=0`). `status` now reports received/forwarded, voice-stops, invalid framing, decoder/encode failures, arrival gaps >40 ms, mixer overflow, padded tails, and per-bot FrameFeed dropped/starved. Those counters are numbers only: no audio, payloads, or speaker ids.
+
+### One-person PTT vs voice-activation (not started)
+
+Headphones. Mute the receiving client's speaker into every microphone. One direction at a time. Type `status` before and after each direction. Audio recording is optional, local, and only if the operator authorises it; it is not written to evidence.
+
+**A — push-to-talk both sides.** Speak a short counted phrase. Note cutout count and rough duration, whether `voiceStops` / `playback.starved` moved, which direction, and a clap/click speak-to-hear time (not mixer `transitLatencyMs`).
+
+**B — voice activation both sides.** Same phrase and the same notes. Compare A vs B before any buffer or codec change.
+
+Full D1 acceptance still needs independent live tests: two speakers each side, receiver failover during speech, and a membership/MLS transition after the first handshake.
 - `DiscordBot` is now exercised against the real `@discordjs/voice` classes with the network edge faked, and `lab:live` is typechecked only. That is simulation. The first live run may still find defects in either.
 - **Slot passthrough drops TeamSpeak Opus it cannot carry.** A single 40 ms or 60 ms frame (indivisible), a lone sub-20 ms frame, or a packet whose sub-20 ms frames do not fill whole 20 ms packets (for example three 10 ms frames) cannot be sent on a Discord slot without re-encoding. They are dropped and counted (`unsupportedFrames`), not forwarded as if they were 20 ms and not transcoded. Multi-frame packets that fill 20 ms multiples, including 2 x 10, 4 x 5 and 8 x 2.5 ms constituents, are regrouped without re-encoding. If real TeamSpeak clients send such frames this will show up as a counter, and D2 must decide whether to transcode.
 - The overflow path decodes then re-encodes, so it is not affected by the unsupported-frame limit.

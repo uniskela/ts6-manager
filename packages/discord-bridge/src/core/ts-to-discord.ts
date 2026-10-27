@@ -1,3 +1,4 @@
+import { noteArrivalGap } from "./arrival-gap.js";
 import type { ClientDirectory } from "./client-directory.js";
 import { FrameMixer } from "./frame-mixer.js";
 import type { BotId } from "./ids.js";
@@ -46,6 +47,15 @@ export class TsToDiscordPipeline {
   private overflowActive = false;
   private lastSweepMs = 0;
   private disposed = false;
+  private readonly lastArrival = new Map<string, number>();
+  /** Packets that reached a known in-channel speaker, including voice-stops. */
+  received = 0;
+  /** 20 ms frames actually handed to a Discord sink. */
+  forwarded = 0;
+  voiceStops = 0;
+  invalidFrames = 0;
+  decoderFailures = 0;
+  arrivalGaps = 0;
   /** Packets the decoder or framing rejected; each one was dropped and the speaker's decoder reset. */
   decodeErrors = 0;
   encodeErrors = 0;
@@ -70,12 +80,16 @@ export class TsToDiscordPipeline {
     const dest = this.o.router.destinationFor(client.uniqueId);
     if (!dest) return { kind: "dropped", reason: "not-in-channel" };
 
+    this.received += 1;
     if (pkt.opus.length === 0) {
+      this.voiceStops += 1;
+      this.lastArrival.delete(client.uniqueId);
       this.disposeDecoder(client.uniqueId);
       this.overflowMixer.endSource(client.uniqueId);
       if (dest !== "overflow") this.o.sinks.get(dest)?.endSpeech();
       return { kind: "end", uniqueId: client.uniqueId };
     }
+    if (noteArrivalGap(this.lastArrival, client.uniqueId, nowMs)) this.arrivalGaps += 1;
 
     if (dest === "overflow") {
       const pcm = this.decode(client.uniqueId, pkt.opus, nowMs);
@@ -88,6 +102,7 @@ export class TsToDiscordPipeline {
     // Slot path: untouched Opus, one 20 ms packet per player tick. Multi-frame packets are cut.
     const split = splitOpusPacket(pkt.opus);
     if (split.kind === "invalid") {
+      this.invalidFrames += 1;
       this.decodeErrors += 1;
       return { kind: "dropped", reason: "undecodable" };
     }
@@ -96,6 +111,7 @@ export class TsToDiscordPipeline {
       return { kind: "dropped", reason: "unsupported-frame" };
     }
     for (const frame of split.frames) this.o.sinks.get(dest)?.sendOpus(frame, nowMs);
+    this.forwarded += split.frames.length;
     this.count(dest, client.uniqueId, split.frames.length);
     return { kind: "slot", bot: dest, uniqueId: client.uniqueId };
   }
@@ -111,6 +127,7 @@ export class TsToDiscordPipeline {
     try {
       return entry.codec.decode(opus);
     } catch {
+      this.decoderFailures += 1;
       this.decodeErrors += 1;
       this.disposeDecoder(uniqueId); // a fresh decoder for the next packet; other speakers are untouched
       return null;
@@ -142,6 +159,7 @@ export class TsToDiscordPipeline {
       return;
     }
     sink?.sendOpus(packet, nowMs);
+    this.forwarded += 1;
     this.overflowLatency.record(nowMs - mixed.oldestArrivedMs);
   }
 
@@ -159,6 +177,7 @@ export class TsToDiscordPipeline {
 
   /** A uniqueId left or was reassigned: stop decoding it and drop what is queued for it. */
   forget(uniqueId: string): void {
+    this.lastArrival.delete(uniqueId);
     this.disposeDecoder(uniqueId);
     this.overflowMixer.flush((s) => s === uniqueId);
     for (const [bot, m] of this.routed) {
@@ -183,6 +202,14 @@ export class TsToDiscordPipeline {
     return this.decoders.size;
   }
 
+  get mixerOverflow(): number {
+    return this.overflowMixer.droppedOverflow;
+  }
+
+  get paddedTails(): number {
+    return this.overflowMixer.paddedTails;
+  }
+
   private count(bot: BotId, uniqueId: string, frames = 1): void {
     let m = this.routed.get(bot);
     if (!m) {
@@ -202,5 +229,6 @@ export class TsToDiscordPipeline {
     this.overflowEncoder = null;
     this.overflowActive = false;
     this.routed.clear();
+    this.lastArrival.clear();
   }
 }

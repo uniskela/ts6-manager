@@ -97,6 +97,7 @@ async function main(): Promise<void> {
     receiveSubscriptions: Object.fromEntries([...concrete].map(([id, b]) => [id, b.openSubscriptions])),
     decryptErrors: Object.fromEntries([...concrete].map(([id, b]) => [id, b.decryptErrors])),
     daveReplacements: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveReplacements])),
+    playback: Object.fromEntries([...concrete].map(([id, b]) => [id, { dropped: b.playbackDropped, starved: b.playbackStarved }])),
     recoveries: Object.fromEntries([...concrete].map(([id, b]) => [id, b.rejoins])),
     identityLookups: Object.fromEntries([...concrete].map(([id, b]) => [id, b.identityLookups])),
   });

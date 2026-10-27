@@ -177,6 +177,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   userId = "";
   healthy = false;
   framesSent = 0;
+  private feedDropped = 0;
+  private feedStarved = 0;
   rejoins = 0;
   /** Privacy-safe MLS negotiation trace for the live wrapper (null when none). */
   private daveTrace: DaveSnapshot | null = null;
@@ -610,8 +612,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private dropOutbound(): void {
     if (this.turnTimer) clearTimeout(this.turnTimer);
     this.turnTimer = null;
-    this.feed?.destroy();
-    this.feed = null;
+    this.detachFeed(false);
     this.player.stop(true);
   }
 
@@ -670,6 +671,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   sendOpus(frame: Buffer): void {
     if (!this.healthy || !this.observeDave()) return;
     if (!this.feed || this.feed.destroyed) {
+      this.detachFeed(false);
       this.feed = new FrameFeed();
       this.player.play(createAudioResource(this.feed, { inputType: StreamType.Opus }));
     }
@@ -682,8 +684,17 @@ export class DiscordBot extends EventEmitter implements BotPort {
   endSpeech(): void {
     if (this.turnTimer) clearTimeout(this.turnTimer);
     this.turnTimer = null;
-    this.feed?.finish();
+    this.detachFeed(true);
+  }
+
+  private detachFeed(finish: boolean): void {
+    const feed = this.feed;
+    if (!feed) return;
+    this.feedDropped += feed.dropped;
+    this.feedStarved += feed.starved;
     this.feed = null;
+    if (finish) feed.finish();
+    else feed.destroy();
   }
 
   /** Start human subscriptions under `generation`. Only the admitted receiver may call this. */
@@ -785,6 +796,14 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   get decryptErrors(): number {
     return this.supervisor?.decryptErrors ?? 0;
+  }
+
+  get playbackDropped(): number {
+    return this.feedDropped + (this.feed?.dropped ?? 0);
+  }
+
+  get playbackStarved(): number {
+    return this.feedStarved + (this.feed?.starved ?? 0);
   }
 
   /**

@@ -224,6 +224,14 @@
     "never splits a surrogate pair at the cut",
     "no healthy bot left: Discord to TeamSpeak fails closed while other slots keep sending"
   ],
+  "src/core/audio-quality.test.ts": [
+    "counts a decoder failure on the overflow path and stops counting after dispose",
+    "counts a read more than 40 ms after the last offer when the queue is empty, and finish does not",
+    "counts an encode failure without incrementing framesSent",
+    "counts incoming, forwarded, encode failure, idle voice-stop, a gap, and flush teardown",
+    "counts only a second arrival more than 40 ms after the first, and forget clears it",
+    "splits received, forwarded, voice-stop, invalid framing and gaps; teardown does not invent a gap"
+  ],
   "src/core/audio-robustness.test.ts": [
     "Discord path: a corrupt packet is dropped, only that user's decoder is reset, the other human continues",
     "a 40 ms decode is delivered as two whole 20 ms frames, in order and unaltered",

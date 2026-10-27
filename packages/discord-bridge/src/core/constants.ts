@@ -1,6 +1,8 @@
 /** Shared audio constants. Discord and TeamSpeak Opus both run at 48 kHz with 20 ms frames. */
 export const SAMPLE_RATE = 48_000;
 export const FRAME_MS = 20;
+/** A hole larger than two frame periods. Counted only; nothing is padded or dropped for it. */
+export const ARRIVAL_GAP_MS = 40;
 export const FRAME_SAMPLES = 960; // per channel
 export const CHANNELS = 2;
 export const FRAME_BYTES = FRAME_SAMPLES * CHANNELS * 2; // s16le interleaved stereo
