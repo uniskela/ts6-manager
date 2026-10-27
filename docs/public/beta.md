@@ -54,6 +54,7 @@ Use `docker-compose.beta.yml` at the repository root (on `main`). The file sets 
 1. Create a `.env.beta` with new secrets. Do not reuse production secrets or the stable stack's `.env`. Keep `.env.beta` private, mode `600`, and Git-ignored (the repository ignores `.env.beta`).
 
 ~~~bash
+umask 077
 echo "TS6_BETA_TAG=v1.12.0-beta.1" >> .env.beta
 echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env.beta
 echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env.beta
