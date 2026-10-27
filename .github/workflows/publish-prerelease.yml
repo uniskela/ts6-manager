@@ -50,6 +50,7 @@ jobs:
       short_sha: ${{ steps.resolve.outputs.short_sha }}
       version: ${{ steps.resolve.outputs.version }}
       tag: ${{ steps.resolve.outputs.tag }}
+      source_branch: ${{ steps.resolve.outputs.source_branch }}
     steps:
       - name: Validate prerelease ref
         env:
@@ -104,39 +105,35 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: bash "${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh" require-prerelease-reviewers
 
-      - name: Checkout requested ref
+      - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.ref }}
-          fetch-depth: 0
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Require trusted source
+        id: resolve
         env:
+          REF: ${{ inputs.ref }}
+          PRE_TAG: ${{ inputs.prerelease_tag }}
           SOURCE_BRANCH: ${{ inputs.source_branch }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           GUARD="${{ runner.temp }}/prerelease-workflow/scripts/ci/prerelease-guards.sh"
-          SHA="$(git rev-parse HEAD)"
-          bash "$GUARD" require-ancestor "$SHA" "$SOURCE_BRANCH"
-          bash "$GUARD" require-protected-source "$SOURCE_BRANCH"
-
-      - name: Resolve image tags
-        id: resolve
-        env:
-          REF: ${{ inputs.ref }}
-          PRE_TAG: ${{ inputs.prerelease_tag }}
-        run: |
-          set -euo pipefail
           PRE='^v[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta|rc)\.[0-9]+$'
-          SHA='^[0-9a-f]{40}$'
-          FULL_SHA="$(git rev-parse HEAD)"
-          if [[ "$REF" =~ $SHA ]] && [ "$FULL_SHA" != "$REF" ]; then
-            echo "Checked-out commit $FULL_SHA does not match requested $REF" >&2
-            exit 1
+          SHA_RE='^[0-9a-f]{40}$'
+          bash "$GUARD" validate-source-branch "$SOURCE_BRANCH"
+          bash "$GUARD" require-protected-source "$SOURCE_BRANCH"
+          if [[ "$REF" =~ $SHA_RE ]]; then
+            TARGET="$REF"
+          else
+            git fetch --no-tags origin "refs/tags/${REF}:refs/tags/${REF}"
+            TARGET="$(git rev-parse "refs/tags/${REF}^{commit}")"
           fi
+          bash "$GUARD" require-ancestor "$TARGET" "$SOURCE_BRANCH"
+          git checkout --detach "$TARGET"
           TAG=""
           if [[ "$REF" =~ $PRE ]]; then
             TAG="$REF"
@@ -145,10 +142,11 @@ jobs:
             TAG="$PRE_TAG"
           fi
           {
-            echo "sha=${FULL_SHA}"
-            echo "short_sha=${FULL_SHA:0:7}"
+            echo "sha=${TARGET}"
+            echo "short_sha=${TARGET:0:7}"
             echo "tag=${TAG}"
             echo "version=${TAG#v}"
+            echo "source_branch=${SOURCE_BRANCH}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Reject tag collisions
@@ -193,11 +191,20 @@ jobs:
           - component: sidecar
             dockerfile: Dockerfile.sidecar
     steps:
-      - name: Checkout requested commit
+      - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check out verified commit
+        run: |
+          set -euo pipefail
+          SHA="${{ needs.resolve-ref.outputs.sha }}"
+          BRANCH="${{ needs.resolve-ref.outputs.source_branch }}"
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+          git merge-base --is-ancestor "$SHA" "origin/${BRANCH}"
+          git checkout --detach "$SHA"
 
       - name: Resolve image tags
         id: tags
@@ -309,11 +316,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout requested commit
+      - name: Checkout trusted default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.resolve-ref.outputs.sha }}
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check out verified commit
+        run: |
+          set -euo pipefail
+          SHA="${{ needs.resolve-ref.outputs.sha }}"
+          BRANCH="${{ needs.resolve-ref.outputs.source_branch }}"
+          git fetch --no-tags origin "+refs/heads/${BRANCH}:refs/remotes/origin/${BRANCH}"
+          git merge-base --is-ancestor "$SHA" "origin/${BRANCH}"
+          git checkout --detach "$SHA"
 
       - name: Resolve image tags
         id: tags

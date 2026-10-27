@@ -455,6 +455,7 @@ class PrereleaseWorkflowTests(unittest.TestCase):
         self.assertIn("reject-image-collision", text)
         self.assertIn("verify-github-release-target", text)
         self.assertNotIn("leaving it unchanged", text)
+        self.assertNotIn("ref: ${{ inputs.ref }}", text)
 
     def test_github_prerelease_is_opt_in_and_marked_prerelease(self):
         job = self.prerelease["jobs"]["github-prerelease"]
