@@ -13,7 +13,7 @@ on:
         type: string
 
 concurrency:
-  group: pr-validation-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: pr-validation-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

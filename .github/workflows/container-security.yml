@@ -56,7 +56,7 @@ on:
         type: string
 
 concurrency:
-  group: container-security-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: container-security-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 permissions:

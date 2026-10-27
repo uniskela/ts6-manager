@@ -456,6 +456,18 @@ class PrereleaseWorkflowTests(unittest.TestCase):
         self.assertIn("verify-github-release-target", text)
         self.assertNotIn("leaving it unchanged", text)
         self.assertNotIn("ref: ${{ inputs.ref }}", text)
+        self.assertEqual(
+            self.prerelease["concurrency"]["group"],
+            "prerelease-${{ inputs.prerelease_tag || inputs.ref }}",
+        )
+        self.assertEqual(
+            self.validation["concurrency"]["group"],
+            "pr-validation-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}",
+        )
+        self.assertEqual(
+            self.security["concurrency"]["group"],
+            "container-security-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}",
+        )
 
     def test_github_prerelease_is_opt_in_and_marked_prerelease(self):
         job = self.prerelease["jobs"]["github-prerelease"]

@@ -130,6 +130,23 @@ class PrereleaseGuardTests(unittest.TestCase):
         self.assertIn(SHA_A, moved.stderr)
         Path(inspect_path).unlink(missing_ok=True)
 
+    def test_image_collision_fails_closed_without_revision(self):
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as inspect:
+            inspect.write(f"ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t\n")
+            inspect_path = inspect.name
+        env = {**os.environ, "PRERELEASE_IMAGE_INSPECT": inspect_path}
+        missing_label = run_guard(
+            "reject-image-collision",
+            "ghcr.io/uniskela/ts6-manager",
+            "v1.12.0-beta.1",
+            "1.12.0-beta.1",
+            SHA_A,
+            env=env,
+        )
+        self.assertNotEqual(missing_label.returncode, 0)
+        self.assertIn("no readable revision", missing_label.stderr)
+        Path(inspect_path).unlink(missing_ok=True)
+
     def test_github_release_refuses_other_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
             fake = Path(tmp)
@@ -137,12 +154,20 @@ class PrereleaseGuardTests(unittest.TestCase):
                 fake / "gh",
                 f"""#!/bin/sh
 if [ "$1" = release ] && [ "$2" = view ]; then
-  [ "$3" = "v1.12.0-beta.1" ] && exit 0
+  [ "$3" = "v1.12.0-beta.1" ] && [ "${{RELEASE_EXISTS:-1}}" = 1 ] && exit 0
   exit 1
 fi
-if [ "$1" = api ] && [ "$2" = repos/uniskela/ts6-manager/commits/v1.12.0-beta.1 ]; then
-  printf '%s\\n' '{SHA_A}'
-  exit 0
+if [ "$1" = api ]; then
+  case "$2" in
+    repos/uniskela/ts6-manager/git/ref/tags/v1.12.0-beta.1)
+      [ "${{TAG_EXISTS:-1}}" = 1 ] && exit 0
+      exit 1
+      ;;
+    repos/uniskela/ts6-manager/commits/v1.12.0-beta.1)
+      printf '%s\\n' '{SHA_A}'
+      exit 0
+      ;;
+  esac
 fi
 exit 1
 """,
@@ -174,6 +199,15 @@ exit 1
             )
             self.assertEqual(create.returncode, 0, create.stderr)
             self.assertEqual(create.stdout.strip(), "create")
+            tag_moved = run_guard(
+                "verify-github-release-target",
+                "v1.12.0-beta.1",
+                SHA_B,
+                "uniskela/ts6-manager",
+                env={**env, "RELEASE_EXISTS": "0", "TAG_EXISTS": "1"},
+            )
+            self.assertNotEqual(tag_moved.returncode, 0)
+            self.assertIn("refusing to publish", tag_moved.stderr)
 
     def test_reviewers_required(self):
         with tempfile.TemporaryDirectory() as tmp:

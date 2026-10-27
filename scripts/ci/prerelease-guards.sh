@@ -70,15 +70,31 @@ reject_tag_collision() {
   [ "$existing" = "$sha" ] || die "git tag $tag already points at $existing, not $sha"
 }
 
+image_present() {
+  local image="$1"
+  if [ -n "${PRERELEASE_IMAGE_INSPECT:-}" ]; then
+    awk -F'\t' -v img="$image" '$1==img {found=1} END {exit !found}' "$PRERELEASE_IMAGE_INSPECT"
+    return
+  fi
+  docker buildx imagetools inspect "$image" >/dev/null 2>&1
+}
+
 image_revision() {
   local image="$1"
   if [ -n "${PRERELEASE_IMAGE_INSPECT:-}" ]; then
     awk -F'\t' -v img="$image" '$1==img {print $2; exit}' "$PRERELEASE_IMAGE_INSPECT"
     return 0
   fi
-  docker buildx imagetools inspect "$image" 2>/dev/null \
-    | awk -F= '/org.opencontainers.image.revision/ {gsub(/[",]/,"",$2); print $2; exit}' \
-    || true
+  local raw
+  raw="$(docker buildx imagetools inspect --raw "$image" 2>/dev/null || true)"
+  [ -n "$raw" ] || return 0
+  printf '%s\n' "$raw" | jq -r '
+    [
+      .annotations["org.opencontainers.image.revision"]?,
+      (.manifests[]?.annotations["org.opencontainers.image.revision"]?),
+      .config.Labels["org.opencontainers.image.revision"]?
+    ] | map(select(. != null and . != "")) | first // empty
+  ' 2>/dev/null || true
 }
 
 reject_image_collision() {
@@ -90,8 +106,11 @@ reject_image_collision() {
     for suffix in $tag $version; do
       [ -n "$suffix" ] || continue
       image="${prefix}/${component}:${suffix}"
+      if ! image_present "$image"; then
+        continue
+      fi
       existing="$(image_revision "$image")"
-      [ -z "$existing" ] && continue
+      [ -n "$existing" ] || die "image $image exists but has no readable revision label"
       [ "$existing" = "$sha" ] || die "image $image revision $existing does not match $sha"
     done
   done
@@ -102,11 +121,16 @@ verify_github_release_target() {
   [[ "$tag" =~ $PRE_TAG ]] || die "verify-github-release-target expects a prerelease tag"
   [[ "$sha" =~ $COMMIT_SHA ]] || die "verify-github-release-target expects a 40-character SHA"
   [ -n "$repo" ] || die "GITHUB_REPOSITORY is required"
+  local existing
   if ! "$GH_BIN" release view "$tag" --repo "$repo" >/dev/null 2>&1; then
+    if "$GH_BIN" api "repos/${repo}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+      existing="$("$GH_BIN" api "repos/${repo}/commits/${tag}" --jq .sha)"
+      [ -n "$existing" ] || die "could not resolve commit for existing tag $tag"
+      [ "$existing" = "$sha" ] || die "git tag $tag points at $existing, not $sha; refusing to publish"
+    fi
     echo create
     return 0
   fi
-  local existing
   existing="$("$GH_BIN" api "repos/${repo}/commits/${tag}" --jq .sha)"
   [ -n "$existing" ] || die "could not resolve commit for existing tag $tag"
   [ "$existing" = "$sha" ] || die "GitHub tag $tag points at $existing, not $sha; refusing to reuse it"

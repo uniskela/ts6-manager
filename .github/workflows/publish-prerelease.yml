@@ -27,7 +27,7 @@ on:
         default: main
 
 concurrency:
-  group: prerelease-${{ inputs.ref }}-${{ inputs.prerelease_tag }}
+  group: prerelease-${{ inputs.prerelease_tag || inputs.ref }}
   cancel-in-progress: false
 
 env:
@@ -280,6 +280,9 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.list }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: |
+            index:org.opencontainers.image.revision=${{ needs.resolve-ref.outputs.sha }}
+            manifest:org.opencontainers.image.revision=${{ needs.resolve-ref.outputs.sha }}
           build-args: |
             GIT_SHA=${{ needs.resolve-ref.outputs.sha }}
           pull: true
@@ -404,6 +407,9 @@ jobs:
           push: true
           tags: ${{ steps.tags.outputs.list }}
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: |
+            index:org.opencontainers.image.revision=${{ needs.resolve-ref.outputs.sha }}
+            manifest:org.opencontainers.image.revision=${{ needs.resolve-ref.outputs.sha }}
           build-args: |
             GIT_SHA=${{ needs.resolve-ref.outputs.sha }}
           pull: true
