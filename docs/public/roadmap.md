@@ -134,9 +134,9 @@ Tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442). Playlist 
 
 ### Discord voice bridge — v1.12.0
 
-Optional, **disabled by default** (compose profile off; no worker until an administrator enables a mapping). A first-party isolated Node 24 worker (not the media sidecar) bridges one approved Discord voice channel and one approved TeamSpeak channel: five `[TS] Username` bots plus `[TS] Others`, and one shared TeamSpeak client for Discord audio. Native admin UI. Official Discord bots only.
+Not released. Not in manager beta images. A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
 
-This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Shipping requires the D1–D6 gates in `docs/internal/discord-voice-bridge.md` and explicit owner approval. Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460).
+Public status: [Discord bridge](discord-bridge.md). This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460).
 
 ## Explicit scope boundaries
 
@@ -144,4 +144,4 @@ The fork does not adopt features that weaken the sidecar/encryption boundaries o
 
 SSO absorption and opportunistic framework migrations remain separate decisions.
 
-Discord voice bridging is the first-party optional feature described above. It stays disabled until an administrator enables a mapping, and it does not absorb upstream Discord/SSO/i18n suites.
+A supported Discord voice product, if it ships later, stays optional and separate from stable 1.11. It does not absorb upstream Discord/SSO/i18n suites.
