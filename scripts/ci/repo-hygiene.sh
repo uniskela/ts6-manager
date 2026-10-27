@@ -98,6 +98,7 @@ fi
 export JWT_SECRET=dummy
 export ENCRYPTION_KEY=dummy
 export SIDECAR_SECRET=dummy
+export TS6_BETA_TAG=v0.0.0-beta.0
 
 # Override files are not complete projects: they only make sense layered on a
 # base file, so that is how they are validated.
