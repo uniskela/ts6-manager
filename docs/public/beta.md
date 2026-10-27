@@ -54,12 +54,11 @@ Use `docker-compose.beta.yml` at the repository root (on `main`). The file sets 
 1. Create a `.env.beta` with new secrets. Do not reuse production secrets or the stable stack's `.env`. Keep `.env.beta` private, mode `600`, and Git-ignored (the repository ignores `.env.beta`).
 
 ~~~bash
-umask 077
+install -m 600 /dev/null .env.beta
 echo "TS6_BETA_TAG=v1.12.0-beta.1" >> .env.beta
 echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env.beta
 echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env.beta
 echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env.beta
-chmod 600 .env.beta
 ~~~
 
 2. Start and stop the stack yourself. Always pass `--env-file .env.beta`. Compose sets `restart: "no"`. The UI is `http://127.0.0.1:13000`. The backend API stays on the Docker network and is not published on the host.
