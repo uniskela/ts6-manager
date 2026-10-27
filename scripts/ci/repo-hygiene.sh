@@ -124,6 +124,11 @@ if [[ "$fail" -eq 0 ]]; then
   echo "OK: docker compose config for ${#compose_files[@]} file(s)"
 fi
 
+echo "==> beta compose isolation"
+if ! python3 "$ROOT/scripts/ci/check-beta-compose.py"; then
+  fail=1
+fi
+
 if [[ "$fail" -ne 0 ]]; then
   echo "repo-hygiene failed" >&2
   exit 1
