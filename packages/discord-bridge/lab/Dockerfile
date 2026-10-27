@@ -29,6 +29,8 @@ COPY packages/backend/src/voice/tslib /app/packages/backend/src/voice/tslib
 COPY packages/discord-bridge/tsconfig.json ./
 COPY packages/discord-bridge/scripts ./scripts
 COPY packages/discord-bridge/src ./src
+# Build-stage only: private-beta.test.mjs reads the compose file. Do not copy lab/ into runtime.
+COPY packages/discord-bridge/lab/docker-compose.private-beta.yml ./lab/docker-compose.private-beta.yml
 COPY tsconfig.base.json /app/tsconfig.base.json
 
 # Gates. Executables are called directly so the build exercises the same entry points as runtime.
