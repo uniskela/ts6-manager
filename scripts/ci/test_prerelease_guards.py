@@ -96,56 +96,64 @@ class PrereleaseGuardTests(unittest.TestCase):
             missing = run_guard("reject-tag-collision", "v1.12.0-beta.2", second, cwd=clone)
             self.assertEqual(missing.returncode, 0, missing.stderr)
 
+    def _inspect_env(self, rows):
+        handle = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
+        handle.write("\n".join(rows) + "\n")
+        handle.close()
+        self.addCleanup(lambda: Path(handle.name).unlink(missing_ok=True))
+        return {**os.environ, "PRERELEASE_IMAGE_INSPECT": handle.name}
+
+    def _reject(self, env, sha=SHA_A, tag="v1.12.0-beta.1", version="1.12.0-beta.1", short=""):
+        args = ["reject-image-collision", "ghcr.io/uniskela/ts6-manager", tag, version, sha]
+        if short:
+            args.append(short)
+        return run_guard(*args, env=env)
+
+    def test_image_collision_absent_allows_publish(self):
+        env = self._inspect_env([])
+        result = self._reject(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_image_collision_same_revision_allows_republish(self):
+        env = self._inspect_env(
+            [
+                f"ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t{SHA_A}",
+                f"ghcr.io/uniskela/ts6-manager/backend:1.12.0-beta.1\t{SHA_A}",
+                f"ghcr.io/uniskela/ts6-manager/backend:sha-{SHA_A[:7]}\t{SHA_A}",
+            ]
+        )
+        result = self._reject(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_image_collision_rejects_other_revision(self):
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as inspect:
-            inspect.write(
-                "\n".join(
-                    [
-                        f"ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t{SHA_A}",
-                        f"ghcr.io/uniskela/ts6-manager/backend:1.12.0-beta.1\t{SHA_A}",
-                    ]
-                )
-                + "\n"
-            )
-            inspect_path = inspect.name
-        env = {**os.environ, "PRERELEASE_IMAGE_INSPECT": inspect_path}
-        same = run_guard(
-            "reject-image-collision",
-            "ghcr.io/uniskela/ts6-manager",
-            "v1.12.0-beta.1",
-            "1.12.0-beta.1",
-            SHA_A,
-            env=env,
+        env = self._inspect_env(
+            [
+                f"ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t{SHA_A}",
+                f"ghcr.io/uniskela/ts6-manager/backend:1.12.0-beta.1\t{SHA_A}",
+            ]
         )
-        self.assertEqual(same.returncode, 0, same.stderr)
-        moved = run_guard(
-            "reject-image-collision",
-            "ghcr.io/uniskela/ts6-manager",
-            "v1.12.0-beta.1",
-            "1.12.0-beta.1",
-            SHA_B,
-            env=env,
-        )
+        moved = self._reject(env, sha=SHA_B)
         self.assertNotEqual(moved.returncode, 0)
         self.assertIn(SHA_A, moved.stderr)
-        Path(inspect_path).unlink(missing_ok=True)
 
     def test_image_collision_fails_closed_without_revision(self):
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as inspect:
-            inspect.write(f"ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t\n")
-            inspect_path = inspect.name
-        env = {**os.environ, "PRERELEASE_IMAGE_INSPECT": inspect_path}
-        missing_label = run_guard(
-            "reject-image-collision",
-            "ghcr.io/uniskela/ts6-manager",
-            "v1.12.0-beta.1",
-            "1.12.0-beta.1",
-            SHA_A,
-            env=env,
-        )
+        env = self._inspect_env(["ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t"])
+        missing_label = self._reject(env)
         self.assertNotEqual(missing_label.returncode, 0)
         self.assertIn("no readable revision", missing_label.stderr)
-        Path(inspect_path).unlink(missing_ok=True)
+
+    def test_image_collision_fails_closed_on_registry_error(self):
+        env = self._inspect_env(["ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1\t\terror"])
+        failed = self._reject(env)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn("refusing to publish", failed.stderr)
+
+    def test_image_collision_checks_short_sha_tag(self):
+        env = self._inspect_env([f"ghcr.io/uniskela/ts6-manager/backend:sha-{SHA_A[:7]}\t{SHA_B}"])
+        conflict = self._reject(env, sha=SHA_A, tag="", version="")
+        self.assertNotEqual(conflict.returncode, 0)
+        self.assertIn(SHA_B, conflict.stderr)
+        self.assertIn(f"sha-{SHA_A[:7]}", conflict.stderr)
 
     def test_github_release_refuses_other_commit(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -238,6 +246,163 @@ exit 1
                 run_guard("require-prerelease-reviewers", "uniskela/ts6-manager", env=env_bad).returncode,
                 0,
             )
+
+
+DOCKER_MOCK = r"""#!/usr/bin/env python3
+import json
+import os
+import sys
+
+CFG = "sha256:" + "c" * 64
+CFG2 = "sha256:" + "e" * 64
+MAN = "sha256:" + "d" * 64
+MAN2 = "sha256:" + "f" * 64
+ATTEST = "sha256:" + "1" * 64
+
+
+def fail(msg):
+    print(msg, file=sys.stderr)
+    raise SystemExit(1)
+
+
+args = sys.argv[1:]
+if args[:3] != ["buildx", "imagetools", "inspect"]:
+    fail("unexpected docker invocation: " + " ".join(args))
+raw = "--raw" in args
+image = [a for a in args[3:] if a != "--raw"][0]
+mode = os.environ.get("DOCKER_MOCK_MODE", "absent")
+present = os.environ.get(
+    "DOCKER_MOCK_IMAGE",
+    "ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1",
+)
+revision = os.environ.get("DOCKER_MOCK_REVISION", "")
+name, _, digest = image.partition("@")
+
+if mode == "absent":
+    fail("ERROR: manifest unknown")
+if mode == "registry-error":
+    fail(os.environ.get("DOCKER_MOCK_ERROR", "unauthorized: authentication required"))
+if name != present:
+    fail("ERROR: manifest unknown")
+if not raw:
+    raise SystemExit(0)
+
+labels = {}
+if mode != "missing-label":
+    labels["org.opencontainers.image.revision"] = revision
+config = {"config": {"Labels": labels}}
+manifest = {"schemaVersion": 2, "config": {"digest": CFG}}
+
+if mode == "multiarch":
+    if not digest:
+        print(
+            json.dumps(
+                {
+                    "schemaVersion": 2,
+                    "manifests": [
+                        {"digest": MAN, "platform": {"os": "linux", "architecture": "amd64"}},
+                        {"digest": MAN2, "platform": {"os": "linux", "architecture": "arm64"}},
+                        {
+                            "digest": ATTEST,
+                            "platform": {"os": "unknown", "architecture": "unknown"},
+                            "annotations": {"vnd.docker.reference.type": "attestation-manifest"},
+                        },
+                    ],
+                    "annotations": {"org.opencontainers.image.revision": "0" * 40},
+                }
+            )
+        )
+    elif digest == MAN:
+        print(json.dumps({"schemaVersion": 2, "config": {"digest": CFG}}))
+    elif digest == MAN2:
+        print(json.dumps({"schemaVersion": 2, "config": {"digest": CFG2}}))
+    elif digest in {CFG, CFG2}:
+        print(json.dumps(config))
+    elif digest == ATTEST:
+        fail("attestation blob should not be inspected")
+    else:
+        fail("ERROR: manifest unknown")
+    raise SystemExit(0)
+
+if not digest:
+    print(json.dumps(manifest))
+elif digest == CFG:
+    print(json.dumps(config))
+else:
+    fail("ERROR: manifest unknown")
+"""
+
+
+class TestImageInspectDockerMock(unittest.TestCase):
+    def _env(self, mode, revision="", image="ghcr.io/uniskela/ts6-manager/backend:v1.12.0-beta.1", error=""):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        write_exec(Path(tmp.name) / "docker", DOCKER_MOCK)
+        env = {k: v for k, v in os.environ.items() if k != "PRERELEASE_IMAGE_INSPECT"}
+        env["PATH"] = f"{tmp.name}:{env.get('PATH', '')}"
+        env["DOCKER_MOCK_MODE"] = mode
+        env["DOCKER_MOCK_IMAGE"] = image
+        env["DOCKER_MOCK_REVISION"] = revision
+        if error:
+            env["DOCKER_MOCK_ERROR"] = error
+        return env
+
+    def _reject(self, env, sha=SHA_A, tag="v1.12.0-beta.1", version="1.12.0-beta.1"):
+        return run_guard(
+            "reject-image-collision",
+            "ghcr.io/uniskela/ts6-manager",
+            tag,
+            version,
+            sha,
+            env=env,
+        )
+
+    def test_absent_image_allows_publish(self):
+        result = self._reject(self._env("absent"))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_same_revision_allows_republish(self):
+        result = self._reject(self._env("present", SHA_A))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_conflicting_revision_blocks_publish(self):
+        result = self._reject(self._env("present", SHA_B), sha=SHA_A)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(SHA_B, result.stderr)
+
+    def test_missing_label_blocks_publish(self):
+        result = self._reject(self._env("missing-label"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no readable revision", result.stderr)
+
+    def test_registry_failure_blocks_publish(self):
+        for msg in (
+            "unauthorized: authentication required",
+            "toomanyrequests: rate limited",
+            "context deadline exceeded",
+            "net/http: TLS handshake timeout",
+        ):
+            with self.subTest(msg=msg):
+                result = self._reject(self._env("registry-error", error=msg))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("refusing to publish", result.stderr)
+
+    def test_multiarch_uses_config_not_annotations(self):
+        result = self._reject(self._env("multiarch", SHA_A))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        annotated_only = self._reject(self._env("multiarch", ""), sha=SHA_A)
+        self.assertNotEqual(annotated_only.returncode, 0)
+        self.assertIn("no readable revision", annotated_only.stderr)
+
+    def test_short_sha_tag_collision(self):
+        result = self._reject(
+            self._env("present", SHA_B, f"ghcr.io/uniskela/ts6-manager/backend:sha-{SHA_A[:7]}"),
+            sha=SHA_A,
+            tag="",
+            version="",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(f"sha-{SHA_A[:7]}", result.stderr)
 
 
 if __name__ == "__main__":

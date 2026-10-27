@@ -454,6 +454,15 @@ class PrereleaseWorkflowTests(unittest.TestCase):
         self.assertIn("reject-tag-collision", text)
         self.assertIn("reject-image-collision", text)
         self.assertIn("verify-github-release-target", text)
+        for job_name in ("build-and-push", "build-all-in-one"):
+            step = next(
+                s
+                for s in self.prerelease["jobs"][job_name]["steps"]
+                if s.get("name") == "Reject image tag collisions"
+            )
+            self.assertNotIn("if", step)
+            self.assertIn("needs.resolve-ref.outputs.short_sha", step["run"])
+            self.assertIn("reject-image-collision", step["run"])
         self.assertNotIn("leaving it unchanged", text)
         self.assertNotIn("ref: ${{ inputs.ref }}", text)
         self.assertEqual(

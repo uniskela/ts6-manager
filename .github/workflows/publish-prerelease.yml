@@ -278,13 +278,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Reject image tag collisions
-        if: needs.resolve-ref.outputs.tag != ''
         run: |
           bash "$RUNNER_TEMP/prerelease-guards.sh" \
             reject-image-collision "${IMAGE_PREFIX}" \
             "${{ needs.resolve-ref.outputs.tag }}" \
             "${{ needs.resolve-ref.outputs.version }}" \
-            "${{ needs.resolve-ref.outputs.sha }}"
+            "${{ needs.resolve-ref.outputs.sha }}" \
+            "${{ needs.resolve-ref.outputs.short_sha }}"
 
       - name: Extract labels
         id: meta
@@ -417,13 +417,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Reject image tag collisions
-        if: needs.resolve-ref.outputs.tag != ''
         run: |
           bash "$RUNNER_TEMP/prerelease-guards.sh" \
             reject-image-collision "${IMAGE_PREFIX}" \
             "${{ needs.resolve-ref.outputs.tag }}" \
             "${{ needs.resolve-ref.outputs.version }}" \
-            "${{ needs.resolve-ref.outputs.sha }}"
+            "${{ needs.resolve-ref.outputs.sha }}" \
+            "${{ needs.resolve-ref.outputs.short_sha }}"
 
       - name: Extract labels
         id: meta

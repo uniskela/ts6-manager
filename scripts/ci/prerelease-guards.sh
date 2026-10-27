@@ -70,13 +70,91 @@ reject_tag_collision() {
   [ "$existing" = "$sha" ] || die "git tag $tag already points at $existing, not $sha"
 }
 
+inspect_not_found() {
+  printf '%s' "$1" | grep -qiE \
+    'manifest unknown|MANIFEST_UNKNOWN|name unknown|NAME_UNKNOWN|not found: manifest|(^|[[:space:]])404([[:space:]]|$)'
+}
+
+inspect_raw() {
+  local image="$1" err
+  err="$(mktemp)"
+  if ! docker buildx imagetools inspect --raw "$image" 2>"$err"; then
+    local msg
+    msg="$(cat "$err")"
+    rm -f "$err"
+    if inspect_not_found "$msg"; then
+      return 1
+    fi
+    die "registry inspect failed for $image; refusing to publish"
+  fi
+  rm -f "$err"
+}
+
+inspect_raw_required() {
+  local image="$1" raw
+  raw="$(inspect_raw "$image")" || die "could not read $image from the registry; refusing to publish"
+  [ -n "$raw" ] || die "registry inspect returned empty for $image; refusing to publish"
+  printf '%s' "$raw"
+}
+
+image_fixture_status() {
+  local image="$1"
+  awk -F'\t' -v img="$image" '$1==img {print ($3 == "" ? "ok" : $3); exit}' "$PRERELEASE_IMAGE_INSPECT"
+}
+
 image_present() {
   local image="$1"
   if [ -n "${PRERELEASE_IMAGE_INSPECT:-}" ]; then
-    awk -F'\t' -v img="$image" '$1==img {found=1} END {exit !found}' "$PRERELEASE_IMAGE_INSPECT"
-    return
+    case "$(image_fixture_status "$image")" in
+      error) die "registry inspect failed for $image; refusing to publish" ;;
+      ok) return 0 ;;
+      *) return 1 ;;
+    esac
   fi
-  docker buildx imagetools inspect "$image" >/dev/null 2>&1
+  local err rc=0
+  err="$(mktemp)"
+  docker buildx imagetools inspect "$image" >/dev/null 2>"$err" || rc=$?
+  local msg
+  msg="$(cat "$err")"
+  rm -f "$err"
+  [ "$rc" -eq 0 ] && return 0
+  if inspect_not_found "$msg"; then
+    return 1
+  fi
+  die "registry inspect failed for $image; refusing to publish"
+}
+
+revision_from_config() {
+  local image="$1" manifest="$2" cfg cfg_raw
+  cfg="$(printf '%s' "$manifest" | jq -r '.config.digest // empty')"
+  [ -n "$cfg" ] || return 0
+  cfg_raw="$(inspect_raw_required "${image}@${cfg}")"
+  printf '%s' "$cfg_raw" | jq -r '.config.Labels["org.opencontainers.image.revision"] // empty'
+}
+
+revision_from_oci() {
+  local image="$1" raw="$2"
+  if printf '%s' "$raw" | jq -e '(.manifests | type) == "array"' >/dev/null 2>&1; then
+    local digest rev seen=""
+    while IFS= read -r digest; do
+      [ -n "$digest" ] || continue
+      rev="$(revision_from_config "$image" "$(inspect_raw_required "${image}@${digest}")")"
+      [ -n "$rev" ] || continue
+      if [ -z "$seen" ]; then
+        seen="$rev"
+      elif [ "$seen" != "$rev" ]; then
+        die "image $image has conflicting config revisions"
+      fi
+    done < <(printf '%s' "$raw" | jq -r '
+      .manifests[]?
+      | select((.platform.os // "linux") != "unknown")
+      | select((.annotations["vnd.docker.reference.type"] // "") != "attestation-manifest")
+      | .digest // empty
+    ')
+    printf '%s' "$seen"
+    return 0
+  fi
+  revision_from_config "$image" "$raw"
 }
 
 image_revision() {
@@ -86,24 +164,22 @@ image_revision() {
     return 0
   fi
   local raw
-  raw="$(docker buildx imagetools inspect --raw "$image" 2>/dev/null || true)"
+  raw="$(inspect_raw "$image")" || return 0
   [ -n "$raw" ] || return 0
-  printf '%s\n' "$raw" | jq -r '
-    [
-      .annotations["org.opencontainers.image.revision"]?,
-      (.manifests[]?.annotations["org.opencontainers.image.revision"]?),
-      .config.Labels["org.opencontainers.image.revision"]?
-    ] | map(select(. != null and . != "")) | first // empty
-  ' 2>/dev/null || true
+  revision_from_oci "$image" "$raw"
 }
 
 reject_image_collision() {
-  local prefix="${1:-}" tag="${2:-}" version="${3:-}" sha="${4:-}"
+  local prefix="${1:-}" tag="${2:-}" version="${3:-}" sha="${4:-}" short="${5:-}"
   [ -n "$prefix" ] || die "image prefix required"
   [[ "$sha" =~ $COMMIT_SHA ]] || die "reject-image-collision expects a 40-character SHA"
+  if [ -z "$short" ]; then
+    short="${sha:0:7}"
+  fi
+  [[ "$short" =~ ^[0-9a-f]{7}$ ]] || die "reject-image-collision expects a 7-character short SHA"
   local component suffix image existing
   for component in backend frontend sidecar all-in-one; do
-    for suffix in $tag $version; do
+    for suffix in "sha-${short}" $tag $version; do
       [ -n "$suffix" ] || continue
       image="${prefix}/${component}:${suffix}"
       if ! image_present "$image"; then
