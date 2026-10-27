@@ -15,12 +15,14 @@ ROOT = Path(__file__).resolve().parents[2]
 
 def compose_config(file: str) -> dict:
     env = {
-        **os.environ,
+        **{k: v for k, v in os.environ.items() if not k.startswith("COMPOSE_")},
         "JWT_SECRET": "dummy",
         "ENCRYPTION_KEY": "dummy",
         "SIDECAR_SECRET": "dummy",
         "TS6_BETA_TAG": "v0.0.0-beta.0",
         "FRONTEND_URL": "",
+        # Empty beats a checkout .env; compose then uses each file's name: / directory default.
+        "COMPOSE_PROJECT_NAME": "",
     }
     raw = subprocess.check_output(
         ["docker", "compose", "-f", file, "config", "--format", "json"],
