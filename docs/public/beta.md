@@ -49,29 +49,30 @@ Each image has `org.opencontainers.image.revision` set to the full commit SHA.
 
 ## Tester install
 
-Use `docker-compose.beta.yml` at the repository root once the companion compose pull request has merged. Until then the file is not on `main`. The file sets Compose project `ts6-beta` and named volumes `ts6-beta-backend-data` / `ts6-beta-music-data`, so it can sit next to a stable stack in the same directory without sharing data. Do not invent a compose file or rename the laboratory image.
+Use `docker-compose.beta.yml` at the repository root (on `main`). The file sets Compose project `ts6-beta` and named volumes `ts6-beta-backend-data` / `ts6-beta-music-data`, so it can sit next to a stable stack in the same directory without sharing data. Do not invent a compose file or rename the laboratory image.
 
-1. Create a `.env` with new secrets (do not reuse production secrets):
+1. Create a `.env.beta` with new secrets. Do not reuse production secrets or the stable stack's `.env`. Keep `.env.beta` private, mode `600`, and Git-ignored (the repository ignores `.env.beta`).
 
 ~~~bash
-echo "TS6_BETA_TAG=v1.12.0-beta.1" >> .env
-echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env
-echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env
-echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env
+echo "TS6_BETA_TAG=v1.12.0-beta.1" >> .env.beta
+echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env.beta
+echo "ENCRYPTION_KEY=$(openssl rand -base64 32)" >> .env.beta
+echo "SIDECAR_SECRET=$(openssl rand -base64 32)" >> .env.beta
+chmod 600 .env.beta
 ~~~
 
-2. Start and stop the stack yourself. Compose sets `restart: "no"`. The UI is `http://127.0.0.1:13000`. The backend API stays on the Docker network and is not published on the host.
+2. Start and stop the stack yourself. Always pass `--env-file .env.beta`. Compose sets `restart: "no"`. The UI is `http://127.0.0.1:13000`. The backend API stays on the Docker network and is not published on the host.
 
 ~~~bash
-docker compose -f docker-compose.beta.yml up -d
-docker compose -f docker-compose.beta.yml ps
+docker compose --env-file .env.beta -f docker-compose.beta.yml up -d
+docker compose --env-file .env.beta -f docker-compose.beta.yml ps
 # UI is http://127.0.0.1:13000 — loopback only, not port 3000
-docker compose -f docker-compose.beta.yml down
+docker compose --env-file .env.beta -f docker-compose.beta.yml down
 ~~~
 
 3. Connect only a disposable or dedicated non-production TeamSpeak server.
 
-4. Keep logs on the host. The compose file caps each container at three 10 MiB files. Do not attach raw logs, `.env`, or tokens to issues or pull requests.
+4. Keep logs on the host. The compose file caps each container at three 10 MiB files. Do not attach raw logs, `.env.beta`, `.env`, or tokens to issues or pull requests.
 
 ### All-in-one
 
@@ -86,7 +87,7 @@ Run beta on a separate host or compose project from production.
 - **Access:** the only published port is the UI on `127.0.0.1:13000`. Reach it over an existing private path if you need another machine. Do not publish the backend.
 - **Resources:** the example limits memory and CPU. Raise them only if the host is dedicated to the test.
 - **Health:** backend `/api/health` (through the UI origin) and sidecar `/health` on the internal network. Record counters you already have (connections, bot state, diagnostics). Do not export secrets.
-- **Control:** start and stop with compose. After a crash, `docker compose -f docker-compose.beta.yml up -d` is a manual recovery, not an invitation to `unless-stopped`.
+- **Control:** start and stop with compose. After a crash, `docker compose --env-file .env.beta -f docker-compose.beta.yml up -d` is a manual recovery, not an invitation to `unless-stopped`.
 
 ### Recovery to verify before unattended operation
 
@@ -106,11 +107,11 @@ Until those are recorded, treat multi-day runs as operator-attended.
 Beta schemas may not load in an older image. Back up the SQLite volume before every tag change.
 
 ~~~bash
-docker compose -f docker-compose.beta.yml down
-# copy the ts6-beta-backend-data volume, then:
+docker compose --env-file .env.beta -f docker-compose.beta.yml down
+# copy the ts6-beta-backend-data volume, then edit TS6_BETA_TAG in .env.beta:
 #   TS6_BETA_TAG=v1.11.2   # last known stable, or
 #   TS6_BETA_TAG=sha-oldid # previous prerelease commit
-docker compose -f docker-compose.beta.yml up -d
+docker compose --env-file .env.beta -f docker-compose.beta.yml up -d
 ~~~
 
 If the newer image applied a schema the older image refuses, restore the volume backup taken on the older tag. Do not point a stable production compose file at a beta volume.
@@ -147,14 +148,14 @@ Publish a **public** GitHub prerelease and tester announcement only when every l
 | Requested SHA is in this repo and green on the workflow gates | Typecheck, complete tests, sidecar smoke, Trivy | Not run for a public tag |
 | Images exist on GHCR with `sha-*` and the prerelease tag; OCI revision matches the SHA | `docker buildx imagetools inspect` | Not published |
 | Stable `latest` / `1.11` / Hub unsuffixed tags unchanged | Inspect those tags before and after | Not published |
-| Tester compose uses project `ts6-beta`, isolated volumes, UI on `127.0.0.1:13000`, no auto-restart | `docker-compose.beta.yml` | Draft PR only |
+| Tester compose uses project `ts6-beta`, isolated volumes, UI on `127.0.0.1:13000`, no auto-restart, secrets from `.env.beta` | `docker-compose.beta.yml` on `main` | Merged |
 | Staging TeamSpeak is non-production; no production host is used | Operator confirms | Not started |
 | Recovery list above recorded | Six checks written down | Not started |
 | GitHub release marked prerelease; unsupported features listed | Workflow notes | Off by default |
 | Discord bridge is **not** advertised as a published image | [Discord bridge](discord-bridge.md) | NO-GO for a registry preview |
 | No tokens, guild ids, private TeamSpeak addresses, or raw logs in the release | Review notes and artifacts | — |
 
-**Public beta is NO-GO** until the draft publishing and docs PRs merge, a maintainer dispatches the workflow for an agreed SHA, and the staging recovery checks are written down. This document does not authorize that dispatch.
+**Public beta is NO-GO.** Tester compose is on `main`. The publishing workflow is still a draft PR. No prerelease images have been published, no dispatch is authorized here, and a public tester announcement is not approved.
 
 ## Security verification (workflow)
 
