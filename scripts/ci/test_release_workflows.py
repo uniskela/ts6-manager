@@ -581,5 +581,82 @@ class PrereleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("docker", result.stdout + result.stderr)
 
 
+class PrivateBetaPublishTests(unittest.TestCase):
+    def setUp(self):
+        self.wf = workflow("publish-discord-bridge-private-beta.yml")
+        self.release = workflow("release-please.yml")
+        self.publish = workflow("publish-images.yml")
+        self.text = (ROOT / ".github/workflows/publish-discord-bridge-private-beta.yml").read_text()
+
+    def test_manual_only_and_not_on_the_stable_path(self):
+        self.assertEqual(set(self.wf["on"]), {"workflow_dispatch"})
+        self.assertNotIn("push", self.wf["on"])
+        self.assertNotIn("workflow_call", self.wf["on"])
+        self.assertNotIn("pull_request_target", self.wf["on"])
+        self.assertEqual(self.wf["env"]["SOURCE_PR"], "504")
+        for other in (self.release, self.publish):
+            self.assertNotIn("publish-discord-bridge-private-beta", yaml.dump(other))
+
+    def test_build_cannot_write_packages_and_publish_needs_approval(self):
+        self.assertEqual(self.wf["permissions"], {"contents": "read"})
+        build = self.wf["jobs"]["verify-and-build"]
+        publish = self.wf["jobs"]["publish"]
+        self.assertEqual(build["permissions"], {"contents": "read", "pull-requests": "read"})
+        self.assertNotEqual(build["permissions"].get("packages"), "write")
+        self.assertEqual(publish["environment"], "discord-bridge-private-beta")
+        self.assertEqual(publish["needs"], "verify-and-build")
+        self.assertEqual(publish["permissions"]["packages"], "write")
+        self.assertNotIn("contents: write", self.text)
+
+    def test_publish_loads_the_artifact_and_never_rebuilds(self):
+        publish = self.wf["jobs"]["publish"]
+        runs = "\n".join(step.get("run", "") for step in publish["steps"])
+        uses = [step.get("uses", "") for step in publish["steps"]]
+        self.assertTrue(any("download-artifact@" in item for item in uses))
+        self.assertFalse(any("actions/checkout@" in item for item in uses))
+        self.assertIn("docker load", runs)
+        self.assertNotRegex(runs, r"docker build(?!x)")
+        self.assertNotIn("packages/discord-bridge/scripts/", runs)
+        self.assertIn("private-beta-", runs)
+        self.assertNotIn(":latest", runs)
+        self.assertNotIn("dockerhub", yaml.dump(self.wf).lower())
+
+    def test_confirm_token_requires_the_full_sha(self):
+        guard = next(
+            step
+            for step in self.wf["jobs"]["verify-and-build"]["steps"]
+            if step.get("name") == "Validate commit and confirm token"
+        )
+        sha = "9ea992fe84203c7cf5b6b89c6a2a876c25a297b3"
+        accepted = [(sha, f"publish-private-beta-{sha}")]
+        rejected = [
+            (sha, "publish-private-beta-deadbeef"),
+            ("deadbeef", f"publish-private-beta-{'d' * 40}"),
+            (sha.upper(), f"publish-private-beta-{sha.upper()}"),
+            ("", f"publish-private-beta-{sha}"),
+        ]
+        for commit, confirm, ok in [(c, t, True) for c, t in accepted] + [(c, t, False) for c, t in rejected]:
+            with self.subTest(commit=commit, confirm=confirm), tempfile.NamedTemporaryFile("w") as out:
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "COMMIT": commit, "CONFIRM": confirm, "GITHUB_OUTPUT": out.name},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+
+    def test_build_saves_a_checksummed_artifact(self):
+        names = [step.get("name") for step in self.wf["jobs"]["verify-and-build"]["steps"]]
+        self.assertLess(names.index("Save verified image artifact"), names.index("Upload verified image artifact"))
+        save = next(
+            step
+            for step in self.wf["jobs"]["verify-and-build"]["steps"]
+            if step.get("name") == "Save verified image artifact"
+        )
+        self.assertIn("docker save", save["run"])
+        self.assertIn("sha256sum", save["run"])
+        self.assertIn("provenance.json", save["run"])
+
+
 if __name__ == "__main__":
     unittest.main()
