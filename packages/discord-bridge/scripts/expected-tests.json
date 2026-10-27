@@ -2,6 +2,12 @@
   "scripts/d1-ts-lab.test.mjs": [
     "documents isolated names and refuses an unknown command"
   ],
+  "scripts/private-beta.test.mjs": [
+    "compose file is opt-in, pinned, unrestarted and has no published ports",
+    "exits 2 when the env file is not mode 0600",
+    "prints SET/MISSING only and does not start without --confirm",
+    "refuses an unknown command and requires a SHA for rollback"
+  ],
   "scripts/run-live-container.test.mjs": [
     "exits 2 when a required variable is MISSING",
     "exits 2 when the env file is missing",
@@ -387,11 +393,17 @@
     "records the session, and the first check that finds it replaced ends every admission for good",
     "revoke ends an admission for good; a return is a new admission and the old one never becomes valid again"
   ],
+  "src/lab/beta-status.test.ts": [
+    "derives fail-closed when DAVE is down or a duplicate receiver appears",
+    "records bounded lifecycle events and never copies a secret-shaped field",
+    "writes status atomically"
+  ],
   "src/lab/config.test.ts": [
     "accepts a complete configuration",
     "reports missing requirements by name and never returns a value",
     "requires six distinct tokens",
-    "single-attempt diagnostic is off unless D1_DAVE_SINGLE_ATTEMPT=1"
+    "single-attempt diagnostic is off unless D1_DAVE_SINGLE_ATTEMPT=1",
+    "treats unset D1_RUNTIME_MODE as laboratory and requires an explicit private-beta label"
   ],
   "src/lab/dave-library.test.ts": [
     "recovers by re-initialising when the last transition id is non-zero",

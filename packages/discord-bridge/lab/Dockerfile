@@ -40,6 +40,10 @@ RUN node scripts/sync-tslib.mjs \
  && mkdir evidence
 
 FROM ${NODE_IMAGE} AS runtime
+ARG SOURCE_COMMIT=unknown
+LABEL org.opencontainers.image.revision="${SOURCE_COMMIT}" \
+      ts6.bridge.experimental="true" \
+      ts6.bridge.public="false"
 WORKDIR /app/packages/discord-bridge
 # Root-owned and read-only to the node user: the runtime cannot install, sync or patch anything.
 COPY --from=build /app/packages/discord-bridge/node_modules ./node_modules

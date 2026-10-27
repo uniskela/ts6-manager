@@ -2,6 +2,8 @@
 
 Operator-only. Do not start a run until every participant is present and the operator authorises that run. Use only the disposable TS6 laboratory (`d1-ts-lab.sh`) and one private Discord testing voice channel. Do not use production TeamSpeak.
 
+A–D may be completed in controlled sessions during the restricted private beta. Keep these PASS/FAIL evidence files separate from private-beta usage counters (`lab/PRIVATE-BETA.md`). The private-beta runner has no `mark` / `kill-receiver` stdin commands.
+
 Evidence is counters plus operator-attested hear/not-hear notes. Do not record audio, tokens, guild names, user names, or host addresses. `mark` notes may say "two distinct voices" or "heard after failover" only.
 
 ## Current gate

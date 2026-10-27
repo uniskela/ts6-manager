@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { labDaveDiagnostic, loadLabConfig, presenceReport } from "./config.js";
+import { labDaveDiagnostic, loadLabConfig, presenceReport, requireRuntimeMode, runtimeMode } from "./config.js";
 
 const full = {
   D1_DISCORD_TOKEN_SLOT_0: "aaaaaaaa-0", D1_DISCORD_TOKEN_SLOT_1: "aaaaaaaa-1", D1_DISCORD_TOKEN_SLOT_2: "aaaaaaaa-2",
@@ -32,5 +32,13 @@ describe("lab config", () => {
       timing: { maxRecoveries: 0 },
       retry: { maxAttempts: 1 },
     });
+  });
+  it("treats unset D1_RUNTIME_MODE as laboratory and requires an explicit private-beta label", () => {
+    assert.deepEqual(runtimeMode({}), { ok: true, mode: "laboratory" });
+    assert.deepEqual(runtimeMode({ D1_RUNTIME_MODE: "private-beta" }), { ok: true, mode: "private-beta" });
+    assert.equal(runtimeMode({ D1_RUNTIME_MODE: "production" }).ok, false);
+    assert.equal(requireRuntimeMode({}, "private-beta").ok, false);
+    assert.equal(requireRuntimeMode({ D1_RUNTIME_MODE: "private-beta" }, "laboratory").ok, false);
+    assert.deepEqual(requireRuntimeMode({ D1_RUNTIME_MODE: "private-beta" }, "private-beta"), { ok: true, mode: "private-beta" });
   });
 });

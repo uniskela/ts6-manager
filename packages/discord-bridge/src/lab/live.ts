@@ -15,10 +15,16 @@ import { ResourceSampler } from "../core/metrics.js";
 import { createOpusCodec } from "../core/opus.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger, safeError } from "../core/redact.js";
-import { labDaveDiagnostic, loadLabConfig, presenceReport } from "./config.js";
+import { labDaveDiagnostic, loadLabConfig, presenceReport, requireRuntimeMode } from "./config.js";
 import { Evidence } from "./evidence.js";
 
 const log = createLogger("d1-live");
+const mode = requireRuntimeMode(process.env, "laboratory");
+if (!mode.ok) {
+  process.stdout.write(`Bridge-D1 laboratory runner refused: ${mode.problem}\n`);
+  process.stdout.write("Use src/lab/private-beta.ts with D1_RUNTIME_MODE=private-beta for the private-beta runtime.\n");
+  process.exit(2);
+}
 const loaded = loadLabConfig(process.env);
 
 if (!loaded.ok) {

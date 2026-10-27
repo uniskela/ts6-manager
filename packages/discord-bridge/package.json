@@ -18,6 +18,7 @@
     "lab:ts-live": "tsx src/lab/ts-live.ts",
     "lab:ts-handshake": "tsx src/lab/ts-handshake.ts",
     "lab:live": "tsx src/lab/live.ts",
+    "beta:private": "tsx src/lab/private-beta.ts",
     "lab:setup": "tsx src/lab/setup.ts",
     "prelab:ts-live": "node scripts/sync-tslib.mjs",
     "prelab:live": "node scripts/sync-tslib.mjs",

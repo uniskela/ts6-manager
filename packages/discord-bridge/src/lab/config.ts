@@ -13,6 +13,25 @@ export interface LabConfig {
 
 export type ConfigResult = { ok: true; config: LabConfig } | { ok: false; missing: string[]; problems: string[] };
 
+export type RuntimeMode = "laboratory" | "private-beta";
+
+export type RuntimeModeResult = { ok: true; mode: RuntimeMode } | { ok: false; problem: string };
+
+/** Explicit runtime label. Unknown values fail closed. Unset means the laboratory runner. */
+export function runtimeMode(env: NodeJS.ProcessEnv): RuntimeModeResult {
+  const raw = env.D1_RUNTIME_MODE;
+  if (raw === undefined || raw === "" || raw === "laboratory") return { ok: true, mode: "laboratory" };
+  if (raw === "private-beta") return { ok: true, mode: "private-beta" };
+  return { ok: false, problem: "D1_RUNTIME_MODE must be laboratory or private-beta" };
+}
+
+export function requireRuntimeMode(env: NodeJS.ProcessEnv, expected: RuntimeMode): RuntimeModeResult {
+  const got = runtimeMode(env);
+  if (!got.ok) return got;
+  if (got.mode !== expected) return { ok: false, problem: `D1_RUNTIME_MODE=${got.mode} is not ${expected}` };
+  return got;
+}
+
 /** Credential presence is reported as SET/MISSING only; values are never returned in errors. */
 export function presenceReport(env: NodeJS.ProcessEnv): Record<string, "SET" | "MISSING"> {
   return Object.fromEntries(REQUIRED.map((k) => [k, env[k] ? "SET" : "MISSING"] as const));
