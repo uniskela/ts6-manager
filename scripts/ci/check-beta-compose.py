@@ -20,6 +20,7 @@ def compose_config(file: str) -> dict:
         "ENCRYPTION_KEY": "dummy",
         "SIDECAR_SECRET": "dummy",
         "TS6_BETA_TAG": "v0.0.0-beta.0",
+        "FRONTEND_URL": "",
     }
     raw = subprocess.check_output(
         ["docker", "compose", "-f", file, "config", "--format", "json"],
