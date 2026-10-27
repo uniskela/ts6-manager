@@ -478,6 +478,81 @@ class PrereleaseWorkflowTests(unittest.TestCase):
         self.assertIn("verify-github-release-target", script)
         self.assertIn("Discord voice bridge", script)
 
+    def test_checkout_paths_stay_under_workspace(self):
+        text = (ROOT / ".github/workflows" / "publish-prerelease.yml").read_text()
+        self.assertNotIn("prerelease-workflow", text)
+        self.assertNotIn("path: ${{ runner.temp }}", text)
+        guard_jobs = ("resolve-ref", "build-and-push", "build-all-in-one", "github-prerelease")
+        keep_run = None
+        for name in guard_jobs:
+            steps = self.prerelease["jobs"][name]["steps"]
+            names = [step.get("name") for step in steps]
+            self.assertIn("Checkout trusted workflow source", names)
+            self.assertIn("Keep publish-path guards", names)
+            source = steps[names.index("Checkout trusted workflow source")]
+            self.assertEqual(source["with"]["ref"], "${{ github.sha }}")
+            self.assertNotIn("path", source.get("with", {}))
+            keep = steps[names.index("Keep publish-path guards")]
+            if keep_run is None:
+                keep_run = keep["run"]
+            self.assertEqual(keep["run"], keep_run)
+            self.assertIn('cp scripts/ci/prerelease-guards.sh "$RUNNER_TEMP/prerelease-guards.sh"', keep["run"])
+            if "Checkout trusted default branch" in names:
+                self.assertLess(
+                    names.index("Keep publish-path guards"),
+                    names.index("Checkout trusted default branch"),
+                )
+            for step in steps:
+                path = (step.get("with") or {}).get("path")
+                if path:
+                    self.assertFalse(str(path).startswith("${{ runner.temp"))
+                    self.assertFalse(str(path).startswith("/"))
+                if "prerelease-guards.sh" in step.get("run", ""):
+                    self.assertIn("$RUNNER_TEMP/prerelease-guards.sh", step["run"])
+                    self.assertNotIn("scripts/ci/prerelease-guards.sh", step["run"].replace(keep["run"], ""))
+
+    def test_dispatch_resolves_guard_path_without_publishing(self):
+        keep = next(
+            step
+            for step in self.prerelease["jobs"]["resolve-ref"]["steps"]
+            if step.get("name") == "Keep publish-path guards"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp) / "runner-temp"
+            workspace = Path(tmp) / "workspace"
+            temp.mkdir()
+            workspace.mkdir()
+            copied = subprocess.run(
+                ["bash", "-c", keep["run"]],
+                cwd=ROOT,
+                env={**os.environ, "RUNNER_TEMP": str(temp)},
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(copied.returncode, 0, copied.stderr)
+            guard = temp / "prerelease-guards.sh"
+            self.assertTrue(guard.is_file())
+            (workspace / "scripts").mkdir()
+            result = subprocess.run(
+                ["bash", str(guard), "validate-source-branch", "main"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run(
+                ["bash", str(guard), "validate-source-branch", "feature/unreviewed"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("ghcr.io", result.stdout + result.stderr)
+            self.assertNotIn("docker", result.stdout + result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
