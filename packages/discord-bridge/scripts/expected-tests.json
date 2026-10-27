@@ -12,7 +12,8 @@
   "scripts/private-pilot.test.mjs": [
     "compose file has no ports, no restart loop, and does not manage TeamSpeak",
     "prints SET/MISSING only and does not start without --confirm",
-    "refuses the disposable lab host and a tag-only image"
+    "refuses a custom env file that is not lab/.env.pilot",
+    "refuses the disposable lab host, a tag-only image, and a missing SHA"
   ],
   "scripts/run-live-container.test.mjs": [
     "exits 2 when a required variable is MISSING",
