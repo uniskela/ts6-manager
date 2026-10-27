@@ -1,0 +1,92 @@
+# Experimental TS6 Manager stack for early testers.
+# Isolated Compose project: ts6-beta. Pin TS6_BETA_TAG. Never use latest.
+# Use a disposable non-production TeamSpeak server. Operator start/stop only.
+
+name: ts6-beta
+
+services:
+  backend:
+    image: ghcr.io/uniskela/ts6-manager/backend:${TS6_BETA_TAG:?Set TS6_BETA_TAG to a prerelease or sha-* tag}
+    container_name: ts6-beta-backend
+    restart: "no"
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - DATABASE_URL=file:/app/packages/backend/data/ts6webui.db
+      - JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in .env or environment}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?Set ENCRYPTION_KEY in .env or environment}
+      - TS_ALLOW_SELF_SIGNED=${TS_ALLOW_SELF_SIGNED:-false}
+      - YT_COOKIE_FILE=${YT_COOKIE_FILE:-}
+      - JWT_ACCESS_EXPIRY=15m
+      - JWT_REFRESH_EXPIRY=7d
+      - FRONTEND_URL=${FRONTEND_URL:-http://127.0.0.1:13000}
+      - PUBLIC_URL=${PUBLIC_URL:-}
+      - MUSIC_DIR=/data/music
+      - SIDECAR_URL=http://ts6-beta-sidecar:9800
+      - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
+      - SIDECAR_BINARY_PATH=${SIDECAR_BINARY_PATH:-}
+    volumes:
+      - backend-data:/app/packages/backend/data
+      - music-data:/data/music
+    depends_on:
+      - sidecar
+    networks:
+      - ts6-beta-network
+
+  sidecar:
+    image: ghcr.io/uniskela/ts6-manager/sidecar:${TS6_BETA_TAG:?Set TS6_BETA_TAG to a prerelease or sha-* tag}
+    container_name: ts6-beta-sidecar
+    restart: "no"
+    mem_limit: 1g
+    cpus: "1.0"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      - SIDECAR_PORT=9800
+      - SIDECAR_SECRET=${SIDECAR_SECRET:?Set SIDECAR_SECRET in .env or environment}
+      - MUSIC_DIR=/data/music
+      - VIDEO_QUEUE_SIZE=8192
+      - AUDIO_QUEUE_SIZE=16384
+      - FFMPEG_HTTP_PERSISTENT=${FFMPEG_HTTP_PERSISTENT:-auto}
+    volumes:
+      - music-data:/data/music
+    networks:
+      - ts6-beta-network
+
+  frontend:
+    image: ghcr.io/uniskela/ts6-manager/frontend:${TS6_BETA_TAG:?Set TS6_BETA_TAG to a prerelease or sha-* tag}
+    container_name: ts6-beta-frontend
+    restart: "no"
+    mem_limit: 256m
+    cpus: "0.5"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    ports:
+      - "127.0.0.1:13000:80"
+    depends_on:
+      - backend
+    networks:
+      - ts6-beta-network
+
+volumes:
+  backend-data:
+    name: ts6-beta-backend-data
+  music-data:
+    name: ts6-beta-music-data
+
+networks:
+  ts6-beta-network:
+    name: ts6-beta-network
