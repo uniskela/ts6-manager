@@ -1,0 +1,12 @@
+# Generated, vendored, and test-output paths. Source tests stay in scope.
+node_modules/
+dist/
+build/
+coverage/
+.pr-test/
+bin/
+packages/backend/generated/
+packages/backend/data/
+packages/frontend/test-results/
+packages/frontend/playwright-report/
+graphify-out/

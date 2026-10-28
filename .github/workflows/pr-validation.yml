@@ -41,6 +41,7 @@ jobs:
           "$RUNNER_TEMP/workflow-tests/bin/python" scripts/ci/test_release_workflows.py
           "$RUNNER_TEMP/workflow-tests/bin/python" scripts/ci/test_prerelease_guards.py
           "$RUNNER_TEMP/workflow-tests/bin/python" scripts/ci/test_private_beta_publish.py
+          "$RUNNER_TEMP/workflow-tests/bin/python" scripts/ci/test_semgrep_workflow.py
           python3 scripts/ci/test_dockerhub_readme.py
 
       - name: Run repo hygiene checks
