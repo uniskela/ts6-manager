@@ -230,6 +230,26 @@ class GhcrTests(unittest.TestCase):
             seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=public)
         self.assertIn("retracted", str(exc.exception))
 
+        inner = FakeGh(
+            {
+                pkg: {"visibility": "public"},
+                f"{pkg}/versions?per_page=100&page=1": [
+                    {"id": 99, "metadata": {"container": {"tags": [tag]}}}
+                ],
+                f"{pkg}/versions/99": {},
+            }
+        )
+
+        def fail_patch(args, capture_output=True, text=True):
+            if "PATCH" in args:
+                return FakeProc(returncode=1, stdout="", stderr="HTTP 403")
+            return inner(args, capture_output=capture_output, text=text)
+
+        with self.assertRaises(SystemExit) as patch_exc:
+            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=fail_patch)
+        self.assertIn("seal PATCH failed", str(patch_exc.exception))
+        self.assertIn("403", str(patch_exc.exception))
+
     def test_bearer_flow_fails_on_public_manifest_and_fail_closed(self):
         token = json.dumps({"token": "anon"}).encode()
         public = FakeOpener(

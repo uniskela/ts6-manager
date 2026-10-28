@@ -86,13 +86,14 @@ def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> s
     if info.get("visibility") == "private":
         return "visibility=private"
     encoded = name.replace("/", "%2F")
+    seal_error = None
     try:
         _gh_mutate(
             ["--method", "PATCH", "-f", "visibility=private", f"{scope}/{owner}/packages/container/{encoded}"],
             runner=runner,
         )
-    except SystemExit:
-        pass
+    except SystemExit as exc:
+        seal_error = str(exc)
     for version in _versions(scope, owner, name, runner=runner):
         if tag in _container_tags(version) and version.get("id") is not None:
             _gh_mutate(
@@ -103,7 +104,10 @@ def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> s
                 ],
                 runner=runner,
             )
-    raise SystemExit(f"package was not private after push; retracted {tag}")
+    msg = f"package was not private after push; retracted {tag}"
+    if seal_error:
+        msg += f"; seal PATCH failed: {seal_error}"
+    raise SystemExit(msg)
 
 
 def _status(url: str, headers: dict[str, str], opener) -> int:
