@@ -17,8 +17,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from verify_private_beta_attestation import file_sha256, verify_attestation
-from verify_private_beta_ghcr import anonymous_pull_denied, require_private_package
+from verify_private_beta_attestation import file_sha256, resolved_subject, verify_attestation
+from verify_private_beta_ghcr import anonymous_pull_denied, require_private_package, seal_or_retract
 from verify_private_beta_source import verify_source
 
 
@@ -209,6 +209,27 @@ class GhcrTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             require_private_package("uniskela", "ts6-manager/discord-bridge", tag, runner=taken)
 
+    def test_seal_or_retract_keeps_private_and_retracts_public(self):
+        tag = f"private-beta-{COMMIT}"
+        pkg = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
+        private = FakeGh({pkg: {"visibility": "private"}})
+        self.assertEqual(
+            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=private),
+            "visibility=private",
+        )
+        public = FakeGh(
+            {
+                pkg: {"visibility": "public"},
+                f"{pkg}/versions?per_page=100&page=1": [
+                    {"id": 99, "metadata": {"container": {"tags": [tag]}}}
+                ],
+                f"{pkg}/versions/99": {},
+            }
+        )
+        with self.assertRaises(SystemExit) as exc:
+            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=public)
+        self.assertIn("retracted", str(exc.exception))
+
     def test_bearer_flow_fails_on_public_manifest_and_fail_closed(self):
         token = json.dumps({"token": "anon"}).encode()
         public = FakeOpener(
@@ -269,6 +290,25 @@ class AttestationTests(unittest.TestCase):
 
             with self.assertRaises(SystemExit):
                 verify_attestation(path, COMMIT, REPO, runner=run_fail)
+
+    def test_resolved_subject_rejects_traversal_wrong_name_and_symlink(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "image.tar.gz").write_bytes(b"x")
+            with self.assertRaises(SystemExit):
+                resolved_subject(str(root / ".." / "image.tar.gz"))
+            with self.assertRaises(SystemExit):
+                resolved_subject(str(root / "other.tar.gz"))
+            secret = root / "secret.bin"
+            secret.write_bytes(b"x")
+            link = root / "image.tar.gz"
+            link.unlink()
+            link.symlink_to(secret)
+            with self.assertRaises(SystemExit):
+                resolved_subject(str(link))
+            link.unlink()
+            (root / "image.tar.gz").write_bytes(b"x")
+            self.assertEqual(resolved_subject(str(root / "image.tar.gz")).name, "image.tar.gz")
 
 
 if __name__ == "__main__":

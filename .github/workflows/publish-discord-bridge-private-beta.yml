@@ -299,9 +299,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 scripts/ci/verify_private_beta_ghcr.py assert-private \
+          python3 scripts/ci/verify_private_beta_ghcr.py seal-or-retract \
             --owner "${{ github.repository_owner }}" \
-            --name "${{ env.PACKAGE_NAME }}"
+            --name "${{ env.PACKAGE_NAME }}" \
+            --tag "${{ needs.verify-and-build.outputs.tag }}"
           python3 scripts/ci/verify_private_beta_ghcr.py anonymous-denied \
             --owner "${{ github.repository_owner }}" \
             --name "${{ env.PACKAGE_NAME }}" \

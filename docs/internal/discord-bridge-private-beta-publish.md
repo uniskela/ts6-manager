@@ -44,11 +44,12 @@ package is public by default. Provision `ghcr.io/uniskela/ts6-manager/discord-br
 as a **private** package out of band, then dispatch. `require-private` fails
 if the package is missing, public, or the tag already exists.
 
-After push: `assert-private` plus the unauthenticated Registry v2 bearer
+After push: `seal-or-retract` plus the unauthenticated Registry v2 bearer
 flow (`GET https://ghcr.io/token?...` then `Authorization: Bearer` on the
 manifest). HTTP 200 on the manifest fails the job (public). Token or
 transport errors fail closed. A raw unauthenticated 401 is not treated as
-proof of privacy.
+proof of privacy. If the package is not private after push, the workflow
+PATCHes visibility, deletes the tag it just pushed, and fails.
 
 ## Residual
 

@@ -632,6 +632,7 @@ class PrivateBetaPublishTests(unittest.TestCase):
         self.assertIn("verify_private_beta_attestation.py", runs)
         self.assertIn("anonymous-denied", runs)
         self.assertIn("require-private", runs)
+        self.assertIn("seal-or-retract", runs)
         self.assertNotIn("provenance.json", runs)
         self.assertIn("private-beta-", runs)
         self.assertNotIn(":latest", runs)

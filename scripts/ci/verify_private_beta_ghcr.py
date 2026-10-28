@@ -44,10 +44,13 @@ def assert_private_package(owner: str, name: str, runner=subprocess.run) -> tupl
     return info, scope
 
 
-def require_private_package(owner: str, name: str, tag: str, runner=subprocess.run) -> str:
-    _, scope = assert_private_package(owner, name, runner=runner)
+def _container_tags(version: dict) -> list[str]:
+    return list(((version.get("metadata") or {}).get("container") or {}).get("tags") or [])
+
+
+def _versions(scope: str, owner: str, name: str, runner=subprocess.run) -> list[dict]:
     encoded = name.replace("/", "%2F")
-    tags: list[str] = []
+    versions: list[dict] = []
     page = 1
     while True:
         batch = gh_api(
@@ -56,14 +59,51 @@ def require_private_package(owner: str, name: str, tag: str, runner=subprocess.r
         )
         if not isinstance(batch, list) or not batch:
             break
-        for version in batch:
-            tags.extend(((version.get("metadata") or {}).get("container") or {}).get("tags") or [])
+        versions.extend(item for item in batch if isinstance(item, dict))
         if len(batch) < 100:
             break
         page += 1
+    return versions
+
+
+def require_private_package(owner: str, name: str, tag: str, runner=subprocess.run) -> str:
+    _, scope = assert_private_package(owner, name, runner=runner)
+    tags = [tag for version in _versions(scope, owner, name, runner=runner) for tag in _container_tags(version)]
     if tag in tags:
         raise SystemExit(f"refusing to overwrite existing tag {tag}")
     return f"visibility=private tag {tag} is free"
+
+
+def _gh_mutate(args: list[str], runner=subprocess.run) -> None:
+    proc = runner(["gh", "api", *args], capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit((proc.stderr or proc.stdout or "gh api mutate failed").strip())
+
+
+def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> str:
+    """After push: private is success. Otherwise PATCH private, delete the tag, fail closed."""
+    info, scope = package_record(owner, name, runner=runner)
+    if info.get("visibility") == "private":
+        return "visibility=private"
+    encoded = name.replace("/", "%2F")
+    try:
+        _gh_mutate(
+            ["--method", "PATCH", "-f", "visibility=private", f"{scope}/{owner}/packages/container/{encoded}"],
+            runner=runner,
+        )
+    except SystemExit:
+        pass
+    for version in _versions(scope, owner, name, runner=runner):
+        if tag in _container_tags(version) and version.get("id") is not None:
+            _gh_mutate(
+                [
+                    "--method",
+                    "DELETE",
+                    f"{scope}/{owner}/packages/container/{encoded}/versions/{version['id']}",
+                ],
+                runner=runner,
+            )
+    raise SystemExit(f"package was not private after push; retracted {tag}")
 
 
 def _status(url: str, headers: dict[str, str], opener) -> int:
@@ -115,11 +155,13 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     req = sub.add_parser("require-private")
     vis = sub.add_parser("assert-private")
+    seal = sub.add_parser("seal-or-retract")
     anon = sub.add_parser("anonymous-denied")
-    for item in (req, vis, anon):
+    for item in (req, vis, seal, anon):
         item.add_argument("--owner", required=True)
         item.add_argument("--name", required=True)
     req.add_argument("--tag", required=True)
+    seal.add_argument("--tag", required=True)
     anon.add_argument("--tag", required=True)
     args = parser.parse_args(argv)
     if args.cmd == "require-private":
@@ -127,6 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     elif args.cmd == "assert-private":
         assert_private_package(args.owner, args.name)
         print("visibility=private")
+    elif args.cmd == "seal-or-retract":
+        print(seal_or_retract(args.owner, args.name, args.tag))
     else:
         print(anonymous_pull_denied(args.owner, args.name, args.tag))
     return 0

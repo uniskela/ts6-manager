@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 PREDICATE_TYPE = "https://github.com/uniskela/ts6-manager/private-beta-publish/v1"
-SIGNER_WORKFLOW = "uniskela/ts6-manager/.github/workflows/publish-discord-bridge-private-beta.yml"
+SIGNER_WORKFLOW = "uniskela/ts6-manager/.github/workflows/publish-discord-bridge-private-beta.yml@refs/heads/main"
 SUBJECT_NAME = "image.tar.gz"
 
 
