@@ -1,22 +1,48 @@
 #!/usr/bin/env python3
 """Verify a GitHub OIDC attestation for the private-beta tarball.
 
-Trust comes from GitHub-signed attestations for this workflow identity and the
-dispatch input SHA. A checksum or provenance file written by the build job is
-not accepted as proof.
+Attestation proves GitHub signed these tarball bytes for this workflow identity.
+It does not prove the bytes were built from the dispatch SHA.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 PREDICATE_TYPE = "https://github.com/uniskela/ts6-manager/private-beta-publish/v1"
-SIGNER_WORKFLOW = "uniskela/ts6-manager/.github/workflows/publish-discord-bridge-private-beta.yml@refs/heads/main"
+CERT_IDENTITY = (
+    "https://github.com/uniskela/ts6-manager/.github/workflows/"
+    "publish-discord-bridge-private-beta.yml@refs/heads/main"
+)
+SOURCE_REF = "refs/heads/main"
 SUBJECT_NAME = "image.tar.gz"
+MIN_GH = (2, 102, 0)
+
+
+def parse_gh_version(text: str) -> tuple[int, int, int]:
+    match = re.search(r"gh version (\d+)\.(\d+)\.(\d+)", text)
+    if not match:
+        raise SystemExit(f"unrecognized gh version output: {text.strip()!r}")
+    return int(match.group(1)), int(match.group(2)), int(match.group(3))
+
+
+def require_gh_version(runner=subprocess.run) -> str:
+    proc = runner(["gh", "--version"], capture_output=True, text=True)
+    text = (proc.stdout or "") + (proc.stderr or "")
+    if proc.returncode != 0:
+        raise SystemExit(text.strip() or "gh --version failed")
+    ver = parse_gh_version(text)
+    if ver < MIN_GH:
+        raise SystemExit(
+            f"gh {ver[0]}.{ver[1]}.{ver[2]} is older than 2.102.0; "
+            "signer-workflow prefix matching is unsafe"
+        )
+    return f"gh {ver[0]}.{ver[1]}.{ver[2]}"
 
 
 def resolved_subject(path: str) -> Path:
@@ -45,9 +71,10 @@ def verify_attestation(
     path: str,
     commit: str,
     repo: str,
-    signer_workflow: str = SIGNER_WORKFLOW,
+    cert_identity: str = CERT_IDENTITY,
     runner=subprocess.run,
 ) -> str:
+    require_gh_version(runner=runner)
     subject = resolved_subject(path)
     digest = file_sha256(str(subject))
     proc = runner(
@@ -58,10 +85,12 @@ def verify_attestation(
             str(subject),
             "--repo",
             repo,
-            "--signer-workflow",
-            signer_workflow,
+            "--cert-identity",
+            cert_identity,
             "--predicate-type",
             PREDICATE_TYPE,
+            "--source-ref",
+            SOURCE_REF,
             "--format",
             "json",
         ],
@@ -81,7 +110,7 @@ def verify_attestation(
         digests = [((item.get("digest") or {}).get("sha256")) for item in (statement.get("subject") or [])]
         if digests and digest not in digests:
             raise SystemExit("attestation subject digest does not match the tarball")
-    return f"attested source_sha={commit} tarball_sha256={digest}"
+    return f"attested source_sha={commit} tarball_sha256={digest} identity={cert_identity}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -89,9 +118,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--file", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--signer-workflow", default=SIGNER_WORKFLOW)
+    parser.add_argument("--cert-identity", default=CERT_IDENTITY)
     args = parser.parse_args(argv)
-    print(verify_attestation(args.file, args.commit, args.repo, args.signer_workflow))
+    print(verify_attestation(args.file, args.commit, args.repo, args.cert_identity))
     return 0
 
 

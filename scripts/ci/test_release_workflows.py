@@ -633,6 +633,7 @@ class PrivateBetaPublishTests(unittest.TestCase):
         self.assertIn("anonymous-denied", runs)
         self.assertIn("require-private", runs)
         self.assertIn("seal-or-retract", runs)
+        self.assertNotIn("-f visibility=private", self.text)
         self.assertNotIn("provenance.json", runs)
         self.assertIn("private-beta-", runs)
         self.assertNotIn(":latest", runs)
@@ -679,6 +680,7 @@ class PrivateBetaPublishTests(unittest.TestCase):
     def test_build_saves_a_tarball_without_self_checksum_trust(self):
         names = [step.get("name") for step in self.wf["jobs"]["verify-and-build"]["steps"]]
         self.assertLess(names.index("Save image tarball"), names.index("Upload image tarball"))
+        self.assertLess(names.index("Upload image tarball"), names.index("Container security and mount probe"))
         save = next(
             step
             for step in self.wf["jobs"]["verify-and-build"]["steps"]

@@ -81,32 +81,35 @@ def _gh_mutate(args: list[str], runner=subprocess.run) -> None:
 
 
 def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> str:
-    """After push: private is success. Otherwise PATCH private, delete the tag, fail closed."""
+    """After push: private is success. Otherwise delete the tag version and fail.
+
+    GitHub does not support making a public package private. Do not PATCH visibility.
+    Deleting the version does not undo a public pull that already happened.
+    """
     info, scope = package_record(owner, name, runner=runner)
     if info.get("visibility") == "private":
         return "visibility=private"
     encoded = name.replace("/", "%2F")
-    seal_error = None
-    try:
-        _gh_mutate(
-            ["--method", "PATCH", "-f", "visibility=private", f"{scope}/{owner}/packages/container/{encoded}"],
-            runner=runner,
-        )
-    except SystemExit as exc:
-        seal_error = str(exc)
+    retract_error = None
     for version in _versions(scope, owner, name, runner=runner):
         if tag in _container_tags(version) and version.get("id") is not None:
-            _gh_mutate(
-                [
-                    "--method",
-                    "DELETE",
-                    f"{scope}/{owner}/packages/container/{encoded}/versions/{version['id']}",
-                ],
-                runner=runner,
-            )
-    msg = f"package was not private after push; retracted {tag}"
-    if seal_error:
-        msg += f"; seal PATCH failed: {seal_error}"
+            try:
+                _gh_mutate(
+                    [
+                        "--method",
+                        "DELETE",
+                        f"{scope}/{owner}/packages/container/{encoded}/versions/{version['id']}",
+                    ],
+                    runner=runner,
+                )
+            except SystemExit as exc:
+                retract_error = str(exc)
+    msg = (
+        f"package visibility={info.get('visibility')!r} after push; "
+        f"public packages cannot be made private; retracted {tag}"
+    )
+    if retract_error:
+        msg += f"; DELETE failed: {retract_error}"
     raise SystemExit(msg)
 
 

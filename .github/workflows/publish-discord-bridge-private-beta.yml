@@ -3,13 +3,9 @@
 # Does not publish latest/stable or Docker Hub. Does not alter release image workflows.
 #
 # Trust model: docs/internal/discord-bridge-private-beta-publish.md
-# - GitHub API proves the dispatch SHA is on open PR 504.
-# - Unprivileged build may run that SHA's Dockerfile. It has no OIDC and no packages:write.
-# - A separate attest job never runs PR or image code. It hashes the tarball and GitHub-signs
-#   an attestation whose predicate.source_sha is ${{ inputs.commit }} from the event, not a
-#   file the build job wrote.
-# - Privileged publish re-hashes the tarball, verifies that GitHub attestation, requires an
-#   already-private GHCR package, loads the image, and pushes. It never builds or execs the image.
+# Reduced-trust private preview. Attestation proves GitHub signed these tarball
+# bytes for this workflow identity. It does not prove they were built from the
+# dispatch SHA. Do not treat this as production provenance.
 name: Publish private-beta discord-bridge
 
 on:
@@ -113,16 +109,6 @@ jobs:
             -t "${IMAGE_NAME}:${TAG}" \
             .
 
-      - name: Container security and mount probe
-        env:
-          COMMIT: ${{ steps.sha.outputs.sha }}
-        run: |
-          set -euo pipefail
-          packages/discord-bridge/scripts/container-runtime-test.sh "ts6-discord-bridge-private-beta:${COMMIT}"
-          packages/discord-bridge/scripts/private-beta-container-test.sh "ts6-discord-bridge-private-beta:${COMMIT}"
-          rev="$(docker image inspect "ts6-discord-bridge-private-beta:${COMMIT}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-          [ "$rev" = "$COMMIT" ]
-
       - name: Save image tarball
         env:
           COMMIT: ${{ steps.sha.outputs.sha }}
@@ -142,6 +128,16 @@ jobs:
           path: verified-image/image.tar.gz
           if-no-files-found: error
           retention-days: 3
+
+      - name: Container security and mount probe
+        env:
+          COMMIT: ${{ steps.sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          packages/discord-bridge/scripts/container-runtime-test.sh "ts6-discord-bridge-private-beta:${COMMIT}"
+          packages/discord-bridge/scripts/private-beta-container-test.sh "ts6-discord-bridge-private-beta:${COMMIT}"
+          rev="$(docker image inspect "ts6-discord-bridge-private-beta:${COMMIT}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
+          [ "$rev" = "$COMMIT" ]
 
   attest:
     name: Attest tarball without running PR or image code

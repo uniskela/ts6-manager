@@ -17,7 +17,15 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from verify_private_beta_attestation import file_sha256, resolved_subject, verify_attestation
+from verify_private_beta_attestation import (
+    CERT_IDENTITY,
+    PREDICATE_TYPE,
+    file_sha256,
+    parse_gh_version,
+    require_gh_version,
+    resolved_subject,
+    verify_attestation,
+)
 from verify_private_beta_ghcr import anonymous_pull_denied, require_private_package, seal_or_retract
 from verify_private_beta_source import verify_source
 
@@ -226,29 +234,18 @@ class GhcrTests(unittest.TestCase):
                 f"{pkg}/versions/99": {},
             }
         )
+        calls = []
+
+        def recording(args, capture_output=True, text=True):
+            calls.append(args)
+            return public(args, capture_output=capture_output, text=text)
+
         with self.assertRaises(SystemExit) as exc:
-            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=public)
+            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=recording)
         self.assertIn("retracted", str(exc.exception))
-
-        inner = FakeGh(
-            {
-                pkg: {"visibility": "public"},
-                f"{pkg}/versions?per_page=100&page=1": [
-                    {"id": 99, "metadata": {"container": {"tags": [tag]}}}
-                ],
-                f"{pkg}/versions/99": {},
-            }
-        )
-
-        def fail_patch(args, capture_output=True, text=True):
-            if "PATCH" in args:
-                return FakeProc(returncode=1, stdout="", stderr="HTTP 403")
-            return inner(args, capture_output=capture_output, text=text)
-
-        with self.assertRaises(SystemExit) as patch_exc:
-            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=fail_patch)
-        self.assertIn("seal PATCH failed", str(patch_exc.exception))
-        self.assertIn("403", str(patch_exc.exception))
+        self.assertIn("cannot be made private", str(exc.exception))
+        self.assertTrue(any("DELETE" in arg for args in calls for arg in args))
+        self.assertFalse(any("PATCH" in arg for args in calls for arg in args))
 
     def test_bearer_flow_fails_on_public_manifest_and_fail_closed(self):
         token = json.dumps({"token": "anon"}).encode()
@@ -276,40 +273,93 @@ class GhcrTests(unittest.TestCase):
             anonymous_pull_denied("uniskela", "ts6-manager/discord-bridge", "t", opener=boom)
 
 
+class VerifyGh:
+    def __init__(self, payload=None, version="gh version 2.102.0 (2026-09-30)\n", identity=CERT_IDENTITY, predicate=PREDICATE_TYPE, returncode=0, stderr=""):
+        self.payload = payload or []
+        self.version = version
+        self.identity = identity
+        self.predicate = predicate
+        self.returncode = returncode
+        self.stderr = stderr
+        self.last_verify = None
+
+    def __call__(self, args, capture_output=True, text=True):
+        if args[:2] == ["gh", "--version"]:
+            return FakeProc(returncode=0, stdout=self.version, stderr="")
+        self.last_verify = args
+        if args[1:3] != ["attestation", "verify"]:
+            return FakeProc(returncode=1, stdout="", stderr="unexpected gh invocation")
+        ident = args[args.index("--cert-identity") + 1] if "--cert-identity" in args else ""
+        pred = args[args.index("--predicate-type") + 1] if "--predicate-type" in args else ""
+        if ident != self.identity:
+            return FakeProc(returncode=1, stdout="", stderr="certificate identity mismatch")
+        if pred != self.predicate:
+            return FakeProc(returncode=1, stdout="", stderr="predicate type mismatch")
+        if self.returncode != 0:
+            return FakeProc(returncode=self.returncode, stdout="", stderr=self.stderr)
+        return FakeProc(returncode=0, stdout=json.dumps(self.payload), stderr="")
+
+
 class AttestationTests(unittest.TestCase):
-    def test_requires_github_signed_predicate_source_sha(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = str(Path(tmp) / "image.tar.gz")
-            Path(path).write_bytes(b"image-bytes")
-            digest = file_sha256(path)
-            good = {
+    def _tarball(self):
+        tmp = tempfile.TemporaryDirectory()
+        path = str(Path(tmp.name) / "image.tar.gz")
+        Path(path).write_bytes(b"image-bytes")
+        self.addCleanup(tmp.cleanup)
+        return path, file_sha256(path)
+
+    def _payload(self, digest, source_sha=COMMIT):
+        return [
+            {
                 "verificationResult": {
                     "statement": {
-                        "predicate": {"source_sha": COMMIT},
+                        "predicate": {"source_sha": source_sha},
                         "subject": [{"name": "image.tar.gz", "digest": {"sha256": digest}}],
                     }
                 }
             }
-            def run(args, capture_output=True, text=True):
-                self.assertEqual(args[0], "gh")
-                self.assertEqual(args[1], "attestation")
-                return FakeProc(returncode=0, stdout=json.dumps([good]), stderr="")
+        ]
 
-            self.assertIn(COMMIT, verify_attestation(path, COMMIT, REPO, runner=run))
-            bad = json.loads(json.dumps(good))
-            bad["verificationResult"]["statement"]["predicate"]["source_sha"] = "00" * 20
+    def test_require_gh_102(self):
+        self.assertEqual(parse_gh_version("gh version 2.102.0 (2026-09-30)\n"), (2, 102, 0))
+        with self.assertRaises(SystemExit):
+            require_gh_version(runner=lambda args, **kw: FakeProc(returncode=0, stdout="gh version 2.101.0\n", stderr=""))
+        help_text = subprocess.check_output(["gh", "attestation", "verify", "--help"], text=True)
+        self.assertGreaterEqual(parse_gh_version(subprocess.check_output(["gh", "--version"], text=True)), (2, 102, 0))
+        self.assertIn("--cert-identity", help_text)
+        self.assertIn("--source-ref", help_text)
 
-            def run_bad(args, capture_output=True, text=True):
-                return FakeProc(returncode=0, stdout=json.dumps([bad]), stderr="")
+    def test_passes_cert_identity_and_source_ref(self):
+        path, digest = self._tarball()
+        runner = VerifyGh(payload=self._payload(digest))
+        msg = verify_attestation(path, COMMIT, REPO, runner=runner)
+        self.assertIn(COMMIT, msg)
+        args = runner.last_verify
+        self.assertIn("--cert-identity", args)
+        self.assertEqual(args[args.index("--cert-identity") + 1], CERT_IDENTITY)
+        self.assertIn("--source-ref", args)
+        self.assertEqual(args[args.index("--source-ref") + 1], "refs/heads/main")
+        self.assertEqual(args[args.index("--predicate-type") + 1], PREDICATE_TYPE)
+        self.assertNotIn("--signer-workflow", args)
 
-            with self.assertRaises(SystemExit):
-                verify_attestation(path, COMMIT, REPO, runner=run_bad)
-
-            def run_fail(args, capture_output=True, text=True):
-                return FakeProc(returncode=1, stdout="", stderr="no attestation")
-
-            with self.assertRaises(SystemExit):
-                verify_attestation(path, COMMIT, REPO, runner=run_fail)
+    def test_rejects_wrong_signer_predicate_sha_digest_and_missing(self):
+        path, digest = self._tarball()
+        cases = {
+            "wrong_signer": {
+                "cert_identity": "https://github.com/evil/repo/.github/workflows/x.yml@refs/heads/main",
+                "runner": VerifyGh(payload=self._payload(digest)),
+            },
+            "wrong_predicate": {
+                "runner": VerifyGh(returncode=1, stderr="predicate type mismatch"),
+            },
+            "wrong_sha": {"runner": VerifyGh(payload=self._payload(digest, source_sha="00" * 20))},
+            "mismatched_digest": {"runner": VerifyGh(payload=self._payload("ab" * 32))},
+            "missing": {"runner": VerifyGh(returncode=1, stderr="no attestation")},
+            "old_gh": {"runner": VerifyGh(version="gh version 2.101.0\n", payload=self._payload(digest))},
+        }
+        for label, kwargs in cases.items():
+            with self.subTest(label), self.assertRaises(SystemExit):
+                verify_attestation(path, COMMIT, REPO, **kwargs)
 
     def test_resolved_subject_rejects_traversal_wrong_name_and_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:

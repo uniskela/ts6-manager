@@ -4,27 +4,39 @@ Manual `workflow_dispatch` on `main` only. Not on the Release Please or
 stable-image path. Do not dispatch until a maintainer is ready to approve
 the `discord-bridge-private-beta` environment. Do not make the package public.
 
-## Trust roots
+This is a **reduced-trust private preview**. It is not production provenance.
+Treat published tags as maintainer-only until the image is rebuilt from merged
+`main` by the existing stable release workflows. Approve that reduced-trust
+use separately from merging #504.
 
-Independently verifiable:
+## What attestation proves
 
-1. **Dispatch SHA** — `${{ inputs.commit }}` comes from the GitHub event, not
-   from the image or a file the build job wrote.
-2. **PR membership** — `scripts/ci/verify_private_beta_source.py` asks the
-   GitHub API (not stdin) whether that SHA is on open, same-repository PR 504.
-   Build, attest, and publish each run this against `github.sha` scripts.
-3. **GitHub OIDC attestation** — the `attest` job checkouts `github.sha` only.
-   It never checkouts the PR, never runs the Dockerfile, never loads or execs
-   the image. It hashes the tarball and GitHub-signs a predicate whose
-   `source_sha` is `${{ inputs.commit }}`. Privileged publish re-hashes the
-   tarball and runs `gh attestation verify --signer-workflow` for this
-   workflow and predicate type. A self-written checksum, `provenance.json`,
-   or OCI label is not a trust root.
-4. **Environment approval** — `publish` requires `discord-bridge-private-beta`
-   with required reviewers and admin bypass disabled.
+GitHub-signed OIDC attestation (`actions/attest` in a job that never runs PR,
+Dockerfile, or image code) plus `gh attestation verify --cert-identity` on
+`gh` 2.102.0+ proves:
 
-Not trust roots: OCI `org.opencontainers.image.revision`, a sha256 file next
-to the tarball, or any JSON the unprivileged build job generated.
+- these tarball bytes were signed by GitHub for this workflow identity on
+  `refs/heads/main`;
+- the custom predicate `source_sha` equals the dispatch input.
+
+It does **not** prove the bytes were built from that commit. Signing a tarball
+received from the unprivileged build job does not fix artifact substitution.
+A malicious Dockerfile at an approved SHA, or a swap of the saved tarball
+before upload, still yields a GitHub-signed artifact for that dispatch SHA.
+
+## Trusted-builder options (not adopted)
+
+| Design | Why it was not used |
+|--------|---------------------|
+| Privileged rebuild + compare | Executes untrusted Dockerfile with `packages:write`. |
+| Build and attest in one job with OIDC | Gives the job that runs the Dockerfile `id-token`. |
+| `docker/build-push-action` provenance on push | Publishes during the build. |
+| Independent bit-for-bit rebuild | Needs a reproducible lab image; this Dockerfile is not. |
+
+The remaining builder is GitHub-hosted `ubuntu-latest` running the workflow
+file from `main`: checkout approved SHA, `docker build`, save, upload, then
+attest in a separate job with no `packages:write`. That is SLSA-style trust
+in the platform and the `main` workflow, not source-to-bytes equivalence.
 
 ## Privilege split
 
@@ -34,28 +46,36 @@ to the tarball, or any JSON the unprivileged build job generated.
 | `attest` | no | yes | no |
 | `publish` | no. `docker load` + `docker push` only | no | yes, after approval |
 
-`publish` checkouts `github.sha` for the verify scripts. It does not checkout
+`publish` checkouts `github.sha` for verify scripts. It does not checkout
 `${{ inputs.commit }}` and does not run `packages/discord-bridge` scripts.
+
+Environment `discord-bridge-private-beta` has required reviewers and admin
+bypass disabled.
 
 ## GHCR privacy
 
-This workflow will not create the package. First push of a public-repo GHCR
-package is public by default. Provision `ghcr.io/uniskela/ts6-manager/discord-bridge`
-as a **private** package out of band, then dispatch. `require-private` fails
-if the package is missing, public, or the tag already exists.
+GitHub: a **new** GHCR package is **private** by default. Once a package is
+**public**, it **cannot** be made private.
 
-After push: `seal-or-retract` plus the unauthenticated Registry v2 bearer
-flow (`GET https://ghcr.io/token?...` then `Authorization: Bearer` on the
-manifest). HTTP 200 on the manifest fails the job (public). Token or
-transport errors fail closed. A raw unauthenticated 401 is not treated as
-proof of privacy. If the package is not private after push, the workflow
-PATCHes visibility, deletes the tag it just pushed, and fails.
+This workflow still will not create the package. `require-private` before
+push fails if the package is missing, not `private`, or the tag exists.
+That is an operational control: confirm an already-private package, avoid
+creating one from this workflow, and refuse tag overwrite.
 
-## Residual
+Check/push race: the package can change after `require-private` and before
+`docker push`. If it is public then, the new tag is public. The workflow
+cannot PATCH it private. `seal-or-retract` deletes the version that carries
+the tag we pushed and fails. That is supported cleanup. It does **not**
+prevent disclosure of bytes already pulled, and it does not make a public
+package private.
 
-A compromised unprivileged build can still substitute tarball bytes. GitHub
-will then attest those bytes to the dispatch SHA. Containment is: no OIDC
-and no `packages:write` on build; environment approval; signer-workflow
-bind; no privileged execution of PR or image code. Bit-for-bit rebuild in
-`publish` is refused because that would execute the untrusted Dockerfile
-with `packages:write`.
+After a private push: Registry v2 anonymous bearer flow. HTTP 200 on the
+manifest fails (public). Token or transport errors fail closed. A raw
+unauthenticated 401 is not proof of privacy.
+
+## Attestation verification
+
+Publish requires `gh` 2.102.0 or newer (complete identity matching). It
+passes `--cert-identity` (exact SAN, not `--signer-workflow`; those flags
+are mutually exclusive) plus `--source-ref refs/heads/main` and the custom
+predicate type. Local `gh` 2.102.0 accepts that argument set.
