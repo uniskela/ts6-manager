@@ -4,8 +4,8 @@
 Require an already-private package before push. After push, confirm visibility
 via the authenticated Packages API, then complete the Registry v2 bearer-token
 flow. Anonymous token-endpoint HTTP 401/403 counts as denied only when that
-API says private and the token URL names this repository. A bearer that can
-read the manifest, or public visibility, retracts only the pushed tag version.
+API says private for this owner/name. A bearer that can read the
+manifest, or public visibility, retracts only the pushed tag version.
 Fail closed on malformed responses, transport errors, rate limits, and
 unexpected status codes.
 """
@@ -16,7 +16,6 @@ import json
 import subprocess
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
 
 
@@ -153,14 +152,6 @@ def registry_token_url(owner: str, name: str) -> str:
     return f"https://ghcr.io/token?service=ghcr.io&scope=repository:{owner}/{name}:pull"
 
 
-def _confirm_token_url_targets_repo(url: str, owner: str, name: str) -> None:
-    parsed = urllib.parse.urlparse(url)
-    scope = (urllib.parse.parse_qs(parsed.query).get("scope") or [""])[0]
-    expected = f"repository:{owner}/{name}:pull"
-    if parsed.scheme != "https" or parsed.netloc != "ghcr.io" or parsed.path != "/token" or scope != expected:
-        raise SystemExit("token request did not target the expected repository")
-
-
 def anonymous_pull_denied(
     owner: str,
     name: str,
@@ -173,7 +164,6 @@ def anonymous_pull_denied(
         info, _ = assert_private_package(owner, name, runner=runner)
         visibility = info.get("visibility")
     token_url = registry_token_url(owner, name)
-    _confirm_token_url_targets_repo(token_url, owner, name)
     req = urllib.request.Request(token_url, method="GET")
     body: object | None = None
     try:
