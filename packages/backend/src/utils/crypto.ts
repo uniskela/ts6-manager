@@ -52,12 +52,15 @@ export function decrypt(encrypted: string): string {
   if (parts.length !== 4) throw new Error('Invalid encrypted format');
 
   const [, ivHex, tagHex, ciphertext] = parts;
+  if (!/^[0-9a-f]{24}$/i.test(ivHex) || !/^[0-9a-f]{32}$/i.test(tagHex)) {
+    throw new Error('Invalid encrypted format');
+  }
+  if (!/^[0-9a-f]*$/i.test(ciphertext) || ciphertext.length % 2 !== 0) {
+    throw new Error('Invalid encrypted format');
+  }
   const key = getKey();
   const iv = Buffer.from(ivHex, 'hex');
   const tag = Buffer.from(tagHex, 'hex');
-  if (iv.length !== IV_LENGTH || tag.length !== TAG_LENGTH) {
-    throw new Error('Invalid encrypted format');
-  }
 
   const decipher = createDecipheriv(ALGORITHM, key, iv, { authTagLength: TAG_LENGTH });
   decipher.setAuthTag(tag);
