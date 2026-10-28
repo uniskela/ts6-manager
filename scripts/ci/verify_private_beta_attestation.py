@@ -16,14 +16,29 @@ from pathlib import Path
 
 PREDICATE_TYPE = "https://github.com/uniskela/ts6-manager/private-beta-publish/v1"
 SIGNER_WORKFLOW = "uniskela/ts6-manager/.github/workflows/publish-discord-bridge-private-beta.yml"
+SUBJECT_NAME = "image.tar.gz"
+
+
+def resolved_subject(path: str) -> Path:
+    candidate = Path(path)
+    if ".." in candidate.parts or candidate.name != SUBJECT_NAME:
+        raise SystemExit(f"expected {SUBJECT_NAME}")
+    resolved = candidate.resolve()
+    if resolved.name != SUBJECT_NAME or not resolved.is_file():
+        raise SystemExit(f"expected {SUBJECT_NAME}")
+    return resolved
 
 
 def file_sha256(path: str) -> str:
     digest = hashlib.sha256()
-    with open(path, "rb") as fh:
+    with resolved_subject(path).open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _statement(entry: dict) -> dict:
+    return ((entry.get("verificationResult") or {}).get("statement") or {})
 
 
 def verify_attestation(
@@ -33,13 +48,14 @@ def verify_attestation(
     signer_workflow: str = SIGNER_WORKFLOW,
     runner=subprocess.run,
 ) -> str:
-    digest = file_sha256(path)
+    subject = resolved_subject(path)
+    digest = file_sha256(str(subject))
     proc = runner(
         [
             "gh",
             "attestation",
             "verify",
-            path,
+            str(subject),
             "--repo",
             repo,
             "--signer-workflow",
@@ -58,17 +74,13 @@ def verify_attestation(
     if not payload:
         raise SystemExit("attestation verify returned no results")
     for entry in payload:
-        statement = ((entry.get("verificationResult") or {}).get("statement") or {})
+        statement = _statement(entry)
         pred = statement.get("predicate") or {}
         if pred.get("source_sha") != commit:
             raise SystemExit(f"attestation source_sha {pred.get('source_sha')!r} != {commit}")
-        subjects = statement.get("subject") or []
-        names = [item.get("name") for item in subjects]
-        digests = [((item.get("digest") or {}).get("sha256")) for item in subjects]
-        if digest not in digests and Path(path).name not in names:
-            # gh verify already bound the file hash; still require the SHA in the statement when present.
-            if digests and digest not in digests:
-                raise SystemExit("attestation subject digest does not match the tarball")
+        digests = [((item.get("digest") or {}).get("sha256")) for item in (statement.get("subject") or [])]
+        if digests and digest not in digests:
+            raise SystemExit("attestation subject digest does not match the tarball")
     return f"attested source_sha={commit} tarball_sha256={digest}"
 
 

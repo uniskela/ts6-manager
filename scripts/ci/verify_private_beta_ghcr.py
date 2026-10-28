@@ -45,7 +45,7 @@ def assert_private_package(owner: str, name: str, runner=subprocess.run) -> tupl
 
 
 def require_private_package(owner: str, name: str, tag: str, runner=subprocess.run) -> str:
-    info, scope = assert_private_package(owner, name, runner=runner)
+    _, scope = assert_private_package(owner, name, runner=runner)
     encoded = name.replace("/", "%2F")
     tags: list[str] = []
     page = 1

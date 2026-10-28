@@ -106,14 +106,15 @@ class SourceVerifyTests(unittest.TestCase):
         self.assertIn(COMMIT, msg)
 
     def test_rejects_closed_pr_wrong_repo_and_foreign_commit(self):
-        with self.assertRaises(SystemExit):
-            verify_source(COMMIT, REPO, "505", runner=FakeGh(pr_routes()))
-        with self.assertRaises(SystemExit):
-            verify_source(COMMIT, REPO, "504", runner=FakeGh(pr_routes(state="closed")))
-        with self.assertRaises(SystemExit):
-            verify_source(COMMIT, REPO, "504", runner=FakeGh(pr_routes(head="evil/fork")))
-        with self.assertRaises(SystemExit):
-            verify_source(COMMIT, REPO, "504", runner=FakeGh(pr_routes(commits=["deadbeef" * 5])))
+        cases = [
+            ("505", FakeGh(pr_routes())),
+            ("504", FakeGh(pr_routes(state="closed"))),
+            ("504", FakeGh(pr_routes(head="evil/fork"))),
+            ("504", FakeGh(pr_routes(commits=["deadbeef" * 5]))),
+        ]
+        for pr, runner in cases:
+            with self.subTest(pr=pr), self.assertRaises(SystemExit):
+                verify_source(COMMIT, REPO, pr, runner=runner)
 
 
 class WorkflowSourceStepTests(unittest.TestCase):
@@ -236,10 +237,10 @@ class GhcrTests(unittest.TestCase):
 
 class AttestationTests(unittest.TestCase):
     def test_requires_github_signed_predicate_source_sha(self):
-        with tempfile.NamedTemporaryFile() as fh:
-            fh.write(b"image-bytes")
-            fh.flush()
-            digest = file_sha256(fh.name)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "image.tar.gz")
+            Path(path).write_bytes(b"image-bytes")
+            digest = file_sha256(path)
             good = {
                 "verificationResult": {
                     "statement": {
@@ -253,7 +254,7 @@ class AttestationTests(unittest.TestCase):
                 self.assertEqual(args[1], "attestation")
                 return FakeProc(returncode=0, stdout=json.dumps([good]), stderr="")
 
-            self.assertIn(COMMIT, verify_attestation(fh.name, COMMIT, REPO, runner=run))
+            self.assertIn(COMMIT, verify_attestation(path, COMMIT, REPO, runner=run))
             bad = json.loads(json.dumps(good))
             bad["verificationResult"]["statement"]["predicate"]["source_sha"] = "00" * 20
 
@@ -261,13 +262,13 @@ class AttestationTests(unittest.TestCase):
                 return FakeProc(returncode=0, stdout=json.dumps([bad]), stderr="")
 
             with self.assertRaises(SystemExit):
-                verify_attestation(fh.name, COMMIT, REPO, runner=run_bad)
+                verify_attestation(path, COMMIT, REPO, runner=run_bad)
 
             def run_fail(args, capture_output=True, text=True):
                 return FakeProc(returncode=1, stdout="", stderr="no attestation")
 
             with self.assertRaises(SystemExit):
-                verify_attestation(fh.name, COMMIT, REPO, runner=run_fail)
+                verify_attestation(path, COMMIT, REPO, runner=run_fail)
 
 
 if __name__ == "__main__":
