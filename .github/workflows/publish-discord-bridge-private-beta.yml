@@ -2,8 +2,14 @@
 # Lives on main only. Does not import Bridge-D1 runtime. Not called from Release Please.
 # Does not publish latest/stable or Docker Hub. Does not alter release image workflows.
 #
-# Unprivileged build: checkout the approved PR #504 SHA, build, test, save a checksummed image.
-# Privileged publish: download that artifact, verify, load, push. No Dockerfile, no PR scripts.
+# Trust model: docs/internal/discord-bridge-private-beta-publish.md
+# - GitHub API proves the dispatch SHA is on open PR 504.
+# - Unprivileged build may run that SHA's Dockerfile. It has no OIDC and no packages:write.
+# - A separate attest job never runs PR or image code. It hashes the tarball and GitHub-signs
+#   an attestation whose predicate.source_sha is ${{ inputs.commit }} from the event, not a
+#   file the build job wrote.
+# - Privileged publish re-hashes the tarball, verifies that GitHub attestation, requires an
+#   already-private GHCR package, loads the image, and pushes. It never builds or execs the image.
 name: Publish private-beta discord-bridge
 
 on:
@@ -29,11 +35,12 @@ env:
   IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ts6-manager/discord-bridge
   PACKAGE_NAME: ts6-manager/discord-bridge
   SOURCE_PR: "504"
+  PREDICATE_TYPE: https://github.com/uniskela/ts6-manager/private-beta-publish/v1
 
 jobs:
   verify-and-build:
     name: Verify SHA and build locally
-    if: github.repository == 'uniskela/ts6-manager'
+    if: github.repository == 'uniskela/ts6-manager' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -42,7 +49,6 @@ jobs:
     outputs:
       sha: ${{ steps.sha.outputs.sha }}
       tag: ${{ steps.sha.outputs.tag }}
-      tarball_sha256: ${{ steps.artifact.outputs.tarball_sha256 }}
     steps:
       - name: Validate commit and confirm token
         id: sha
@@ -63,42 +69,20 @@ jobs:
           echo "sha=${COMMIT}" >> "$GITHUB_OUTPUT"
           echo "tag=private-beta-${COMMIT}" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Verify commit belongs to PR 504
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMIT: ${{ steps.sha.outputs.sha }}
-          REPO: ${{ github.repository }}
-          SOURCE_PR: ${{ env.SOURCE_PR }}
         run: |
-          set -euo pipefail
-          meta="$(gh api "repos/${REPO}/pulls/${SOURCE_PR}")"
-          python3 - "$COMMIT" "$REPO" "$SOURCE_PR" <<'PY'
-          import json, os, subprocess, sys
-          commit, repo, source_pr = sys.argv[1], sys.argv[2], sys.argv[3]
-          meta = json.loads(sys.stdin.read())
-          if meta.get("state") != "open":
-              raise SystemExit(f"PR #{source_pr} must be open")
-          head = ((meta.get("head") or {}).get("repo") or {}).get("full_name")
-          if head != repo:
-              raise SystemExit(f"PR #{source_pr} must be from {repo}")
-          shas = []
-          page = 1
-          while True:
-              raw = subprocess.check_output(
-                  ["gh", "api", f"repos/{repo}/pulls/{source_pr}/commits?per_page=100&page={page}"],
-                  text=True,
-              )
-              batch = json.loads(raw)
-              if not batch:
-                  break
-              shas.extend(item.get("sha") for item in batch)
-              if len(batch) < 100:
-                  break
-              page += 1
-          if commit not in shas:
-              raise SystemExit(f"{commit} is not a commit on PR #{source_pr}")
-          print(f"commit {commit} is on open PR #{source_pr}")
-          PY
+          python3 scripts/ci/verify_private_beta_source.py \
+            --commit "${{ steps.sha.outputs.sha }}" \
+            --repo "${{ github.repository }}" \
+            --pr "${{ env.SOURCE_PR }}"
 
       - name: Checkout approved commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -139,8 +123,7 @@ jobs:
           rev="$(docker image inspect "ts6-discord-bridge-private-beta:${COMMIT}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
           [ "$rev" = "$COMMIT" ]
 
-      - name: Save verified image artifact
-        id: artifact
+      - name: Save image tarball
         env:
           COMMIT: ${{ steps.sha.outputs.sha }}
           TAG: ${{ steps.sha.outputs.tag }}
@@ -151,43 +134,65 @@ jobs:
             "ts6-discord-bridge-private-beta:${COMMIT}" \
             "${IMAGE_NAME}:${TAG}" \
             | gzip > verified-image/image.tar.gz
-          tarball_sha256="$(sha256sum verified-image/image.tar.gz | awk '{print $1}')"
-          printf '%s\n' "$tarball_sha256" > verified-image/image.tar.gz.sha256
-          rev="$(docker image inspect "ts6-discord-bridge-private-beta:${COMMIT}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-          image_id="$(docker image inspect "ts6-discord-bridge-private-beta:${COMMIT}" --format '{{.Id}}')"
-          python3 - "$COMMIT" "$TAG" "$tarball_sha256" "$rev" "$image_id" <<'PY'
-          import json, sys
-          commit, tag, digest, rev, image_id = sys.argv[1:]
-          if rev != commit:
-              raise SystemExit(f"OCI revision {rev} != {commit}")
-          with open("verified-image/provenance.json", "w", encoding="utf-8") as fh:
-              json.dump(
-                  {
-                      "source_sha": commit,
-                      "tag": tag,
-                      "tarball_sha256": digest,
-                      "oci_revision": rev,
-                      "image_id": image_id,
-                  },
-                  fh,
-                  indent=2,
-              )
-              fh.write("\n")
-          PY
-          echo "tarball_sha256=${tarball_sha256}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload verified image artifact
+      - name: Upload image tarball
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: discord-bridge-private-beta
-          path: verified-image/
+          path: verified-image/image.tar.gz
           if-no-files-found: error
           retention-days: 3
 
-  publish:
-    name: Push verified artifact after approval
-    if: github.repository == 'uniskela/ts6-manager'
+  attest:
+    name: Attest tarball without running PR or image code
+    if: github.repository == 'uniskela/ts6-manager' && github.ref == 'refs/heads/main'
     needs: verify-and-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Re-verify commit belongs to PR 504
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/ci/verify_private_beta_source.py \
+            --commit "${{ needs.verify-and-build.outputs.sha }}" \
+            --repo "${{ github.repository }}" \
+            --pr "${{ env.SOURCE_PR }}"
+
+      - name: Download image tarball
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: discord-bridge-private-beta
+          path: verified-image
+
+      - name: Write GitHub-injected predicate
+        env:
+          COMMIT: ${{ inputs.commit }}
+        run: |
+          python3 -c 'import json, os, pathlib; pathlib.Path("predicate.json").write_text(json.dumps({"source_sha": os.environ["COMMIT"], "source_pr": "504", "tag": "private-beta-" + os.environ["COMMIT"]}))'
+
+      - name: Attest tarball to the GitHub-provided source SHA
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: verified-image/image.tar.gz
+          predicate-type: ${{ env.PREDICATE_TYPE }}
+          predicate-path: predicate.json
+
+  publish:
+    name: Push attested artifact after approval
+    if: github.repository == 'uniskela/ts6-manager' && github.ref == 'refs/heads/main'
+    needs: [verify-and-build, attest]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: discord-bridge-private-beta
@@ -195,6 +200,7 @@ jobs:
       contents: read
       packages: write
       pull-requests: read
+      attestations: read
     steps:
       - name: Refuse mutable tags
         env:
@@ -209,78 +215,51 @@ jobs:
             exit 1
           fi
 
+      - name: Checkout workflow revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Re-verify commit belongs to PR 504
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          COMMIT: ${{ needs.verify-and-build.outputs.sha }}
-          REPO: ${{ github.repository }}
-          SOURCE_PR: ${{ env.SOURCE_PR }}
         run: |
-          set -euo pipefail
-          meta="$(gh api "repos/${REPO}/pulls/${SOURCE_PR}")"
-          python3 - "$COMMIT" "$REPO" "$SOURCE_PR" <<'PY'
-          import json, subprocess, sys
-          commit, repo, source_pr = sys.argv[1], sys.argv[2], sys.argv[3]
-          meta = json.loads(sys.stdin.read())
-          if meta.get("state") != "open":
-              raise SystemExit(f"PR #{source_pr} must be open")
-          head = ((meta.get("head") or {}).get("repo") or {}).get("full_name")
-          if head != repo:
-              raise SystemExit(f"PR #{source_pr} must be from {repo}")
-          shas = []
-          page = 1
-          while True:
-              raw = subprocess.check_output(
-                  ["gh", "api", f"repos/{repo}/pulls/{source_pr}/commits?per_page=100&page={page}"],
-                  text=True,
-              )
-              batch = json.loads(raw)
-              if not batch:
-                  break
-              shas.extend(item.get("sha") for item in batch)
-              if len(batch) < 100:
-                  break
-              page += 1
-          if commit not in shas:
-              raise SystemExit(f"{commit} is not a commit on PR #{source_pr}")
-          print(f"commit {commit} is on open PR #{source_pr}")
-          PY
+          python3 scripts/ci/verify_private_beta_source.py \
+            --commit "${{ needs.verify-and-build.outputs.sha }}" \
+            --repo "${{ github.repository }}" \
+            --pr "${{ env.SOURCE_PR }}"
 
-      - name: Download verified image artifact
+      - name: Download image tarball
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: discord-bridge-private-beta
           path: verified-image
 
-      - name: Verify artifact checksum and load the same image
+      - name: Verify GitHub attestation for this tarball
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/ci/verify_private_beta_attestation.py \
+            --file verified-image/image.tar.gz \
+            --commit "${{ needs.verify-and-build.outputs.sha }}" \
+            --repo "${{ github.repository }}"
+
+      - name: Require an already-private GHCR package
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/ci/verify_private_beta_ghcr.py require-private \
+            --owner "${{ github.repository_owner }}" \
+            --name "${{ env.PACKAGE_NAME }}" \
+            --tag "${{ needs.verify-and-build.outputs.tag }}"
+
+      - name: Load the attested image
         env:
           COMMIT: ${{ needs.verify-and-build.outputs.sha }}
           TAG: ${{ needs.verify-and-build.outputs.tag }}
-          EXPECTED_SHA256: ${{ needs.verify-and-build.outputs.tarball_sha256 }}
         run: |
           set -euo pipefail
-          if [ -e packages/discord-bridge ] || [ -e Dockerfile ] || [ -e packages/discord-bridge/lab/Dockerfile ]; then
-            echo "publish job must not have repository build context" >&2
-            exit 1
-          fi
-          got="$(sha256sum verified-image/image.tar.gz | awk '{print $1}')"
-          listed="$(tr -d '[:space:]' < verified-image/image.tar.gz.sha256)"
-          python3 - "$COMMIT" "$TAG" "$EXPECTED_SHA256" "$got" "$listed" <<'PY'
-          import json, sys
-          commit, tag, expected, got, listed = sys.argv[1:]
-          prov = json.load(open("verified-image/provenance.json", encoding="utf-8"))
-          for key, value in (
-              ("source_sha", commit),
-              ("tag", tag),
-              ("tarball_sha256", expected),
-              ("oci_revision", commit),
-          ):
-              if prov.get(key) != value:
-                  raise SystemExit(f"provenance {key}={prov.get(key)!r} != {value!r}")
-          if got != expected or listed != expected:
-              raise SystemExit("artifact checksum mismatch")
-          print("artifact checksum and provenance match")
-          PY
           gzip -dc verified-image/image.tar.gz | docker load
           rev="$(docker image inspect "${IMAGE_NAME}:${TAG}" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
           if [ "$rev" != "$COMMIT" ]; then
@@ -294,57 +273,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Refuse public package or existing tag
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          TAG: ${{ needs.verify-and-build.outputs.tag }}
-        run: |
-          set -euo pipefail
-          python3 - "$OWNER" "$PACKAGE_NAME" "$TAG" <<'PY'
-          import json, subprocess, sys
-          owner, name, tag = sys.argv[1], sys.argv[2], sys.argv[3]
-          encoded = name.replace("/", "%2F")
-
-          def api(path):
-              proc = subprocess.run(["gh", "api", path], capture_output=True, text=True)
-              if proc.returncode != 0:
-                  err = proc.stderr + proc.stdout
-                  if "404" in err or "Not Found" in err or "Package not found" in err:
-                      return None
-                  raise SystemExit(err or f"gh api failed: {path}")
-              return json.loads(proc.stdout)
-
-          info = api(f"users/{owner}/packages/container/{encoded}")
-          scope = "users"
-          if info is None:
-              info = api(f"orgs/{owner}/packages/container/{encoded}")
-              scope = "orgs"
-          if info is None:
-              print("package does not exist yet; first push must become private")
-              sys.exit(0)
-          vis = info.get("visibility")
-          print(f"visibility={vis}")
-          if vis != "private":
-              raise SystemExit("package must stay private; refusing an existing public package")
-          versions = []
-          page = 1
-          while True:
-              batch = api(f"{scope}/{owner}/packages/container/{encoded}/versions?per_page=100&page={page}")
-              if not batch:
-                  break
-              versions.extend(batch)
-              if len(batch) < 100:
-                  break
-              page += 1
-          tags = []
-          for version in versions:
-              tags.extend(((version.get("metadata") or {}).get("container") or {}).get("tags") or [])
-          if tag in tags:
-              raise SystemExit(f"refusing to overwrite existing tag {tag}")
-          print(f"tag {tag} is free")
-          PY
 
       - name: Push commit-specific tag only
         env:
@@ -367,66 +295,16 @@ jobs:
           echo "sha=${COMMIT}" >> "$GITHUB_STEP_SUMMARY"
           echo "DIGEST=${digest}" >> "$GITHUB_ENV"
 
-      - name: Enforce private visibility and deny anonymous pull
+      - name: Confirm private visibility and deny anonymous pull
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          OWNER: ${{ github.repository_owner }}
-          TAG: ${{ needs.verify-and-build.outputs.tag }}
         run: |
-          set -euo pipefail
-          python3 - "$OWNER" "$PACKAGE_NAME" "$IMAGE_NAME" "$TAG" "${DIGEST:-}" <<'PY'
-          import json, subprocess, sys, urllib.request
-          owner, name, image, tag, digest = sys.argv[1:6]
-          encoded = name.replace("/", "%2F")
-
-          def api(method, path, data=None):
-              args = ["gh", "api", "--method", method, path]
-              if data is not None:
-                  args.extend(["--input", "-"])
-              proc = subprocess.run(
-                  args,
-                  input=json.dumps(data) if data is not None else None,
-                  capture_output=True,
-                  text=True,
-              )
-              return proc.returncode, proc.stdout, proc.stderr + proc.stdout
-
-          def visibility():
-              for path in (
-                  f"users/{owner}/packages/container/{encoded}",
-                  f"orgs/{owner}/packages/container/{encoded}",
-              ):
-                  code, out, err = api("GET", path)
-                  if code == 0:
-                      return json.loads(out).get("visibility"), path
-                  if "404" not in err and "Not Found" not in err and "Package not found" not in err:
-                      raise SystemExit(err)
-              raise SystemExit("package missing after push")
-
-          vis, path = visibility()
-          if vis != "private":
-              for method, candidate, body in (
-                  ("POST", f"user/packages/container/{encoded}", {"visibility": "private"}),
-                  ("POST", f"users/{owner}/packages/container/{encoded}", {"visibility": "private"}),
-                  ("PATCH", path, {"visibility": "private"}),
-              ):
-                  api(method, candidate, body)
-              vis, path = visibility()
-          print(f"visibility={vis}")
-          if vis != "private":
-              raise SystemExit("package must be private after publish")
-
-          url = f"https://ghcr.io/v2/{owner}/{name}/manifests/{tag}"
-          req = urllib.request.Request(url, method="GET", headers={"Accept": "application/vnd.oci.image.manifest.v1+json"})
-          try:
-              with urllib.request.urlopen(req, timeout=30) as resp:
-                  code = resp.status
-          except urllib.error.HTTPError as exc:
-              code = exc.code
-          print(f"anonymous_manifest_status={code}")
-          if code not in (401, 403, 404):
-              raise SystemExit(f"anonymous pull must be denied, got HTTP {code}")
-          if digest:
-              print(f"digest={digest}")
-          print(f"pin={image}@{digest}" if digest else f"tag={image}:{tag}")
-          PY
+          python3 scripts/ci/verify_private_beta_ghcr.py assert-private \
+            --owner "${{ github.repository_owner }}" \
+            --name "${{ env.PACKAGE_NAME }}"
+          python3 scripts/ci/verify_private_beta_ghcr.py anonymous-denied \
+            --owner "${{ github.repository_owner }}" \
+            --name "${{ env.PACKAGE_NAME }}" \
+            --tag "${{ needs.verify-and-build.outputs.tag }}"
+          echo "digest=${DIGEST:-}"
+          echo "pin=${IMAGE_NAME}@${DIGEST:-}"
