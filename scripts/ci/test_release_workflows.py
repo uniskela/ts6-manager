@@ -630,10 +630,18 @@ class PrivateBetaPublishTests(unittest.TestCase):
         self.assertNotIn("docker run", runs)
         self.assertNotIn("packages/discord-bridge/scripts/", runs)
         self.assertIn("verify_private_beta_attestation.py", runs)
-        self.assertIn("anonymous-denied", runs)
+        self.assertIn("verify-after-push", runs)
         self.assertIn("require-private", runs)
-        self.assertIn("seal-or-retract", runs)
         self.assertNotIn("-f visibility=private", self.text)
+        push = next(step for step in publish["steps"] if step.get("name") == "Push commit-specific tag only")
+        confirm = next(
+            step
+            for step in publish["steps"]
+            if step.get("name") == "Confirm private visibility and deny anonymous pull"
+        )
+        self.assertEqual(push.get("id"), "push")
+        self.assertIn("always()", confirm.get("if", ""))
+        self.assertIn("steps.push.outcome != 'skipped'", confirm.get("if", ""))
         self.assertNotIn("provenance.json", runs)
         self.assertIn("private-beta-", runs)
         self.assertNotIn(":latest", runs)

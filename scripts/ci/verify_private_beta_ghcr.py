@@ -3,6 +3,7 @@
 
 Require an already-private package before push. After push, complete the
 Registry v2 bearer-token flow and fail closed on public access or errors.
+Anonymous HTTP 200 or public visibility retracts only the pushed tag version.
 """
 from __future__ import annotations
 
@@ -80,6 +81,42 @@ def _gh_mutate(args: list[str], runner=subprocess.run) -> None:
         raise SystemExit((proc.stderr or proc.stdout or "gh api mutate failed").strip())
 
 
+def retract_pushed_tag(owner: str, name: str, tag: str, scope: str, runner=subprocess.run) -> str:
+    """Delete versions whose only tag is `tag`. Never delete other versions."""
+    encoded = name.replace("/", "%2F")
+    retracted = False
+    refused: list[str] = []
+    retract_error = None
+    for version in _versions(scope, owner, name, runner=runner):
+        tags = _container_tags(version)
+        if tag not in tags or version.get("id") is None:
+            continue
+        extra = [item for item in tags if item != tag]
+        if extra:
+            refused.append(f"version {version['id']} also tagged {extra!r}")
+            continue
+        try:
+            _gh_mutate(
+                [
+                    "--method",
+                    "DELETE",
+                    f"{scope}/{owner}/packages/container/{encoded}/versions/{version['id']}",
+                ],
+                runner=runner,
+            )
+            retracted = True
+        except SystemExit as exc:
+            retract_error = str(exc)
+    parts = [
+        f"retracted {tag}" if retracted else f"no version carrying only {tag} was found to retract"
+    ]
+    if refused:
+        parts.append("refused to delete unrelated versions: " + "; ".join(refused))
+    if retract_error:
+        parts.append(f"DELETE failed: {retract_error}")
+    return "; ".join(parts)
+
+
 def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> str:
     """After push: private is success. Otherwise delete the tag version and fail.
 
@@ -89,31 +126,11 @@ def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> s
     info, scope = package_record(owner, name, runner=runner)
     if info.get("visibility") == "private":
         return "visibility=private"
-    encoded = name.replace("/", "%2F")
-    retract_error = None
-    retracted = False
-    for version in _versions(scope, owner, name, runner=runner):
-        if tag in _container_tags(version) and version.get("id") is not None:
-            try:
-                _gh_mutate(
-                    [
-                        "--method",
-                        "DELETE",
-                        f"{scope}/{owner}/packages/container/{encoded}/versions/{version['id']}",
-                    ],
-                    runner=runner,
-                )
-                retracted = True
-            except SystemExit as exc:
-                retract_error = str(exc)
-    msg = (
+    cleanup = retract_pushed_tag(owner, name, tag, scope, runner=runner)
+    raise SystemExit(
         f"package visibility={info.get('visibility')!r} after push; "
-        "public packages cannot be made private; "
+        f"public packages cannot be made private; {cleanup}"
     )
-    msg += f"retracted {tag}" if retracted else f"no version carrying {tag} was found to retract"
-    if retract_error:
-        msg += f"; DELETE failed: {retract_error}"
-    raise SystemExit(msg)
 
 
 def _status(url: str, headers: dict[str, str], opener) -> int:
@@ -160,6 +177,35 @@ def anonymous_pull_denied(owner: str, name: str, tag: str, opener=urllib.request
     return f"anonymous_manifest_status={code}"
 
 
+def verify_after_push(
+    owner: str,
+    name: str,
+    tag: str,
+    runner=subprocess.run,
+    opener=urllib.request.urlopen,
+) -> str:
+    """Post-push privacy check. Retract on public visibility or anonymous HTTP 200."""
+    info, scope = package_record(owner, name, runner=runner)
+    vis = info.get("visibility")
+    errors: list[str] = []
+    exposed = vis != "private"
+    if exposed:
+        errors.append(
+            f"package visibility={vis!r} after push; public packages cannot be made private"
+        )
+    try:
+        anon = anonymous_pull_denied(owner, name, tag, opener=opener)
+    except SystemExit as exc:
+        errors.append(str(exc))
+        if "anonymous pull succeeded" in str(exc):
+            exposed = True
+    if exposed:
+        errors.append(retract_pushed_tag(owner, name, tag, scope, runner=runner))
+    if errors:
+        raise SystemExit("; ".join(errors))
+    return f"visibility=private {anon}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -167,12 +213,14 @@ def main(argv: list[str] | None = None) -> int:
     vis = sub.add_parser("assert-private")
     seal = sub.add_parser("seal-or-retract")
     anon = sub.add_parser("anonymous-denied")
-    for item in (req, vis, seal, anon):
+    after = sub.add_parser("verify-after-push")
+    for item in (req, vis, seal, anon, after):
         item.add_argument("--owner", required=True)
         item.add_argument("--name", required=True)
     req.add_argument("--tag", required=True)
     seal.add_argument("--tag", required=True)
     anon.add_argument("--tag", required=True)
+    after.add_argument("--tag", required=True)
     args = parser.parse_args(argv)
     if args.cmd == "require-private":
         print(require_private_package(args.owner, args.name, args.tag))
@@ -181,6 +229,8 @@ def main(argv: list[str] | None = None) -> int:
         print("visibility=private")
     elif args.cmd == "seal-or-retract":
         print(seal_or_retract(args.owner, args.name, args.tag))
+    elif args.cmd == "verify-after-push":
+        print(verify_after_push(args.owner, args.name, args.tag))
     else:
         print(anonymous_pull_denied(args.owner, args.name, args.tag))
     return 0

@@ -26,7 +26,12 @@ from verify_private_beta_attestation import (
     resolved_subject,
     verify_attestation,
 )
-from verify_private_beta_ghcr import anonymous_pull_denied, require_private_package, seal_or_retract
+from verify_private_beta_ghcr import (
+    anonymous_pull_denied,
+    require_private_package,
+    seal_or_retract,
+    verify_after_push,
+)
 from verify_private_beta_source import verify_source
 
 
@@ -282,6 +287,129 @@ class GhcrTests(unittest.TestCase):
         boom = FakeOpener({})
         with self.assertRaises(SystemExit):
             anonymous_pull_denied("uniskela", "ts6-manager/discord-bridge", "t", opener=boom)
+
+    def test_verify_after_push_retracts_anonymous_200_not_other_versions(self):
+        tag = f"private-beta-{COMMIT}"
+        pkg = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
+        gh = FakeGh(
+            {
+                pkg: {"visibility": "private"},
+                f"{pkg}/versions?per_page=100&page=1": [
+                    {"id": 99, "metadata": {"container": {"tags": [tag]}}},
+                    {"id": 1, "metadata": {"container": {"tags": ["keep-me"]}}},
+                    {"id": 2, "metadata": {"container": {"tags": [tag, "other"]}}},
+                ],
+                f"{pkg}/versions/99": {},
+            }
+        )
+        calls = []
+
+        def recording(args, capture_output=True, text=True):
+            calls.append(args)
+            return gh(args, capture_output=capture_output, text=text)
+
+        opener = FakeOpener(
+            {
+                "ghcr.io/token": (200, json.dumps({"token": "anon"}).encode()),
+                "/manifests/": (200, b"{}"),
+            }
+        )
+        with self.assertRaises(SystemExit) as exc:
+            verify_after_push(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                tag,
+                runner=recording,
+                opener=opener,
+            )
+        msg = str(exc.exception)
+        self.assertIn("anonymous pull succeeded", msg)
+        self.assertIn(f"retracted {tag}", msg)
+        self.assertIn("refused to delete unrelated versions", msg)
+        deleted = [args[-1] for args in calls if "--method" in args and "DELETE" in args]
+        self.assertEqual(deleted, [f"{pkg}/versions/99"])
+
+    def test_verify_after_push_private_denied_does_not_retract(self):
+        tag = f"private-beta-{COMMIT}"
+        pkg = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
+        gh = FakeGh(
+            {
+                pkg: {"visibility": "private"},
+                f"{pkg}/versions?per_page=100&page=1": [
+                    {"id": 99, "metadata": {"container": {"tags": [tag]}}},
+                ],
+                f"{pkg}/versions/99": {},
+            }
+        )
+        calls = []
+
+        def recording(args, capture_output=True, text=True):
+            calls.append(args)
+            return gh(args, capture_output=capture_output, text=text)
+
+        opener = FakeOpener(
+            {
+                "ghcr.io/token": (200, json.dumps({"token": "anon"}).encode()),
+                "/manifests/": (401, b""),
+            }
+        )
+        msg = verify_after_push(
+            "uniskela",
+            "ts6-manager/discord-bridge",
+            tag,
+            runner=recording,
+            opener=opener,
+        )
+        self.assertIn("visibility=private", msg)
+        self.assertFalse(any("--method" in args and "DELETE" in args for args in calls))
+
+    def test_verify_after_push_reports_delete_failure(self):
+        tag = f"private-beta-{COMMIT}"
+        pkg = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
+        gh = FakeGh(
+            {
+                pkg: {"visibility": "private"},
+                f"{pkg}/versions?per_page=100&page=1": [
+                    {"id": 99, "metadata": {"container": {"tags": [tag]}}},
+                ],
+            }
+        )
+        opener = FakeOpener(
+            {
+                "ghcr.io/token": (200, json.dumps({"token": "anon"}).encode()),
+                "/manifests/": (200, b"{}"),
+            }
+        )
+        with self.assertRaises(SystemExit) as exc:
+            verify_after_push(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                tag,
+                runner=gh,
+                opener=opener,
+            )
+        self.assertIn("DELETE failed", str(exc.exception))
+
+    def test_post_push_privacy_runs_when_digest_inspect_fails(self):
+        publish = workflow()["jobs"]["publish"]
+        steps = {step.get("name"): step for step in publish["steps"]}
+        push = steps["Push commit-specific tag only"]
+        digest = steps["Record published digest"]
+        confirm = steps["Confirm private visibility and deny anonymous pull"]
+        names = [step.get("name") for step in publish["steps"]]
+        self.assertEqual(push.get("id"), "push")
+        self.assertIn("docker push", push["run"])
+        self.assertNotIn("imagetools inspect", push["run"])
+        self.assertIn("imagetools inspect", digest["run"])
+        self.assertIsNone(digest.get("if"))
+        self.assertLess(names.index("Push commit-specific tag only"), names.index("Record published digest"))
+        self.assertLess(names.index("Record published digest"), names.index("Confirm private visibility and deny anonymous pull"))
+        condition = confirm.get("if", "")
+        self.assertIn("always()", condition)
+        self.assertIn("steps.push.outcome", condition)
+        self.assertIn("skipped", condition)
+        self.assertIn("verify-after-push", confirm["run"])
+        self.assertNotIn("anonymous-denied", confirm["run"])
 
 
 class VerifyGh:

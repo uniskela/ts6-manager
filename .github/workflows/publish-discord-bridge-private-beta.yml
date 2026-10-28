@@ -271,35 +271,39 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push commit-specific tag only
+        id: push
         env:
           TAG: ${{ needs.verify-and-build.outputs.tag }}
           COMMIT: ${{ needs.verify-and-build.outputs.sha }}
         run: |
           set -euo pipefail
           docker push "${IMAGE_NAME}:${TAG}"
+          echo "published ${IMAGE_NAME}:${TAG}"
+          echo "source=${COMMIT}"
+          echo "tag=${IMAGE_NAME}:${TAG}" >> "$GITHUB_STEP_SUMMARY"
+          echo "sha=${COMMIT}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record published digest
+        env:
+          TAG: ${{ needs.verify-and-build.outputs.tag }}
+        run: |
+          set -euo pipefail
           digest="$(docker buildx imagetools inspect "${IMAGE_NAME}:${TAG}" --format '{{json .Manifest}}' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("digest",""))')"
           if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
             echo "missing image digest" >&2
             exit 1
           fi
-          echo "published ${IMAGE_NAME}:${TAG}"
           echo "digest=${digest}"
-          echo "source=${COMMIT}"
           echo "digest=${digest}" >> "$GITHUB_STEP_SUMMARY"
-          echo "tag=${IMAGE_NAME}:${TAG}" >> "$GITHUB_STEP_SUMMARY"
           echo "pin=${IMAGE_NAME}@${digest}" >> "$GITHUB_STEP_SUMMARY"
-          echo "sha=${COMMIT}" >> "$GITHUB_STEP_SUMMARY"
           echo "DIGEST=${digest}" >> "$GITHUB_ENV"
 
       - name: Confirm private visibility and deny anonymous pull
+        if: ${{ always() && steps.push.outcome != 'skipped' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          python3 scripts/ci/verify_private_beta_ghcr.py seal-or-retract \
-            --owner "${{ github.repository_owner }}" \
-            --name "${{ env.PACKAGE_NAME }}" \
-            --tag "${{ needs.verify-and-build.outputs.tag }}"
-          python3 scripts/ci/verify_private_beta_ghcr.py anonymous-denied \
+          python3 scripts/ci/verify_private_beta_ghcr.py verify-after-push \
             --owner "${{ github.repository_owner }}" \
             --name "${{ env.PACKAGE_NAME }}" \
             --tag "${{ needs.verify-and-build.outputs.tag }}"

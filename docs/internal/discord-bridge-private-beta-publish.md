@@ -70,14 +70,18 @@ creating one from this workflow, and refuse tag overwrite.
 
 Check/push race: the package can change after `require-private` and before
 `docker push`. If it is public then, the new tag is public. The workflow
-cannot PATCH it private. `seal-or-retract` deletes the version that carries
-the tag we pushed and fails. That is supported cleanup. It does **not**
-prevent disclosure of bytes already pulled, and it does not make a public
-package private.
+cannot PATCH it private.
 
-After a private push: Registry v2 anonymous bearer flow. HTTP 200 on the
-manifest fails (public). Token or transport errors fail closed. A raw
-unauthenticated 401 is not proof of privacy.
+After a push may have occurred (including digest-inspect failure),
+`verify-after-push` always runs. Public visibility or anonymous HTTP 200
+deletes only the version whose tags are exactly the tag we pushed, then
+fails. Versions that also carry other tags are not deleted. DELETE errors
+are included in the failure. Cleanup does **not** undo a pull that already
+happened, and it does not make a public package private.
+
+Registry v2 anonymous bearer flow: HTTP 200 on the manifest is confirmed
+public access and triggers that retraction. Token or transport errors fail
+closed without retracting. A raw unauthenticated 401 is not proof of privacy.
 
 ## Attestation verification
 
