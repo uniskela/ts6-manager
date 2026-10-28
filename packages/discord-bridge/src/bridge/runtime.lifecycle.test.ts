@@ -6,6 +6,7 @@ import { toneFrame } from "../core/pcm.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger } from "../core/redact.js";
 import { TS_CODEC_OPUS_VOICE } from "../core/constants.js";
+import { RebuildBudgetExhausted } from "../core/rebuild-budget.js";
 import { FakeBot, FakeTs, settle } from "../testing/fake-runtime.js";
 import { tick, waitFor } from "../testing/fake-voice.js";
 import { BridgeRuntime } from "./runtime.js";
@@ -94,6 +95,64 @@ describe("receiver failover is not delayed by reconnect work", () => {
     await waitFor(() => b.joinCount >= before + 3, 1000, "bounded retries");
     await tick(150);
     assert.equal(b.joinCount, before + 3, "it stops after maxAttempts instead of looping");
+    await rt.stop();
+  });
+
+  it("a zero recovery budget never schedules a wake-up or retries", async () => {
+    const { bots, rt } = build();
+    await rt.start();
+    await settle(rt);
+    const b = bots.get("slot-0")!;
+    const joins = b.joinCount;
+    b.failJoin = new RebuildBudgetExhausted(200, 0, 200);
+    b.die();
+    await settle(rt);
+    assert.equal(rt.status().scheduledReconnects, 0, "max=0 must not arm a budget wake-up");
+    assert.equal(b.joinCount, joins + 1, "one refused attempt, then stop");
+    await tick(250);
+    assert.equal(rt.status().scheduledReconnects, 0);
+    assert.equal(b.joinCount, joins + 1, "the window elapsing must not retry");
+    await rt.stop();
+  });
+});
+
+describe("Discord joins wait until the runtime is started", () => {
+  it("TeamSpeak directory events while created do not join Discord", async () => {
+    const { ts, bots, rt } = build();
+    ts.addUser(1);
+    ts.addUser(2);
+    await settle(rt);
+    assert.equal(rt.status().state, "created");
+    assert.equal(
+      [...bots.values()].reduce((n, b) => n + b.joinCount, 0),
+      0,
+      "no Discord join before start()",
+    );
+    await rt.stop();
+  });
+
+  it("membership discovered before start is applied once running", async () => {
+    const { ts, bots, rt } = build();
+    ts.addUser(1, "Alice");
+    ts.addUser(2, "Bob");
+    await settle(rt);
+    assert.equal(bots.get("slot-0")!.joinCount, 0);
+    await rt.start();
+    await settle(rt);
+    assert.deepEqual(rt.status().inChannel, ["slot-0", "slot-1"]);
+    assert.equal(bots.get("slot-0")!.nick, "[TS] Alice");
+    assert.equal(bots.get("slot-1")!.nick, "[TS] Bob");
+    await rt.stop();
+  });
+
+  it("a client who left during initialisation is not joined at start", async () => {
+    const { ts, bots, rt } = build();
+    ts.addUser(1);
+    ts.removeUser(1);
+    await rt.start();
+    await settle(rt);
+    assert.deepEqual(rt.status().inChannel, ["slot-0"], "idle receiver only");
+    assert.equal(bots.get("slot-1")!.joinCount, 0);
     await rt.stop();
   });
 });

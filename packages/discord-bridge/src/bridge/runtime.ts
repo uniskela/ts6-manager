@@ -86,8 +86,10 @@ const DEFAULT_RETRY: RetryPolicy = { baseMs: 1_000, maxMs: 30_000, maxAttempts: 
  * (each bot has at most one join in flight, and a hung or failed one is retried in the background).
  * A reconnect can therefore never delay receiver replacement or other bots' membership.
  *
- * Lifecycle: created, running, stopping, stopped. Once stopping, nothing is scheduled, listeners
- * are removed, reception is invalidated, queued work is skipped and in-flight joins are aborted.
+ * Lifecycle: created, running, stopping, stopped. created is not live: Discord joins wait for
+ * start(), which applies the current TeamSpeak directory. Once stopping, nothing is scheduled,
+ * listeners are removed, reception is invalidated, queued work is skipped and in-flight joins
+ * are aborted.
  */
 export class BridgeRuntime extends EventEmitter {
   readonly router: SlotRouter;
@@ -176,7 +178,7 @@ export class BridgeRuntime extends EventEmitter {
   }
 
   private live(): boolean {
-    return this.lifecycle === "created" || this.lifecycle === "running";
+    return this.lifecycle === "running";
   }
 
   private noteCallbackError(where: CallbackSite, e: unknown): void {
@@ -404,9 +406,10 @@ export class BridgeRuntime extends EventEmitter {
           // wanted again by now, this attempt was the one in flight and nobody else would start it.
           this.schedule(() => this.sync(`join cancelled ${id}`));
         } else if (isRebuildBudgetExhausted(e)) {
-          // The bot's one rebuild budget is spent. No retry loop: wake once, when it frees.
+          // The bot's one rebuild budget is spent. max=0 never frees; otherwise wake once, when it does.
           this.o.log.warn(`${id} reconnect refused: ${e.message}`);
           this.election.setState(id, { healthy: false, inChannel: false });
+          if (e.max === 0) return;
           this.scheduleWake(id, e.retryInMs);
         } else {
           this.o.log.warn(`${id} could not join: ${e instanceof Error ? e.message : String(e)}`);

@@ -181,14 +181,17 @@
     "present before the bridge starts: five humans still get five slots and nobody overflows"
   ],
   "src/bridge/runtime.lifecycle.test.ts": [
+    "TeamSpeak directory events while created do not join Discord",
     "a Discord-to-TeamSpeak mix tick that throws on every tick does not stop TeamSpeak audio reaching the overflow bot",
     "a TeamSpeak transport that throws while the tick sends is counted, and the next frames are sent",
+    "a client who left during initialisation is not joined at start",
     "a failed reconnect is retried with a bounded backoff and then given up on",
     "a failure while handling a Discord frame is contained and counted",
     "a failure while handling a TeamSpeak voice packet does not throw out of the UDP callback",
     "a pending reconnect does not hold the queue: a new TeamSpeak user still gets a bot promptly",
     "a throw from the Discord-to-TeamSpeak tick is counted, the runtime stays up, and later audio is still sent",
     "a throw from the TeamSpeak-to-Discord overflow tick is counted, the runtime stays up, and later overflow audio is still sent",
+    "a zero recovery budget never schedules a wake-up or retries",
     "activates the healthy successor while the failed bot's reconnect is still pending",
     "activates the successor before any unrelated reconnect is attempted",
     "an overflow tick that throws on every tick does not stop Discord audio reaching TeamSpeak",
@@ -196,6 +199,7 @@
     "failures on every tick in both directions are counted in full, logged a bounded number of times, and stop with the runtime",
     "ignores directory and bot events after stop, and removes its listeners",
     "is idempotent and cannot be restarted",
+    "membership discovered before start is applied once running",
     "never joins again after stop, even when bots report their own intentional leave as a failure",
     "preserves the receiveGeneration fence across the failover",
     "stops the 20 ms ticker and invalidates reception"
@@ -219,6 +223,7 @@
     "a target lookup that finishes after stop() does not create a connection",
     "elects and activates a healthy successor while the failed bot's replacement connection is unresolved",
     "holds for any interleaving of stop() with join completion (seeded)",
+    "maxRecoveries 0 refuses the rebuild, arms no timer, and does not retry after syncs or the window",
     "one limit across gateway destruction, receive failures, DAVE loss, direct joins and runtime retries",
     "receive-stream errors cannot rebuild the connection past the budget, and the bot stays out until the window frees",
     "repeated refusals and repeated syncs keep one timer per bot, and the window expiring causes exactly one attempt",

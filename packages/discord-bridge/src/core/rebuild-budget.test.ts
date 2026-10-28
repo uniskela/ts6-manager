@@ -42,6 +42,10 @@ describe("RebuildBudget", () => {
 
   it("a budget of zero refuses everything", () => {
     const b = new RebuildBudget(0, 1000, () => 0);
-    assert.throws(() => b.spend(), (e: unknown) => (e as RebuildBudgetExhausted).retryInMs === 1000, "a finite wait, never NaN");
+    assert.throws(
+      () => b.spend(),
+      (e: unknown) => isRebuildBudgetExhausted(e) && e.retryInMs === 1000 && e.max === 0,
+      "a finite wait, never NaN, and max=0 so the runtime can skip the wake-up",
+    );
   });
 });

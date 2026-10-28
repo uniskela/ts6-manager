@@ -69,7 +69,6 @@ async function main(): Promise<void> {
     concrete.set(id, bot);
     bots.set(id, bot);
   }
-  runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log, retry: diag.retry });
   if (diag.singleAttempt) log.info("single-attempt diagnostic: first planned join only; no automatic reconnects");
 
   // Fail closed: every identity must log in and pass the guild/channel permission check first.
@@ -92,6 +91,7 @@ async function main(): Promise<void> {
     process.exit(3);
   }
 
+  runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log, retry: diag.retry });
   sampler.start(1000);
   await runtime.start();
   log.info("bridge running. Commands: status | kill-receiver | mark <id> pass|fail <note> | write | quit");

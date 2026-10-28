@@ -84,7 +84,6 @@ async function main(): Promise<void> {
     concrete.set(id, bot);
     bots.set(id, bot);
   }
-  runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log, retry: diag.retry });
   if (diag.singleAttempt) log.info("single-attempt: first planned join only; no automatic reconnects");
 
   const bad: string[] = [];
@@ -106,6 +105,7 @@ async function main(): Promise<void> {
     process.exit(3);
   }
 
+  runtime = new BridgeRuntime({ ts, bots, election, codecFactory: () => createOpusCodec("auto"), log, retry: diag.retry });
   sampler.start(1000);
   await runtime.start();
   pushEvent(events, "bridge_running");

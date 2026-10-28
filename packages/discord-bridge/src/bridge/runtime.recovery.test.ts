@@ -225,6 +225,31 @@ describe("every reconnect entry point spends the same budget (receive failures, 
   });
 });
 
+describe("a zero recovery budget never schedules a wake-up", () => {
+  it("maxRecoveries 0 refuses the rebuild, arms no timer, and does not retry after syncs or the window", async () => {
+    const r = realRuntime({ users: 1, timing: { maxRecoveries: 0, recoveryWindowMs: 200, readyMs: 300 } });
+    try {
+      await r.rt.start();
+      await r.rt.idle();
+      const t = r.tests.get("slot-0")!;
+      const ready = t.ready.length;
+      t.latest().conn.destroy(false);
+      await waitFor(() => !t.bot.healthy, 1000, "unhealthy after the first connection dies");
+      await r.rt.idle();
+      assert.equal(r.rt.status().scheduledReconnects, 0, "zero budget must not arm a wake-up");
+      assert.equal(t.ready.length, ready, "no rebuild");
+      for (let i = 0; i < 4; i++) await r.rt.refreshExclusions();
+      await r.rt.idle();
+      await tick(250);
+      assert.equal(r.rt.status().scheduledReconnects, 0, "repeated syncs must not arm a timer either");
+      assert.equal(t.ready.length, ready, "still no rebuild after the window");
+      assert.equal(t.bot.healthy, false);
+    } finally {
+      await r.cleanup();
+    }
+  });
+});
+
 describe("an exhausted budget costs exactly one wake-up (real DiscordBot, real VoiceConnection)", () => {
   it("repeated refusals and repeated syncs keep one timer per bot, and the window expiring causes exactly one attempt", async () => {
     const r = realRuntime({ users: 1, timing: { maxRecoveries: 1, recoveryWindowMs: 500, readyMs: 300 } });

@@ -17,7 +17,7 @@ export class RebuildBudgetExhausted extends Error {
   readonly code = "REBUILD_BUDGET_EXHAUSTED";
   constructor(
     readonly retryInMs: number,
-    max: number,
+    readonly max: number,
     windowMs: number,
   ) {
     super(`connection rebuild budget exhausted (${max} per ${windowMs} ms); next attempt allowed in ${retryInMs} ms`);
