@@ -200,7 +200,10 @@ def verify_after_push(
         if "anonymous pull succeeded" in str(exc):
             exposed = True
     if exposed:
-        errors.append(retract_pushed_tag(owner, name, tag, scope, runner=runner))
+        try:
+            errors.append(retract_pushed_tag(owner, name, tag, scope, runner=runner))
+        except SystemExit as exc:
+            errors.append(f"retract failed: {exc}")
     if errors:
         raise SystemExit("; ".join(errors))
     return f"visibility=private {anon}"

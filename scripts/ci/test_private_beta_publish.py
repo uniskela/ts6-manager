@@ -363,6 +363,28 @@ class GhcrTests(unittest.TestCase):
         self.assertIn("visibility=private", msg)
         self.assertFalse(any("--method" in args and "DELETE" in args for args in calls))
 
+    def test_verify_after_push_keeps_exposure_if_retract_listing_fails(self):
+        tag = f"private-beta-{COMMIT}"
+        pkg = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
+        gh = FakeGh({pkg: {"visibility": "private"}})
+        opener = FakeOpener(
+            {
+                "ghcr.io/token": (200, json.dumps({"token": "anon"}).encode()),
+                "/manifests/": (200, b"{}"),
+            }
+        )
+        with self.assertRaises(SystemExit) as exc:
+            verify_after_push(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                tag,
+                runner=gh,
+                opener=opener,
+            )
+        msg = str(exc.exception)
+        self.assertIn("anonymous pull succeeded", msg)
+        self.assertIn("retract failed:", msg)
+
     def test_verify_after_push_reports_delete_failure(self):
         tag = f"private-beta-{COMMIT}"
         pkg = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
