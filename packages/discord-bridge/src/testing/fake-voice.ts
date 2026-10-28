@@ -316,6 +316,7 @@ export function testBot(
      * not reach the next test. "process" gives the bot the production default, the process-wide one.
      */
     identityRequests?: IdentityRequests | "process";
+    log?: import("../core/redact.js").Logger;
   } = {},
 ): TestBot {
   const adapter = fakeAdapter(id);
@@ -328,7 +329,7 @@ export function testBot(
     guildId,
     channelId: "channel-1",
     election,
-    log: quietLog,
+    log: o.log ?? quietLog,
     onHumanOpus: o.onHumanOpus ?? (() => undefined),
     onHumanClosed: o.onHumanClosed,
     bridgeUserIds: o.bridgeUserIds ?? (() => new Set()),

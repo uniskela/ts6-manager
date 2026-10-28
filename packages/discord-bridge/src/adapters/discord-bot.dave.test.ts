@@ -4,6 +4,7 @@ import { AudioPlayerStatus } from "@discordjs/voice";
 import type { BotId } from "../core/ids.js";
 import { preferredOrder } from "../core/ids.js";
 import { ReceiverElection } from "../core/receiver-election.js";
+import { createLogger } from "../core/redact.js";
 import { DAVE_MAGIC, isSilence, talk, testBot, tick, waitFor, type ReadyHandle } from "../testing/fake-voice.js";
 
 const opus = (n: number) => Buffer.from([0xfc, n, n, n]);
@@ -100,6 +101,76 @@ describe("DAVE enforcement on the receive boundary (real VoiceReceiver)", () => 
     h.udp("human", opus(8), { dave: false });
     await tick(60);
     assert.equal(got.filter((o) => o.equals(opus(8))).length, 0, "plaintext rejected even while passthrough was enabled");
+    await t.bot.destroy();
+  });
+});
+
+function capturingLog() {
+  const lines: string[] = [];
+  return { lines, log: createLogger("test", (l) => lines.push(l)) };
+}
+
+const daveLines = (lines: string[], phase: string) => lines.filter((l) => l.includes(`DAVE ${phase}:`));
+
+describe("privacy-safe DAVE lifecycle diagnostics", () => {
+  it("logs protocol, connection status, elapsed time, member counts and event categories on first DAVE loss, without identities or secrets", async () => {
+    const { lines, log } = capturingLog();
+    const election = electedReceiver();
+    const t = testBot("slot-0", election, { log, timing: { daveGraceMs: 400 } });
+    const h = await t.join({ receive: true });
+    t.voice("human-alice", "channel-1", { member: { bot: false } });
+    h.setDave({ ready: false });
+    const lost = await waitFor(() => daveLines(lines, "lost")[0], 1000, "DAVE lost diagnostic");
+    assert.match(lost, /protocol=\d+.*ready=false.*conn=ready.*elapsedMs=\d+.*voiceMembers=\d+.*voiceBots=\d+/);
+    assert.match(lost, /pending=\d+/);
+    assert.doesNotMatch(lost, /human-alice|token-slot-0|alice-username/i);
+    await tick(80);
+    assert.equal(daveLines(lines, "lost").length, 1, "unchanged unready state is not logged again");
+    await t.bot.destroy();
+  });
+
+  it("logs restored when DAVE returns inside the grace window, and does not log grace-expired", async () => {
+    const { lines, log } = capturingLog();
+    const election = electedReceiver();
+    const t = testBot("slot-0", election, { log, timing: { daveGraceMs: 400 } });
+    const reasons: string[] = [];
+    t.bot.on("unhealthy", (r: string) => reasons.push(r));
+    const h = await t.join({ receive: true });
+    h.setDave({ ready: false });
+    await waitFor(() => daveLines(lines, "lost")[0], 1000, "lost");
+    h.setDave({ ready: true });
+    const restored = await waitFor(() => daveLines(lines, "restored")[0], 1000, "DAVE restored diagnostic");
+    assert.match(restored, /ready=true.*conn=ready.*elapsedMs=\d+.*voiceMembers=\d+/);
+    await tick(80);
+    assert.equal(daveLines(lines, "grace-expired").length, 0);
+    assert.deepEqual(reasons, []);
+    await t.bot.destroy();
+  });
+
+  it("logs grace-expired with the snapshot when the grace window ends", async () => {
+    const { lines, log } = capturingLog();
+    const election = electedReceiver();
+    const t = testBot("slot-0", election, { log, timing: { daveGraceMs: 80 } });
+    const h = await t.join({ receive: true });
+    h.setDave({ ready: false });
+    const expired = await waitFor(() => daveLines(lines, "grace-expired")[0], 1500, "grace-expired diagnostic");
+    assert.match(expired, /ready=false.*conn=ready.*elapsedMs=\d+.*voiceMembers=\d+/);
+    assert.match(expired, /pending=\d+/);
+    await t.bot.destroy();
+  });
+
+  it("logs a Discord voice connection status change once per new status, not for nested networking updates", async () => {
+    const { lines, log } = capturingLog();
+    const election = electedReceiver();
+    const t = testBot("slot-0", election, { log });
+    const h = await t.join();
+    const before = daveLines(lines, "voice-destroyed").length;
+    h.conn.destroy(false);
+    await waitFor(() => daveLines(lines, "voice-destroyed").length > before, 1000, "voice-destroyed diagnostic");
+    assert.match(daveLines(lines, "voice-destroyed").at(-1)!, /conn=destroyed.*elapsedMs=/);
+    const n = daveLines(lines, "voice-destroyed").length;
+    await tick(40);
+    assert.equal(daveLines(lines, "voice-destroyed").length, n, "unchanged destroyed status is not logged again");
     await t.bot.destroy();
   });
 });

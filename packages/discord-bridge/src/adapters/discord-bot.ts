@@ -182,6 +182,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   rejoins = 0;
   /** Privacy-safe MLS negotiation trace for the live wrapper (null when none). */
   private daveTrace: DaveSnapshot | null = null;
+  /** Last DAVE lifecycle log identity (phase + protocol/status/membership/trace, not elapsedMs). */
+  private lastDaveLifecycleKey: string | null = null;
   /** When the live voice connection last became Ready; used only for elapsedMs diagnostics. */
   private connectedAt: number | null = null;
   /** Established DAVE sessions replaced by another while receiving (each one ended a receive generation). */
@@ -425,10 +427,11 @@ export class DiscordBot extends EventEmitter implements BotPort {
       this.installDaveGuards(fresh);
       this.watchDave(fresh);
       fresh.subscribe(this.player);
-      fresh.on("stateChange", (_o, n) => {
+      fresh.on("stateChange", (o, n) => {
         // Only an unexpected change on the live connection is a failure; our own teardown detaches first.
         if (fresh !== this.connection) return;
         this.watchDave(fresh);
+        if (o.status !== n.status) this.logDaveLifecycle(fresh, `voice-${n.status}`);
         if (n.status === VoiceConnectionStatus.Disconnected) this.markUnhealthy(`voice ${n.status}`);
         // Destroyed cannot be revived: drop it so the next join builds a new connection and DAVE session.
         else if (n.status === VoiceConnectionStatus.Destroyed) this.markUnhealthy(`voice ${n.status}`, { fresh: true });
@@ -585,21 +588,24 @@ export class DiscordBot extends EventEmitter implements BotPort {
   }
 
   private handleDaveLost(): void {
-    this.o.log.warn(`${this.o.id} DAVE unavailable: stopping send and receive until it is established again`);
+    this.logDaveLifecycle(this.connection, "lost");
     this.dropOutbound();
     this.stopReceive();
     this.o.election.daveLost(this.o.id, "dave unavailable");
     this.clearGraceTimer();
     this.graceTimer = setTimeout(() => {
       this.graceTimer = null;
-      if (!this.daveOk) this.markUnhealthy("DAVE unavailable after the grace window", { fresh: true });
+      if (!this.daveOk) {
+        this.logDaveLifecycle(this.connection, "grace-expired");
+        this.markUnhealthy("DAVE unavailable after the grace window", { fresh: true });
+      }
     }, this.timing.daveGraceMs);
     this.graceTimer.unref();
   }
 
   private handleDaveRestored(): void {
     this.clearGraceTimer();
-    this.o.log.info(`${this.o.id} DAVE established again`);
+    this.logDaveLifecycle(this.connection, "restored");
     this.o.election.daveRestored(this.o.id);
   }
 
@@ -621,23 +627,23 @@ export class DiscordBot extends EventEmitter implements BotPort {
     const deadline = Date.now() + this.timing.daveWaitMs;
     let lastLog = 0;
     this.watchDave(conn);
-    this.logDaveProgress(conn, "wait");
+    this.logDaveLifecycle(conn, "wait");
     while (Date.now() < deadline) {
       this.checkpoint(epoch, conn);
       this.watchDave(conn);
       if (this.enforced(conn)) {
-        this.logDaveProgress(conn, "ready");
+        this.logDaveLifecycle(conn, "ready");
         return;
       }
       const now = Date.now();
       if (now - lastLog >= 2_000) {
         lastLog = now;
-        this.logDaveProgress(conn, "wait");
+        this.logDaveLifecycle(conn, "wait");
       }
       await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
     const info = readDaveInfo(conn);
-    this.logDaveProgress(conn, "timeout");
+    this.logDaveLifecycle(conn, "timeout");
     this.noteFailure();
     this.discardConnection();
     throw new Error(`DAVE not negotiated (protocolVersion=${info?.protocolVersion ?? "n/a"}, ready=${info?.ready ?? false}); failing closed`);
@@ -660,11 +666,36 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.daveTrace = live;
   }
 
-  private logDaveProgress(conn: VoiceConnection, phase: string): void {
-    const info = readDaveInfo(conn);
+  /** Integers only: Discord voice members in the configured channel, and how many are bots. */
+  private voiceMemberCounts(): { members: number; bots: number } {
+    const guild = this.client.guilds.cache.get(this.o.guildId);
+    if (!guild) return { members: 0, bots: 0 };
+    let members = 0;
+    let bots = 0;
+    for (const vs of guild.voiceStates.cache.values()) {
+      if (vs.channelId !== this.o.channelId) continue;
+      members += 1;
+      if (vs.member?.user?.bot === true) bots += 1;
+    }
+    return { members, bots };
+  }
+
+  /**
+   * One privacy-safe line for a DAVE or voice-connection lifecycle event. Skips a repeat of the
+   * same phase/protocol/ready/connection/membership/trace (elapsedMs is observational only).
+   */
+  private logDaveLifecycle(conn: VoiceConnection | null, phase: string): void {
+    const info = conn ? readDaveInfo(conn) : null;
     const trace = this.daveTrace ? formatDaveSnapshot(this.daveTrace) : "no-wrapper";
     const elapsedMs = this.connectedAt === null ? "n/a" : Date.now() - this.connectedAt;
-    this.o.log.info(`${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} elapsedMs=${elapsedMs} failures=${this.failures} ${trace}`);
+    const status = conn?.state.status ?? "none";
+    const { members, bots } = this.voiceMemberCounts();
+    const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} ${trace}`;
+    if (key === this.lastDaveLifecycleKey) return;
+    this.lastDaveLifecycleKey = key;
+    const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} ${trace}`;
+    if (phase === "lost" || phase === "grace-expired" || phase.startsWith("voice-")) this.o.log.warn(line);
+    else this.o.log.info(line);
   }
 
   /** The TeamSpeak speaker assigned to this bot: Opus passthrough, one turn per stretch of speech. */
