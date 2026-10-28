@@ -91,6 +91,7 @@ def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> s
         return "visibility=private"
     encoded = name.replace("/", "%2F")
     retract_error = None
+    retracted = False
     for version in _versions(scope, owner, name, runner=runner):
         if tag in _container_tags(version) and version.get("id") is not None:
             try:
@@ -102,12 +103,14 @@ def seal_or_retract(owner: str, name: str, tag: str, runner=subprocess.run) -> s
                     ],
                     runner=runner,
                 )
+                retracted = True
             except SystemExit as exc:
                 retract_error = str(exc)
     msg = (
         f"package visibility={info.get('visibility')!r} after push; "
-        f"public packages cannot be made private; retracted {tag}"
+        "public packages cannot be made private; "
     )
+    msg += f"retracted {tag}" if retracted else f"no version carrying {tag} was found to retract"
     if retract_error:
         msg += f"; DELETE failed: {retract_error}"
     raise SystemExit(msg)

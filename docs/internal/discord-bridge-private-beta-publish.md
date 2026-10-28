@@ -9,6 +9,12 @@ Treat published tags as maintainer-only until the image is rebuilt from merged
 `main` by the existing stable release workflows. Approve that reduced-trust
 use separately from merging #504.
 
+Environment approval gates **GHCR push**, not the unprivileged build. The
+image tarball is an Actions artifact for three days. Anyone who can dispatch
+this workflow and read Actions artifacts can download those bytes without
+approver sign-off. That is accepted for this preview: only trusted writers
+should dispatch.
+
 ## What attestation proves
 
 GitHub-signed OIDC attestation (`actions/attest` in a job that never runs PR,

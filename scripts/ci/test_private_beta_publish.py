@@ -247,6 +247,17 @@ class GhcrTests(unittest.TestCase):
         self.assertTrue(any("DELETE" in arg for args in calls for arg in args))
         self.assertFalse(any("PATCH" in arg for args in calls for arg in args))
 
+        missing_tag = FakeGh(
+            {
+                pkg: {"visibility": "public"},
+                f"{pkg}/versions?per_page=100&page=1": [{"id": 1, "metadata": {"container": {"tags": []}}}],
+            }
+        )
+        with self.assertRaises(SystemExit) as missing:
+            seal_or_retract("uniskela", "ts6-manager/discord-bridge", tag, runner=missing_tag)
+        self.assertIn("no version carrying", str(missing.exception))
+        self.assertNotIn(f"retracted {tag}", str(missing.exception))
+
     def test_bearer_flow_fails_on_public_manifest_and_fail_closed(self):
         token = json.dumps({"token": "anon"}).encode()
         public = FakeOpener(
