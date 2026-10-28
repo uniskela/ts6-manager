@@ -43,11 +43,14 @@ class SemgrepWorkflowTests(unittest.TestCase):
         self.assertIn("--config p/owasp-top-ten", scan)
         self.assertIn("--config .semgrep", scan)
         self.assertIn("--sarif-output=semgrep.sarif", scan)
+        self.assertNotIn(" --sarif\n", scan)
         self.assertNotIn("semgrep ci", scan)
         self.assertNotIn("semgrep login", self.text)
         self.assertNotIn("--error", scan)
         self.assertNotIn("SEMGREP_APP_TOKEN", self.text)
         self.assertNotIn("continue-on-error", self.text)
+        self.assertNotIn("|| true", self.text)
+        self.assertNotIn("upload-sarif", self.text)
         self.assertEqual(
             self.steps["Scan with Community Edition rules"]["env"]["SEMGREP_SEND_METRICS"],
             "off",
@@ -64,10 +67,14 @@ class SemgrepWorkflowTests(unittest.TestCase):
         self.assertEqual(self.steps["Upload SARIF artifact"]["with"]["path"], "semgrep.sarif")
 
     def test_custom_rules_and_ignore_file_exist(self):
-        rules = (ROOT / ".semgrep" / "unsafe-subprocess.yml").read_text()
-        self.assertIn("ts6.child-process-shell-true", rules)
-        self.assertIn("ts6.go-shell-c", rules)
-        self.assertIn("shell: true", rules)
+        path = ROOT / ".semgrep" / "unsafe-subprocess.yml"
+        parsed = yaml.safe_load(path.read_text())
+        ids = [rule["id"] for rule in parsed["rules"]]
+        self.assertEqual(ids, ["ts6.child-process-shell-true", "ts6.go-shell-c"])
+        for rule in parsed["rules"]:
+            for item in rule["pattern-either"]:
+                self.assertIsInstance(item["pattern"], str)
+                self.assertNotIn("\n", item["pattern"])
         ignore = (ROOT / ".semgrepignore").read_text()
         self.assertIn("node_modules/", ignore)
         self.assertIn("packages/backend/generated/", ignore)

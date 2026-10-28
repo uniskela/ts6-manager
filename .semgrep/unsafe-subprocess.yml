@@ -1,5 +1,6 @@
 # Regression guards only. These patterns are absent from current TS6 Manager
 # production code (spawn/execFile use argv arrays and shell:false).
+# Quote every pattern: unquoted `shell: true` is invalid YAML.
 rules:
   - id: ts6.child-process-shell-true
     message: child_process invoked with shell:true. Pass an argv array and shell:false.
@@ -12,16 +13,16 @@ rules:
       cwe: CWE-78
       likelihood: HIGH
     pattern-either:
-      - pattern: spawn($CMD, $ARGS, {..., shell: true, ...})
-      - pattern: spawn($CMD, {..., shell: true, ...})
-      - pattern: spawnSync($CMD, $ARGS, {..., shell: true, ...})
-      - pattern: spawnSync($CMD, {..., shell: true, ...})
-      - pattern: execFile($CMD, $ARGS, {..., shell: true, ...})
-      - pattern: execFile($CMD, {..., shell: true, ...})
-      - pattern: execFileSync($CMD, $ARGS, {..., shell: true, ...})
-      - pattern: execFileSync($CMD, {..., shell: true, ...})
-      - pattern: exec($CMD, {..., shell: true, ...})
-      - pattern: execSync($CMD, {..., shell: true, ...})
+      - pattern: 'spawn($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'spawn($CMD, {..., shell: true, ...})'
+      - pattern: 'spawnSync($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'spawnSync($CMD, {..., shell: true, ...})'
+      - pattern: 'execFile($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'execFile($CMD, {..., shell: true, ...})'
+      - pattern: 'execFileSync($CMD, $ARGS, {..., shell: true, ...})'
+      - pattern: 'execFileSync($CMD, {..., shell: true, ...})'
+      - pattern: 'exec($CMD, {..., shell: true, ...})'
+      - pattern: 'execSync($CMD, {..., shell: true, ...})'
 
   - id: ts6.go-shell-c
     message: os/exec invoked via a shell. Use exec.Command(bin, args...).
@@ -33,7 +34,7 @@ rules:
       cwe: CWE-78
       likelihood: HIGH
     pattern-either:
-      - pattern: exec.Command("sh", "-c", $CMD)
-      - pattern: exec.Command("/bin/sh", "-c", $CMD)
-      - pattern: exec.Command("bash", "-c", $CMD)
-      - pattern: exec.Command("/bin/bash", "-c", $CMD)
+      - pattern: 'exec.Command("sh", "-c", $CMD)'
+      - pattern: 'exec.Command("/bin/sh", "-c", $CMD)'
+      - pattern: 'exec.Command("bash", "-c", $CMD)'
+      - pattern: 'exec.Command("/bin/bash", "-c", $CMD)'

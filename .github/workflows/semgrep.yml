@@ -48,7 +48,6 @@ jobs:
             --config p/security-audit \
             --config p/owasp-top-ten \
             --config .semgrep \
-            --sarif \
             --sarif-output=semgrep.sarif
 
       - name: Upload SARIF artifact
