@@ -1,0 +1,93 @@
+import assert from 'node:assert/strict';
+import { createCipheriv, randomBytes, scryptSync } from 'node:crypto';
+import { describe, it } from 'node:test';
+import { config } from '../config.js';
+import { decrypt, encrypt } from './crypto.js';
+
+const SALT = 'ts6-webui-enc-v1';
+
+function partsOf(blob: string): [string, string, string, string] {
+  const parts = blob.split(':');
+  assert.equal(parts.length, 4);
+  return parts as [string, string, string, string];
+}
+
+function withTag(blob: string, tag: Buffer): string {
+  const [prefix, iv, , ciphertext] = partsOf(blob);
+  return `${prefix}:${iv}:${tag.toString('hex')}:${ciphertext}`;
+}
+
+function withCiphertext(blob: string, ciphertext: Buffer): string {
+  const [prefix, iv, tag] = partsOf(blob);
+  return `${prefix}:${iv}:${tag}:${ciphertext.toString('hex')}`;
+}
+
+/** Ciphertext produced the way encrypt() did before authTagLength was set. */
+function encryptWithoutAuthTagLength(plaintext: string): string {
+  const source = process.env.ENCRYPTION_KEY || config.jwtSecret;
+  const key = scryptSync(source, SALT, 32);
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  const tag = cipher.getAuthTag();
+  return `enc:${iv.toString('hex')}:${tag.toString('hex')}:${encrypted}`;
+}
+
+describe('field encryption AES-256-GCM', () => {
+  it('round-trips valid ciphertext with a 16-byte tag', () => {
+    const blob = encrypt('secret-api-key');
+    assert.match(blob, /^enc:[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/);
+    assert.equal(decrypt(blob), 'secret-api-key');
+  });
+
+  it('decrypts ciphertext produced without an explicit authTagLength option', () => {
+    const blob = encryptWithoutAuthTagLength('legacy-secret');
+    assert.match(blob, /^enc:[0-9a-f]{24}:[0-9a-f]{32}:[0-9a-f]+$/);
+    assert.equal(decrypt(blob), 'legacy-secret');
+  });
+
+  it('leaves plaintext values unchanged for migration', () => {
+    assert.equal(decrypt('not-yet-encrypted'), 'not-yet-encrypted');
+  });
+
+  it('rejects modified ciphertext', () => {
+    const blob = encrypt('secret');
+    const [, , , ctHex] = partsOf(blob);
+    const ct = Buffer.from(ctHex, 'hex');
+    ct[0] ^= 1;
+    assert.throws(() => decrypt(withCiphertext(blob, ct)));
+  });
+
+  it('rejects a modified authentication tag', () => {
+    const blob = encrypt('secret');
+    const [, , tagHex] = partsOf(blob);
+    const tag = Buffer.from(tagHex, 'hex');
+    tag[0] ^= 1;
+    assert.throws(() => decrypt(withTag(blob, tag)));
+  });
+
+  it('rejects a truncated 12-byte authentication tag', () => {
+    const blob = encrypt('secret');
+    const [, , tagHex] = partsOf(blob);
+    assert.throws(() => decrypt(withTag(blob, Buffer.from(tagHex, 'hex').subarray(0, 12))));
+  });
+
+  it('rejects a truncated 4-byte authentication tag', () => {
+    const blob = encrypt('secret');
+    const [, , tagHex] = partsOf(blob);
+    assert.throws(() => decrypt(withTag(blob, Buffer.from(tagHex, 'hex').subarray(0, 4))));
+  });
+
+  it('rejects an oversized authentication tag', () => {
+    const blob = encrypt('secret');
+    const [, , tagHex] = partsOf(blob);
+    const tag = Buffer.concat([Buffer.from(tagHex, 'hex'), Buffer.from([0])]);
+    assert.throws(() => decrypt(withTag(blob, tag)));
+  });
+
+  it('rejects an empty authentication tag', () => {
+    const blob = encrypt('secret');
+    assert.throws(() => decrypt(withTag(blob, Buffer.alloc(0))));
+  });
+});
