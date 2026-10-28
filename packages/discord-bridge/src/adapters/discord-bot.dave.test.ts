@@ -121,9 +121,9 @@ describe("privacy-safe DAVE lifecycle diagnostics", () => {
     t.voice("human-alice", "channel-1", { member: { bot: false } });
     h.setDave({ ready: false });
     const lost = await waitFor(() => daveLines(lines, "lost")[0], 1000, "DAVE lost diagnostic");
-    assert.match(lost, /protocol=\d+.*ready=false.*conn=ready.*elapsedMs=\d+.*voiceMembers=\d+.*voiceBots=\d+/);
+    assert.match(lost, /protocol=\d+.*ready=false.*conn=ready.*elapsedMs=\d+.*voiceMembers=[1-9]\d*.*voiceBots=\d+/);
     assert.match(lost, /pending=\d+/);
-    assert.doesNotMatch(lost, /human-alice|token-slot-0|alice-username/i);
+    assert.doesNotMatch(lost, /human-alice|token-slot-0|userice/i);
     await tick(80);
     assert.equal(daveLines(lines, "lost").length, 1, "unchanged unready state is not logged again");
     await t.bot.destroy();
@@ -171,6 +171,20 @@ describe("privacy-safe DAVE lifecycle diagnostics", () => {
     const n = daveLines(lines, "voice-destroyed").length;
     await tick(40);
     assert.equal(daveLines(lines, "voice-destroyed").length, n, "unchanged destroyed status is not logged again");
+    await t.bot.destroy();
+  });
+
+  it("does not log grace-expired after the connection is already torn down", async () => {
+    const { lines, log } = capturingLog();
+    const election = electedReceiver();
+    const t = testBot("slot-0", election, { log, timing: { daveGraceMs: 120 } });
+    const h = await t.join({ receive: true });
+    h.setDave({ ready: false });
+    await waitFor(() => daveLines(lines, "lost")[0], 1000, "lost");
+    h.conn.destroy(false);
+    await waitFor(() => daveLines(lines, "voice-destroyed")[0], 1000, "destroyed");
+    await tick(200);
+    assert.equal(daveLines(lines, "grace-expired").length, 0, "a dead connection must not emit a late grace-expired line");
     await t.bot.destroy();
   });
 });

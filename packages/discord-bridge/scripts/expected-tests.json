@@ -91,6 +91,7 @@
     "an established session in davey passthrough mode does not accept plaintext",
     "declares the bot unhealthy only after the grace window, so the runtime can fail over",
     "delivers a DAVE-decrypted human frame while DAVE is established (control)",
+    "does not log grace-expired after the connection is already torn down",
     "holds the receiver through a short transition and reactivates it under a new generation",
     "logs a Discord voice connection status change once per new status, not for nested networking updates",
     "logs grace-expired with the snapshot when the grace window ends",

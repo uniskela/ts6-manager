@@ -588,7 +588,6 @@ export class DiscordBot extends EventEmitter implements BotPort {
   }
 
   private handleDaveLost(): void {
-    this.logDaveLifecycle(this.connection, "lost");
     this.dropOutbound();
     this.stopReceive();
     this.o.election.daveLost(this.o.id, "dave unavailable");
@@ -601,6 +600,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
       }
     }, this.timing.daveGraceMs);
     this.graceTimer.unref();
+    this.logDaveLifecycle(this.connection, "lost");
   }
 
   private handleDaveRestored(): void {
@@ -685,17 +685,22 @@ export class DiscordBot extends EventEmitter implements BotPort {
    * same phase/protocol/ready/connection/membership/trace (elapsedMs is observational only).
    */
   private logDaveLifecycle(conn: VoiceConnection | null, phase: string): void {
-    const info = conn ? readDaveInfo(conn) : null;
-    const trace = this.daveTrace ? formatDaveSnapshot(this.daveTrace) : "no-wrapper";
-    const elapsedMs = this.connectedAt === null ? "n/a" : Date.now() - this.connectedAt;
-    const status = conn?.state.status ?? "none";
-    const { members, bots } = this.voiceMemberCounts();
-    const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} ${trace}`;
-    if (key === this.lastDaveLifecycleKey) return;
-    this.lastDaveLifecycleKey = key;
-    const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} ${trace}`;
-    if (phase === "lost" || phase === "grace-expired" || phase.startsWith("voice-")) this.o.log.warn(line);
-    else this.o.log.info(line);
+    try {
+      const info = conn ? readDaveInfo(conn) : null;
+      const trace = this.daveTrace ? formatDaveSnapshot(this.daveTrace) : "no-wrapper";
+      const elapsedMs = this.connectedAt === null ? "n/a" : Date.now() - this.connectedAt;
+      const status = conn?.state.status ?? "none";
+      const { members, bots } = this.voiceMemberCounts();
+      const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} ${trace}`;
+      if (key === this.lastDaveLifecycleKey) return;
+      this.lastDaveLifecycleKey = key;
+      const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} ${trace}`;
+      const severe = phase === "lost" || phase === "grace-expired" || phase === "voice-disconnected" || phase === "voice-destroyed";
+      if (severe) this.o.log.warn(line);
+      else this.o.log.info(line);
+    } catch {
+      /* diagnostics must never block fail-closed */
+    }
   }
 
   /** The TeamSpeak speaker assigned to this bot: Opus passthrough, one turn per stretch of speech. */
@@ -853,6 +858,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /** `force` reports even when the bot already has no connection. */
   markUnhealthy(reason: string, opts: { fresh?: boolean; force?: boolean } = {}): void {
+    this.clearGraceTimer();
     if (this.stopped) return;
     if (!opts.force && !this.healthy && !this.connection) return;
     this.healthy = false;
