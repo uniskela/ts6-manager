@@ -22,6 +22,12 @@ function withCiphertext(blob: string, ciphertext: Buffer): string {
   return `${prefix}:${iv}:${tag}:${ciphertext.toString('hex')}`;
 }
 
+function withPart(blob: string, index: 1 | 2 | 3, value: string): string {
+  const parts = partsOf(blob);
+  parts[index] = value;
+  return parts.join(':');
+}
+
 /** Ciphertext produced the way encrypt() did before authTagLength was set. */
 function encryptWithoutAuthTagLength(plaintext: string): string {
   const source = process.env.ENCRYPTION_KEY || config.jwtSecret;
@@ -89,5 +95,56 @@ describe('field encryption AES-256-GCM', () => {
   it('rejects an empty authentication tag', () => {
     const blob = encrypt('secret');
     assert.throws(() => decrypt(withTag(blob, Buffer.alloc(0))));
+  });
+
+  it('round-trips empty plaintext with empty ciphertext', () => {
+    const blob = encrypt('');
+    assert.match(blob, /^enc:[0-9a-f]{24}:[0-9a-f]{32}:$/);
+    assert.equal(decrypt(blob), '');
+  });
+
+  it('rejects an IV with a non-hex suffix', () => {
+    const blob = encrypt('secret');
+    const [, ivHex] = partsOf(blob);
+    assert.throws(() => decrypt(withPart(blob, 1, `${ivHex}zz`)), /Invalid encrypted format/);
+  });
+
+  it('rejects an IV with an extra hex character', () => {
+    const blob = encrypt('secret');
+    const [, ivHex] = partsOf(blob);
+    assert.throws(() => decrypt(withPart(blob, 1, `${ivHex}a`)), /Invalid encrypted format/);
+  });
+
+  it('rejects an authentication tag with a non-hex suffix', () => {
+    const blob = encrypt('secret');
+    const [, , tagHex] = partsOf(blob);
+    assert.throws(() => decrypt(withPart(blob, 2, `${tagHex}zz`)), /Invalid encrypted format/);
+  });
+
+  it('rejects an authentication tag with an extra hex character', () => {
+    const blob = encrypt('secret');
+    const [, , tagHex] = partsOf(blob);
+    assert.throws(() => decrypt(withPart(blob, 2, `${tagHex}a`)), /Invalid encrypted format/);
+  });
+
+  it('rejects ciphertext with a non-hex suffix', () => {
+    const blob = encrypt('secret');
+    const [, , , ctHex] = partsOf(blob);
+    assert.throws(() => decrypt(withPart(blob, 3, `${ctHex}zz`)), /Invalid encrypted format/);
+  });
+
+  it('rejects odd-length ciphertext', () => {
+    const blob = encrypt('secret');
+    const [, , , ctHex] = partsOf(blob);
+    assert.throws(() => decrypt(withPart(blob, 3, `${ctHex}a`)), /Invalid encrypted format/);
+  });
+
+  it('rejects ciphertext with interior non-hex characters', () => {
+    const blob = encrypt('secret');
+    const [, , , ctHex] = partsOf(blob);
+    assert.throws(
+      () => decrypt(withPart(blob, 3, `${ctHex.slice(0, 2)}zz${ctHex.slice(2)}`)),
+      /Invalid encrypted format/,
+    );
   });
 });
