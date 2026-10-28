@@ -581,5 +581,123 @@ class PrereleaseWorkflowTests(unittest.TestCase):
             self.assertNotIn("docker", result.stdout + result.stderr)
 
 
+class PrivateBetaPublishTests(unittest.TestCase):
+    def setUp(self):
+        self.wf = workflow("publish-discord-bridge-private-beta.yml")
+        self.release = workflow("release-please.yml")
+        self.publish = workflow("publish-images.yml")
+        self.text = (ROOT / ".github/workflows/publish-discord-bridge-private-beta.yml").read_text()
+
+    def test_manual_only_and_not_on_the_stable_path(self):
+        self.assertEqual(set(self.wf["on"]), {"workflow_dispatch"})
+        self.assertNotIn("push", self.wf["on"])
+        self.assertNotIn("workflow_call", self.wf["on"])
+        self.assertNotIn("pull_request_target", self.wf["on"])
+        self.assertEqual(self.wf["env"]["SOURCE_PR"], "504")
+        for other in (self.release, self.publish):
+            self.assertNotIn("publish-discord-bridge-private-beta", yaml.dump(other))
+
+    def test_build_cannot_write_packages_and_publish_needs_approval(self):
+        self.assertEqual(self.wf["permissions"], {"contents": "read"})
+        build = self.wf["jobs"]["verify-and-build"]
+        attest = self.wf["jobs"]["attest"]
+        publish = self.wf["jobs"]["publish"]
+        self.assertEqual(build["permissions"], {"contents": "read", "pull-requests": "read"})
+        self.assertNotEqual(build["permissions"].get("packages"), "write")
+        self.assertNotEqual(build["permissions"].get("id-token"), "write")
+        self.assertEqual(attest["permissions"]["id-token"], "write")
+        self.assertEqual(attest["permissions"]["attestations"], "write")
+        self.assertNotEqual(attest["permissions"].get("packages"), "write")
+        self.assertEqual(publish["environment"], "discord-bridge-private-beta")
+        self.assertEqual(publish["needs"], ["verify-and-build", "attest"])
+        self.assertEqual(publish["permissions"]["packages"], "write")
+        self.assertNotEqual(publish["permissions"].get("id-token"), "write")
+        self.assertNotIn("contents: write", self.text)
+        for job in (build, attest, publish):
+            self.assertIn("refs/heads/main", job["if"])
+
+    def test_publish_loads_the_artifact_and_never_rebuilds(self):
+        publish = self.wf["jobs"]["publish"]
+        runs = "\n".join(step.get("run", "") for step in publish["steps"])
+        uses = [step.get("uses", "") for step in publish["steps"]]
+        self.assertTrue(any("download-artifact@" in item for item in uses))
+        checkout = [step for step in publish["steps"] if "actions/checkout@" in step.get("uses", "")]
+        self.assertEqual(len(checkout), 1)
+        self.assertEqual(checkout[0]["with"]["ref"], "${{ github.sha }}")
+        self.assertNotIn("inputs.commit", yaml.dump(checkout[0]))
+        self.assertIn("docker load", runs)
+        self.assertNotRegex(runs, r"docker build(?!x)")
+        self.assertNotIn("docker run", runs)
+        self.assertNotIn("packages/discord-bridge/scripts/", runs)
+        self.assertIn("verify_private_beta_attestation.py", runs)
+        self.assertIn("verify-after-push", runs)
+        self.assertIn("require-private", runs)
+        self.assertNotIn("-f visibility=private", self.text)
+        push = next(step for step in publish["steps"] if step.get("name") == "Push commit-specific tag only")
+        confirm = next(
+            step
+            for step in publish["steps"]
+            if step.get("name") == "Confirm private visibility and deny anonymous pull"
+        )
+        self.assertEqual(push.get("id"), "push")
+        self.assertIn("always()", confirm.get("if", ""))
+        self.assertIn("steps.push.outcome != 'skipped'", confirm.get("if", ""))
+        self.assertNotIn("provenance.json", runs)
+        self.assertIn("private-beta-", runs)
+        self.assertNotIn(":latest", runs)
+        self.assertNotIn("dockerhub", yaml.dump(self.wf).lower())
+
+    def test_confirm_token_requires_the_full_sha(self):
+        guard = next(
+            step
+            for step in self.wf["jobs"]["verify-and-build"]["steps"]
+            if step.get("name") == "Validate commit and confirm token"
+        )
+        sha = "9ea992fe84203c7cf5b6b89c6a2a876c25a297b3"
+        accepted = [(sha, f"publish-private-beta-{sha}")]
+        rejected = [
+            (sha, "publish-private-beta-deadbeef"),
+            ("deadbeef", f"publish-private-beta-{'d' * 40}"),
+            (sha.upper(), f"publish-private-beta-{sha.upper()}"),
+            ("", f"publish-private-beta-{sha}"),
+        ]
+        for commit, confirm, ok in [(c, t, True) for c, t in accepted] + [(c, t, False) for c, t in rejected]:
+            with self.subTest(commit=commit, confirm=confirm), tempfile.NamedTemporaryFile("w") as out:
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "COMMIT": commit, "CONFIRM": confirm, "GITHUB_OUTPUT": out.name},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+
+    def test_attest_job_never_runs_pr_or_image_code(self):
+        attest = self.wf["jobs"]["attest"]
+        blob = yaml.dump(attest)
+        runs = "\n".join(step.get("run", "") for step in attest["steps"])
+        checkout = [step for step in attest["steps"] if "actions/checkout@" in step.get("uses", "")]
+        self.assertEqual(len(checkout), 1)
+        self.assertEqual(checkout[0]["with"]["ref"], "${{ github.sha }}")
+        self.assertIn("actions/attest@", " ".join(step.get("uses", "") for step in attest["steps"]))
+        self.assertIn("inputs.commit", blob)
+        self.assertIn("predicate.json", blob)
+        self.assertNotIn("docker", runs.lower())
+        self.assertNotIn("packages/discord-bridge", blob)
+        self.assertNotIn("provenance.json", blob)
+
+    def test_build_saves_a_tarball_without_self_checksum_trust(self):
+        names = [step.get("name") for step in self.wf["jobs"]["verify-and-build"]["steps"]]
+        self.assertLess(names.index("Save image tarball"), names.index("Upload image tarball"))
+        self.assertLess(names.index("Upload image tarball"), names.index("Container security and mount probe"))
+        save = next(
+            step
+            for step in self.wf["jobs"]["verify-and-build"]["steps"]
+            if step.get("name") == "Save image tarball"
+        )
+        self.assertIn("docker save", save["run"])
+        self.assertNotIn("sha256sum", save["run"])
+        self.assertNotIn("provenance.json", save["run"])
+
+
 if __name__ == "__main__":
     unittest.main()
