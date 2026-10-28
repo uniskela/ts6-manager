@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """GHCR privacy checks that do not trust a raw unauthenticated 401.
 
-Require an already-private package before push. After push, complete the
-Registry v2 bearer-token flow and fail closed on public access or errors.
-Anonymous HTTP 200 or public visibility retracts only the pushed tag version.
+Require an already-private package before push. After push, confirm visibility
+via the authenticated Packages API, then complete the Registry v2 bearer-token
+flow. Anonymous token-endpoint HTTP 401/403 counts as denied only when that
+API says private for this owner/name. A bearer that can read the
+manifest, or public visibility, retracts only the pushed tag version.
+Fail closed on malformed responses, transport errors, rate limits, and
+unexpected status codes.
 """
 from __future__ import annotations
 
@@ -144,20 +148,49 @@ def _status(url: str, headers: dict[str, str], opener) -> int:
         raise SystemExit(f"registry request failed closed: {exc}") from exc
 
 
-def anonymous_pull_denied(owner: str, name: str, tag: str, opener=urllib.request.urlopen) -> str:
-    token_url = f"https://ghcr.io/token?service=ghcr.io&scope=repository:{owner}/{name}:pull"
+def registry_token_url(owner: str, name: str) -> str:
+    return f"https://ghcr.io/token?service=ghcr.io&scope=repository:{owner}/{name}:pull"
+
+
+def anonymous_pull_denied(
+    owner: str,
+    name: str,
+    tag: str,
+    opener=urllib.request.urlopen,
+    runner=subprocess.run,
+    visibility: str | None = None,
+) -> str:
+    if visibility is None:
+        info, _ = assert_private_package(owner, name, runner=runner)
+        visibility = info.get("visibility")
+    token_url = registry_token_url(owner, name)
     req = urllib.request.Request(token_url, method="GET")
+    body: object | None = None
     try:
         with opener(req, timeout=30) as resp:
-            if int(resp.status) != 200:
-                raise SystemExit(f"anonymous token endpoint returned HTTP {resp.status}")
-            body = json.load(resp)
+            token_status = int(resp.status)
+            if token_status == 200:
+                try:
+                    body = json.load(resp)
+                except Exception as exc:  # noqa: BLE001
+                    raise SystemExit(f"anonymous token response malformed: {exc}") from exc
     except urllib.error.HTTPError as exc:
-        raise SystemExit(f"anonymous token endpoint returned HTTP {exc.code}") from exc
+        token_status = int(exc.code)
     except SystemExit:
         raise
     except Exception as exc:  # noqa: BLE001
         raise SystemExit(f"anonymous token request failed closed: {exc}") from exc
+    if token_status in (401, 403):
+        if visibility != "private":
+            raise SystemExit(
+                f"anonymous token endpoint returned HTTP {token_status} "
+                "without private package confirmation"
+            )
+        return f"anonymous_token_status={token_status}"
+    if token_status != 200:
+        raise SystemExit(f"anonymous token endpoint returned HTTP {token_status}")
+    if not isinstance(body, dict):
+        raise SystemExit("anonymous token response malformed: expected object")
     token = (body.get("token") or body.get("access_token") or "").strip()
     if not token:
         raise SystemExit("anonymous token endpoint returned no token")
@@ -194,7 +227,9 @@ def verify_after_push(
             f"package visibility={vis!r} after push; public packages cannot be made private"
         )
     try:
-        anon = anonymous_pull_denied(owner, name, tag, opener=opener)
+        anon = anonymous_pull_denied(
+            owner, name, tag, opener=opener, runner=runner, visibility=vis
+        )
     except SystemExit as exc:
         errors.append(str(exc))
         if "anonymous pull succeeded" in str(exc):

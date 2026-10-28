@@ -182,15 +182,31 @@ class FakeResp:
 class FakeOpener:
     def __init__(self, mapping):
         self.mapping = mapping
+        self.urls = []
 
     def __call__(self, req, timeout=30):
         url = req if isinstance(req, str) else req.full_url
+        self.urls.append(url)
         for key, (status, body) in self.mapping.items():
             if key in url:
                 if status >= 400:
                     raise urllib.error.HTTPError(url, status, "err", hdrs=None, fp=None)
                 return FakeResp(status, body)
         raise RuntimeError(url)
+
+
+PKG = "users/uniskela/packages/container/ts6-manager%2Fdiscord-bridge"
+PKG_VERSIONS = f"{PKG}/versions?per_page=100&page=1"
+
+
+def private_pkg_gh(**extra):
+    routes = {PKG: {"visibility": "private"}, **extra}
+    return FakeGh(routes)
+
+
+def public_pkg_gh(**extra):
+    routes = {PKG: {"visibility": "public"}, **extra}
+    return FakeGh(routes)
 
 
 class GhcrTests(unittest.TestCase):
@@ -265,6 +281,7 @@ class GhcrTests(unittest.TestCase):
 
     def test_bearer_flow_fails_on_public_manifest_and_fail_closed(self):
         token = json.dumps({"token": "anon"}).encode()
+        gh = private_pkg_gh()
         public = FakeOpener(
             {
                 "ghcr.io/token": (200, token),
@@ -272,7 +289,9 @@ class GhcrTests(unittest.TestCase):
             }
         )
         with self.assertRaises(SystemExit) as pub:
-            anonymous_pull_denied("uniskela", "ts6-manager/discord-bridge", "t", opener=public)
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=public, runner=gh
+            )
         self.assertIn("public", str(pub.exception))
         denied = FakeOpener(
             {
@@ -280,13 +299,82 @@ class GhcrTests(unittest.TestCase):
                 "/manifests/": (401, b""),
             }
         )
-        self.assertIn("401", anonymous_pull_denied("uniskela", "ts6-manager/discord-bridge", "t", opener=denied))
-        token_fail = FakeOpener({"ghcr.io/token": (401, b"")})
-        with self.assertRaises(SystemExit):
-            anonymous_pull_denied("uniskela", "ts6-manager/discord-bridge", "t", opener=token_fail)
+        self.assertIn(
+            "401",
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=denied, runner=gh
+            ),
+        )
         boom = FakeOpener({})
         with self.assertRaises(SystemExit):
-            anonymous_pull_denied("uniskela", "ts6-manager/discord-bridge", "t", opener=boom)
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=boom, runner=gh
+            )
+
+    def test_private_token_endpoint_401_and_403_count_as_denied(self):
+        gh = private_pkg_gh()
+        for code in (401, 403):
+            opener = FakeOpener({"ghcr.io/token": (code, b"")})
+            msg = anonymous_pull_denied(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                "t",
+                opener=opener,
+                runner=gh,
+            )
+            self.assertIn(str(code), msg)
+            self.assertTrue(any("repository:uniskela/ts6-manager/discord-bridge:pull" in url for url in opener.urls))
+            self.assertFalse(any("/manifests/" in url for url in opener.urls))
+
+    def test_token_401_without_private_confirmation_fail_closed(self):
+        opener = FakeOpener({"ghcr.io/token": (401, b"")})
+        with self.assertRaises(SystemExit) as missing:
+            anonymous_pull_denied(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                "t",
+                opener=opener,
+                runner=FakeGh({PKG: None, "orgs/uniskela/packages/container/ts6-manager%2Fdiscord-bridge": None}),
+            )
+        self.assertNotIn("anonymous_token_status", str(missing.exception))
+        self.assertIn("missing", str(missing.exception).lower())
+        with self.assertRaises(SystemExit) as public:
+            anonymous_pull_denied(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                "t",
+                opener=FakeOpener({"ghcr.io/token": (401, b"")}),
+                runner=public_pkg_gh(),
+                visibility="public",
+            )
+        self.assertIn("without private package confirmation", str(public.exception))
+
+    def test_token_endpoint_fail_closed_on_malformed_rate_limit_and_transport(self):
+        gh = private_pkg_gh()
+        malformed = FakeOpener({"ghcr.io/token": (200, b"{")})
+        with self.assertRaises(SystemExit) as bad:
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=malformed, runner=gh
+            )
+        self.assertIn("malformed", str(bad.exception).lower())
+        limited = FakeOpener({"ghcr.io/token": (429, b"")})
+        with self.assertRaises(SystemExit) as rate:
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=limited, runner=gh
+            )
+        self.assertIn("429", str(rate.exception))
+        unexpected = FakeOpener({"ghcr.io/token": (500, b"")})
+        with self.assertRaises(SystemExit) as boom:
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=unexpected, runner=gh
+            )
+        self.assertIn("500", str(boom.exception))
+        transport = FakeOpener({})
+        with self.assertRaises(SystemExit) as down:
+            anonymous_pull_denied(
+                "uniskela", "ts6-manager/discord-bridge", "t", opener=transport, runner=gh
+            )
+        self.assertIn("failed closed", str(down.exception))
 
     def test_verify_after_push_retracts_anonymous_200_not_other_versions(self):
         tag = f"private-beta-{COMMIT}"
@@ -362,6 +450,77 @@ class GhcrTests(unittest.TestCase):
         )
         self.assertIn("visibility=private", msg)
         self.assertFalse(any("--method" in args and "DELETE" in args for args in calls))
+
+    def test_verify_after_push_private_token_401_does_not_retract(self):
+        tag = f"private-beta-{COMMIT}"
+        gh = FakeGh(
+            {
+                PKG: {"visibility": "private"},
+                PKG_VERSIONS: [{"id": 99, "metadata": {"container": {"tags": [tag]}}}],
+                f"{PKG}/versions/99": {},
+            }
+        )
+        calls = []
+
+        def recording(args, capture_output=True, text=True):
+            calls.append(args)
+            return gh(args, capture_output=capture_output, text=text)
+
+        msg = verify_after_push(
+            "uniskela",
+            "ts6-manager/discord-bridge",
+            tag,
+            runner=recording,
+            opener=FakeOpener({"ghcr.io/token": (401, b"")}),
+        )
+        self.assertIn("visibility=private", msg)
+        self.assertIn("401", msg)
+        self.assertFalse(any("--method" in args and "DELETE" in args for args in calls))
+
+    def test_verify_after_push_retracts_when_api_says_public_even_if_token_401(self):
+        tag = f"private-beta-{COMMIT}"
+        gh = FakeGh(
+            {
+                PKG: {"visibility": "public"},
+                PKG_VERSIONS: [{"id": 99, "metadata": {"container": {"tags": [tag]}}}],
+                f"{PKG}/versions/99": {},
+            }
+        )
+        calls = []
+
+        def recording(args, capture_output=True, text=True):
+            calls.append(args)
+            return gh(args, capture_output=capture_output, text=text)
+
+        with self.assertRaises(SystemExit) as exc:
+            verify_after_push(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                tag,
+                runner=recording,
+                opener=FakeOpener({"ghcr.io/token": (401, b"")}),
+            )
+        msg = str(exc.exception)
+        self.assertIn("visibility='public'", msg)
+        self.assertIn(f"retracted {tag}", msg)
+        self.assertTrue(any("--method" in args and "DELETE" in args for args in calls))
+
+    def test_verify_after_push_packages_api_failure_fail_closed_no_retract(self):
+        tag = f"private-beta-{COMMIT}"
+
+        def failing(args, capture_output=True, text=True):
+            return FakeProc(returncode=1, stdout="", stderr="gh: API rate limit exceeded (HTTP 403)")
+
+        with self.assertRaises(SystemExit) as exc:
+            verify_after_push(
+                "uniskela",
+                "ts6-manager/discord-bridge",
+                tag,
+                runner=failing,
+                opener=FakeOpener({"ghcr.io/token": (401, b"")}),
+            )
+        self.assertIn("rate limit", str(exc.exception).lower())
+        self.assertNotIn("retracted", str(exc.exception))
 
     def test_verify_after_push_keeps_exposure_if_retract_listing_fails(self):
         tag = f"private-beta-{COMMIT}"
