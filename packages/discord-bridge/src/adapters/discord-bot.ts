@@ -885,6 +885,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
    * the resulting state change is not mistaken for a failure and never triggers a fresh join.
    */
   private discardConnection(): void {
+    this.clearGraceTimer();
+    this.lastDaveLifecycleKey = null;
     const conn = this.connection;
     this.connection = null;
     this.daveOk = false;
