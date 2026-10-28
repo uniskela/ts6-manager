@@ -80,8 +80,12 @@ are included in the failure. Cleanup does **not** undo a pull that already
 happened, and it does not make a public package private.
 
 Registry v2 anonymous bearer flow: HTTP 200 on the manifest is confirmed
-public access and triggers that retraction. Token or transport errors fail
-closed without retracting. A raw unauthenticated 401 is not proof of privacy.
+public access and triggers that retraction. If GHCR withholds an anonymous
+token (HTTP 401/403), that counts as denied only after the Packages API
+independently reports `visibility=private` for this repository. Malformed
+token bodies, transport errors, rate limits, and unexpected status codes
+fail closed without retracting. A raw unauthenticated 401 is not proof of
+privacy by itself.
 
 ## Attestation verification
 
