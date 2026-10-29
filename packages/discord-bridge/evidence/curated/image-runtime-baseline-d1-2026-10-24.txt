@@ -1,0 +1,24 @@
+FAIL  smoke:deps rc=1
+    at async Engine.findProjectSpec (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14051:40)
+    at async Engine.executePackageManagerRequest (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14105:24)
+    at async Object.runMain (/usr/local/lib/node_modules/corepack/dist/lib/corepack.cjs:14838:7) {
+  [cause]: [TypeError: fetch failed] {
+    [cause]: Error: getaddrinfo EAI_AGAIN registry.npmjs.org
+        at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:123:26) {
+      errno: -3001,
+      code: 'EAI_AGAIN',
+      syscall: 'getaddrinfo',
+      hostname: 'registry.npmjs.org'
+    }
+  }
+}
+
+Node.js v24.22.1
+PASS  runs as uid 1000
+PASS  node_modules is not writable
+PASS  .vendor is not writable
+PASS  src is not writable
+PASS  package.json is not writable
+PASS  evidence/ is the only writable path
+FAIL  entrypoint ["docker-entrypoint.sh"]
+PASS  registry.npmjs.org is unreachable from the container

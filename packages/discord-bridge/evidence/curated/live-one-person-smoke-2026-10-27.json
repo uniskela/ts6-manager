@@ -1,0 +1,55 @@
+{
+  "id": "live-one-person-smoke-2026-10-27",
+  "title": "One-person Discord ↔ TeamSpeak audio smoke (not D1 acceptance)",
+  "result": "PASS",
+  "provenance": "LIVE",
+  "notes": "Human-first join on the disposable TS6 laboratory. Operator attested audible audio both ways, mainly stable, with occasional short dropouts and about one second of perceived delay. Not multi-speaker, failover, or membership-transition evidence.",
+  "image": "ts6-discord-bridge-lab:d1-2d8e52a-epoch",
+  "sourceSha": "2d8e52a",
+  "singleAttempt": true,
+  "dave": {
+    "protocolVersion": 1,
+    "ready": true,
+    "nativeStatus": 3,
+    "establishedMs": 511143,
+    "replacements": 0,
+    "decryptErrors": 0,
+    "recoveries": 0,
+    "lastKind": "commit",
+    "lastOk": true,
+    "lastTransition": 0
+  },
+  "election": {
+    "receiver": "slot-0",
+    "generation": 2,
+    "duplicateReceivers": [],
+    "inChannelSlots": 1
+  },
+  "d2t": {
+    "framesSent": 1295,
+    "selfSourceDrops": 0,
+    "fenceDroppedAtMix": 0,
+    "daveDropped": 0,
+    "admissionDropped": 0,
+    "decodeErrors": 0,
+    "transitLatencyMs": { "n": 1295, "p50": 17, "p95": 40, "max": 69 }
+  },
+  "t2d": {
+    "decodeErrors": 1,
+    "unsupportedFrames": 0,
+    "routedIdentities": 1,
+    "overflowLatencyN": 0
+  },
+  "errors": {
+    "callbackErrors": 0,
+    "tickErrors": { "tsToDiscord": 0, "discordToTs": 0 },
+    "scheduledReconnects": 0
+  },
+  "resources": {
+    "cpuAvgPercent": 2.1,
+    "cpuMaxPercent": 16.7,
+    "rssAvgMb": 136.5,
+    "rssMaxMb": 138.2,
+    "samples": 511
+  }
+}

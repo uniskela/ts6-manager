@@ -690,7 +690,9 @@ export class Ts3Client extends EventEmitter {
         break;
       case PacketType.Voice:
       case PacketType.VoiceWhisper:
-        this.emit("voice", data);
+        // The second argument is the transport packet type (0 Voice, 1 VoiceWhisper). Existing
+        // listeners ignore it; the Discord bridge uses it to forward channel voice only.
+        this.emit("voice", data, packetType);
         break;
     }
   }

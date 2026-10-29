@@ -1,0 +1,126 @@
+{
+  "recordedAt": "2026-10-25",
+  "oldCommit": "0256a3bf61bf2adc4ac06e600581f30d678f4c0e",
+  "newCommit": "see PR",
+  "provenance": "SIMULATED unless a row says otherwise. Each 'before' was run in a clean extract of the reviewed commit (git archive 0256a3b) with only the test harness file src/testing/fake-voice.ts replaced by the new one (it adds adapter switches refuseNext/failCreate, nothing in production code). 'After' is the fixed code. Not live Discord.",
+  "results": [
+    {
+      "id": "R1",
+      "defect": "failure-driven rebuild bypasses the recovery budget",
+      "class": "behavioural",
+      "reproductions": {
+        "A_real_rejoin_refusal_maxRecoveries1": {
+          "before": {
+            "afterFirstRebuild": {
+              "connections": 2,
+              "charged": 0
+            },
+            "secondFailureJoin": "ok",
+            "connectionsTotal": 3,
+            "charged": 1
+          },
+          "after": {
+            "afterFirstRebuild": {
+              "connections": 2,
+              "charged": 1
+            },
+            "secondFailureJoin": "REBUILD_BUDGET_EXHAUSTED",
+            "connectionsTotal": 2,
+            "charged": 1
+          }
+        },
+        "B_destroyed_during_target_resolution_5_rounds_maxRecoveries1": {
+          "before": {
+            "outcomes": [
+              "ok",
+              "ok",
+              "ok",
+              "ok",
+              "ok"
+            ],
+            "connectionsTotal": 6,
+            "charged": 0,
+            "healthy": true
+          },
+          "after": {
+            "outcomes": [
+              "ok",
+              "REBUILD_BUDGET_EXHAUSTED",
+              "REBUILD_BUDGET_EXHAUSTED",
+              "REBUILD_BUDGET_EXHAUSTED",
+              "REBUILD_BUDGET_EXHAUSTED"
+            ],
+            "connectionsTotal": 2,
+            "charged": 1,
+            "healthy": false
+          }
+        },
+        "C_construction_throws_6_attempts_maxRecoveries1": {
+          "before": {
+            "outcomes": [
+              "adapter unavailable",
+              "adapter unavailable",
+              "adapter unavailable",
+              "adapter unavailable",
+              "adapter unavailable",
+              "adapter unavailable"
+            ],
+            "charged": 0
+          },
+          "after": {
+            "outcomes": [
+              "adapter unavailable",
+              "adapter unavailable",
+              "REBUILD_BUDGET_EXHAUSTED",
+              "REBUILD_BUDGET_EXHAUSTED",
+              "REBUILD_BUDGET_EXHAUSTED",
+              "REBUILD_BUDGET_EXHAUSTED"
+            ],
+            "charged": 1
+          }
+        }
+      },
+      "tests": "discord-bot.budget.test.ts: 4 of the first 7 failed on the unfixed code (refused rejoin 0 !== 1; destroyed-during-lookup 'ok | ok | ok | ok | ok'; Disconnected-during-lookup 0 !== 1; construction exception not bounded); the other 3 are guards. An eighth test (a failure while the join waits for DAVE) was added and mutation-checked. runtime.recovery.test.ts adds the single wake-up test (a guard of existing behaviour, it passed before the change to the adapter)."
+    },
+    {
+      "id": "R2",
+      "defect": "test verifier accepts an unexpected reported file",
+      "class": "behavioural",
+      "reproduction": {
+        "fixture": "package-shaped temp dir; scripts/a.test.mjs imports ../extra/sneaky.mjs, which registers one passing test; expected map lists only a.test.mjs",
+        "before": "verified: 2 tests in 2 files, none failed, skipped, todo or cancelled; exit 0",
+        "after": "TEST RUN NOT ACCEPTED: UNEXPECTED FILE extra/sneaky.mjs: reported test results but is not a discovered test file; exit 1"
+      },
+      "identityAssessment": "196 tests, three full runs, identical multiset of (file, name) in all three; 0 duplicate (file, name) pairs; the 5 titles with digit runs are literal text. Names are therefore a stable identity and expected-tests.json now lists them.",
+      "tests": "scripts/run-tests.fixture.test.mjs (5, real command in throwaway packages), scripts/test-verify.test.mjs (8, was 4)"
+    },
+    {
+      "id": "R3",
+      "defect": "pending identity lookups are unbounded",
+      "class": "behavioural",
+      "reproduction": {
+        "scenario": "100 distinct unknown speakers, lookup never settles, maxEntries=4",
+        "before": "lookups started=100, unsettled=100, admitted=0",
+        "after": "lookups started=8, unsettled=8, refused=92, admitted=0"
+      },
+      "tests": "human-filter.test.ts (+10), discord-bot.receive.test.ts (+2). Mutation-checked: removing the cap fails 3 tests; applying late answers regardless of cancellation fails 3; removing the bot's forget/reset wiring fails the bot-level test."
+    },
+    {
+      "id": "R4",
+      "defect": "ticker exception regression is ineffective",
+      "class": "mutation",
+      "reproduction": {
+        "mutation": "remove the try/catch around t2d.tickOverflow/d2t.tick in BridgeRuntime.start()",
+        "before": "old test 'a failure inside the 20 ms ticker does not escape as an uncaught exception': PASS (vacuous)",
+        "after": "3 new tests: FAIL with the injected error escaping; with the catch in place all 3 PASS"
+      }
+    },
+    {
+      "id": "Sonar",
+      "defect": "javascript:S2871 on scripts/run-tests.mjs line 35",
+      "class": "static analysis",
+      "before": "PR 504 quality gate ERROR; condition new_reliability_rating actual 4 (D), threshold 1",
+      "fix": "explicit UTF-16 code-unit comparator (byCodeUnit); same order as the default sort for strings; gate re-evaluated by CI after push (see report)"
+    }
+  ]
+}

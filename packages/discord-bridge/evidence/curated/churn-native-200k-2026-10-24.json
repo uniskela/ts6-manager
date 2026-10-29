@@ -1,0 +1,140 @@
+{
+  "at": "2026-10-24T11:27:58.524Z",
+  "node": "v24.21.0",
+  "checks": [
+    {
+      "id": "churn-release-on-close",
+      "title": "Native decoders are released when streams close (200000 distinct participants)",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "per-user decoders at the end 0, live native codecs 1 (the one shared encoder); RSS grew 0.8 MB and heap 0 MB after a 100000-cycle warm-up, over the next 100000 cycles"
+    },
+    {
+      "id": "churn-idle-sweep",
+      "title": "With no close notification, idle sweep and the decoder cap keep live decoders bounded",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "live decoders at the end 51 (cap 256, idle 5 s); RSS grew -6.2 MB and heap 0 MB after a 100000-cycle warm-up, over the next 100000 cycles"
+    }
+  ],
+  "data": {
+    "churn": [
+      {
+        "name": "stream-close",
+        "withClose": true,
+        "cycles": 200000,
+        "decodersCreated": 200001,
+        "marks": [
+          {
+            "cycle": 100000,
+            "liveDecoders": 1,
+            "rssMB": 165,
+            "heapMB": 8
+          },
+          {
+            "cycle": 200000,
+            "liveDecoders": 1,
+            "rssMB": 165.8,
+            "heapMB": 8
+          }
+        ],
+        "trend": [
+          {
+            "cycle": 20000,
+            "rssMB": 163.8
+          },
+          {
+            "cycle": 40000,
+            "rssMB": 164.4
+          },
+          {
+            "cycle": 60000,
+            "rssMB": 164.5
+          },
+          {
+            "cycle": 80000,
+            "rssMB": 164.3
+          },
+          {
+            "cycle": 120000,
+            "rssMB": 164.8
+          },
+          {
+            "cycle": 140000,
+            "rssMB": 164.8
+          },
+          {
+            "cycle": 160000,
+            "rssMB": 164.1
+          },
+          {
+            "cycle": 180000,
+            "rssMB": 164.1
+          }
+        ],
+        "growthRssMB": 0.8,
+        "growthHeapMB": 0,
+        "finalLive": 1,
+        "pipelineDecoders": 0
+      },
+      {
+        "name": "idle-sweep-only",
+        "withClose": false,
+        "cycles": 200000,
+        "decodersCreated": 200001,
+        "marks": [
+          {
+            "cycle": 100000,
+            "liveDecoders": 51,
+            "rssMB": 199.6,
+            "heapMB": 8.1
+          },
+          {
+            "cycle": 200000,
+            "liveDecoders": 51,
+            "rssMB": 193.4,
+            "heapMB": 8.1
+          }
+        ],
+        "trend": [
+          {
+            "cycle": 20000,
+            "rssMB": 165.8
+          },
+          {
+            "cycle": 40000,
+            "rssMB": 169.2
+          },
+          {
+            "cycle": 60000,
+            "rssMB": 167.3
+          },
+          {
+            "cycle": 80000,
+            "rssMB": 195.4
+          },
+          {
+            "cycle": 120000,
+            "rssMB": 199.1
+          },
+          {
+            "cycle": 140000,
+            "rssMB": 199.5
+          },
+          {
+            "cycle": 160000,
+            "rssMB": 199.6
+          },
+          {
+            "cycle": 180000,
+            "rssMB": 193.5
+          }
+        ],
+        "growthRssMB": -6.2,
+        "growthHeapMB": 0,
+        "finalLive": 51,
+        "pipelineDecoders": 50
+      }
+    ]
+  }
+}

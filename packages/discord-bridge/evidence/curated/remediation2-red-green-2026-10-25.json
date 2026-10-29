@@ -1,0 +1,128 @@
+{
+  "recordedAt": "2026-10-25",
+  "oldCommit": "d890b5de8b298239e16053aa27f61ab105f36665",
+  "newCommit": "see PR",
+  "provenance": "SIMULATED: reviewer probes (read before running) against the real VoiceConnection/AudioPlayer/VoiceReceiver/SpeakingMap/DAVE wrapper with a fake gateway, networking and native MLS payloads; native Opus. No live Discord.",
+  "note": "A probe asserts the defect, so exit 0 on the old commit means reproduced and a failing assertion or missing symptom on the new commit means the defect is gone. Classes: behavioural = same probe, symptom gone; new-API = probe uses a removed API; guard = probe precondition changed by another fix.",
+  "f12": "Not probe-based: node --test --test-force-exit with the TAP reporter piped truncated core.test.ts (30 tests) to 19/24/27 on several of 12 runs, always exit code 0; scripts/run-tests.mjs runs without forced exit and fails on missing, skipped, timed-out or miscounted tests.",
+  "results": [
+    {
+      "id": "F1",
+      "defect": "destroyed Discord connections never reconnect",
+      "probe": "independent/discord-destroyed.mts",
+      "class": "behavioural",
+      "summary": "old: 1 connection, status destroyed, 3 joins fail; new: 2 connections, ready, healthy",
+      "oldExit": 0,
+      "oldOutput": "{\n  readyConnections: 1,\n  status: 'destroyed',\n  healthy: false,\n  errors: [\n    'The operation was aborted',\n    'The operation was aborted',\n    'The operation was aborted'\n  ]\n}",
+      "newOutput": "{\n  readyConnections: 2,\n  status: 'ready',\n  healthy: true,\n  errors: [ 'unexpected success', 'unexpected success', 'unexpected success' ]\n}\nAssertionError [ERR_ASSERTION]: Expected \"actual\" to be reference-equal to \"expected\":\n+ actual - expected\n... Skipped lines\n  <ref *1> VoiceConnection {"
+    },
+    {
+      "id": "F2",
+      "defect": "pending join survives runtime.stop()",
+      "probe": "independent/shutdown-late-target.ts",
+      "class": "behavioural",
+      "summary": "old: joinsAfterStopCompleted=1, connection ready, healthy; new: 0 joins, not healthy",
+      "oldExit": 0,
+      "oldOutput": "{\"runtime\":\"stopped\",\"joinsBeforeStopCompleted\":0,\"joinsAfterStopCompleted\":1,\"connection\":\"ready\",\"healthy\":true}",
+      "newOutput": "{\"runtime\":\"stopped\",\"joinsBeforeStopCompleted\":0,\"joinsAfterStopCompleted\":0,\"healthy\":false}\nAssertionError [ERR_ASSERTION]: demonstrated a voice join after runtime.stop completed\n0 !== 1\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: 0,\n  expected: 1,\n  operator: 'strictEqual',\n  diff: 'simple'\n}"
+    },
+    {
+      "id": "F3",
+      "defect": "failing receiver blocks failover while its replacement is built",
+      "probe": "independent/runtime-recovery-failover.ts",
+      "class": "new-API",
+      "summary": "probe calls DiscordBot.recover(), which was removed (the runtime is now the only reconnect owner); the behaviour is covered by runtime.recovery.test.ts 'elects and activates a healthy successor while the failed bot's replacement connection is unresolved' (mutation-checked); it cannot run on the reviewed commit",
+      "oldOutput": "{\"failed\":\"slot-0\",\"successor\":\"slot-1\",\"successorHealthy\":true,\"receiver\":\"slot-0\",\"failedConnection\":\"signalling\",\"failedHealthy\":false,\"admit\":false,\"successorSubs\":0}",
+      "newOutput": "<scratch>/wt-new/packages/discord-bridge/independent/runtime-recovery-failover.ts:18\nconst recovery=tests.get(failed)!.bot.recover('persistent decrypt failure');\nTypeError: tests.get(...).bot.recover is not a function"
+    },
+    {
+      "id": "F4",
+      "defect": "recovery budget bypassed by receive-stream errors",
+      "probe": "independent/recovery-limit-stream-errors.ts + shim (independent/f4-shim.ts)",
+      "class": "guard + shimmed behavioural",
+      "summary": "original probe: new code never subscribes on the first packet (speaker identity is resolved first, F6), so its precondition fails; with the speaker kept talking until subscribed: old 5 connections for maxRecoveries=1, new 2 connections (first + one rebuild) and the bot stays out of service",
+      "oldOutput": "{\"configuredMaxRecoveries\":1,\"actualStreamErrorRecoveryRequests\":4,\"createdConnections\":5,\"adapterRecoveries\":1,\"healthy\":true}",
+      "newOutput": "AssertionError [ERR_ASSERTION]: active receive subscription\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: undefined,\n  expected: true,\n  operator: '==',\n  diff: 'simple'\n}"
+    },
+    {
+      "id": "F5a",
+      "defect": "packet dispatched after DAVE loss between prepare and dispatch",
+      "probe": "independent/discord-dispatch.mts",
+      "class": "behavioural",
+      "summary": "old: 1 packet sent at protocol 0; new: nothing is dispatched",
+      "oldExit": 0,
+      "oldOutput": "{\n  protocolVersionAtSend: 0,\n  packetsSentAfterLoss: 1,\n  firstPacket: '44415645fc2a2a2a'\n}",
+      "newOutput": "<scratch>/wt-new/packages/discord-bridge/src/testing/fake-voice.ts:220\n    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);\nError: timed out waiting for queued packet sent after DAVE loss"
+    },
+    {
+      "id": "F5b",
+      "defect": "queued PCM forwarded to TS after live DAVE loss, before the watchdog",
+      "probe": "independent/dave-mix-window.ts",
+      "class": "behavioural",
+      "summary": "old: 1 frame forwarded; new: 0",
+      "oldExit": 0,
+      "oldOutput": "{\"protocolAtMix\":0,\"forwardedQueuedFrames\":1,\"reportedGeneration\":2}",
+      "newOutput": "{\"protocolAtMix\":0,\"forwardedQueuedFrames\":0,\"reportedGeneration\":2}\nAssertionError [ERR_ASSERTION]: queued PCM still reaches TS after actual DAVE loss, before the watchdog sees it\n0 !== 1\n  generatedMessage: false,\n  code: 'ERR_ASSERTION',\n  actual: 0,\n  expected: 1,\n  operator: 'strictEqual',\n  diff: 'simple'\n}"
+    },
+    {
+      "id": "F6",
+      "defect": "another bot account forwarded into TeamSpeak",
+      "probe": "independent/discord-human.mts",
+      "class": "behavioural",
+      "summary": "old: 1 subscription, forwarded; new: never subscribed or forwarded",
+      "oldExit": 0,
+      "oldOutput": "{\n  isKnownBot: true,\n  openSubscriptions: 1,\n  forwardedUsers: [ '123456789012345678' ]\n}",
+      "newOutput": "<scratch>/wt-new/packages/discord-bridge/src/testing/fake-voice.ts:220\n    if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);\nError: timed out waiting for known non-bridge bot audio forwarded"
+    },
+    {
+      "id": "F7",
+      "defect": "playback buffer retains 20 frames of stale audio",
+      "probe": "audio-review-probes.ts",
+      "class": "behavioural",
+      "summary": "old: heard 0-15 then 96-99; new: heard 96-99",
+      "oldExit": 0,
+      "oldOutput": "feed buffered 16 private queue 4 dropped 80\nheard packets [\n   0,  1,  2,  3,  4,  5,  6,\n   7,  8,  9, 10, 11, 12, 13,\n  14, 15, 96, 97, 98, 99\n]",
+      "newOutput": "feed buffered 1 private queue 4 dropped 96\nheard packets [ 96, 97, 98, 99 ]"
+    },
+    {
+      "id": "F8",
+      "defect": "valid 4 x 10 ms Opus packet rejected as unsupported",
+      "probe": "audio-sub20.ts",
+      "class": "behavioural",
+      "summary": "old: unsupported (40 ms); new: two 20 ms packets f5fffefffe, each decodes to 3840 bytes",
+      "oldExit": 0,
+      "oldOutput": "ten f4fffe framing code 0\nforty f704fffefffefffefffe decoded bytes 7680 split { kind: 'unsupported', durationMs: 40 }\nrepacketized twenty f5fffefffe decoded bytes 3840",
+      "newOutput": "ten f4fffe framing code 0\nforty f704fffefffefffefffe decoded bytes 7680 split {\n  kind: 'frames',\n  frames: [ <Buffer f5 ff fe ff fe>, <Buffer f5 ff fe ff fe> ]\n}\nrepacketized twenty f5fffefffe decoded bytes 3840"
+    },
+    {
+      "id": "F9",
+      "defect": "excluded MusicBot takes slot-0 and pushes a human to overflow",
+      "probe": "audio-excluded.ts",
+      "class": "behavioural",
+      "summary": "old: MusicBot in slot-0, human 5 on overflow, overflow bot joined; new: MusicBot has no destination, human 5 in slot-4, overflow bot not in channel",
+      "oldExit": 0,
+      "oldOutput": "excluded destination slot-0 human5 destination overflow overflow in channel true slot0 nickname [TS] MusicBot",
+      "newOutput": "excluded destination null human5 destination slot-4 overflow in channel false slot0 nickname [TS] User1"
+    },
+    {
+      "id": "F10",
+      "defect": "dispose is not terminal",
+      "probe": "audio-review-disposal.ts",
+      "class": "behavioural",
+      "summary": "old: queue 1 after dispose, frame heard after dispose, encoder recreated; new: queue 0, nothing heard, encoder null",
+      "oldExit": 0,
+      "oldOutput": "before dispose queues 1\nafter dispose queues 1\npost-dispose heard 1 encoder still present true",
+      "newOutput": "before dispose queues 1\nafter dispose queues 0\npost-dispose heard 0 encoder still present false"
+    },
+    {
+      "id": "F11",
+      "defect": "routing telemetry grows without bound",
+      "probe": "independent/routing-churn.ts",
+      "class": "behavioural",
+      "summary": "old: 40000 retained entries; new: no entry retained (the per-bot map is gone, the probe's assertion on its size throws)",
+      "oldExit": 0,
+      "oldOutput": "{\"participantsRemaining\":0,\"occupiedSlots\":0,\"decoders\":0,\"retainedDepartedRoutingEntries\":40000}",
+      "newOutput": "{\"participantsRemaining\":0,\"occupiedSlots\":0,\"decoders\":0}\nAssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n+ actual - expected\n+ undefined\n- 40000\n  generatedMessage: true,\n  code: 'ERR_ASSERTION',\n  actual: undefined,\n  expected: 40000,\n  operator: 'strictEqual',"
+    }
+  ]
+}

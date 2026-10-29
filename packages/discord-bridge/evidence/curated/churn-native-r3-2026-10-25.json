@@ -1,0 +1,172 @@
+{
+  "at": "2026-10-25T09:22:40.380Z",
+  "node": "v24.21.0",
+  "checks": [
+    {
+      "id": "churn-release-on-close",
+      "title": "Native decoders are released when streams close (40000 distinct participants)",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "per-user decoders at the end 0, live native codecs 1 (the one shared encoder); RSS grew 33.9 MB and heap 0 MB after a 20000-cycle warm-up, over the next 20000 cycles"
+    },
+    {
+      "id": "churn-idle-sweep",
+      "title": "With no close notification, idle sweep and the decoder cap keep live decoders bounded",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "live decoders at the end 51 (cap 256, idle 5 s); RSS grew 2.5 MB and heap 0 MB after a 20000-cycle warm-up, over the next 20000 cycles"
+    },
+    {
+      "id": "churn-ts-to-discord",
+      "title": "TeamSpeak to Discord: overflow speakers coming and going (40000 distinct people) leave no decoder or routing state, and dispose is terminal",
+      "result": "PASS",
+      "provenance": "NATIVE-DEPS",
+      "notes": "peak routing entries 1, final 0; decoders 0; live codecs before dispose 1, after 0; codecs created after dispose 0, frames sent after dispose 0; RSS grew 0.4 MB and heap 0.1 MB after a 20000-cycle warm-up"
+    }
+  ],
+  "data": {
+    "churn": [
+      {
+        "name": "stream-close",
+        "withClose": true,
+        "cycles": 40000,
+        "decodersCreated": 40001,
+        "marks": [
+          {
+            "cycle": 20000,
+            "liveDecoders": 1,
+            "rssMB": 160.3,
+            "heapMB": 8.2
+          },
+          {
+            "cycle": 40000,
+            "liveDecoders": 1,
+            "rssMB": 194.2,
+            "heapMB": 8.2
+          }
+        ],
+        "trend": [
+          {
+            "cycle": 4000,
+            "rssMB": 127.7
+          },
+          {
+            "cycle": 8000,
+            "rssMB": 160.2
+          },
+          {
+            "cycle": 12000,
+            "rssMB": 160.2
+          },
+          {
+            "cycle": 16000,
+            "rssMB": 160.2
+          },
+          {
+            "cycle": 24000,
+            "rssMB": 160.6
+          },
+          {
+            "cycle": 28000,
+            "rssMB": 194.1
+          },
+          {
+            "cycle": 32000,
+            "rssMB": 194.1
+          },
+          {
+            "cycle": 36000,
+            "rssMB": 194.1
+          }
+        ],
+        "growthRssMB": 33.9,
+        "growthHeapMB": 0,
+        "finalLive": 1,
+        "pipelineDecoders": 0
+      },
+      {
+        "name": "idle-sweep-only",
+        "withClose": false,
+        "cycles": 40000,
+        "decodersCreated": 40001,
+        "marks": [
+          {
+            "cycle": 20000,
+            "liveDecoders": 51,
+            "rssMB": 195.7,
+            "heapMB": 8.3
+          },
+          {
+            "cycle": 40000,
+            "liveDecoders": 51,
+            "rssMB": 198.2,
+            "heapMB": 8.3
+          }
+        ],
+        "trend": [
+          {
+            "cycle": 4000,
+            "rssMB": 194.4
+          },
+          {
+            "cycle": 8000,
+            "rssMB": 194.4
+          },
+          {
+            "cycle": 12000,
+            "rssMB": 196.8
+          },
+          {
+            "cycle": 16000,
+            "rssMB": 197.1
+          },
+          {
+            "cycle": 24000,
+            "rssMB": 195.7
+          },
+          {
+            "cycle": 28000,
+            "rssMB": 195.7
+          },
+          {
+            "cycle": 32000,
+            "rssMB": 198.2
+          },
+          {
+            "cycle": 36000,
+            "rssMB": 198.2
+          }
+        ],
+        "growthRssMB": 2.5,
+        "growthHeapMB": 0,
+        "finalLive": 51,
+        "pipelineDecoders": 50
+      }
+    ],
+    "churnTs": {
+      "cycles": 40000,
+      "codecsCreated": 40001,
+      "liveBeforeDispose": 1,
+      "liveAfterDispose": 0,
+      "createdAfterDispose": 0,
+      "sentAfterDispose": 0,
+      "peakRoutedIdentities": 1,
+      "finalRoutedIdentities": 0,
+      "decoders": 0,
+      "growthRssMB": 0.4,
+      "growthHeapMB": 0.1,
+      "marks": [
+        {
+          "cycle": 20000,
+          "rssMB": 196,
+          "heapMB": 8.3
+        },
+        {
+          "cycle": 40000,
+          "rssMB": 196.4,
+          "heapMB": 8.4
+        }
+      ]
+    }
+  }
+}

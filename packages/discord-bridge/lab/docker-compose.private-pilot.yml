@@ -1,0 +1,48 @@
+# Isolated Bridge-D1 production-server PILOT. Experimental. Opt-in.
+# Does not start, stop or reconfigure TeamSpeak. Does not touch manager compose.
+# Image must be a GHCR digest. No published ports. restart: "no".
+name: d1-private-pilot
+
+services:
+  bridge:
+    image: ${D1_BRIDGE_IMAGE:?set D1_BRIDGE_IMAGE to ghcr.io/uniskela/ts6-manager/discord-bridge@sha256:...}
+    container_name: d1-private-pilot-bridge
+    restart: "no"
+    init: true
+    stop_grace_period: 30s
+    read_only: true
+    user: "1000:1000"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    cpus: "1.0"
+    mem_limit: 512m
+    tmpfs:
+      - /tmp
+    env_file:
+      - .env.pilot
+    environment:
+      D1_RUNTIME_MODE: private-beta
+      D1_SOURCE_COMMIT: ${SOURCE_COMMIT:?set SOURCE_COMMIT to the approved full SHA}
+      D1_PILOT_EXTERNAL_TS: "1"
+    command: ["src/lab/private-beta.ts"]
+    volumes:
+      - ./evidence-pilot:/app/packages/discord-bridge/evidence
+    logging:
+      driver: json-file
+      options:
+        max-size: "4m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "./node_modules/.bin/tsx", "src/lab/private-beta-health.ts"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 90s
+    networks:
+      - d1-private-pilot
+
+networks:
+  d1-private-pilot:
+    driver: bridge
