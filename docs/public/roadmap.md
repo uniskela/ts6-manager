@@ -134,7 +134,7 @@ Tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442). Playlist 
 
 ### Discord voice bridge — v1.12.0
 
-Not released. Not in manager beta images. A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
+Not released. Not in manager beta images. A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Laboratory DAVE sessions do not make the bridge a product: remaining live audio and failover rows are still open. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
 
 Public status: [Discord bridge](discord-bridge.md). This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460).
 

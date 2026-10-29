@@ -47,7 +47,7 @@
 | --- | --- | --- |
 | v1.11.2 #460 | Release PR still open | **No changes** |
 | v1.12.0 #442 | Listener playlists, search, votes, standalone remote; R1/R2 security gates | **Unchanged**; F24 QA only |
-| v1.12.0 #502 | Optional 5+1 Discord voice bridge, Bridge-K/D1–D6 gated | **Unchanged**; D1 still draft and lacks live evidence |
+| v1.12.0 #502 | Optional 5+1 Discord voice bridge, Bridge-K/D1–D6 gated | **Unchanged**; D1 still draft / **NO-GO**. Operator DAVE leave/rejoin counters on SHA `7f4d6c7` are in [2026-10-29-d1-live-evidence.md](2026-10-29-d1-live-evidence.md). Bidirectional audio on that SHA and acceptance A–D remain open. D2/Presence-1 stay gated. |
 | v1.12.x #464 | PIN and installable remote, subject to approval | **Unchanged** and not bundled into #506 |
 | v1.13.0 #297 | Community Insights/client history | F17 evaluated within existing privacy design |
 | v1.14.0 #299 | Observe-only join protection, optional enforcement | **Unchanged**; F17 country enrichment not prerequisite |
