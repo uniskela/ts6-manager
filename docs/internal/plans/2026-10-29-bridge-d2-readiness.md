@@ -26,7 +26,7 @@ That is **not** D2. Lab start is stdin/`private-beta.ts`, not an HTTP control pl
 | TeamSpeak identity | Ephemeral level-8 | **D2-I:** one encrypted identity per mapping in Prisma (music-bot `encrypt()` / `restoreIdentity`). Worker gets it only on authorised Start; memory only; no second store. |
 | TS lifecycle | Lab connect/disconnect | Start only after mapping + membership checks. Stop: drain, destroy bots, drop in-memory identity, disconnect TS. SIGTERM grace like private-beta 30s. Compose **`restart: "no"`** (D2-R). |
 | Health | `host-status.json` / private-beta healthcheck | Loopback/internal HTTP: mapping enabled, one receiver, DAVE ready, no duplicate receivers, redacted counters. 1 CPU / 512 MiB starting limits. |
-| DAVE / reconnect | Fail-closed; Phase 1 `maxRecoveries=0` | Product default is bounded reconnect (lab 3/60s), still no plaintext. Owner picks default vs single-attempt diagnostic. Do not weaken fences. |
+| DAVE / reconnect | Fail-closed; Phase 1 lab `maxRecoveries=0` | No plaintext. Compose **does not** restart on DAVE loss (D2-R). In-process recovery budget is **not** chosen in this D2 batch. |
 | API / UI | None | D2: admin start/stop/config/status, write-only tokens. D5 owns the page. |
 | 5+1 | Implemented in D1 core | D2 must not shrink to one bot. |
 | Rollback | Lab `rollback <sha>` / previous GHCR digest | Pin previous release digest; profile off returns manager to “no Discord”; do not mix lab and release tags. |
@@ -60,7 +60,7 @@ D5 UI waits. D3 slot persistence waits. Presence-1 waits for D2-1 (store) and D2
 - Image: native Opus + davey load; DAVE-native fail is fatal.
 - Compose: profile off ⇒ no worker; no `0.0.0.0` publish; `restart: "no"`; one replica.
 - Crypto: token encrypt/decrypt; GET empty; empty patch keeps value.
-- Identity: persist + restore same uniqueId; destroy on mapping delete; second Start fences the first session; worker has no identity file.
+- Identity: persist + restore same uniqueId; disable/Stop keeps ciphertext; delete wipes it; second Start fences the first session; worker has no identity file.
 - Control: missing secret 401; six tokens required; start refused if membership check fails.
 - Shutdown: stop destroys Discord voice + TS client; no reconnect after stop.
 - Regression: listener-remote and music-bot tests unchanged.
@@ -69,7 +69,8 @@ D5 UI waits. D3 slot persistence waits. Presence-1 waits for D2-1 (store) and D2
 
 - May D2 code start before A–D PASS? **Still NO.**
 - No `ENCRYPTION_KEY` re-encrypt job exists today; identity follows the same “do not rotate casually” rule as music bots.
-- In-process DAVE reconnect budget vs compose `restart: "no"` are different layers; do not conflate them with `D1_DAVE_SINGLE_ATTEMPT`.
+- In-process DAVE reconnect budget (none vs 3/60s vs single-attempt) is **unset**; compose `restart: "no"` is set. Do not conflate the layers.
 - First official connect with a new persisted uniqueId looks like a new TeamSpeak client (D1 lab used ephemeral keys).
+- Identity **security level** (D1 lab 8 vs music-bot raise toward 23) is unset.
 
 Related: [#502](https://github.com/uniskela/ts6-manager/issues/502), [#442](https://github.com/uniskela/ts6-manager/issues/442), [#556](https://github.com/uniskela/ts6-manager/issues/556).

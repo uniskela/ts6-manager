@@ -47,17 +47,19 @@ Opens only after D1 live acceptance (including two-speaker, failover, and member
 ### Shared TeamSpeak identity (backend source of truth)
 
 - Exactly **one** shared TeamSpeak identity per configured bridge mapping (one Prisma row per mapped TeamSpeak server).
-- Backend generates (level 8, same helper as music bots) or restores via `restoreIdentity`. Persist ciphertext only (`encrypt(JSON.stringify(scalar identity))`, same pattern as `MusicBot.identityData`).
+- Backend generates or restores via the same helpers as music bots (`generateIdentity` / `restoreIdentity`, same serialize path as `MusicBot.identityData`). Persist ciphertext only (`encrypt()`). Security level is **not** decided here (music bots later raise toward 23; D1 lab used 8).
 - The worker receives the identity **only** in an authorised start payload for that mapping’s active session. It holds it in memory for that session. It must not write identity files, env, or a local database.
 - **One active worker session per mapping.** Backend issues a session/lease id on Start. A second Start for the same mapping stops and fences the previous session before a new payload is sent. The worker refuses voice connect if the session id does not match. Two replicas must not both hold the identity.
-- Delete/disable of the mapping destroys the ciphertext in Prisma and requires Stop so the worker drops memory. Backups of the database contain ciphertext; treat them as secret, same as other `encrypt()` fields.
+- **Stop / disable:** worker drops the in-memory identity and disconnects. Prisma ciphertext stays so the next authorised Start restores the same uniqueId.
+- **Delete mapping:** destroy the ciphertext in Prisma, then Stop so memory is empty. Backups of the database contain ciphertext; treat them as secret, same as other `encrypt()` fields.
 - `ENCRYPTION_KEY` rotation is the existing product rule: do not rotate casually; a new key cannot decrypt old rows (music bots, API keys, and this identity alike). D2 must not invent a separate rotation scheme. A future shared re-encrypt job, if built, covers this field with the others.
-- Logs, health, status JSON, and ordinary GET omit uniqueId private keys, seed, and ciphertext. Public uniqueId may appear only if an existing music-bot diagnostic already allows an equivalent, non-secret identifier; default is omit.
+- Logs, health, status JSON, and ordinary GET omit identity private keys, seed, ciphertext, and uniqueId. Same omission as music-bot GET (`identityData` never returned).
 
 ### Fail-closed DAVE
 
-- Fail-closed DAVE and receive-generation fences stay as D1.
-- In-process reconnect budget (if enabled) is bounded and is **not** a container restart. `restart: "no"` means a process exit stays down until an operator starts it. `D1_DAVE_SINGLE_ATTEMPT` remains a lab diagnostic, not the official compose default, unless a later owner decision says otherwise.
+- Fail-closed DAVE and receive-generation fences stay as D1. Unhealthy DAVE never yields plaintext and never restarts the container.
+- **Compose restart (D2-R)** is `"no"`. A process exit stays down until an operator starts it.
+- **In-process reconnect budget** is a separate layer from D2-R. This draft does not change D1’s fail-closed fences. Official default for in-process recoveries (none vs bounded 3/60s vs lab `D1_DAVE_SINGLE_ATTEMPT`) is **not chosen here**.
 
 ### Out of D2
 
@@ -67,6 +69,8 @@ Opens only after D1 live acceptance (including two-speaker, failover, and member
 - Presence-1 shared nickname roster (separate spec; uses this persisted identity).
 - Presence-2 per-user TeamSpeak identities (needs a Bridge-K amendment).
 ```
+
+When this text is later applied to Bridge-K, also replace the Official deployment line “no unlimited restart loop on a crash without a backoff” with D2-R (`restart: "no"`; `on-failure:3` only after a later approval). Do not leave both sentences in the contract.
 
 ## What this draft does not do
 
