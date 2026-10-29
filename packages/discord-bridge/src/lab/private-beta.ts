@@ -13,6 +13,8 @@ import { createOpusCodec } from "../core/opus.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger, safeError } from "../core/redact.js";
 import {
+  botsOnlyParkGrant,
+  connectedParkBots,
   buildBetaStatus,
   diffEvents,
   pushEvent,
@@ -139,7 +141,7 @@ async function main(): Promise<void> {
       })),
       voiceMembers: occupancy.members,
       voiceBots: occupancy.bots,
-      botsOnlyPark: st.receiver ? concrete.get(st.receiver as BotId)?.knownBotsOnlyChannel === true : false,
+      botsOnlyPark: botsOnlyParkGrant(st.receiver, connectedParkBots(concrete.values())),
     };
   };
 
