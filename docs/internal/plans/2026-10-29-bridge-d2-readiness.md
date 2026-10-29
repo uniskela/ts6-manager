@@ -4,7 +4,7 @@
 **Status:** Research only. Do not implement. Do not amend [discord-voice-bridge.md](../discord-voice-bridge.md) without owner approval.  
 **Opens after:** D1 live acceptance (A–D) plus independent review of that HEAD. Current D1: **NO-GO** ([evidence](2026-10-29-d1-live-evidence.md)).
 
-Owner decisions are recorded in [2026-10-29-bridge-d2-contract-draft.md](2026-10-29-bridge-d2-contract-draft.md): Prisma identity (D2-I), level-23 async generate-before-Start (D2-L), in-process recovery gated (D2-C), delete order (D2-D), compose `restart: "no"` (D2-R), `chore:` vs `feat:` (D2-P).
+Owner decisions are recorded in [2026-10-29-bridge-d2-contract-draft.md](2026-10-29-bridge-d2-contract-draft.md): Prisma identity (D2-I), level-23 async generate-before-Start with **180 s** timeout (D2-L), first-wins lease (D2-S), in-process recovery gated (D2-C), delete order (D2-D), compose `restart: "no"` (D2-R), `chore:` vs `feat:` (D2-P).
 
 Companion: Bridge-K contract and [2026-10-23 spec](../superpowers/specs/2026-10-23-discord-voice-bridge-design.md). D2 there is: official image/compose, control plane, encrypted tokens.
 
@@ -23,10 +23,10 @@ That is **not** D2. Lab start is stdin/`private-beta.ts`, not an HTTP control pl
 | Images | Lab Dockerfile on #504; private GHCR preview is reduced-trust, not a release | Publish worker only with a GitHub Release (same rule as sidecar). No `latest` from this lane. Private-beta workflow stays off Release Please. |
 | Config / secrets | Six env tokens; `DISCORD_BRIDGE_SECRET` not in D1 | Prisma mapping per TeamSpeak server; tokens `enc:iv:tag:ciphertext`; GET never returns plaintext or ciphertext; empty field = keep. Worker mutating API bearer, same class as sidecar. Production fatal if URL set without secret. |
 | Six bots | Required now | Keep 5+1. No seventh bot. Receiver elected from those six. |
-| TeamSpeak identity | Ephemeral level-8 | **D2-I/L:** `generateIdentityAsync(23)` on Node 20 **before** first Start; encrypt in Prisma; later Starts restore. Never TS-connect on level 8 then upgrade (unlike music-bot create). |
+| TeamSpeak identity | Ephemeral level-8 | **D2-I/L:** `generateIdentityAsync(23)` on Node 20 **before** first Start; **180 s** then terminate; one in-flight; encrypt in Prisma; later Starts restore. Never TS-connect on level 8. |
 | TS lifecycle | Lab connect/disconnect | Start only after mapping + membership checks. Stop: drain, destroy bots, drop in-memory identity, disconnect TS. SIGTERM grace like private-beta 30s. Compose **`restart: "no"`** (D2-R). |
 | Health | `host-status.json` / private-beta healthcheck | Loopback/internal HTTP: mapping enabled, one receiver, DAVE ready, no duplicate receivers, redacted counters. 1 CPU / 512 MiB starting limits. |
-| DAVE / reconnect | Fail-closed; D1 lab `maxRecoveries=0` **unchanged** | D2 supervised: no in-process reconnect. Production target 3/60s **after** D1 failover+recovery PASS. Compose `restart: "no"`. No plaintext. |
+| DAVE / reconnect | Fail-closed; D1 lab `maxRecoveries=0` **unchanged** | D2 supervised: no in-process reconnect. Production 3/60s after D1 failover+recovery PASS **and** explicit owner approval. Compose `restart: "no"`. No plaintext. |
 | API / UI | None | D2: admin start/stop/config/status, write-only tokens. D5 owns the page. |
 | 5+1 | Implemented in D1 core | D2 must not shrink to one bot. |
 | Rollback | Lab `rollback <sha>` / previous GHCR digest | Pin previous release digest; profile off returns manager to “no Discord”; do not mix lab and release tags. |
@@ -46,12 +46,12 @@ That is **not** D2. Lab start is stdin/`private-beta.ts`, not an HTTP control pl
 Small, independently reviewable. No live Discord unless noted. Prefixes follow **D2-P**.
 
 1. **D2-0** `docs:` — Apply the approved D2 subsection to Bridge-K (this draft’s fenced text, after owner says apply).
-2. **D2-1** `chore:` — Prisma mapping + encrypted tokens + identity + lease. Coordinate with #442. `generateIdentityAsync(23)` before first Start is allowed; Start fails closed if generation fails. Tests below. No live Discord.
+2. **D2-1** `chore:` — Prisma mapping + encrypted tokens + identity + lease. Coordinate with #442. Wrap `generateIdentityAsync(23)` at **180 s** (`Worker.terminate()`; ignore late results). One in-flight per mapping. Start fails closed if generation fails or is not yet persisted. Tests below. No live Discord.
 3. **D2-2** `chore:` — `Dockerfile.discord-bridge` + compose profile; `restart: "no"`; one replica; no published port; 1 CPU / 512 MiB; native Opus/DAVE CI smoke. Default `up` does not start it.
 4. **D2-3** `chore:` — Worker HTTP start/stop/status; bearer secret; identity **memory only** for the session id in the payload; refuse mismatch; Stop drops identity. Fake backend tests.
-5. **D2-4** `feat:` — Backend Start pushes identity + session over the internal URL; singleton lease (second Start fences the first); fatal if URL without secret; redacted status. This is the first user-facing enablement; do not land it until v1.12.0 is the intended target.
+5. **D2-4** `feat:` — Backend Start pushes identity + session over the internal URL; **first-wins** atomic Prisma lease (competing Start **409**; identical retry of the winner is idempotent); fatal if URL without secret; redacted status. Restart is Stop → fence → new lease → Start. This is the first user-facing enablement; do not land it until v1.12.0 is the intended target.
 
-Later, **separate approvals:** (1) in-process 3/60s after D1 failover + recovery tests; (2) compose `on-failure:3` after recovery/fail-closed/shutdown are accepted live.
+Later, **separate approvals:** (1) in-process 3/60s after D1 failover + recovery tests PASS **and** explicit owner approval; (2) compose `on-failure:3` after recovery/fail-closed/shutdown are accepted live.
 
 D5 UI waits. D3 slot persistence waits. Presence-1 waits for D2-1 (store) and D2-4 (identity actually flows) plus D1 GO.
 
@@ -60,7 +60,8 @@ D5 UI waits. D3 slot persistence waits. Presence-1 waits for D2-1 (store) and D2
 - Image: native Opus + davey load; DAVE-native fail is fatal.
 - Compose: profile off ⇒ no worker; no `0.0.0.0` publish; `restart: "no"`; one replica.
 - Crypto: token encrypt/decrypt; GET empty; empty patch keeps value.
-- Identity: `generateIdentityAsync(23)` (Worker on Node 20) persists; restore keeps the same uniqueId across restarts; generation failure ⇒ Start fails, redacted; concurrent Starts ⇒ one lease; disable/Stop keeps ciphertext; **delete order** revoke → Stop/fence → Prisma delete → stale payload refused; worker has no identity file; no keys/seeds/ciphertext in logs or GET.
+- Identity: `generateIdentityAsync(23)` (Worker on Node 20) persists atomically encrypted; restore keeps the same uniqueId across restarts; **180 s** timeout ⇒ terminate, ignore late result, redacted fail, no persist; cancellation/delete/invalid lease ignores late result; one in-flight per mapping (no competing persist); generation failure ⇒ Start fails, redacted; never level-8 fallback; Start before persist refuses connect.
+- Lease (**D2-S**): concurrent Starts ⇒ first atomic claim wins; loser **409**; idempotent retry of winner returns existing session; stale session id / fencing generation fail closed; disable/Stop keeps ciphertext; **delete order** revoke → Stop/fence → Prisma delete → stale payload refused; worker has no identity file; no keys/seeds/ciphertext in logs or GET.
 - Control: missing secret 401; six tokens required; start refused if membership check fails.
 - Shutdown: stop destroys Discord voice + TS client; no reconnect after stop.
 - Regression: listener-remote and music-bot tests unchanged.
@@ -69,9 +70,10 @@ D5 UI waits. D3 slot persistence waits. Presence-1 waits for D2-1 (store) and D2
 
 - May D2 code start before A–D PASS? **Still NO.**
 - No `ENCRYPTION_KEY` re-encrypt job exists today; identity follows the same “do not rotate casually” rule as music bots.
-- Level-23 `keyOffset` search can take seconds–minutes. D2-1 must timeout generation and keep it on `generateIdentityAsync` (existing Worker). Do not block Node 20 with sync `generateIdentity(23)`.
+- Level-23 `keyOffset` search can take seconds–minutes. D2-1 wraps existing `generateIdentityAsync` at **180 s** then `Worker.terminate()`. Today’s helper has no timeout. Measure latency in D2-1; any timeout change needs review. Do not block Node 20 with sync `generateIdentity(23)`.
 - Music-bot create still uses a placeholder then upgrades; D2 must not copy that connect path.
 - First official connect with a new persisted uniqueId looks like a new TeamSpeak client to a server that only saw D1’s ephemeral keys.
-- Flipping D2 from no in-process reconnects to 3/60s is a later owner+test gate, not part of D2-4.
+- Flipping D2 from no in-process reconnects to 3/60s is a later test **and** explicit owner-approval gate, not part of D2-4.
+- D6 “Worker crash / kill recovery” means operator Restart, not Docker restart (apply-time note only).
 
 Related: [#502](https://github.com/uniskela/ts6-manager/issues/502), [#442](https://github.com/uniskela/ts6-manager/issues/442), [#556](https://github.com/uniskela/ts6-manager/issues/556).
