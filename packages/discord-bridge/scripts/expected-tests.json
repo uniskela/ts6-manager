@@ -256,6 +256,7 @@
     "0 TeamSpeak users: only slot 0 is in Discord as the receiver and keeps its application name",
     "1-5 TeamSpeak users: those slot bots join as [TS] Username and overflow stays out",
     "6th user brings in [TS] Others and receive moves to overflow with teardown first; it moves back before overflow leaves",
+    "a delayed Discord nick from before leave cannot overwrite the name after rejoin",
     "a non-receiver slot failure does not move receive and leaves the other slots running",
     "does not mark a failed Discord nick as applied, and does not drop the slot",
     "falls back for an empty name",

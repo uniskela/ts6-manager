@@ -20,7 +20,7 @@ export class FakeBot extends EventEmitter implements BotPort {
   emitUnhealthyOnLeave = false;
   nickCalls: (string | null)[] = [];
   nickDelay: Promise<void> | null = null;
-  nickFailOnce = false;
+  nickFailRemaining = 0;
   private abortJoin: (() => void) | null = null;
 
   constructor(readonly id: BotId, readonly userId: string, private readonly order?: string[]) {
@@ -64,8 +64,8 @@ export class FakeBot extends EventEmitter implements BotPort {
   async setNickname(n: string | null): Promise<boolean> {
     this.nickCalls.push(n);
     if (this.nickDelay) await this.nickDelay;
-    if (this.nickFailOnce) {
-      this.nickFailOnce = false;
+    if (this.nickFailRemaining > 0) {
+      this.nickFailRemaining -= 1;
       return false;
     }
     this.nick = n;

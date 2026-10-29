@@ -1010,6 +1010,11 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.voiceMemberCounts();
   }
 
+  /** Same bots-only grant as the DAVE idle park path (voice-state cache plus MLS peers). */
+  get knownBotsOnlyChannel(): boolean {
+    return this.connection !== null && this.knownBotsOnly(this.connection);
+  }
+
   /** Privacy-safe MLS negotiation snapshot (categories and integers only). */
   get daveNegotiation() {
     return this.daveTrace

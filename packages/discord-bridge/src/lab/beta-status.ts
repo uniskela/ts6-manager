@@ -73,6 +73,8 @@ export interface BetaSnapshotIn {
   /** Discord voice-channel occupancy. Integers only; never user ids. */
   voiceMembers?: number;
   voiceBots?: number;
+  /** Receiver uses the same bots-only grant as DAVE idle park (voice-state plus MLS peers). */
+  botsOnlyPark?: boolean;
 }
 
 export function sumValues(map: Record<string, number> | undefined): number {
@@ -86,21 +88,14 @@ export function receiverDaveReady(snap: BetaSnapshotIn): boolean {
   return info?.ready === true && (info.protocolVersion ?? 0) >= 1;
 }
 
-/** True when every mapped-channel voice member is a bot (idle MLS wait). Occupancy must be known. */
-export function botsOnlyChannel(snap: BetaSnapshotIn): boolean {
-  const members = snap.voiceMembers;
-  const bots = snap.voiceBots;
-  return typeof members === "number" && typeof bots === "number" && members > 0 && members === bots;
-}
-
 export function deriveHealth(snap: BetaSnapshotIn, started: boolean): BetaHealth {
   if (snap.state === "stopping" || snap.state === "stopped") return "fail-closed";
   if (!started || snap.state !== "running") return "starting";
   if (Array.isArray(snap.duplicateReceivers) && snap.duplicateReceivers.length > 0) return "fail-closed";
   if (!snap.receiver) return "fail-closed";
   if (!receiverDaveReady(snap)) {
-    // Bots-only MLS park: connection kept, audio fail-closed by design, not a crashed worker.
-    if (botsOnlyChannel(snap) && (snap.scheduledReconnects ?? 0) === 0) return "parked";
+    // Occupancy integers alone can lag a human join. Park only on the same grant as audio idle.
+    if (snap.botsOnlyPark === true && (snap.scheduledReconnects ?? 0) === 0) return "parked";
     return "fail-closed";
   }
   if ((snap.scheduledReconnects ?? 0) > 0 || sumValues(snap.decryptErrors) > 0 || sumValues(snap.recoveries) > 0) {
@@ -157,6 +152,7 @@ export function buildBetaStatus(input: {
     duplicateReceivers: Array.isArray(input.snap.duplicateReceivers) ? input.snap.duplicateReceivers.length : 0,
     voiceMembers: input.snap.voiceMembers ?? null,
     voiceBots: input.snap.voiceBots ?? null,
+    botsOnlyPark: input.snap.botsOnlyPark === true,
     counters: {
       decryptErrors: sumValues(input.snap.decryptErrors),
       daveReplacements: sumValues(input.snap.daveReplacements),

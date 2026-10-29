@@ -76,33 +76,15 @@ export class TsToDiscordPipeline {
   onVoice(data: Buffer, nowMs: number): RouteResult {
     if (this.disposed) return { kind: "dropped", reason: "disposed" };
     const pkt = parseS2CVoice(data);
-    if (!pkt) {
-      this.malformed += 1;
-      return { kind: "dropped", reason: "malformed" };
-    }
-    if (pkt.clid === this.o.ownClid()) {
-      this.ownVoice += 1;
-      return { kind: "dropped", reason: "own-voice" };
-    }
+    if (!pkt) return this.drop("malformed");
+    if (pkt.clid === this.o.ownClid()) return this.drop("own-voice");
     const client = this.o.directory.byClientId(pkt.clid);
-    if (!client) {
-      this.unknownSpeakers += 1;
-      return { kind: "dropped", reason: "unknown-speaker" };
-    }
-    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) {
-      this.excluded += 1;
-      return { kind: "dropped", reason: "excluded" };
-    }
-    if (client.channelId !== this.o.channelId()) {
-      this.notInChannel += 1;
-      return { kind: "dropped", reason: "not-in-channel" };
-    }
+    if (!client) return this.drop("unknown-speaker");
+    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) return this.drop("excluded");
+    if (client.channelId !== this.o.channelId()) return this.drop("not-in-channel");
 
     const dest = this.o.router.destinationFor(client.uniqueId);
-    if (!dest) {
-      this.notInChannel += 1;
-      return { kind: "dropped", reason: "not-in-channel" };
-    }
+    if (!dest) return this.drop("not-in-channel");
 
     this.received += 1;
     if (pkt.opus.length === 0) {
@@ -232,6 +214,15 @@ export class TsToDiscordPipeline {
 
   get paddedTails(): number {
     return this.overflowMixer.paddedTails;
+  }
+
+  private drop(reason: Extract<RouteResult, { kind: "dropped" }>["reason"]): RouteResult {
+    if (reason === "malformed") this.malformed += 1;
+    else if (reason === "own-voice") this.ownVoice += 1;
+    else if (reason === "unknown-speaker") this.unknownSpeakers += 1;
+    else if (reason === "excluded") this.excluded += 1;
+    else if (reason === "not-in-channel") this.notInChannel += 1;
+    return { kind: "dropped", reason };
   }
 
   private count(bot: BotId, uniqueId: string, frames = 1): void {

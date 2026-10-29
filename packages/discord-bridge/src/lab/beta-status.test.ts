@@ -102,6 +102,11 @@ describe("private-beta status", () => {
     assert.equal(deriveHealth({ ...running, dave: { "slot-0": { protocolVersion: 1, ready: false } } }, true), "fail-closed");
     assert.equal(
       deriveHealth({ ...running, dave: { "slot-0": { protocolVersion: 1, ready: false } }, voiceMembers: 4, voiceBots: 4 }, true),
+      "fail-closed",
+      "stale occupancy integers must not park while a human may be present",
+    );
+    assert.equal(
+      deriveHealth({ ...running, dave: { "slot-0": { protocolVersion: 1, ready: false } }, botsOnlyPark: true }, true),
       "parked",
     );
     assert.equal(deriveHealth({ ...running, receiver: null }, true), "fail-closed");

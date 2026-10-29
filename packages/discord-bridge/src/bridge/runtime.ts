@@ -346,8 +346,8 @@ export class BridgeRuntime extends EventEmitter {
     this.o.log.warn(`${bot} unhealthy: ${reason}`);
     this.inChannel.delete(bot);
     this.appliedNick.delete(bot);
-    this.nickEpoch.delete(bot);
-    this.nickChain.delete(bot);
+    // Keep nickChain: dropping it lets a stale Discord REST call race a rejoin's newer name.
+    this.nickEpoch.set(bot, (this.nickEpoch.get(bot) ?? 0) + 1);
     this.election.setState(bot, { healthy: false, inChannel: false });
     this.election.fail(bot, reason); // a non-receiver failure leaves the receiver alone
     this.schedule(() => this.sync(`unhealthy ${bot}`));
@@ -386,10 +386,8 @@ export class BridgeRuntime extends EventEmitter {
       this.o.bots.get(id)?.leave();
       this.inChannel.delete(id);
       this.appliedNick.delete(id);
-      this.nickEpoch.delete(id);
-      this.nickChain.delete(id);
       this.cancelRetry(id);
-      this.track(this.o.bots.get(id)!.setNickname(null));
+      this.queueNick(id, null);
     }
   }
 
@@ -477,7 +475,6 @@ export class BridgeRuntime extends EventEmitter {
   }
 
   private applyNickname(id: BotId, idleSlot0: boolean): void {
-    const bot = this.o.bots.get(id)!;
     let name: string | null;
     if (id === "overflow") name = OVERFLOW_NICKNAME;
     else if (idleSlot0 && id === "slot-0") name = null;
@@ -487,14 +484,29 @@ export class BridgeRuntime extends EventEmitter {
       name = tsNickname(nick ?? "Unknown");
     }
     if (this.appliedNick.get(id) === name) return;
+    this.queueNick(id, name);
+  }
+
+  /**
+   * One Discord nick queue per bot. Epoch is never reset, so leave/rejoin cannot drop an in-flight
+   * REST call off the chain. discord.js REST already queues and waits out 429s; we retry a failed
+   * call once immediately. Permission errors fail twice and stay unapplied until a later sync.
+   */
+  private queueNick(id: BotId, name: string | null): void {
+    const bot = this.o.bots.get(id)!;
     const epoch = (this.nickEpoch.get(id) ?? 0) + 1;
     this.nickEpoch.set(id, epoch);
     const prev = this.nickChain.get(id) ?? Promise.resolve();
     const next = prev.then(async () => {
-      if (this.nickEpoch.get(id) !== epoch) return;
-      const ok = await bot.setNickname(name);
-      if (this.nickEpoch.get(id) !== epoch) return;
-      if (ok) this.appliedNick.set(id, name);
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (this.nickEpoch.get(id) !== epoch) return;
+        const ok = await bot.setNickname(name);
+        if (this.nickEpoch.get(id) !== epoch) return;
+        if (ok) {
+          this.appliedNick.set(id, name);
+          return;
+        }
+      }
     });
     this.nickChain.set(id, next.then(() => undefined, () => undefined));
     this.track(next);

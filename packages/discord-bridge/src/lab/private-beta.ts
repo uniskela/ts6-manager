@@ -146,6 +146,7 @@ async function main(): Promise<void> {
       ),
       voiceMembers: occupancy.members,
       voiceBots: occupancy.bots,
+      botsOnlyPark: st.receiver ? concrete.get(st.receiver as BotId)?.knownBotsOnlyChannel === true : false,
     };
   };
 

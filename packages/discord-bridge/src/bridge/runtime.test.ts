@@ -237,7 +237,7 @@ describe("TeamSpeak nickname → Discord slot nick", () => {
     await settle();
     const slot = bots.get("slot-0")!;
     const joins = slot.joinCount;
-    slot.nickFailOnce = true;
+    slot.nickFailRemaining = 2;
     ts.renameUser(1, "Blocked");
     await settle();
     assert.equal(slot.nick, "[TS] Alice");
@@ -246,6 +246,25 @@ describe("TeamSpeak nickname → Discord slot nick", () => {
     ts.addUser(2, "Bob");
     await settle();
     assert.equal(slot.nick, "[TS] Blocked");
+    await rt.stop();
+  });
+
+  it("a delayed Discord nick from before leave cannot overwrite the name after rejoin", async () => {
+    const { ts, bots, rt, settle } = await build();
+    await rt.start();
+    ts.addUser(1, "Alice");
+    await settle();
+    const slot = bots.get("slot-0")!;
+    let release!: () => void;
+    slot.nickDelay = new Promise<void>((r) => (release = r));
+    ts.renameUser(1, "Old");
+    await new Promise((r) => setImmediate(r));
+    ts.removeUser(1);
+    slot.nickDelay = null;
+    ts.addUser(1, "New");
+    release();
+    await settle();
+    assert.equal(slot.nick, "[TS] New");
     await rt.stop();
   });
 });

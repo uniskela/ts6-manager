@@ -74,15 +74,19 @@ export class ClientDirectory {
         break;
       }
       case "notifyclientupdated": {
-        const client = this.byClid.get(parseInt(cmd.params.clid || "0", 10));
-        if (client && cmd.params.client_nickname !== undefined && client.nickname !== cmd.params.client_nickname) {
-          client.nickname = cmd.params.client_nickname;
-          events.push({ type: "nick", client });
-        }
+        const nick = this.nickEvent(cmd.params);
+        if (nick) events.push(nick);
         break;
       }
     }
     return events;
+  }
+
+  private nickEvent(params: Record<string, string>): DirectoryEvent | null {
+    const client = this.byClid.get(parseInt(params.clid || "0", 10));
+    if (!client || params.client_nickname === undefined || client.nickname === params.client_nickname) return null;
+    client.nickname = params.client_nickname;
+    return { type: "nick", client };
   }
 
   byClientId(clid: number): DirectoryClient | undefined {
