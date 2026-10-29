@@ -25,65 +25,71 @@ export class ClientDirectory {
   private readonly byClid = new Map<number, DirectoryClient>();
 
   ingest(cmd: Cmd): DirectoryEvent[] {
-    const events: DirectoryEvent[] = [];
     switch (cmd.name) {
       case "notifycliententerview":
-      case "clientlist": {
-        const entries = cmd.groups ?? [cmd.params];
-        const first = cmd.params;
-        for (const e of entries) {
-          const clid = parseInt(e.clid || "0", 10);
-          const uid = e.client_unique_identifier;
-          if (!clid || !uid) continue;
-          const client: DirectoryClient = {
-            clid,
-            uniqueId: uid,
-            nickname: e.client_nickname ?? "",
-            channelId: parseInt(e.ctid || e.cid || first.ctid || first.cid || "0", 10),
-            isQuery: String(e.client_type) === "1",
-          };
-          this.byClid.set(clid, client);
-          events.push({ type: "enter", client });
-        }
-        break;
-      }
-      case "notifyclientleftview": {
-        const entries = cmd.groups ?? [cmd.params];
-        for (const e of entries) {
-          const clid = parseInt(e.clid || "0", 10);
-          const client = this.byClid.get(clid);
-          if (client) {
-            this.byClid.delete(clid);
-            events.push({ type: "leave", client });
-          }
-        }
-        break;
-      }
-      case "notifyclientmoved": {
-        const entries = cmd.groups ?? [cmd.params];
-        const first = cmd.params;
-        for (const e of entries) {
-          const clid = parseInt(e.clid || "0", 10);
-          const client = this.byClid.get(clid);
-          if (client) {
-            // ctid is sent once on the first entry of a piped list; later entries inherit it.
-            client.channelId = parseInt(e.ctid || first.ctid || "0", 10);
-            events.push({ type: "move", client });
-          }
-        }
-        break;
-      }
+      case "clientlist":
+        return this.enterList(cmd);
+      case "notifyclientleftview":
+        return this.leaveList(cmd);
+      case "notifyclientmoved":
+        return this.moveList(cmd);
       case "notifyclientupdated": {
         const nick = this.nickEvent(cmd.params);
-        if (nick) events.push(nick);
-        break;
+        return nick ? [nick] : [];
       }
+      default:
+        return [];
+    }
+  }
+
+  private enterList(cmd: Cmd): DirectoryEvent[] {
+    const events: DirectoryEvent[] = [];
+    const first = cmd.params;
+    for (const e of cmd.groups ?? [cmd.params]) {
+      const clid = Number.parseInt(e.clid || "0", 10);
+      const uid = e.client_unique_identifier;
+      if (!clid || !uid) continue;
+      const client: DirectoryClient = {
+        clid,
+        uniqueId: uid,
+        nickname: e.client_nickname ?? "",
+        channelId: Number.parseInt(e.ctid || e.cid || first.ctid || first.cid || "0", 10),
+        isQuery: String(e.client_type) === "1",
+      };
+      this.byClid.set(clid, client);
+      events.push({ type: "enter", client });
+    }
+    return events;
+  }
+
+  private leaveList(cmd: Cmd): DirectoryEvent[] {
+    const events: DirectoryEvent[] = [];
+    for (const e of cmd.groups ?? [cmd.params]) {
+      const clid = Number.parseInt(e.clid || "0", 10);
+      const client = this.byClid.get(clid);
+      if (!client) continue;
+      this.byClid.delete(clid);
+      events.push({ type: "leave", client });
+    }
+    return events;
+  }
+
+  private moveList(cmd: Cmd): DirectoryEvent[] {
+    const events: DirectoryEvent[] = [];
+    const first = cmd.params;
+    for (const e of cmd.groups ?? [cmd.params]) {
+      const clid = Number.parseInt(e.clid || "0", 10);
+      const client = this.byClid.get(clid);
+      if (!client) continue;
+      // ctid is sent once on the first entry of a piped list; later entries inherit it.
+      client.channelId = Number.parseInt(e.ctid || first.ctid || "0", 10);
+      events.push({ type: "move", client });
     }
     return events;
   }
 
   private nickEvent(params: Record<string, string>): DirectoryEvent | null {
-    const client = this.byClid.get(parseInt(params.clid || "0", 10));
+    const client = this.byClid.get(Number.parseInt(params.clid || "0", 10));
     if (!client || params.client_nickname === undefined || client.nickname === params.client_nickname) return null;
     client.nickname = params.client_nickname;
     return { type: "nick", client };

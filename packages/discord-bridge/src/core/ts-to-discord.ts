@@ -1,11 +1,11 @@
 import { noteArrivalGap } from "./arrival-gap.js";
-import type { ClientDirectory } from "./client-directory.js";
+import type { ClientDirectory, DirectoryClient } from "./client-directory.js";
 import { FrameMixer } from "./frame-mixer.js";
 import type { BotId } from "./ids.js";
 import { LatencyStats } from "./metrics.js";
 import type { OpusCodec } from "./opus.js";
 import { splitOpusPacket } from "./opus-packet.js";
-import { parseS2CVoice } from "./ts-voice-packet.js";
+import { parseS2CVoice, type TsVoicePacket } from "./ts-voice-packet.js";
 import type { SlotRouter } from "./slot-router.js";
 
 export interface DiscordSendSink {
@@ -77,12 +77,8 @@ export class TsToDiscordPipeline {
     if (this.disposed) return { kind: "dropped", reason: "disposed" };
     const pkt = parseS2CVoice(data);
     if (!pkt) return this.drop("malformed");
-    if (pkt.clid === this.o.ownClid()) return this.drop("own-voice");
-    const client = this.o.directory.byClientId(pkt.clid);
-    if (!client) return this.drop("unknown-speaker");
-    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) return this.drop("excluded");
-    if (client.channelId !== this.o.channelId()) return this.drop("not-in-channel");
-
+    const client = this.speakerOf(pkt);
+    if ("kind" in client) return client;
     const dest = this.o.router.destinationFor(client.uniqueId);
     if (!dest) return this.drop("not-in-channel");
 
@@ -96,17 +92,30 @@ export class TsToDiscordPipeline {
       return { kind: "end", uniqueId: client.uniqueId };
     }
     if (noteArrivalGap(this.lastArrival, client.uniqueId, nowMs)) this.arrivalGaps += 1;
+    if (dest === "overflow") return this.forwardOverflow(client.uniqueId, pkt.opus, nowMs);
+    return this.forwardSlot(dest, client.uniqueId, pkt.opus, nowMs);
+  }
 
-    if (dest === "overflow") {
-      const pcm = this.decode(client.uniqueId, pkt.opus, nowMs);
-      if (!pcm) return { kind: "dropped", reason: "undecodable" };
-      this.overflowMixer.push(client.uniqueId, pcm, null, nowMs);
-      this.count("overflow", client.uniqueId);
-      return { kind: "overflow", uniqueId: client.uniqueId };
-    }
+  private speakerOf(pkt: TsVoicePacket): DirectoryClient | RouteResult {
+    if (pkt.clid === this.o.ownClid()) return this.drop("own-voice");
+    const client = this.o.directory.byClientId(pkt.clid);
+    if (!client) return this.drop("unknown-speaker");
+    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) return this.drop("excluded");
+    if (client.channelId !== this.o.channelId()) return this.drop("not-in-channel");
+    return client;
+  }
 
+  private forwardOverflow(uniqueId: string, opus: Buffer, nowMs: number): RouteResult {
+    const pcm = this.decode(uniqueId, opus, nowMs);
+    if (!pcm) return { kind: "dropped", reason: "undecodable" };
+    this.overflowMixer.push(uniqueId, pcm, null, nowMs);
+    this.count("overflow", uniqueId);
+    return { kind: "overflow", uniqueId };
+  }
+
+  private forwardSlot(dest: BotId, uniqueId: string, opus: Buffer, nowMs: number): RouteResult {
     // Slot path: untouched Opus, one 20 ms packet per player tick. Multi-frame packets are cut.
-    const split = splitOpusPacket(pkt.opus);
+    const split = splitOpusPacket(opus);
     if (split.kind === "invalid") {
       this.invalidFrames += 1;
       this.decodeErrors += 1;
@@ -118,8 +127,8 @@ export class TsToDiscordPipeline {
     }
     for (const frame of split.frames) this.o.sinks.get(dest)?.sendOpus(frame, nowMs);
     this.forwarded += split.frames.length;
-    this.count(dest, client.uniqueId, split.frames.length);
-    return { kind: "slot", bot: dest, uniqueId: client.uniqueId };
+    this.count(dest, uniqueId, split.frames.length);
+    return { kind: "slot", bot: dest, uniqueId };
   }
 
   /** Decode one packet for a speaker. A corrupt packet is dropped and that speaker's decoder is replaced. */
