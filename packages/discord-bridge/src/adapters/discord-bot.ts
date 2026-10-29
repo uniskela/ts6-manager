@@ -29,7 +29,7 @@ import { registerSecret, safeError, type Logger } from "../core/redact.js";
 import { ReceiveSupervisor } from "../core/receive-supervisor.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
 import { VoiceAdmission, type Admission } from "../core/voice-admission.js";
-import type { BotPort } from "../bridge/runtime.js";
+import { nickErrorKind, type BotPort, type NickResult } from "../bridge/runtime.js";
 
 /** Where a bot joins and which gateway adapter carries its voice signalling. */
 export interface VoiceTarget {
@@ -258,18 +258,18 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.selfDeaf;
   }
 
-  /** `null` resets to the application name. False means Discord refused; the runtime must not treat it as applied. */
-  async setNickname(nick: string | null): Promise<boolean> {
+  /** `null` resets to the application name. `denied` is a 403/missing-permissions; `failed` is transient. */
+  async setNickname(nick: string | null): Promise<NickResult> {
     try {
       const guild = await this.client.guilds.fetch(this.o.guildId);
       const me = guild.members.me;
-      if (!me) return false;
+      if (!me) return "failed";
       await me.setNickname(nick === null ? null : nick.slice(0, 32));
-      return true;
+      return "ok";
     } catch (e) {
       // Contract: a nickname failure warns and keeps the old nick; it never stops the bridge.
       this.o.log.warn(`${this.o.id} nickname not changed: ${safeError(e)}`);
-      return false;
+      return nickErrorKind(e);
     }
   }
 

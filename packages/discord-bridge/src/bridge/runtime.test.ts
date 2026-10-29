@@ -7,7 +7,7 @@ import { toneFrame } from "../core/pcm.js";
 import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger } from "../core/redact.js";
 import { FakeBot, FakeTs, settle as settleRuntime } from "../testing/fake-runtime.js";
-import { BridgeRuntime } from "./runtime.js";
+import { BridgeRuntime, nickErrorKind } from "./runtime.js";
 
 const quiet = createLogger("test", () => undefined);
 
@@ -246,10 +246,81 @@ describe("TeamSpeak nickname → Discord slot nick", () => {
     assert.equal(slot.nick, "[TS] Alice");
     assert.equal(slot.inVoice, true);
     assert.equal(slot.joinCount, joins);
+    const spent = slot.nickCalls.length;
     ts.addUser(2, "Bob");
     await settle();
-    assert.equal(slot.nick, "[TS] Blocked");
+    assert.equal(slot.nickCalls.length, spent, "unrelated syncs do not spend more transient attempts");
+    assert.equal(slot.nick, "[TS] Alice");
+    slot.nickFailRemaining = 0;
+    ts.renameUser(1, "Carol");
+    await settle();
+    assert.equal(slot.nick, "[TS] Carol");
     await rt.stop();
+  });
+
+  it("returning to the applied nickname still queues a compensating Discord request", async () => {
+    const { ts, rt, settle, slot } = await aliceSlot();
+    const joins = slot.joinCount;
+    const release = holdNick(slot);
+    ts.renameUser(1, "Bob");
+    await new Promise((r) => setImmediate(r));
+    ts.renameUser(1, "Alice");
+    release();
+    await settle();
+    assert.equal(slot.nick, "[TS] Alice");
+    assert.equal(slot.nickCalls.at(-1), "[TS] Alice");
+    assert.equal(slot.joinCount, joins, "audio membership is not rebuilt");
+    await rt.stop();
+  });
+
+  it("does not retry a permission-denied nick across unrelated syncs", async () => {
+    const { ts, rt, settle, slot } = await aliceSlot();
+    slot.nickDenied = true;
+    const before = slot.nickCalls.length;
+    ts.renameUser(1, "Blocked");
+    await settle();
+    assert.equal(slot.nick, "[TS] Alice");
+    assert.equal(slot.nickCalls.length, before + 1);
+    ts.addUser(2, "Bob");
+    await settle();
+    for (let i = 0; i < 12; i++) ts.renameUser(2, `Bob${i}`);
+    await settle();
+    assert.equal(slot.nickCalls.length, before + 1, "unrelated title changes must not retry a 403");
+    slot.nickDenied = false;
+    ts.renameUser(1, "Carol");
+    await settle();
+    assert.equal(slot.nick, "[TS] Carol");
+    await rt.stop();
+  });
+
+  it("does not start a queued Discord nick after shutdown", async () => {
+    const ts = new FakeTs();
+    const bots = new Map<BotId, FakeBot>();
+    for (const id of preferredOrder(5)) bots.set(id, new FakeBot(id, `discord-${id}`));
+    const rt = new BridgeRuntime({ ts, bots, codecFactory: () => createOpusCodec("auto"), log: quiet, stopTimeoutMs: 30 });
+    await rt.start();
+    ts.addUser(1, "Alice");
+    await settleRuntime(rt);
+    const slot = bots.get("slot-0")!;
+    const release = holdNick(slot);
+    ts.renameUser(1, "First");
+    await new Promise((r) => setImmediate(r));
+    ts.renameUser(1, "Second");
+    await new Promise((r) => setImmediate(r));
+    const callsAtStop = slot.nickCalls.length;
+    await rt.stop();
+    release();
+    await new Promise((r) => setImmediate(r));
+    await new Promise((r) => setImmediate(r));
+    assert.equal(slot.nickCalls.length, callsAtStop);
+    assert.equal(slot.nickCalls.includes("[TS] Second"), false);
+  });
+
+  it("classifies Discord 403 and missing-permissions as denied", () => {
+    assert.equal(nickErrorKind({ status: 403, code: 0 }), "denied");
+    assert.equal(nickErrorKind({ status: 400, code: 50013 }), "denied");
+    assert.equal(nickErrorKind({ status: 403, code: 50001 }), "denied");
+    assert.equal(nickErrorKind({ status: 500, code: 0 }), "failed");
   });
 
   it("a delayed Discord nick from before leave cannot overwrite the name after rejoin", async () => {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
   EVENT_CAP,
+  botsOnlyParkGrant,
   buildBetaStatus,
   deriveHealth,
   diffEvents,
@@ -110,6 +111,11 @@ describe("private-beta status", () => {
       "parked",
     );
     assert.equal(deriveHealth({ ...running, receiver: null }, true), "fail-closed");
+    assert.equal(
+      deriveHealth({ ...running, receiver: null, dave: {}, botsOnlyPark: true }, true),
+      "parked",
+      "bots-only initial negotiation parks without electing a receiver",
+    );
     assert.equal(deriveHealth({ ...running, duplicateReceivers: ["slot-1"] }, true), "fail-closed");
     assert.equal(deriveHealth({ ...running, scheduledReconnects: 1 }, true), "degraded");
     assert.equal(deriveHealth({ ...running, state: "stopping" }, true), "fail-closed");
@@ -162,10 +168,43 @@ describe("private-beta status", () => {
     assert.equal(healthcheckOk({ ...ok, daveReady: false, health: "fail-closed" }, now), false);
     assert.equal(healthcheckOk({ ...ok, daveReady: false, health: "parked" }, now), true);
     assert.equal(healthcheckOk({ ...ok, receiver: null, health: "fail-closed" }, now), false);
+    assert.equal(healthcheckOk({ ...ok, receiver: null, daveReady: false, health: "parked" }, now), true);
     assert.equal(hostHealthLabel({ ...ok, health: "parked" }, true), "parked");
     assert.equal(healthcheckOk({ ...ok, state: "running" }, now + 31_000), false);
     assert.equal(hostHealthLabel(ok, true), "ok");
     assert.equal(hostHealthLabel(ok, false), "stale");
     assert.equal(hostHealthLabel(null, false), "absent");
+  });
+
+  it("parks bots-only startup without a receiver and keeps Docker healthcheck green", () => {
+    const adapter = { id: "slot-0", knownBotsOnlyChannel: true };
+    const human = { id: "slot-0", knownBotsOnlyChannel: false };
+    assert.equal(botsOnlyParkGrant(null, [adapter]), true);
+    assert.equal(botsOnlyParkGrant(null, [human]), false);
+    assert.equal(botsOnlyParkGrant("slot-0", [adapter]), true);
+    const snap: BetaSnapshotIn = {
+      state: "running",
+      receiver: null,
+      generation: 0,
+      scheduledReconnects: 0,
+      duplicateReceivers: [],
+      dave: { "slot-0": { protocolVersion: 1, ready: false } },
+      botsOnlyPark: botsOnlyParkGrant(null, [adapter]),
+    };
+    const status = buildBetaStatus({ sourceCommit: "x", snap, events: [], started: true, singleAttempt: true });
+    const now = Date.parse(String(status.at));
+    assert.equal(status.health, "parked");
+    assert.equal(status.receiver, null);
+    assert.equal(status.daveReady, false);
+    assert.equal(healthcheckOk(status, now), true);
+    const unknown = buildBetaStatus({
+      sourceCommit: "x",
+      snap: { ...snap, botsOnlyPark: botsOnlyParkGrant(null, [{ id: "slot-0", knownBotsOnlyChannel: false }]) },
+      events: [],
+      started: true,
+      singleAttempt: true,
+    });
+    assert.equal(unknown.health, "fail-closed");
+    assert.equal(healthcheckOk(unknown, now), false);
   });
 });

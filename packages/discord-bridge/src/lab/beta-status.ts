@@ -73,8 +73,18 @@ export interface BetaSnapshotIn {
   /** Discord voice-channel occupancy. Integers only; never user ids. */
   voiceMembers?: number;
   voiceBots?: number;
-  /** Receiver uses the same bots-only grant as DAVE idle park (voice-state plus MLS peers). */
+  /** Same bots-only grant as DAVE idle park (voice-state plus MLS peers). Receiver optional at startup. */
   botsOnlyPark?: boolean;
+}
+
+/** Park when the elected receiver grants, or when any connected bot grants before election. */
+export function botsOnlyParkGrant(
+  receiver: string | null | undefined,
+  bots: Iterable<{ id: string; knownBotsOnlyChannel: boolean }>,
+): boolean {
+  const list = [...bots];
+  if (receiver) return list.find((b) => b.id === receiver)?.knownBotsOnlyChannel === true;
+  return list.some((b) => b.knownBotsOnlyChannel);
 }
 
 export function sumValues(map: Record<string, number> | undefined): number {
@@ -92,12 +102,13 @@ export function deriveHealth(snap: BetaSnapshotIn, started: boolean): BetaHealth
   if (snap.state === "stopping" || snap.state === "stopped") return "fail-closed";
   if (!started || snap.state !== "running") return "starting";
   if (Array.isArray(snap.duplicateReceivers) && snap.duplicateReceivers.length > 0) return "fail-closed";
-  if (!snap.receiver) return "fail-closed";
   if (!receiverDaveReady(snap)) {
     // Occupancy integers alone can lag a human join. Park only on the same grant as audio idle.
+    // Initial bots-only MLS wait has no elected receiver yet; do not invent one.
     if (snap.botsOnlyPark === true && (snap.scheduledReconnects ?? 0) === 0) return "parked";
     return "fail-closed";
   }
+  if (!snap.receiver) return "fail-closed";
   if ((snap.scheduledReconnects ?? 0) > 0 || sumValues(snap.decryptErrors) > 0 || sumValues(snap.recoveries) > 0) {
     return "degraded";
   }
@@ -208,14 +219,14 @@ export function writeBetaStatusFiles(dir: string, status: Record<string, unknown
   writeAtomicJson(join(dir, "host-status.json"), hostStatusView(status), 0o644);
 }
 
-/** Docker HEALTHCHECK: DAVE + receiver, not merely process uptime. Stale files fail. */
+/** Docker HEALTHCHECK: fresh running status. Parked may lack a receiver; stale files fail. */
 export function healthcheckOk(status: Record<string, unknown>, now = Date.now()): boolean {
   if (status.mode !== PRIVATE_BETA_MODE) return false;
   const at = Date.parse(String(status.at ?? ""));
   if (!Number.isFinite(at) || now - at > 30_000) return false;
   if (status.state !== "running") return false;
-  if (!status.receiver) return false;
   if (status.health === "parked") return true;
+  if (!status.receiver) return false;
   if (status.daveReady !== true) return false;
   return status.health === "ok" || status.health === "degraded";
 }

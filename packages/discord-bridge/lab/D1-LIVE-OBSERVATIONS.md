@@ -16,7 +16,7 @@ Operator private-beta, not the disposable laboratory. Do not mark Bridge-D1 A–
 
 With only bridge bots in the mapped Discord channel, the worker parks the MLS wait: the voice connection is kept, audio boundaries stay fail-closed, single-attempt does not charge a reconnect. Status previously reported that as `fail-closed` and Docker `unhealthy`.
 
-This branch reports that as `health=parked` only when the receiver's `knownBotsOnly` grant is true (voice-state cache **and** MLS `connectedClients`, same predicate as the audio idle park). Occupancy integers `voiceMembers`/`voiceBots` stay diagnostic; equal bot counts alone must not park, because a human can be in MLS peers before voice-state cache updates. A human-present DAVE failure stays `fail-closed`.
+This branch reports that as `health=parked` when `knownBotsOnly` is true (voice-state cache **and** MLS `connectedClients`, same predicate as the audio idle park), including initial bots-only MLS wait before a receiver is elected. Occupancy integers `voiceMembers`/`voiceBots` stay diagnostic; equal bot counts alone must not park, because a human can be in MLS peers before voice-state cache updates. A human-present DAVE failure and unknown membership stay `fail-closed`.
 
 AudioPlayer / sender DAVE / reconnect lifecycle is owned by a separate investigation. Do not treat this note as that root cause.
 
