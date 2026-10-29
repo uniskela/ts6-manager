@@ -13,9 +13,12 @@ Companion readiness: [2026-10-29-bridge-d2-readiness.md](2026-10-29-bridge-d2-re
 
 | ID | Decision |
 |---|---|
-| **D2-I** | Encrypted Prisma, owned by the TS6 Manager backend. One shared TeamSpeak identity per configured bridge mapping. Music-bot `encrypt()` / `identityData` pattern. Worker is not a second store. |
-| **D2-R** | Initial official compose: `restart: "no"`. Later bounded `on-failure:3` needs a separate approval and test. No unlimited restart loop. No plaintext DAVE fallback. |
-| **D2-P** | `chore:` for preparatory packaging/infra that does not enable a user-facing feature. `feat:` when completed functionality is intentionally introduced into v1.12.0. Do not retarget the release early. |
+| **D2-I** | Encrypted Prisma, backend-owned. One shared identity per mapping. Music-bot `encrypt()` store. Worker is not a second store. |
+| **D2-L** | Level **23**, via existing `generateIdentityAsync(23)` on the **Node 20 backend** Worker, **before** first authorised Start. Persist, then restore. Never connect on a temporary level-8 identity. |
+| **D2-C** | Supervised D2 rollout: **no** in-process reconnects. Intended production: **3 / 60s with backoff**, gated on D1 live failover **and** recovery tests PASS. D1 single-attempt lab behaviour is unchanged. |
+| **D2-D** | Delete order: revoke lease → Stop/fence worker → delete Prisma identity+mapping → stale Start/payloads fail closed. |
+| **D2-R** | Compose `restart: "no"`. Later `on-failure:3` needs separate approval. No unlimited Docker restart. No plaintext. |
+| **D2-P** | `chore:` preparatory; `feat:` when v1.12.0 is meant to gain Start. Do not retarget early. |
 
 Prisma schema PRs still wait if another `SCHEMA_VERSION` change (#442) is open.
 
@@ -42,24 +45,36 @@ Opens only after D1 live acceptance (including two-speaker, failover, and member
 - Six official bot tokens per mapped TeamSpeak server, stored `enc:iv:tag:ciphertext` with the existing AES-256-GCM helper (`encrypt()`).
 - Worker mutating API requires a bearer secret, same class as `SIDECAR_SECRET`. Production is fatal if `DISCORD_BRIDGE_URL` is set without `DISCORD_BRIDGE_SECRET`.
 - Frontend never sees bot tokens, TeamSpeak identity material, or the worker secret.
-- Start is refused until mapping is enabled and guild/channel membership checks pass. Stop destroys Discord voice connections, drops the in-memory identity, and disconnects the shared TeamSpeak client.
+- Start is refused until mapping is enabled, guild/channel membership checks pass, **and** a level-23 identity is already persisted. Stop destroys Discord voice connections, drops the in-memory identity, and disconnects the shared TeamSpeak client.
+- Administrative Stop, credential revocation, and failed membership/authorisation checks do **not** schedule reconnects.
 
 ### Shared TeamSpeak identity (backend source of truth)
 
 - Exactly **one** shared TeamSpeak identity per configured bridge mapping (one Prisma row per mapped TeamSpeak server).
-- Backend generates or restores via the same helpers as music bots (`generateIdentity` / `restoreIdentity`, same serialize path as `MusicBot.identityData`). Persist ciphertext only (`encrypt()`). Security level is **not** decided here (music bots later raise toward 23; D1 lab used 8).
-- The worker receives the identity **only** in an authorised start payload for that mapping’s active session. It holds it in memory for that session. It must not write identity files, env, or a local database.
-- **One active worker session per mapping.** Backend issues a session/lease id on Start. A second Start for the same mapping stops and fences the previous session before a new payload is sent. The worker refuses voice connect if the session id does not match. Two replicas must not both hold the identity.
-- **Stop / disable:** worker drops the in-memory identity and disconnects. Prisma ciphertext stays so the next authorised Start restores the same uniqueId.
-- **Delete mapping:** destroy the ciphertext in Prisma, then Stop so memory is empty. Backups of the database contain ciphertext; treat them as secret, same as other `encrypt()` fields.
-- `ENCRYPTION_KEY` rotation is the existing product rule: do not rotate casually; a new key cannot decrypt old rows (music bots, API keys, and this identity alike). D2 must not invent a separate rotation scheme. A future shared re-encrypt job, if built, covers this field with the others.
-- Logs, health, status JSON, and ordinary GET omit identity private keys, seed, ciphertext, and uniqueId. Same omission as music-bot GET (`identityData` never returned).
+- **Generate** with `generateIdentityAsync(23)` in a backend `worker_threads` Worker (`packages/backend/src/voice/tslib/identity-worker.ts`). This already runs on Node 20 for music bots. Do not call synchronous `generateIdentity(23)` on the HTTP thread. Do not generate inside the Node 24 Discord worker.
+- Generation completes **before** the mapping’s first authorised Start. Kick it off when the mapping is saved (preferred) so Start is not the first wait. Wall time is a CPU-bound `keyOffset` search (seconds to minutes; same class as music-bot upgrades). Start must not TeamSpeak-connect until ciphertext is stored.
+- **Do not** connect on a temporary level-8 identity and replace it later. That music-bot placeholder path is explicitly out of D2.
+- Subsequent Starts **restore** the persisted identity (`decrypt` + `restoreIdentity`). Same uniqueId across process restarts.
+- If generation fails or times out, Start fails closed with a redacted error. No identity material in the error body or logs.
+- The worker receives the identity **only** in an authorised start payload for that mapping’s active session. Memory only. No identity files, env, or worker database.
+- **One active worker session per mapping.** Backend issues a session/lease id on Start. Concurrent Starts: one winner; the other is fenced (no second payload that can connect). The worker refuses voice connect if the session id does not match.
+- **Administrative Stop:** end the session; worker drops memory; ciphertext stays; a later Start is allowed if the mapping is still enabled. Do not auto-reconnect.
+- **Disable mapping:** refuse new Starts until re-enabled; Stop the session; ciphertext stays.
+- **Delete mapping** (this order):
+  1. Revoke the mapping’s active lease and refuse new Starts.
+  2. Stop the worker session; wait until it is terminated or securely fenced (stale session id).
+  3. Delete the encrypted identity and mapping row from Prisma.
+  4. Any stale worker or late Start payload for that mapping/session must fail closed and must not recreate the row or reconnect.
+- Backups contain ciphertext; treat them as secret. `ENCRYPTION_KEY` rotation follows existing encrypted fields (do not rotate casually; no separate D2 scheme).
+- Logs, health, status JSON, and ordinary GET omit keys, seeds, ciphertext, and uniqueId.
 
-### Fail-closed DAVE
+### Fail-closed DAVE and reconnect
 
-- Fail-closed DAVE and receive-generation fences stay as D1. Unhealthy DAVE never yields plaintext and never restarts the container.
-- **Compose restart (D2-R)** is `"no"`. A process exit stays down until an operator starts it.
-- **In-process reconnect budget** is a separate layer from D2-R. This draft does not change D1’s fail-closed fences. Official default for in-process recoveries (none vs bounded 3/60s vs lab `D1_DAVE_SINGLE_ATTEMPT`) is **not chosen here**.
+- Fail-closed DAVE and receive-generation fences stay as D1. Unhealthy DAVE never yields plaintext.
+- **Compose (D2-R):** `restart: "no"`. Process exit stays down. No automatic Docker restart loop.
+- **In-process (D2-C):** first supervised D2 rollout has **no** automatic in-process reconnects (`maxRecoveries=0` on that official image). Intended production policy is bounded **3 attempts / 60 s with backoff**, enabled only after D1 live failover (ACCEPTANCE C) **and** follow-on recovery tests PASS, plus owner approval to flip the flag.
+- Never reconnect blindly after credential revocation, failed membership/authorisation, or administrative Stop.
+- **D1 lab** `D1_DAVE_SINGLE_ATTEMPT=1` / Draft PR #504 behaviour is **not** modified by D2.
 
 ### Out of D2
 
