@@ -5,7 +5,20 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+fixture_pid=""
+stop_fixture() {
+  if [ -n "${fixture_pid:-}" ]; then
+    kill "$fixture_pid" 2>/dev/null || true
+    wait "$fixture_pid" 2>/dev/null || true
+    fixture_pid=""
+  fi
+}
+trap 'stop_fixture; rm -rf "$TMP"' EXIT
+
+# Resolve system curl before the fake installer shim is on PATH.
+REAL_CURL="$(command -v curl)"
+test -n "$REAL_CURL"
+test -x "$REAL_CURL"
 
 run_install() {
   PATH="$TMP:$PATH" \
@@ -68,37 +81,103 @@ fi
 test ! -e "$TMP/http-redir/deno"
 test ! -e "$TMP/http-redir.zip"
 
-# Real curl: 302 to http:// is rejected when --proto-redir is HTTPS-only.
-# Same flags the installer now passes (Debian/node image curl supports them).
-python3 - "$TMP/redir.port" <<'PY' &
-import http.server, socketserver, sys
+# Real curl against a local fixture: HTTP first hop allowed, HTTP redirect refused.
+python3 - "$TMP/fixture.port" "$TMP/fixture.log" <<'PY' &
+import http.server, os, socketserver, sys
+
+port_file, log_file = sys.argv[1], sys.argv[2]
+
 class H(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(302)
-        self.send_header("Location", "http://127.0.0.1:9/evil.zip")
+        with open(log_file, "a", encoding="utf-8") as fh:
+            fh.write(self.path + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        if self.path == "/ok":
+            body = b"ok\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if self.path == "/redir":
+            dest = "http://127.0.0.1:%d/followed" % self.server.server_address[1]
+            self.send_response(302)
+            self.send_header("Location", dest)
+            self.end_headers()
+            return
+        if self.path == "/followed":
+            body = b"followed\n"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
         self.end_headers()
-    def log_message(self, *args):
+
+    def log_message(self, *_args):
         pass
+
 httpd = socketserver.TCPServer(("127.0.0.1", 0), H)
-open(sys.argv[1], "w").write(str(httpd.server_address[1]))
-httpd.handle_request()
+with open(port_file, "w", encoding="utf-8") as fh:
+    fh.write(str(httpd.server_address[1]))
+    fh.flush()
+    os.fsync(fh.fileno())
+httpd.serve_forever()
 PY
-redir_pid=$!
-trap 'kill "$redir_pid" 2>/dev/null || true; rm -rf "$TMP"' EXIT
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  [ -s "$TMP/redir.port" ] && break
-  sleep 0.05
+fixture_pid=$!
+
+i=0
+while [ ! -s "$TMP/fixture.port" ]; do
+  i=$((i + 1))
+  if [ "$i" -gt 50 ]; then
+    echo "install-deno.test: HTTP fixture did not start" >&2
+    exit 1
+  fi
+  sleep 0.1
 done
-test -s "$TMP/redir.port"
-redir_port="$(cat "$TMP/redir.port")"
-if curl -fsSL --proto-redir '=https' "http://127.0.0.1:${redir_port}/" -o "$TMP/evil.zip"
-then
-  echo "install-deno.test: curl followed an HTTP redirect" >&2
+fixture_port="$(cat "$TMP/fixture.port")"
+
+control_err="$TMP/control.err"
+control_rc=0
+control_body="$("$REAL_CURL" -fsS --noproxy '*' --connect-timeout 2 --max-time 5 \
+  "http://127.0.0.1:${fixture_port}/ok" 2>"$control_err")" || control_rc=$?
+if [ "$control_rc" -ne 0 ] || [ "$control_body" != "ok" ]; then
+  echo "install-deno.test: control request to local fixture failed (exit $control_rc)" >&2
+  cat "$control_err" >&2 || true
+  exit 1
+fi
+
+redir_err="$TMP/redir.err"
+redir_rc=0
+"$REAL_CURL" -fsSL --noproxy '*' --connect-timeout 2 --max-time 5 \
+  --proto '=https,http' --proto-redir '=https' \
+  "http://127.0.0.1:${fixture_port}/redir" \
+  -o "$TMP/evil.zip" 2>"$redir_err" || redir_rc=$?
+if [ "$redir_rc" -eq 7 ]; then
+  echo "install-deno.test: curl could not connect before the redirect (exit 7)" >&2
+  cat "$redir_err" >&2 || true
+  exit 1
+fi
+if [ "$redir_rc" -ne 1 ]; then
+  echo "install-deno.test: expected curl exit 1 rejecting HTTP redirect, got $redir_rc" >&2
+  cat "$redir_err" >&2 || true
+  exit 1
+fi
+if ! grep -qiE 'protocol.*"http".*disabled|protocol http not supported or disabled' "$redir_err"; then
+  echo "install-deno.test: missing protocol-disabled diagnostic" >&2
+  cat "$redir_err" >&2 || true
+  exit 1
+fi
+if ! grep -qx '/redir' "$TMP/fixture.log"; then
+  echo "install-deno.test: fixture did not receive the redirect request" >&2
   exit 1
 fi
 test ! -e "$TMP/evil.zip"
-kill "$redir_pid" 2>/dev/null || true
-trap 'rm -rf "$TMP"' EXIT
+stop_fixture
 
 # CRLF version/checksum files from a Windows checkout must install too.
 printf '2.9.7\r\n' > "$TMP/version"
