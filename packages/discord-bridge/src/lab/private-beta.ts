@@ -111,39 +111,32 @@ async function main(): Promise<void> {
   pushEvent(events, "bridge_running");
   log.info("private-beta running. Status file: evidence/private-beta-status.json. SIGTERM/SIGINT to stop.");
 
+  const byBot = <T>(pick: (b: DiscordBot) => T) => Object.fromEntries([...concrete].map(([id, b]) => [id, pick(b)]));
   const snapshot = (): BetaSnapshotIn => {
     const occupancy = [...concrete.values()].reduce(
-      (acc, b) => {
-        const o = b.channelOccupancy;
-        return o.members > acc.members ? o : acc;
-      },
+      (acc, b) => (b.channelOccupancy.members > acc.members ? b.channelOccupancy : acc),
       { members: 0, bots: 0 },
     );
     const st = runtime!.status();
-    const inChannel = new Set(st.inChannel);
+    const present = new Set(st.inChannel);
     return {
       ...st,
-      dave: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveInfo])),
-      decryptErrors: Object.fromEntries([...concrete].map(([id, b]) => [id, b.decryptErrors])),
-      daveReplacements: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveReplacements])),
-      recoveries: Object.fromEntries([...concrete].map(([id, b]) => [id, b.rejoins])),
+      dave: byBot((b) => b.daveInfo),
+      decryptErrors: byBot((b) => b.decryptErrors),
+      daveReplacements: byBot((b) => b.daveReplacements),
+      recoveries: byBot((b) => b.rejoins),
       tsTransport: { whisperDropped: ts.whisperDropped },
-      senders: Object.fromEntries(
-        [...concrete].map(([id, b]) => [
-          id,
-          {
-            daveReady: b.daveInfo?.ready === true && (b.daveInfo.protocolVersion ?? 0) >= 1,
-            framesSent: b.framesSent,
-            playerStatus: b.playerStatus,
-            playbackDropped: b.playbackDropped,
-            playbackStarved: b.playbackStarved,
-            playbackHealthRejected: b.playbackHealthRejected,
-            playbackDaveRejected: b.playbackDaveRejected,
-            healthy: b.healthy,
-            inChannel: inChannel.has(id),
-          },
-        ]),
-      ),
+      senders: byBot((b) => ({
+        daveReady: b.daveInfo?.ready === true && (b.daveInfo.protocolVersion ?? 0) >= 1,
+        framesSent: b.framesSent,
+        playerStatus: b.playerStatus,
+        playbackDropped: b.playbackDropped,
+        playbackStarved: b.playbackStarved,
+        playbackHealthRejected: b.playbackHealthRejected,
+        playbackDaveRejected: b.playbackDaveRejected,
+        healthy: b.healthy,
+        inChannel: present.has(b.id),
+      })),
       voiceMembers: occupancy.members,
       voiceBots: occupancy.bots,
       botsOnlyPark: st.receiver ? concrete.get(st.receiver as BotId)?.knownBotsOnlyChannel === true : false,

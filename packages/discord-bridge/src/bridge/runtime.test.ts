@@ -196,32 +196,39 @@ describe("DAVE transition at the receiver while audio is queued (simulated Disco
 });
 
 describe("TeamSpeak nickname → Discord slot nick", () => {
+  async function aliceSlot() {
+    const ctx = await build();
+    await ctx.rt.start();
+    ctx.ts.addUser(1, "Alice");
+    await ctx.settle();
+    return { ...ctx, slot: ctx.bots.get("slot-0")! };
+  }
+
+  function holdNick(slot: FakeBot): () => void {
+    let release!: () => void;
+    slot.nickDelay = new Promise<void>((r) => (release = r));
+    return () => {
+      slot.nickDelay = null;
+      release();
+    };
+  }
+
   it("propagates a nickname change to the same uniqueId's slot without rejoining", async () => {
-    const { ts, bots, rt, settle } = await build();
-    await rt.start();
-    ts.addUser(1, "Alice");
-    await settle();
-    const joins = bots.get("slot-0")!.joinCount;
-    assert.equal(bots.get("slot-0")!.nick, "[TS] Alice");
+    const { ts, rt, settle, slot } = await aliceSlot();
+    const joins = slot.joinCount;
     ts.renameUser(1, "Alicia");
     await settle();
-    assert.equal(bots.get("slot-0")!.nick, "[TS] Alicia");
-    assert.equal(bots.get("slot-0")!.joinCount, joins, "audio membership is not rebuilt");
+    assert.equal(slot.nick, "[TS] Alicia");
+    assert.equal(slot.joinCount, joins, "audio membership is not rebuilt");
     assert.equal(rt.router.slotOccupant(0), "uid1");
     await rt.stop();
   });
 
   it("keeps the last nickname when a slower earlier Discord response arrives", async () => {
-    const { ts, bots, rt, settle } = await build();
-    await rt.start();
-    ts.addUser(1, "Alice");
-    await settle();
-    const slot = bots.get("slot-0")!;
-    let release!: () => void;
-    slot.nickDelay = new Promise<void>((r) => (release = r));
+    const { ts, rt, settle, slot } = await aliceSlot();
+    const release = holdNick(slot);
     ts.renameUser(1, "First");
     await new Promise((r) => setImmediate(r));
-    slot.nickDelay = null;
     ts.renameUser(1, "Second");
     release();
     await settle();
@@ -231,11 +238,7 @@ describe("TeamSpeak nickname → Discord slot nick", () => {
   });
 
   it("does not mark a failed Discord nick as applied, and does not drop the slot", async () => {
-    const { ts, bots, rt, settle } = await build();
-    await rt.start();
-    ts.addUser(1, "Alice");
-    await settle();
-    const slot = bots.get("slot-0")!;
+    const { ts, rt, settle, slot } = await aliceSlot();
     const joins = slot.joinCount;
     slot.nickFailRemaining = 2;
     ts.renameUser(1, "Blocked");
@@ -250,17 +253,11 @@ describe("TeamSpeak nickname → Discord slot nick", () => {
   });
 
   it("a delayed Discord nick from before leave cannot overwrite the name after rejoin", async () => {
-    const { ts, bots, rt, settle } = await build();
-    await rt.start();
-    ts.addUser(1, "Alice");
-    await settle();
-    const slot = bots.get("slot-0")!;
-    let release!: () => void;
-    slot.nickDelay = new Promise<void>((r) => (release = r));
+    const { ts, rt, settle, slot } = await aliceSlot();
+    const release = holdNick(slot);
     ts.renameUser(1, "Old");
     await new Promise((r) => setImmediate(r));
     ts.removeUser(1);
-    slot.nickDelay = null;
     ts.addUser(1, "New");
     release();
     await settle();
