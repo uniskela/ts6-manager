@@ -143,6 +143,12 @@
     "tears a late connection down when leave() arrives while it waits for Ready",
     "treats a rejoin() that returns false as a failure and builds a new connection"
   ],
+  "src/adapters/discord-bot.playback.test.ts": [
+    "drops a DAVE-lost turn and plays a fresh turn when DAVE returns",
+    "keeps Discord to TeamSpeak working while another sender connection is recreated",
+    "subscribes playback after repeated leave/join, connection recreation and receiver rejoin",
+    "sustains 10000 simulated player ticks and resumes after a silent turn"
+  ],
   "src/adapters/discord-bot.receive.test.ts": [
     "a bot that starts speaking after reception began is excluded on the speaking-start path too",
     "a frame arriving after closeAll never reaches the pipeline",
@@ -168,6 +174,15 @@
     "rejects stale reception from the replaced connection",
     "reports the poisoned session once and treats its own teardown and the rebuild as no failure",
     "verifies freshness: a rebuild that hands back the same DAVE session fails and leaves the bot unhealthy"
+  ],
+  "src/adapters/ts-session.rollover.test.ts": [
+    "carries post-rollover voice through the real directory, router, pipeline, player and DAVE dispatch",
+    "does not overflow the 32-bit generation or search beyond adjacent generations",
+    "handles a lost boundary packet and a delayed previous-generation packet without rolling back",
+    "keeps emitting voice after the server advances generation at 65535 -> 0",
+    "keeps the existing unencrypted and dummy-key paths from advancing real-key generation",
+    "never advances generation from a forged packet and keeps packet types independent",
+    "receives a complete 65536-packet generation and the next generation without wall-clock waiting"
   ],
   "src/adapters/ts-session.test.ts": [
     "fails closed when the transport does not say which kind of packet it is",
