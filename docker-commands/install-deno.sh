@@ -28,7 +28,9 @@ if ! printf '%s\n' "$EXPECTED" | grep -Eq '^[0-9a-f]{64}$'; then
   exit 1
 fi
 
-curl -fsSL \
+# --proto / --proto-redir keep the first hop and any GitHub redirect on HTTPS.
+# The SHA-256 check below still pins the bytes even if a mirror is used.
+curl -fsSL --proto '=https' --proto-redir '=https' \
   "https://github.com/denoland/deno/releases/download/v${DENO_VERSION}/deno-${DENO_ARCH}-unknown-linux-gnu.zip" \
   -o "$ZIP"
 printf '%s  %s\n' "$EXPECTED" "$ZIP" | sha256sum -c -
