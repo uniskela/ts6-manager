@@ -37,12 +37,12 @@ Set `FRONTEND_URL` to the public frontend origin when it differs from the defaul
 
 ## WebSockets
 
-The application uses authenticated WebSockets. Ensure the reverse proxy supports WebSocket upgrade requests to the backend through the frontend/nginx path used by your deployment.
+The application uses authenticated WebSockets on `/ws`. Ensure the reverse proxy supports WebSocket upgrade requests for that path through the frontend/nginx used by your deployment. Do not send `Upgrade` or `Connection: upgrade` on `/api`. The bundled frontend and all-in-one nginx configs upgrade `/ws` only.
 
-A minimal outer NGINX location that only sets `X-Forwarded-For` is not enough. Prefer something like:
+A minimal outer NGINX location that only sets `X-Forwarded-For` is not enough for `/ws`. Prefer a plain `location /` plus a dedicated WebSocket location. Keep the long read timeout on `/ws` so idle WebSocket connections stay open, and keep the forwarded headers on both locations:
 
 ~~~nginx
-location / {
+location /ws {
     proxy_pass http://127.0.0.1:3000;  # frontend / all-in-one published port
     proxy_http_version 1.1;
     proxy_set_header Host $host;
@@ -51,6 +51,14 @@ location / {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_read_timeout 86400;
+}
+
+location / {
+    proxy_pass http://127.0.0.1:3000;  # frontend / all-in-one published port
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
 }
 ~~~
 
@@ -62,7 +70,7 @@ In-browser preview signaling uses ordinary HTTPS API calls through the reverse p
 
 If the preview stays on “Connecting to stream…” and then reports an ICE failure or timeout:
 
-- confirm WebSocket/upgrade headers above so the rest of the live UI stays healthy;
+- confirm the `/ws` location above sends upgrade headers, and that `location /` does not, so the rest of the live UI stays healthy;
 - remember NGINX does **not** carry WebRTC media — only signaling;
 - set `WEBRTC_NAT1TO1_IP` to an IPv4 the **browser** can dial (LAN or Tailscale for local clients; public IPv4 when the browser is on the Internet), and publish `WEBRTC_UDP_PORT` with `WEBRTC_BIND_IP` on the Docker host (bind may differ from the advertised address when a firewall/NAT forwards UDP);
 - **avoid** advertising `127.0.0.1` unless the browser is on the Docker host itself;

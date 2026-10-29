@@ -144,7 +144,7 @@ Check:
 - **candidate reachability:** `WEBRTC_NAT1TO1_IP` is an IPv4 the browser can dial (not a container `172.x`; not `127.0.0.1` unless the browser is on the Docker host);
 - **Docker host binding:** `WEBRTC_UDP_PORT` is published via `WEBRTC_BIND_IP` on the host (`${WEBRTC_BIND_IP}:${WEBRTC_UDP_PORT}:…/udp`). Bind can differ from NAT1To1 when a firewall/NAT forwards the public UDP port to the host;
 - for public-Internet browsers: advertise the public IPv4 in `WEBRTC_NAT1TO1_IP`, forward UDP to the Docker host, and keep the host bind accordingly;
-- WebSocket upgrade headers on the outer reverse proxy so live UI updates still work;
+- WebSocket upgrade headers on the outer reverse proxy's `/ws` location (not on `/api`) so live UI updates still work;
 - Twitch live URLs use yt-dlp URL resolve (not a temp download) — see #203 if Twitch sources fail before the preview can attach.
 
 ### Check the browser side first
