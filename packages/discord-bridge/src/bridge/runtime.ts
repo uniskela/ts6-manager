@@ -104,6 +104,8 @@ export class BridgeRuntime extends EventEmitter {
   private readonly tracked = new Set<Promise<unknown>>();
   private readonly retryTimers = new Map<BotId, NodeJS.Timeout>();
   private readonly retryAttempts = new Map<BotId, number>();
+  /** maxRecoveries=0 never recovers by time or membership churn; only a new runtime/bot can retry. */
+  private readonly permanentlyRefused = new Set<BotId>();
   private readonly appliedNick = new Map<BotId, string | null>();
   private readonly detach: (() => void)[] = [];
   private ticker: NodeJS.Timeout | null = null;
@@ -370,7 +372,7 @@ export class BridgeRuntime extends EventEmitter {
       else this.election.setState(id, { healthy: bot.healthy, inChannel: true });
     }
     // 2. Move the receiver off any bot that is about to leave BEFORE it leaves.
-    const leaving = [...this.inChannel].filter((id) => !want.has(id));
+    const leaving = [...new Set([...this.inChannel, ...this.inflightJoins.keys(), ...this.retryTimers.keys()])].filter((id) => !want.has(id));
     for (const id of leaving) this.election.setState(id, { inChannel: false });
     this.election.reconcile(reason);
     // 3. Nicknames, then departures.
@@ -386,13 +388,13 @@ export class BridgeRuntime extends EventEmitter {
 
   /** Join `id` in the background. At most one join per bot is in flight. */
   private ensureJoined(id: BotId): void {
-    if (!this.live() || this.inflightJoins.has(id)) return;
+    if (!this.live() || this.inflightJoins.has(id) || this.permanentlyRefused.has(id)) return;
     const bot = this.o.bots.get(id)!;
     const attempt = (async () => {
       try {
         await bot.join({ receive: id === "overflow" || id === this.election.receiver });
-        if (!this.live()) {
-          bot.leave(); // a join that finished after stop() must not leave a connection behind
+        if (!this.live() || !this.desiredMembers().has(id)) {
+          bot.leave(); // a late completion must still satisfy shutdown AND current membership intent
           return;
         }
         this.inChannel.add(id);
@@ -409,7 +411,11 @@ export class BridgeRuntime extends EventEmitter {
           // The bot's one rebuild budget is spent. max=0 never frees; otherwise wake once, when it does.
           this.o.log.warn(`${id} reconnect refused: ${e.message}`);
           this.election.setState(id, { healthy: false, inChannel: false });
-          if (e.max === 0) return;
+          if (e.max === 0) {
+            this.permanentlyRefused.add(id);
+            this.clearRetryTimer(id);
+            return;
+          }
           this.scheduleWake(id, e.retryInMs);
         } else {
           this.o.log.warn(`${id} could not join: ${e instanceof Error ? e.message : String(e)}`);

@@ -41,13 +41,13 @@ export interface VoiceTarget {
 export interface BotTiming {
   /** How long a join waits for the voice connection to become Ready. */
   readyMs: number;
-  /** How long a Ready connection may take to establish DAVE before the bot leaves (fail closed). */
+  /** How long a Ready connection with possible human peers may take to establish DAVE. */
   daveWaitMs: number;
   /** Poll interval while waiting for DAVE. */
   pollMs: number;
   /** How often a joined bot re-reads the live DAVE state (the library has no event for it). */
   watchdogMs: number;
-  /** How long DAVE may stay unavailable (an MLS transition) before the bot is declared unhealthy. */
+  /** How long DAVE may stay unavailable with possible human peers before the bot is unhealthy. */
   daveGraceMs: number;
   /**
    * The one budget for failure-driven reconnects: this many connection rebuild attempts per window,
@@ -211,6 +211,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     // updates the guild's voice-state cache before it emits this, so every later check agrees.
     this.onVoiceState = (before, after) => {
       if (before.channelId === this.o.channelId && after.channelId !== this.o.channelId) this.admission?.revoke(after.id);
+      if (before.channelId === this.o.channelId || after.channelId === this.o.channelId) this.observeDave();
     };
     this.client.on("voiceStateUpdate", this.onVoiceState);
     this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play, maxMissedFrames: 5 } });
@@ -471,6 +472,32 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return conn !== null && daveEnforced(readDaveInfo(conn)) && this.sessionEpoch(conn) !== null;
   }
 
+  /**
+   * A transport with an identifiable protocol-1 session may wait quietly for MLS while only known
+   * bots are present. Channel voice-state is the primary occupancy source (a human can appear
+   * before voice-gateway negotiation). `connectedClients` is Discord's MLS peer set in the pinned
+   * library: extra unclassifiable IDs start the deadline. An unreadable Set is ignored, not a park
+   * grant. This controls deadlines only; every audio boundary still requires `enforced`.
+   */
+  private knownBotsOnly(conn: VoiceConnection): boolean {
+    if ((readDaveInfo(conn)?.protocolVersion ?? 0) < 1 || this.sessionEpoch(conn) === null || this.channelOf(this.userId) !== this.o.channelId) return false;
+    const guild = this.client.guilds.cache.get(this.o.guildId);
+    if (!guild) return false;
+    for (const vs of guild.voiceStates.cache.values()) {
+      if (vs.channelId !== this.o.channelId || this.excluded(vs.id)) continue;
+      if ((vs.member?.user?.bot ?? this.client.users.cache.get(vs.id)?.bot) !== true) return false;
+    }
+    const peers = (conn.state as { networking?: { state?: { connectionData?: { connectedClients?: unknown } } } }).networking?.state?.connectionData?.connectedClients;
+    if (peers instanceof Set) {
+      for (const id of peers) {
+        if (typeof id !== "string") return false;
+        if (this.excluded(id)) continue;
+        if ((guild.voiceStates.cache.get(id)?.member?.user?.bot ?? this.client.users.cache.get(id)?.bot) !== true) return false;
+      }
+    }
+    return true;
+  }
+
   /** The epoch of the DAVE session in force on this connection now, or null when there is none. */
   private sessionEpoch(conn: VoiceConnection): number | null {
     return this.daveEpochs.of(daveSessionIdentity(conn));
@@ -568,6 +595,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     if (ok && this.healthy && this.admission && (this.admission.isClosed || this.receiveSession === null || !this.receiveSessionHolds(conn, this.receiveSession))) {
       this.handleDaveReplaced();
     }
+    if (!ok && this.healthy) this.updateDaveGrace();
     return ok;
   }
 
@@ -592,15 +620,30 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.stopReceive();
     this.o.election.daveLost(this.o.id, "dave unavailable");
     this.clearGraceTimer();
+    this.updateDaveGrace();
+    this.logDaveLifecycle(this.connection, "lost");
+  }
+
+  /** No recovery debt for an idle MLS wait; possible human peers get a fresh, bounded grace. */
+  private updateDaveGrace(): void {
+    const conn = this.connection;
+    if (!conn || this.knownBotsOnly(conn)) {
+      this.clearGraceTimer();
+      return;
+    }
+    if (this.graceTimer) return;
     this.graceTimer = setTimeout(() => {
       this.graceTimer = null;
-      if (!this.daveOk) {
-        this.logDaveLifecycle(this.connection, "grace-expired");
-        this.markUnhealthy("DAVE unavailable after the grace window", { fresh: true });
+      if (conn !== this.connection) return;
+      if (this.enforced(conn)) {
+        this.observeDave();
+        return;
       }
+      if (this.knownBotsOnly(conn)) return;
+      this.logDaveLifecycle(conn, "grace-expired");
+      this.markUnhealthy("DAVE unavailable after the grace window", { fresh: true });
     }, this.timing.daveGraceMs);
     this.graceTimer.unref();
-    this.logDaveLifecycle(this.connection, "lost");
   }
 
   private handleDaveRestored(): void {
@@ -622,13 +665,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.player.stop(true);
   }
 
-  /** Enforce DAVE: wait for an established session, otherwise drop the connection and fail closed. */
+  /** Enforce DAVE before completing a join. A known bots-only protocol-1 transport can stay parked. */
   private async requireDave(conn: VoiceConnection, epoch: number): Promise<void> {
-    const deadline = Date.now() + this.timing.daveWaitMs;
+    let deadline: number | null = null;
     let lastLog = 0;
     this.watchDave(conn);
     this.logDaveLifecycle(conn, "wait");
-    while (Date.now() < deadline) {
+    for (;;) {
       this.checkpoint(epoch, conn);
       this.watchDave(conn);
       if (this.enforced(conn)) {
@@ -636,12 +679,18 @@ export class DiscordBot extends EventEmitter implements BotPort {
         return;
       }
       const now = Date.now();
+      if (this.knownBotsOnly(conn)) deadline = null;
+      else {
+        deadline ??= now + this.timing.daveWaitMs;
+        if (now >= deadline) break;
+      }
       if (now - lastLog >= 2_000) {
         lastLog = now;
         this.logDaveLifecycle(conn, "wait");
       }
       await new Promise((r) => setTimeout(r, this.timing.pollMs));
     }
+    this.checkpoint(epoch, conn); // cancellation, even during the final poll, never incurs recovery debt
     const info = readDaveInfo(conn);
     this.logDaveLifecycle(conn, "timeout");
     this.noteFailure();

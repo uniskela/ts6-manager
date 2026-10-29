@@ -173,6 +173,24 @@
     "fails closed when the transport does not say which kind of packet it is",
     "forwards channel Voice and never forwards VoiceWhisper"
   ],
+  "src/bridge/runtime.dave-idle.test.ts": [
+    "TeamSpeak membership cancels an unwanted pending join before it can become a receiver",
+    "a late human gets a fresh bounded wait and can establish DAVE on the parked connection",
+    "a present human without a welcome still times out and permanent budget refusal is logged once across syncs",
+    "a returning human without DAVE exhausts the loss grace and fails closed",
+    "empty-channel startup parks the transport beyond 10 s, with both audio boundaries closed",
+    "grace expiry reads live DAVE readiness even when the watchdog has not seen restoration",
+    "human-first startup elects and undeafens only after an established MLS session",
+    "last-human departure during initial negotiation resets the wait without a recovery charge",
+    "last-human departure fences queued audio, parks a lost session beyond 5 s, then uses fresh admissions",
+    "leave during the last DAVE poll is cancellation and does not poison a later planned join",
+    "membership welcomes keep the session identity, while an in-place reinit fences the receive generation",
+    "missing-self cannot be mistaken for a known bots-only channel",
+    "protocol-zero cannot be mistaken for a known bots-only channel",
+    "shutdown cancels an empty-channel DAVE wait and never creates another connection",
+    "unknown-peer cannot be mistaken for a known bots-only channel",
+    "unknown-voice-peer cannot be mistaken for a known bots-only channel"
+  ],
   "src/bridge/runtime.dave.test.ts": [
     "a frame arriving while DAVE is lost is never queued",
     "a frame queued while DAVE was established is dropped, not forwarded, when DAVE is lost before the watchdog notices",

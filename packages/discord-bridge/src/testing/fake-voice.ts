@@ -119,7 +119,7 @@ export class FakeNetworking extends EventEmitter {
     this.state = {
       code: NETWORKING_READY,
       dave,
-      connectionData: { encryptionMode: "aead_aes256_gcm_rtpsize", nonceBuffer: Buffer.alloc(12), secretKey },
+      connectionData: { encryptionMode: "aead_aes256_gcm_rtpsize", nonceBuffer: Buffer.alloc(12), secretKey, connectedClients: new Set<string>() },
       ws: new EventEmitter(),
       udp: new EventEmitter(),
     };
@@ -305,6 +305,8 @@ export function testBot(
     bridgeUserIds?: () => ReadonlySet<string>;
     timing?: Partial<import("../adapters/discord-bot.js").BotTiming>;
     protocolVersion?: number;
+    /** Initial native MLS readiness; false models Ready before any group welcome/commit. */
+    daveReady?: boolean;
     now?: () => number;
     /** Stands in for Discord's REST user lookup. Default: every user is a human. */
     userLookup?: (userId: string) => Promise<{ bot: boolean } | null>;
@@ -369,7 +371,7 @@ export function testBot(
     completePending() {
       const conn = bot.voiceConnection;
       if (!conn || conn.state.status !== "signalling" || t.ready.some((h) => h.conn === conn)) return null;
-      const h = withVoice(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion }));
+      const h = withVoice(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion, ready: o.daveReady }));
       t.ready.push(h);
       return h;
     },
@@ -393,7 +395,7 @@ export function testBot(
     queueMicrotask(() => {
       const conn = bot.voiceConnection;
       if (!t.autoReady || !conn || conn.state.status !== "signalling" || t.ready.some((h) => h.conn === conn)) return;
-      t.ready.push(withVoice(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion, reuse: t.reuseDave ? t.latest() : undefined })));
+      t.ready.push(withVoice(makeReady(conn, { userId: bot.userId, protocolVersion: o.protocolVersion, ready: o.daveReady, reuse: t.reuseDave ? t.latest() : undefined })));
     });
   return t;
 }

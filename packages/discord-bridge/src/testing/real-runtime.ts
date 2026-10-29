@@ -12,6 +12,7 @@ import { preferredOrder, type BotId } from "../core/ids.js";
 import { createOpusCodec } from "../core/opus.js";
 import { toneFrame } from "../core/pcm.js";
 import { ReceiverElection } from "../core/receiver-election.js";
+import type { Logger } from "../core/redact.js";
 import { FakeTs } from "./fake-runtime.js";
 import { quietLog, testBot, type TestBot } from "./fake-voice.js";
 
@@ -19,7 +20,7 @@ import { quietLog, testBot, type TestBot } from "./fake-voice.js";
 export const validOpus = (): Buffer => createOpusCodec("native").encode(toneFrame(440, 0));
 
 export function realRuntime(
-  o: { users?: number; timing?: Partial<BotTiming>; retry?: Partial<RetryPolicy>; stopTimeoutMs?: number; now?: () => number } = {},
+  o: { users?: number; timing?: Partial<BotTiming>; retry?: Partial<RetryPolicy>; stopTimeoutMs?: number; now?: () => number; daveReady?: boolean; log?: Logger } = {},
 ) {
   const election = new ReceiverElection(preferredOrder(5));
   const ts = new FakeTs();
@@ -36,6 +37,8 @@ export function realRuntime(
         identityRequests,
         timing: o.timing,
         now: o.now,
+        daveReady: o.daveReady,
+        log: o.log,
         onHumanOpus: (b, g, u, op, a) => rt.onHumanOpus(b, g, u, op, a),
         onHumanClosed: (b, u) => rt.onHumanClosed(b, u),
       }),
@@ -47,7 +50,7 @@ export function realRuntime(
     bots,
     election,
     codecFactory: () => createOpusCodec("native"),
-    log: quietLog,
+    log: o.log ?? quietLog,
     stopTimeoutMs: o.stopTimeoutMs ?? 200,
     retry: { baseMs: 5, maxMs: 50, maxAttempts: 5, ...o.retry },
   });
