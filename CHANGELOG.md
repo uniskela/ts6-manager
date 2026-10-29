@@ -2,6 +2,17 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.11.3](https://github.com/uniskela/ts6-manager/compare/v1.11.2...v1.11.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deps:** bump transitive qs to 6.16.2 ([#553](https://github.com/uniskela/ts6-manager/issues/553)) ([5b2ac8e](https://github.com/uniskela/ts6-manager/commit/5b2ac8e32c970b9f58b0c2925f1ff72d467fce6c))
+* **deps:** update yt-dlp to 2026.10.21 ([#525](https://github.com/uniskela/ts6-manager/issues/525)) ([c483acf](https://github.com/uniskela/ts6-manager/commit/c483acf8387e5f9195a3b4c01851da2f8e3439fd))
+* reject malformed hex in AES-GCM encrypted fields ([#549](https://github.com/uniskela/ts6-manager/issues/549)) ([1d58ebf](https://github.com/uniskela/ts6-manager/commit/1d58ebfddbfafb08d4366332d213aa74f075edda))
+* require 16-byte AES-GCM authentication tags ([#547](https://github.com/uniskela/ts6-manager/issues/547)) ([7735d99](https://github.com/uniskela/ts6-manager/commit/7735d99fb86aa6656877e6f8b1d68b00d9f9e331))
+* stop sending WebSocket upgrade headers on /api ([#548](https://github.com/uniskela/ts6-manager/issues/548)) ([030de0d](https://github.com/uniskela/ts6-manager/commit/030de0d54f74ea4ee34c7c2b1d7bf6b60b7d35cd))
+
 ## [1.11.2](https://github.com/uniskela/ts6-manager/compare/v1.11.1...v1.11.2) (2026-10-25)
 
 
