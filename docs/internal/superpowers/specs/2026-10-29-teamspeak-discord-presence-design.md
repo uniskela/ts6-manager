@@ -1,8 +1,8 @@
 # TeamSpeak-side Discord presence
 
 **Date:** 2026-10-29
-**Status:** Design approved; implementation not started
-**Scope:** Planning only. Presence-1 is a shared TeamSpeak nickname roster of connected Discord humans. Presence-2 (per-user TeamSpeak identities) is a later owner decision. Do not implement on Draft PR #504, the D1 beta, or any live image.
+**Status:** Presence-1 design approved; implementation not started. Presence-2 is informative only and is not approved for implementation.
+**Scope:** Planning only. Presence-1 is a shared TeamSpeak nickname roster of connected Discord humans. Presence-2 (per-user TeamSpeak identities) is a later owner decision and needs an explicit Bridge-K amendment before any implementation. Do not implement on Draft PR #504, the D1 beta, or any live image.
 
 Companion contract: [discord-voice-bridge.md](../../discord-voice-bridge.md). This document does not amend Bridge-K.
 
@@ -25,8 +25,9 @@ Presence-1 lists **connected Discord human participants**. Silent sitters appear
 Derive the roster from verified Discord voice-channel membership:
 
 - In the mapped guild voice-state cache, `channelId` is the approved Discord voice channel.
-- Identity is a verified human (`HumanFilter`: `bot === false`).
-- Exclude bridge bot user ids, other bots, and unverified / unknown identities.
+- For **every** current member of that channel, ask `HumanFilter` whether they are a verified human. Do not wait for speaking, packets, or `VoiceAdmission`.
+- Include only `isHuman === true`. Unknown stays off the nick until the lookup answers human. A late human answer is a roster event.
+- Exclude bridge bot user ids, other bots, failed lookups, and unverified / unknown identities.
 
 Keep display presence independent of:
 
@@ -34,18 +35,18 @@ Keep display presence independent of:
 - active speaking
 - `VoiceAdmission` / receive-generation fences
 
-Audio admission still decides who is mixed. A silent verified human is on the nick and not in the mix. An unverified speaker is in neither.
+Audio admission still decides who is mixed. A silent verified human is on the nick and not in the mix. An unverified speaker is in neither. A receive-generation bump does not add or remove anyone.
 
 ### 3. Stale users must disappear
 
-Rebuild the roster from the live voice-state cache on every relevant event. Do not keep a side list that outlives membership.
+Rebuild the roster from the live voice-state cache plus current identity answers on every relevant event. Do not keep a side list that outlives membership. Receive-generation and DAVE session changes are not roster events.
 
-Remove a user when they leave or move off the mapped channel, when identity flips to bot or unverified, when the receive session is replaced and they are no longer in the live cache, or when the TeamSpeak client reconnects (rebuild from cache after connect; do not restore the previous nick string blindly if membership changed).
+Remove a user when they leave or move off the mapped channel, or when identity flips to bot or unverified. After the TeamSpeak client reconnects, rebuild from the current cache; do not restore the previous nick string blindly if membership changed.
 
 ### 4. Release sequencing
 
 1. Complete D1 acceptance.
-2. D2 packaging and persist the **one** shared TeamSpeak identity.
+2. D2 packaging. Persist the **one** shared TeamSpeak identity as a Presence-1 prerequisite (it may ride with D2; this is not a silent Bridge-K D2 amendment).
 3. Presence-1 shared nickname roster.
 4. Consider Presence-2 only after an explicit Bridge-K amendment.
 
@@ -83,9 +84,9 @@ Rules:
 
 ### Source and events
 
-Watch Discord `voiceStateUpdate` for the mapped channel, plus identity-filter answers and member display-name / nick updates.
+Watch Discord `voiceStateUpdate` for the mapped channel, plus identity-filter answers and member display-name / nick updates. On membership, ask `HumanFilter` for each current mapped-channel member even if they have never spoken.
 
-On each event, recompute the desired set from the live cache. Then format the desired nick. Do not incrementally patch a stored name list without a cache re-read.
+On each event, recompute the desired set from the live cache and current identity answers. Then format the desired nick. Do not incrementally patch a stored name list without a cache re-read.
 
 Reconnect of the shared TeamSpeak client: after `clientinit`, set the nick from the current cache (coalesced). Do not replay a stale pre-disconnect roster.
 
@@ -110,7 +111,7 @@ Presence-1 must:
 
 Unchanged: TeamSpeak still hears one talking client. Presence-1 does not grant audio, election, or DAVE. Dual-homed echo stays documented, not cancelled.
 
-## Presence-2 — individual TeamSpeak identities (not scheduled)
+## Presence-2 — individual TeamSpeak identities (informative; not approved)
 
 One `Ts3Client` cannot impersonate multiple client ids. Each assigned Discord human needs a full UDP session (identity, handshake, EAX, `sendVoice`).
 
@@ -147,6 +148,7 @@ Configurable cap (default 5) plus one overflow identity while overflow is non-em
 - DAVE down, not speaking, or not admitted does not remove a verified sitter.
 - Join, leave, move, and display-name change update the nick within the coalesce window.
 - After departure or TeamSpeak reconnect, a user who is not in the live cache is gone.
+- A receive-generation or DAVE-session change does not add or remove roster members by itself.
 - Nick is always 3–30 characters, stable first-seen order, `+N` overflow kept.
 - `clientupdate` failure or flood: previous nick kept, warning only, audio continues.
 - No new Discord applications. No change to 5+1 TeamSpeak → Discord slots.
@@ -169,7 +171,8 @@ Deterministic. No live Discord.
 - empty / one / two / `+N` formatting at 30 characters
 - surrogate-safe truncation; `+N` never dropped
 - silent verified human appears; unverified and bots do not
-- DAVE lost / no admission does not drop a sitter
+- never-spoken mapped-channel human appears after the identity answer
+- DAVE lost / no admission / receive-generation bump does not drop a sitter
 - five joins in 200 ms → one `clientupdate`
 - leave or channel move removes the name after the next send
 - TeamSpeak reconnect rebuilds from the current cache
