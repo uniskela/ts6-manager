@@ -29,7 +29,7 @@ import { registerSecret, safeError, type Logger } from "../core/redact.js";
 import { ReceiveSupervisor } from "../core/receive-supervisor.js";
 import type { ReceiverElection } from "../core/receiver-election.js";
 import { VoiceAdmission, type Admission } from "../core/voice-admission.js";
-import type { BotPort } from "../bridge/runtime.js";
+import { nickErrorKind, type BotPort, type NickResult } from "../bridge/runtime.js";
 
 /** Where a bot joins and which gateway adapter carries its voice signalling. */
 export interface VoiceTarget {
@@ -177,6 +177,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   userId = "";
   healthy = false;
   framesSent = 0;
+  playbackHealthRejected = 0;
+  playbackDaveRejected = 0;
   private feedDropped = 0;
   private feedStarved = 0;
   rejoins = 0;
@@ -256,14 +258,18 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.selfDeaf;
   }
 
-  /** `null` resets to the application name. */
-  async setNickname(nick: string | null): Promise<void> {
+  /** `null` resets to the application name. `denied` is a 403/missing-permissions; `failed` is transient. */
+  async setNickname(nick: string | null): Promise<NickResult> {
     try {
       const guild = await this.client.guilds.fetch(this.o.guildId);
-      await guild.members.me?.setNickname(nick === null ? null : nick.slice(0, 32));
+      const me = guild.members.me;
+      if (!me) return "failed";
+      await me.setNickname(nick === null ? null : nick.slice(0, 32));
+      return "ok";
     } catch (e) {
       // Contract: a nickname failure warns and keeps the old nick; it never stops the bridge.
       this.o.log.warn(`${this.o.id} nickname not changed: ${safeError(e)}`);
+      return nickErrorKind(e);
     }
   }
 
@@ -754,7 +760,14 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /** The TeamSpeak speaker assigned to this bot: Opus passthrough, one turn per stretch of speech. */
   sendOpus(frame: Buffer): void {
-    if (!this.healthy || !this.observeDave()) return;
+    if (!this.healthy) {
+      this.playbackHealthRejected += 1;
+      return;
+    }
+    if (!this.observeDave()) {
+      this.playbackDaveRejected += 1;
+      return;
+    }
     if (!this.feed || this.feed.destroyed) {
       this.detachFeed(false);
       this.feed = new FrameFeed();
@@ -990,6 +1003,16 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   get daveInfo() {
     return this.connection ? readDaveInfo(this.connection) : null;
+  }
+
+  /** Integers only: Discord voice members in the mapped channel, and how many are bots. */
+  get channelOccupancy(): { members: number; bots: number } {
+    return this.voiceMemberCounts();
+  }
+
+  /** Same bots-only grant as the DAVE idle park path (voice-state cache plus MLS peers). */
+  get knownBotsOnlyChannel(): boolean {
+    return this.connection !== null && this.knownBotsOnly(this.connection);
   }
 
   /** Privacy-safe MLS negotiation snapshot (categories and integers only). */

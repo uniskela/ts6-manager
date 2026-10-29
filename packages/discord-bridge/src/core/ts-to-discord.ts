@@ -1,11 +1,11 @@
 import { noteArrivalGap } from "./arrival-gap.js";
-import type { ClientDirectory } from "./client-directory.js";
+import type { ClientDirectory, DirectoryClient } from "./client-directory.js";
 import { FrameMixer } from "./frame-mixer.js";
 import type { BotId } from "./ids.js";
 import { LatencyStats } from "./metrics.js";
 import type { OpusCodec } from "./opus.js";
 import { splitOpusPacket } from "./opus-packet.js";
-import { parseS2CVoice } from "./ts-voice-packet.js";
+import { parseS2CVoice, type TsVoicePacket } from "./ts-voice-packet.js";
 import type { SlotRouter } from "./slot-router.js";
 
 export interface DiscordSendSink {
@@ -61,6 +61,12 @@ export class TsToDiscordPipeline {
   encodeErrors = 0;
   /** Well formed packets whose frame duration cannot be carried to a slot bot without re-encoding. */
   unsupportedFrames = 0;
+  /** Pre-route drops. Integers only; never clids or uniqueIds. */
+  malformed = 0;
+  unknownSpeakers = 0;
+  ownVoice = 0;
+  excluded = 0;
+  notInChannel = 0;
   /** bot -> uniqueId -> frames, the per-speaker routing evidence. */
   readonly routed = new Map<BotId, Map<string, number>>();
   readonly overflowLatency = new LatencyStats();
@@ -70,15 +76,11 @@ export class TsToDiscordPipeline {
   onVoice(data: Buffer, nowMs: number): RouteResult {
     if (this.disposed) return { kind: "dropped", reason: "disposed" };
     const pkt = parseS2CVoice(data);
-    if (!pkt) return { kind: "dropped", reason: "malformed" };
-    if (pkt.clid === this.o.ownClid()) return { kind: "dropped", reason: "own-voice" };
-    const client = this.o.directory.byClientId(pkt.clid);
-    if (!client) return { kind: "dropped", reason: "unknown-speaker" };
-    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) return { kind: "dropped", reason: "excluded" };
-    if (client.channelId !== this.o.channelId()) return { kind: "dropped", reason: "not-in-channel" };
-
+    if (!pkt) return this.drop("malformed");
+    const client = this.speakerOf(pkt);
+    if ("kind" in client) return client;
     const dest = this.o.router.destinationFor(client.uniqueId);
-    if (!dest) return { kind: "dropped", reason: "not-in-channel" };
+    if (!dest) return this.drop("not-in-channel");
 
     this.received += 1;
     if (pkt.opus.length === 0) {
@@ -90,17 +92,30 @@ export class TsToDiscordPipeline {
       return { kind: "end", uniqueId: client.uniqueId };
     }
     if (noteArrivalGap(this.lastArrival, client.uniqueId, nowMs)) this.arrivalGaps += 1;
+    if (dest === "overflow") return this.forwardOverflow(client.uniqueId, pkt.opus, nowMs);
+    return this.forwardSlot(dest, client.uniqueId, pkt.opus, nowMs);
+  }
 
-    if (dest === "overflow") {
-      const pcm = this.decode(client.uniqueId, pkt.opus, nowMs);
-      if (!pcm) return { kind: "dropped", reason: "undecodable" };
-      this.overflowMixer.push(client.uniqueId, pcm, null, nowMs);
-      this.count("overflow", client.uniqueId);
-      return { kind: "overflow", uniqueId: client.uniqueId };
-    }
+  private speakerOf(pkt: TsVoicePacket): DirectoryClient | RouteResult {
+    if (pkt.clid === this.o.ownClid()) return this.drop("own-voice");
+    const client = this.o.directory.byClientId(pkt.clid);
+    if (!client) return this.drop("unknown-speaker");
+    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) return this.drop("excluded");
+    if (client.channelId !== this.o.channelId()) return this.drop("not-in-channel");
+    return client;
+  }
 
+  private forwardOverflow(uniqueId: string, opus: Buffer, nowMs: number): RouteResult {
+    const pcm = this.decode(uniqueId, opus, nowMs);
+    if (!pcm) return { kind: "dropped", reason: "undecodable" };
+    this.overflowMixer.push(uniqueId, pcm, null, nowMs);
+    this.count("overflow", uniqueId);
+    return { kind: "overflow", uniqueId };
+  }
+
+  private forwardSlot(dest: BotId, uniqueId: string, opus: Buffer, nowMs: number): RouteResult {
     // Slot path: untouched Opus, one 20 ms packet per player tick. Multi-frame packets are cut.
-    const split = splitOpusPacket(pkt.opus);
+    const split = splitOpusPacket(opus);
     if (split.kind === "invalid") {
       this.invalidFrames += 1;
       this.decodeErrors += 1;
@@ -112,8 +127,8 @@ export class TsToDiscordPipeline {
     }
     for (const frame of split.frames) this.o.sinks.get(dest)?.sendOpus(frame, nowMs);
     this.forwarded += split.frames.length;
-    this.count(dest, client.uniqueId, split.frames.length);
-    return { kind: "slot", bot: dest, uniqueId: client.uniqueId };
+    this.count(dest, uniqueId, split.frames.length);
+    return { kind: "slot", bot: dest, uniqueId };
   }
 
   /** Decode one packet for a speaker. A corrupt packet is dropped and that speaker's decoder is replaced. */
@@ -208,6 +223,15 @@ export class TsToDiscordPipeline {
 
   get paddedTails(): number {
     return this.overflowMixer.paddedTails;
+  }
+
+  private drop(reason: Extract<RouteResult, { kind: "dropped" }>["reason"]): RouteResult {
+    if (reason === "malformed") this.malformed += 1;
+    else if (reason === "own-voice") this.ownVoice += 1;
+    else if (reason === "unknown-speaker") this.unknownSpeakers += 1;
+    else if (reason === "excluded") this.excluded += 1;
+    else if (reason === "not-in-channel") this.notInChannel += 1;
+    return { kind: "dropped", reason };
   }
 
   private count(bot: BotId, uniqueId: string, frames = 1): void {

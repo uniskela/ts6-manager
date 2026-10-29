@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import type { BotPort } from "../bridge/runtime.js";
+import type { BotPort, NickResult } from "../bridge/runtime.js";
 import { ClientDirectory } from "../core/client-directory.js";
 import type { BotId } from "../core/ids.js";
 
@@ -18,6 +18,13 @@ export class FakeBot extends EventEmitter implements BotPort {
   failJoin: Error | null = null;
   /** Mimic a bot that reports its own intentional leave as a failure (the baseline behaviour). */
   emitUnhealthyOnLeave = false;
+  nickCalls: (string | null)[] = [];
+  nickDelay: Promise<void> | null = null;
+  nickFailRemaining = 0;
+  /** When set, `nickFailRemaining` applies only to this value; otherwise every call fails. */
+  nickFailFor?: string | null;
+  nickDenied = false;
+  nickThrow = false;
   private abortJoin: (() => void) | null = null;
 
   constructor(readonly id: BotId, readonly userId: string, private readonly order?: string[]) {
@@ -58,8 +65,17 @@ export class FakeBot extends EventEmitter implements BotPort {
     if (this.emitUnhealthyOnLeave) queueMicrotask(() => this.emit("unhealthy", "voice destroyed"));
   }
 
-  async setNickname(n: string | null): Promise<void> {
+  async setNickname(n: string | null): Promise<NickResult> {
+    this.nickCalls.push(n);
+    if (this.nickDelay) await this.nickDelay;
+    if (this.nickThrow) throw new Error("setNickname rejected");
+    if (this.nickDenied) return "denied";
+    if (this.nickFailRemaining > 0 && (this.nickFailFor === undefined || this.nickFailFor === n)) {
+      this.nickFailRemaining -= 1;
+      return "failed";
+    }
     this.nick = n;
+    return "ok";
   }
 
   startReceive(g: number): boolean {
@@ -107,6 +123,14 @@ export class FakeTs extends EventEmitter {
   }
   removeUser(n: number): void {
     for (const ev of this.directory.ingest({ name: "notifyclientleftview", params: { clid: String(100 + n) } })) this.emit("directory", ev);
+  }
+  renameUser(n: number, name: string): void {
+    for (const ev of this.directory.ingest({
+      name: "notifyclientupdated",
+      params: { clid: String(100 + n), client_nickname: name },
+    })) {
+      this.emit("directory", ev);
+    }
   }
 }
 

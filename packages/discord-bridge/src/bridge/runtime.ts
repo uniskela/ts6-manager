@@ -13,6 +13,17 @@ import type { Admission } from "../core/voice-admission.js";
 import { SlotRouter, type SlotChange } from "../core/slot-router.js";
 import { TsToDiscordPipeline, type DiscordSendSink } from "../core/ts-to-discord.js";
 
+export type NickResult = "ok" | "denied" | "failed";
+
+/** 403 / missing-permissions are permanent for this desired value; everything else is transient. */
+export function nickErrorKind(e: unknown): Exclude<NickResult, "ok"> {
+  const err = e as { status?: number; code?: number | string };
+  if (err.status === 403) return "denied";
+  const code = Number(err.code);
+  if (code === 50013 || code === 50001) return "denied";
+  return "failed";
+}
+
 export interface BotPort extends DiscordSendSink {
   readonly id: BotId;
   /** Discord user id of this bot (so its audio is never re-forwarded). */
@@ -22,7 +33,7 @@ export interface BotPort extends DiscordSendSink {
   readonly deaf: boolean;
   join(opts: { receive: boolean }): Promise<void>;
   leave(): void;
-  setNickname(nick: string | null): Promise<void>;
+  setNickname(nick: string | null): Promise<NickResult>;
   startReceive(generation: number): boolean;
   stopReceive(): void;
   /** Is DAVE established on the live connection right now (read from the connection, not cached). Absent means yes. */
@@ -106,7 +117,19 @@ export class BridgeRuntime extends EventEmitter {
   private readonly retryAttempts = new Map<BotId, number>();
   /** maxRecoveries=0 never recovers by time or membership churn; only a new runtime/bot can retry. */
   private readonly permanentlyRefused = new Set<BotId>();
+  /** Last name Discord actually accepted. */
   private readonly appliedNick = new Map<BotId, string | null>();
+  /** Current TeamSpeak-derived intent. Distinct from applied and from the in-flight REST name. */
+  private readonly desiredNick = new Map<BotId, string | null>();
+  /** Name of the latest queued REST call; a different pending name must not suppress a compensating update. */
+  private readonly pendingNick = new Map<BotId, string | null>();
+  /** Permission-denied value: do not retry this (bot, name) until leave/unhealthy or a different desired name succeeds. */
+  private readonly nickDenied = new Map<BotId, string | null>();
+  /** Transient failures already spent for this desired value (max 2 across unrelated syncs). */
+  private readonly nickFailCount = new Map<BotId, { value: string | null; n: number }>();
+  /** Last Discord nick request submitted per bot; stale in-flight calls must not apply. */
+  private readonly nickEpoch = new Map<BotId, number>();
+  private readonly nickChain = new Map<BotId, Promise<void>>();
   private readonly detach: (() => void)[] = [];
   private ticker: NodeJS.Timeout | null = null;
   private lifecycle: RuntimeState = "created";
@@ -238,6 +261,7 @@ export class BridgeRuntime extends EventEmitter {
   }
 
   private async shutdown(): Promise<void> {
+    this.invalidateNicks();
     if (this.ticker) clearInterval(this.ticker);
     this.ticker = null;
     for (const t of this.retryTimers.values()) clearTimeout(t);
@@ -342,7 +366,9 @@ export class BridgeRuntime extends EventEmitter {
     if (!this.live()) return;
     this.o.log.warn(`${bot} unhealthy: ${reason}`);
     this.inChannel.delete(bot);
-    this.appliedNick.delete(bot);
+    this.clearNickState(bot);
+    // Keep nickChain: dropping it lets a stale Discord REST call race a rejoin's newer name.
+    this.nickEpoch.set(bot, (this.nickEpoch.get(bot) ?? 0) + 1);
     this.election.setState(bot, { healthy: false, inChannel: false });
     this.election.fail(bot, reason); // a non-receiver failure leaves the receiver alone
     this.schedule(() => this.sync(`unhealthy ${bot}`));
@@ -380,9 +406,9 @@ export class BridgeRuntime extends EventEmitter {
     for (const id of leaving) {
       this.o.bots.get(id)?.leave();
       this.inChannel.delete(id);
-      this.appliedNick.delete(id);
+      this.clearNickState(id);
       this.cancelRetry(id);
-      this.track(this.o.bots.get(id)!.setNickname(null));
+      this.queueNick(id, null);
     }
   }
 
@@ -470,7 +496,6 @@ export class BridgeRuntime extends EventEmitter {
   }
 
   private applyNickname(id: BotId, idleSlot0: boolean): void {
-    const bot = this.o.bots.get(id)!;
     let name: string | null;
     if (id === "overflow") name = OVERFLOW_NICKNAME;
     else if (idleSlot0 && id === "slot-0") name = null;
@@ -479,9 +504,84 @@ export class BridgeRuntime extends EventEmitter {
       const nick = uid ? this.o.ts.directory.inChannel(this.o.ts.channelId).find((c) => c.uniqueId === uid)?.nickname : undefined;
       name = tsNickname(nick ?? "Unknown");
     }
-    if (this.appliedNick.has(id) && this.appliedNick.get(id) === name) return; // only touch Discord when it changes
-    this.appliedNick.set(id, name);
-    this.track(bot.setNickname(name));
+    this.desiredNick.set(id, name);
+    if (this.pendingNick.get(id) === name) return;
+    if (this.appliedNick.get(id) === name && !this.pendingNick.has(id)) return;
+    if (this.nickDenied.get(id) === name) return;
+    const spent = this.nickFailCount.get(id);
+    if (spent?.value === name && (spent?.n ?? 0) >= 2) return;
+    this.queueNick(id, name);
+  }
+
+  /**
+   * One Discord nick queue per bot. Epoch is never reset, so leave/rejoin cannot drop an in-flight
+   * REST call off the chain. discord.js REST already queues and waits out 429s. Permission denials
+   * are not retried for the same desired value; transient failures get two attempts then wait for
+   * a new desired name or a leave/unhealthy.
+   */
+  private queueNick(id: BotId, name: string | null): void {
+    const bot = this.o.bots.get(id)!;
+    const epoch = (this.nickEpoch.get(id) ?? 0) + 1;
+    this.nickEpoch.set(id, epoch);
+    this.pendingNick.set(id, name);
+    const prev = this.nickChain.get(id) ?? Promise.resolve();
+    const next = prev.then(() => this.runNick(bot, id, name, epoch));
+    this.nickChain.set(id, next.then(() => undefined, () => undefined));
+    this.track(next);
+  }
+
+  /** REST worker for one epoch. A superseded `ok` still records Discord's confirmed name. */
+  private async runNick(bot: BotPort, id: BotId, name: string | null, epoch: number): Promise<void> {
+    try {
+      let attempts = 0;
+      for (;;) {
+        if (!this.live() || this.nickEpoch.get(id) !== epoch) return;
+        let result: NickResult;
+        try {
+          result = await bot.setNickname(name);
+        } catch {
+          result = "failed";
+        }
+        if (!this.live()) return;
+        if (this.nickEpoch.get(id) !== epoch) {
+          if (result === "ok") this.appliedNick.set(id, name);
+          return;
+        }
+        if (result === "ok") {
+          this.appliedNick.set(id, name);
+          this.nickFailCount.delete(id);
+          this.nickDenied.delete(id);
+          return;
+        }
+        if (result === "denied") {
+          this.nickDenied.set(id, name);
+          return;
+        }
+        attempts += 1;
+        if (attempts >= 2) {
+          this.nickFailCount.set(id, { value: name, n: 2 });
+          return;
+        }
+      }
+    } finally {
+      if (this.nickEpoch.get(id) === epoch && this.pendingNick.get(id) === name) this.pendingNick.delete(id);
+    }
+  }
+
+  private clearNickState(id: BotId): void {
+    this.appliedNick.delete(id);
+    this.desiredNick.delete(id);
+    this.pendingNick.delete(id);
+    this.nickDenied.delete(id);
+    this.nickFailCount.delete(id);
+  }
+
+  private invalidateNicks(): void {
+    for (const id of this.o.bots.keys()) {
+      this.nickEpoch.set(id, (this.nickEpoch.get(id) ?? 0) + 1);
+      this.pendingNick.delete(id);
+      this.desiredNick.delete(id);
+    }
   }
 
   private activate(bot: BotId, generation: number): void {
@@ -549,6 +649,11 @@ export class BridgeRuntime extends EventEmitter {
         paddedTails: this.t2d.paddedTails,
         decodeErrors: this.t2d.decodeErrors,
         unsupportedFrames: this.t2d.unsupportedFrames,
+        malformed: this.t2d.malformed,
+        unknownSpeakers: this.t2d.unknownSpeakers,
+        ownVoice: this.t2d.ownVoice,
+        excluded: this.t2d.excluded,
+        notInChannel: this.t2d.notInChannel,
         decoders: this.t2d.decoderCount,
         routedIdentities: this.t2d.routedIdentities,
       },

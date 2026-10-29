@@ -256,14 +256,24 @@
     "0 TeamSpeak users: only slot 0 is in Discord as the receiver and keeps its application name",
     "1-5 TeamSpeak users: those slot bots join as [TS] Username and overflow stays out",
     "6th user brings in [TS] Others and receive moves to overflow with teardown first; it moves back before overflow leaves",
+    "a delayed Discord nick from before leave cannot overwrite the name after rejoin",
     "a non-receiver slot failure does not move receive and leaves the other slots running",
+    "classifies Discord 403 and missing-permissions as denied",
+    "clears a stuck pending nick when setNickname rejects",
+    "does not keep a superseded Discord nick as confirmed when the compensating update fails",
+    "does not mark a failed Discord nick as applied, and does not drop the slot",
+    "does not retry a permission-denied nick across unrelated syncs",
+    "does not start a queued Discord nick after shutdown",
     "falls back for an empty name",
     "flushes queued frames, stops receiving, and never forwards stale audio after DAVE returns",
     "keeps the [TS] prefix and truncates the name to 32 UTF-16 units",
+    "keeps the last nickname when a slower earlier Discord response arrives",
     "killing the receiver elects exactly one successor and the old bot cannot resubscribe",
     "killing the receiver mid-speech: stale frames fenced, TeamSpeak hears one copy per tick",
     "never splits a surrogate pair at the cut",
-    "no healthy bot left: Discord to TeamSpeak fails closed while other slots keep sending"
+    "no healthy bot left: Discord to TeamSpeak fails closed while other slots keep sending",
+    "propagates a nickname change to the same uniqueId's slot without rejoining",
+    "returning to the applied nickname still queues a compensating Discord request"
   ],
   "src/core/audio-quality.test.ts": [
     "counts a decoder failure on the overflow path and stops counting after dispose",
@@ -430,7 +440,10 @@
   ],
   "src/lab/beta-status.test.ts": [
     "derives fail-closed when DAVE is down or a duplicate receiver appears",
+    "does not park pre-election when connected bot observations disagree or none are connected",
+    "exposes TeamSpeak→Discord counters and per-slot sender readiness without identities",
     "healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped",
+    "parks bots-only startup without a receiver through publisher files and the healthcheck script",
     "records bounded lifecycle events and never copies a secret-shaped field",
     "writes status atomically"
   ],

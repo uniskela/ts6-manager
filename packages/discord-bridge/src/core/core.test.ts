@@ -194,8 +194,14 @@ describe("ClientDirectory", () => {
     });
     assert.equal(d.byClientId(3)!.channelId, 5);
     assert.deepEqual(d.inChannel(5).map((c) => c.uniqueId).sort(), ["uidA", "uidB"]);
-    d.ingest({ name: "notifyclientupdated", params: { clid: "2", client_nickname: "Renamed" } });
+    const nick = d.ingest({ name: "notifyclientupdated", params: { clid: "2", client_nickname: "Renamed" } });
+    assert.equal(nick.length, 1);
+    assert.equal(nick[0]!.type, "nick");
+    assert.equal(nick[0]!.client.uniqueId, "uidA");
+    assert.equal(nick[0]!.client.nickname, "Renamed");
     assert.equal(d.byClientId(2)!.uniqueId, "uidA");
+    assert.equal(d.ingest({ name: "notifyclientupdated", params: { clid: "2" } }).length, 0);
+    assert.equal(d.ingest({ name: "notifyclientupdated", params: { clid: "2", client_nickname: "Renamed" } }).length, 0);
     d.ingest({ name: "notifyclientmoved", params: { clid: "3", ctid: "9" } });
     assert.deepEqual(d.inChannel(5).map((c) => c.uniqueId), ["uidA"]);
     d.ingest({ name: "notifyclientleftview", params: { clid: "2" } });
@@ -326,6 +332,9 @@ describe("TsToDiscordPipeline (simulated Discord sinks, real Opus)", () => {
     const { pipe } = setup(1);
     assert.deepEqual(pipe.onVoice(voicePacket(99, Buffer.from([1])), 0), { kind: "dropped", reason: "own-voice" });
     assert.deepEqual(pipe.onVoice(voicePacket(55, Buffer.from([1])), 0), { kind: "dropped", reason: "unknown-speaker" });
+    assert.equal(pipe.ownVoice, 1);
+    assert.equal(pipe.unknownSpeakers, 1);
+    assert.equal(pipe.received, 0);
   });
 
   it("excludes music bots by uniqueId", () => {
@@ -337,6 +346,7 @@ describe("TsToDiscordPipeline (simulated Discord sinks, real Opus)", () => {
       directory, router, sinks: new Map(), codecFactory: codec, channelId: () => 1, ownClid: () => 99, excludedUniqueIds: new Set(["music"]),
     });
     assert.deepEqual(pipe.onVoice(voicePacket(20, Buffer.from([1])), 0), { kind: "dropped", reason: "excluded" });
+    assert.equal(pipe.excluded, 1);
   });
 });
 
