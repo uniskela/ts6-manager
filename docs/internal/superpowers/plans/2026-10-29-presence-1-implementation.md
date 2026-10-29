@@ -1,6 +1,6 @@
 # Presence-1 Implementation Plan
 
-> **For agentic workers:** Do not implement until D1 acceptance and the shared TeamSpeak identity persist (D2-1 or equivalent) are done. Then use superpowers:subagent-driven-development or executing-plans task-by-task.
+> **For agentic workers:** Do not implement until D1 acceptance and D2 identity persist (Prisma, backend-owned; D2-1 store + D2-4 start payload) are done. Then use superpowers:subagent-driven-development or executing-plans task-by-task.
 
 **Goal:** Shared TeamSpeak nickname roster of verified Discord humans in the mapped voice channel, including silent sitters.
 
@@ -40,13 +40,13 @@ Do not touch receiver election, DAVE guards, `VoiceAdmission`, or slot routing i
 
 ## Dependency on D2 identity persist
 
-Without a persisted TS identity, a reconnect is a new uniqueId and the nick is connect-only. Presence-1 still **works** on an ephemeral client if `setNickname` exists, but the approved sequence is: D1 GO → persist the one identity → Presence-1. Do not ship Presence-1 on the disposable D1 nick `ts6-bridge-d1` as a product.
+Without a persisted TS identity, a reconnect is a new uniqueId and the nick is connect-only. **D2-I** stores that identity in Prisma (backend). Sequence: D1 GO → D2-1 (ciphertext) + D2-4 (Start payload) → Presence-1. Do not ship Presence-1 on the disposable D1 nick `ts6-bridge-d1` as a product. Do not add a worker-side identity file.
 
 ## Milestones
 
 ### M0 — Gate (no code)
 
-D1 A–D PASS + review. Identity persist merged or explicitly waived by owner.
+D1 A–D PASS + review. D2-1 Prisma identity and D2-4 authorised Start payload merged. No owner waiver of persist.
 
 ### M1 — Pure nick formatter
 

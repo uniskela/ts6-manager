@@ -2,23 +2,22 @@
 
 **Status:** Planning text only. Do **not** paste into [discord-voice-bridge.md](../discord-voice-bridge.md) until D1 acceptance **and** explicit owner approval.  
 **Does not** start D2 or Presence-1 implementation.  
-**Does not** change evidence classifications in [2026-10-29-d1-live-evidence.md](2026-10-29-d1-live-evidence.md).
+**Does not** change evidence classifications in [2026-10-29-d1-live-evidence.md](2026-10-29-d1-live-evidence.md).  
+Draft PR [#563](https://github.com/uniskela/ts6-manager/pull/563) stays Draft until that approval.
 
 Intended insertion point: after `## Bridge-D1 — live bidirectional proof`, before `## Bridge-D3 — identity and slots`.
 
-Companion readiness: [2026-10-29-bridge-d2-readiness.md](2026-10-29-bridge-d2-readiness.md). Spec D2 row: official image/compose, control plane, encrypted tokens.
+Companion readiness: [2026-10-29-bridge-d2-readiness.md](2026-10-29-bridge-d2-readiness.md).
 
-## Owner decisions still required
+## Recorded owner decisions (2026-10-29)
 
-Do not guess these in a later Bridge-K edit.
+| ID | Decision |
+|---|---|
+| **D2-I** | Encrypted Prisma, owned by the TS6 Manager backend. One shared TeamSpeak identity per configured bridge mapping. Music-bot `encrypt()` / `identityData` pattern. Worker is not a second store. |
+| **D2-R** | Initial official compose: `restart: "no"`. Later bounded `on-failure:3` needs a separate approval and test. No unlimited restart loop. No plaintext DAVE fallback. |
+| **D2-P** | `chore:` for preparatory packaging/infra that does not enable a user-facing feature. `feat:` when completed functionality is intentionally introduced into v1.12.0. Do not retarget the release early. |
 
-| ID | Decision | Options | Default if unset |
-|---|---|---|---|
-| D2-I | Shared TeamSpeak identity storage | (a) Prisma ciphertext with the mapping row (music-bot `encrypt()` pattern); (b) worker-local encrypted file; (c) omit from D2, persist only with Presence-1 | **Unset.** Presence-1 wants persist; Bridge-K D2 today does not name it |
-| D2-R | Official worker `restart` | (a) `"no"` like private-beta; (b) bounded backoff (`on-failure` + cap); (c) compose `always` | **Not (c).** Unbounded restart is already forbidden. (a) vs (b) needs a call |
-| D2-P | First D2 merge commit class | (a) `chore:` packaging, no SemVer bump; (b) `feat:` that opens/retargets v1.12.0 | **Unset.** A `feat:` on `main` retargets the release PR |
-
-Also: D2 schema PR must wait if another Prisma `SCHEMA_VERSION` PR (#442) is open.
+Prisma schema PRs still wait if another `SCHEMA_VERSION` change (#442) is open.
 
 ## Proposed contract text
 
@@ -33,34 +32,44 @@ Opens only after D1 live acceptance (including two-speaker, failover, and member
 - Published only with a GitHub Release (same rule as the sidecar). Do not promote `private-beta-*` tags or the reduced-trust preview workflow into official compose.
 - Compose profile `discord-bridge`. Default `docker compose up` does not create or start the worker. `DISCORD_BRIDGE_URL` stays unset unless that profile is on.
 - No published worker port. Internal Docker network or loopback only.
-- Starting limits: 1 CPU / 512 MiB. No unlimited restart loop. **Restart policy is owner decision D2-R.**
-- Native Opus and DAVE (`@snazzah/davey`) load in CI. DAVE-native failure is fatal. No plaintext voice path.
+- Starting limits: 1 CPU / 512 MiB. **One replica.** Do not scale the worker.
+- `restart: "no"` for the first controlled D2 rollout. Do not switch to `on-failure:3` (or any backoff restart) until live recovery, fail-closed behaviour, and shutdown handling are accepted **and** the owner approves that change. `always` / `unless-stopped` are forbidden. An unhealthy DAVE session must not restart the container in a loop and must not fall back to plaintext.
+- Native Opus and DAVE (`@snazzah/davey`) load in CI. DAVE-native failure is fatal.
 
 ### Control plane and secrets
 
-- Admin-only start/stop/config/status. Write-only token fields. GET never returns token plaintext or ciphertext. Empty token field means keep stored value.
-- Six official bot tokens per mapped TeamSpeak server, stored `enc:iv:tag:ciphertext` with the existing AES-256-GCM helper.
+- Admin-only start/stop/config/status. Write-only token fields. GET never returns token plaintext, token ciphertext, TeamSpeak identity material, or session secrets. Empty token field means keep stored value.
+- Six official bot tokens per mapped TeamSpeak server, stored `enc:iv:tag:ciphertext` with the existing AES-256-GCM helper (`encrypt()`).
 - Worker mutating API requires a bearer secret, same class as `SIDECAR_SECRET`. Production is fatal if `DISCORD_BRIDGE_URL` is set without `DISCORD_BRIDGE_SECRET`.
 - Frontend never sees bot tokens, TeamSpeak identity material, or the worker secret.
-- Start is refused until mapping is enabled and guild/channel membership checks pass. Stop destroys Discord voice connections and disconnects the shared TeamSpeak client.
+- Start is refused until mapping is enabled and guild/channel membership checks pass. Stop destroys Discord voice connections, drops the in-memory identity, and disconnects the shared TeamSpeak client.
 
-### Shared TeamSpeak client
+### Shared TeamSpeak identity (backend source of truth)
 
-- Still exactly one TeamSpeak UDP client and one Discord→TeamSpeak mix.
-- Identity persist (**D2-I**) is not implied by this subsection until the owner picks (a), (b), or (c).
-- Fail-closed DAVE and receive-generation fences stay as D1. Product reconnect budget is bounded; it is not `maxRecoveries=0` unless the operator sets that diagnostic.
+- Exactly **one** shared TeamSpeak identity per configured bridge mapping (one Prisma row per mapped TeamSpeak server).
+- Backend generates (level 8, same helper as music bots) or restores via `restoreIdentity`. Persist ciphertext only (`encrypt(JSON.stringify(scalar identity))`, same pattern as `MusicBot.identityData`).
+- The worker receives the identity **only** in an authorised start payload for that mapping’s active session. It holds it in memory for that session. It must not write identity files, env, or a local database.
+- **One active worker session per mapping.** Backend issues a session/lease id on Start. A second Start for the same mapping stops and fences the previous session before a new payload is sent. The worker refuses voice connect if the session id does not match. Two replicas must not both hold the identity.
+- Delete/disable of the mapping destroys the ciphertext in Prisma and requires Stop so the worker drops memory. Backups of the database contain ciphertext; treat them as secret, same as other `encrypt()` fields.
+- `ENCRYPTION_KEY` rotation is the existing product rule: do not rotate casually; a new key cannot decrypt old rows (music bots, API keys, and this identity alike). D2 must not invent a separate rotation scheme. A future shared re-encrypt job, if built, covers this field with the others.
+- Logs, health, status JSON, and ordinary GET omit uniqueId private keys, seed, and ciphertext. Public uniqueId may appear only if an existing music-bot diagnostic already allows an equivalent, non-secret identifier; default is omit.
+
+### Fail-closed DAVE
+
+- Fail-closed DAVE and receive-generation fences stay as D1.
+- In-process reconnect budget (if enabled) is bounded and is **not** a container restart. `restart: "no"` means a process exit stays down until an operator starts it. `D1_DAVE_SINGLE_ATTEMPT` remains a lab diagnostic, not the official compose default, unless a later owner decision says otherwise.
 
 ### Out of D2
 
 - D3: persistent `uniqueId → slot` mapping and Discord `[TS] ` nicks.
 - D4: overflow mix rules.
 - D5: admin page / onboarding wizard.
-- Presence-1 shared nickname roster (separate spec; needs identity persist).
+- Presence-1 shared nickname roster (separate spec; uses this persisted identity).
 - Presence-2 per-user TeamSpeak identities (needs a Bridge-K amendment).
 ```
 
 ## What this draft does not do
 
 - Does not edit `docs/internal/discord-voice-bridge.md`.
-- Does not resolve D2-I / D2-R / D2-P.
-- Does not authorise implementation, GHCR publish, Portainer, or Draft PR #504 changes.
+- Does not authorise implementation, GHCR publish, Portainer, recovery-policy changes, or Draft PR #504 changes.
+- Does not close D1 acceptance rows.
