@@ -6,7 +6,7 @@ export const STATUS_FILE = "evidence/private-beta-status.json";
 export const HOST_STATUS_FILE = "evidence/host-status.json";
 export const EVENT_CAP = 200;
 
-export type BetaHealth = "starting" | "ok" | "degraded" | "fail-closed";
+export type BetaHealth = "starting" | "ok" | "degraded" | "parked" | "fail-closed";
 export type BetaEventKind =
   | "starting"
   | "bridge_running"
@@ -42,6 +42,37 @@ export interface BetaSnapshotIn {
   daveReplacements?: Record<string, number>;
   recoveries?: Record<string, number>;
   d2t?: { framesSent?: number; daveDropped?: number; admissionDropped?: number; selfSourceDrops?: number };
+  t2d?: {
+    received?: number;
+    forwarded?: number;
+    unsupportedFrames?: number;
+    invalidFrames?: number;
+    decodeErrors?: number;
+    voiceStops?: number;
+    malformed?: number;
+    unknownSpeakers?: number;
+    ownVoice?: number;
+    excluded?: number;
+    notInChannel?: number;
+  };
+  tsTransport?: { whisperDropped?: number };
+  senders?: Record<
+    string,
+    {
+      daveReady?: boolean;
+      framesSent?: number;
+      playerStatus?: string;
+      playbackDropped?: number;
+      playbackStarved?: number;
+      playbackHealthRejected?: number;
+      playbackDaveRejected?: number;
+      healthy?: boolean;
+      inChannel?: boolean;
+    }
+  >;
+  /** Discord voice-channel occupancy. Integers only; never user ids. */
+  voiceMembers?: number;
+  voiceBots?: number;
 }
 
 export function sumValues(map: Record<string, number> | undefined): number {
@@ -55,11 +86,23 @@ export function receiverDaveReady(snap: BetaSnapshotIn): boolean {
   return info?.ready === true && (info.protocolVersion ?? 0) >= 1;
 }
 
+/** True when every mapped-channel voice member is a bot (idle MLS wait). Occupancy must be known. */
+export function botsOnlyChannel(snap: BetaSnapshotIn): boolean {
+  const members = snap.voiceMembers;
+  const bots = snap.voiceBots;
+  return typeof members === "number" && typeof bots === "number" && members > 0 && members === bots;
+}
+
 export function deriveHealth(snap: BetaSnapshotIn, started: boolean): BetaHealth {
   if (snap.state === "stopping" || snap.state === "stopped") return "fail-closed";
   if (!started || snap.state !== "running") return "starting";
-  if (!snap.receiver || !receiverDaveReady(snap)) return "fail-closed";
   if (Array.isArray(snap.duplicateReceivers) && snap.duplicateReceivers.length > 0) return "fail-closed";
+  if (!snap.receiver) return "fail-closed";
+  if (!receiverDaveReady(snap)) {
+    // Bots-only MLS park: connection kept, audio fail-closed by design, not a crashed worker.
+    if (botsOnlyChannel(snap) && (snap.scheduledReconnects ?? 0) === 0) return "parked";
+    return "fail-closed";
+  }
   if ((snap.scheduledReconnects ?? 0) > 0 || sumValues(snap.decryptErrors) > 0 || sumValues(snap.recoveries) > 0) {
     return "degraded";
   }
@@ -112,6 +155,8 @@ export function buildBetaStatus(input: {
     daveReady: receiverDaveReady(input.snap),
     scheduledReconnects: input.snap.scheduledReconnects ?? 0,
     duplicateReceivers: Array.isArray(input.snap.duplicateReceivers) ? input.snap.duplicateReceivers.length : 0,
+    voiceMembers: input.snap.voiceMembers ?? null,
+    voiceBots: input.snap.voiceBots ?? null,
     counters: {
       decryptErrors: sumValues(input.snap.decryptErrors),
       daveReplacements: sumValues(input.snap.daveReplacements),
@@ -120,7 +165,20 @@ export function buildBetaStatus(input: {
       daveDropped: input.snap.d2t?.daveDropped ?? 0,
       admissionDropped: input.snap.d2t?.admissionDropped ?? 0,
       selfSourceDrops: input.snap.d2t?.selfSourceDrops ?? 0,
+      t2dReceived: input.snap.t2d?.received ?? 0,
+      t2dForwarded: input.snap.t2d?.forwarded ?? 0,
+      t2dUnsupportedFrames: input.snap.t2d?.unsupportedFrames ?? 0,
+      t2dInvalidFrames: input.snap.t2d?.invalidFrames ?? 0,
+      t2dDecodeErrors: input.snap.t2d?.decodeErrors ?? 0,
+      t2dVoiceStops: input.snap.t2d?.voiceStops ?? 0,
+      t2dMalformed: input.snap.t2d?.malformed ?? 0,
+      t2dUnknownSpeakers: input.snap.t2d?.unknownSpeakers ?? 0,
+      t2dOwnVoice: input.snap.t2d?.ownVoice ?? 0,
+      t2dExcluded: input.snap.t2d?.excluded ?? 0,
+      t2dNotInChannel: input.snap.t2d?.notInChannel ?? 0,
+      tsWhisperDropped: input.snap.tsTransport?.whisperDropped ?? 0,
     },
+    senders: input.snap.senders ?? {},
     events: input.events.slice(-EVENT_CAP),
   };
 }
@@ -160,15 +218,17 @@ export function healthcheckOk(status: Record<string, unknown>, now = Date.now())
   const at = Date.parse(String(status.at ?? ""));
   if (!Number.isFinite(at) || now - at > 30_000) return false;
   if (status.state !== "running") return false;
-  if (status.daveReady !== true || !status.receiver) return false;
+  if (!status.receiver) return false;
+  if (status.health === "parked") return true;
+  if (status.daveReady !== true) return false;
   return status.health === "ok" || status.health === "degraded";
 }
 
 /** Host `status` must not treat a leftover file as live health after the container stops. */
-export function hostHealthLabel(status: Record<string, unknown> | null, containerRunning: boolean): "ok" | "degraded" | "fail-closed" | "starting" | "stale" | "absent" {
+export function hostHealthLabel(status: Record<string, unknown> | null, containerRunning: boolean): "ok" | "degraded" | "parked" | "fail-closed" | "starting" | "stale" | "absent" {
   if (!containerRunning) return status ? "stale" : "absent";
   if (!status) return "absent";
   const h = status.health;
-  if (h === "ok" || h === "degraded" || h === "fail-closed" || h === "starting") return h;
+  if (h === "ok" || h === "degraded" || h === "parked" || h === "fail-closed" || h === "starting") return h;
   return "fail-closed";
 }

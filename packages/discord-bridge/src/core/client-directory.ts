@@ -7,7 +7,7 @@ export interface DirectoryClient {
 }
 
 export interface DirectoryEvent {
-  type: "enter" | "leave" | "move";
+  type: "enter" | "leave" | "move" | "nick";
   client: DirectoryClient;
 }
 
@@ -75,7 +75,10 @@ export class ClientDirectory {
       }
       case "notifyclientupdated": {
         const client = this.byClid.get(parseInt(cmd.params.clid || "0", 10));
-        if (client && cmd.params.client_nickname !== undefined) client.nickname = cmd.params.client_nickname;
+        if (client && cmd.params.client_nickname !== undefined && client.nickname !== cmd.params.client_nickname) {
+          client.nickname = cmd.params.client_nickname;
+          events.push({ type: "nick", client });
+        }
         break;
       }
     }

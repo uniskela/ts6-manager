@@ -29,12 +29,81 @@ const running: BetaSnapshotIn = {
   daveReplacements: { "slot-0": 0 },
   recoveries: { "slot-0": 0 },
   d2t: { framesSent: 12, daveDropped: 0, admissionDropped: 0, selfSourceDrops: 0 },
+  t2d: {
+    received: 40,
+    forwarded: 38,
+    unsupportedFrames: 1,
+    invalidFrames: 0,
+    decodeErrors: 0,
+    voiceStops: 2,
+    malformed: 0,
+    unknownSpeakers: 3,
+    ownVoice: 1,
+    excluded: 0,
+    notInChannel: 0,
+  },
+  tsTransport: { whisperDropped: 2 },
+  senders: {
+    "slot-0": {
+      daveReady: true,
+      framesSent: 20,
+      playerStatus: "playing",
+      playbackDropped: 0,
+      playbackStarved: 0,
+      playbackHealthRejected: 0,
+      playbackDaveRejected: 4,
+      healthy: true,
+      inChannel: true,
+    },
+    "slot-1": {
+      daveReady: true,
+      framesSent: 0,
+      playerStatus: "idle",
+      playbackDropped: 0,
+      playbackStarved: 1,
+      playbackHealthRejected: 2,
+      playbackDaveRejected: 0,
+      healthy: true,
+      inChannel: false,
+    },
+  },
+  voiceMembers: 3,
+  voiceBots: 2,
 };
 
 describe("private-beta status", () => {
+  it("exposes TeamSpeak→Discord counters and per-slot sender readiness without identities", () => {
+    const status = buildBetaStatus({ sourceCommit: "abc123", snap: running, events: [], started: true, singleAttempt: true });
+    const counters = status.counters as Record<string, unknown>;
+    assert.equal(counters.t2dReceived, 40);
+    assert.equal(counters.t2dForwarded, 38);
+    assert.equal(counters.t2dUnsupportedFrames, 1);
+    assert.equal(counters.t2dUnknownSpeakers, 3);
+    assert.equal(counters.tsWhisperDropped, 2);
+    assert.equal(status.voiceMembers, 3);
+    assert.equal(status.voiceBots, 2);
+    const senders = status.senders as Record<string, Record<string, unknown>>;
+    assert.equal(senders["slot-1"]!.playerStatus, "idle");
+    assert.equal(senders["slot-1"]!.daveReady, true);
+    assert.equal(senders["slot-1"]!.playbackHealthRejected, 2);
+    assert.equal(senders["slot-0"]!.playbackDaveRejected, 4);
+    assert.equal(senders["slot-1"]!.inChannel, false);
+    const text = JSON.stringify(status);
+    assert.equal(text.includes("uid"), false);
+    assert.equal(text.includes("Alice"), false);
+    const host = hostStatusView(status);
+    assert.equal("senders" in host, false);
+    assert.equal("counters" in host, false);
+    assert.equal(deriveHealth(running, true), "ok", "receiver DAVE health is independent of sender playback");
+  });
+
   it("derives fail-closed when DAVE is down or a duplicate receiver appears", () => {
     assert.equal(deriveHealth(running, true), "ok");
     assert.equal(deriveHealth({ ...running, dave: { "slot-0": { protocolVersion: 1, ready: false } } }, true), "fail-closed");
+    assert.equal(
+      deriveHealth({ ...running, dave: { "slot-0": { protocolVersion: 1, ready: false } }, voiceMembers: 4, voiceBots: 4 }, true),
+      "parked",
+    );
     assert.equal(deriveHealth({ ...running, receiver: null }, true), "fail-closed");
     assert.equal(deriveHealth({ ...running, duplicateReceivers: ["slot-1"] }, true), "fail-closed");
     assert.equal(deriveHealth({ ...running, scheduledReconnects: 1 }, true), "degraded");
@@ -86,7 +155,9 @@ describe("private-beta status", () => {
     const now = Date.parse(String(ok.at));
     assert.equal(healthcheckOk(ok, now), true);
     assert.equal(healthcheckOk({ ...ok, daveReady: false, health: "fail-closed" }, now), false);
+    assert.equal(healthcheckOk({ ...ok, daveReady: false, health: "parked" }, now), true);
     assert.equal(healthcheckOk({ ...ok, receiver: null, health: "fail-closed" }, now), false);
+    assert.equal(hostHealthLabel({ ...ok, health: "parked" }, true), "parked");
     assert.equal(healthcheckOk({ ...ok, state: "running" }, now + 31_000), false);
     assert.equal(hostHealthLabel(ok, true), "ok");
     assert.equal(hostHealthLabel(ok, false), "stale");

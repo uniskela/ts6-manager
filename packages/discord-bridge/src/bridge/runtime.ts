@@ -22,7 +22,7 @@ export interface BotPort extends DiscordSendSink {
   readonly deaf: boolean;
   join(opts: { receive: boolean }): Promise<void>;
   leave(): void;
-  setNickname(nick: string | null): Promise<void>;
+  setNickname(nick: string | null): Promise<boolean>;
   startReceive(generation: number): boolean;
   stopReceive(): void;
   /** Is DAVE established on the live connection right now (read from the connection, not cached). Absent means yes. */
@@ -107,6 +107,9 @@ export class BridgeRuntime extends EventEmitter {
   /** maxRecoveries=0 never recovers by time or membership churn; only a new runtime/bot can retry. */
   private readonly permanentlyRefused = new Set<BotId>();
   private readonly appliedNick = new Map<BotId, string | null>();
+  /** Last Discord nick request submitted per bot; stale in-flight calls must not apply. */
+  private readonly nickEpoch = new Map<BotId, number>();
+  private readonly nickChain = new Map<BotId, Promise<void>>();
   private readonly detach: (() => void)[] = [];
   private ticker: NodeJS.Timeout | null = null;
   private lifecycle: RuntimeState = "created";
@@ -343,6 +346,8 @@ export class BridgeRuntime extends EventEmitter {
     this.o.log.warn(`${bot} unhealthy: ${reason}`);
     this.inChannel.delete(bot);
     this.appliedNick.delete(bot);
+    this.nickEpoch.delete(bot);
+    this.nickChain.delete(bot);
     this.election.setState(bot, { healthy: false, inChannel: false });
     this.election.fail(bot, reason); // a non-receiver failure leaves the receiver alone
     this.schedule(() => this.sync(`unhealthy ${bot}`));
@@ -381,6 +386,8 @@ export class BridgeRuntime extends EventEmitter {
       this.o.bots.get(id)?.leave();
       this.inChannel.delete(id);
       this.appliedNick.delete(id);
+      this.nickEpoch.delete(id);
+      this.nickChain.delete(id);
       this.cancelRetry(id);
       this.track(this.o.bots.get(id)!.setNickname(null));
     }
@@ -479,9 +486,18 @@ export class BridgeRuntime extends EventEmitter {
       const nick = uid ? this.o.ts.directory.inChannel(this.o.ts.channelId).find((c) => c.uniqueId === uid)?.nickname : undefined;
       name = tsNickname(nick ?? "Unknown");
     }
-    if (this.appliedNick.has(id) && this.appliedNick.get(id) === name) return; // only touch Discord when it changes
-    this.appliedNick.set(id, name);
-    this.track(bot.setNickname(name));
+    if (this.appliedNick.get(id) === name) return;
+    const epoch = (this.nickEpoch.get(id) ?? 0) + 1;
+    this.nickEpoch.set(id, epoch);
+    const prev = this.nickChain.get(id) ?? Promise.resolve();
+    const next = prev.then(async () => {
+      if (this.nickEpoch.get(id) !== epoch) return;
+      const ok = await bot.setNickname(name);
+      if (this.nickEpoch.get(id) !== epoch) return;
+      if (ok) this.appliedNick.set(id, name);
+    });
+    this.nickChain.set(id, next.then(() => undefined, () => undefined));
+    this.track(next);
   }
 
   private activate(bot: BotId, generation: number): void {
@@ -549,6 +565,11 @@ export class BridgeRuntime extends EventEmitter {
         paddedTails: this.t2d.paddedTails,
         decodeErrors: this.t2d.decodeErrors,
         unsupportedFrames: this.t2d.unsupportedFrames,
+        malformed: this.t2d.malformed,
+        unknownSpeakers: this.t2d.unknownSpeakers,
+        ownVoice: this.t2d.ownVoice,
+        excluded: this.t2d.excluded,
+        notInChannel: this.t2d.notInChannel,
         decoders: this.t2d.decoderCount,
         routedIdentities: this.t2d.routedIdentities,
       },

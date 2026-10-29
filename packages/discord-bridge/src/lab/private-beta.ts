@@ -111,13 +111,43 @@ async function main(): Promise<void> {
   pushEvent(events, "bridge_running");
   log.info("private-beta running. Status file: evidence/private-beta-status.json. SIGTERM/SIGINT to stop.");
 
-  const snapshot = (): BetaSnapshotIn => ({
-    ...runtime!.status(),
-    dave: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveInfo])),
-    decryptErrors: Object.fromEntries([...concrete].map(([id, b]) => [id, b.decryptErrors])),
-    daveReplacements: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveReplacements])),
-    recoveries: Object.fromEntries([...concrete].map(([id, b]) => [id, b.rejoins])),
-  });
+  const snapshot = (): BetaSnapshotIn => {
+    const occupancy = [...concrete.values()].reduce(
+      (acc, b) => {
+        const o = b.channelOccupancy;
+        return o.members > acc.members ? o : acc;
+      },
+      { members: 0, bots: 0 },
+    );
+    const st = runtime!.status();
+    const inChannel = new Set(st.inChannel);
+    return {
+      ...st,
+      dave: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveInfo])),
+      decryptErrors: Object.fromEntries([...concrete].map(([id, b]) => [id, b.decryptErrors])),
+      daveReplacements: Object.fromEntries([...concrete].map(([id, b]) => [id, b.daveReplacements])),
+      recoveries: Object.fromEntries([...concrete].map(([id, b]) => [id, b.rejoins])),
+      tsTransport: { whisperDropped: ts.whisperDropped },
+      senders: Object.fromEntries(
+        [...concrete].map(([id, b]) => [
+          id,
+          {
+            daveReady: b.daveInfo?.ready === true && (b.daveInfo.protocolVersion ?? 0) >= 1,
+            framesSent: b.framesSent,
+            playerStatus: b.playerStatus,
+            playbackDropped: b.playbackDropped,
+            playbackStarved: b.playbackStarved,
+            playbackHealthRejected: b.playbackHealthRejected,
+            playbackDaveRejected: b.playbackDaveRejected,
+            healthy: b.healthy,
+            inChannel: inChannel.has(id),
+          },
+        ]),
+      ),
+      voiceMembers: occupancy.members,
+      voiceBots: occupancy.bots,
+    };
+  };
 
   let prev: BetaSnapshotIn | null = null;
   const publish = () => {

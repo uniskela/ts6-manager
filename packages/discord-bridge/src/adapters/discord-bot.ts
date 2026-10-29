@@ -177,6 +177,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   userId = "";
   healthy = false;
   framesSent = 0;
+  playbackHealthRejected = 0;
+  playbackDaveRejected = 0;
   private feedDropped = 0;
   private feedStarved = 0;
   rejoins = 0;
@@ -256,14 +258,18 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.selfDeaf;
   }
 
-  /** `null` resets to the application name. */
-  async setNickname(nick: string | null): Promise<void> {
+  /** `null` resets to the application name. False means Discord refused; the runtime must not treat it as applied. */
+  async setNickname(nick: string | null): Promise<boolean> {
     try {
       const guild = await this.client.guilds.fetch(this.o.guildId);
-      await guild.members.me?.setNickname(nick === null ? null : nick.slice(0, 32));
+      const me = guild.members.me;
+      if (!me) return false;
+      await me.setNickname(nick === null ? null : nick.slice(0, 32));
+      return true;
     } catch (e) {
       // Contract: a nickname failure warns and keeps the old nick; it never stops the bridge.
       this.o.log.warn(`${this.o.id} nickname not changed: ${safeError(e)}`);
+      return false;
     }
   }
 
@@ -754,7 +760,14 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   /** The TeamSpeak speaker assigned to this bot: Opus passthrough, one turn per stretch of speech. */
   sendOpus(frame: Buffer): void {
-    if (!this.healthy || !this.observeDave()) return;
+    if (!this.healthy) {
+      this.playbackHealthRejected += 1;
+      return;
+    }
+    if (!this.observeDave()) {
+      this.playbackDaveRejected += 1;
+      return;
+    }
     if (!this.feed || this.feed.destroyed) {
       this.detachFeed(false);
       this.feed = new FrameFeed();
@@ -990,6 +1003,11 @@ export class DiscordBot extends EventEmitter implements BotPort {
 
   get daveInfo() {
     return this.connection ? readDaveInfo(this.connection) : null;
+  }
+
+  /** Integers only: Discord voice members in the mapped channel, and how many are bots. */
+  get channelOccupancy(): { members: number; bots: number } {
+    return this.voiceMemberCounts();
   }
 
   /** Privacy-safe MLS negotiation snapshot (categories and integers only). */

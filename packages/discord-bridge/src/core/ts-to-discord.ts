@@ -61,6 +61,12 @@ export class TsToDiscordPipeline {
   encodeErrors = 0;
   /** Well formed packets whose frame duration cannot be carried to a slot bot without re-encoding. */
   unsupportedFrames = 0;
+  /** Pre-route drops. Integers only; never clids or uniqueIds. */
+  malformed = 0;
+  unknownSpeakers = 0;
+  ownVoice = 0;
+  excluded = 0;
+  notInChannel = 0;
   /** bot -> uniqueId -> frames, the per-speaker routing evidence. */
   readonly routed = new Map<BotId, Map<string, number>>();
   readonly overflowLatency = new LatencyStats();
@@ -70,15 +76,33 @@ export class TsToDiscordPipeline {
   onVoice(data: Buffer, nowMs: number): RouteResult {
     if (this.disposed) return { kind: "dropped", reason: "disposed" };
     const pkt = parseS2CVoice(data);
-    if (!pkt) return { kind: "dropped", reason: "malformed" };
-    if (pkt.clid === this.o.ownClid()) return { kind: "dropped", reason: "own-voice" };
+    if (!pkt) {
+      this.malformed += 1;
+      return { kind: "dropped", reason: "malformed" };
+    }
+    if (pkt.clid === this.o.ownClid()) {
+      this.ownVoice += 1;
+      return { kind: "dropped", reason: "own-voice" };
+    }
     const client = this.o.directory.byClientId(pkt.clid);
-    if (!client) return { kind: "dropped", reason: "unknown-speaker" };
-    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) return { kind: "dropped", reason: "excluded" };
-    if (client.channelId !== this.o.channelId()) return { kind: "dropped", reason: "not-in-channel" };
+    if (!client) {
+      this.unknownSpeakers += 1;
+      return { kind: "dropped", reason: "unknown-speaker" };
+    }
+    if (client.isQuery || this.o.excludedUniqueIds?.has(client.uniqueId)) {
+      this.excluded += 1;
+      return { kind: "dropped", reason: "excluded" };
+    }
+    if (client.channelId !== this.o.channelId()) {
+      this.notInChannel += 1;
+      return { kind: "dropped", reason: "not-in-channel" };
+    }
 
     const dest = this.o.router.destinationFor(client.uniqueId);
-    if (!dest) return { kind: "dropped", reason: "not-in-channel" };
+    if (!dest) {
+      this.notInChannel += 1;
+      return { kind: "dropped", reason: "not-in-channel" };
+    }
 
     this.received += 1;
     if (pkt.opus.length === 0) {

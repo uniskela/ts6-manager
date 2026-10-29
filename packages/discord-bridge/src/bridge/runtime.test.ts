@@ -195,6 +195,61 @@ describe("DAVE transition at the receiver while audio is queued (simulated Disco
   });
 });
 
+describe("TeamSpeak nickname → Discord slot nick", () => {
+  it("propagates a nickname change to the same uniqueId's slot without rejoining", async () => {
+    const { ts, bots, rt, settle } = await build();
+    await rt.start();
+    ts.addUser(1, "Alice");
+    await settle();
+    const joins = bots.get("slot-0")!.joinCount;
+    assert.equal(bots.get("slot-0")!.nick, "[TS] Alice");
+    ts.renameUser(1, "Alicia");
+    await settle();
+    assert.equal(bots.get("slot-0")!.nick, "[TS] Alicia");
+    assert.equal(bots.get("slot-0")!.joinCount, joins, "audio membership is not rebuilt");
+    assert.equal(rt.router.slotOccupant(0), "uid1");
+    await rt.stop();
+  });
+
+  it("keeps the last nickname when a slower earlier Discord response arrives", async () => {
+    const { ts, bots, rt, settle } = await build();
+    await rt.start();
+    ts.addUser(1, "Alice");
+    await settle();
+    const slot = bots.get("slot-0")!;
+    let release!: () => void;
+    slot.nickDelay = new Promise<void>((r) => (release = r));
+    ts.renameUser(1, "First");
+    await new Promise((r) => setImmediate(r));
+    slot.nickDelay = null;
+    ts.renameUser(1, "Second");
+    release();
+    await settle();
+    assert.equal(slot.nick, "[TS] Second");
+    assert.equal(slot.nickCalls.at(-1), "[TS] Second");
+    await rt.stop();
+  });
+
+  it("does not mark a failed Discord nick as applied, and does not drop the slot", async () => {
+    const { ts, bots, rt, settle } = await build();
+    await rt.start();
+    ts.addUser(1, "Alice");
+    await settle();
+    const slot = bots.get("slot-0")!;
+    const joins = slot.joinCount;
+    slot.nickFailOnce = true;
+    ts.renameUser(1, "Blocked");
+    await settle();
+    assert.equal(slot.nick, "[TS] Alice");
+    assert.equal(slot.inVoice, true);
+    assert.equal(slot.joinCount, joins);
+    ts.addUser(2, "Bob");
+    await settle();
+    assert.equal(slot.nick, "[TS] Blocked");
+    await rt.stop();
+  });
+});
+
 describe("tsNickname", () => {
   it("keeps the [TS] prefix and truncates the name to 32 UTF-16 units", () => {
     assert.equal(tsNickname("Alice"), "[TS] Alice");
