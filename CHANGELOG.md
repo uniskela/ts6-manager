@@ -2,6 +2,14 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.11.4](https://github.com/uniskela/ts6-manager/compare/v1.11.3...v1.11.4) (2026-10-29)
+
+
+### Bug Fixes
+
+* keep Deno installer downloads on HTTPS ([#558](https://github.com/uniskela/ts6-manager/issues/558)) ([e42a88a](https://github.com/uniskela/ts6-manager/commit/e42a88a0a00f27ca936204dab2ee935898f3c79a))
+* keep sidecar API logs on one record ([#559](https://github.com/uniskela/ts6-manager/issues/559)) ([6f305b9](https://github.com/uniskela/ts6-manager/commit/6f305b96bd2d93f2c6d219cdfdcd140096e383ba))
+
 ## [1.11.3](https://github.com/uniskela/ts6-manager/compare/v1.11.2...v1.11.3) (2026-10-29)
 
 
