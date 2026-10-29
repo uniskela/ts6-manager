@@ -68,7 +68,7 @@ packages/discord-bridge/scripts/d1-ts-lab.sh stop
 |---|---|---|
 | `health=ok` | status file | running, one receiver, DAVE ready, no duplicate receivers |
 | `health=degraded` | status file | scheduled reconnect, decrypt error, or recovery count > 0 |
-| `health=parked` | status file | DAVE idle park grant (`knownBotsOnly`: voice-state and MLS peers are known bots), DAVE not ready. Allowed with no elected receiver during initial bots-only MLS wait. Occupancy integers alone do not park. Audio is fail-closed by design. |
+| `health=parked` | status file | DAVE idle park grant (`knownBotsOnly`: voice-state and MLS peers are known bots), DAVE not ready. Allowed with no elected receiver during initial bots-only MLS wait only when every *connected* bot grants; disagreement or no connected observer stays fail-closed. Occupancy integers alone do not park. Audio is fail-closed by design. |
 | `health=fail-closed` | status file | DAVE not ready while a human may be present, unknown membership, duplicate receiver, or stopping |
 | `health=stale` | host status | leftover file after the container stopped |
 | Docker `healthy` | compose healthcheck | fresh status; `ok`, `degraded`, or `parked` (parked may have no receiver yet). Stale files fail. (`src/lab/private-beta-health.ts`) |

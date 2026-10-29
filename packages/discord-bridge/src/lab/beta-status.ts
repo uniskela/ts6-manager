@@ -77,14 +77,28 @@ export interface BetaSnapshotIn {
   botsOnlyPark?: boolean;
 }
 
-/** Park when the elected receiver grants, or when any connected bot grants before election. */
-export function botsOnlyParkGrant(
-  receiver: string | null | undefined,
-  bots: Iterable<{ id: string; knownBotsOnlyChannel: boolean }>,
-): boolean {
+export type ParkBot = { id: string; knownBotsOnlyChannel: boolean; connected?: boolean };
+
+/** Map DiscordBot-like adapters the way private-beta snapshot does (`voiceConnection !== null`). */
+export function connectedParkBots(
+  bots: Iterable<{ id: string; knownBotsOnlyChannel: boolean; voiceConnection: unknown }>,
+): ParkBot[] {
+  return [...bots].map((b) => ({
+    id: b.id,
+    knownBotsOnlyChannel: b.knownBotsOnlyChannel,
+    connected: b.voiceConnection !== null,
+  }));
+}
+
+/**
+ * Park when the elected receiver grants, or when every currently connected bot grants before election.
+ * Disconnected bots are not observers. No connected observer, or any connected false, is not a park.
+ */
+export function botsOnlyParkGrant(receiver: string | null | undefined, bots: Iterable<ParkBot>): boolean {
   const list = [...bots];
   if (receiver) return list.find((b) => b.id === receiver)?.knownBotsOnlyChannel === true;
-  return list.some((b) => b.knownBotsOnlyChannel);
+  const observers = list.filter((b) => b.connected === true);
+  return observers.length > 0 && observers.every((b) => b.knownBotsOnlyChannel);
 }
 
 export function sumValues(map: Record<string, number> | undefined): number {

@@ -14,6 +14,7 @@ import { ReceiverElection } from "../core/receiver-election.js";
 import { createLogger, safeError } from "../core/redact.js";
 import {
   botsOnlyParkGrant,
+  connectedParkBots,
   buildBetaStatus,
   diffEvents,
   pushEvent,
@@ -140,7 +141,7 @@ async function main(): Promise<void> {
       })),
       voiceMembers: occupancy.members,
       voiceBots: occupancy.bots,
-      botsOnlyPark: botsOnlyParkGrant(st.receiver, concrete.values()),
+      botsOnlyPark: botsOnlyParkGrant(st.receiver, connectedParkBots(concrete.values())),
     };
   };
 

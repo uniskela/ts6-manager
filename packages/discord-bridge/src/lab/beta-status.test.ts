@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   EVENT_CAP,
   botsOnlyParkGrant,
   buildBetaStatus,
+  connectedParkBots,
   deriveHealth,
   diffEvents,
   healthcheckOk,
@@ -18,6 +21,8 @@ import {
   type BetaEvent,
   type BetaSnapshotIn,
 } from "./beta-status.js";
+
+const pkgRoot = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const running: BetaSnapshotIn = {
   state: "running",
@@ -176,12 +181,48 @@ describe("private-beta status", () => {
     assert.equal(hostHealthLabel(null, false), "absent");
   });
 
-  it("parks bots-only startup without a receiver and keeps Docker healthcheck green", () => {
-    const adapter = { id: "slot-0", knownBotsOnlyChannel: true };
-    const human = { id: "slot-0", knownBotsOnlyChannel: false };
-    assert.equal(botsOnlyParkGrant(null, [adapter]), true);
-    assert.equal(botsOnlyParkGrant(null, [human]), false);
-    assert.equal(botsOnlyParkGrant("slot-0", [adapter]), true);
+  it("does not park pre-election when connected bot observations disagree or none are connected", () => {
+    const grant = (bots: { id: string; knownBotsOnlyChannel: boolean; voiceConnection: unknown }[]) =>
+      botsOnlyParkGrant(null, connectedParkBots(bots));
+    assert.equal(
+      grant([
+        { id: "slot-0", knownBotsOnlyChannel: true, voiceConnection: {} },
+        { id: "slot-1", knownBotsOnlyChannel: true, voiceConnection: {} },
+      ]),
+      true,
+    );
+    assert.equal(
+      grant([
+        { id: "slot-0", knownBotsOnlyChannel: true, voiceConnection: {} },
+        { id: "slot-1", knownBotsOnlyChannel: false, voiceConnection: {} },
+      ]),
+      false,
+      "one connected human/unknown observation vetoes park",
+    );
+    assert.equal(
+      grant([
+        { id: "slot-0", knownBotsOnlyChannel: true, voiceConnection: {} },
+        { id: "slot-1", knownBotsOnlyChannel: false, voiceConnection: null },
+      ]),
+      true,
+      "disconnected bots are not observers",
+    );
+    assert.equal(grant([{ id: "slot-0", knownBotsOnlyChannel: false, voiceConnection: null }]), false);
+    assert.equal(botsOnlyParkGrant("slot-0", [{ id: "slot-0", knownBotsOnlyChannel: false, connected: true }]), false);
+  });
+
+  it("parks bots-only startup without a receiver through publisher files and the healthcheck script", () => {
+    // Boundary: no Discord login, no private-beta.ts snapshot(), no compose.
+    // Covers the publisher mapping (voiceConnection → connected) → botsOnlyParkGrant →
+    // buildBetaStatus → writeBetaStatusFiles → src/lab/private-beta-health.ts (compose HEALTHCHECK).
+    const adapters = [
+      { id: "slot-0", knownBotsOnlyChannel: true, voiceConnection: {} },
+      { id: "slot-1", knownBotsOnlyChannel: false, voiceConnection: null },
+    ];
+    const human = { id: "slot-0", knownBotsOnlyChannel: false, voiceConnection: {} };
+    assert.equal(botsOnlyParkGrant(null, connectedParkBots(adapters)), true);
+    assert.equal(botsOnlyParkGrant(null, connectedParkBots([human])), false);
+    assert.equal(botsOnlyParkGrant("slot-0", connectedParkBots(adapters)), true);
     const snap: BetaSnapshotIn = {
       state: "running",
       receiver: null,
@@ -189,22 +230,38 @@ describe("private-beta status", () => {
       scheduledReconnects: 0,
       duplicateReceivers: [],
       dave: { "slot-0": { protocolVersion: 1, ready: false } },
-      botsOnlyPark: botsOnlyParkGrant(null, [adapter]),
+      botsOnlyPark: botsOnlyParkGrant(null, connectedParkBots(adapters)),
     };
+    const dir = mkdtempSync(join(tmpdir(), "d1-park-"));
     const status = buildBetaStatus({ sourceCommit: "x", snap, events: [], started: true, singleAttempt: true });
-    const now = Date.parse(String(status.at));
-    assert.equal(status.health, "parked");
-    assert.equal(status.receiver, null);
-    assert.equal(status.daveReady, false);
-    assert.equal(healthcheckOk(status, now), true);
+    writeBetaStatusFiles(dir, status);
+    const detailed = JSON.parse(readFileSync(join(dir, "private-beta-status.json"), "utf8")) as Record<string, unknown>;
+    const now = Date.parse(String(detailed.at));
+    assert.equal(detailed.health, "parked");
+    assert.equal(detailed.receiver, null);
+    assert.equal(detailed.daveReady, false);
+    assert.equal(healthcheckOk(detailed, now), true);
+    const health = spawnSync(process.execPath, ["--import", "tsx", "src/lab/private-beta-health.ts"], {
+      cwd: pkgRoot,
+      env: { ...process.env, D1_STATUS_FILE: join(dir, "private-beta-status.json") },
+      encoding: "utf8",
+    });
+    assert.equal(health.status, 0, health.stderr);
     const unknown = buildBetaStatus({
       sourceCommit: "x",
-      snap: { ...snap, botsOnlyPark: botsOnlyParkGrant(null, [{ id: "slot-0", knownBotsOnlyChannel: false }]) },
+      snap: { ...snap, botsOnlyPark: botsOnlyParkGrant(null, connectedParkBots([human])) },
       events: [],
       started: true,
       singleAttempt: true,
     });
+    writeBetaStatusFiles(dir, unknown);
     assert.equal(unknown.health, "fail-closed");
     assert.equal(healthcheckOk(unknown, now), false);
+    const unhealthy = spawnSync(process.execPath, ["--import", "tsx", "src/lab/private-beta-health.ts"], {
+      cwd: pkgRoot,
+      env: { ...process.env, D1_STATUS_FILE: join(dir, "private-beta-status.json") },
+      encoding: "utf8",
+    });
+    assert.equal(unhealthy.status, 1);
   });
 });

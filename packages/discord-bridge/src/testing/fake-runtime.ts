@@ -21,7 +21,10 @@ export class FakeBot extends EventEmitter implements BotPort {
   nickCalls: (string | null)[] = [];
   nickDelay: Promise<void> | null = null;
   nickFailRemaining = 0;
+  /** When set, `nickFailRemaining` applies only to this value; otherwise every call fails. */
+  nickFailFor?: string | null;
   nickDenied = false;
+  nickThrow = false;
   private abortJoin: (() => void) | null = null;
 
   constructor(readonly id: BotId, readonly userId: string, private readonly order?: string[]) {
@@ -65,8 +68,9 @@ export class FakeBot extends EventEmitter implements BotPort {
   async setNickname(n: string | null): Promise<NickResult> {
     this.nickCalls.push(n);
     if (this.nickDelay) await this.nickDelay;
+    if (this.nickThrow) throw new Error("setNickname rejected");
     if (this.nickDenied) return "denied";
-    if (this.nickFailRemaining > 0) {
+    if (this.nickFailRemaining > 0 && (this.nickFailFor === undefined || this.nickFailFor === n)) {
       this.nickFailRemaining -= 1;
       return "failed";
     }

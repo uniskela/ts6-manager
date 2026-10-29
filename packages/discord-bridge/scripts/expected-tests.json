@@ -259,6 +259,8 @@
     "a delayed Discord nick from before leave cannot overwrite the name after rejoin",
     "a non-receiver slot failure does not move receive and leaves the other slots running",
     "classifies Discord 403 and missing-permissions as denied",
+    "clears a stuck pending nick when setNickname rejects",
+    "does not keep a superseded Discord nick as confirmed when the compensating update fails",
     "does not mark a failed Discord nick as applied, and does not drop the slot",
     "does not retry a permission-denied nick across unrelated syncs",
     "does not start a queued Discord nick after shutdown",
@@ -438,9 +440,10 @@
   ],
   "src/lab/beta-status.test.ts": [
     "derives fail-closed when DAVE is down or a duplicate receiver appears",
+    "does not park pre-election when connected bot observations disagree or none are connected",
     "exposes TeamSpeak→Discord counters and per-slot sender readiness without identities",
     "healthcheck requires fresh DAVE and a receiver, and leftover files are stale when stopped",
-    "parks bots-only startup without a receiver and keeps Docker healthcheck green",
+    "parks bots-only startup without a receiver through publisher files and the healthcheck script",
     "records bounded lifecycle events and never copies a secret-shaped field",
     "writes status atomically"
   ],

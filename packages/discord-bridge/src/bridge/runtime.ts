@@ -509,7 +509,7 @@ export class BridgeRuntime extends EventEmitter {
     if (this.appliedNick.get(id) === name && !this.pendingNick.has(id)) return;
     if (this.nickDenied.get(id) === name) return;
     const spent = this.nickFailCount.get(id);
-    if (spent && spent.value === name && spent.n >= 2) return;
+    if (spent?.value === name && (spent?.n ?? 0) >= 2) return;
     this.queueNick(id, name);
   }
 
@@ -525,34 +525,47 @@ export class BridgeRuntime extends EventEmitter {
     this.nickEpoch.set(id, epoch);
     this.pendingNick.set(id, name);
     const prev = this.nickChain.get(id) ?? Promise.resolve();
-    const next = prev.then(async () => {
+    const next = prev.then(() => this.runNick(bot, id, name, epoch));
+    this.nickChain.set(id, next.then(() => undefined, () => undefined));
+    this.track(next);
+  }
+
+  /** REST worker for one epoch. A superseded `ok` still records Discord's confirmed name. */
+  private async runNick(bot: BotPort, id: BotId, name: string | null, epoch: number): Promise<void> {
+    try {
       let attempts = 0;
       for (;;) {
         if (!this.live() || this.nickEpoch.get(id) !== epoch) return;
-        const result = await bot.setNickname(name);
-        if (!this.live() || this.nickEpoch.get(id) !== epoch) return;
+        let result: NickResult;
+        try {
+          result = await bot.setNickname(name);
+        } catch {
+          result = "failed";
+        }
+        if (!this.live()) return;
+        if (this.nickEpoch.get(id) !== epoch) {
+          if (result === "ok") this.appliedNick.set(id, name);
+          return;
+        }
         if (result === "ok") {
           this.appliedNick.set(id, name);
           this.nickFailCount.delete(id);
           this.nickDenied.delete(id);
-          if (this.pendingNick.get(id) === name) this.pendingNick.delete(id);
           return;
         }
         if (result === "denied") {
           this.nickDenied.set(id, name);
-          if (this.pendingNick.get(id) === name) this.pendingNick.delete(id);
           return;
         }
         attempts += 1;
         if (attempts >= 2) {
           this.nickFailCount.set(id, { value: name, n: 2 });
-          if (this.pendingNick.get(id) === name) this.pendingNick.delete(id);
           return;
         }
       }
-    });
-    this.nickChain.set(id, next.then(() => undefined, () => undefined));
-    this.track(next);
+    } finally {
+      if (this.nickEpoch.get(id) === epoch && this.pendingNick.get(id) === name) this.pendingNick.delete(id);
+    }
   }
 
   private clearNickState(id: BotId): void {

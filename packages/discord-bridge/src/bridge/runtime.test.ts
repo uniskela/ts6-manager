@@ -273,6 +273,49 @@ describe("TeamSpeak nickname → Discord slot nick", () => {
     await rt.stop();
   });
 
+  it("does not keep a superseded Discord nick as confirmed when the compensating update fails", async () => {
+    const { ts, rt, settle, slot } = await aliceSlot();
+    const release = holdNick(slot);
+    ts.renameUser(1, "Bob");
+    await new Promise((r) => setImmediate(r));
+    ts.renameUser(1, "Alice");
+    slot.nickFailFor = "[TS] Alice";
+    slot.nickFailRemaining = 2;
+    release();
+    await settle();
+    assert.equal(slot.nick, "[TS] Bob", "Discord kept the superseded success");
+    const spent = slot.nickCalls.length;
+    ts.addUser(2, "Other");
+    await settle();
+    assert.equal(slot.nickCalls.length, spent, "spent Alice budget is not retried on unrelated syncs");
+    slot.nickFailRemaining = 0;
+    ts.renameUser(1, "Carol");
+    await settle();
+    assert.equal(slot.nick, "[TS] Carol");
+    ts.renameUser(1, "Alice");
+    await settle();
+    assert.equal(slot.nick, "[TS] Alice");
+    await rt.stop();
+  });
+
+  it("clears a stuck pending nick when setNickname rejects", async () => {
+    const { ts, rt, settle, slot } = await aliceSlot();
+    const before = slot.nickCalls.length;
+    slot.nickThrow = true;
+    ts.renameUser(1, "Bob");
+    await settle();
+    assert.equal(slot.nick, "[TS] Alice");
+    assert.equal(slot.nickCalls.length, before + 2, "two rejected attempts then budget");
+    ts.addUser(2, "Other");
+    await settle();
+    assert.equal(slot.nickCalls.length, before + 2, "rejected Bob is not retried across unrelated syncs");
+    slot.nickThrow = false;
+    ts.renameUser(1, "Carol");
+    await settle();
+    assert.equal(slot.nick, "[TS] Carol");
+    await rt.stop();
+  });
+
   it("does not retry a permission-denied nick across unrelated syncs", async () => {
     const { ts, rt, settle, slot } = await aliceSlot();
     slot.nickDenied = true;
