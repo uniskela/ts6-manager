@@ -10,6 +10,7 @@ export type DiscordCommandIntent = {
   command: string;
   args?: Record<string, string>;
   idempotencyKey?: string;
+  ts6Role?: Ts6Role;
 };
 
 export type CommandFailureCode =
@@ -142,7 +143,7 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
 
     if (isMusicCommand(intent.command)) {
       if (!deps.music) return fail('not_implemented', 'Music commands are not available yet.');
-      return deps.music.execute(intent, binding);
+      return deps.music.execute({ ...intent, ts6Role: role }, binding);
     }
 
     if (intent.command === 'ts.help') return ok(HELP);

@@ -9,11 +9,25 @@ import {
   stopPlayback,
 } from '../voice/commands/playback.js';
 import { applyMediaUrlToBot, beginChatMediaRequest } from '../voice/commands/queue.js';
+import {
+  addUrlToPlaylist,
+  createServerPlaylist,
+  enqueueSavedPlaylist,
+  formatNamedMatchError,
+  formatPlaylistList,
+  loadPlaylistSummaries,
+  loadRadioStations,
+  matchNamed,
+  radioQueueItem,
+  removeTrackFromPlaylist,
+  type PlaylistCatalog,
+} from '../voice/commands/library.js';
+import { formatRadioListMessage } from '../voice/ts6-chat-format.js';
 import { validateUrl } from '../utils/url-validator.js';
 import type { VoiceBot } from '../voice/voice-bot.js';
 import type { CommandResult, DiscordCommandIntent, GuildBinding } from './adapter.js';
 import { formatBotNowPlaying, formatBotQueue } from './music-inspect.js';
-import { PHASE_2A_MUSIC_COMMANDS, PHASE_2B_1_MUSIC_COMMANDS, isMusicCommand } from './music.js';
+import { PHASE_2A_MUSIC_COMMANDS, PHASE_2B_1_MUSIC_COMMANDS, PHASE_2B_2_MUSIC_COMMANDS, isMusicCommand } from './music.js';
 import { MemoryReplayGuard, type ReplayGuard } from './security.js';
 
 export type MusicCommandService = {
@@ -29,9 +43,11 @@ export type MusicServiceDeps = {
   validateUrl?: (url: string) => Promise<{ valid: boolean; error?: string }>;
   replay?: ReplayGuard;
   nowMs?: () => number;
+  prisma?: PlaylistCatalog;
 };
 
-const READY = new Set<string>([...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_1_MUSIC_COMMANDS]);
+const READY = new Set<string>([...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_1_MUSIC_COMMANDS, ...PHASE_2B_2_MUSIC_COMMANDS]);
+const PLAYLIST_EDITS = new Set(['create', 'add', 'remove']);
 
 function fail(code: CommandResult['code'], content: string, ack: CommandResult['ack'] = 'immediate'): CommandResult {
   return { ok: false, code, ephemeral: true, content, ack };
@@ -51,9 +67,38 @@ function volumeArg(intent: DiscordCommandIntent): string {
   return (args.level ?? args.volume ?? args.value ?? '').trim();
 }
 
+function arg(intent: DiscordCommandIntent, ...keys: string[]): string {
+  const args = intent.args ?? {};
+  for (const key of keys) {
+    const value = args[key]?.trim();
+    if (value) return value;
+  }
+  return '';
+}
+
+function playlistAction(intent: DiscordCommandIntent): 'list' | 'play' | 'create' | 'add' | 'remove' {
+  const action = arg(intent, 'subcommand', 'action', 'op').toLowerCase();
+  if (action === 'list' || action === 'play' || action === 'create' || action === 'add' || action === 'remove') return action;
+  return arg(intent, 'name', 'playlist', 'query') ? 'play' : 'list';
+}
+
+function radioAction(intent: DiscordCommandIntent): 'list' | 'play' {
+  const action = arg(intent, 'subcommand', 'action', 'op').toLowerCase();
+  if (action === 'list' || action === 'play') return action;
+  return arg(intent, 'station', 'name', 'query', 'id') ? 'play' : 'list';
+}
+
 function mediaArgs(intent: DiscordCommandIntent): string {
   if (intent.command === 'play') return playQuery(intent) || 'url';
   if (intent.command === 'volume') return volumeArg(intent);
+  if (intent.command === 'playlist') {
+    const action = playlistAction(intent);
+    return action === 'list' ? '' : action;
+  }
+  if (intent.command === 'radio') {
+    const action = radioAction(intent);
+    return action === 'list' ? '' : action;
+  }
   return '';
 }
 
@@ -88,6 +133,9 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     const identity = deps.identityForUser?.(intent.userId) ?? {};
     if (!authorizeMediaCommand(policy, intent.command, identity, mediaArgs(intent))) {
       return fail('unauthorized', 'You do not have permission to use this command.');
+    }
+    if (intent.command === 'playlist' && PLAYLIST_EDITS.has(playlistAction(intent)) && intent.ts6Role !== 'admin') {
+      return fail('unauthorized', 'You do not have permission to edit playlists.');
     }
 
     if (intent.command === 'nowplaying') return ok(formatBotNowPlaying(bot));
@@ -142,6 +190,10 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       }
     }
 
+    if (intent.command === 'playlist' || intent.command === 'radio') {
+      return catalogCommand(intent, binding, bot);
+    }
+
     const query = playQuery(intent);
     if (!query) return fail('unavailable', 'Usage: /play <url>', 'deferred');
     const replayed = claim(intent, 'deferred');
@@ -175,6 +227,93 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       const message = err instanceof Error ? err.message : 'Playback failed.';
       return fail('unavailable', message, 'deferred');
     }
+  }
+
+  async function catalogCommand(
+    intent: DiscordCommandIntent,
+    binding: GuildBinding,
+    bot: VoiceBot,
+  ): Promise<CommandResult> {
+    if (!deps.prisma) return fail('unavailable', 'Music catalog is unavailable.');
+    const serverConfigId = bot.currentConfig.serverConfigId;
+    if (!serverConfigId) return fail('unavailable', 'No server configured.');
+
+    if (intent.command === 'radio') {
+      const action = radioAction(intent);
+      if (action === 'list') {
+        const stations = await loadRadioStations(deps.prisma, serverConfigId);
+        if (!stations.length) return ok('No radio stations configured.');
+        return ok(formatRadioListMessage(stations, '/radio play <id>'));
+      }
+      const query = arg(intent, 'station', 'name', 'query', 'id');
+      if (!query) return fail('unavailable', 'Usage: /radio play <station>', 'deferred');
+      const replayed = claim(intent, 'deferred');
+      if (replayed) return replayed;
+      const stations = await loadRadioStations(deps.prisma, serverConfigId);
+      const matches = matchNamed(stations, query);
+      if (matches.length !== 1) {
+        return fail('unavailable', formatNamedMatchError('station', matches, '/radio list'), 'deferred');
+      }
+      const item = radioQueueItem(matches[0]);
+      try {
+        await bot.playStream(item, { replaceSessionIds: [] });
+        return ok(`Now playing: ${matches[0].name}`, 'deferred');
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Radio playback failed.';
+        return fail('unavailable', message, 'deferred');
+      }
+    }
+
+    const action = playlistAction(intent);
+    if (action === 'list') {
+      return ok(formatPlaylistList(await loadPlaylistSummaries(deps.prisma, serverConfigId)));
+    }
+    if (action === 'play') {
+      const query = arg(intent, 'name', 'playlist', 'query');
+      if (!query) return fail('unavailable', 'Usage: /playlist play <name>', 'deferred');
+      const replayed = claim(intent, 'deferred');
+      if (replayed) return replayed;
+      const result = await enqueueSavedPlaylist(deps.prisma, bot, query, {
+        musicSwitch: { replaceSessionIds: [] },
+        listHint: '/playlist list',
+        isCurrent: () => deps.getBot(binding.botId!) === bot,
+      });
+      if (!result.ok) return fail('unavailable', result.message, 'deferred');
+      return ok(`Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`, 'deferred');
+    }
+    if (action === 'create') {
+      const name = arg(intent, 'name', 'playlist', 'query');
+      const replayed = claim(intent, 'immediate');
+      if (replayed) return replayed;
+      const result = await createServerPlaylist(deps.prisma, {
+        name,
+        serverConfigId,
+        musicBotId: binding.botId!,
+      });
+      if (!result.ok) return fail('unavailable', result.message);
+      return ok(`Created playlist "${result.name.slice(0, 60)}" [${result.id}].`);
+    }
+    if (action === 'add') {
+      const name = arg(intent, 'name', 'playlist');
+      const url = arg(intent, 'url', 'query', 'source');
+      if (!name || !url) return fail('unavailable', 'Usage: /playlist add <name> <URL>', 'deferred');
+      if (!/^https?:\/\//i.test(url)) return fail('unavailable', 'Playlist add accepts HTTP(S) URLs only.', 'deferred');
+      const check = await (deps.validateUrl ?? validateUrl)(url);
+      if (!check.valid) return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
+      const replayed = claim(intent, 'deferred');
+      if (replayed) return replayed;
+      const result = await addUrlToPlaylist(deps.prisma, { query: name, url, serverConfigId });
+      if (!result.ok) return fail('unavailable', result.message, 'deferred');
+      return ok(`Added to "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`, 'deferred');
+    }
+    const name = arg(intent, 'name', 'playlist');
+    const track = arg(intent, 'track', 'song', 'title');
+    if (!name || !track) return fail('unavailable', 'Usage: /playlist remove <name> <track>');
+    const replayed = claim(intent, 'immediate');
+    if (replayed) return replayed;
+    const result = await removeTrackFromPlaylist(deps.prisma, { query: name, track, serverConfigId });
+    if (!result.ok) return fail('unavailable', result.message);
+    return ok(`Removed from "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`);
   }
 
   return { execute };

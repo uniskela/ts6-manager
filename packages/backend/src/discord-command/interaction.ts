@@ -7,11 +7,25 @@ export function planAcknowledgement(command: string): CommandResult['ack'] {
   return command === 'play' || command === 'playlist' || command === 'radio' ? 'deferred' : 'immediate';
 }
 
-function commandFromData(data: { name?: string; options?: Array<{ name?: string }> } | undefined): string {
+type InteractionOption = { name?: string; value?: unknown; options?: InteractionOption[] };
+
+function commandFromData(data: { name?: string; options?: InteractionOption[] } | undefined): string {
   if (!data?.name) return '';
   const sub = data.options?.[0]?.name;
   if (data.name === 'ts' && sub) return `ts.${sub}`;
   return data.name;
+}
+
+function collectArgs(options: InteractionOption[] | undefined, args: Record<string, string> = {}): Record<string, string> {
+  for (const option of options ?? []) {
+    if (!option || typeof option.name !== 'string') continue;
+    if (typeof option.value === 'string') args[option.name] = option.value;
+    else if (option.options) {
+      if (!args.subcommand) args.subcommand = option.name;
+      collectArgs(option.options, args);
+    }
+  }
+  return args;
 }
 
 export function parseInteractionBody(body: string): DiscordCommandIntent | { ping: true } | null {
@@ -20,18 +34,13 @@ export function parseInteractionBody(body: string): DiscordCommandIntent | { pin
       type?: number;
       guild_id?: string;
       member?: { user?: { id?: string }; roles?: string[]; permissions?: string };
-      data?: { name?: string; options?: Array<{ name?: string }> };
+      data?: { name?: string; options?: InteractionOption[] };
     };
     if (parsed.type === 1) return { ping: true };
     if (parsed.type !== 2) return null;
     const command = commandFromData(parsed.data);
     if (!command || !parsed.guild_id || !parsed.member?.user?.id) return null;
-    const args: Record<string, string> = {};
-    for (const option of parsed.data?.options ?? []) {
-      if (option && typeof option.name === 'string' && typeof (option as { value?: unknown }).value === 'string') {
-        args[option.name] = (option as { value: string }).value;
-      }
-    }
+    const args = collectArgs(parsed.data?.options);
     return {
       guildId: parsed.guild_id,
       userId: parsed.member.user.id,

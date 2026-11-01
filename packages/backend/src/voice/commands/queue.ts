@@ -5,6 +5,7 @@ import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
+import { enqueueSavedPlaylist, formatPlaylistList, loadPlaylistSummaries } from './library.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
 /** Abort pending song searches when the bot's media request is replaced or stopped. */
@@ -199,55 +200,22 @@ export async function handlePlaylist(
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   if (!serverConfigId) { context.reply(bot, userClid, 'No server configured.'); return; }
-  // A Stop, queue clear or bot restart while the playlist is looked up drops this load.
-  const stopGeneration = bot.stopGeneration;
-  const where = { OR: [{ serverConfigId }, { serverConfigId: null }] };
-  const playlists = await context.prisma.playlist.findMany({
-    where, select: { id: true, name: true }, orderBy: { name: 'asc' },
-  });
-  const query = args.trim().toLowerCase();
+  const query = args.trim();
   if (!query) {
-    context.reply(bot, userClid, playlists.length
-      ? 'Playlists (first 10):\n' + playlists.slice(0, 10).map(p => `[${p.id}] ${p.name.slice(0, 60)}`).join('\n')
-      : 'No playlists configured for this bot/server.');
+    context.reply(bot, userClid, formatPlaylistList(await loadPlaylistSummaries(context.prisma, serverConfigId)));
     return;
   }
-  const byId = /^\d+$/.test(query) ? playlists.filter(p => p.id === Number(query)) : [];
-  const exact = playlists.filter(p => p.name.toLowerCase() === query);
-  const matches = byId.length ? byId : exact.length ? exact : playlists.filter(p => p.name.toLowerCase().includes(query));
-  if (matches.length !== 1) {
-    context.reply(bot, userClid, matches.length
-      ? 'Ambiguous playlist; use an ID: ' + matches.slice(0, 5).map(p => `[${p.id}] ${p.name.slice(0, 60)}`).join(', ')
-      : 'Playlist not found. Use !playlist to list.');
-    return;
-  }
-  const playlist = await context.prisma.playlist.findFirst({
-    where: { ...where, id: matches[0].id },
-    include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
+  const result = await enqueueSavedPlaylist(context.prisma, bot, query, {
+    musicSwitch: context.chatMusicSwitch(bot),
+    listHint: '!playlist to list',
+    isCurrent: () => context.voiceBotManager.getBot(botId) === bot,
   });
-  if (!playlist?.songs.length) { context.reply(bot, userClid, 'Playlist is empty.'); return; }
-  if (context.voiceBotManager.getBot(botId) !== bot || bot.stopGeneration !== stopGeneration) {
-    void context.reply(bot, userClid, 'Playback was stopped before the playlist was loaded.');
+  if (!result.ok) {
+    context.reply(bot, userClid, result.message);
     return;
   }
-  const items: QueueItem[] = playlist.songs.map(({ song }) => ({
-    id: String(song.id), title: song.title, artist: song.artist ?? undefined,
-    duration: song.duration ?? undefined, filePath: song.filePath,
-    source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined,
-  }));
-  try {
-    bot.queue.addMany(items);
-  } catch (err) {
-    if (!(err instanceof QueueFullError)) throw err;
-    void context.reply(bot, userClid, err.message);
-    return;
-  }
-  context.saveMusicRequest(bot, items);
-  if (bot.status === 'connected' && !bot.nowPlaying) {
-    const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
-    if (first) await bot.play(first, context.chatMusicSwitch(bot)); // VoiceBot owns local/stream playlist resolution.
-  }
-  context.reply(bot, userClid, `Queued playlist "${playlist.name.slice(0, 60)}" (${items.length} tracks).`);
+  context.saveMusicRequest(bot, result.items);
+  context.reply(bot, userClid, `Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`);
 }
 
 /** Report or set the queue repeat mode after validating the requested mode. */

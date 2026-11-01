@@ -39,6 +39,7 @@ function fakeBot(status: 'connected' | 'playing' | 'paused' | 'stopped' = 'conne
     status,
     nowPlaying: null,
     isStreaming: false,
+    stopGeneration: 0,
     playbackProgress: { position: 12, duration: 120 },
     queue: new PlayQueue(),
     assertMusicCanStart: () => {},
@@ -50,6 +51,7 @@ function fakeBot(status: 'connected' | 'playing' | 'paused' | 'stopped' = 'conne
     },
     stopAudio(options?: { keepPendingRequests?: boolean }) {
       bot.lastStop = options;
+      if (!options?.keepPendingRequests) bot.stopGeneration += 1;
       bot.nowPlaying = null;
       if (bot.status === 'playing' || bot.status === 'paused') bot.status = 'connected';
       bot.isStreaming = false;
@@ -233,12 +235,10 @@ describe('Discord adapter music wiring', () => {
     assert.equal(result.ack, 'deferred');
   });
 
-  it('keeps Phase 2B-2 playlist and radio unimplemented', async () => {
+  it('fails closed when playlist catalog is not wired', async () => {
     const adapter = createDiscordCommandAdapter(adapterDeps(fakeBot()));
-    for (const command of ['playlist', 'radio']) {
-      const result = await adapter.handle(musicIntent({ command, userId: DJ }));
-      assert.equal(result.code, 'not_implemented', command);
-    }
+    const result = await adapter.handle(musicIntent({ command: 'playlist', args: { subcommand: 'list' }, userId: DJ }));
+    assert.equal(result.code, 'unavailable');
   });
 });
 
@@ -398,5 +398,323 @@ describe('Discord playback controls share TeamSpeak bot state', () => {
     }));
     assert.equal(result.ok, true);
     assert.equal(bot.status, 'paused');
+  });
+});
+
+function songRow(id: number, title: string, serverConfigId = 9) {
+  return {
+    id, title, artist: 'A', duration: 1, filePath: `/tmp/${id}`, source: 'url',
+    sourceUrl: `https://8.8.8.8/${id}`, serverConfigId,
+  };
+}
+
+function fakeCatalog() {
+  let nextPlaylist = 20;
+  let nextSong = 200;
+  const playlists: Array<{ id: number; name: string; serverConfigId: number | null; musicBotId?: number }> = [
+    { id: 3, name: 'Rock', serverConfigId: 9, musicBotId: 1 },
+    { id: 4, name: 'Shared Mix', serverConfigId: null },
+    { id: 5, name: 'Other Server', serverConfigId: 8 },
+    { id: 6, name: 'Rock Live', serverConfigId: 9 },
+  ];
+  const songs = [songRow(7, 'Track'), songRow(8, 'Shared Song'), songRow(9, 'Foreign Song', 8)];
+  const links = [
+    { playlistId: 3, songId: 7, position: 0 },
+    { playlistId: 4, songId: 8, position: 0 },
+    { playlistId: 5, songId: 9, position: 0 },
+  ];
+  const stations = [
+    { id: 1, name: 'Jazz FM', url: 'https://8.8.8.8/jazz', genre: 'Jazz', serverConfigId: 9 },
+    { id: 2, name: 'Rock Radio', url: 'https://8.8.8.8/rock', genre: 'Rock', serverConfigId: 9 },
+    { id: 11, name: 'Foreign FM', url: 'https://8.8.8.8/f', genre: 'X', serverConfigId: 8 },
+  ];
+
+  function inScope(row: { id?: number; serverConfigId?: number | null }, where: any): boolean {
+    if (!where) return true;
+    if (where.id != null && row.id !== where.id) return false;
+    if (Object.prototype.hasOwnProperty.call(where, 'serverConfigId') && where.OR == null && row.serverConfigId !== where.serverConfigId) {
+      return false;
+    }
+    if (where.OR) return where.OR.some((clause: any) => inScope(row, { ...where, ...clause, OR: undefined }));
+    return true;
+  }
+
+  const db: any = {
+    playlist: {
+      findMany: async ({ where }: any) => playlists.filter((p) => inScope(p, where)).map(({ id, name }) => ({ id, name })),
+      findFirst: async ({ where }: any) => {
+        const playlist = playlists.find((p) => inScope(p, where));
+        if (!playlist) return null;
+        return {
+          ...playlist,
+          songs: links.filter((link) => link.playlistId === playlist.id)
+            .sort((a, b) => a.position - b.position)
+            .map((link) => ({ position: link.position, song: songs.find((s) => s.id === link.songId) })),
+        };
+      },
+      create: async ({ data }: any) => {
+        const created = { id: nextPlaylist++, name: data.name, serverConfigId: data.serverConfigId, musicBotId: data.musicBotId };
+        playlists.push(created);
+        return created;
+      },
+    },
+    radioStation: {
+      findMany: async ({ where }: any) => stations.filter((s) => s.serverConfigId === where.serverConfigId),
+    },
+    song: {
+      findFirst: async ({ where }: any) => songs.find((s) => s.sourceUrl === where.sourceUrl && s.serverConfigId === where.serverConfigId) ?? null,
+      create: async ({ data }: any) => {
+        const created = { id: nextSong++, ...data };
+        songs.push(created);
+        return created;
+      },
+    },
+    playlistSong: {
+      findUnique: async ({ where }: any) => {
+        const key = where.playlistId_songId;
+        return links.find((link) => link.playlistId === key.playlistId && link.songId === key.songId) ?? null;
+      },
+      create: async ({ data }: any) => { links.push(data); return data; },
+      deleteMany: async ({ where }: any) => {
+        const before = links.length;
+        for (let i = links.length - 1; i >= 0; i--) {
+          if (links[i].playlistId === where.playlistId && links[i].songId === where.songId) links.splice(i, 1);
+        }
+        return { count: before - links.length };
+      },
+      aggregate: async ({ where }: any) => {
+        const positions = links.filter((link) => link.playlistId === where.playlistId).map((link) => link.position);
+        return { _max: { position: positions.length ? Math.max(...positions) : null } };
+      },
+    },
+    $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(db),
+    _playlists: playlists,
+    _links: links,
+    _songs: songs,
+  };
+  return db;
+}
+
+describe('Discord playlist and radio catalog (2B-2A)', () => {
+  const binding = { instanceId: 'inst-1', revoked: false, botId: 1 };
+
+  it('lists this server and shared playlists, not other servers', async () => {
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: fakeCatalog() }));
+    const result = await music.execute(musicIntent({ command: 'playlist', args: { subcommand: 'list' } }), binding);
+    assert.equal(result.ok, true);
+    assert.match(result.content, /Rock/);
+    assert.match(result.content, /Shared Mix/);
+    assert.doesNotMatch(result.content, /Other Server/);
+  });
+
+  it('plays a saved playlist onto the shared queue', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() }));
+    const result = await music.execute(musicIntent({
+      command: 'playlist',
+      args: { subcommand: 'play', name: 'Rock' },
+    }), binding);
+    assert.equal(result.ok, true);
+    assert.equal(result.ack, 'deferred');
+    assert.equal(bot.nowPlaying?.title, 'Track');
+    assert.equal(bot.queue.length, 1);
+  });
+
+  it('requires an unambiguous playlist or station name', async () => {
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: fakeCatalog() }));
+    const playlist = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: 'Rock' },
+    }), binding);
+    assert.equal(playlist.ok, true);
+    const ambiguous = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: 'roc' },
+    }), binding);
+    assert.equal(ambiguous.ok, false);
+    assert.match(ambiguous.content, /Ambiguous/);
+  });
+
+  it('lists and plays radio on this server only', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() }));
+    const list = await music.execute(musicIntent({ command: 'radio', args: { subcommand: 'list' } }), binding);
+    assert.match(list.content, /Jazz FM/);
+    assert.match(list.content, /\/radio play/);
+    assert.doesNotMatch(list.content, /!radio/);
+    assert.doesNotMatch(list.content, /Foreign FM/);
+    const play = await music.execute(musicIntent({
+      command: 'radio', args: { subcommand: 'play', station: 'Jazz FM' },
+    }), binding);
+    assert.equal(play.ok, true);
+    assert.equal(bot.nowPlaying?.title, 'Jazz FM');
+    assert.equal(bot.nowPlaying?.source, 'radio');
+  });
+
+  it('does not enqueue a playlist loaded after /stop', async () => {
+    const bot = fakeBot();
+    const catalog = fakeCatalog();
+    const original = catalog.playlist.findFirst;
+    catalog.playlist.findFirst = async (args: unknown) => {
+      bot.stopGeneration += 1;
+      return original(args);
+    };
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: catalog }));
+    const result = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: '3' },
+    }), binding);
+    assert.equal(result.ok, false);
+    assert.match(result.content, /stopped/);
+    assert.equal(bot.queue.length, 0);
+  });
+
+  it('denies playlist play without queue permission and radio play without playback permission', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, {
+      prisma: fakeCatalog(),
+      loadMediaPermissions: async () => restricted,
+    }));
+    const playlist = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: 'Rock' },
+    }), binding);
+    const radio = await music.execute(musicIntent({
+      command: 'radio', args: { subcommand: 'play', station: '1' },
+    }), binding);
+    const list = await music.execute(musicIntent({ command: 'playlist', args: { subcommand: 'list' } }), binding);
+    assert.equal(playlist.code, 'unauthorized');
+    assert.equal(radio.code, 'unauthorized');
+    assert.equal(list.ok, true);
+    assert.equal(bot.nowPlaying, null);
+  });
+
+  it('rejects unpaired guilds and missing bots before catalog access', async () => {
+    let finds = 0;
+    const catalog = fakeCatalog();
+    catalog.playlist.findMany = async () => { finds += 1; return []; };
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const unpaired = await music.execute(musicIntent({ command: 'playlist' }), null);
+    const missing = await createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog, getBot: () => null }))
+      .execute(musicIntent({ command: 'radio' }), binding);
+    assert.equal(unpaired.code, 'unpaired');
+    assert.equal(missing.code, 'unavailable');
+    assert.equal(finds, 0);
+  });
+
+  it('does not play a playlist twice for the same Discord interaction', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() }));
+    const intent = musicIntent({
+      command: 'playlist',
+      args: { subcommand: 'play', name: '3' },
+      idempotencyKey: 'pl-retry',
+    });
+    assert.equal((await music.execute(intent, binding)).ok, true);
+    assert.equal((await music.execute(intent, binding)).ok, true);
+    assert.equal(bot.queue.length, 1);
+  });
+});
+
+describe('Discord playlist edits (2B-2B)', () => {
+  const binding = { instanceId: 'inst-1', revoked: false, botId: 1 };
+
+  it('lets TS6 admins create, add, and remove tracks with stable order', async () => {
+    const catalog = fakeCatalog();
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const created = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'create', name: 'Night' },
+    }), binding);
+    assert.equal(created.ok, true);
+    const add = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Night', url: 'https://8.8.8.8/night.mp3' },
+    }), binding);
+    assert.equal(add.ok, true);
+    const playlist = await catalog.playlist.findFirst({ where: { OR: [{ serverConfigId: 9 }, { serverConfigId: null }], id: 20 } });
+    assert.equal(playlist.songs.length, 1);
+    assert.equal(playlist.songs[0].position, 0);
+    const removed = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'remove', name: 'Night', track: '1' },
+    }), binding);
+    assert.equal(removed.ok, true);
+    const empty = await catalog.playlist.findFirst({ where: { OR: [{ serverConfigId: 9 }, { serverConfigId: null }], id: 20 } });
+    assert.equal(empty.songs.length, 0);
+  });
+
+  it('does not treat Discord Manage Guild as playlist-edit admin', async () => {
+    const bot = fakeBot();
+    const adapter = createDiscordCommandAdapter({
+      ...adapterDeps(bot, { music: createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() })) }),
+      policy: { viewerRoleIds: [VIEWER_ROLE], adminRoleIds: [] },
+    });
+    const result = await adapter.handle(musicIntent({
+      command: 'playlist',
+      args: { subcommand: 'create', name: 'Nope' },
+      userId: VIEWER,
+      roleIds: [VIEWER_ROLE],
+      memberPermissions: String(1n << 5n),
+    }));
+    assert.equal(result.code, 'unauthorized');
+  });
+
+  it('keeps playlist edits admin-only even when DJs can play', async () => {
+    const catalog = fakeCatalog();
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const denied = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'viewer',
+      args: { subcommand: 'create', name: 'Nope' },
+    }), binding);
+    assert.equal(denied.code, 'unauthorized');
+    const play = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'viewer',
+      args: { subcommand: 'play', name: 'Rock' },
+    }), binding);
+    assert.equal(play.ok, true);
+  });
+
+  it('does not let Manage Guild or this server edit shared or foreign playlists', async () => {
+    const catalog = fakeCatalog();
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const shared = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      memberPermissions: String(1n << 5n),
+      args: { subcommand: 'add', name: '4', url: 'https://8.8.8.8/x.mp3' },
+    }), binding);
+    const foreign = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Other Server', url: 'https://8.8.8.8/x.mp3' },
+    }), binding);
+    assert.equal(shared.ok, false);
+    assert.equal(foreign.ok, false);
+    assert.match(shared.content, /cannot be edited/);
+  });
+
+  it('rejects unsafe add URLs and duplicate interaction edits', async () => {
+    const catalog = fakeCatalog();
+    let created = 0;
+    const originalCreate = catalog.playlist.create;
+    catalog.playlist.create = async (args: any) => { created += 1; return originalCreate(args); };
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const unsafe = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Rock', url: 'http://127.0.0.1/secret.mp3' },
+    }), binding);
+    assert.equal(unsafe.ok, false);
+    const intent = musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      idempotencyKey: 'create-once',
+      args: { subcommand: 'create', name: 'Once' },
+    });
+    assert.equal((await music.execute(intent, binding)).ok, true);
+    assert.equal((await music.execute(intent, binding)).ok, true);
+    assert.equal(created, 1);
   });
 });

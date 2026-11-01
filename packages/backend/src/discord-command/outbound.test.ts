@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { createDiscordCommandAdapter, type DiscordCommandDeps } from './adapter.js';
-import { handleSignedInteraction, planAcknowledgement } from './interaction.js';
+import { handleSignedInteraction, parseInteractionBody, planAcknowledgement } from './interaction.js';
 import { createOutboundCommandSession } from './outbound.js';
 import { MemoryReplayGuard, signInvokeHmac } from './security.js';
 
@@ -180,5 +180,31 @@ describe('acknowledgements', () => {
     assert.equal(planAcknowledgement('queue'), 'immediate');
     assert.equal(planAcknowledgement('nowplaying'), 'immediate');
     assert.equal(planAcknowledgement('play'), 'deferred');
+    assert.equal(planAcknowledgement('playlist'), 'deferred');
+    assert.equal(planAcknowledgement('radio'), 'deferred');
+  });
+});
+
+describe('interaction argument flattening', () => {
+  it('reads Discord subcommand options into args.subcommand', () => {
+    const parsed = parseInteractionBody(JSON.stringify({
+      type: 2,
+      id: 'ix-pl',
+      guild_id: '111',
+      member: { user: { id: 'u' }, roles: [], permissions: '0' },
+      data: {
+        name: 'playlist',
+        options: [{
+          name: 'play',
+          type: 1,
+          options: [{ name: 'name', type: 3, value: 'Rock' }],
+        }],
+      },
+    }));
+    assert.ok(parsed && !('ping' in parsed));
+    assert.equal(parsed.command, 'playlist');
+    assert.equal(parsed.args?.subcommand, 'play');
+    assert.equal(parsed.args?.name, 'Rock');
+    assert.equal(parsed.idempotencyKey, 'ix-pl');
   });
 });

@@ -51,7 +51,7 @@ Not wired into Express. No new public port.
 | Server-group DJ policy | Needs a **linked** TS uid + server groups via `identityForUser`. Empty identity fails closed. We do not invent a clid. |
 | Idempotency | In-process `MemoryReplayGuard` (60s). Lost on restart; a retried interaction id can play again after expiry. |
 | `/pause` `/resume` `/skip` `/stop` `/volume` | Phase 2B-1 library only. Same VoiceBot as TeamSpeak. Chat `!pause` remains a toggle. |
-| `/playlist` `/radio` | `not_implemented` (Phase 2B-2). |
+| `/playlist` `/radio` | Phase 2B-2 library only. List/play reuse Prisma rows. Create/add/remove are TS6 admin and server-owned playlists only. Discord `add` stores the URL as a temporary song title; later enrich title/duration/artwork via the existing media pipeline — do not add a second extractor. |
 | Hosted Uniskela hub | Not started. |
 
 Idempotency is still in-process `MemoryReplayGuard` (60s). Lost on restart; a retried interaction id can mutate again after expiry.

@@ -3,7 +3,7 @@ export const PHASE_2B_1_MUSIC_COMMANDS = ['pause', 'resume', 'skip', 'stop', 'vo
 export const PHASE_2B_2_MUSIC_COMMANDS = ['playlist', 'radio'] as const;
 export const PHASE_2B_MUSIC_COMMANDS = [...PHASE_2B_1_MUSIC_COMMANDS, ...PHASE_2B_2_MUSIC_COMMANDS] as const;
 
-/** Phase 2 command names. 2B-2 (`playlist`, `radio`) stays rejected until those handlers land. */
+/** Phase 2 command names. Search (`/play` text) stays rejected until Phase 2B-3. */
 export const MUSIC_COMMANDS = [...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_MUSIC_COMMANDS] as const;
 
 export type MusicCommand = (typeof MUSIC_COMMANDS)[number];
