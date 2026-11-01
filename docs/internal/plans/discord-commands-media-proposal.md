@@ -50,10 +50,15 @@ Not wired into Express. No new public port.
 | Music request history | Discord `saveMusicRequest` is a no-op on purpose. Existing history rows do not store a TeamSpeak clid; wire the real saver when the live bot is connected (Phase 2B). Optional requester label (Discord user vs TS uid) is a later milestone. |
 | Server-group DJ policy | Needs a **linked** TS uid + server groups via `identityForUser`. Empty identity fails closed. We do not invent a clid. |
 | Idempotency | In-process `MemoryReplayGuard` (60s). Lost on restart; a retried interaction id can play again after expiry. |
-| `/pause` `/resume` `/skip` `/stop` `/playlist` `/radio` `/volume` | `not_implemented` (Phase 2B). |
+| `/pause` `/resume` `/skip` `/stop` `/volume` | Phase 2B-1 library only. Same VoiceBot as TeamSpeak. Chat `!pause` remains a toggle. |
+| `/playlist` `/radio` | `not_implemented` (Phase 2B-2). |
 | Hosted Uniskela hub | Not started. |
+
+Idempotency is still in-process `MemoryReplayGuard` (60s). Lost on restart; a retried interaction id can mutate again after expiry.
 
 ## Later
 
-Phase 2B: idempotent pause/resume (not the chat toggle), skip/stop, playlist, radio, volume, URL+search `/play`.  
-Phase 3: real outbound connection to Uniskela + Connect Discord UI.
+Phase 2B-2: `/playlist` and `/radio` from existing Prisma rows.  
+Phase 2B-3: `/play` search via `findSong`.  
+Phase 2C: live `VoiceBotManager`, persisted guild binds, durable interaction dedupe, Discord registration.  
+Phase 3: Uniskela hub + Connect Discord UI.

@@ -62,6 +62,7 @@ export const MEDIA_COMMAND_GROUP_BY_COMMAND = {
 
 /** Read-only command forms stay public even when controls are restricted. */
 export function mediaCommandGroup(command: string, args = ''): MediaCommandGroup | 'info' | 'listener' | null {
+  if (command === 'resume') return 'playback';
   if (!Object.prototype.hasOwnProperty.call(MEDIA_COMMAND_GROUP_BY_COMMAND, command)) return null;
   const value = args.trim().toLowerCase();
   if (command === 'queue' && (!value || value === 'show')) return 'info';

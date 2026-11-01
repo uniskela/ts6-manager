@@ -125,6 +125,18 @@ test('idle playlist append resumes existing queue order instead of jumping past 
   assert.equal(f.played.length, 1);
   assert.equal(f.played[0].title, 'Already queued');
 });
+test('!pause still toggles TeamSpeak playback', async () => {
+  const f = fixture('playing');
+  f.bot.pause = function () { if (this.status === 'playing') this.status = 'paused'; };
+  f.bot.resume = function () { if (this.status === 'paused') this.status = 'playing'; };
+  await f.command('!pause');
+  assert.equal(f.bot.status, 'paused');
+  assert.match(f.replies.at(-1)!, /Paused/);
+  await f.command('!pause');
+  assert.equal(f.bot.status, 'playing');
+  assert.match(f.replies.at(-1)!, /Resumed/);
+});
+
 test('!vol shows the shared volume and applies a new level', async () => {
   const f = fixture();
   f.bot.currentConfig.volume = 40;

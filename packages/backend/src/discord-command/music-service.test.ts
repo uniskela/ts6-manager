@@ -35,12 +35,28 @@ function stubPipeline(item: QueueItem): MediaUrlPipelineDeps {
 
 function fakeBot(status: 'connected' | 'playing' | 'paused' | 'stopped' = 'connected') {
   const bot: any = {
-    currentConfig: { id: 1, serverConfigId: 9, serverPort: 10011 },
+    currentConfig: { id: 1, serverConfigId: 9, serverPort: 10011, volume: 40 },
     status,
     nowPlaying: null,
+    isStreaming: false,
     playbackProgress: { position: 12, duration: 120 },
     queue: new PlayQueue(),
     assertMusicCanStart: () => {},
+    pause() {
+      if (bot.status === 'playing') bot.status = 'paused';
+    },
+    resume() {
+      if (bot.status === 'paused') bot.status = 'playing';
+    },
+    stopAudio(options?: { keepPendingRequests?: boolean }) {
+      bot.lastStop = options;
+      bot.nowPlaying = null;
+      if (bot.status === 'playing' || bot.status === 'paused') bot.status = 'connected';
+      bot.isStreaming = false;
+    },
+    applyVolume: async (volume: number) => {
+      bot.currentConfig.volume = volume;
+    },
     play: async (item: QueueItem) => {
       bot.nowPlaying = item;
       bot.status = 'playing';
@@ -217,11 +233,170 @@ describe('Discord adapter music wiring', () => {
     assert.equal(result.ack, 'deferred');
   });
 
-  it('keeps Phase 2B commands unimplemented', async () => {
+  it('keeps Phase 2B-2 playlist and radio unimplemented', async () => {
     const adapter = createDiscordCommandAdapter(adapterDeps(fakeBot()));
-    for (const command of ['pause', 'resume', 'skip', 'stop', 'playlist', 'radio', 'volume']) {
+    for (const command of ['playlist', 'radio']) {
       const result = await adapter.handle(musicIntent({ command, userId: DJ }));
       assert.equal(result.code, 'not_implemented', command);
     }
+  });
+});
+
+describe('Discord playback controls share TeamSpeak bot state', () => {
+  const binding = { instanceId: 'inst-1', revoked: false, botId: 1 };
+
+  it('pauses and resumes explicitly and idempotently', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    const music = createMusicCommandService(serviceOpts(bot));
+    const paused = await music.execute(musicIntent({ command: 'pause' }), binding);
+    assert.equal(paused.ok, true);
+    assert.equal(paused.ack, 'immediate');
+    assert.equal(bot.status, 'paused');
+    const pausedAgain = await music.execute(musicIntent({ command: 'pause' }), binding);
+    assert.equal(pausedAgain.ok, true);
+    assert.equal(bot.status, 'paused');
+    const resumed = await music.execute(musicIntent({ command: 'resume' }), binding);
+    assert.equal(resumed.ok, true);
+    assert.equal(bot.status, 'playing');
+    const resumedAgain = await music.execute(musicIntent({ command: 'resume' }), binding);
+    assert.equal(resumedAgain.ok, true);
+    assert.equal(bot.status, 'playing');
+  });
+
+  it('skips to the next queued track and shares that state with TeamSpeak', async () => {
+    const bot = fakeBot('playing');
+    bot.queue.addMany([track('a', 'One'), track('b', 'Two')]);
+    bot.queue.playAt(0);
+    bot.nowPlaying = bot.queue.current;
+    const music = createMusicCommandService(serviceOpts(bot));
+    const skipped = await music.execute(musicIntent({ command: 'skip' }), binding);
+    assert.equal(skipped.ok, true);
+    assert.match(skipped.content, /Two/);
+    assert.equal(bot.nowPlaying?.title, 'Two');
+    assert.equal(bot.queue.current?.title, 'Two');
+  });
+
+  it('skip on an empty queue stops audio but keeps pending downloads', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('only', 'Only');
+    const music = createMusicCommandService(serviceOpts(bot));
+    const skipped = await music.execute(musicIntent({ command: 'skip' }), binding);
+    assert.equal(skipped.ok, true);
+    assert.equal(bot.status, 'connected');
+    assert.deepEqual(bot.lastStop, { keepPendingRequests: true });
+  });
+
+  it('stop clears a music queue and reports playback errors', async () => {
+    const bot = fakeBot('playing');
+    bot.queue.addMany([track('a', 'One'), track('b', 'Two')]);
+    bot.queue.playAt(0);
+    bot.nowPlaying = bot.queue.current;
+    const music = createMusicCommandService(serviceOpts(bot));
+    const stopped = await music.execute(musicIntent({ command: 'stop' }), binding);
+    assert.equal(stopped.ok, true);
+    assert.equal(bot.queue.length, 0);
+    assert.equal(bot.nowPlaying, null);
+    assert.equal(bot.lastStop, undefined);
+
+    bot.play = async () => { throw new Error('decoder failed'); };
+    bot.queue.addMany([track('c', 'Three'), track('d', 'Four')]);
+    bot.queue.playAt(0);
+    bot.status = 'playing';
+    const failedSkip = await music.execute(musicIntent({ command: 'skip' }), binding);
+    assert.equal(failedSkip.ok, false);
+    assert.equal(failedSkip.code, 'unavailable');
+    assert.match(failedSkip.content, /decoder failed/);
+  });
+
+  it('stop during radio keeps queued songs', async () => {
+    const bot = fakeBot('playing');
+    bot.isStreaming = true;
+    bot.queue.addMany([track('a', 'Song A'), track('b', 'Song B')]);
+    const music = createMusicCommandService(serviceOpts(bot));
+    const stopped = await music.execute(musicIntent({ command: 'stop' }), binding);
+    assert.equal(stopped.ok, true);
+    assert.deepEqual(bot.queue.getAll().map((item: QueueItem) => item.title), ['Song A', 'Song B']);
+  });
+
+  it('reports and sets volume at 0 and 100 and rejects out-of-range values', async () => {
+    const bot = fakeBot();
+    const applied: number[] = [];
+    bot.applyVolume = async (volume: number) => {
+      applied.push(volume);
+      bot.currentConfig.volume = volume;
+    };
+    const music = createMusicCommandService(serviceOpts(bot));
+    const shown = await music.execute(musicIntent({ command: 'volume' }), binding);
+    assert.equal(shown.ok, true);
+    assert.match(shown.content, /40%/);
+    const zero = await music.execute(musicIntent({ command: 'volume', args: { level: '0' } }), binding);
+    const max = await music.execute(musicIntent({ command: 'volume', args: { level: '100' } }), binding);
+    const bad = await music.execute(musicIntent({ command: 'volume', args: { level: '101' } }), binding);
+    assert.deepEqual(applied, [0, 100]);
+    assert.match(zero.content, /0%/);
+    assert.match(max.content, /100%/);
+    assert.equal(bad.ok, false);
+    assert.match(bad.content, /0-100/);
+  });
+
+  it('denies restricted controls without mutating playback', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    const music = createMusicCommandService(serviceOpts(bot, {
+      loadMediaPermissions: async () => restricted,
+    }));
+    for (const command of ['pause', 'resume', 'skip', 'stop']) {
+      const result = await music.execute(musicIntent({ command }), binding);
+      assert.equal(result.code, 'unauthorized', command);
+    }
+    const volume = await music.execute(musicIntent({ command: 'volume', args: { level: '10' } }), binding);
+    assert.equal(volume.code, 'unauthorized');
+    assert.equal(bot.status, 'playing');
+    assert.equal(bot.nowPlaying?.title, 'Current');
+    assert.equal(bot.currentConfig.volume, 40);
+  });
+
+  it('rejects unpaired guilds and missing bots before controls run', async () => {
+    const bot = fakeBot('playing');
+    let gets = 0;
+    const music = createMusicCommandService(serviceOpts(bot, {
+      getBot: () => { gets += 1; return bot; },
+    }));
+    const unpaired = await music.execute(musicIntent({ command: 'pause' }), null);
+    const missing = await createMusicCommandService(serviceOpts(bot, { getBot: () => null }))
+      .execute(musicIntent({ command: 'skip' }), binding);
+    assert.equal(unpaired.code, 'unpaired');
+    assert.equal(missing.code, 'unavailable');
+    assert.equal(gets, 0);
+    assert.equal(bot.status, 'playing');
+  });
+
+  it('does not skip twice for the same Discord interaction', async () => {
+    const bot = fakeBot('playing');
+    bot.queue.addMany([track('a', 'One'), track('b', 'Two'), track('c', 'Three')]);
+    bot.queue.playAt(0);
+    bot.nowPlaying = bot.queue.current;
+    const music = createMusicCommandService(serviceOpts(bot));
+    const intent = musicIntent({ command: 'skip', idempotencyKey: 'skip-retry' });
+    const first = await music.execute(intent, binding);
+    const second = await music.execute(intent, binding);
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(bot.nowPlaying?.title, 'Two');
+    assert.match(second.content, /Already handled/);
+  });
+
+  it('uses the bound bot id, never a client-supplied bot id', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    const adapter = createDiscordCommandAdapter(adapterDeps(bot));
+    const result = await adapter.handle(musicIntent({
+      command: 'pause',
+      args: { botId: '99' },
+      userId: DJ,
+    }));
+    assert.equal(result.ok, true);
+    assert.equal(bot.status, 'paused');
   });
 });

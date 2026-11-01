@@ -16,6 +16,8 @@ export { handleSignedInteraction, parseInteractionBody, planAcknowledgement } fr
 export {
   MUSIC_COMMANDS,
   PHASE_2A_MUSIC_COMMANDS,
+  PHASE_2B_1_MUSIC_COMMANDS,
+  PHASE_2B_2_MUSIC_COMMANDS,
   PHASE_2B_MUSIC_COMMANDS,
   assertMusicNotImplemented,
   isMusicCommand,
