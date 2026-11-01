@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Resolver } from 'node:dns/promises';
 import http from 'node:http';
 import net from 'node:net';
-import { MEDIA_EGRESS_PORTS, mediaEgressRefusal } from './egress-policy.js';
+import { MEDIA_EGRESS_PORTS, pinMediaAddresses } from './egress-policy.js';
 
 /**
  * Loopback forward proxy that every media download goes through (yt-dlp, and
@@ -11,8 +11,8 @@ import { MEDIA_EGRESS_PORTS, mediaEgressRefusal } from './egress-policy.js';
  *
  * - each job gets its own random token, sent as proxy credentials; requests
  *   without a live token are refused, so other local processes cannot use it;
- * - the proxy resolves the host itself, drops every answer the policy refuses
- *   and connects to an approved address, so a later DNS answer cannot swap it;
+ * - the proxy resolves the host itself, refuses the whole lookup if any answer
+ *   is forbidden, and connects only to a pinned approved address;
  * - it never follows redirects: the client does, through the proxy, so each
  *   hop is checked again;
  * - only CONNECT (https) and absolute-form http requests, to the job's allowed
@@ -319,15 +319,9 @@ export class MediaEgressProxy {
       }
     }
     if (signal.aborted) throw new Refused(410, 'cancelled');
-    const approved: string[] = [];
-    let reason = 'did not resolve';
-    for (const address of answers) {
-      const refusal = this.options.permitAddress?.(address) ? null : mediaEgressRefusal(address);
-      if (refusal) reason = `${refusal} address`;
-      else approved.push(address);
-    }
-    if (approved.length === 0) throw new Refused(403, reason);
-    return approved;
+    const { addresses, reason } = pinMediaAddresses(answers, this.options.permitAddress);
+    if (addresses.length === 0) throw new Refused(403, reason);
+    return addresses;
   }
 
   private checkPort(state: JobState, port: number): void {
@@ -481,6 +475,8 @@ export class MediaEgressProxy {
         return;
       }
       if (head.length) socket.unshift(head);
+      // Track before reading the status line so a silent upstream cannot leak.
+      this.track(state, release, [socket, req.socket]);
       const path = `${url.pathname}${url.search}` || '/';
       const headers = originHeaders(req, url);
       const lines = [`${req.method} ${path} HTTP/1.1`];
@@ -489,14 +485,13 @@ export class MediaEgressProxy {
         for (const item of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${item}`);
       }
       socket.write(`${lines.join('\r\n')}\r\n\r\n`);
-      const preface = await readStatusLine(socket, setup.signal);
+      const preface = await readStatusLine(socket, setup.signal, this.limits.connectMs);
       if (!/^(ICY |HTTP\/1\.[01] [2-5]\d\d)/i.test(preface.line)) {
         socket.destroy();
         throw new Refused(502, 'invalid upstream status');
       }
       socket.unshift(preface.raw);
       // Raw pipe so Icecast `ICY 200 OK` is forwarded after a connection-time pin.
-      this.track(state, release, [socket, req.socket]);
       socket.pipe(req.socket);
       req.resume();
       res.on('error', () => {});
@@ -537,16 +532,20 @@ function originHeaders(req: http.IncomingMessage, url: URL): http.OutgoingHttpHe
 }
 
 /** First response line plus the bytes already read, so ICY and HTTP can both be forwarded. */
-function readStatusLine(socket: net.Socket, signal: AbortSignal): Promise<{ line: string; raw: Buffer }> {
+function readStatusLine(socket: net.Socket, signal: AbortSignal, timeoutMs: number): Promise<{ line: string; raw: Buffer }> {
   return new Promise((resolve, reject) => {
     let buffered = Buffer.alloc(0);
+    let timer: NodeJS.Timeout | undefined;
     const finish = (err?: Error, result?: { line: string; raw: Buffer }) => {
+      clearTimeout(timer);
       signal.removeEventListener('abort', onAbort);
       socket.off('data', onData);
       socket.off('error', onError);
       socket.off('close', onClose);
-      if (err) reject(err);
-      else resolve(result!);
+      if (err) {
+        socket.destroy();
+        reject(err);
+      } else resolve(result!);
     };
     const onData = (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
@@ -567,6 +566,7 @@ function readStatusLine(socket: net.Socket, signal: AbortSignal): Promise<{ line
     socket.on('error', onError);
     socket.on('close', onClose);
     signal.addEventListener('abort', onAbort, { once: true });
+    timer = setTimeout(() => finish(new Refused(504, 'status timed out')), timeoutMs);
     if (signal.aborted) queueMicrotask(onAbort);
   });
 }

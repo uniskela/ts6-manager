@@ -4,18 +4,40 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { describe, it, mock } from 'node:test';
 import { setMediaEgressProxyForTests } from '../egress/media-egress.js';
-import { AudioPipeline, buildPcmStreamArgs } from './pipeline.js';
+import { AudioPipeline, assertFfmpegHttpsVerification, buildPcmStreamArgs, resetFfmpegHttpsVerificationForTests } from './pipeline.js';
 
 describe('buildPcmStreamArgs', () => {
-  it('lets radio open HTTP(S) through the media egress proxy, including HLS', () => {
+  it('lets radio open HTTP(S) through the media egress proxy, including HLS, with TLS verification', () => {
     const args = buildPcmStreamArgs('https://203.0.113.10/live');
     const protocols = args[args.indexOf('-protocol_whitelist') + 1];
     const formats = args[args.indexOf('-format_whitelist') + 1];
     assert.ok(args.includes('-reconnect'));
+    assert.equal(args[args.indexOf('-tls_verify') + 1], '1');
+    assert.ok(args.indexOf('-tls_verify') < args.indexOf('-i'));
+    assert.equal(buildPcmStreamArgs('http://203.0.113.10/live').includes('-tls_verify'), false);
     assert.equal(protocols, 'http,https,tls,tcp,httpproxy,crypto');
     assert.match(formats, /hls/);
     assert.doesNotMatch(formats, /concat|file|udp|rtp/);
     assert.deepEqual(args.slice(args.indexOf('-i'), args.indexOf('-i') + 2), ['-i', 'https://203.0.113.10/live']);
+  });
+});
+
+describe('assertFfmpegHttpsVerification', () => {
+  it('refuses OpenSSL-only ffmpeg that cannot verify host names per request', () => {
+    resetFfmpegHttpsVerificationForTests();
+    try {
+      assert.throws(() => assertFfmpegHttpsVerification((command, args) => {
+        const help = args.includes('protocol=tls');
+        return {
+          status: 0,
+          error: undefined,
+          stdout: help ? '  -tls_verify        <int>        ED\n' : 'configuration: --enable-openssl --enable-gpl\n',
+          stderr: '',
+        } as ReturnType<typeof childProcess.spawnSync>;
+      }), /host names/);
+    } finally {
+      resetFfmpegHttpsVerificationForTests();
+    }
   });
 });
 

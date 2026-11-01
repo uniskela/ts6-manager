@@ -43,6 +43,12 @@ async function untilConnections(proxy: MediaEgressProxy, count: number): Promise
   assert.equal(proxy.activeConnections, count);
 }
 
+async function untilDestroyed(socket: net.Socket | undefined): Promise<void> {
+  assert.ok(socket, 'expected a live socket');
+  for (let i = 0; i < 80 && !socket.destroyed; i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(socket.destroyed, true);
+}
+
 describe('media egress proxy', () => {
   let echo: net.Server;
   let echoPort: number;
@@ -139,10 +145,10 @@ describe('media egress proxy', () => {
     }
   });
 
-  it('connects only to the answers the policy approves', async () => {
+  it('connects only when every DNS answer is approved', async () => {
     const proxy = new MediaEgressProxy({
       ...permitLocal,
-      resolve: async () => ['10.0.0.1', '127.0.0.1'],
+      resolve: async () => ['127.0.0.1'],
       log: () => {},
     });
     try {
@@ -151,10 +157,37 @@ describe('media egress proxy', () => {
         proxyPort(job.proxyUrl),
         `CONNECT media.test:${echoPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`,
       );
-      assert.equal(statusOf(text), 200, 'the private answer is dropped and the approved one used');
+      assert.equal(statusOf(text), 200);
       socket.destroy();
     } finally {
       await proxy.close();
+    }
+  });
+
+  it('refuses mixed public and private IPv4 or IPv6 DNS results', async () => {
+    for (const answers of [
+      ['10.0.0.1', '127.0.0.1'],
+      ['2606:4700::1', '::ffff:10.0.0.1'],
+      ['93.184.215.14', 'fd00::1'],
+    ]) {
+      const proxy = new MediaEgressProxy({
+        ...permitLocal,
+        resolve: async () => answers,
+        log: () => {},
+      });
+      try {
+        const job = await proxy.issue(60_000);
+        const port = proxyPort(job.proxyUrl);
+        const auth = `Proxy-Authorization: ${credentials(job.proxyUrl)}`;
+        const connect = await raw(port, `CONNECT media.test:${echoPort} HTTP/1.1\r\n${auth}\r\n\r\n`);
+        assert.equal(statusOf(connect.text), 403, `CONNECT ${answers.join(',')}`);
+        connect.socket.destroy();
+        const get = await raw(port, `GET http://media.test/a HTTP/1.1\r\nHost: media.test\r\n${auth}\r\n\r\n`);
+        assert.equal(statusOf(get.text), 403, `GET ${answers.join(',')}`);
+        get.socket.destroy();
+      } finally {
+        await proxy.close();
+      }
     }
   });
 
@@ -221,6 +254,156 @@ describe('media egress proxy', () => {
       const https = await raw(port, `GET https://media.test/ HTTP/1.1\r\nHost: media.test\r\n${auth}\r\n\r\n`);
       assert.equal(statusOf(https.text), 400);
     } finally {
+      await proxy.close();
+    }
+  });
+
+  it('times out an upstream that connects but never sends a status line', async () => {
+    let incoming: net.Socket | undefined;
+    const silent = net.createServer((socket) => {
+      incoming = socket;
+      socket.resume();
+    });
+    silent.listen(0, '127.0.0.1');
+    await once(silent, 'listening');
+    const silentPort = (silent.address() as net.AddressInfo).port;
+    const proxy = new MediaEgressProxy({
+      ...permitLocal,
+      resolve: async () => ['127.0.0.1'],
+      log: () => {},
+      limits: { connectMs: 40 },
+    });
+    try {
+      const job = await proxy.issue(60_000);
+      const { text, socket } = await raw(
+        proxyPort(job.proxyUrl),
+        `GET http://media.test:${silentPort}/live HTTP/1.1\r\nHost: media.test:${silentPort}\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`,
+      );
+      assert.equal(statusOf(text), 504);
+      socket.destroy();
+      await untilDestroyed(incoming);
+      await untilConnections(proxy, 0);
+      job.release();
+      assert.equal(proxy.activeConnections, 0);
+    } finally {
+      incoming?.destroy();
+      silent.close();
+      await proxy.close();
+    }
+  });
+
+  it('destroys the real sockets when the client leaves, the job is revoked, or the proxy shuts down', async () => {
+    const upstreams: net.Socket[] = [];
+    const origin = net.createServer((socket) => {
+      upstreams.push(socket);
+      socket.pipe(socket);
+      socket.resume();
+    });
+    origin.listen(0, '127.0.0.1');
+    await once(origin, 'listening');
+    const originPort = (origin.address() as net.AddressInfo).port;
+    const proxy = new MediaEgressProxy({
+      ...permitLocal,
+      resolve: async () => ['127.0.0.1'],
+      log: () => {},
+    });
+    try {
+      const connect = async (job: { proxyUrl: string }) => {
+        const reply = await raw(
+          proxyPort(job.proxyUrl),
+          `CONNECT media.test:${originPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`,
+        );
+        assert.equal(statusOf(reply.text), 200);
+        reply.socket.write('ping');
+        const [echoed] = await once(reply.socket, 'data') as [Buffer];
+        assert.equal(echoed.toString(), 'ping');
+        return reply.socket;
+      };
+
+      const left = await proxy.issue(60_000);
+      const leftClient = await connect(left);
+      const leftUp = upstreams.at(-1);
+      leftClient.destroy();
+      await untilDestroyed(leftUp);
+      await untilDestroyed(leftClient);
+      await untilConnections(proxy, 0);
+
+      const revoked = await proxy.issue(60_000);
+      const revokedClient = await connect(revoked);
+      const revokedUp = upstreams.at(-1);
+      revoked.release();
+      await untilDestroyed(revokedUp);
+      await untilDestroyed(revokedClient);
+      await untilConnections(proxy, 0);
+
+      const shutting = await proxy.issue(60_000);
+      const shuttingClient = await connect(shutting);
+      const shuttingUp = upstreams.at(-1);
+      await proxy.close();
+      await untilDestroyed(shuttingUp);
+      await untilDestroyed(shuttingClient);
+    } finally {
+      for (const socket of upstreams) socket.destroy();
+      origin.close();
+      await proxy.close();
+    }
+  });
+
+  it('destroys sockets when DNS setup or a silent handshake is aborted', async () => {
+    let dnsAborted = false;
+    const hanging = new MediaEgressProxy({
+      ...permitLocal,
+      resolve: (_host, signal) => new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          dnsAborted = true;
+          reject(new Error('cancelled'));
+        }, { once: true });
+      }),
+      log: () => {},
+    });
+    try {
+      const job = await hanging.issue(60_000);
+      const client = net.connect(proxyPort(job.proxyUrl), '127.0.0.1');
+      await once(client, 'connect');
+      client.write(`CONNECT media.test:443 HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`);
+      await untilConnections(hanging, 1);
+      client.destroy();
+      await untilDestroyed(client);
+      await untilConnections(hanging, 0);
+      assert.equal(dnsAborted, true);
+    } finally {
+      await hanging.close();
+    }
+
+    let incoming: net.Socket | undefined;
+    const silent = net.createServer((socket) => {
+      incoming = socket;
+      socket.resume();
+    });
+    silent.listen(0, '127.0.0.1');
+    await once(silent, 'listening');
+    const silentPort = (silent.address() as net.AddressInfo).port;
+    const proxy = new MediaEgressProxy({
+      ...permitLocal,
+      resolve: async () => ['127.0.0.1'],
+      log: () => {},
+    });
+    try {
+      const job = await proxy.issue(60_000);
+      const { text, socket } = await raw(
+        proxyPort(job.proxyUrl),
+        `CONNECT media.test:${silentPort} HTTP/1.1\r\nProxy-Authorization: ${credentials(job.proxyUrl)}\r\n\r\n`,
+      );
+      assert.equal(statusOf(text), 200);
+      for (let i = 0; i < 80 && !incoming; i++) await new Promise((r) => setTimeout(r, 5));
+      assert.ok(incoming, 'upstream accepted the tunnel');
+      assert.equal(incoming.destroyed, false);
+      await proxy.close();
+      await untilDestroyed(incoming);
+      await untilDestroyed(socket);
+    } finally {
+      incoming?.destroy();
+      silent.close();
       await proxy.close();
     }
   });

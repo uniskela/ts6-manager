@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 import type { Readable } from "stream";
 import OpusScript from "opusscript";
 import { validateUrl } from "../../utils/url-validator.js";
@@ -61,9 +61,47 @@ export function buildPcmFileArgs(input: string, startSeconds = 0): string[] {
   return args;
 }
 
+/** ffmpeg TLS defaults to verify=0; this is required for every HTTPS hop including HLS. */
+export const RADIO_TLS_VERIFY_ARGS = ["-tls_verify", "1"] as const;
+
+let cachedHttpsVerify: Error | true | undefined;
+
+/**
+ * Refuse HTTPS radio unless this ffmpeg can verify certificates and host names
+ * on each request (GnuTLS/libtls/mbedtls). OpenSSL-only builds skip hostname
+ * checks unless a single -verifyhost is set, which breaks multi-host HLS.
+ */
+export function assertFfmpegHttpsVerification(run = spawnSync): void {
+  if (cachedHttpsVerify === true) return;
+  if (cachedHttpsVerify instanceof Error) throw cachedHttpsVerify;
+  const help = run("ffmpeg", ["-hide_banner", "-h", "protocol=tls"], { encoding: "utf8", timeout: 8_000 });
+  const text = `${help.stdout ?? ""}\n${help.stderr ?? ""}`;
+  if (help.error || help.status !== 0 || !/^\s+-tls_verify\b/m.test(text)) {
+    cachedHttpsVerify = new Error("HTTPS radio requires an ffmpeg build that supports -tls_verify");
+    throw cachedHttpsVerify;
+  }
+  const version = run("ffmpeg", ["-hide_banner", "-version"], { encoding: "utf8", timeout: 8_000 });
+  const config = `${version.stdout ?? ""}\n${version.stderr ?? ""}`;
+  const opensslOnly = /--enable-openssl\b/.test(config)
+    && !/--enable-gnutls\b/.test(config)
+    && !/--enable-libtls\b/.test(config)
+    && !/--enable-mbedtls\b/.test(config)
+    && !/--enable-libcurl\b/.test(config);
+  if (opensslOnly) {
+    cachedHttpsVerify = new Error("HTTPS radio requires an ffmpeg TLS backend that verifies host names on each request");
+    throw cachedHttpsVerify;
+  }
+  cachedHttpsVerify = true;
+}
+
+export function resetFfmpegHttpsVerificationForTests(): void {
+  cachedHttpsVerify = undefined;
+}
+
 export function buildPcmStreamArgs(input: string): string[] {
   return [
     "-protocol_whitelist", REMOTE_PROTOCOLS, "-format_whitelist", RADIO_FORMATS,
+    ...(/^https:/i.test(input) ? RADIO_TLS_VERIFY_ARGS : []),
     "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
     "-i", input,
     "-f", "s16le",
@@ -177,6 +215,7 @@ export class AudioPipeline {
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
     }
+    if (/^https:/i.test(url)) assertFfmpegHttpsVerification();
     const job = await acquireMediaEgress(url, FILE_STREAM_EGRESS_TTL_MS, { ports: RADIO_EGRESS_PORTS });
     if (!job) throw new MediaEgressError();
     const ffmpeg = spawn("ffmpeg", buildPcmStreamArgs(url), {

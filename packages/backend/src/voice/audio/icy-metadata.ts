@@ -1,7 +1,8 @@
 import { Resolver } from 'node:dns/promises';
 import net from 'node:net';
 import tls from 'tls';
-import { RADIO_EGRESS_PORTS, mediaEgressRefusal } from '../egress/egress-policy.js';
+import { RADIO_EGRESS_PORTS, pinMediaAddresses } from '../egress/egress-policy.js';
+import { mediaEgressEnabled } from '../egress/media-egress.js';
 
 /**
  * Fetch the current StreamTitle from an ICY/Shoutcast/Icecast radio stream.
@@ -12,11 +13,13 @@ import { RADIO_EGRESS_PORTS, mediaEgressRefusal } from '../egress/egress-policy.
  *
  * Each hop is resolved and pinned by the media-egress address policy before
  * connect. Redirects are not followed until the next hop passes the same check.
+ * DNS, TCP and TLS are aborted with the request timeout so a hung handshake
+ * cannot leak a socket. ICY does not start when MEDIA_EGRESS_PROXY=off.
  */
 
 export type IcyConnectDeps = {
-  resolve?: (host: string) => Promise<string[]>;
-  connect?: (opts: { host: string; port: number; tls: boolean; servername: string }) => Promise<net.Socket>;
+  resolve?: (host: string, signal: AbortSignal) => Promise<string[]>;
+  connect?: (opts: { host: string; port: number; tls: boolean; servername: string }, signal: AbortSignal) => Promise<net.Socket>;
 };
 
 export async function fetchIcyMetadata(
@@ -24,6 +27,7 @@ export async function fetchIcyMetadata(
   timeoutMs = 10000,
   deps: IcyConnectDeps = {},
 ): Promise<string | null> {
+  if (!mediaEgressEnabled()) return null;
   let currentUrl = streamUrl;
   const maxRedirects = 5;
 
@@ -43,33 +47,69 @@ interface IcyResult {
   redirect?: string;
 }
 
-async function defaultResolve(host: string): Promise<string[]> {
+async function defaultResolve(host: string, signal: AbortSignal): Promise<string[]> {
   const resolver = new Resolver({ timeout: 4_000, tries: 2 });
-  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
-  return [
-    ...(v4.status === 'fulfilled' ? v4.value : []),
-    ...(v6.status === 'fulfilled' ? v6.value : []),
-  ];
+  const cancel = () => resolver.cancel();
+  signal.addEventListener('abort', cancel, { once: true });
+  try {
+    if (signal.aborted) return [];
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+    if (signal.aborted) return [];
+    return [
+      ...(v4.status === 'fulfilled' ? v4.value : []),
+      ...(v6.status === 'fulfilled' ? v6.value : []),
+    ];
+  } finally {
+    signal.removeEventListener('abort', cancel);
+  }
 }
 
-function defaultConnect(opts: { host: string; port: number; tls: boolean; servername: string }): Promise<net.Socket> {
+export function connectIcySocket(opts: { host: string; port: number; tls: boolean; servername: string }, signal: AbortSignal): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
+    if (signal.aborted) {
+      reject(new Error('cancelled'));
+      return;
+    }
+    let settled = false;
     const socket = opts.tls
       ? tls.connect({
         host: opts.host,
         port: opts.port,
         servername: opts.servername,
         rejectUnauthorized: true,
-      }, () => resolve(socket))
-      : net.connect({ host: opts.host, port: opts.port }, () => resolve(socket));
-    socket.once('error', reject);
+      })
+      : net.connect({ host: opts.host, port: opts.port });
+    const onAbort = () => {
+      socket.destroy();
+      finish(new Error('cancelled'));
+    };
+    const finish = (err?: Error) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener('abort', onAbort);
+      socket.off('error', onError);
+      socket.off('connect', onReady);
+      socket.off('secureConnect', onReady);
+      if (err) {
+        socket.destroy();
+        reject(err);
+      } else {
+        resolve(socket);
+      }
+    };
+    const onError = (err: Error) => finish(err);
+    const onReady = () => finish();
+    signal.addEventListener('abort', onAbort, { once: true });
+    socket.once('error', onError);
+    if (opts.tls) socket.once('secureConnect', onReady);
+    else socket.once('connect', onReady);
   });
 }
 
-async function approvedAddresses(host: string, resolve: (host: string) => Promise<string[]>): Promise<string[]> {
+async function approvedAddresses(host: string, resolve: (host: string, signal: AbortSignal) => Promise<string[]>, signal: AbortSignal): Promise<string[]> {
   const literal = host.replace(/^\[|\]$/g, '');
-  const answers = net.isIP(literal) ? [literal] : await resolve(literal);
-  return answers.filter((address) => mediaEgressRefusal(address) == null);
+  const answers = net.isIP(literal) ? [literal] : await resolve(literal, signal);
+  return pinMediaAddresses(answers).addresses;
 }
 
 function parseRadioUrl(streamUrl: string): URL | null {
@@ -85,18 +125,18 @@ function parseRadioUrl(streamUrl: string): URL | null {
   return url;
 }
 
-async function openCheckedSocket(streamUrl: string, deps: IcyConnectDeps): Promise<{ socket: net.Socket; url: URL } | null> {
+async function openCheckedSocket(streamUrl: string, deps: IcyConnectDeps, signal: AbortSignal): Promise<{ socket: net.Socket; url: URL } | null> {
   const url = parseRadioUrl(streamUrl);
   if (!url) return null;
-  const approved = await approvedAddresses(url.hostname, deps.resolve ?? defaultResolve);
-  if (!approved.length) return null;
+  const approved = await approvedAddresses(url.hostname, deps.resolve ?? defaultResolve, signal);
+  if (!approved.length || signal.aborted) return null;
   const port = url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80);
-  const socket = await (deps.connect ?? defaultConnect)({
+  const socket = await (deps.connect ?? connectIcySocket)({
     host: approved[0],
     port,
     tls: url.protocol === 'https:',
     servername: url.hostname,
-  });
+  }, signal);
   return { socket, url };
 }
 
@@ -104,9 +144,10 @@ function fetchIcySingle(streamUrl: string, timeoutMs: number, deps: IcyConnectDe
   return new Promise((resolve) => {
     let resolved = false;
     let socket: net.Socket | undefined;
+    const abort = new AbortController();
     const timer = setTimeout(() => done({ title: null }), timeoutMs);
 
-    void openCheckedSocket(streamUrl, deps).then((opened) => {
+    void openCheckedSocket(streamUrl, deps, abort.signal).then((opened) => {
       if (resolved) {
         opened?.socket.destroy();
         return;
@@ -184,6 +225,7 @@ function fetchIcySingle(streamUrl: string, timeoutMs: number, deps: IcyConnectDe
       if (resolved) return;
       resolved = true;
       clearTimeout(timer);
+      abort.abort();
       try { socket?.destroy(); } catch { /* already closed */ }
       resolve(result);
     }

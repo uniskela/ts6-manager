@@ -39,12 +39,12 @@ yt-dlp handles media links for music, video, library downloads, playlist imports
 
 - accepts only connections from the job that started them (each download gets its own short-lived credentials);
 - resolves each host itself, refuses loopback, private, link-local, cloud metadata and other reserved addresses (with no local-network exception), and connects only to an address it approved;
-- allows only ports 80 and 443 for downloads; radio jobs also allow Icecast ports 8000, 8008, 8080 and 8443;
+- allows only ports 80 and 443 for downloads; radio jobs also allow Icecast ports 8000 (default HTTP), 8008 (alternate HTTP), 8080 (common HTTP front) and 8443 (HTTPS);
 - never follows redirects: yt-dlp or ffmpeg does, and each hop (including HLS playlists and segments) is checked again;
 - runs yt-dlp without configuration files or plugins from the host, with its own downloader and HTTP(S), HLS and DASH formats only. When yt-dlp would hand an HTTPS stream to ffmpeg instead, the download fails;
 - lets the backend's ffmpeg play only a single media file from a resolved URL, never a playlist.
 
-Radio playback (TeamSpeak `!radio`, Discord `/radio`, Auto-DJ radio, web radio) uses that same proxy. ICY metadata resolves and pins each hop with the same address and radio-port policy, then connects to the approved IP with the original `Host` header and HTTPS SNI/`rejectUnauthorized`. If the proxy cannot start, or `MEDIA_EGRESS_PROXY=off`, radio fails instead of connecting directly. `off` still lets YouTube links and searches connect directly; it is not a way to play radio without the checks.
+Radio playback (TeamSpeak `!radio`, Discord `/radio`, Auto-DJ radio, web radio) uses that same proxy. ffmpeg is started with `-tls_verify 1` so every HTTPS hop (including HLS playlists, segments and keys) verifies the certificate chain; hostname matching is required from the TLS backend (GnuTLS/libtls/mbedtls). A DNS lookup that returns any forbidden address is refused in full. ICY metadata uses the same address and radio-port policy, then connects to a pinned IP with the original `Host` header and HTTPS SNI/`rejectUnauthorized`. If the proxy cannot start, or `MEDIA_EGRESS_PROXY=off`, radio audio and ICY metadata both fail instead of connecting directly. `off` still lets YouTube links and searches connect directly; it is not a way to play radio without the checks.
 
 Video that yt-dlp resolves for direct streaming (YouTube direct playback, Twitch) is played by the media sidecar. The sidecar connects through its own checking proxy (`SIDECAR_EGRESS_PROXY`). Before handing a URL over, the backend checks its address and limits it to ports 80 and 443. Redirects and playlist segments that the sidecar's ffmpeg then follows are checked by the sidecar's proxy under its own rules. `MEDIA_EGRESS_PROXY=off` is an emergency setting; see [Environment variables](environment-variables.md#backend).
 
