@@ -3,7 +3,7 @@ export const PHASE_2B_1_MUSIC_COMMANDS = ['pause', 'resume', 'skip', 'stop', 'vo
 export const PHASE_2B_2_MUSIC_COMMANDS = ['playlist', 'radio'] as const;
 export const PHASE_2B_MUSIC_COMMANDS = [...PHASE_2B_1_MUSIC_COMMANDS, ...PHASE_2B_2_MUSIC_COMMANDS] as const;
 
-/** Phase 2 command names. Search (`/play` text) stays rejected until Phase 2B-3. */
+/** Phase 2 command names. `/play` accepts a URL or a TeamSpeak song-search query. */
 export const MUSIC_COMMANDS = [...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_MUSIC_COMMANDS] as const;
 
 export type MusicCommand = (typeof MUSIC_COMMANDS)[number];

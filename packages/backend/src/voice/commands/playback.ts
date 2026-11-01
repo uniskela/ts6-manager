@@ -85,8 +85,8 @@ export async function handleRadio(
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
 
-/** Longest free-text query `!play <song name>` sends to search. */
-const MAX_SONG_QUERY_LENGTH = 200;
+/** Longest free-text query `!play` / `/play` sends to search. */
+export const MAX_SONG_QUERY_LENGTH = 200;
 
 /** Resume paused playback, or resolve a media URL or song search into the queue. */
 export async function handlePlay(

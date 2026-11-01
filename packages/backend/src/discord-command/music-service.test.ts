@@ -718,3 +718,282 @@ describe('Discord playlist edits (2B-2B)', () => {
     assert.equal(created, 1);
   });
 });
+
+describe('Discord /play search uses TeamSpeak findSong', () => {
+  const binding = { instanceId: 'inst-1', revoked: false, botId: 1 };
+
+  function foundSong(url = 'https://8.8.8.8/found.mp3') {
+    return {
+      id: 'abc',
+      title: 'Found',
+      artist: 'X',
+      duration: 1,
+      thumbnail: '',
+      url,
+      source: 'youtube-music' as const,
+    };
+  }
+
+  it('resolves a song name onto the shared TeamSpeak queue', async () => {
+    const bot = fakeBot();
+    const searched: string[] = [];
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: stubPipeline(track('from-search', 'Search Track')),
+      findSong: async (query: string) => {
+        searched.push(query);
+        return foundSong();
+      },
+    }));
+    const result = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'never gonna give you up' },
+      idempotencyKey: 'search-1',
+    }), binding);
+    assert.equal(result.ok, true);
+    assert.equal(result.ack, 'deferred');
+    assert.deepEqual(searched, ['never gonna give you up']);
+    assert.equal(bot.nowPlaying?.title, 'Search Track');
+
+    const { enqueueMediaUrl } = await import('../voice/commands/queue.js');
+    await enqueueMediaUrl(
+      {
+        voiceBotManager: { getBot: () => bot },
+        virtualServerIdForBot: () => 2,
+        joinChannelForCommand: async () => {},
+        chatMusicSwitch: () => undefined,
+        saveMusicRequest: () => {},
+        reply: () => {},
+      } as any,
+      1, bot, 7, 'https://8.8.8.8/chat.mp3', undefined,
+      stubPipeline(track('from-chat', 'Chat Track')),
+    );
+    assert.equal(bot.nowPlaying?.title, 'Search Track');
+    assert.equal(bot.queue.getAll().some((item: QueueItem) => item.title === 'Chat Track'), true);
+  });
+
+  it('reports no results and hides provider errors without enqueueing', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, {
+      findSong: async () => null,
+    }));
+    const empty = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'zzzz nothing' },
+    }), binding);
+    assert.equal(empty.ok, false);
+    assert.match(empty.content, /No results for "zzzz nothing"/);
+    assert.equal(bot.nowPlaying, null);
+
+    const leaking = createMusicCommandService(serviceOpts(bot, {
+      findSong: async () => { throw new Error('yt-dlp cookies at /secret/cookies.txt'); },
+    }));
+    const failed = await leaking.execute(musicIntent({
+      command: 'play',
+      args: { query: 'anything' },
+    }), binding);
+    assert.equal(failed.ok, false);
+    assert.match(failed.content, /Search failed/);
+    assert.doesNotMatch(failed.content, /cookies|\/secret/);
+    assert.equal(bot.queue.length, 0);
+  });
+
+  function hangUntilAbort(onStart?: () => void) {
+    return async (_query: string, signal?: AbortSignal) => {
+      onStart?.();
+      await new Promise<void>((_resolve, reject) => {
+        const fail = () => reject(signal?.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        if (signal?.aborted) fail();
+        else signal?.addEventListener('abort', fail, { once: true });
+      });
+      return foundSong();
+    };
+  }
+
+  it('times out a hung search', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, {
+      findSong: hangUntilAbort(),
+      searchTimeoutMs: 20,
+    }));
+    const result = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'slow song' },
+    }), binding);
+    assert.equal(result.ok, false);
+    assert.match(result.content, /timed out/i);
+    assert.equal(bot.nowPlaying, null);
+  });
+
+  it('cancels an in-flight search when /stop runs', async () => {
+    const bot = fakeBot();
+    let released!: () => void;
+    const started = new Promise<void>((resolve) => { released = resolve; });
+    const music = createMusicCommandService(serviceOpts(bot, {
+      findSong: hangUntilAbort(released),
+    }));
+    const pending = music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'stop me' },
+      idempotencyKey: 'search-stop',
+    }), binding);
+    const raced = await Promise.race([
+      pending.then((result) => ({ kind: 'done' as const, result })),
+      started.then(() => ({ kind: 'searching' as const })),
+    ]);
+    if (raced.kind === 'done') {
+      assert.equal(raced.result.ok, false);
+      assert.match(raced.result.content, /cancelled/i);
+      return;
+    }
+    const stopped = await music.execute(musicIntent({ command: 'stop', idempotencyKey: 'stop-1' }), binding);
+    const cancelled = await pending;
+    assert.equal(stopped.ok, true);
+    assert.equal(cancelled.ok, false);
+    assert.match(cancelled.content, /cancelled/i);
+    assert.equal(bot.queue.length, 0);
+  });
+
+  it('lets a newer /play cancel the older search on the same bot', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    let released!: () => void;
+    const started = new Promise<void>((resolve) => { released = resolve; });
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: stubPipeline(track('second', 'Second')),
+      findSong: hangUntilAbort(released),
+    }));
+    const first = music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'first search' },
+      idempotencyKey: 'play-a',
+    }), binding);
+    await started;
+    const second = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/second.mp3' },
+      idempotencyKey: 'play-b',
+    }), binding);
+    const cancelled = await first;
+    assert.equal(second.ok, true);
+    assert.equal(cancelled.ok, false);
+    assert.match(cancelled.content, /cancelled/i);
+    assert.equal(bot.queue.getAll().filter((item: QueueItem) => item.title === 'Second').length, 1);
+    assert.equal(bot.queue.getAll().some((item: QueueItem) => item.title === 'Search Track'), false);
+  });
+
+  it('does not enqueue after /stop during URL validation', async () => {
+    const bot = fakeBot();
+    let stop!: () => Promise<unknown>;
+    const music = createMusicCommandService(serviceOpts(bot, {
+      findSong: async () => foundSong(),
+      validateUrl: async () => {
+        await stop();
+        return { valid: true };
+      },
+      pipeline: stubPipeline(track('late', 'Late')),
+    }));
+    stop = () => music.execute(musicIntent({ command: 'stop', idempotencyKey: 'stop-val' }), binding);
+    const result = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'late result' },
+      idempotencyKey: 'play-late',
+    }), binding);
+    assert.equal(result.ok, false);
+    assert.match(result.content, /cancelled/i);
+    assert.equal(bot.nowPlaying, null);
+    assert.equal(bot.queue.length, 0);
+  });
+
+  it('rejects an unsafe URL returned by search', async () => {
+    let downloads = 0;
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, {
+      findSong: async () => foundSong('http://127.0.0.1/secret.mp3'),
+      pipeline: {
+        ...stubPipeline(track('bad')),
+        downloadTrack: async () => { downloads += 1; throw new Error('must not download'); },
+      },
+    }));
+    const result = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'private host' },
+    }), binding);
+    assert.equal(result.ok, false);
+    assert.equal(downloads, 0);
+    assert.equal(bot.queue.length, 0);
+  });
+
+  it('does not search twice for the same Discord interaction', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    let searches = 0;
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: stubPipeline(track('once', 'Once')),
+      findSong: async () => {
+        searches += 1;
+        return foundSong();
+      },
+    }));
+    const intent = musicIntent({
+      command: 'play',
+      args: { query: 'once only' },
+      idempotencyKey: 'search-retry',
+    });
+    assert.equal((await music.execute(intent, binding)).ok, true);
+    assert.equal((await music.execute(intent, binding)).ok, true);
+    assert.equal(searches, 1);
+    assert.equal(bot.queue.getAll().filter((item: QueueItem) => item.title === 'Once').length, 1);
+  });
+
+  it('denies restricted search and unpaired guilds without calling findSong', async () => {
+    const bot = fakeBot();
+    let searches = 0;
+    const findSong = async () => {
+      searches += 1;
+      return foundSong();
+    };
+    const denied = await createMusicCommandService(serviceOpts(bot, {
+      loadMediaPermissions: async () => restricted,
+      findSong,
+    })).execute(musicIntent({ command: 'play', args: { query: 'restricted' } }), binding);
+    const unpaired = await createMusicCommandService(serviceOpts(bot, { findSong })).execute(
+      musicIntent({ command: 'play', args: { query: 'unpaired' } }),
+      null,
+    );
+    const missing = await createMusicCommandService(serviceOpts(bot, {
+      getBot: () => null,
+      findSong,
+    })).execute(musicIntent({ command: 'play', args: { query: 'ghost' } }), binding);
+    assert.equal(denied.code, 'unauthorized');
+    assert.equal(unpaired.code, 'unpaired');
+    assert.equal(missing.code, 'unavailable');
+    assert.equal(searches, 0);
+    assert.equal(bot.nowPlaying, null);
+  });
+
+  it('plays a direct URL without searching and caps song queries at 200 characters', async () => {
+    const bot = fakeBot();
+    const searched: string[] = [];
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: stubPipeline(track('t1', 'Track One')),
+      findSong: async (query: string) => {
+        searched.push(query);
+        return null;
+      },
+    }));
+    const urlPlay = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/discord.mp3' },
+    }), binding);
+    assert.equal(urlPlay.ok, true);
+    assert.equal(bot.nowPlaying?.title, 'Track One');
+    assert.deepEqual(searched, []);
+
+    const long = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'x'.repeat(250) },
+    }), binding);
+    assert.equal(long.ok, false);
+    assert.equal(searched[0]?.length, 200);
+  });
+});

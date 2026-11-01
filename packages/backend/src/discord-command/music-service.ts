@@ -1,7 +1,9 @@
 import type { MediaCommandPermissions } from '@ts6/common';
 import { authorizeMediaCommand, type MediaCommandIdentity } from '../voice/media-command-permissions.js';
 import { defaultMediaUrlDeps, type MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
+import { findSongForQuery } from '../voice/audio/youtube.js';
 import {
+  MAX_SONG_QUERY_LENGTH,
   parseVolumeLevel,
   pausePlayback,
   resumePlayback,
@@ -44,7 +46,11 @@ export type MusicServiceDeps = {
   replay?: ReplayGuard;
   nowMs?: () => number;
   prisma?: PlaylistCatalog;
+  findSong?: (query: string, signal?: AbortSignal) => ReturnType<typeof findSongForQuery>;
+  searchTimeoutMs?: number;
 };
+
+const SEARCH_TIMEOUT_MS = 12_000;
 
 const READY = new Set<string>([...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_1_MUSIC_COMMANDS, ...PHASE_2B_2_MUSIC_COMMANDS]);
 const PLAYLIST_EDITS = new Set(['create', 'add', 'remove']);
@@ -195,13 +201,32 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     }
 
     const query = playQuery(intent);
-    if (!query) return fail('unavailable', 'Usage: /play <url>', 'deferred');
+    if (!query) return fail('unavailable', 'Usage: /play <url|song name>', 'deferred');
     const replayed = claim(intent, 'deferred');
     if (replayed) return replayed;
+
+    const request = beginChatMediaRequest(binding.botId);
+    let url = query;
     if (!/^https?:\/\//i.test(query)) {
-      return fail('unavailable', 'Phase 2A accepts HTTP(S) URLs only.', 'deferred');
+      const songQuery = query.trim().slice(0, MAX_SONG_QUERY_LENGTH);
+      try {
+        const timeout = AbortSignal.timeout(deps.searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
+        const signal = AbortSignal.any([request.signal, timeout]);
+        const findSong = deps.findSong ?? ((q, s) => findSongForQuery(q, undefined, s));
+        const song = await findSong(songQuery, signal);
+        if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
+        if (!song) return fail('unavailable', `No results for "${songQuery}".`, 'deferred');
+        url = song.url;
+      } catch (err) {
+        if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
+        const name = err instanceof Error ? err.name : '';
+        if (name === 'TimeoutError') return fail('unavailable', 'Search timed out.', 'deferred');
+        return fail('unavailable', 'Search failed.', 'deferred');
+      }
     }
-    const check = await (deps.validateUrl ?? validateUrl)(query);
+    if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
+    const check = await (deps.validateUrl ?? validateUrl)(url);
+    if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
     if (!check.valid) return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
 
     try {
@@ -214,8 +239,8 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
         },
         binding.botId,
         bot,
-        query,
-        beginChatMediaRequest(binding.botId),
+        url,
+        request,
         deps.pipeline ?? defaultMediaUrlDeps(),
       );
       if (!applied) return fail('unavailable', 'Could not start playback.', 'deferred');

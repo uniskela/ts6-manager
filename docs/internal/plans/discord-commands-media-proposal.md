@@ -44,7 +44,7 @@ Not wired into Express. No new public port.
 
 | Gap | Status |
 |---|---|
-| `/play` search / library names | URL-only. Non-HTTP(S) queries are rejected. |
+| `/play` search / library names | Phase 2B-3: non-URL queries call `findSongForQuery` (YouTube Music, then YouTube). First playable result only. Resolved URL still goes through `validateUrl` + `applyMediaUrlToBot`. 12s search timeout. `/stop` aborts via `beginChatMediaRequest`. |
 | Live `VoiceBotManager` / Express / Discord command registration | Not wired. Tests use fakes. |
 | Guild→bot binding persistence | In-memory `GuildBinding` only. |
 | Music request history | Discord `saveMusicRequest` is a no-op on purpose. Existing history rows do not store a TeamSpeak clid; wire the real saver when the live bot is connected (Phase 2B). Optional requester label (Discord user vs TS uid) is a later milestone. |
@@ -58,7 +58,17 @@ Idempotency is still in-process `MemoryReplayGuard` (60s). Lost on restart; a re
 
 ## Later
 
-Phase 2B-2: `/playlist` and `/radio` from existing Prisma rows.  
-Phase 2B-3: `/play` search via `findSong`.  
-Phase 2C: live `VoiceBotManager`, persisted guild binds, durable interaction dedupe, Discord registration.  
+Phase 2B-3: `/play` search via `findSongForQuery`. Same providers as TeamSpeak `!play` (YouTube Music → YouTube). No extra extractors. Public-release licensing stays the existing yt-dlp / YouTube Music terms already used for TeamSpeak search — Discord does not add Spotify/Apple/other name search. URL `/play` still uses the existing media pipeline (YouTube / Spotify / Apple Music links when already supported). Search cancellation reuses `beginChatMediaRequest` (bot-id keyed AbortController + generation; not TeamSpeak-specific).  
+
+## Phase 2C (not started)
+
+Live wiring only. Do not implement until approved.
+
+1. Bind `createMusicCommandService` to the running `VoiceBotManager` / Prisma (no second queue).
+2. Persist `GuildBinding` (guild → instance, bot, revoked) instead of the in-memory map.
+3. Register Discord slash commands on the Uniskela command app (`applications.commands`). No seventh customer bot, no DAVE/voice-slot change.
+4. Replace in-process `MemoryReplayGuard` with durable interaction-id idempotency (survives restart).
+5. Wire `saveMusicRequest` to existing music history once the live bot is connected. Optional Discord-user vs TS-uid requester label later.
+6. Optional `identityForUser` (Discord ↔ TS uid) so `server_groups` DJ policy can pass. Empty identity stays fail-closed.
+
 Phase 3: Uniskela hub + Connect Discord UI.
