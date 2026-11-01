@@ -40,7 +40,12 @@ export type PlaylistCatalog = {
 };
 
 export function catalogScopeWhere(serverConfigId: number) {
-  return { OR: [{ serverConfigId }, { serverConfigId: null }] };
+  return {
+    AND: [
+      { OR: [{ serverConfigId }, { serverConfigId: null }] },
+      { OR: [{ musicBot: null }, { musicBot: { serverConfigId } }] },
+    ],
+  };
 }
 
 export function matchNamed<T extends NamedRecord>(items: T[], query: string): T[] {

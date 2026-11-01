@@ -15,7 +15,8 @@ import { MEDIA_EGRESS_PORTS, mediaEgressRefusal } from './egress-policy.js';
  *   and connects to an approved address, so a later DNS answer cannot swap it;
  * - it never follows redirects: the client does, through the proxy, so each
  *   hop is checked again;
- * - only CONNECT (https) and absolute-form http requests, to ports 80 and 443.
+ * - only CONNECT (https) and absolute-form http requests, to the job's allowed
+ *   ports (80 and 443 by default; radio jobs add Icecast ports);
  *
  * It only governs traffic a client sends through it. See docs/public/security.md
  * for what that leaves to the deployment.
@@ -86,6 +87,7 @@ interface JobState {
   expires: number;
   revoked: boolean;
   timer: NodeJS.Timeout;
+  ports: ReadonlySet<number>;
 }
 
 /** Thrown when a refused request is answered; carries the HTTP status. */
@@ -171,13 +173,14 @@ export class MediaEgressProxy {
   }
 
   /** Issue a token for one job. Fails when the proxy cannot listen (fail closed). */
-  async issue(ttlMs: number): Promise<EgressJob> {
+  async issue(ttlMs: number, opts?: { ports?: ReadonlySet<number> }): Promise<EgressJob> {
     const port = await this.start();
     const token = randomBytes(32).toString('hex');
     const key = tokenKey(token);
     const state: JobState = {
       open: new Set(), active: 0, opened: 0, abort: new AbortController(), logged: 0, expires: Date.now() + ttlMs, revoked: false,
       timer: setTimeout(() => this.revoke(key), ttlMs),
+      ports: opts?.ports ?? MEDIA_EGRESS_PORTS,
     };
     state.timer.unref();
     this.jobs.set(key, state);
@@ -327,8 +330,8 @@ export class MediaEgressProxy {
     return approved;
   }
 
-  private checkPort(port: number): void {
-    if (!MEDIA_EGRESS_PORTS.has(port) && !this.options.permitPort?.(port)) {
+  private checkPort(state: JobState, port: number): void {
+    if (!state.ports.has(port) && !this.options.permitPort?.(port)) {
       throw new Refused(403, `port ${port} not allowed`);
     }
   }
@@ -418,7 +421,7 @@ export class MediaEgressProxy {
     client.once('end', gone);
     try {
       if (!target) throw new Refused(400, 'malformed target');
-      this.checkPort(target.port);
+      this.checkPort(state, target.port);
       release = this.admit(state);
       const addresses = await this.approvedAddresses(target.host, setup.signal);
       const { socket, head: upstreamEarly } = await this.connectAny(addresses, target.port, setup.signal);
@@ -465,7 +468,7 @@ export class MediaEgressProxy {
     try {
       assertForwardable(req, url);
       const port = url.port ? Number(url.port) : 80;
-      this.checkPort(port);
+      this.checkPort(state, port);
       release = this.admit(state);
       const addresses = await this.approvedAddresses(url.hostname, setup.signal);
       // Directly, or through an upstream proxy as a tunnel to the approved address, so the
@@ -478,17 +481,25 @@ export class MediaEgressProxy {
         return;
       }
       if (head.length) socket.unshift(head);
-      // Revoking the job closes both sides; the upstream connection is used for this request only.
-      this.track(state, release, [socket], [req.socket]);
-      const out = http.request({
-        createConnection: () => socket,
-        method: req.method,
-        path: `${url.pathname}${url.search}`,
-        headers: originHeaders(req, url),
-        setHost: false,
-      });
-      relayResponse(out, socket, res);
-      req.pipe(out);
+      const path = `${url.pathname}${url.search}` || '/';
+      const headers = originHeaders(req, url);
+      const lines = [`${req.method} ${path} HTTP/1.1`];
+      for (const [name, value] of Object.entries(headers)) {
+        if (value === undefined) continue;
+        for (const item of Array.isArray(value) ? value : [value]) lines.push(`${name}: ${item}`);
+      }
+      socket.write(`${lines.join('\r\n')}\r\n\r\n`);
+      const preface = await readStatusLine(socket, setup.signal);
+      if (!/^(ICY |HTTP\/1\.[01] [2-5]\d\d)/i.test(preface.line)) {
+        socket.destroy();
+        throw new Refused(502, 'invalid upstream status');
+      }
+      socket.unshift(preface.raw);
+      // Raw pipe so Icecast `ICY 200 OK` is forwarded after a connection-time pin.
+      this.track(state, release, [socket, req.socket]);
+      socket.pipe(req.socket);
+      req.resume();
+      res.on('error', () => {});
     } catch (err) {
       release();
       const refused = err instanceof Refused ? err : new Refused(502, 'could not connect');
@@ -525,45 +536,38 @@ function originHeaders(req: http.IncomingMessage, url: URL): http.OutgoingHttpHe
   return headers;
 }
 
-/**
- * Pass the upstream response back. An invalid status, an upgrade or an
- * upstream that closes early gets a 502; a body cut off upstream is cut off
- * here too, never left hanging.
- */
-function relayResponse(out: http.ClientRequest, socket: net.Socket, res: http.ServerResponse): void {
-  const fail = () => {
-    if (res.headersSent) res.destroy();
-    else res.writeHead(502, { Connection: 'close' }).end();
-  };
-  out.on('upgrade', (_upgradeRes, upgraded) => {
-    upgraded.destroy();
-    socket.destroy();
-    fail();
-  });
-  out.on('close', () => { if (!res.headersSent) fail(); });
-  out.on('error', fail);
-  res.on('close', () => out.destroy());
-  out.on('response', (upstreamRes) => {
-    const status = upstreamRes.statusCode ?? 0;
-    if (status < 200 || status > 599) {
-      upstreamRes.destroy();
-      fail();
-      return;
-    }
-    const back: http.OutgoingHttpHeaders = { connection: 'close' };
-    for (const [name, value] of Object.entries(upstreamRes.headers)) {
-      if (!HOP_HEADERS.has(name) && value !== undefined) back[name] = value;
-    }
-    try {
-      res.writeHead(status, back);
-    } catch {
-      upstreamRes.destroy();
-      res.destroy();
-      return;
-    }
-    upstreamRes.on('error', () => res.destroy());
-    upstreamRes.on('close', () => { if (!upstreamRes.complete) res.destroy(); });
-    upstreamRes.pipe(res);
+/** First response line plus the bytes already read, so ICY and HTTP can both be forwarded. */
+function readStatusLine(socket: net.Socket, signal: AbortSignal): Promise<{ line: string; raw: Buffer }> {
+  return new Promise((resolve, reject) => {
+    let buffered = Buffer.alloc(0);
+    const finish = (err?: Error, result?: { line: string; raw: Buffer }) => {
+      signal.removeEventListener('abort', onAbort);
+      socket.off('data', onData);
+      socket.off('error', onError);
+      socket.off('close', onClose);
+      if (err) reject(err);
+      else resolve(result!);
+    };
+    const onData = (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const end = buffered.indexOf('\n');
+      if (end < 0) {
+        if (buffered.length > 1024) finish(new Refused(502, 'invalid upstream status'));
+        return;
+      }
+      finish(undefined, {
+        line: buffered.subarray(0, end).toString('latin1').trim(),
+        raw: buffered,
+      });
+    };
+    const onError = () => finish(new Refused(502, 'could not connect'));
+    const onClose = () => finish(new Refused(502, 'upstream closed'));
+    const onAbort = () => finish(new Refused(410, 'cancelled'));
+    socket.on('data', onData);
+    socket.on('error', onError);
+    socket.on('close', onClose);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) queueMicrotask(onAbort);
   });
 }
 

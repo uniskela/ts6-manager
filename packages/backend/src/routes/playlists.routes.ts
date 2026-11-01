@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
+import { catalogScopeWhere } from '../voice/commands/library.js';
 
 export const playlistRoutes: Router = Router();
 
@@ -59,12 +60,7 @@ playlistRoutes.get('/', async (req: Request, res: Response, next) => {
     const playlists = await prisma.playlist.findMany({
       // Legacy playlists without an explicit server can still belong to a bot.
       // Match the same server eligibility enforced when choosing an Auto-DJ source.
-      where: serverConfigId ? {
-        AND: [
-          { OR: [{ serverConfigId }, { serverConfigId: null }] },
-          { OR: [{ musicBot: null }, { musicBot: { serverConfigId } }] },
-        ],
-      } : undefined,
+      where: serverConfigId ? catalogScopeWhere(serverConfigId) : undefined,
       include: { _count: { select: { songs: true } } },
       orderBy: { createdAt: 'desc' },
     });

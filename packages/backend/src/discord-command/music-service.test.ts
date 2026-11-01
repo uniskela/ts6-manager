@@ -411,17 +411,20 @@ function songRow(id: number, title: string, serverConfigId = 9) {
 function fakeCatalog() {
   let nextPlaylist = 20;
   let nextSong = 200;
-  const playlists: Array<{ id: number; name: string; serverConfigId: number | null; musicBotId?: number }> = [
-    { id: 3, name: 'Rock', serverConfigId: 9, musicBotId: 1 },
-    { id: 4, name: 'Shared Mix', serverConfigId: null },
-    { id: 5, name: 'Other Server', serverConfigId: 8 },
-    { id: 6, name: 'Rock Live', serverConfigId: 9 },
+  const playlists: Array<{ id: number; name: string; serverConfigId: number | null; musicBotId?: number | null; musicBot?: { serverConfigId: number } | null }> = [
+    { id: 3, name: 'Rock', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 } },
+    { id: 4, name: 'Shared Mix', serverConfigId: null, musicBotId: null, musicBot: null },
+    { id: 5, name: 'Other Server', serverConfigId: 8, musicBotId: 2, musicBot: { serverConfigId: 8 } },
+    { id: 6, name: 'Rock Live', serverConfigId: 9, musicBot: { serverConfigId: 9 } },
+    { id: 7, name: 'Legacy Foreign Bot', serverConfigId: null, musicBotId: 2, musicBot: { serverConfigId: 8 } },
+    { id: 8, name: 'Legacy This Bot', serverConfigId: null, musicBotId: 1, musicBot: { serverConfigId: 9 } },
   ];
   const songs = [songRow(7, 'Track'), songRow(8, 'Shared Song'), songRow(9, 'Foreign Song', 8)];
   const links = [
     { playlistId: 3, songId: 7, position: 0 },
     { playlistId: 4, songId: 8, position: 0 },
     { playlistId: 5, songId: 9, position: 0 },
+    { playlistId: 8, songId: 8, position: 0 },
   ];
   const stations = [
     { id: 1, name: 'Jazz FM', url: 'https://8.8.8.8/jazz', genre: 'Jazz', serverConfigId: 9 },
@@ -429,14 +432,15 @@ function fakeCatalog() {
     { id: 11, name: 'Foreign FM', url: 'https://8.8.8.8/f', genre: 'X', serverConfigId: 8 },
   ];
 
-  function inScope(row: { id?: number; serverConfigId?: number | null }, where: any): boolean {
-    if (!where) return true;
-    if (where.id != null && row.id !== where.id) return false;
-    if (Object.prototype.hasOwnProperty.call(where, 'serverConfigId') && where.OR == null && row.serverConfigId !== where.serverConfigId) {
-      return false;
-    }
-    if (where.OR) return where.OR.some((clause: any) => inScope(row, { ...where, ...clause, OR: undefined }));
-    return true;
+  function inScope(row: Record<string, unknown>, where?: any): boolean {
+    return !where || Object.entries(where).every(([key, value]) =>
+      key === 'OR'
+        ? (value as any[]).some((condition) => inScope(row, condition))
+        : key === 'AND'
+          ? (value as any[]).every((condition) => inScope(row, condition))
+          : value !== null && typeof value === 'object'
+            ? row[key] !== null && typeof row[key] === 'object' && inScope(row[key] as Record<string, unknown>, value)
+            : row[key] === value);
   }
 
   const db: any = {
@@ -453,7 +457,13 @@ function fakeCatalog() {
         };
       },
       create: async ({ data }: any) => {
-        const created = { id: nextPlaylist++, name: data.name, serverConfigId: data.serverConfigId, musicBotId: data.musicBotId };
+        const created = {
+          id: nextPlaylist++,
+          name: data.name,
+          serverConfigId: data.serverConfigId,
+          musicBotId: data.musicBotId,
+          musicBot: data.serverConfigId == null ? null : { serverConfigId: data.serverConfigId },
+        };
         playlists.push(created);
         return created;
       },
@@ -504,7 +514,37 @@ describe('Discord playlist and radio catalog (2B-2A)', () => {
     assert.equal(result.ok, true);
     assert.match(result.content, /Rock/);
     assert.match(result.content, /Shared Mix/);
+    assert.match(result.content, /Legacy This Bot/);
     assert.doesNotMatch(result.content, /Other Server/);
+    assert.doesNotMatch(result.content, /Legacy Foreign Bot/);
+    const foreign = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: '7' },
+    }), binding);
+    assert.equal(foreign.ok, false);
+    assert.match(foreign.content, /not found/i);
+    const foreignName = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: 'Legacy Foreign Bot' },
+    }), binding);
+    assert.equal(foreignName.ok, false);
+    assert.match(foreignName.content, /not found/i);
+  });
+
+  it('plays shared and same-server legacy playlists by name or id', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() }));
+    const shared = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: 'Shared Mix' },
+    }), binding);
+    assert.equal(shared.ok, true);
+    assert.equal(bot.nowPlaying?.title, 'Shared Song');
+    const legacy = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: '8' },
+    }), binding);
+    assert.equal(legacy.ok, true);
+    const named = await music.execute(musicIntent({
+      command: 'playlist', args: { subcommand: 'play', name: 'Legacy This Bot' },
+    }), binding);
+    assert.equal(named.ok, true);
   });
 
   it('plays a saved playlist onto the shared queue', async () => {

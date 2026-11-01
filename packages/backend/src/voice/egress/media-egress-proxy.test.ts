@@ -3,6 +3,7 @@ import { once } from 'node:events';
 import http from 'node:http';
 import net from 'node:net';
 import { after, before, describe, it } from 'node:test';
+import { RADIO_EGRESS_PORTS } from './egress-policy.js';
 import { MediaEgressProxy, parseAuthority, type MediaEgressProxyOptions } from './media-egress-proxy.js';
 
 /** Local servers stand in for public media hosts; tests allow their address and port explicitly. */
@@ -172,6 +173,28 @@ describe('media egress proxy', () => {
       assert.equal(statusOf(literal.text), 403);
       assert.ok(logs.some((line) => line.includes('nas.test') && line.includes('private address')));
       assert.ok(logs.every((line) => !line.includes(new URL(job.proxyUrl).password)), 'no token in logs');
+    } finally {
+      await proxy.close();
+    }
+  });
+
+  it('lets a radio job use Icecast ports that a download job still refuses', async () => {
+    const proxy = new MediaEgressProxy({
+      permitAddress: (address) => address === '127.0.0.1',
+      resolve: async () => ['127.0.0.1'],
+      log: () => {},
+    });
+    try {
+      const radio = await proxy.issue(60_000, { ports: RADIO_EGRESS_PORTS });
+      const download = await proxy.issue(60_000);
+      const auth = (job: { proxyUrl: string }) => `Proxy-Authorization: ${credentials(job.proxyUrl)}`;
+      const radioHop = await raw(proxyPort(radio.proxyUrl), `CONNECT radio.example:8000 HTTP/1.1\r\n${auth(radio)}\r\n\r\n`);
+      assert.notEqual(statusOf(radioHop.text), 403, 'radio jobs may use port 8000');
+      radioHop.socket.destroy();
+      const downloadHop = await raw(proxyPort(download.proxyUrl), `CONNECT radio.example:8000 HTTP/1.1\r\n${auth(download)}\r\n\r\n`);
+      assert.equal(statusOf(downloadHop.text), 403);
+      const ssh = await raw(proxyPort(radio.proxyUrl), `CONNECT radio.example:22 HTTP/1.1\r\n${auth(radio)}\r\n\r\n`);
+      assert.equal(statusOf(ssh.text), 403);
     } finally {
       await proxy.close();
     }

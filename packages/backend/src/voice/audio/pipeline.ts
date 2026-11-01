@@ -2,7 +2,8 @@ import { spawn, type ChildProcess } from "child_process";
 import type { Readable } from "stream";
 import OpusScript from "opusscript";
 import { validateUrl } from "../../utils/url-validator.js";
-import { acquireMediaEgress, egressEnvironment, mediaEgressEnabled } from "../egress/media-egress.js";
+import { RADIO_EGRESS_PORTS } from "../egress/egress-policy.js";
+import { acquireMediaEgress, egressEnvironment, MediaEgressError, mediaEgressEnabled } from "../egress/media-egress.js";
 
 export const SAMPLE_RATE = 48000;
 export const CHANNELS = 2;
@@ -26,6 +27,12 @@ const REMOTE_PROTOCOLS = "http,https,tls,tcp,httpproxy,crypto";
  * are refused, so ffmpeg never opens addresses named inside the response.
  */
 const REMOTE_FORMATS = "matroska,webm,mov,mp4,m4a,mp3,ogg,aac,flac,wav";
+
+/**
+ * Radio may be Icecast or HLS. Segment and redirect fetches still go through
+ * the media egress proxy, so addresses named in a playlist are checked again.
+ */
+const RADIO_FORMATS = `${REMOTE_FORMATS},hls,mpegts`;
 
 /** Longest a resolved track may stream through one proxy token. */
 const FILE_STREAM_EGRESS_TTL_MS = 12 * 60 * 60_000;
@@ -52,6 +59,20 @@ export function buildPcmFileArgs(input: string, startSeconds = 0): string[] {
     "pipe:1",
   );
   return args;
+}
+
+export function buildPcmStreamArgs(input: string): string[] {
+  return [
+    "-protocol_whitelist", REMOTE_PROTOCOLS, "-format_whitelist", RADIO_FORMATS,
+    "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+    "-i", input,
+    "-f", "s16le",
+    "-acodec", "pcm_s16le",
+    "-ar", String(SAMPLE_RATE),
+    "-ac", String(CHANNELS),
+    "-loglevel", "error",
+    "pipe:1",
+  ];
 }
 
 export class AudioPipeline {
@@ -152,26 +173,18 @@ export class AudioPipeline {
    * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
    */
   async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
-    // C4: Validate URL before passing to ffmpeg
     const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
     }
-
-    const args = [
-      "-reconnect", "1",
-      "-reconnect_streamed", "1",
-      "-reconnect_delay_max", "5",
-      "-i", url,
-      "-f", "s16le",
-      "-acodec", "pcm_s16le",
-      "-ar", String(SAMPLE_RATE),
-      "-ac", String(CHANNELS),
-      "-loglevel", "error",
-      "pipe:1",
-    ];
-
-    const ffmpeg = spawn("ffmpeg", args, { shell: false });
+    const job = await acquireMediaEgress(url, FILE_STREAM_EGRESS_TTL_MS, { ports: RADIO_EGRESS_PORTS });
+    if (!job) throw new MediaEgressError();
+    const ffmpeg = spawn("ffmpeg", buildPcmStreamArgs(url), {
+      shell: false,
+      env: egressEnvironment(job.proxyUrl),
+    });
+    ffmpeg.once("close", () => job?.release());
+    ffmpeg.once("error", () => job?.release());
     return {
       stdout: ffmpeg.stdout,
       process: ffmpeg,

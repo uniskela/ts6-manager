@@ -11,11 +11,13 @@ function fixture(status = 'connected') {
   const playlists = [{ id: 3, name: 'Rock' }, { id: 4, name: 'Rock live' }];
   const prisma = { appSetting: { findUnique: async () => null }, playlist: {
     findMany: async ({ where }: any) => {
-      assert.deepEqual(where.OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[0].OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[1].OR, [{ musicBot: null }, { musicBot: { serverConfigId: 9 } }]);
       return playlists;
     },
     findFirst: async ({ where }: any) => {
-      assert.deepEqual(where.OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[0].OR, [{ serverConfigId: 9 }, { serverConfigId: null }]);
+      assert.deepEqual(where.AND[1].OR, [{ musicBot: null }, { musicBot: { serverConfigId: 9 } }]);
       return { name: 'Rock', songs: [{ song: { id: 7, title: 'Track', filePath: '', source: 'youtube', sourceUrl: 'https://www.youtube.com/watch?v=abcdefghijk' } }] };
     },
   } } as any;

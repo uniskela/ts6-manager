@@ -101,7 +101,7 @@ describe('media egress jobs', () => {
     assert.equal(await acquireMediaEgress('ytsearch1:artist title', 60_000), null);
     for (const target of [
       'https://soundcloud.com/a/b', 'http://www.youtube.com/watch?v=abcdefghijk', 'https://youtube.com.evil.test/x',
-      'https://user:pw@www.youtube.com/watch?v=abcdefghijk', 'not a url',
+      'https://user:pw@www.youtube.com/watch?v=abcdefghijk', 'not a url', 'https://radio.example/stream',
     ]) {
       await assert.rejects(acquireMediaEgress(target, 60_000), (err: Error) => err instanceof MediaEgressError && err.message === MEDIA_EGRESS_OFF_REFUSAL, target);
     }

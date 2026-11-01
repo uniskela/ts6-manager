@@ -108,9 +108,10 @@ describe('chat playlist scope', () => {
   for (const serverConfigId of [9, 10]) it(`lists and loads shared and legacy playlists on server ${serverConfigId}`, async () => {
     const replies: string[] = [];
     const playlists = [
-      { id: 2, name: 'Server nine other bot', serverConfigId: 9, musicBotId: 99 },
-      { id: 3, name: 'Legacy shared', serverConfigId: null, musicBotId: 99 },
-      { id: 4, name: 'Server ten other bot', serverConfigId: 10, musicBotId: 100 },
+      { id: 2, name: 'Server nine other bot', serverConfigId: 9, musicBotId: 99, musicBot: { serverConfigId: 9 } },
+      { id: 3, name: 'Legacy shared', serverConfigId: null, musicBotId: null, musicBot: null },
+      { id: 4, name: 'Server ten other bot', serverConfigId: 10, musicBotId: 100, musicBot: { serverConfigId: 10 } },
+      { id: 5, name: 'Legacy foreign bot', serverConfigId: null, musicBotId: 99, musicBot: { serverConfigId: 99 } },
     ];
     const prisma = {
       appSetting: { findUnique: async () => null },
@@ -138,6 +139,8 @@ describe('chat playlist scope', () => {
       status: 'playing',
       nowPlaying: null,
       play: async () => {},
+      videoSessionInfo: () => null,
+      musicSessionInfo: () => null,
     };
 
     await handler.onTextMessage(1, bot, { invokerid: '2', msg: '!playlist' });
@@ -146,6 +149,7 @@ describe('chat playlist scope', () => {
     assert.ok(replies.at(-1)!.includes(ownName));
     assert.match(replies.at(-1)!, /Legacy shared/);
     assert.ok(!replies.at(-1)!.includes(otherName));
+    assert.ok(!replies.at(-1)!.includes('Legacy foreign bot'));
     await handler.onTextMessage(1, bot, { invokerid: '2', msg: `!playlist ${ownName}` });
     assert.ok(replies.at(-1)!.includes(`Queued playlist "${ownName}" (1 tracks).`));
     await handler.onTextMessage(1, bot, { invokerid: '2', msg: '!playlist 3' });
@@ -154,6 +158,8 @@ describe('chat playlist scope', () => {
     assert.equal(replies.at(-1), 'Queued playlist "Legacy shared" (1 tracks).');
     assert.equal(bot.queue.length, 3);
     await handler.onTextMessage(1, bot, { invokerid: '2', msg: `!playlist ${otherName}` });
+    assert.equal(replies.at(-1), 'Playlist not found. Use !playlist to list.');
+    await handler.onTextMessage(1, bot, { invokerid: '2', msg: '!playlist 5' });
     assert.equal(replies.at(-1), 'Playlist not found. Use !playlist to list.');
     assert.equal(bot.queue.length, 3);
   });

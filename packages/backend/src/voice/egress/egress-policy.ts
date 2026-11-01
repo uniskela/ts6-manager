@@ -11,6 +11,9 @@ import { isNeverAllowedIP, isPrivateIP } from '../../utils/url-validator.js';
 /** Ports a media download may connect to. */
 export const MEDIA_EGRESS_PORTS: ReadonlySet<number> = new Set([80, 443]);
 
+/** Extra Icecast/Shoutcast ports radio may use, still subject to the address policy. */
+export const RADIO_EGRESS_PORTS: ReadonlySet<number> = new Set([80, 443, 8000, 8008, 8080, 8443]);
+
 /** Special-purpose ranges (RFC 6890 registries) that are never a public media host. */
 const reserved = new BlockList();
 for (const [ip, prefix] of [

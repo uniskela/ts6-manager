@@ -1,6 +1,7 @@
-import net from 'net';
+import { Resolver } from 'node:dns/promises';
+import net from 'node:net';
 import tls from 'tls';
-import { isPrivateIP } from '../../utils/url-validator.js';
+import { RADIO_EGRESS_PORTS, mediaEgressRefusal } from '../egress/egress-policy.js';
 
 /**
  * Fetch the current StreamTitle from an ICY/Shoutcast/Icecast radio stream.
@@ -9,29 +10,32 @@ import { isPrivateIP } from '../../utils/url-validator.js';
  * ICY protocol (which responds with "ICY 200 OK" instead of "HTTP/1.x 200 OK").
  * Node.js http module cannot parse ICY responses.
  *
- * Follows HTTP redirects (301/302/303/307/308) up to 5 hops.
- *
- * Protocol:
- * 1. Send HTTP GET with `Icy-MetaData: 1` header
- * 2. Read `icy-metaint` from response headers
- * 3. Skip metaInt bytes of audio data
- * 4. Read 1 byte (metadata length = byte * 16)
- * 5. Read metadata string, parse StreamTitle
- * 6. Close connection
+ * Each hop is resolved and pinned by the media-egress address policy before
+ * connect. Redirects are not followed until the next hop passes the same check.
  */
-export async function fetchIcyMetadata(streamUrl: string, timeoutMs = 10000): Promise<string | null> {
+
+export type IcyConnectDeps = {
+  resolve?: (host: string) => Promise<string[]>;
+  connect?: (opts: { host: string; port: number; tls: boolean; servername: string }) => Promise<net.Socket>;
+};
+
+export async function fetchIcyMetadata(
+  streamUrl: string,
+  timeoutMs = 10000,
+  deps: IcyConnectDeps = {},
+): Promise<string | null> {
   let currentUrl = streamUrl;
   const maxRedirects = 5;
 
   for (let i = 0; i <= maxRedirects; i++) {
-    const result = await fetchIcySingle(currentUrl, timeoutMs);
+    const result = await fetchIcySingle(currentUrl, timeoutMs, deps);
     if (result.redirect) {
       currentUrl = result.redirect;
       continue;
     }
     return result.title;
   }
-  return null; // Too many redirects
+  return null;
 }
 
 interface IcyResult {
@@ -39,112 +43,148 @@ interface IcyResult {
   redirect?: string;
 }
 
-function fetchIcySingle(streamUrl: string, timeoutMs: number): Promise<IcyResult> {
+async function defaultResolve(host: string): Promise<string[]> {
+  const resolver = new Resolver({ timeout: 4_000, tries: 2 });
+  const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+  return [
+    ...(v4.status === 'fulfilled' ? v4.value : []),
+    ...(v6.status === 'fulfilled' ? v6.value : []),
+  ];
+}
+
+function defaultConnect(opts: { host: string; port: number; tls: boolean; servername: string }): Promise<net.Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = opts.tls
+      ? tls.connect({
+        host: opts.host,
+        port: opts.port,
+        servername: opts.servername,
+        rejectUnauthorized: true,
+      }, () => resolve(socket))
+      : net.connect({ host: opts.host, port: opts.port }, () => resolve(socket));
+    socket.once('error', reject);
+  });
+}
+
+async function approvedAddresses(host: string, resolve: (host: string) => Promise<string[]>): Promise<string[]> {
+  const literal = host.replace(/^\[|\]$/g, '');
+  const answers = net.isIP(literal) ? [literal] : await resolve(literal);
+  return answers.filter((address) => mediaEgressRefusal(address) == null);
+}
+
+function parseRadioUrl(streamUrl: string): URL | null {
+  let url: URL;
+  try {
+    url = new URL(streamUrl);
+  } catch {
+    return null;
+  }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password) return null;
+  const port = url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80);
+  if (!RADIO_EGRESS_PORTS.has(port)) return null;
+  return url;
+}
+
+async function openCheckedSocket(streamUrl: string, deps: IcyConnectDeps): Promise<{ socket: net.Socket; url: URL } | null> {
+  const url = parseRadioUrl(streamUrl);
+  if (!url) return null;
+  const approved = await approvedAddresses(url.hostname, deps.resolve ?? defaultResolve);
+  if (!approved.length) return null;
+  const port = url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80);
+  const socket = await (deps.connect ?? defaultConnect)({
+    host: approved[0],
+    port,
+    tls: url.protocol === 'https:',
+    servername: url.hostname,
+  });
+  return { socket, url };
+}
+
+function fetchIcySingle(streamUrl: string, timeoutMs: number, deps: IcyConnectDeps): Promise<IcyResult> {
   return new Promise((resolve) => {
     let resolved = false;
-    const url = new URL(streamUrl);
-    const isHttps = url.protocol === 'https:';
-    const host = url.hostname;
-    const port = parseInt(url.port) || (isHttps ? 443 : 80);
-    const path = url.pathname + url.search;
-
-    // Build raw HTTP request
-    const request =
-      `GET ${path || '/'} HTTP/1.0\r\n` +
-      `Host: ${host}\r\n` +
-      `User-Agent: TS6-MusicBot/1.0\r\n` +
-      `Icy-MetaData: 1\r\n` +
-      `Connection: close\r\n` +
-      `\r\n`;
-
-    // C4: Block private/reserved IPs
-    if (isPrivateIP(host)) {
-      return resolve({ title: null });
-    }
-
-    let socket: net.Socket;
-    if (isHttps) {
-      socket = tls.connect({ host, port }, () => {
-        socket.write(request);
-      });
-    } else {
-      socket = net.connect({ host, port }, () => {
-        socket.write(request);
-      });
-    }
-
-    let buffer = Buffer.alloc(0);
-    let headersParsed = false;
-    let metaInt = 0;
-    let headersEndOffset = 0;
-
+    let socket: net.Socket | undefined;
     const timer = setTimeout(() => done({ title: null }), timeoutMs);
 
-    socket.on('data', (chunk: Buffer) => {
-      if (resolved) return;
-      buffer = Buffer.concat([buffer, chunk]);
+    void openCheckedSocket(streamUrl, deps).then((opened) => {
+      if (resolved) {
+        opened?.socket.destroy();
+        return;
+      }
+      if (!opened) {
+        done({ title: null });
+        return;
+      }
+      socket = opened.socket;
+      const path = opened.url.pathname + opened.url.search;
+      const request =
+        `GET ${path || '/'} HTTP/1.0\r\n` +
+        `Host: ${opened.url.host}\r\n` +
+        `User-Agent: TS6-MusicBot/1.0\r\n` +
+        `Icy-MetaData: 1\r\n` +
+        `Connection: close\r\n` +
+        `\r\n`;
+      socket.write(request);
+      attach(socket, opened.url);
+    }).catch(() => done({ title: null }));
 
-      // Phase 1: Parse response headers
-      if (!headersParsed) {
-        const headerEnd = buffer.indexOf('\r\n\r\n');
-        if (headerEnd < 0) return; // Need more data
+    function attach(live: net.Socket, current: URL) {
+      let buffer = Buffer.alloc(0);
+      let headersParsed = false;
+      let metaInt = 0;
+      let headersEndOffset = 0;
 
-        const headersRaw = buffer.subarray(0, headerEnd).toString('latin1');
-        const headersLower = headersRaw.toLowerCase();
-        headersParsed = true;
-        headersEndOffset = headerEnd + 4;
+      live.on('data', (chunk: Buffer) => {
+        if (resolved) return;
+        buffer = Buffer.concat([buffer, chunk]);
 
-        // Check for redirect (301, 302, 303, 307, 308)
-        const statusLine = headersRaw.split('\r\n')[0];
-        if (/\b30[12378]\b/.test(statusLine)) {
-          const locMatch = headersRaw.match(/[Ll]ocation:\s*(.+)/);
-          if (locMatch) {
-            return done({ title: null, redirect: locMatch[1].trim() });
+        if (!headersParsed) {
+          const headerEnd = buffer.indexOf('\r\n\r\n');
+          if (headerEnd < 0) return;
+
+          const headersRaw = buffer.subarray(0, headerEnd).toString('latin1');
+          const headersLower = headersRaw.toLowerCase();
+          headersParsed = true;
+          headersEndOffset = headerEnd + 4;
+
+          const statusLine = headersRaw.split('\r\n')[0];
+          if (/\b30[12378]\b/.test(statusLine)) {
+            const locMatch = headersRaw.match(/[Ll]ocation:\s*(.+)/);
+            if (locMatch) {
+              try {
+                return done({ title: null, redirect: new URL(locMatch[1].trim(), current).href });
+              } catch {
+                return done({ title: null });
+              }
+            }
           }
+
+          const metaIntMatch = headersLower.match(/icy-metaint\s*:\s*(\d+)/);
+          if (!metaIntMatch) return done({ title: null });
+          metaInt = parseInt(metaIntMatch[1]);
+          if (!metaInt || metaInt <= 0) return done({ title: null });
         }
 
-        // Extract icy-metaint
-        const metaIntMatch = headersLower.match(/icy-metaint\s*:\s*(\d+)/);
-        if (!metaIntMatch) {
-          return done({ title: null }); // No ICY metadata support
-        }
-        metaInt = parseInt(metaIntMatch[1]);
-        if (!metaInt || metaInt <= 0) {
-          return done({ title: null });
-        }
-      }
+        const bodyStart = headersEndOffset;
+        const bodyLen = buffer.length - bodyStart;
+        if (bodyLen <= metaInt) return;
+        const metaLen = buffer[bodyStart + metaInt] * 16;
+        if (metaLen === 0) return done({ title: null });
+        if (bodyLen < metaInt + 1 + metaLen) return;
+        const metaStr = buffer.subarray(bodyStart + metaInt + 1, bodyStart + metaInt + 1 + metaLen).toString('utf-8');
+        const match = metaStr.match(/StreamTitle='([^']*?)'/);
+        done({ title: match ? match[1].trim() || null : null });
+      });
 
-      // Phase 2: Read audio data + metadata block
-      const bodyStart = headersEndOffset;
-      const bodyLen = buffer.length - bodyStart;
-
-      // Need at least metaInt bytes of audio + 1 byte metadata length
-      if (bodyLen <= metaInt) return;
-
-      const metaLenByte = buffer[bodyStart + metaInt];
-      const metaLen = metaLenByte * 16;
-
-      if (metaLen === 0) {
-        // No metadata at this position — could mean empty title
-        return done({ title: null });
-      }
-
-      // Need the full metadata block
-      if (bodyLen < metaInt + 1 + metaLen) return;
-
-      const metaStr = buffer.subarray(bodyStart + metaInt + 1, bodyStart + metaInt + 1 + metaLen).toString('utf-8');
-      const match = metaStr.match(/StreamTitle='([^']*?)'/);
-      done({ title: match ? match[1].trim() || null : null });
-    });
-
-    socket.on('error', () => done({ title: null }));
-    socket.on('end', () => done({ title: null }));
+      live.on('error', () => done({ title: null }));
+      live.on('end', () => done({ title: null }));
+    }
 
     function done(result: IcyResult) {
       if (resolved) return;
       resolved = true;
       clearTimeout(timer);
-      try { socket.destroy(); } catch {}
+      try { socket?.destroy(); } catch { /* already closed */ }
       resolve(result);
     }
   });
