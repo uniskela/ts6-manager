@@ -1,7 +1,8 @@
-/** Phase 2 command names. Adapter rejects these until playback wiring lands. */
-export const MUSIC_COMMANDS = [
-  'play', 'pause', 'resume', 'skip', 'stop', 'queue', 'nowplaying', 'playlist', 'radio',
-] as const;
+export const PHASE_2A_MUSIC_COMMANDS = ['play', 'queue', 'nowplaying'] as const;
+export const PHASE_2B_MUSIC_COMMANDS = ['pause', 'resume', 'skip', 'stop', 'playlist', 'radio', 'volume'] as const;
+
+/** Phase 2 command names. 2B stays rejected until those handlers land. */
+export const MUSIC_COMMANDS = [...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_MUSIC_COMMANDS] as const;
 
 export type MusicCommand = (typeof MUSIC_COMMANDS)[number];
 

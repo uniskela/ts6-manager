@@ -9,6 +9,7 @@ export type DiscordCommandIntent = {
   memberPermissions: string;
   command: string;
   args?: Record<string, string>;
+  idempotencyKey?: string;
 };
 
 export type CommandFailureCode =
@@ -28,7 +29,7 @@ export type CommandResult = {
   ack: 'immediate' | 'deferred' | 'pong';
 };
 
-export type GuildBinding = { instanceId: string; revoked: boolean };
+export type GuildBinding = { instanceId: string; revoked: boolean; botId?: number };
 
 export type DiscordCommandPolicy = {
   viewerRoleIds: string[];
@@ -65,6 +66,7 @@ export type DiscordCommandDeps = {
   audit: (event: DiscordAuditEvent) => void;
   rateLimit?: { take(key: string, nowMs: number): boolean };
   nowMs?: () => number;
+  music?: { execute(intent: DiscordCommandIntent, binding: GuildBinding | null): Promise<CommandResult> };
 };
 
 const MANAGE_GUILD = 1n << 5n;
@@ -126,9 +128,6 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
     if (deps.rateLimit && !deps.rateLimit.take(`${intent.guildId}:${intent.userId}`, nowMs)) {
       return fail('rate_limited', 'You are sending commands too quickly.');
     }
-    if (isMusicCommand(intent.command)) {
-      return fail('not_implemented', 'Music commands are not available yet.');
-    }
 
     const binding = deps.bindings.get(intent.guildId);
     if (!binding || binding.revoked) {
@@ -139,6 +138,11 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
     if (!role) return fail('unauthorized', 'You do not have permission to use this command.');
     if (needsAdmin(intent.command) && role !== 'admin') {
       return fail('unauthorized', 'You do not have permission to use this command.');
+    }
+
+    if (isMusicCommand(intent.command)) {
+      if (!deps.music) return fail('not_implemented', 'Music commands are not available yet.');
+      return deps.music.execute(intent, binding);
     }
 
     if (intent.command === 'ts.help') return ok(HELP);

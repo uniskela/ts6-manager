@@ -1,11 +1,10 @@
 import type { CommandResult, DiscordCommandIntent } from './adapter.js';
-import { isMusicCommand } from './music.js';
 import { verifyDiscordSignature } from './security.js';
 
 type InteractionAdapter = { handle(intent: DiscordCommandIntent): Promise<CommandResult> };
 
 export function planAcknowledgement(command: string): CommandResult['ack'] {
-  return isMusicCommand(command) ? 'deferred' : 'immediate';
+  return command === 'play' || command === 'playlist' || command === 'radio' ? 'deferred' : 'immediate';
 }
 
 function commandFromData(data: { name?: string; options?: Array<{ name?: string }> } | undefined): string {
@@ -27,12 +26,20 @@ export function parseInteractionBody(body: string): DiscordCommandIntent | { pin
     if (parsed.type !== 2) return null;
     const command = commandFromData(parsed.data);
     if (!command || !parsed.guild_id || !parsed.member?.user?.id) return null;
+    const args: Record<string, string> = {};
+    for (const option of parsed.data?.options ?? []) {
+      if (option && typeof option.name === 'string' && typeof (option as { value?: unknown }).value === 'string') {
+        args[option.name] = (option as { value: string }).value;
+      }
+    }
     return {
       guildId: parsed.guild_id,
       userId: parsed.member.user.id,
       roleIds: parsed.member.roles ?? [],
       memberPermissions: parsed.member.permissions ?? '0',
       command,
+      args,
+      idempotencyKey: typeof (parsed as { id?: unknown }).id === 'string' ? (parsed as { id: string }).id : undefined,
     };
   } catch {
     return null;

@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createDiscordCommandAdapter, type DiscordCommandDeps, type DiscordCommandIntent } from './adapter.js';
-import { MUSIC_COMMANDS } from './music.js';
 import { MemoryCommandRateLimit } from './rate-limit.js';
 
 const GUILD = '111';
@@ -148,12 +147,12 @@ describe('read-only Discord command adapter', () => {
     assert.equal(bridge.ack, 'immediate');
   });
 
-  it('reserves Phase 2 music commands without mutating playback', async () => {
+  it('reserves Phase 2B music commands without mutating playback', async () => {
     let presenceCalls = 0;
     const adapter = createDiscordCommandAdapter(deps({
       presence: { async snapshot() { presenceCalls += 1; return null; } },
     }));
-    for (const command of MUSIC_COMMANDS) {
+    for (const command of ['pause', 'resume', 'skip', 'stop', 'playlist', 'radio', 'volume']) {
       const result = await adapter.handle(intent({ command, userId: ADMIN }));
       assert.equal(result.code, 'not_implemented', command);
       assert.equal(result.ok, false);

@@ -68,9 +68,17 @@ export async function startOrAppendMediaItem(
   return started ? false : null;
 }
 
+/** Shared queue mutation for TeamSpeak chat, HTTP play-url, and Discord /play. No chat reply. */
+export type MediaUrlApplyContext = {
+  voiceBotManager: { getBot(id: number): VoiceBot | undefined | null };
+  virtualServerIdForBot(botId: number): number;
+  saveMusicRequest(bot: VoiceBot, item: QueueItem | QueueItem[]): void;
+  chatMusicSwitch(bot: VoiceBot): { replaceSessionIds: string[] };
+};
+
 /** Append a resolved request, starting it only when music is idle. */
 export async function enqueueMediaItem(
-  context: CommandContext,
+  context: Pick<MediaUrlApplyContext, 'saveMusicRequest' | 'chatMusicSwitch'>,
   bot: VoiceBot,
   item: QueueItem,
   isCurrent: () => boolean,
@@ -84,38 +92,30 @@ export async function enqueueMediaItem(
   return queued;
 }
 
-/**
- * Resolve Spotify / Apple Music / YouTube Music / playlist URLs, download the first track,
- * and queue the rest in the background (same approach as play-url).
- */
-export async function enqueueMediaUrl(
-  context: CommandContext,
+export async function applyMediaUrlToBot(
+  context: MediaUrlApplyContext,
   botId: number,
   bot: VoiceBot,
-  userClid: number,
   rawUrl: string,
-  request = beginChatMediaRequest(botId),
+  request: ChatMediaRequest,
   deps: MediaUrlPipelineDeps = defaultMediaUrlDeps(),
-): Promise<void> {
+): Promise<{ alreadyPlaying: boolean; first: QueueItem; playlistNote: string } | null> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
   const isCurrent = () => !request.isCancelled()
     && context.voiceBotManager.getBot(botId) === bot
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
-  if (!isCurrent()) return;
-  await context.joinChannelForCommand(botId, bot, userClid);
-  if (!isCurrent()) return;
+  if (!isCurrent()) return null;
   let firstCall = true;
   let alreadyPlaying = false;
   let playbackAccepted = true;
-  // Room for every track of the link, held while its later tracks download.
   let reservation: QueueReservation | undefined;
 
   const result = await runMediaUrlPipeline(
     deps,
     {
-      play: async (item, opts) => {
+      play: async (item, _opts) => {
         const isFirst = firstCall;
         firstCall = false;
         const live = context.voiceBotManager.getBot(botId);
@@ -156,22 +156,36 @@ export async function enqueueMediaUrl(
     },
   );
 
-  if (!isCurrent() || !playbackAccepted) return;
-
+  if (!isCurrent() || !playbackAccepted) return null;
   const pendingTotal = result.queuedInBackground;
   const playlistNote =
     pendingTotal > 0
       ? ` (+${pendingTotal} more from${result.playlistTitle ? ` "${result.playlistTitle}"` : ' playlist'})`
       : '';
+  return { alreadyPlaying, first: result.first, playlistNote };
+}
 
-  if (alreadyPlaying) {
+export async function enqueueMediaUrl(
+  context: CommandContext,
+  botId: number,
+  bot: VoiceBot,
+  userClid: number,
+  rawUrl: string,
+  request = beginChatMediaRequest(botId),
+  deps: MediaUrlPipelineDeps = defaultMediaUrlDeps(),
+): Promise<void> {
+  if (request.isCancelled() || context.voiceBotManager.getBot(botId) !== bot) return;
+  await context.joinChannelForCommand(botId, bot, userClid);
+  const applied = await applyMediaUrlToBot(context, botId, bot, rawUrl, request, deps);
+  if (!applied) return;
+  if (applied.alreadyPlaying) {
     context.reply(
       bot,
       userClid,
-      `Queued: ${result.first.artist} - ${result.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${playlistNote}`,
+      `Queued: ${applied.first.artist} - ${applied.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${applied.playlistNote}`,
     );
   } else {
-    context.reply(bot, userClid, `Now playing: ${result.first.artist} - ${result.first.title}${playlistNote}`);
+    context.reply(bot, userClid, `Now playing: ${applied.first.artist} - ${applied.first.title}${applied.playlistNote}`);
   }
 }
 

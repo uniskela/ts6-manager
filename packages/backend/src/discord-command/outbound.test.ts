@@ -177,6 +177,8 @@ describe('acknowledgements', () => {
   it('acks read-only commands immediately and defers Phase 2 music', () => {
     assert.equal(planAcknowledgement('ts.help'), 'immediate');
     assert.equal(planAcknowledgement('ts.online'), 'immediate');
+    assert.equal(planAcknowledgement('queue'), 'immediate');
+    assert.equal(planAcknowledgement('nowplaying'), 'immediate');
     assert.equal(planAcknowledgement('play'), 'deferred');
   });
 });

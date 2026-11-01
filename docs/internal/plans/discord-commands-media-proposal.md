@@ -36,7 +36,24 @@ Not wired into Express. No new public port.
 - Hosted outbound session is in-memory; no Uniskela hub process.
 - `/ts online` is nicknames only and ephemeral; audit logs Discord user/guild ids, not TeamSpeak UIDs.
 
+## Phase 2A (this branch) — local library only
+
+`/play`, `/queue`, `/nowplaying` call `applyMediaUrlToBot`, which is also what TeamSpeak `enqueueMediaUrl` (`!play`) uses. One `PlayQueue`. Bot ID comes from `GuildBinding.botId` only. `authorizeMediaCommand` is the media gate.
+
+**Not done (do not treat as shipped):**
+
+| Gap | Status |
+|---|---|
+| `/play` search / library names | URL-only. Non-HTTP(S) queries are rejected. |
+| Live `VoiceBotManager` / Express / Discord command registration | Not wired. Tests use fakes. |
+| Guild→bot binding persistence | In-memory `GuildBinding` only. |
+| Music request history | Discord `saveMusicRequest` is a no-op on purpose. Existing history rows do not store a TeamSpeak clid; wire the real saver when the live bot is connected (Phase 2B). Optional requester label (Discord user vs TS uid) is a later milestone. |
+| Server-group DJ policy | Needs a **linked** TS uid + server groups via `identityForUser`. Empty identity fails closed. We do not invent a clid. |
+| Idempotency | In-process `MemoryReplayGuard` (60s). Lost on restart; a retried interaction id can play again after expiry. |
+| `/pause` `/resume` `/skip` `/stop` `/playlist` `/radio` `/volume` | `not_implemented` (Phase 2B). |
+| Hosted Uniskela hub | Not started. |
+
 ## Later
 
-Phase 2: `MusicCommandHandler` via `MusicCommandRequest`.  
+Phase 2B: idempotent pause/resume (not the chat toggle), skip/stop, playlist, radio, volume, URL+search `/play`.  
 Phase 3: real outbound connection to Uniskela + Connect Discord UI.
