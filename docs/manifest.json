@@ -91,6 +91,13 @@
       "kind": "doc"
     },
     {
+      "source": "docs/public/radio-fetcher.md",
+      "slug": "radio-fetcher",
+      "title": "Radio fetcher",
+      "group": "Deploy & operate",
+      "kind": "doc"
+    },
+    {
       "source": "docs/public/native-sidecar.md",
       "slug": "native-sidecar",
       "title": "Native media sidecar",

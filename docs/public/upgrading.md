@@ -19,6 +19,23 @@ Preserve:
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
 
+### Radio isolated fetcher
+
+**Breaking change for radio playback.** Remote radio no longer starts ffmpeg inside the backend. Every radio entry point (TeamSpeak, Discord, web, Auto-DJ, listener requests, queue next/prev) uses the isolated media fetcher. If the fetcher is not running, radio fails with *Radio playback needs the isolated media fetcher. Saved stations are unchanged.* There is no silent fallback and no public `MEDIA_FETCHER=legacy` override.
+
+This is a documented security change. Treat the release that ships it as **major** (`feat!:`) because existing installs lose radio until the overlay is added. Station rows are not modified.
+
+**What to do**
+
+1. Keep the existing database volume. Station records stay as they are.
+2. Add the [Radio fetcher](radio-fetcher.md) overlay to the split stack (`docker-compose.yml` + `docker-compose.media-fetcher.yml`).
+3. Create `.media-fetcher-token` and confirm the host has Linux 6.7+ with Landlock ABI ≥ 4.
+4. Play a saved station. Music and YouTube are unchanged.
+
+**All-in-one and native installs.** Radio fails closed until an equivalent fetcher is running. Do not expect the all-in-one image alone to play radio after this change.
+
+`MEDIA_EGRESS_PROXY=off` is still not a way to play radio.
+
 ### Upgrading to 1.10.0
 
 **Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.

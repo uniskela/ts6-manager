@@ -2,14 +2,8 @@ import { spawn, spawnSync, type ChildProcess } from "child_process";
 import type { Readable } from "stream";
 import OpusScript from "opusscript";
 import { validateUrl } from "../../utils/url-validator.js";
-import { RADIO_EGRESS_PORTS } from "../egress/egress-policy.js";
-import { acquireMediaEgress, egressEnvironment, MediaEgressError, mediaEgressEnabled } from "../egress/media-egress.js";
-import {
-  mediaFetcherEnabled,
-  radioAllowsHls,
-  RADIO_HLS_RESTRICTED,
-  submitMediaFetch,
-} from "../egress/media-fetcher-client.js";
+import { acquireMediaEgress, egressEnvironment, mediaEgressEnabled } from "../egress/media-egress.js";
+import { submitMediaFetch } from "../egress/media-fetcher-client.js";
 
 export const SAMPLE_RATE = 48000;
 export const CHANNELS = 2;
@@ -216,35 +210,14 @@ export class AudioPipeline {
   }
 
   /**
-   * Stream audio from a URL to raw PCM (for live radio streams).
-   * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
+   * Stream live radio through the isolated media fetcher.
+   * Never starts local ffmpeg. Missing or failed fetcher fails closed.
    */
   async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
     const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
     }
-    if (!mediaFetcherEnabled() && !radioAllowsHls() && /\.m3u8(\?|#|$)/i.test(url)) {
-      throw new MediaEgressError(RADIO_HLS_RESTRICTED);
-    }
-    if (mediaFetcherEnabled()) {
-      return submitMediaFetch(url);
-    }
-    if (/^https:/i.test(url)) assertFfmpegHttpsVerification();
-    const job = await acquireMediaEgress(url, FILE_STREAM_EGRESS_TTL_MS, { ports: RADIO_EGRESS_PORTS });
-    if (!job) throw new MediaEgressError();
-    const ffmpeg = spawn("ffmpeg", buildPcmStreamArgs(url), {
-      shell: false,
-      env: egressEnvironment(job.proxyUrl),
-    });
-    ffmpeg.once("close", () => job?.release());
-    ffmpeg.once("error", () => job?.release());
-    return {
-      stdout: ffmpeg.stdout,
-      process: ffmpeg,
-      kill: () => {
-        try { ffmpeg.kill("SIGKILL"); } catch { }
-      },
-    };
+    return submitMediaFetch(url);
   }
 }

@@ -10,6 +10,7 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [Install as an app](pwa.md) — iPhone/iPad, Android and desktop installation, updates and offline limits
 - [Configuration](configuration.md) — required secrets, TeamSpeak connection setup, and application settings
 - [Environment variables](environment-variables.md) — backend, frontend, and sidecar settings
+- [Radio fetcher](radio-fetcher.md) — isolated radio playback, Landlock, Compose overlay, and migration
 - [Native media sidecar](native-sidecar.md) — optional release binaries for host GPU encoders
 - [Upgrading](upgrading.md) — update containers without losing credentials or database state
 - [Beta releases](beta.md) — prerelease images, tester compose, and rollback (not production)

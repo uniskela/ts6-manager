@@ -1,5 +1,6 @@
-# Isolated radio fetcher overlay. Do not use as the only compose file.
+# Isolated radio fetcher overlay. Required for remote radio. Do not use as the only compose file.
 # Fetcher requires Landlock ABI >= 4 (Linux 6.7+). It will not start without it.
+# Without this overlay, radio fails closed. There is no legacy in-process fallback.
 #   docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml up
 # Backend stays on ts6-network only. Fetcher stays on ts6_fetch only.
 # No published fetcher/proxy ports. No Docker socket. No extra capabilities.

@@ -4,36 +4,28 @@ import net from 'node:net';
 import type { ChildProcess } from 'node:child_process';
 import { PassThrough, type Readable } from 'node:stream';
 import { RADIO_EGRESS_PORTS } from './egress-policy.js';
-import { MEDIA_LINK_UNAVAILABLE, MediaEgressError } from './media-egress.js';
+import { MediaEgressError } from './media-egress.js';
 
-/** MEDIA_FETCHER=1 routes radio through the isolated fetcher. Any other value leaves the in-process path. */
-export function mediaFetcherEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.MEDIA_FETCHER ?? '').trim() === '1';
+/** User-facing message when remote radio cannot use the isolated fetcher. */
+export const RADIO_FETCHER_UNAVAILABLE =
+  'Radio playback needs the isolated media fetcher. Saved stations are unchanged.';
+
+export const MEDIA_FETCHER_UNAVAILABLE = RADIO_FETCHER_UNAVAILABLE;
+
+function fetcherUnavailable(): MediaEgressError {
+  return new MediaEgressError(RADIO_FETCHER_UNAVAILABLE);
 }
-
-/**
- * Temporary HLS refusal for installs without the isolated fetcher.
- * RADIO_ALLOW_HLS=0 rejects .m3u8 URLs. This does not close the Debian
- * ffmpeg httpproxy SSRF gap for other playlist shapes.
- */
-export function radioAllowsHls(env: NodeJS.ProcessEnv = process.env): boolean {
-  return (env.RADIO_ALLOW_HLS ?? '1').trim() !== '0';
-}
-
-export const RADIO_HLS_RESTRICTED =
-  'HLS radio is disabled (RADIO_ALLOW_HLS=0) until the isolated media fetcher is enabled. This restriction does not fully resolve SSRF.';
-
-export const MEDIA_FETCHER_UNAVAILABLE = MEDIA_LINK_UNAVAILABLE;
 
 function readToken(env: NodeJS.ProcessEnv = process.env): string {
   const file = env.MEDIA_FETCHER_TOKEN_FILE;
-  if (!file) throw new MediaEgressError();
+  if (!file) throw fetcherUnavailable();
   try {
     const token = fs.readFileSync(file, 'utf8').replace(/\s+/g, '');
     if (token.length < 16) throw new Error('short');
     return token;
-  } catch {
-    throw new MediaEgressError();
+  } catch (err) {
+    if (err instanceof MediaEgressError) throw err;
+    throw fetcherUnavailable();
   }
 }
 
@@ -81,13 +73,13 @@ export async function submitMediaFetch(
     token = readToken(env);
   } catch (err) {
     if (err instanceof MediaEgressError) throw err;
-    throw new MediaEgressError();
+    throw fetcherUnavailable();
   }
   let socket: net.Socket;
   try {
     socket = await connectJob(sockPath);
   } catch {
-    throw new MediaEgressError();
+    throw fetcherUnavailable();
   }
   const stdout = new PassThrough();
   const proc = new EventEmitter() as ChildProcess;
@@ -105,7 +97,7 @@ export async function submitMediaFetch(
   let header: Record<string, unknown>;
   try {
     header = await new Promise<Record<string, unknown>>((resolve, reject) => {
-    const fail = () => reject(new MediaEgressError());
+    const fail = () => reject(fetcherUnavailable());
     socket.on('error', fail);
     socket.on('data', function onHead(chunk: Buffer) {
       buf = Buffer.concat([buf, chunk]);
@@ -115,7 +107,7 @@ export async function submitMediaFetch(
       socket.off('error', fail);
       let parsed: Record<string, unknown>;
       try { parsed = JSON.parse(buf.subarray(0, nl).toString()); } catch {
-        reject(new MediaEgressError());
+        reject(fetcherUnavailable());
         return;
       }
       buf = buf.subarray(nl + 1);
@@ -130,12 +122,12 @@ export async function submitMediaFetch(
     });
   } catch {
     socket.destroy();
-    throw new MediaEgressError();
+    throw fetcherUnavailable();
   }
 
   if (!header.ok) {
     socket.destroy();
-    throw new MediaEgressError();
+    throw fetcherUnavailable();
   }
   jobId = String(header.jobId ?? '');
   if (buf.length) stdout.write(buf);

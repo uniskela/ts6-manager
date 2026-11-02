@@ -208,6 +208,24 @@ Sidecars before 1.11.2 mark the stream's audio and video as send-and-receive (`a
 
 Upgrade ts6-manager to 1.11.2 or newer, including the media sidecar. That sidecar offers send-only media (`a=sendonly`), which beta5 answers. A Docker sidecar follows the image tag. Replace a [native sidecar](native-sidecar.md#version-compatibility) with the 1.11.2 archive.
 
+## Radio playback needs the isolated media fetcher
+
+Chat, Discord, the web Play button, Auto-DJ radio, listener requests and queue next/prev all use the same path. If the isolated fetcher is missing, misconfigured, or down, the user-facing message is:
+
+`Radio playback needs the isolated media fetcher. Saved stations are unchanged.`
+
+This is not a database problem. Station rows are left as they are.
+
+Check:
+
+1. the split stack includes `docker-compose.media-fetcher.yml`;
+2. `.media-fetcher-token` exists and is mounted read-only at `/run/media-fetcher-token`;
+3. `ts6-media-fetcher` and `ts6-media-egress-proxy` are running;
+4. the host kernel is Linux 6.7+ with Landlock ABI ≥ 4 (the fetcher exits on older kernels);
+5. `/jobs` is shared between backend and fetcher and writable by uid 1000.
+
+There is no supported `MEDIA_FETCHER=legacy` switch. See [Radio fetcher](radio-fetcher.md).
+
 ## Appearance custom CSS made the UI unusable
 
 Custom CSS is browser-local. Open:

@@ -1,6 +1,6 @@
 # Isolated media fetcher
 
-Radio PCM for `MEDIA_FETCHER=1`. Backend never joins `ts6_fetch`. Fetcher never joins the app network.
+Remote radio PCM. The backend never joins `ts6_fetch`. The fetcher never joins the app network. Radio fails closed if this service is not running.
 
 ## Landlock (mandatory)
 
@@ -16,6 +16,6 @@ Radio PCM for `MEDIA_FETCHER=1`. Backend never joins `ts6_fetch`. Fetcher never 
 
 Same runtime family as `Dockerfile.backend` production: `node:20-slim` + Debian ffmpeg. `ll-wrap` is compiled in-image (bookworm glibc).
 
-## Legacy radio (not the default yet)
+## No legacy fallback
 
-With `MEDIA_FETCHER` unset, `AudioPipeline.toPcmStream` still uses in-process ffmpeg + the checking proxy. That path does not close the Debian HLS `httpproxy` SSRF. `RADIO_ALLOW_HLS=0` only rejects `.m3u8` suffixes and is **not** comprehensive HLS prevention. A fail-closed default (radio requires the fetcher) is proposed; it is **not** enabled in this change.
+`AudioPipeline.toPcmStream` always submits to this fetcher. `MEDIA_FETCHER` unset, `0`, or `legacy` does not start in-process ffmpeg. Filename extensions and `RADIO_ALLOW_HLS` are not safety controls. Operator guide: [Radio fetcher](../../docs/public/radio-fetcher.md).
