@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -132,8 +133,12 @@ describe('real ffmpeg radio TLS verification', { skip: !haveFfmpeg }, () => {
 
   it('fetches an HTTPS HLS playlist and segment through the checked proxy', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'ts6-radio-hls-'));
+    const pinned: string[] = [];
     const proxy = new MediaEgressProxy({
-      permitAddress: (address) => address === '127.0.0.1',
+      permitAddress: (address) => {
+        pinned.push(address);
+        return address === '127.0.0.1';
+      },
       permitPort: () => true,
       resolve: async () => ['127.0.0.1'],
       log: () => {},
@@ -199,9 +204,102 @@ describe('real ffmpeg radio TLS verification', { skip: !haveFfmpeg }, () => {
       assert.ok(hits.some((path) => path.startsWith('/live.m3u8')), `${result.stderr} hits=${hits.join(',')}`);
       assert.ok(hits.some((path) => path.startsWith('/key.bin')), `${result.stderr} hits=${hits.join(',')}`);
       assert.ok(hits.some((path) => path.startsWith('/seg.ts')), `${result.stderr} hits=${hits.join(',')}`);
+      assert.ok(pinned.length >= 3, `nested hops must be pinned by the proxy (${pinned.length}): ${result.stderr}`);
     } finally {
       await proxy.close();
       await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not fetch HLS hops when the proxy refuses the destination', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'ts6-radio-hls-refuse-'));
+    const proxy = new MediaEgressProxy({
+      permitAddress: () => false,
+      permitPort: () => true,
+      resolve: async () => ['127.0.0.1'],
+      log: () => {},
+    });
+    try {
+      openssl(['req', '-x509', '-newkey', 'rsa:2048', '-keyout', join(dir, 'ca.key'), '-out', join(dir, 'ca.crt'),
+        '-days', '1', '-nodes', '-subj', '/CN=TS6-Test-CA']);
+      await writeFile(join(dir, 'match.cnf'), 'subjectAltName=IP:127.0.0.1\n');
+      openssl(['req', '-newkey', 'rsa:2048', '-keyout', join(dir, 'server.key'), '-out', join(dir, 'server.csr'),
+        '-nodes', '-subj', '/CN=127.0.0.1']);
+      openssl(['x509', '-req', '-in', join(dir, 'server.csr'), '-CA', join(dir, 'ca.crt'), '-CAkey', join(dir, 'ca.key'),
+        '-out', join(dir, 'server.crt'), '-days', '1', '-CAcreateserial', '-extfile', join(dir, 'match.cnf')]);
+      const hits: string[] = [];
+      const server = https.createServer({
+        cert: await readFile(join(dir, 'server.crt')),
+        key: await readFile(join(dir, 'server.key')),
+      }, (req, res) => {
+        hits.push(req.url ?? '');
+        res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+        res.end('#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:0.4,\nseg.ts\n#EXT-X-ENDLIST\n');
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      const port = (server.address() as import('node:net').AddressInfo).port;
+      const job = await proxy.issue(60_000, { ports: RADIO_EGRESS_PORTS });
+      await runFfmpeg(
+        tlsProbeArgs(`https://127.0.0.1:${port}/live.m3u8`, [
+          '-format_whitelist', 'hls,mpegts,mp3',
+          '-ca_file', join(dir, 'ca.crt'),
+        ]),
+        egressEnvironment(job.proxyUrl),
+      );
+      job.release();
+      server.close();
+      assert.deepEqual(hits, []);
+    } finally {
+      await proxy.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not open a raw tcp:// HLS segment beside the proxy', async () => {
+    const trap: net.Socket[] = [];
+    const silent = net.createServer((socket) => {
+      trap.push(socket);
+      socket.resume();
+    });
+    silent.listen(0, '127.0.0.1');
+    await once(silent, 'listening');
+    const trapPort = (silent.address() as net.AddressInfo).port;
+    const proxy = new MediaEgressProxy({
+      permitAddress: (address) => address === '127.0.0.1',
+      permitPort: (port) => port !== trapPort,
+      resolve: async () => ['127.0.0.1'],
+      log: () => {},
+    });
+    const origin = http.createServer((_req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+      res.end(`#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:0.2,\ntcp://127.0.0.1:${trapPort}/seg.ts\n#EXT-X-ENDLIST\n`);
+    });
+    origin.listen(0, '127.0.0.1');
+    await once(origin, 'listening');
+    const originPort = (origin.address() as net.AddressInfo).port;
+    try {
+      const job = await proxy.issue(60_000, { ports: RADIO_EGRESS_PORTS });
+      const result = await runFfmpeg(
+        [
+          '-protocol_whitelist', 'http,https,tls,tcp,httpproxy,crypto',
+          '-format_whitelist', 'hls,mpegts,mp3',
+          '-allowed_extensions', 'ALL',
+          '-i', `http://127.0.0.1:${originPort}/live.m3u8`,
+          '-t', '0.15',
+          '-f', 'null',
+          '-',
+        ],
+        egressEnvironment(job.proxyUrl),
+      );
+      job.release();
+      assert.notEqual(result.status, 0);
+      assert.equal(trap.length, 0, 'tcp:// must not connect around the proxy');
+    } finally {
+      for (const socket of trap) socket.destroy();
+      origin.close();
+      silent.close();
+      await proxy.close();
     }
   });
 

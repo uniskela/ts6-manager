@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { describe, it, mock } from 'node:test';
 import { setMediaEgressProxyForTests } from '../egress/media-egress.js';
+import { RADIO_HLS_RESTRICTED } from '../egress/media-fetcher-client.js';
 import { AudioPipeline, assertFfmpegHttpsVerification, buildPcmStreamArgs, resetFfmpegHttpsVerificationForTests } from './pipeline.js';
 
 describe('buildPcmStreamArgs', () => {
@@ -85,10 +86,59 @@ describe('toPcmStream media egress', () => {
     }
   });
 
+  it('fails closed without spawning ffmpeg when MEDIA_FETCHER=1 and the fetcher is down', async () => {
+    const previous = {
+      fetcher: process.env.MEDIA_FETCHER,
+      sock: process.env.MEDIA_FETCHER_SOCK,
+      token: process.env.MEDIA_FETCHER_TOKEN_FILE,
+    };
+    process.env.MEDIA_FETCHER = '1';
+    process.env.MEDIA_FETCHER_SOCK = '/tmp/ts6-missing-jobs.sock';
+    delete process.env.MEDIA_FETCHER_TOKEN_FILE;
+    const spawn = mock.method(childProcess, 'spawn', () => {
+      throw new Error('must not spawn');
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(() => new AudioPipeline().toPcmStream('https://93.184.215.14/radio'));
+      assert.equal(spawn.mock.calls.length, 0);
+    } finally {
+      spawn.mock.restore();
+      syncBuiltinESMExports();
+      if (previous.fetcher === undefined) delete process.env.MEDIA_FETCHER; else process.env.MEDIA_FETCHER = previous.fetcher;
+      if (previous.sock === undefined) delete process.env.MEDIA_FETCHER_SOCK; else process.env.MEDIA_FETCHER_SOCK = previous.sock;
+      if (previous.token === undefined) delete process.env.MEDIA_FETCHER_TOKEN_FILE; else process.env.MEDIA_FETCHER_TOKEN_FILE = previous.token;
+    }
+  });
+
+  it('rejects HLS radio when RADIO_ALLOW_HLS=0 and the isolated fetcher is off', async () => {
+    const previous = { hls: process.env.RADIO_ALLOW_HLS, fetcher: process.env.MEDIA_FETCHER };
+    process.env.RADIO_ALLOW_HLS = '0';
+    delete process.env.MEDIA_FETCHER;
+    const spawn = mock.method(childProcess, 'spawn', () => {
+      throw new Error('must not spawn');
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(
+        () => new AudioPipeline().toPcmStream('https://93.184.215.14/live.m3u8'),
+        (err: Error) => err.message === RADIO_HLS_RESTRICTED,
+      );
+      assert.equal(spawn.mock.calls.length, 0);
+    } finally {
+      spawn.mock.restore();
+      syncBuiltinESMExports();
+      if (previous.hls === undefined) delete process.env.RADIO_ALLOW_HLS; else process.env.RADIO_ALLOW_HLS = previous.hls;
+      if (previous.fetcher === undefined) delete process.env.MEDIA_FETCHER; else process.env.MEDIA_FETCHER = previous.fetcher;
+    }
+  });
+
   it('starts ffmpeg for radio with a checked proxy and releases it when ffmpeg exits', async () => {
     setMediaEgressProxyForTests(undefined);
     const previous = process.env.MEDIA_EGRESS_PROXY;
+    const previousFetcher = process.env.MEDIA_FETCHER;
     delete process.env.MEDIA_EGRESS_PROXY;
+    delete process.env.MEDIA_FETCHER;
     const calls: Array<{ env: NodeJS.ProcessEnv }> = [];
     const proc = Object.assign(new EventEmitter(), { stdout: new EventEmitter(), kill: () => true });
     const spawn = mock.method(childProcess, 'spawn', (_command: string, _args: string[], options: { env: NodeJS.ProcessEnv }) => {
@@ -105,6 +155,7 @@ describe('toPcmStream media egress', () => {
       spawn.mock.restore();
       syncBuiltinESMExports();
       if (previous === undefined) delete process.env.MEDIA_EGRESS_PROXY; else process.env.MEDIA_EGRESS_PROXY = previous;
+      if (previousFetcher === undefined) delete process.env.MEDIA_FETCHER; else process.env.MEDIA_FETCHER = previousFetcher;
       setMediaEgressProxyForTests(undefined);
     }
   });

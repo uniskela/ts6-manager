@@ -4,6 +4,12 @@ import OpusScript from "opusscript";
 import { validateUrl } from "../../utils/url-validator.js";
 import { RADIO_EGRESS_PORTS } from "../egress/egress-policy.js";
 import { acquireMediaEgress, egressEnvironment, MediaEgressError, mediaEgressEnabled } from "../egress/media-egress.js";
+import {
+  mediaFetcherEnabled,
+  radioAllowsHls,
+  RADIO_HLS_RESTRICTED,
+  submitMediaFetch,
+} from "../egress/media-fetcher-client.js";
 
 export const SAMPLE_RATE = 48000;
 export const CHANNELS = 2;
@@ -17,8 +23,11 @@ export function isRemoteInput(input: string): boolean {
 }
 
 /**
- * Protocols ffmpeg may open for a resolved track URL: HTTP(S) to the media
- * egress proxy only, so a playlist or redirect cannot open anything else.
+ * Protocols ffmpeg may open for a resolved track URL. HTTPS-via-proxy on
+ * Debian ffmpeg nests `httpproxy` (tls.c → httpproxy://proxy/origin), so that
+ * name has to stay. HLS 5.1 treats any proto prefix `http` as allowed, which
+ * includes `httpproxy://` segment URLs; those are a known remaining gap
+ * (playlist-named httpproxy is not the job proxy).
  */
 const REMOTE_PROTOCOLS = "http,https,tls,tcp,httpproxy,crypto";
 
@@ -214,6 +223,12 @@ export class AudioPipeline {
     const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
+    }
+    if (!mediaFetcherEnabled() && !radioAllowsHls() && /\.m3u8(\?|#|$)/i.test(url)) {
+      throw new MediaEgressError(RADIO_HLS_RESTRICTED);
+    }
+    if (mediaFetcherEnabled()) {
+      return submitMediaFetch(url);
     }
     if (/^https:/i.test(url)) assertFfmpegHttpsVerification();
     const job = await acquireMediaEgress(url, FILE_STREAM_EGRESS_TTL_MS, { ports: RADIO_EGRESS_PORTS });

@@ -113,6 +113,9 @@ export async function startMediaEgress(log: Pick<Console, 'log' | 'warn'> = cons
     log.warn('[MediaEgress] DISABLED by MEDIA_EGRESS_PROXY=off. Media downloads connect directly and are not checked at connection time; only YouTube links and searches are accepted until it is switched back on.');
     return;
   }
+  if ((process.env.MEDIA_FETCHER ?? '').trim() === '1') {
+    log.log('[MediaEgress] radio uses isolated fetcher (MEDIA_FETCHER=1); downloads still use the in-process proxy');
+  }
   const ignored = ignoredProxyVariables();
   if (ignored.length > 0 && !process.env.MEDIA_UPSTREAM_PROXY) {
     log.warn(`[MediaEgress] ${ignored.join(', ')} is set but media downloads no longer use it. Set MEDIA_UPSTREAM_PROXY if downloads must go through an outbound proxy.`);

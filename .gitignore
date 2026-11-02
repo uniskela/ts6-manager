@@ -18,4 +18,5 @@ build-and-push.ps1
 packages/frontend/test-results/
 packages/frontend/playwright-report/
 .pr-test/
+.media-fetcher-token
 bin/
