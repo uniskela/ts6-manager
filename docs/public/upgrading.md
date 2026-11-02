@@ -29,7 +29,7 @@ This is a documented security change. Treat the release that ships it as **major
 
 1. Keep the existing database volume. Station records stay as they are.
 2. Add the [Radio fetcher](radio-fetcher.md) overlay to the split stack (`docker-compose.yml` + `docker-compose.media-fetcher.yml`).
-3. Create `.media-fetcher-token` and confirm the host has Linux 6.7+ with Landlock ABI ≥ 4.
+3. Create `.media-fetcher-token` with `umask 077` (mode `600`, not `644`) and confirm the host has Linux 6.7+ with Landlock ABI ≥ 4. The overlay copies that file into the jobs volume; keep the host file owner-only.
 4. Play a saved station. Music and YouTube are unchanged.
 
 **All-in-one and native installs.** Radio fails closed until an equivalent fetcher is running. Do not expect the all-in-one image alone to play radio after this change.

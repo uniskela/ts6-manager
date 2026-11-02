@@ -50,7 +50,7 @@ describe('submitMediaFetch', () => {
       );
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-fetch-'));
       const token = path.join(dir, 'token');
-      fs.writeFileSync(token, '0123456789abcdef0123456789abcdef');
+      fs.writeFileSync(token, '0123456789abcdef0123456789abcdef', { mode: 0o600 });
       await assert.rejects(
         () => submitMediaFetch('https://203.0.113.10/live', {
           MEDIA_FETCHER: '0',
@@ -66,11 +66,34 @@ describe('submitMediaFetch', () => {
     }
   });
 
+  it('fails closed when the token file is world-readable', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-fetch-world-'));
+    const token = path.join(dir, 'token');
+    fs.writeFileSync(token, '0123456789abcdef0123456789abcdef', { mode: 0o644 });
+    fs.chmodSync(token, 0o644);
+    const spawn = mock.method(childProcess, 'spawn', () => {
+      throw new Error('must not spawn');
+    });
+    try {
+      await assert.rejects(
+        () => submitMediaFetch('https://203.0.113.10/live', {
+          MEDIA_FETCHER_SOCK: path.join(dir, 'jobs.sock'),
+          MEDIA_FETCHER_TOKEN_FILE: token,
+        }),
+        isUnavailable,
+      );
+      assert.equal(spawn.mock.calls.length, 0);
+    } finally {
+      spawn.mock.restore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('streams PCM after a successful job header and never starts ffmpeg', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-fetch-ok-'));
     const sockPath = path.join(dir, 'jobs.sock');
     const token = path.join(dir, 'token');
-    fs.writeFileSync(token, '0123456789abcdef0123456789abcdef');
+    fs.writeFileSync(token, '0123456789abcdef0123456789abcdef', { mode: 0o600 });
     const server = net.createServer((client) => {
       client.once('data', () => {
         client.write(`${JSON.stringify({ ok: true, jobId: 'j1' })}\n`);
@@ -109,7 +132,7 @@ describe('submitMediaFetch', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-fetch-no-'));
     const sockPath = path.join(dir, 'jobs.sock');
     const token = path.join(dir, 'token');
-    fs.writeFileSync(token, '0123456789abcdef0123456789abcdef');
+    fs.writeFileSync(token, '0123456789abcdef0123456789abcdef', { mode: 0o600 });
     const server = net.createServer((client) => {
       client.once('data', () => {
         client.write(`${JSON.stringify({ ok: false, error: 'denied' })}\n`);

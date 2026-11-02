@@ -14,7 +14,9 @@ Remote radio PCM. The backend never joins `ts6_fetch`. The fetcher never joins t
 | `unshare(CLONE_NEWNET)` | Still EPERM under default Docker; not used |
 | Rootful Docker | Unverified in this environment |
 
-Same runtime family as `Dockerfile.backend` production: `node:20-slim` + Debian ffmpeg. `ll-wrap` is compiled in-image (bookworm glibc).
+Same runtime family as `Dockerfile.backend` production: `node:20-slim` + Debian ffmpeg. `ll-wrap` is compiled in-image (bookworm glibc). The overlay image tag is `ts6-media-fetcher:local`; it is not published with the GHCR backend/frontend/sidecar images.
+
+Host token stays mode `600`. `install-token.mjs` (container uid 0) copies it to `/jobs/.token` as uid 1000 mode 600 so the fetcher and the stock backend image (root) can both read it under rootless Docker. World-readable tokens are refused.
 
 ## No legacy fallback
 

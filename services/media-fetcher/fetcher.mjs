@@ -4,9 +4,11 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
+import { radioFfmpegArgs } from './ffmpeg-args.mjs';
 import { landlockDisabledByEnv, parseCheckOutput } from './landlock.mjs';
 import { peerPid } from './peer-pid.mjs';
-import { RADIO_EGRESS_PORTS } from './policy.mjs';
+import { allocateJobId, allowTlsConnect, constrainRadioPorts, parseJobId } from './policy.mjs';
+import { assertPrivateTokenMode } from './token.mjs';
 
 const sockPath = process.env.JOBS_SOCK || '/jobs/jobs.sock';
 const ctlPath = process.env.PROXY_CTL || '/ctl/proxy.sock';
@@ -20,6 +22,7 @@ const jobs = new Map();
 function readToken() {
   const file = process.env.MEDIA_FETCHER_TOKEN_FILE;
   if (!file) throw new Error('MEDIA_FETCHER_TOKEN_FILE required');
+  assertPrivateTokenMode(fs.statSync(file).mode);
   const token = fs.readFileSync(file, 'utf8').replace(/\s+/g, '');
   if (token.length < 16) throw new Error('fetcher token too short');
   delete process.env.MEDIA_FETCHER_TOKEN;
@@ -141,18 +144,7 @@ function startFfmpeg(url, shimPort) {
     throw new Error('landlock required');
   }
   const ca = process.env.MEDIA_FETCHER_CA_FILE;
-  const args = [
-    '-hide_banner', '-nostdin', '-v', 'error',
-    '-protocol_whitelist', 'http,https,tls,tcp,httpproxy,crypto',
-    ...(url.startsWith('https:') ? ['-tls_verify', '1'] : []),
-    ...(url.startsWith('https:') && ca ? ['-ca_file', ca] : []),
-    '-format_whitelist', 'hls,mpegts,mp3,aac,ogg,flac,wav,webm,mov,mp4,m4a',
-    ...(url.includes('.m3u8') ? ['-allowed_extensions', 'ALL'] : []),
-    '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_delay_max', '5',
-    '-i', url,
-    '-f', 's16le', '-acodec', 'pcm_s16le', '-ar', '48000', '-ac', '2',
-    'pipe:1',
-  ];
+  const args = radioFfmpegArgs(url, { ca });
   const env = {
     PATH: process.env.PATH,
     http_proxy: `http://127.0.0.1:${shimPort}`,
@@ -213,9 +205,14 @@ async function handle(socket) {
       return;
     }
     if (msg.op === 'cancel') {
-      const job = jobs.get(msg.jobId);
+      const jobId = parseJobId(msg.jobId);
+      if (!jobId) {
+        socket.end(JSON.stringify({ ok: false, error: 'bad-job-id' }) + '\n');
+        return;
+      }
+      const job = jobs.get(jobId);
       await finish(job);
-      socket.end(JSON.stringify({ ok: true, cancelled: msg.jobId, existed: Boolean(job) }) + '\n');
+      socket.end(JSON.stringify({ ok: true, cancelled: jobId, existed: Boolean(job) }) + '\n');
       return;
     }
     if (msg.op !== 'submit') {
@@ -230,12 +227,27 @@ async function handle(socket) {
       socket.end(JSON.stringify({ ok: false, error: 'bad url' }) + '\n');
       return;
     }
-    const jobId = typeof msg.jobId === 'string' && msg.jobId ? msg.jobId.slice(0, 64) : randomBytes(4).toString('hex');
+    const allocated = allocateJobId(jobs, msg.jobId);
+    if (!allocated.ok) {
+      socket.end(JSON.stringify({ ok: false, error: allocated.error }) + '\n');
+      return;
+    }
+    const jobId = allocated.jobId;
     const jobToken = randomBytes(16).toString('hex');
-    const ports = (msg.ports || [...RADIO_EGRESS_PORTS]).map(Number);
+    const ports = constrainRadioPorts(msg.ports);
+    if (!ports) {
+      socket.end(JSON.stringify({ ok: false, error: 'bad-ports' }) + '\n');
+      return;
+    }
     const hosts = Array.isArray(msg.hosts) ? msg.hosts.map(String) : [];
     try {
-      const reg = await ctl('POST', '/jobs', { id: jobId, token: jobToken, hosts, ports });
+      const reg = await ctl('POST', '/jobs', {
+        id: jobId, token: jobToken, hosts, ports, connect: allowTlsConnect(msg.url),
+      });
+      if (reg.status === 409) {
+        socket.end(JSON.stringify({ ok: false, error: 'duplicate-job' }) + '\n');
+        return;
+      }
       if (reg.status !== 201) throw new Error('proxy register');
     } catch {
       socket.end(JSON.stringify({ ok: false, error: 'proxy-unavailable' }) + '\n');

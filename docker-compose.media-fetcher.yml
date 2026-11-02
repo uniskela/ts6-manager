@@ -5,23 +5,53 @@
 # Backend stays on ts6-network only. Fetcher stays on ts6_fetch only.
 # No published fetcher/proxy ports. No Docker socket. No extra capabilities.
 #
-# Create a token file (32+ hex) before starting:
+# Create a token file (32+ hex) before starting. Keep it owner-only on the host:
 #   umask 077; openssl rand -hex 32 > .media-fetcher-token
+# Rootless Docker maps that host file to container root. Do not chmod 644.
+# media-fetcher-token copies it into the jobs volume as uid 1000 mode 600.
 # Rootless named volumes may be root-owned; if bind fails:
 #   docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml \
 #     run --rm --user 0 media-fetcher chown -R node:node /jobs /ctl
+#
+# The overlay builds ts6-media-fetcher:local from this tree. It is not pulled from GHCR.
 
 services:
   backend:
     environment:
       - MEDIA_FETCHER=1
       - MEDIA_FETCHER_SOCK=/jobs/jobs.sock
-      - MEDIA_FETCHER_TOKEN_FILE=/run/media-fetcher-token
+      - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
     volumes:
       - ts6-jobs:/jobs
-      - ${MEDIA_FETCHER_TOKEN_FILE:-./.media-fetcher-token}:/run/media-fetcher-token:ro
     depends_on:
-      - media-fetcher
+      sidecar:
+        condition: service_started
+      media-fetcher-token:
+        condition: service_completed_successfully
+      media-fetcher:
+        condition: service_started
+
+  media-fetcher-token:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - TOKEN_SRC=/src/token
+      - TOKEN_DEST=/jobs/.token
+    volumes:
+      - ${MEDIA_FETCHER_TOKEN_FILE:-./.media-fetcher-token}:/src/token:ro
+      - ts6-jobs:/jobs
+    command: ["node", "/app/install-token.mjs"]
+    restart: "no"
+    networks:
+      ts6_fetch:
 
   media-egress-proxy:
     build:
@@ -66,15 +96,17 @@ services:
       - JOBS_SOCK=/jobs/jobs.sock
       - PROXY_CTL=/ctl/proxy.sock
       - PROXY_HOST=media-egress-proxy
-      - MEDIA_FETCHER_TOKEN_FILE=/run/media-fetcher-token
+      - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
       - FETCHER_MAX_JOBS=4
     volumes:
       - ts6-jobs:/jobs
       - ts6-ctl:/ctl
-      - ${MEDIA_FETCHER_TOKEN_FILE:-./.media-fetcher-token}:/run/media-fetcher-token:ro
     command: ["node", "/app/fetcher.mjs"]
     depends_on:
-      - media-egress-proxy
+      media-fetcher-token:
+        condition: service_completed_successfully
+      media-egress-proxy:
+        condition: service_started
     restart: unless-stopped
     networks:
       ts6_fetch:

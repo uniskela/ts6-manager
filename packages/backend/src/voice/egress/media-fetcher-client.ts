@@ -20,6 +20,8 @@ function readToken(env: NodeJS.ProcessEnv = process.env): string {
   const file = env.MEDIA_FETCHER_TOKEN_FILE;
   if (!file) throw fetcherUnavailable();
   try {
+    const st = fs.statSync(file);
+    if ((st.mode & 0o007) !== 0) throw new Error('world');
     const token = fs.readFileSync(file, 'utf8').replace(/\s+/g, '');
     if (token.length < 16) throw new Error('short');
     return token;

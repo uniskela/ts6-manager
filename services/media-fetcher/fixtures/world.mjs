@@ -79,16 +79,52 @@ const origin = https.createServer({
     req.on('close', () => clearInterval(iv));
     return;
   }
+  if (req.url?.startsWith('/https-bad.m3u8')) {
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+    res.end('#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttps://origin:8080/stream\n#EXT-X-ENDLIST\n');
+    return;
+  }
+  if (req.url?.startsWith('/file-token.m3u8')) {
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+    res.end('#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nfile:///jobs/.token\n#EXT-X-ENDLIST\n');
+    return;
+  }
+  if (req.url?.startsWith('/unix-ctl.m3u8')) {
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+    res.end('#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nunix:///ctl/proxy.sock\n#EXT-X-ENDLIST\n');
+    return;
+  }
   if (req.url?.startsWith('/stream')) {
     res.writeHead(200, { 'Content-Type': 'audio/mpeg' }).end(tone);
     return;
   }
   res.writeHead(404).end();
 });
-origin.listen(9443, '0.0.0.0');
+origin.listen(8443, '0.0.0.0');
 await once(origin, 'listening');
 
+openssl(['req', '-x509', '-newkey', 'rsa:2048', '-keyout', join(dir, 'bad.key'), '-out', join(dir, 'bad.crt'),
+  '-days', '1', '-nodes', '-subj', '/CN=origin', '-addext', 'subjectAltName=DNS:origin']);
+const untrusted = https.createServer({
+  cert: await readFile(join(dir, 'bad.crt')),
+  key: await readFile(join(dir, 'bad.key')),
+}, (_req, res) => {
+  res.writeHead(200, { 'Content-Type': 'audio/mpeg' }).end(tone);
+});
+untrusted.listen(8080, '0.0.0.0');
+await once(untrusted, 'listening');
+
 const iceast = http.createServer((req, res) => {
+  if (req.url?.startsWith('/https-hop.m3u8')) {
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+    res.end('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=128000\nhttps://origin:8443/live.m3u8\n');
+    return;
+  }
+  if (req.url?.startsWith('/https-bad.m3u8')) {
+    res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
+    res.end('#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttps://origin:8080/stream\n#EXT-X-ENDLIST\n');
+    return;
+  }
   if (req.url?.startsWith('/hold')) {
     res.writeHead(200, { 'Content-Type': 'audio/mpeg' });
     const iv = setInterval(() => { try { res.write(tone); } catch { /* closed */ } }, 400);

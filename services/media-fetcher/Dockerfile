@@ -17,7 +17,8 @@ RUN apt-get update \
   && chown node:node /jobs /ctl /app
 COPY --from=wrap /ll-wrap /usr/local/bin/ll-wrap
 RUN chmod 755 /usr/local/bin/ll-wrap
-COPY --chown=node:node fetcher.mjs proxy.mjs policy.mjs peer-pid.mjs landlock.mjs /app/
+COPY --chown=node:node fetcher.mjs proxy.mjs policy.mjs peer-pid.mjs landlock.mjs \
+  token.mjs ffmpeg-args.mjs install-token.mjs /app/
 USER node
 WORKDIR /app
 # Default command is the fetcher; compose overrides to proxy.mjs for the proxy service.

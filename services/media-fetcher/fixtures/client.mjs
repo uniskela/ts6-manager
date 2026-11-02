@@ -73,7 +73,7 @@ if (op === 'submit') {
     jobId: arg('id', ''),
     url: arg('url'),
     hosts: arg('hosts', 'origin').split(','),
-    ports: arg('ports', '9443,8000').split(',').map(Number),
+    ports: arg('ports', '8443,8000').split(',').map(Number),
   }, { collectPcm: true, timeoutMs: Number(arg('timeout', '15000')) });
   process.stdout.write(JSON.stringify({ header: result.header, bytes: result.bytes }) + '\n');
   process.exit(result.header?.ok && result.bytes > 0 ? 0 : 1);

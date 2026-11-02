@@ -1,8 +1,37 @@
 /** Address/port policy. Keep aligned with packages/backend/src/voice/egress/egress-policy.ts. */
+import { randomBytes } from 'node:crypto';
 import { BlockList, isIP } from 'node:net';
 
 export const MEDIA_EGRESS_PORTS = new Set([80, 443]);
 export const RADIO_EGRESS_PORTS = new Set([80, 443, 8000, 8008, 8080, 8443]);
+const JOB_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+
+export function constrainRadioPorts(requested) {
+  const src = Array.isArray(requested) && requested.length
+    ? requested.map(Number)
+    : [...RADIO_EGRESS_PORTS];
+  const ports = [...new Set(src.filter((p) => RADIO_EGRESS_PORTS.has(p)))];
+  return ports.length ? ports : null;
+}
+
+export function parseJobId(requested) {
+  return typeof requested === 'string' && JOB_ID_RE.test(requested) ? requested : null;
+}
+
+/** HTTP-start jobs cannot set ffmpeg tls_verify (httpproxy). Do not CONNECT. */
+export function allowTlsConnect(url) {
+  return typeof url === 'string' && /^https:/i.test(url);
+}
+
+export function allocateJobId(existing, requested) {
+  if (requested == null || requested === '') {
+    return { ok: true, jobId: randomBytes(8).toString('hex') };
+  }
+  const jobId = parseJobId(requested);
+  if (!jobId) return { ok: false, error: 'bad-job-id' };
+  if (existing.has(jobId)) return { ok: false, error: 'duplicate-job' };
+  return { ok: true, jobId };
+}
 
 const reserved = new BlockList();
 for (const [ip, prefix] of [

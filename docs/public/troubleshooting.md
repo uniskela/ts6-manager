@@ -218,11 +218,11 @@ This is not a database problem. Station rows are left as they are.
 
 Check:
 
-1. the split stack includes `docker-compose.media-fetcher.yml`;
-2. `.media-fetcher-token` exists and is mounted read-only at `/run/media-fetcher-token`;
+1. the split stack includes `docker-compose.media-fetcher.yml` and built `ts6-media-fetcher:local`;
+2. `.media-fetcher-token` exists, is mode `600`, and `media-fetcher-token` copied it to `/jobs/.token`;
 3. `ts6-media-fetcher` and `ts6-media-egress-proxy` are running;
 4. the host kernel is Linux 6.7+ with Landlock ABI ≥ 4 (the fetcher exits on older kernels);
-5. `/jobs` is shared between backend and fetcher and writable by uid 1000.
+5. `/jobs` is shared between backend and fetcher and writable by the fetcher (uid 1000).
 
 There is no supported `MEDIA_FETCHER=legacy` switch. See [Radio fetcher](radio-fetcher.md).
 

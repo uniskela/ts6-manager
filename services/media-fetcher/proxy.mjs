@@ -4,7 +4,7 @@ import { Resolver } from 'node:dns/promises';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
-import { pinMediaAddresses, RADIO_EGRESS_PORTS } from './policy.mjs';
+import { constrainRadioPorts, pinMediaAddresses } from './policy.mjs';
 
 const listenPort = Number(process.env.PROXY_PORT || 8080);
 const ctlPath = process.env.PROXY_CTL || '/ctl/proxy.sock';
@@ -136,7 +136,7 @@ server.on('connect', async (req, socket) => {
   const sep = req.url.lastIndexOf(':');
   const host = req.url.slice(0, sep);
   const port = Number(req.url.slice(sep + 1));
-  if (!allowedHost(job, host) || !allowedPort(job, port)) {
+  if (!job.connect || !allowedHost(job, host) || !allowedPort(job, port)) {
     socket.write('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
     socket.destroy();
     return;
@@ -194,15 +194,23 @@ async function control(req, res) {
         res.writeHead(400).end();
         return;
       }
-      const ports = Array.isArray(body.ports) ? body.ports.map(Number) : [...RADIO_EGRESS_PORTS];
-      if (!ports.every((p) => p > 0 && p < 65536)) {
+      const id = String(body.id);
+      for (const job of jobs.values()) {
+        if (job.id === id) {
+          res.writeHead(409).end();
+          return;
+        }
+      }
+      const ports = constrainRadioPorts(body.ports);
+      if (!ports) {
         res.writeHead(400).end();
         return;
       }
       jobs.set(tokenHash(body.token), {
-        id: String(body.id),
+        id,
         hosts: new Set((body.hosts || []).map((h) => String(h).toLowerCase())),
         ports: new Set(ports),
+        connect: body.connect === true,
         sockets: new Set(),
         abort: new AbortController(),
       });

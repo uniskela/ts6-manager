@@ -10,7 +10,6 @@ TOKEN_FILE="$WORKDIR/token"
 mkdir -p "$WORKDIR"
 umask 077
 openssl rand -hex 32 > "$TOKEN_FILE"
-chmod 644 "$TOKEN_FILE"
 
 P=ts6gatec
 cleanup() {
@@ -33,6 +32,16 @@ docker network create "${P}_app" >/dev/null
 docker volume create "${P}_jobs" >/dev/null
 docker volume create "${P}_ctl" >/dev/null
 docker run --rm -u 0 -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" "$IMAGE" chown -R node:node /jobs /ctl
+chmod 644 "$TOKEN_FILE"
+docker run --rm -u 0 -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" "$IMAGE" \
+  node /app/install-token.mjs >/dev/null 2>&1 && fail "world-readable token installed"
+chmod 600 "$TOKEN_FILE"
+docker run --rm -u 0 -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" \
+  -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token "$IMAGE" node /app/install-token.mjs \
+  || fail "token install"
+TOKEN_MODE=$(docker run --rm -u 1000 -v "${P}_jobs:/jobs" "$IMAGE" stat -c '%a' /jobs/.token)
+[ "$TOKEN_MODE" = "600" ] || fail "token mode $TOKEN_MODE"
+pass "token install mode $TOKEN_MODE"
 
 common=(--user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL)
 
@@ -54,7 +63,6 @@ docker logs "$P-proxy" 2>&1 | grep -q 'PROXY ready' || fail "proxy start"
 
 docker run -d --name "$P-fetcher" "${common[@]}" --network "${P}_fetch" \
   -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
-  -v "$TOKEN_FILE:/jobs/.token:ro" \
   -e JOBS_SOCK=/jobs/jobs.sock -e PROXY_CTL=/ctl/proxy.sock \
   -e PROXY_HOST=media-egress-proxy \
   -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token \
@@ -68,7 +76,6 @@ backend() {
   docker run --rm --user node --network "${P}_app" --security-opt=no-new-privileges \
     --read-only --tmpfs /tmp --cap-drop ALL \
     -v "${P}_jobs:/jobs" \
-    -v "$TOKEN_FILE:/jobs/.token:ro" \
     -v "$DIR/fixtures/client.mjs:/app/client.mjs:ro" \
     -e JOBS_SOCK=/jobs/jobs.sock \
     -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token \
@@ -105,7 +112,7 @@ echo "$UNAUTH" | grep -q unauthorized || fail "unauth $UNAUTH"
 pass "unix auth"
 
 # PCM paths
-HLS=$(backend submit --id legit --url https://origin:9443/live.m3u8 --ports 9443 || true)
+HLS=$(backend submit --id legit --url https://origin:8443/live.m3u8 --ports 8443 || true)
 echo "HLS $HLS"
 HLS_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HLS")
 if [ "$HLS_BYTES" -le 1000 ]; then
@@ -120,13 +127,49 @@ HTTP_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(
 [ "$HTTP_BYTES" -gt 1000 ] || fail "http iceast $HTTP"
 pass "HTTP Icecast $HTTP_BYTES"
 
-HTTPS=$(backend submit --id https1 --url https://origin:9443/stream --ports 9443 || true)
+HTTPS=$(backend submit --id https1 --url https://origin:8443/stream --ports 8443 || true)
 HTTPS_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HTTPS")
 [ "$HTTPS_BYTES" -gt 1000 ] || fail "https iceast $HTTPS"
 pass "HTTPS Icecast $HTTPS_BYTES"
 
+HOP=$(backend submit --id hop1 --url http://origin:8000/https-hop.m3u8 --ports 8000,8443 || true)
+HOP_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HOP")
+[ "$HOP_BYTES" -eq 0 ] || fail "HTTP-start HTTPS hop leaked $HOP"
+pass "HTTP-start CONNECT denied"
+
+docker exec "$P-fetcher" sh -c ': > /jobs/ff.err' || true
+BADCERT=$(backend submit --id badcert --url https://origin:8080/stream --ports 8080 || true)
+BADCERT_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$BADCERT")
+[ "$BADCERT_BYTES" -eq 0 ] || fail "untrusted HTTPS initial leaked $BADCERT"
+BADCERT_LOG=$(docker exec "$P-fetcher" sh -c 'cat /jobs/ff.err 2>/dev/null || true')
+echo "$BADCERT_LOG" | grep -Ei 'certificate|tls|gnutls|verify|self[- ]signed' >/dev/null \
+  || fail "untrusted HTTPS initial not a cert error: $BADCERT_LOG"
+pass "untrusted HTTPS initial blocked (cert)"
+
+BADHOP=$(backend submit --id badhop --url https://origin:8443/https-bad.m3u8 --ports 8443,8080 || true)
+BADHOP_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$BADHOP")
+[ "$BADHOP_BYTES" -eq 0 ] || fail "untrusted HTTPS hop leaked $BADHOP"
+pass "untrusted HTTPS-start hop blocked"
+
+HTTPBAD=$(backend submit --id httpbad --url http://origin:8000/https-bad.m3u8 --ports 8000,8080 || true)
+HTTPBAD_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HTTPBAD")
+[ "$HTTPBAD_BYTES" -eq 0 ] || fail "HTTP-start untrusted HTTPS leaked $HTTPBAD"
+pass "HTTP-start untrusted HTTPS denied"
+
+FILETOK=$(backend submit --id filetok --url https://origin:8443/file-token.m3u8 --ports 8443 || true)
+FILETOK_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$FILETOK")
+[ "$FILETOK_BYTES" -eq 0 ] || fail "file token playlist leaked $FILETOK"
+UNIXCTL=$(backend submit --id unixctl --url https://origin:8443/unix-ctl.m3u8 --ports 8443 || true)
+UNIXCTL_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$UNIXCTL")
+[ "$UNIXCTL_BYTES" -eq 0 ] || fail "unix ctl playlist leaked $UNIXCTL"
+pass "ffmpeg file/unix playlist blocked"
+
+BADPORT=$(backend submit --id ssh1 --url http://origin:8000/stream --ports 22 || true)
+echo "$BADPORT" | grep -q bad-ports || fail "unclamped ports $BADPORT"
+pass "ports clamped"
+
 # Original httpproxy HLS bypass
-BYPASS=$(backend submit --id bypass --url https://origin:9443/bypass.m3u8 --ports 9443 || true)
+BYPASS=$(backend submit --id bypass --url https://origin:8443/bypass.m3u8 --ports 8443 || true)
 BYPASS_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$BYPASS")
 [ "$BYPASS_BYTES" -eq 0 ] || fail "bypass leaked $BYPASS"
 TRAP=$(docker run --rm --network "${P}_world" "$IMAGE" node -e '
@@ -141,12 +184,14 @@ for i in $(seq 1 40); do grep -q shimPort "$WORKDIR/b.json" 2>/dev/null && break
 BPORT=$(node -e "const t=require('fs').readFileSync(process.argv[1],'utf8'); const m=t.match(/\"shimPort\":(\\d+)/); if(!m) process.exit(2); process.stdout.write(m[1]);" "$WORKDIR/b.json")
 [ -n "$BPORT" ] || fail "B shim $WORKDIR/b.json"
 docker exec "$P-world" sh -c "printf '%s\n' '127.0.0.1:${BPORT}' > /tmp/cross-target"
-A_CROSS=$(backend submit --id jobA --url https://origin:9443/cross.m3u8 --ports 9443 || true)
-A2=$(backend submit --id jobA2 --url "httpproxy://127.0.0.1:${BPORT}/http://origin:8000/stream" --ports 9443 || true)
+A_CROSS=$(backend submit --id jobA --url https://origin:8443/cross.m3u8 --ports 8443 || true)
+A2=$(backend submit --id jobA2 --url "httpproxy://127.0.0.1:${BPORT}/http://origin:8000/stream" --ports 8443 || true)
 A2_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$A2")
 [ "$A2_BYTES" -eq 0 ] || fail "cross-job inherit $A2"
 BST=$(backend status || true)
 echo "$BST" | grep -q jobB || fail "B gone during A2 $BST"
+DUP=$(backend submit --id jobB --url http://origin:8000/stream --ports 8000 || true)
+echo "$DUP" | grep -q duplicate-job || fail "duplicate id $DUP"
 pass "cross-job shim blocked (B=$BPORT A2 bytes=$A2_BYTES)"
 
 # Cancel / no leftover ffmpeg (jobB hold from the cross-job test must be gone first)
@@ -187,12 +232,12 @@ pass "no token in argv/environ"
 
 # Explicit Landlock disable cannot start
 NOLL=$(docker run --rm --name "$P-noll" --user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL \
-  -v "$TOKEN_FILE:/jobs/.token:ro" \
+  -v "${P}_jobs:/jobs" \
   -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token -e LL_WRAP=0 \
   "$IMAGE" node /app/fetcher.mjs 2>&1 || true)
 echo "$NOLL" | grep -q 'landlock required' || fail "LL_WRAP=0 not refused: $NOLL"
 FAKE=$(docker run --rm --user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL \
-  -v "$TOKEN_FILE:/jobs/.token:ro" \
+  -v "${P}_jobs:/jobs" \
   -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token -e LL_WRAP_PATH=/usr/bin/ffmpeg \
   "$IMAGE" node /app/fetcher.mjs 2>&1 || true)
 echo "$FAKE" | grep -Eq 'landlock unavailable|landlock wrapper missing|landlock required' || fail "fake wrap not refused: $FAKE"

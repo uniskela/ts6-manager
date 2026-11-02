@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { mediaEgressRefusal, pinMediaAddresses, RADIO_EGRESS_PORTS } from './policy.mjs';
+import {
+  allocateJobId,
+  allowTlsConnect,
+  constrainRadioPorts,
+  mediaEgressRefusal,
+  parseJobId,
+  pinMediaAddresses,
+  RADIO_EGRESS_PORTS,
+} from './policy.mjs';
 import { matchPeerInode } from './peer-pid.mjs';
 
 describe('media fetcher policy', () => {
@@ -21,6 +29,34 @@ describe('media fetcher policy', () => {
     assert.ok(RADIO_EGRESS_PORTS.has(8000));
     assert.ok(RADIO_EGRESS_PORTS.has(443));
     assert.equal(RADIO_EGRESS_PORTS.has(22), false);
+  });
+
+  it('clamps requested ports to the radio policy', () => {
+    assert.deepEqual(constrainRadioPorts(undefined).sort(), [...RADIO_EGRESS_PORTS].sort());
+    assert.deepEqual(constrainRadioPorts([8000, 22, 443]), [8000, 443]);
+    assert.equal(constrainRadioPorts([22, 9443]), null);
+    assert.equal(constrainRadioPorts(['nope']), null);
+  });
+
+  it('rejects duplicate and malformed job ids without replacing the live job', () => {
+    const jobs = new Map([['live-job', { id: 'live-job' }]]);
+    assert.equal(allocateJobId(jobs, 'live-job').error, 'duplicate-job');
+    assert.equal(jobs.get('live-job').id, 'live-job');
+    assert.equal(allocateJobId(jobs, '../x').error, 'bad-job-id');
+    assert.equal(allocateJobId(jobs, 'bad id').error, 'bad-job-id');
+    assert.equal(allocateJobId(jobs, 'ok_job-1').jobId, 'ok_job-1');
+    assert.match(allocateJobId(jobs, '').jobId, /^[a-f0-9]{16}$/);
+    assert.equal(parseJobId('live-job'), 'live-job');
+    assert.equal(parseJobId(''), null);
+    assert.equal(parseJobId('../x'), null);
+  });
+
+  it('allows TLS CONNECT only for HTTPS-start jobs', () => {
+    assert.equal(allowTlsConnect('https://203.0.113.10/live.m3u8'), true);
+    assert.equal(allowTlsConnect('http://203.0.113.10/live'), false);
+    assert.equal(allowTlsConnect('http://203.0.113.10/https-hop.m3u8'), false);
+    assert.equal(allowTlsConnect(''), false);
+    assert.equal(allowTlsConnect({ connect: true }), false);
   });
 });
 
