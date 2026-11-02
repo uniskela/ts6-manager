@@ -72,6 +72,136 @@ describe("SlotRouter", () => {
     r.leave("b");
     assert.equal(r.botCarriesAudio("overflow"), false);
   });
+  it("reassigns one occupant from a refused slot and never assigns that slot again", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.setSlotEligible(0, false);
+    assert.equal(r.destinationFor("a"), null);
+    assert.deepEqual(r.evictIneligible(), [{ uniqueId: "a", from: "slot-0", to: "slot-1" }]);
+    assert.equal(r.destinationFor("a"), "slot-1");
+    assert.equal(r.botCarriesAudio("slot-0"), false);
+    r.leave("a");
+    r.join("a");
+    assert.equal(r.destinationFor("a"), "slot-1");
+    r.join("b");
+    assert.equal(r.destinationFor("b"), "overflow");
+    assert.equal(r.destinationFor("b") === "slot-0", false);
+  });
+  it("drops a second occupant fail-closed instead of overwriting a live slot", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.join("b");
+    r.setSlotEligible(0, false);
+    const changes = r.evictIneligible();
+    assert.deepEqual(changes, [{ uniqueId: "a", from: "slot-0", to: null }]);
+    assert.equal(r.slotOccupant(1), "b");
+    assert.equal(r.destinationFor("a"), null);
+    assert.equal(r.isUnavailable("a"), true);
+    r.leave("a");
+    r.join("a-new");
+    assert.equal(r.destinationFor("a-new"), "overflow");
+    assert.equal(r.slotOccupant(1), "b");
+  });
+  it("places a dropped occupant only after the slot becomes eligible again", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.join("b");
+    r.setSlotEligible(0, false);
+    r.evictIneligible();
+    assert.equal(r.isUnavailable("a"), true);
+    const back = r.setSlotEligible(0, true);
+    assert.deepEqual(back, [{ uniqueId: "a", from: null, to: "slot-0" }]);
+    assert.equal(r.destinationFor("a"), "slot-0");
+    assert.equal(r.destinationFor("b"), "slot-1");
+  });
+  it("restores unavailable occupants onto overflow after overflow becomes usable", () => {
+    const r = new SlotRouter(5);
+    for (let i = 0; i < 6; i++) r.join(`u${i}`);
+    assert.equal(r.destinationFor("u5"), "overflow");
+    r.setOverflowEligible(false);
+    assert.equal(r.destinationFor("u5"), null);
+    assert.equal(r.isUnavailable("u5"), true);
+    for (let i = 0; i < 5; i++) assert.equal(r.destinationFor(`u${i}`), `slot-${i}`);
+    const back = r.setOverflowEligible(true);
+    assert.deepEqual(back, [{ uniqueId: "u5", from: null, to: "overflow" }]);
+    assert.equal(r.destinationFor("u5"), "overflow");
+    assert.deepEqual(r.overflowMembers(), ["u5"]);
+    assert.equal(r.isUnavailable("u5"), false);
+  });
+  it("gives a dropped occupant the slot freed when another occupant leaves", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.join("b");
+    r.setSlotEligible(0, false);
+    r.evictIneligible();
+    assert.equal(r.isUnavailable("a"), true);
+    const changes = r.leave("b");
+    assert.deepEqual(changes, [
+      { uniqueId: "b", from: "slot-1", to: null },
+      { uniqueId: "a", from: null, to: "slot-1" },
+    ]);
+    assert.equal(r.destinationFor("a"), "slot-1");
+    assert.equal(r.isUnavailable("a"), false);
+    assert.equal(r.slotOccupant(0), null);
+  });
+  it("A/B/C: restores unavailable A onto B's slot before overflow C", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.join("b");
+    r.setSlotEligible(0, false);
+    r.evictIneligible();
+    r.join("c");
+    assert.equal(r.destinationFor("a"), null);
+    assert.equal(r.isUnavailable("a"), true);
+    assert.equal(r.destinationFor("b"), "slot-1");
+    assert.equal(r.destinationFor("c"), "overflow");
+    const changes = r.leave("b");
+    assert.deepEqual(changes, [
+      { uniqueId: "b", from: "slot-1", to: null },
+      { uniqueId: "a", from: null, to: "slot-1" },
+    ]);
+    assert.equal(r.destinationFor("a"), "slot-1");
+    assert.equal(r.destinationFor("c"), "overflow");
+    assert.deepEqual(r.overflowMembers(), ["c"]);
+    assert.equal(r.isUnavailable("a"), false);
+    assert.equal(r.slotOccupant(0), null);
+  });
+  it("does not move an unavailable occupant onto overflow on a later join", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.join("b");
+    r.setSlotEligible(0, false);
+    r.evictIneligible();
+    assert.deepEqual(r.join("a"), []);
+    assert.equal(r.isUnavailable("a"), true);
+    assert.equal(r.destinationFor("a"), null);
+    assert.deepEqual(r.overflowMembers(), []);
+    r.join("c");
+    assert.equal(r.destinationFor("c"), "overflow");
+    assert.equal(r.isUnavailable("a"), true);
+  });
+  it("leave/rejoin keeps unavailable first, then overflow, then a new arrival", () => {
+    const r = new SlotRouter(2);
+    r.join("a");
+    r.join("b");
+    r.setSlotEligible(0, false);
+    r.evictIneligible();
+    r.join("c");
+    r.leave("b");
+    assert.equal(r.destinationFor("a"), "slot-1");
+    r.join("b");
+    assert.equal(r.destinationFor("b"), "overflow");
+    assert.deepEqual(r.overflowMembers(), ["c", "b"]);
+    r.leave("a");
+    assert.equal(r.destinationFor("c"), "slot-1");
+    assert.deepEqual(r.overflowMembers(), ["b"]);
+    r.join("d");
+    assert.equal(r.destinationFor("d"), "overflow");
+    assert.equal(r.destinationFor("c"), "slot-1");
+    assert.equal(r.destinationFor("a"), null);
+    assert.equal(r.isUnavailable("a"), false);
+    assert.equal(new Set(["c", "b", "d"]).size, 3);
+  });
 });
 
 describe("ReceiverElection", () => {
@@ -262,9 +392,9 @@ function recordingSink() {
 describe("TsToDiscordPipeline (simulated Discord sinks, real Opus)", () => {
   const codec = () => createOpusCodec("auto");
 
-  function setup(users: number) {
+  function setup(users: number, slotCount = 5) {
     const directory = new ClientDirectory();
-    const router = new SlotRouter(5);
+    const router = new SlotRouter(slotCount);
     const sinks = new Map<string, ReturnType<typeof recordingSink>>();
     for (const id of ["overflow", "slot-0", "slot-1", "slot-2", "slot-3", "slot-4"]) sinks.set(id, recordingSink());
     for (let i = 0; i < users; i++) {
@@ -312,6 +442,21 @@ describe("TsToDiscordPipeline (simulated Discord sinks, real Opus)", () => {
     pipe.onVoice(voicePacket(10, payload), 0);
     assert.deepEqual(sinks.get("slot-0")!.frames[0], payload);
     assert.equal(sinks.get("slot-1")!.frames.length, 0);
+  });
+
+  it("drops TeamSpeak audio when the assigned slot is refused and does not steal the other slot", () => {
+    const { pipe, sinks, router } = setup(2, 2);
+    router.setSlotEligible(0, false);
+    router.evictIneligible();
+    const payload = createOpusCodec("auto").encode(toneFrame(500, 0));
+    const dropped = pipe.onVoice(voicePacket(10, payload), 0);
+    const kept = pipe.onVoice(voicePacket(11, payload), 0);
+    assert.equal(dropped.kind, "dropped");
+    if (dropped.kind === "dropped") assert.equal(dropped.reason, "unavailable");
+    assert.equal(pipe.unavailable, 1);
+    assert.equal(sinks.get("slot-0")!.frames.length, 0);
+    assert.equal(kept.kind, "slot");
+    assert.equal(sinks.get("slot-1")!.frames.length, 1);
   });
 
   it("mixes the three overflow speakers of an eight-user channel onto the overflow bot only", () => {

@@ -174,6 +174,29 @@ export function observeDaveWs(ws: object, snap: DaveSnapshot | (() => DaveSnapsh
   };
 }
 
+/** Privacy-safe classifier for a DAVE lifecycle log. Does not claim a root cause of the original loss. */
+export type DaveLifecycleCause = "mls-transition" | "voice-session" | "membership" | "grace-cancel" | "dave-state";
+
+export function classifyDaveLifecycle(input: {
+  phase: string;
+  lastKind: DaveEventKind | null;
+  membersChanged: boolean;
+}): DaveLifecycleCause {
+  if (input.phase === "grace-cancelled") return "grace-cancel";
+  if (input.phase.startsWith("voice-")) return "voice-session";
+  if (
+    input.lastKind === "execute_transition" ||
+    input.lastKind === "commit" ||
+    input.lastKind === "welcome" ||
+    input.lastKind === "prepare_transition" ||
+    input.lastKind === "invalidate"
+  ) {
+    return "mls-transition";
+  }
+  if (input.membersChanged) return "membership";
+  return "dave-state";
+}
+
 /** One-line snapshot. Categories and integers only. */
 export function formatDaveSnapshot(snap: DaveSnapshot): string {
   const events = Object.entries(snap.events)

@@ -6,7 +6,7 @@ export const STATUS_FILE = "evidence/private-beta-status.json";
 export const HOST_STATUS_FILE = "evidence/host-status.json";
 export const EVENT_CAP = 200;
 
-export type BetaHealth = "starting" | "ok" | "degraded" | "parked" | "fail-closed";
+export type BetaHealth = "starting" | "ok" | "degraded" | "unavailable" | "parked" | "fail-closed";
 export type BetaEventKind =
   | "starting"
   | "bridge_running"
@@ -16,6 +16,8 @@ export type BetaEventKind =
   | "generation_changed"
   | "reconnect_scheduled"
   | "unhealthy"
+  | "slot_refused"
+  | "route_unavailable"
   | "stopping"
   | "stopped";
 
@@ -54,6 +56,7 @@ export interface BetaSnapshotIn {
     ownVoice?: number;
     excluded?: number;
     notInChannel?: number;
+    unavailable?: number;
   };
   tsTransport?: { whisperDropped?: number };
   senders?: Record<
@@ -75,6 +78,13 @@ export interface BetaSnapshotIn {
   voiceBots?: number;
   /** Same bots-only grant as DAVE idle park (voice-state plus MLS peers). Receiver optional at startup. */
   botsOnlyPark?: boolean;
+  refusedSlots?: string[];
+  unavailableRoutes?: number;
+  occupiedSlots?: number;
+  desiredSlots?: string[];
+  connectedSlots?: string[];
+  recovery?: Record<string, { used?: number; max?: number }>;
+  occupancy?: { slot: number; occupied?: boolean; occupant?: string | null; eligible: boolean }[];
 }
 
 export type ParkBot = { id: string; knownBotsOnlyChannel: boolean; connected?: boolean };
@@ -112,6 +122,36 @@ export function receiverDaveReady(snap: BetaSnapshotIn): boolean {
   return info?.ready === true && (info.protocolVersion ?? 0) >= 1;
 }
 
+function senderReady(s: { inChannel?: boolean; healthy?: boolean; daveReady?: boolean } | undefined): boolean {
+  return s?.inChannel === true && s?.healthy !== false && s?.daveReady === true;
+}
+
+function occupancyBlocked(snap: BetaSnapshotIn): boolean {
+  return (snap.occupancy ?? []).some((row) => {
+    const occupied = row.occupied === true || row.occupant != null;
+    return occupied && row.eligible === false;
+  });
+}
+
+function connectedSenderIds(snap: BetaSnapshotIn): Set<string> {
+  if (snap.connectedSlots) return new Set(snap.connectedSlots);
+  return new Set(Object.entries(snap.senders ?? {}).filter(([, s]) => s.inChannel === true).map(([id]) => id));
+}
+
+/** Desired/required senders. Empty desiredSlots means none required (idle). Occupied eligible slots otherwise. */
+function requiredSenderIds(snap: BetaSnapshotIn): string[] {
+  if (snap.desiredSlots) return snap.desiredSlots;
+  const fromOccupancy = (snap.occupancy ?? [])
+    .filter((row) => row.eligible && (row.occupied === true || row.occupant != null))
+    .map((row) => `slot-${row.slot}`);
+  if (fromOccupancy.length > 0) return fromOccupancy;
+  return [...connectedSenderIds(snap)];
+}
+
+function requiredSenderReady(snap: BetaSnapshotIn, id: string, connected: Set<string>): boolean {
+  return senderReady({ ...snap.senders?.[id], inChannel: connected.has(id) });
+}
+
 export function deriveHealth(snap: BetaSnapshotIn, started: boolean): BetaHealth {
   if (snap.state === "stopping" || snap.state === "stopped") return "fail-closed";
   if (!started || snap.state !== "running") return "starting";
@@ -123,7 +163,25 @@ export function deriveHealth(snap: BetaSnapshotIn, started: boolean): BetaHealth
     return "fail-closed";
   }
   if (!snap.receiver) return "fail-closed";
-  if ((snap.scheduledReconnects ?? 0) > 0 || sumValues(snap.decryptErrors) > 0 || sumValues(snap.recoveries) > 0) {
+  const refused = snap.refusedSlots?.length ?? 0;
+  const unavailable = snap.unavailableRoutes ?? 0;
+  const occupied = snap.occupiedSlots ?? 0;
+  const connected = connectedSenderIds(snap);
+  const required = requiredSenderIds(snap);
+  const usable = required.filter((id) => requiredSenderReady(snap, id, connected)).length;
+  const requiredGap = required.some((id) => !requiredSenderReady(snap, id, connected));
+  const blocked = occupancyBlocked(snap);
+  if ((unavailable > 0 && occupied === 0) || ((unavailable > 0 || blocked) && usable === 0 && required.length > 0)) {
+    return "unavailable";
+  }
+  if (
+    refused > 0 ||
+    unavailable > 0 ||
+    blocked ||
+    requiredGap ||
+    (snap.scheduledReconnects ?? 0) > 0 ||
+    sumValues(snap.decryptErrors) > 0
+  ) {
     return "degraded";
   }
   return "ok";
@@ -151,6 +209,13 @@ export function diffEvents(prev: BetaSnapshotIn | null, next: BetaSnapshotIn, ev
     emit("reconnect_scheduled", { count: next.scheduledReconnects ?? 0 });
   }
   if (prev.state === "running" && (next.state === "stopping" || next.state === "stopped")) emit("stopping");
+  const prevRefused = new Set(prev.refusedSlots ?? []);
+  for (const id of next.refusedSlots ?? []) {
+    if (!prevRefused.has(id)) emit("slot_refused", { slot: id });
+  }
+  if ((prev.unavailableRoutes ?? 0) === 0 && (next.unavailableRoutes ?? 0) > 0) {
+    emit("route_unavailable", { count: next.unavailableRoutes ?? 0 });
+  }
   return added;
 }
 
@@ -197,9 +262,19 @@ export function buildBetaStatus(input: {
       t2dOwnVoice: input.snap.t2d?.ownVoice ?? 0,
       t2dExcluded: input.snap.t2d?.excluded ?? 0,
       t2dNotInChannel: input.snap.t2d?.notInChannel ?? 0,
+      t2dUnavailable: input.snap.t2d?.unavailable ?? 0,
       tsWhisperDropped: input.snap.tsTransport?.whisperDropped ?? 0,
     },
     senders: input.snap.senders ?? {},
+    slots: {
+      desired: input.snap.desiredSlots ?? [],
+      connected: input.snap.connectedSlots ?? [],
+      refused: input.snap.refusedSlots ?? [],
+      occupied: input.snap.occupiedSlots ?? 0,
+      unavailableRoutes: input.snap.unavailableRoutes ?? 0,
+    },
+    recovery: input.snap.recovery ?? {},
+    occupancy: input.snap.occupancy ?? [],
     events: input.events.slice(-EVENT_CAP),
   };
 }
@@ -233,7 +308,7 @@ export function writeBetaStatusFiles(dir: string, status: Record<string, unknown
   writeAtomicJson(join(dir, "host-status.json"), hostStatusView(status), 0o644);
 }
 
-/** Docker HEALTHCHECK: fresh running status. Parked may lack a receiver; stale files fail. */
+/** Docker process liveness, not application audio readiness. Degraded/unavailable routing stays up. */
 export function healthcheckOk(status: Record<string, unknown>, now = Date.now()): boolean {
   if (status.mode !== PRIVATE_BETA_MODE) return false;
   const at = Date.parse(String(status.at ?? ""));
@@ -242,14 +317,14 @@ export function healthcheckOk(status: Record<string, unknown>, now = Date.now())
   if (status.health === "parked") return true;
   if (!status.receiver) return false;
   if (status.daveReady !== true) return false;
-  return status.health === "ok" || status.health === "degraded";
+  return status.health === "ok" || status.health === "degraded" || status.health === "unavailable";
 }
 
 /** Host `status` must not treat a leftover file as live health after the container stops. */
-export function hostHealthLabel(status: Record<string, unknown> | null, containerRunning: boolean): "ok" | "degraded" | "parked" | "fail-closed" | "starting" | "stale" | "absent" {
+export function hostHealthLabel(status: Record<string, unknown> | null, containerRunning: boolean): "ok" | "degraded" | "unavailable" | "parked" | "fail-closed" | "starting" | "stale" | "absent" {
   if (!containerRunning) return status ? "stale" : "absent";
   if (!status) return "absent";
   const h = status.health;
-  if (h === "ok" || h === "degraded" || h === "parked" || h === "fail-closed" || h === "starting") return h;
+  if (h === "ok" || h === "degraded" || h === "unavailable" || h === "parked" || h === "fail-closed" || h === "starting") return h;
   return "fail-closed";
 }

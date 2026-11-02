@@ -100,7 +100,12 @@ describe("private-beta status", () => {
     const host = hostStatusView(status);
     assert.equal("senders" in host, false);
     assert.equal("counters" in host, false);
-    assert.equal(deriveHealth(running, true), "ok", "receiver DAVE health is independent of sender playback");
+    assert.equal(deriveHealth(running, true), "ok", "receiver DAVE health is independent of sender playback counters");
+    assert.equal(
+      deriveHealth({ ...running, recoveries: { "slot-0": 4, "slot-1": 2 } }, true),
+      "ok",
+      "lifetime successful recoveries stay in diagnostics and must not force degraded",
+    );
   });
 
   it("derives fail-closed when DAVE is down or a duplicate receiver appears", () => {
@@ -124,6 +129,189 @@ describe("private-beta status", () => {
     assert.equal(deriveHealth({ ...running, duplicateReceivers: ["slot-1"] }, true), "fail-closed");
     assert.equal(deriveHealth({ ...running, scheduledReconnects: 1 }, true), "degraded");
     assert.equal(deriveHealth({ ...running, state: "stopping" }, true), "fail-closed");
+    assert.equal(
+      deriveHealth(
+        {
+          ...running,
+          receiver: "slot-1",
+          dave: { "slot-0": { protocolVersion: 1, ready: false }, "slot-1": { protocolVersion: 1, ready: true } },
+          refusedSlots: ["slot-0"],
+          occupiedSlots: 1,
+          unavailableRoutes: 0,
+          senders: {
+            ...running.senders,
+            "slot-0": { ...running.senders!["slot-0"]!, healthy: false, inChannel: false, daveReady: false },
+            "slot-1": { ...running.senders!["slot-1"]!, healthy: true, inChannel: true, daveReady: true },
+          },
+        },
+        true,
+      ),
+      "degraded",
+      "a healthy receiver must not hide a refused required sender",
+    );
+    assert.equal(
+      deriveHealth({ ...running, refusedSlots: ["slot-0"], unavailableRoutes: 1, occupiedSlots: 0 }, true),
+      "unavailable",
+    );
+    assert.equal(
+      deriveHealth(
+        {
+          ...running,
+          receiver: "slot-1",
+          dave: { "slot-1": { protocolVersion: 1, ready: true } },
+          occupiedSlots: 2,
+          occupancy: [
+            { slot: 0, occupied: true, eligible: true, occupant: null },
+            { slot: 1, occupied: true, eligible: true, occupant: null },
+          ],
+          senders: {
+            ...running.senders,
+            "slot-0": { ...running.senders!["slot-0"]!, healthy: true, inChannel: true, daveReady: false },
+            "slot-1": { ...running.senders!["slot-1"]!, healthy: true, inChannel: true, daveReady: true },
+          },
+        },
+        true,
+      ),
+      "degraded",
+      "an occupied sender without DAVE readiness is not ok",
+    );
+    assert.equal(
+      deriveHealth(
+        {
+          ...running,
+          receiver: "slot-1",
+          dave: { "slot-1": { protocolVersion: 1, ready: true } },
+          refusedSlots: ["slot-0"],
+          unavailableRoutes: 1,
+          occupiedSlots: 0,
+          occupancy: [
+            { slot: 0, occupied: false, eligible: false, occupant: null },
+            { slot: 1, occupied: false, eligible: true, occupant: null },
+          ],
+          senders: {
+            ...running.senders,
+            "slot-0": { ...running.senders!["slot-0"]!, healthy: false, inChannel: false, daveReady: false },
+            "slot-1": { ...running.senders!["slot-1"]!, healthy: false, inChannel: false, daveReady: true },
+          },
+        },
+        true,
+      ),
+      "unavailable",
+    );
+  });
+
+  it("required disconnected or DAVE-unready senders keep health off ok without restarting Docker", () => {
+    const pending = {
+      ...running,
+      desiredSlots: ["slot-0", "slot-1"],
+      connectedSlots: ["slot-0"],
+      occupiedSlots: 2,
+      occupancy: [
+        { slot: 0, occupied: true, eligible: true, occupant: null },
+        { slot: 1, occupied: true, eligible: true, occupant: null },
+      ],
+      senders: {
+        ...running.senders,
+        "slot-0": { ...running.senders!["slot-0"]!, healthy: true, inChannel: true, daveReady: true },
+        "slot-1": { ...running.senders!["slot-1"]!, healthy: true, inChannel: false, daveReady: false },
+      },
+    };
+    assert.equal(deriveHealth(pending, true), "degraded", "required sender still on its first join is not ok");
+
+    const disconnected = {
+      ...pending,
+      senders: {
+        ...pending.senders,
+        "slot-1": { ...pending.senders["slot-1"]!, healthy: false, inChannel: false, daveReady: false },
+      },
+    };
+    assert.equal(deriveHealth(disconnected, true), "degraded", "required disconnected sender is not ok");
+
+    const daveGrace = {
+      ...running,
+      desiredSlots: ["slot-0", "slot-1"],
+      connectedSlots: ["slot-0", "slot-1"],
+      occupiedSlots: 2,
+      senders: {
+        ...running.senders,
+        "slot-0": { ...running.senders!["slot-0"]!, healthy: true, inChannel: true, daveReady: true },
+        "slot-1": { ...running.senders!["slot-1"]!, healthy: true, inChannel: true, daveReady: false },
+      },
+    };
+    assert.equal(deriveHealth(daveGrace, true), "degraded", "required sender in DAVE grace is not ok");
+
+    const allUnavailable = {
+      ...running,
+      desiredSlots: ["slot-0", "slot-1"],
+      connectedSlots: [],
+      refusedSlots: ["slot-0", "slot-1"],
+      unavailableRoutes: 2,
+      occupiedSlots: 2,
+      occupancy: [
+        { slot: 0, occupied: true, eligible: false, occupant: null },
+        { slot: 1, occupied: true, eligible: false, occupant: null },
+      ],
+      senders: {
+        ...running.senders,
+        "slot-0": { ...running.senders!["slot-0"]!, healthy: false, inChannel: false, daveReady: false },
+        "slot-1": { ...running.senders!["slot-1"]!, healthy: false, inChannel: false, daveReady: false },
+      },
+    };
+    assert.equal(deriveHealth(allUnavailable, true), "unavailable");
+
+    const recovered = {
+      ...running,
+      desiredSlots: ["slot-0", "slot-1"],
+      connectedSlots: ["slot-0", "slot-1"],
+      occupiedSlots: 2,
+      senders: {
+        ...running.senders,
+        "slot-0": { ...running.senders!["slot-0"]!, healthy: true, inChannel: true, daveReady: true },
+        "slot-1": { ...running.senders!["slot-1"]!, healthy: true, inChannel: true, daveReady: true },
+      },
+    };
+    assert.equal(deriveHealth(recovered, true), "ok");
+
+    const empty = {
+      ...running,
+      desiredSlots: [],
+      connectedSlots: ["slot-0"],
+      occupiedSlots: 0,
+      occupancy: [
+        { slot: 0, occupied: false, eligible: true, occupant: null },
+        { slot: 1, occupied: false, eligible: true, occupant: null },
+      ],
+      senders: {
+        ...running.senders,
+        "slot-0": { ...running.senders!["slot-0"]!, healthy: true, inChannel: true, daveReady: true },
+        "slot-1": { ...running.senders!["slot-1"]!, healthy: true, inChannel: false, daveReady: true },
+      },
+    };
+    assert.equal(deriveHealth(empty, true), "ok", "empty channel with no required senders is not degraded");
+
+    const now = Date.parse(String(buildBetaStatus({ sourceCommit: "x", snap: running, events: [], started: true, singleAttempt: true }).at));
+    const pendingStatus = buildBetaStatus({ sourceCommit: "x", snap: pending, events: [], started: true, singleAttempt: false });
+    assert.equal(pendingStatus.health, "degraded");
+    assert.equal(healthcheckOk(pendingStatus, now), true, "degraded routing must not fail the Docker HEALTHCHECK");
+    const unavailableStatus = { ...pendingStatus, health: "unavailable" };
+    assert.equal(healthcheckOk(unavailableStatus, now), true);
+  });
+
+  it("Docker healthcheck stays live for degraded and unavailable so a refused sender cannot restart-loop", () => {
+    const ok = buildBetaStatus({ sourceCommit: "x", snap: running, events: [], started: true, singleAttempt: true });
+    const now = Date.parse(String(ok.at));
+    const degraded = buildBetaStatus({
+      sourceCommit: "x",
+      snap: { ...running, receiver: "slot-1", dave: { "slot-1": { protocolVersion: 1, ready: true } }, refusedSlots: ["slot-0"] },
+      events: [],
+      started: true,
+      singleAttempt: true,
+    });
+    const unavailable = { ...degraded, health: "unavailable" };
+    assert.equal(degraded.health, "degraded");
+    assert.equal(healthcheckOk(degraded, now), true);
+    assert.equal(healthcheckOk(unavailable, now), true);
+    assert.equal(healthcheckOk({ ...ok, daveReady: false, health: "fail-closed" }, now), false);
   });
 
   it("records bounded lifecycle events and never copies a secret-shaped field", () => {

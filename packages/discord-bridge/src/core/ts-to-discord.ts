@@ -19,7 +19,7 @@ export type RouteResult =
   | { kind: "slot"; bot: BotId; uniqueId: string }
   | { kind: "overflow"; uniqueId: string }
   | { kind: "end"; uniqueId: string }
-  | { kind: "dropped"; reason: "malformed" | "unknown-speaker" | "excluded" | "not-in-channel" | "own-voice" | "undecodable" | "unsupported-frame" | "disposed" };
+  | { kind: "dropped"; reason: "malformed" | "unknown-speaker" | "excluded" | "not-in-channel" | "own-voice" | "undecodable" | "unsupported-frame" | "disposed" | "unavailable" };
 
 /** A decoder unused for this long is released; the sweep runs at most this often. */
 const DECODER_IDLE_MS = 5_000;
@@ -67,6 +67,8 @@ export class TsToDiscordPipeline {
   ownVoice = 0;
   excluded = 0;
   notInChannel = 0;
+  /** Speaker is in the TeamSpeak channel but has no usable Discord destination. */
+  unavailable = 0;
   /** bot -> uniqueId -> frames, the per-speaker routing evidence. */
   readonly routed = new Map<BotId, Map<string, number>>();
   readonly overflowLatency = new LatencyStats();
@@ -80,7 +82,7 @@ export class TsToDiscordPipeline {
     const client = this.speakerOf(pkt);
     if ("kind" in client) return client;
     const dest = this.o.router.destinationFor(client.uniqueId);
-    if (!dest) return this.drop("not-in-channel");
+    if (!dest) return this.drop(this.o.router.isUnavailable(client.uniqueId) ? "unavailable" : "not-in-channel");
 
     this.received += 1;
     if (pkt.opus.length === 0) {
@@ -231,6 +233,7 @@ export class TsToDiscordPipeline {
     else if (reason === "unknown-speaker") this.unknownSpeakers += 1;
     else if (reason === "excluded") this.excluded += 1;
     else if (reason === "not-in-channel") this.notInChannel += 1;
+    else if (reason === "unavailable") this.unavailable += 1;
     return { kind: "dropped", reason };
   }
 

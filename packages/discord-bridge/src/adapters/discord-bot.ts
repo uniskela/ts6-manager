@@ -17,7 +17,7 @@ import {
 } from "@discordjs/voice";
 import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
-import { emptyDaveSnapshot, formatDaveSnapshot, observeDave, observeDaveWs, type DaveSnapshot } from "../core/dave-observe.js";
+import { classifyDaveLifecycle, emptyDaveSnapshot, formatDaveSnapshot, observeDave, observeDaveWs, type DaveSnapshot } from "../core/dave-observe.js";
 import { DaveSessionEpochs, daveSessionIdentity } from "../core/dave-session.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
@@ -186,6 +186,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private daveTrace: DaveSnapshot | null = null;
   /** Last DAVE lifecycle log identity (phase + protocol/status/membership/trace, not elapsedMs). */
   private lastDaveLifecycleKey: string | null = null;
+  private lastVoiceMembers = { members: 0, bots: 0 };
   /** When the live voice connection last became Ready; used only for elapsedMs diagnostics. */
   private connectedAt: number | null = null;
   /** Established DAVE sessions replaced by another while receiving (each one ended a receive generation). */
@@ -634,6 +635,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private updateDaveGrace(): void {
     const conn = this.connection;
     if (!conn || this.knownBotsOnly(conn)) {
+      if (this.graceTimer) this.logDaveLifecycle(conn, "grace-cancelled");
       this.clearGraceTimer();
       return;
     }
@@ -746,10 +748,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
       const elapsedMs = this.connectedAt === null ? "n/a" : Date.now() - this.connectedAt;
       const status = conn?.state.status ?? "none";
       const { members, bots } = this.voiceMemberCounts();
-      const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} ${trace}`;
+      const membersChanged = members !== this.lastVoiceMembers.members || bots !== this.lastVoiceMembers.bots;
+      this.lastVoiceMembers = { members, bots };
+      const cause = classifyDaveLifecycle({ phase, lastKind: this.daveTrace?.lastKind ?? null, membersChanged });
+      const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} cause=${cause} ${trace}`;
       if (key === this.lastDaveLifecycleKey) return;
       this.lastDaveLifecycleKey = key;
-      const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} ${trace}`;
+      const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} cause=${cause} ${trace}`;
       const severe = phase === "lost" || phase === "grace-expired" || phase === "voice-disconnected" || phase === "voice-destroyed";
       if (severe) this.o.log.warn(line);
       else this.o.log.info(line);
@@ -881,6 +886,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
    */
   get identityLookups() {
     return this.humans.stats();
+  }
+
+  recoveryBudget(): { used: number; max: number } {
+    return { used: this.budget.used, max: this.timing.maxRecoveries };
   }
 
   /** Admissions under the current receive generation (0 while not receiving). */

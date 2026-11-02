@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import type { BotPort, NickResult } from "../bridge/runtime.js";
 import { ClientDirectory } from "../core/client-directory.js";
 import type { BotId } from "../core/ids.js";
+import { JoinCancelled } from "../core/join-errors.js";
 
 /** A Discord bot as the runtime sees it, with switches for the failures the runtime must survive. */
 export class FakeBot extends EventEmitter implements BotPort {
@@ -16,6 +17,9 @@ export class FakeBot extends EventEmitter implements BotPort {
   /** While set, `join` waits for it (a reconnect that hangs). `leave()` aborts the wait. */
   gate: Promise<void> | null = null;
   failJoin: Error | null = null;
+  /** 0 = single-attempt: runtime refuses reconnect without calling join again. */
+  recoveryMax = 3;
+  recoveryUsed = 0;
   /** Mimic a bot that reports its own intentional leave as a failure (the baseline behaviour). */
   emitUnhealthyOnLeave = false;
   nickCalls: (string | null)[] = [];
@@ -47,7 +51,7 @@ export class FakeBot extends EventEmitter implements BotPort {
     this.order?.push(`${this.id}.join`);
     if (this.failJoin) throw this.failJoin;
     if (this.gate) {
-      const aborted = new Promise<never>((_, reject) => (this.abortJoin = () => reject(new Error("join aborted"))));
+      const aborted = new Promise<never>((_, reject) => (this.abortJoin = () => reject(new JoinCancelled())));
       await Promise.race([this.gate, aborted]);
     }
     this.inVoice = true;
@@ -95,6 +99,10 @@ export class FakeBot extends EventEmitter implements BotPort {
   }
 
   endSpeech(): void {}
+
+  recoveryBudget(): { used: number; max: number } {
+    return { used: this.recoveryUsed, max: this.recoveryMax };
+  }
 
   /** Simulates the Discord connection dying. */
   die(): void {
