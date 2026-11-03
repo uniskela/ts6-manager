@@ -110,7 +110,29 @@ describe('addUrlToPlaylist mode gate (finding #10)', () => {
     assert.equal(result.ok, true);
     assert.equal(db._songs.length, 1);
     assert.equal(db._songs[0].source, 'url');
+    assert.equal(db._songs[0].sourceUrl, 'https://8.8.8.8/ok.mp3');
+    assert.equal(db._songs[0].title, 'Media from 8.8.8.8');
+    assert.doesNotMatch(db._songs[0].title, /ok\.mp3/);
     assert.equal(db._links.length, 1);
+  });
+
+  it('finding #9: never stores password or query token in the song title', async () => {
+    const db = catalog([{
+      id: 30, name: 'Stream', mode: 'stream', youtubePlaylistId: null, serverConfigId: 9,
+    }]);
+    const url = 'https://dj:tok_en@cdn.example.test/live.m3u8?access_token=sekrit';
+    const result = await addUrlToPlaylist(db, {
+      query: 'Stream',
+      url,
+      serverConfigId: 9,
+    });
+    assert.equal(result.ok, true);
+    if (result.ok) {
+      assert.equal(result.title, 'Media from cdn.example.test');
+      assert.doesNotMatch(result.title, /tok_en|sekrit|dj:/);
+    }
+    assert.equal(db._songs[0].sourceUrl, url);
+    assert.doesNotMatch(db._songs[0].title, /tok_en|sekrit|dj:/);
   });
 
   it('treats legacy/null mode like REST (local) and refuses URL add', async () => {

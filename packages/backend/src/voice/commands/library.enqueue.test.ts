@@ -152,7 +152,8 @@ describe('enqueueSavedPlaylist queue integrity (finding #12)', () => {
       musicSwitch: { replaceSessionIds: [] },
     });
     assert.equal(result.ok, false);
-    assert.match(result.ok === false ? result.message : '', /decoder failed/);
+    assert.equal(result.ok === false ? result.message : '', 'Could not start playlist playback.');
+    assert.doesNotMatch(result.ok === false ? result.message : '', /decoder failed/);
     assert.deepEqual(bot.queue.getAll().map((item: QueueItem) => item.id), ['keep']);
     assert.equal(bot.queue.current, existing);
     assert.equal(bot.nowPlaying, null);

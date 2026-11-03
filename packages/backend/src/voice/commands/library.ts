@@ -1,5 +1,5 @@
 import type { VoiceBot } from '../voice-bot.js';
-import { MediaSessionConflictError } from '../media-session.js';
+import { MediaSessionConflictError, safeUrlDisplayTitle } from '../media-session.js';
 import { QueueFullError, type QueueItem } from '../playlist/queue.js';
 import { isYouTubeHostUrl } from '../audio/youtube.js';
 
@@ -182,8 +182,9 @@ export async function enqueueSavedPlaylist(
     // Clear audio only while this request still owns nowPlaying (not a newer Play B).
     if (first && bot.nowPlaying === first) bot.stopAudio({ keepPendingRequests: true });
     if (stillOurs()) releaseOwnedPlaylistItems(bot, items, previousCurrent);
-    if (err instanceof MediaSessionConflictError || err instanceof Error) {
-      return { ok: false, message: err.message };
+    if (err instanceof MediaSessionConflictError) return { ok: false, message: err.message };
+    if (err instanceof Error) {
+      return { ok: false, message: 'Could not start playlist playback.' };
     }
     throw err;
   }
@@ -298,8 +299,9 @@ export async function addUrlToPlaylist(
     if (!song) {
       song = await tx.song.create({
         data: {
-          // Temporary title; enrich title/duration/artwork later via the existing media pipeline.
-          title: input.url,
+          // Neutral title only — never store the raw URL (credentials/query may be present).
+          // Playback uses sourceUrl; metadata enrichment can replace the title later.
+          title: safeUrlDisplayTitle(input.url),
           artist: null,
           duration: null,
           filePath: '',

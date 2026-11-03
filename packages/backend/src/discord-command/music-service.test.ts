@@ -306,7 +306,8 @@ describe('Discord playback controls share TeamSpeak bot state', () => {
     const failedSkip = await music.execute(musicIntent({ command: 'skip' }), binding);
     assert.equal(failedSkip.ok, false);
     assert.equal(failedSkip.code, 'unavailable');
-    assert.match(failedSkip.content, /decoder failed/);
+    assert.equal(failedSkip.content, 'Skip failed.');
+    assert.doesNotMatch(failedSkip.content, /decoder failed/);
   });
 
   it('stop during radio keeps queued songs', async () => {
@@ -431,11 +432,11 @@ describe('Discord playback controls share TeamSpeak bot state', () => {
     assert.equal(bot.nowPlaying?.title, 'Two');
   });
 
-  it('finding #8: thrown command errors settle as failed and stay failed on retry', async () => {
+  it('finding #8/#9: thrown command errors settle as failed without leaking internals on retry', async () => {
     const bot = fakeBot('playing');
     bot.nowPlaying = track('cur', 'Current');
     bot.applyVolume = async () => {
-      throw new Error('volume backend down');
+      throw new Error('ECONNREFUSED /var/run/sidecar.sock token=leak-me');
     };
     const music = createMusicCommandService(serviceOpts(bot));
     const intent = musicIntent({
@@ -446,10 +447,51 @@ describe('Discord playback controls share TeamSpeak bot state', () => {
     const first = await music.execute(intent, binding);
     const second = await music.execute(intent, binding);
     assert.equal(first.ok, false);
-    assert.match(first.content, /volume backend down/);
+    assert.equal(first.content, 'Could not set volume.');
+    assert.doesNotMatch(first.content, /ECONNREFUSED|sidecar\.sock|leak-me/);
     assert.equal(second.ok, false);
     assert.equal(second.content, first.content);
     assert.equal(bot.currentConfig.volume, 40);
+  });
+
+  it('finding #9: play failures and URL titles stay free of secrets', async () => {
+    const bot = fakeBot();
+    const secret = 'https://u:p@host.example/x?token=abc';
+    bot.play = async () => {
+      throw new Error(`ffmpeg failed open ${secret} at /data/music/.cache/x`);
+    };
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: {
+        ...stubPipeline(track('t', secret)),
+        downloadTrack: async () => ({ ...track('t', secret), title: secret, sourceUrl: secret }),
+      },
+    }));
+    const failed = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/ok.mp3' },
+      idempotencyKey: 'play-secret-err',
+    }), binding);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.content, 'Playback failed.');
+    assert.doesNotMatch(failed.content, /u:p@|token=abc|\/data\/music/);
+
+    bot.play = async (item: QueueItem) => {
+      bot.nowPlaying = item;
+      bot.status = 'playing';
+    };
+    const catalog = fakeCatalog();
+    const added = await createMusicCommandService(serviceOpts(bot, { prisma: catalog })).execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Rock', url: secret },
+    }), binding);
+    // SSRF validator rejects credentialed hosts before add — either path must not echo secrets.
+    if (added.ok) {
+      assert.doesNotMatch(added.content, /u:p@|token=abc|p@host/);
+      assert.match(added.content, /Media from /);
+    } else {
+      assert.doesNotMatch(added.content, /u:p@|token=abc/);
+    }
   });
 
   it('uses the bound bot id, never a client-supplied bot id', async () => {

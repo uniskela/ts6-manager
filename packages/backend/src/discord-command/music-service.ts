@@ -28,9 +28,11 @@ import { formatRadioListMessage } from '../voice/ts6-chat-format.js';
 import { validateUrl } from '../utils/url-validator.js';
 import type { VoiceBot } from '../voice/voice-bot.js';
 import type { CommandResult, DiscordCommandIntent, GuildBinding } from './adapter.js';
+import { publicMediaTitle } from '../voice/media-session.js';
 import { formatBotNowPlaying, formatBotQueue } from './music-inspect.js';
 import { PHASE_2A_MUSIC_COMMANDS, PHASE_2B_1_MUSIC_COMMANDS, PHASE_2B_2_MUSIC_COMMANDS, isMusicCommand } from './music.js';
 import { MemoryCommandIdempotency, musicIdempotencyKey } from './idempotency.js';
+import { publicCommandError } from './public-messages.js';
 
 export type MusicCommandService = {
   execute(intent: DiscordCommandIntent, binding: GuildBinding | null): Promise<CommandResult>;
@@ -135,7 +137,7 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     } catch (err) {
       const failed = fail(
         'unavailable',
-        err instanceof Error ? err.message : 'Command failed.',
+        publicCommandError(err, 'Command failed.'),
         ack,
       );
       idempotency.complete(key, failed, nowMs());
@@ -193,11 +195,13 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       return once(intent, 'immediate', async () => {
         try {
           const result = await skipPlayback(bot, { replaceSessionIds: [] });
-          if (result.kind === 'skipped') return ok(`Skipped to: ${result.title}`);
+          if (result.kind === 'skipped') {
+            const title = publicMediaTitle(result.title, bot.nowPlaying?.sourceUrl);
+            return ok(`Skipped to: ${title}`);
+          }
           return ok('Queue empty — playback stopped.');
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'Skip failed.';
-          return fail('unavailable', message);
+          return fail('unavailable', publicCommandError(err, 'Skip failed.'));
         }
       });
     }
@@ -215,8 +219,7 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
           await bot.applyVolume(level);
           return ok(`Volume set to ${bot.currentConfig.volume}%.`);
         } catch (err) {
-          const message = err instanceof Error ? err.message : 'Could not set volume.';
-          return fail('unavailable', `Could not set volume: ${message}`);
+          return fail('unavailable', publicCommandError(err, 'Could not set volume.'));
         }
       });
     }
@@ -288,14 +291,14 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
           request.discard();
           return fail('unavailable', 'Could not start playback.', 'deferred');
         }
+        const title = publicMediaTitle(applied.first.title, applied.first.sourceUrl ?? url);
         if (applied.alreadyPlaying) {
-          return ok(`Queued: ${applied.first.artist ?? ''} - ${applied.first.title}${applied.playlistNote}`.replace(' - ', ' — ').trim(), 'deferred');
+          return ok(`Queued: ${applied.first.artist ?? ''} - ${title}${applied.playlistNote}`.replace(' - ', ' — ').trim(), 'deferred');
         }
-        return ok(`Now playing: ${applied.first.artist ?? ''} — ${applied.first.title}${applied.playlistNote}`, 'deferred');
+        return ok(`Now playing: ${applied.first.artist ?? ''} — ${title}${applied.playlistNote}`, 'deferred');
       } catch (err) {
         request.discard();
-        const message = err instanceof Error ? err.message : 'Playback failed.';
-        return fail('unavailable', message, 'deferred');
+        return fail('unavailable', publicCommandError(err, 'Playback failed.'), 'deferred');
       }
     });
   }
@@ -345,8 +348,7 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
           return ok(`Now playing: ${matches[0].name}`, 'deferred');
         } catch (err) {
           request.discard();
-          const message = err instanceof Error ? err.message : 'Radio playback failed.';
-          return fail('unavailable', message, 'deferred');
+          return fail('unavailable', publicCommandError(err, 'Radio playback failed.'), 'deferred');
         }
       });
     }
@@ -390,7 +392,8 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       return once(intent, 'deferred', async () => {
         const result = await addUrlToPlaylist(deps.prisma!, { query: name, url, serverConfigId });
         if (!result.ok) return fail('unavailable', result.message, 'deferred');
-        return ok(`Added to "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`, 'deferred');
+        const title = publicMediaTitle(result.title, url);
+        return ok(`Added to "${result.playlist.slice(0, 60)}": ${title.slice(0, 80)}`, 'deferred');
       });
     }
     const name = arg(intent, 'name', 'playlist');
@@ -399,7 +402,8 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     return once(intent, 'immediate', async () => {
       const result = await removeTrackFromPlaylist(deps.prisma!, { query: name, track, serverConfigId });
       if (!result.ok) return fail('unavailable', result.message);
-      return ok(`Removed from "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`);
+      const title = publicMediaTitle(result.title);
+      return ok(`Removed from "${result.playlist.slice(0, 60)}": ${title.slice(0, 80)}`);
     });
   }
 
