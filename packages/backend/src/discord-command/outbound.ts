@@ -8,18 +8,22 @@ export type OutboundEnvelope = {
   nonce: string;
   body: string;
   signatureHex: string;
-  nowMs?: number;
 };
 
 /**
  * Customer → Uniskela session. The hub pushes signed intents on this
  * connection; TS6 Manager never exposes an inbound command HTTP route.
+ *
+ * Clock skew uses the receiver clock only (`opts.nowMs` / `Date.now()`).
+ * Envelope fields never supply the verification clock.
  */
 export function createOutboundCommandSession(opts: {
   instanceId: string;
   secret: string;
   adapter: SessionAdapter;
   replay: ReplayGuard;
+  nowMs?: () => number;
+  maxAgeMs?: number;
 }) {
   let revoked = false;
 
@@ -39,7 +43,8 @@ export function createOutboundCommandSession(opts: {
         body: envelope.body,
         signatureHex: envelope.signatureHex,
         replay: opts.replay,
-        nowMs: envelope.nowMs,
+        nowMs: opts.nowMs?.() ?? Date.now(),
+        maxAgeMs: opts.maxAgeMs,
       });
       if (!verified.ok) {
         return { ok: false, code: verified.code, ephemeral: true, content: 'Rejected.', ack: 'immediate' };

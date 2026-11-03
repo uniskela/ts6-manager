@@ -48,6 +48,7 @@ describe('outbound hosted session (no inbound public API)', () => {
       secret: 'instance-secret',
       adapter,
       replay: new MemoryReplayGuard(),
+      nowMs: () => 1_700_000_000_000,
     });
     const timestamp = '1700000000';
     const nonce = 'out-1';
@@ -57,7 +58,6 @@ describe('outbound hosted session (no inbound public API)', () => {
       nonce,
       body,
       signatureHex: signInvokeHmac({ secret: 'instance-secret', timestamp, nonce, body }),
-      nowMs: 1_700_000_000_000,
     });
     assert.equal(result.ok, true);
     assert.match(result.content, /\/ts help/);
@@ -65,6 +65,7 @@ describe('outbound hosted session (no inbound public API)', () => {
 
   it('rejects a replayed outbound envelope before the adapter runs', async () => {
     let handles = 0;
+    let nowMs = 1_700_000_000_000;
     const adapter = {
       async handle() {
         handles += 1;
@@ -76,6 +77,7 @@ describe('outbound hosted session (no inbound public API)', () => {
       secret: 'instance-secret',
       adapter,
       replay: new MemoryReplayGuard(),
+      nowMs: () => nowMs,
     });
     const timestamp = '1700000000';
     const nonce = 'out-1';
@@ -85,12 +87,40 @@ describe('outbound hosted session (no inbound public API)', () => {
       nonce,
       body,
       signatureHex: signInvokeHmac({ secret: 'instance-secret', timestamp, nonce, body }),
-      nowMs: 1_700_000_000_000,
     };
     await session.receive(envelope);
-    const replayed = await session.receive({ ...envelope, nowMs: 1_700_000_000_100 });
+    nowMs = 1_700_000_000_100;
+    const replayed = await session.receive(envelope);
     assert.equal(handles, 1);
     assert.equal(replayed.code, 'replay');
+  });
+
+  it('ignores attacker-supplied envelope.nowMs for clock checks (#6)', async () => {
+    let handles = 0;
+    const session = createOutboundCommandSession({
+      instanceId: 'inst-1',
+      secret: 'instance-secret',
+      adapter: {
+        async handle() {
+          handles += 1;
+          return { ok: true, ephemeral: false, content: 'x', ack: 'immediate' as const };
+        },
+      },
+      replay: new MemoryReplayGuard(),
+      nowMs: () => 1_700_000_000_000,
+    });
+    const timestamp = '1000000000'; // far in the past on the receiver clock
+    const nonce = 'out-spoof-clock';
+    const body = JSON.stringify(helpIntent());
+    const result = await session.receive({
+      timestamp,
+      nonce,
+      body,
+      signatureHex: signInvokeHmac({ secret: 'instance-secret', timestamp, nonce, body }),
+      nowMs: 1_000_000_000_000,
+    } as Parameters<typeof session.receive>[0] & { nowMs: number });
+    assert.equal(result.code, 'replay');
+    assert.equal(handles, 0);
   });
 
   it('drops commands after revocation', async () => {
@@ -100,6 +130,7 @@ describe('outbound hosted session (no inbound public API)', () => {
       secret: 'instance-secret',
       adapter,
       replay: new MemoryReplayGuard(),
+      nowMs: () => 1_700_000_000_000,
     });
     session.revoke();
     const timestamp = '1700000000';
@@ -110,7 +141,6 @@ describe('outbound hosted session (no inbound public API)', () => {
       nonce,
       body,
       signatureHex: signInvokeHmac({ secret: 'instance-secret', timestamp, nonce, body }),
-      nowMs: 1_700_000_000_000,
     });
     assert.equal(result.code, 'unpaired');
   });
