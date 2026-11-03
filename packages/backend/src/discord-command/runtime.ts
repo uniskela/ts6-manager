@@ -13,13 +13,14 @@ import type { DiscordInteractionFollowUp } from './follow-up.js';
  * Do not treat MemoryGuildBindingLookup as production persistence.
  */
 export type GuildBindingLookup = {
-  get(guildId: string): GuildBinding | null;
+  get(guildId: string): GuildBinding | null | Promise<GuildBinding | null>;
 };
 
+/** Test double only — never auto-installed in production. */
 export class MemoryGuildBindingLookup implements GuildBindingLookup {
   constructor(private readonly rows: Map<string, GuildBinding> = new Map()) {}
 
-  get(guildId: string): GuildBinding | null {
+  async get(guildId: string): Promise<GuildBinding | null> {
     return this.rows.get(guildId) ?? null;
   }
 

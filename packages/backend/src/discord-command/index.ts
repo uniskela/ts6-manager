@@ -38,6 +38,14 @@ export {
   type GuildBindingLookup,
 } from './runtime.js';
 export {
+  assertDiscordGuildId,
+  createDiscordGuildBindingService,
+  createPrismaGuildBindingLookup,
+  type DiscordGuildBindingRow,
+  type DiscordGuildBindingService,
+  type GuildBindingWriteInput,
+} from './guild-bindings.js';
+export {
   MUSIC_COMMANDS,
   PHASE_2A_MUSIC_COMMANDS,
   PHASE_2B_1_MUSIC_COMMANDS,

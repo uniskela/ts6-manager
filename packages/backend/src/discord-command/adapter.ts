@@ -30,7 +30,13 @@ export type CommandResult = {
   ack: 'immediate' | 'deferred' | 'pong';
 };
 
-export type GuildBinding = { instanceId: string; revoked: boolean; botId?: number };
+export type GuildBinding = {
+  instanceId: string;
+  revoked: boolean;
+  botId?: number;
+  /** Authorised TeamSpeak server for this guild (set by persistent bindings). */
+  serverConfigId?: number;
+};
 
 export type DiscordCommandPolicy = {
   viewerRoleIds: string[];
@@ -60,7 +66,8 @@ export type DiscordAuditEvent = {
 };
 
 export type DiscordCommandDeps = {
-  bindings: { get(guildId: string): GuildBinding | null };
+  /** Sync or async; persistent stores are async. */
+  bindings: { get(guildId: string): GuildBinding | null | Promise<GuildBinding | null> };
   policy: DiscordCommandPolicy;
   presence: { snapshot(): Promise<PresenceSnapshot | null> };
   bridge: { health(): Promise<BridgeSnapshot | null> };
@@ -130,7 +137,12 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
       return fail('rate_limited', 'You are sending commands too quickly.');
     }
 
-    const binding = deps.bindings.get(intent.guildId);
+    let binding: GuildBinding | null;
+    try {
+      binding = await deps.bindings.get(intent.guildId);
+    } catch {
+      return fail('unavailable', 'Guild binding lookup is unavailable.');
+    }
     if (!binding || binding.revoked) {
       return fail('unpaired', 'This Discord server is not connected to TS6 Manager.');
     }

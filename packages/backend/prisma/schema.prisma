@@ -77,6 +77,7 @@ model TsServerConfig {
   playlists     Playlist[]
   iptvPlaylists IptvPlaylist[]
   iptvChannelPicks IptvChannelPick[]
+  discordGuildBindings DiscordGuildBinding[]
 }
 
 model BotFlow {
@@ -176,6 +177,26 @@ model MusicBot {
   updatedAt       DateTime  @updatedAt
 
   playlists Playlist[]
+  discordGuildBindings DiscordGuildBinding[]
+}
+
+/// Discord guild → TeamSpeak music bot binding (Phase 2C).
+/// guildId is the Discord snowflake string (never coerced to JS number).
+/// One row per guild; revoke in place rather than deleting history of the pair.
+model DiscordGuildBinding {
+  id             Int            @id @default(autoincrement())
+  guildId        String         @unique
+  instanceId     String
+  serverConfigId Int
+  serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
+  musicBotId     Int
+  musicBot       MusicBot       @relation(fields: [musicBotId], references: [id], onDelete: Restrict)
+  revoked        Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([serverConfigId])
+  @@index([musicBotId])
 }
 
 model Song {
