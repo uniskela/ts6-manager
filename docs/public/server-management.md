@@ -27,7 +27,7 @@ Administrators can:
 
 ### Channel icons
 
-TeamSpeak stores icons on the virtual server itself and a channel refers to one by number. In a channel's **Edit** dialog, **Server icons** lists the icons already on the server with previews; click one to use it, or pick the crossed circle for no icon. An administrator can **Upload** a PNG, JPEG or GIF (at most 256 KB; TeamSpeak shows icons at 16×16) and delete icons that are no longer wanted. Deleting an icon removes it from every channel and group still using it.
+TeamSpeak stores icons on the virtual server itself and a channel refers to one by number. In a channel's **Edit** dialog, **Server icons** lists the icons already on the server with previews; click one to use it, or pick the crossed circle for no icon. An administrator can **Upload** a PNG, JPEG, GIF or SVG (at most 256 KB; TeamSpeak shows icons at 16×16) and delete icons that are no longer wanted. SVG previews are shown as images only, so scripts or links inside an SVG never run in the manager. Deleting an icon removes it from every channel and group still using it.
 
 Icons travel over the server's SSH query connection and TeamSpeak's file-transfer port (30033 by default), so SSH credentials must be set on the connection and the manager must be able to reach that port. The query login needs TeamSpeak's icon management permission (`b_icon_manage`) to upload or delete.
 

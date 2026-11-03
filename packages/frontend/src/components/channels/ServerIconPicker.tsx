@@ -37,7 +37,7 @@ export function ServerIconPicker({ value, onSelect }: Readonly<{ value: number; 
           <p className="text-xs font-medium">Server icons</p>
           <p className="text-[10px] text-muted-foreground">Icons stored on this TeamSpeak server. Click one to use it for this channel.</p>
         </div>
-        <input ref={input} type="file" accept="image/png,image/jpeg,image/gif" aria-label="Upload icon"
+        <input ref={input} type="file" accept="image/png,image/jpeg,image/gif,image/svg+xml,.svg" aria-label="Upload icon"
           className="hidden" disabled={upload.isPending} onChange={(e) => {
             const file = e.target.files?.[0];
             e.target.value = '';
@@ -90,7 +90,7 @@ export function ServerIconPicker({ value, onSelect }: Readonly<{ value: number; 
       )}
       {data?.truncated && <p className="text-[10px] text-muted-foreground">Showing the newest {data.icons.length} icons.</p>}
 
-      <p className="text-[10px] text-muted-foreground">PNG, JPEG or GIF, at most {maxKb} KB. TeamSpeak shows icons at 16×16.</p>
+      <p className="text-[10px] text-muted-foreground">PNG, JPEG, GIF or SVG, at most {maxKb} KB. TeamSpeak shows icons at 16×16.</p>
       {upload.error && <p role="alert" className="text-[10px] text-destructive">{apiErrorMessage(upload.error, 'Could not upload icon')}</p>}
 
       <ConfirmDialog
