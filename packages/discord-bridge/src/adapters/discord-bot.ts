@@ -156,8 +156,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private failures = 0;
   /** The DAVE session that was poisoned. The replacement must be a different object. */
   private poisonedDave: object | null = null;
-  /** The DAVE session the packet waiting for dispatch was encrypted under. */
-  private preparedFor: object | null = null;
+  /** Session epoch the packet waiting for dispatch was prepared under. Null when none. */
+  private preparedForEpoch: number | null = null;
   private readonly budget: RebuildBudget;
   private readonly humans: HumanFilter;
   /** Who may be heard under the current receive generation; null while not receiving. */
@@ -524,19 +524,27 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private installDaveGuards(conn: VoiceConnection): void {
     const prepare = conn.prepareAudioPacket.bind(conn);
     conn.prepareAudioPacket = (buffer) => {
-      if (!this.sendAllowed(conn)) return undefined;
-      const under = this.currentDave(conn); // the session in force when encryption starts, not when it ends
+      // Refuse and forget any prior prepare: a failed gate must not leave a stale epoch for dispatch.
+      if (!this.sendAllowed(conn)) {
+        this.preparedForEpoch = null;
+        return undefined;
+      }
+      const epoch = this.sessionEpoch(conn); // capture before encrypt; reinit mid-flight advances this
+      if (epoch === null) {
+        this.preparedForEpoch = null;
+        return undefined;
+      }
       const packet = prepare(buffer);
-      this.preparedFor = under;
+      this.preparedForEpoch = packet == null ? null : epoch;
       return packet;
     };
-    // The player prepares on one tick and dispatches on the next. DAVE can be lost in between, so
-    // the prepared packet is re-checked against the live session when it is about to leave.
+    // The player prepares on one tick and dispatches on the next. DAVE can be lost or reinited in
+    // between, so the prepared packet is re-checked against the live session epoch when it leaves.
     const dispatch = conn.dispatchAudio.bind(conn);
     conn.dispatchAudio = () => {
-      const preparedFor = this.preparedFor;
-      this.preparedFor = null;
-      if (!this.sendAllowed(conn) || preparedFor === null || preparedFor !== this.currentDave(conn)) return false;
+      const preparedForEpoch = this.preparedForEpoch;
+      this.preparedForEpoch = null; // one-shot: a stale/late callback cannot reuse the previous epoch
+      if (!this.sendAllowed(conn) || preparedForEpoch === null || preparedForEpoch !== this.sessionEpoch(conn)) return false;
       return dispatch();
     };
     const play = conn.playOpusPacket.bind(conn);
@@ -963,7 +971,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.daveOk = false;
     this.daveTrace = null;
     this.connectedAt = null;
-    this.preparedFor = null;
+    this.preparedForEpoch = null;
     this.daveEpochs.forget();
     this.abortJoin?.abort();
     this.stopReceive(conn);

@@ -302,4 +302,78 @@ describe("the packet is checked again at the moment it leaves, not only when it 
     assert.equal(h.networking.wire.filter((p) => !isSilence(p)).length, 0, "the stale packet never left");
     await t.bot.destroy();
   });
+
+  it("a packet prepared before an in-place DAVESession.reinit() is not dispatched", async () => {
+    const election = new ReceiverElection(preferredOrder(5));
+    const t = testBot("slot-0", election, { timing: { watchdogMs: 5000 } });
+    const h = await t.join();
+    const epochBefore = t.bot.daveSession;
+    const prepare = h.networking.prepareAudioPacket.bind(h.networking);
+    let reinited = false;
+    h.networking.prepareAudioPacket = (opus: Buffer) => {
+      const packet = prepare(opus);
+      if (!reinited) {
+        reinited = true;
+        // Same wrapper/Networking/native objects, ready throughout: wrapper identity cannot see this.
+        h.reinitDave();
+      }
+      return packet;
+    };
+    t.bot.sendOpus(Buffer.from([0xfc, 44, 44, 44]));
+    await waitFor(() => reinited, 1000, "the first packet was prepared then reinited");
+    await tick(120);
+    assert.ok(t.bot.daveSession !== null && t.bot.daveSession! > epochBefore!, "reinit advances the session epoch");
+    assert.equal(h.networking.wire.filter((p) => !isSilence(p)).length, 0, "ciphertext from the old epoch must not leave");
+    await t.bot.destroy();
+  });
+
+  it("fresh packets after an in-place reinit still leave encrypted under the new epoch", async () => {
+    const election = new ReceiverElection(preferredOrder(5));
+    const t = testBot("slot-0", election, { timing: { watchdogMs: 5000 } });
+    const h = await t.join();
+    const prepare = h.networking.prepareAudioPacket.bind(h.networking);
+    let reinited = false;
+    h.networking.prepareAudioPacket = (opus: Buffer) => {
+      const packet = prepare(opus);
+      if (!reinited) {
+        reinited = true;
+        h.reinitDave();
+      }
+      return packet;
+    };
+    t.bot.sendOpus(Buffer.from([0xfc, 45, 45, 45]));
+    await waitFor(() => reinited, 1000, "stale prepare completed");
+    await tick(120);
+    assert.equal(h.networking.wire.filter((p) => !isSilence(p)).length, 0, "stale packet dropped");
+    h.networking.prepareAudioPacket = prepare; // restore: later prepares are under the new epoch only
+    h.networking.wire.length = 0;
+    await waitFor(() => {
+      t.bot.sendOpus(Buffer.from([0xfc, 46, 46, 46]));
+      return h.networking.wire.some((p) => isDave(p) && p.includes(46));
+    }, 1500, "encrypted frames after reinit");
+    assert.deepEqual(plaintextMedia(h.networking.wire), []);
+    await t.bot.destroy();
+  });
+
+  it("welcome and commit on the live wrapper do not interrupt outbound audio", async () => {
+    const election = new ReceiverElection(preferredOrder(5));
+    const t = testBot("slot-0", election, { timing: { watchdogMs: 5000 } });
+    const h = await t.join();
+    const epoch = t.bot.daveSession;
+    await waitFor(() => {
+      t.bot.sendOpus(Buffer.from([0xfc, 47, 47, 47]));
+      return h.networking.wire.some((p) => isDave(p) && p.includes(47));
+    }, 1500, "playback started");
+    // Welcome/commit join or advance the MLS group; they are not a session replacement.
+    h.dave.processWelcome(Buffer.from([1, 2, 3]));
+    h.dave.processCommit(Buffer.from([4, 5, 6]));
+    assert.equal(t.bot.daveSession, epoch, "welcome/commit keep the same session epoch");
+    h.networking.wire.length = 0;
+    await waitFor(() => {
+      t.bot.sendOpus(Buffer.from([0xfc, 48, 48, 48]));
+      return h.networking.wire.some((p) => isDave(p) && p.includes(48));
+    }, 1500, "audio continues after welcome/commit");
+    assert.deepEqual(plaintextMedia(h.networking.wire), []);
+    await t.bot.destroy();
+  });
 });
