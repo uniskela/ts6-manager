@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import express from 'express';
 import net from 'node:net';
-import { iconRoutes, MAX_ICON_BYTES, parseIconId } from './icons.routes.js';
+import { iconImageMime, iconRoutes, MAX_ICON_BYTES, parseIconId } from './icons.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { crc32 } from '../utils/ts-file-transfer.js';
 
 const png = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.from('icon-bytes')]);
 const pngId = crc32(png);
+const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/></svg>');
+const svgId = crc32(svg);
 
 let nextConfigId = 1000;
 
@@ -118,6 +120,47 @@ test('upload stores the image as icon_<crc32>, audits it, and lists and previews
   } finally { await f.close(); }
 });
 
+test('SVG documents are recognised; other markup is not', () => {
+  const svgs = [
+    svg,
+    Buffer.from('<svg/>'),
+    Buffer.from('\uFEFF<?xml version="1.0" encoding="UTF-8"?>\n<!-- Created with Inkscape -->\n<svg\n  width="16"></svg>'),
+    Buffer.from('<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg></svg>'),
+    Buffer.from('<!DOCTYPE svg [ <!ENTITY ns "http://www.w3.org/2000/svg"> ]>\r\n<svg xmlns="&ns;"></svg>'),
+  ];
+  for (const image of svgs) assert.equal(iconImageMime(image), 'image/svg+xml', image.toString());
+  const others = ['<svgx></svgx>', '<!DOCTYPE svg [ <!ENTITY a "b">', '<html><svg></svg></html>', 'text <svg></svg>', '<!-- unclosed <svg></svg>', '<?xml version="1.0"?><SVG></SVG>', ''];
+  for (const text of others) assert.equal(iconImageMime(Buffer.from(text)), null, text);
+  assert.equal(iconImageMime(png), 'image/png', 'raster formats still win');
+});
+
+test('SVG detection stays fast on hostile uploads', () => {
+  const n = MAX_ICON_BYTES;
+  const hostile = ['<!---->'.repeat(n / 7), '<!--'.repeat(n / 4), '<?x?>'.repeat(n / 5), '<!DOCTYPE>'.repeat(n / 10), '<!DOCTYPE[]>'.repeat(n / 12), '<!DOCTYPE [' + '>'.repeat(n), ' '.repeat(n)];
+  const started = performance.now();
+  for (const text of hostile) assert.equal(iconImageMime(Buffer.from(text + 'x')), null);
+  assert.ok(performance.now() - started < 2000, 'each check is a single forward scan');
+});
+
+test('SVG icons are previewed as sandboxed SVG and can be uploaded', async () => {
+  const f = await fixture();
+  try {
+    const hostile = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"><script>alert(2)</script></svg>');
+    f.files.set('icon_888', hostile);
+    const image = await fetch(`${f.base}/888`);
+    assert.equal(image.status, 200);
+    assert.equal(image.headers.get('content-type'), 'image/svg+xml');
+    assert.equal(image.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(image.headers.get('content-security-policy'), "default-src 'none'; sandbox", 'scripts in an SVG never run');
+    assert.deepEqual(Buffer.from(await image.arrayBuffer()), hostile);
+
+    const res = await fetch(f.base, { method: 'POST', body: form(svg) });
+    assert.equal(res.status, 201);
+    assert.equal((await res.json()).id, svgId);
+    assert.deepEqual(f.files.get(`icon_${svgId}`), svg);
+  } finally { await f.close(); }
+});
+
 test('previews download from TeamSpeak once and are then cached', async () => {
   const f = await fixture();
   try {
@@ -126,7 +169,7 @@ test('previews download from TeamSpeak once and are then cached', async () => {
     assert.equal(f.commands.filter((c) => c.startsWith('ftinitdownload')).length, 1);
     assert.equal((await fetch(`${f.base}/12345`)).status, 404);
     assert.equal((await fetch(`${f.base}/not-a-number`)).status, 404);
-    f.files.set('icon_777', Buffer.from('<svg onload=alert(1)>'));
+    f.files.set('icon_777', Buffer.from('<html><script>alert(1)</script></html>'));
     assert.equal((await fetch(`${f.base}/777`)).status, 415, 'non-image bytes are never served');
   } finally { await f.close(); }
 });
@@ -145,7 +188,7 @@ test('delete removes the icon and audits it', async () => {
 test('non-images, oversized files and refused transfers are rejected', async () => {
   const f = await fixture();
   try {
-    assert.equal((await fetch(f.base, { method: 'POST', body: form(Buffer.from('<svg></svg>')) })).status, 400);
+    assert.equal((await fetch(f.base, { method: 'POST', body: form(Buffer.from('<html><svg></svg></html>')) })).status, 400);
     assert.equal((await fetch(f.base, { method: 'POST', body: form(Buffer.concat([png, Buffer.alloc(MAX_ICON_BYTES)])) })).status, 400);
     assert.equal(f.files.size, 0);
     assert.ok(!f.commands.some((c) => c.startsWith('ftinitupload')));

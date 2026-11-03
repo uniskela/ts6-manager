@@ -1,4 +1,3 @@
-import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { iconsApi } from '../api/icons.api';
 import { useServerStore } from '../stores/server.store';
@@ -17,24 +16,31 @@ export function useServerIcons(enabled: boolean) {
   });
 }
 
-/** Object URL for one icon's image; an icon's bytes never change for its id. */
+/** Reads a blob into a `data:` URL. */
+function toDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read icon'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * `data:` URL for one icon's image; an icon's bytes never change for its id.
+ * Not a `blob:` URL: those share this app's origin, so an SVG icon opened in its own tab could
+ * run script with the signed-in session. A `data:` document gets an opaque origin instead.
+ */
 export function useServerIconImage(id: number) {
   const { selectedConfigId: c, selectedSid: s } = useServerStore();
   const image = useQuery({
     queryKey: ['server-icon-image', c, s, id],
-    queryFn: () => iconsApi.image(c!, s!, id),
+    queryFn: () => iconsApi.image(c!, s!, id).then(toDataUrl),
     enabled: !!c && !!s && id > 0,
     staleTime: Infinity,
     retry: false,
   });
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    if (!image.data) { setUrl(null); return; }
-    const objectUrl = URL.createObjectURL(image.data);
-    setUrl(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [image.data]);
-  return { url, failed: image.isError };
+  return { url: image.data ?? null, failed: image.isError };
 }
 
 export function useUploadServerIcon() {
