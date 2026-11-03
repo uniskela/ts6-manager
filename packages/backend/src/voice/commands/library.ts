@@ -221,6 +221,36 @@ export function canEditPlaylist(playlist: { serverConfigId: number | null }, ser
   return playlist.serverConfigId === serverConfigId;
 }
 
+export type PlaylistMode = 'local' | 'stream';
+
+export function normalizePlaylistMode(raw: unknown, fallback: PlaylistMode = 'local'): PlaylistMode {
+  if (raw === 'stream' || raw === 'local') return raw;
+  return fallback;
+}
+
+/** YouTube-imported playlists must stay stream-mode even if DB defaulted to local. */
+export function effectivePlaylistMode(p: { mode: string; youtubePlaylistId?: string | null }): PlaylistMode {
+  if (p.youtubePlaylistId) return 'stream';
+  return normalizePlaylistMode(p.mode);
+}
+
+/** Same source→mode rules as REST playlist song adds. */
+export function songMatchesMode(source: string, mode: PlaylistMode): boolean {
+  if (mode === 'local') return source === 'local';
+  return source === 'youtube' || source === 'url';
+}
+
+export function playlistModeMismatchMessage(mode: PlaylistMode): string {
+  return mode === 'local'
+    ? 'This local playlist only accepts local library songs'
+    : 'This stream playlist only accepts YouTube / URL songs';
+}
+
+/** Source that Discord / Chat URL-add would store for this URL. */
+export function urlAddSongSource(url: string): 'youtube' | 'url' {
+  return isYouTubeHostUrl(url) ? 'youtube' : 'url';
+}
+
 export async function createServerPlaylist(
   db: PlaylistCatalog,
   input: { name: string; serverConfigId: number; musicBotId: number },
@@ -256,6 +286,11 @@ export async function addUrlToPlaylist(
   if (!canEditPlaylist(playlist, input.serverConfigId)) {
     return { ok: false, message: 'Shared or foreign playlists cannot be edited from this server.' };
   }
+  const mode = effectivePlaylistMode(playlist);
+  const source = urlAddSongSource(input.url);
+  if (!songMatchesMode(source, mode)) {
+    return { ok: false, message: playlistModeMismatchMessage(mode) };
+  }
   const work = async (tx: PlaylistCatalog) => {
     let song = await tx.song.findFirst({
       where: { sourceUrl: input.url, serverConfigId: input.serverConfigId },
@@ -268,7 +303,7 @@ export async function addUrlToPlaylist(
           artist: null,
           duration: null,
           filePath: '',
-          source: isYouTubeHostUrl(input.url) ? 'youtube' : 'url',
+          source,
           sourceUrl: input.url,
           fileSize: null,
           serverConfigId: input.serverConfigId,

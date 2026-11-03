@@ -1,30 +1,17 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
-import { catalogScopeWhere } from '../voice/commands/library.js';
+import {
+  catalogScopeWhere,
+  effectivePlaylistMode,
+  normalizePlaylistMode,
+  playlistModeMismatchMessage,
+  songMatchesMode,
+} from '../voice/commands/library.js';
 
 export const playlistRoutes: Router = Router();
 
 playlistRoutes.use(requireRole('admin'));
-
-type PlaylistMode = 'local' | 'stream';
-
-function normalizePlaylistMode(raw: unknown, fallback: PlaylistMode = 'local'): PlaylistMode {
-  if (raw === 'stream' || raw === 'local') return raw;
-  return fallback;
-}
-
-/** YouTube-imported playlists must stay stream-mode even if DB defaulted to local. */
-function effectivePlaylistMode(p: { mode: string; youtubePlaylistId?: string | null }): PlaylistMode {
-  if (p.youtubePlaylistId) return 'stream';
-  return normalizePlaylistMode(p.mode);
-}
-
-function songMatchesMode(source: string, mode: PlaylistMode): boolean {
-  if (mode === 'local') return source === 'local';
-  // stream playlists accept youtube + direct url tracks
-  return source === 'youtube' || source === 'url';
-}
 
 function mapPlaylistSummary(p: {
   id: number;
@@ -259,12 +246,7 @@ playlistRoutes.post('/:id/songs', async (req: Request, res: Response, next) => {
 
     const mode = effectivePlaylistMode(playlist);
     if (songs.some((song) => !songMatchesMode(song.source, mode))) {
-      throw new AppError(
-        400,
-        mode === 'local'
-          ? 'This local playlist only accepts local library songs'
-          : 'This stream playlist only accepts YouTube / URL songs',
-      );
+      throw new AppError(400, playlistModeMismatchMessage(mode));
     }
 
     const added = await appendSongsToPlaylist(prisma, playlistId, ids);

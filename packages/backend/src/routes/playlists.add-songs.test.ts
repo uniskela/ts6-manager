@@ -20,14 +20,20 @@ async function post(app: Express, path: string, body: unknown) {
   }
 }
 
-function fixture(existingSongIds: number[] = [], conflicts = 0) {
+function fixture(
+  existingSongIds: number[] = [],
+  conflicts = 0,
+  playlist: { id: number; mode: string; youtubePlaylistId: string | null } = {
+    id: 7, mode: 'stream', youtubePlaylistId: null,
+  },
+) {
   const songs = [
     { id: 1, source: 'youtube' },
     { id: 2, source: 'youtube' },
     { id: 3, source: 'url' },
     { id: 4, source: 'local' },
   ];
-  const links = existingSongIds.map((songId, position) => ({ playlistId: 7, songId, position }));
+  const links = existingSongIds.map((songId, position) => ({ playlistId: playlist.id, songId, position }));
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -43,7 +49,7 @@ function fixture(existingSongIds: number[] = [], conflicts = 0) {
     },
     playlist: {
       findUnique: async ({ where }: any) =>
-        where.id === 7 ? { id: 7, mode: 'stream', youtubePlaylistId: null } : null,
+        where.id === playlist.id ? { ...playlist } : null,
     },
     song: {
       findMany: async ({ where }: any) => songs.filter((s) => where.id.in.includes(s.id)),
@@ -92,6 +98,14 @@ describe('POST /playlists/:id/songs', () => {
     const f = fixture();
     const res = await post(f.app, '/playlists/7/songs', { songIds: [1, 4] });
     assert.equal(res.status, 400);
+    assert.equal(f.links.length, 0);
+  });
+
+  it('finding #10: local playlist rejects URL songs with the shared mode message', async () => {
+    const f = fixture([], 0, { id: 7, mode: 'local', youtubePlaylistId: null });
+    const res = await post(f.app, '/playlists/7/songs', { songIds: [3] });
+    assert.equal(res.status, 400);
+    assert.match(String(res.body.error ?? res.body.message ?? ''), /local playlist only accepts local library songs/i);
     assert.equal(f.links.length, 0);
   });
 

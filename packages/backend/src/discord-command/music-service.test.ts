@@ -476,13 +476,22 @@ function songRow(id: number, title: string, serverConfigId = 9) {
 function fakeCatalog() {
   let nextPlaylist = 20;
   let nextSong = 200;
-  const playlists: Array<{ id: number; name: string; serverConfigId: number | null; musicBotId?: number | null; musicBot?: { serverConfigId: number } | null }> = [
-    { id: 3, name: 'Rock', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 } },
-    { id: 4, name: 'Shared Mix', serverConfigId: null, musicBotId: null, musicBot: null },
-    { id: 5, name: 'Other Server', serverConfigId: 8, musicBotId: 2, musicBot: { serverConfigId: 8 } },
-    { id: 6, name: 'Rock Live', serverConfigId: 9, musicBot: { serverConfigId: 9 } },
-    { id: 7, name: 'Legacy Foreign Bot', serverConfigId: null, musicBotId: 2, musicBot: { serverConfigId: 8 } },
-    { id: 8, name: 'Legacy This Bot', serverConfigId: null, musicBotId: 1, musicBot: { serverConfigId: 9 } },
+  const playlists: Array<{
+    id: number;
+    name: string;
+    serverConfigId: number | null;
+    musicBotId?: number | null;
+    musicBot?: { serverConfigId: number } | null;
+    mode?: string | null;
+    youtubePlaylistId?: string | null;
+  }> = [
+    { id: 3, name: 'Rock', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 4, name: 'Shared Mix', serverConfigId: null, musicBotId: null, musicBot: null, mode: 'stream', youtubePlaylistId: null },
+    { id: 5, name: 'Other Server', serverConfigId: 8, musicBotId: 2, musicBot: { serverConfigId: 8 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 6, name: 'Rock Live', serverConfigId: 9, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 7, name: 'Legacy Foreign Bot', serverConfigId: null, musicBotId: 2, musicBot: { serverConfigId: 8 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 8, name: 'Legacy This Bot', serverConfigId: null, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 9, name: 'Local Files', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'local', youtubePlaylistId: null },
   ];
   const songs = [songRow(7, 'Track'), songRow(8, 'Shared Song'), songRow(9, 'Foreign Song', 8)];
   const links = [
@@ -528,6 +537,8 @@ function fakeCatalog() {
           serverConfigId: data.serverConfigId,
           musicBotId: data.musicBotId,
           musicBot: data.serverConfigId == null ? null : { serverConfigId: data.serverConfigId },
+          mode: data.mode ?? 'stream',
+          youtubePlaylistId: data.youtubePlaylistId ?? null,
         };
         playlists.push(created);
         return created;
@@ -821,6 +832,30 @@ describe('Discord playlist edits (2B-2B)', () => {
     assert.equal((await music.execute(intent, binding)).ok, true);
     assert.equal((await music.execute(intent, binding)).ok, true);
     assert.equal(created, 1);
+  });
+
+  it('finding #10: Discord URL-add rejects local playlists like REST, without DB rows', async () => {
+    const catalog = fakeCatalog();
+    const songsBefore = catalog._songs.length;
+    const linksBefore = catalog._links.length;
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const denied = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Local Files', url: 'https://8.8.8.8/external.mp3' },
+    }), binding);
+    assert.equal(denied.ok, false);
+    assert.match(denied.content, /local playlist only accepts local library songs/i);
+    assert.equal(catalog._songs.length, songsBefore);
+    assert.equal(catalog._links.length, linksBefore);
+
+    const streamOk = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Rock', url: 'https://8.8.8.8/stream-ok.mp3' },
+    }), binding);
+    assert.equal(streamOk.ok, true);
+    assert.equal(catalog._links.length, linksBefore + 1);
   });
 });
 
