@@ -176,6 +176,7 @@ describe('playlist creation scope', () => {
     });
     app.locals.prisma = {
       playlist: {
+        findMany: async () => [],
         create: async ({ data }: { data: Record<string, unknown> }) => {
           saved = data;
           return { id: 9, ...data };
@@ -206,12 +207,55 @@ describe('playlist creation scope', () => {
     const { status, saved } = await create({ name: 'Lounge', serverConfigId: 2 });
     assert.equal(status, 201);
     assert.equal(saved?.serverConfigId, 2);
+    assert.equal(saved?.nameKey, 'lounge');
+    assert.equal(saved?.name, 'Lounge');
   });
 
   it('keeps a playlist created without a server shared', async () => {
     const { status, saved } = await create({ name: 'Lounge' });
     assert.equal(status, 201);
     assert.equal(saved?.serverConfigId, null);
+    assert.equal(saved?.nameKey, 'lounge');
+  });
+
+  it('finding #11: REST rejects a duplicate name with 409', async () => {
+    let saved: Record<string, unknown> | null = null;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { id: 1, role: 'admin', username: 'tester' };
+      next();
+    });
+    app.locals.prisma = {
+      playlist: {
+        findMany: async () => [{ id: 3, name: 'Lounge', serverConfigId: 2 }],
+        create: async ({ data }: { data: Record<string, unknown> }) => {
+          saved = data;
+          return { id: 9, ...data };
+        },
+      },
+      tsServerConfig: {
+        findUnique: async () => ({ id: 2 }),
+      },
+    };
+    app.use('/playlists', playlistRoutes);
+    app.use(errorHandler);
+    const server = app.listen(0);
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const { port } = server.address() as { port: number };
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/playlists`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: ' lounge ', serverConfigId: 2 }),
+      });
+      const body = await response.json();
+      assert.equal(response.status, 409);
+      assert.match(String(body.error ?? body.message ?? ''), /already exists/i);
+      assert.equal(saved, null);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it('rejects a server that does not exist', async () => {

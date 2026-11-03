@@ -1,7 +1,16 @@
 import type { VoiceBot } from '../voice-bot.js';
+import { AppError } from '../../middleware/error-handler.js';
 import { MediaSessionConflictError, safeUrlDisplayTitle } from '../media-session.js';
 import { QueueFullError, type QueueItem } from '../playlist/queue.js';
 import { isYouTubeHostUrl } from '../audio/youtube.js';
+import {
+  ensurePlaylistNameKeyConstraintsReady,
+  findPlaylistNameOccupant,
+  isPlaylistNameUniqueViolation,
+  normalizePlaylistDisplayName,
+  normalizePlaylistNameKey,
+  PlaylistNameConflictError,
+} from './playlist-name.js';
 
 export type NamedRecord = { id: number; name: string };
 
@@ -256,20 +265,36 @@ export async function createServerPlaylist(
   db: PlaylistCatalog,
   input: { name: string; serverConfigId: number; musicBotId: number },
 ): Promise<{ ok: true; id: number; name: string } | { ok: false; message: string }> {
-  const name = input.name.trim();
+  const name = normalizePlaylistDisplayName(input.name);
   if (!name) return { ok: false, message: 'Usage: /playlist create <name>' };
-  const existing = matchNamed(await loadPlaylistSummaries(db, input.serverConfigId), name)
-    .filter((item) => item.name.toLowerCase() === name.toLowerCase());
-  if (existing.length) return { ok: false, message: `Playlist "${name.slice(0, 60)}" already exists ([${existing[0].id}]).` };
-  const created = await db.playlist.create({
-    data: {
-      name,
-      mode: 'stream',
-      musicBotId: input.musicBotId,
-      serverConfigId: input.serverConfigId,
-    },
-  });
-  return { ok: true, id: created.id, name: created.name };
+  try {
+    await ensurePlaylistNameKeyConstraintsReady(db as any);
+  } catch (err) {
+    if (err instanceof AppError) return { ok: false, message: err.message };
+    throw err;
+  }
+  const nameKey = normalizePlaylistNameKey(name);
+  const occupant = await findPlaylistNameOccupant(db as any, nameKey, input.serverConfigId);
+  if (occupant) {
+    return { ok: false, message: new PlaylistNameConflictError(name, occupant.id).message };
+  }
+  try {
+    const created = await db.playlist.create({
+      data: {
+        name,
+        nameKey,
+        mode: 'stream',
+        musicBotId: input.musicBotId,
+        serverConfigId: input.serverConfigId,
+      },
+    });
+    return { ok: true, id: created.id, name: created.name };
+  } catch (err) {
+    if (isPlaylistNameUniqueViolation(err)) {
+      return { ok: false, message: new PlaylistNameConflictError(name).message };
+    }
+    throw err;
+  }
 }
 
 export async function addUrlToPlaylist(

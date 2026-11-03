@@ -197,6 +197,10 @@ model Song {
 model Playlist {
   id                Int            @id @default(autoincrement())
   name              String
+  /// trim + JS toLowerCase(); uniqueness via partial SQLite indexes in migration SQL
+  /// (per serverConfigId, and separately among shared/null rows). Not @@unique here —
+  /// Prisma cannot express those partial indexes.
+  nameKey           String         @default("")
   /// local = library uploads / local files only; stream = YouTube/URL tracks only.
   mode              String         @default("local")
   musicBotId        Int?
@@ -207,6 +211,8 @@ model Playlist {
   createdAt         DateTime       @default(now())
 
   songs PlaylistSong[]
+
+  @@index([nameKey])
 }
 
 model PlaylistSong {

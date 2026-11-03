@@ -521,19 +521,20 @@ function fakeCatalog() {
   const playlists: Array<{
     id: number;
     name: string;
+    nameKey: string;
     serverConfigId: number | null;
     musicBotId?: number | null;
     musicBot?: { serverConfigId: number } | null;
     mode?: string | null;
     youtubePlaylistId?: string | null;
   }> = [
-    { id: 3, name: 'Rock', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
-    { id: 4, name: 'Shared Mix', serverConfigId: null, musicBotId: null, musicBot: null, mode: 'stream', youtubePlaylistId: null },
-    { id: 5, name: 'Other Server', serverConfigId: 8, musicBotId: 2, musicBot: { serverConfigId: 8 }, mode: 'stream', youtubePlaylistId: null },
-    { id: 6, name: 'Rock Live', serverConfigId: 9, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
-    { id: 7, name: 'Legacy Foreign Bot', serverConfigId: null, musicBotId: 2, musicBot: { serverConfigId: 8 }, mode: 'stream', youtubePlaylistId: null },
-    { id: 8, name: 'Legacy This Bot', serverConfigId: null, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
-    { id: 9, name: 'Local Files', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'local', youtubePlaylistId: null },
+    { id: 3, name: 'Rock', nameKey: 'rock', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 4, name: 'Shared Mix', nameKey: 'shared mix', serverConfigId: null, musicBotId: null, musicBot: null, mode: 'stream', youtubePlaylistId: null },
+    { id: 5, name: 'Other Server', nameKey: 'other server', serverConfigId: 8, musicBotId: 2, musicBot: { serverConfigId: 8 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 6, name: 'Rock Live', nameKey: 'rock live', serverConfigId: 9, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 7, name: 'Legacy Foreign Bot', nameKey: 'legacy foreign bot', serverConfigId: null, musicBotId: 2, musicBot: { serverConfigId: 8 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 8, name: 'Legacy This Bot', nameKey: 'legacy this bot', serverConfigId: null, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'stream', youtubePlaylistId: null },
+    { id: 9, name: 'Local Files', nameKey: 'local files', serverConfigId: 9, musicBotId: 1, musicBot: { serverConfigId: 9 }, mode: 'local', youtubePlaylistId: null },
   ];
   const songs = [songRow(7, 'Track'), songRow(8, 'Shared Song'), songRow(9, 'Foreign Song', 8)];
   const links = [
@@ -561,7 +562,12 @@ function fakeCatalog() {
 
   const db: any = {
     playlist: {
-      findMany: async ({ where }: any) => playlists.filter((p) => inScope(p, where)).map(({ id, name }) => ({ id, name })),
+      findMany: async ({ where, select }: any) => playlists.filter((p) => inScope(p, where)).map((p) => {
+        if (!select) return p;
+        const out: Record<string, unknown> = {};
+        for (const key of Object.keys(select)) out[key] = (p as any)[key];
+        return out;
+      }),
       findFirst: async ({ where }: any) => {
         const playlist = playlists.find((p) => inScope(p, where));
         if (!playlist) return null;
@@ -576,6 +582,7 @@ function fakeCatalog() {
         const created = {
           id: nextPlaylist++,
           name: data.name,
+          nameKey: data.nameKey ?? String(data.name ?? '').trim().toLowerCase(),
           serverConfigId: data.serverConfigId,
           musicBotId: data.musicBotId,
           musicBot: data.serverConfigId == null ? null : { serverConfigId: data.serverConfigId },
