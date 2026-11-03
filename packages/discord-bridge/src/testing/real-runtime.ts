@@ -20,7 +20,16 @@ import { quietLog, testBot, type TestBot } from "./fake-voice.js";
 export const validOpus = (): Buffer => createOpusCodec("native").encode(toneFrame(440, 0));
 
 export function realRuntime(
-  o: { users?: number; timing?: Partial<BotTiming>; retry?: Partial<RetryPolicy>; stopTimeoutMs?: number; now?: () => number; daveReady?: boolean; log?: Logger } = {},
+  o: {
+    users?: number;
+    timing?: Partial<BotTiming>;
+    retry?: Partial<RetryPolicy>;
+    stopTimeoutMs?: number;
+    now?: () => number;
+    daveReady?: boolean;
+    bot?: (id: BotId) => { daveReady?: boolean; timing?: Partial<BotTiming> };
+    log?: Logger;
+  } = {},
 ) {
   const election = new ReceiverElection(preferredOrder(5));
   const ts = new FakeTs();
@@ -35,9 +44,9 @@ export function realRuntime(
       testBot(id, election, {
         sessionId,
         identityRequests,
-        timing: o.timing,
+        timing: { ...o.timing, ...o.bot?.(id).timing },
         now: o.now,
-        daveReady: o.daveReady,
+        daveReady: o.bot?.(id).daveReady ?? o.daveReady,
         log: o.log,
         onHumanOpus: (b, g, u, op, a) => rt.onHumanOpus(b, g, u, op, a),
         onHumanClosed: (b, u) => rt.onHumanClosed(b, u),

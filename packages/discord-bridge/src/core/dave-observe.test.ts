@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { DAVESession } from "@discordjs/voice";
-import { emptyDaveSnapshot, formatDaveSnapshot, noteDaveWsOut, observeDave, observeDaveWs } from "./dave-observe.js";
+import { classifyDaveLifecycle, emptyDaveSnapshot, formatDaveSnapshot, noteDaveWsOut, observeDave, observeDaveWs } from "./dave-observe.js";
 import { daveEnforced, readDaveInfo } from "./dave-gate.js";
 import { daveSessionIdentity } from "./dave-session.js";
 import { preferredOrder } from "./ids.js";
@@ -94,5 +94,15 @@ describe("DAVE diagnostic extras", () => {
     assert.equal(n.failures, 0);
     assert.ok(!Object.values(n).some((v) => Buffer.isBuffer(v)));
     await t.bot.destroy();
+  });
+});
+
+describe("classifyDaveLifecycle", () => {
+  it("separates MLS, voice-session, membership, grace cancel and dave-state", () => {
+    assert.equal(classifyDaveLifecycle({ phase: "lost", lastKind: "welcome", membersChanged: false }), "mls-transition");
+    assert.equal(classifyDaveLifecycle({ phase: "voice-disconnected", lastKind: null, membersChanged: true }), "voice-session");
+    assert.equal(classifyDaveLifecycle({ phase: "lost", lastKind: null, membersChanged: true }), "membership");
+    assert.equal(classifyDaveLifecycle({ phase: "grace-cancelled", lastKind: null, membersChanged: false }), "grace-cancel");
+    assert.equal(classifyDaveLifecycle({ phase: "grace-expired", lastKind: null, membersChanged: false }), "dave-state");
   });
 });

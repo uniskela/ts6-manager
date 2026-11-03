@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { CallbackErrors, type CallbackSite } from "../core/callback-errors.js";
 import type { ClientDirectory, DirectoryEvent } from "../core/client-directory.js";
 import { DiscordToTsPipeline } from "../core/discord-to-ts.js";
-import { preferredOrder, slotBotId, type BotId } from "../core/ids.js";
+import { preferredOrder, slotBotId, slotIndex, type BotId } from "../core/ids.js";
 import { isJoinCancelled } from "../core/join-errors.js";
 import { isRebuildBudgetExhausted } from "../core/rebuild-budget.js";
 import { OVERFLOW_NICKNAME, tsNickname } from "../core/nickname.js";
@@ -44,6 +44,8 @@ export interface BotPort extends DiscordSendSink {
    * refuses a frame without an admission. Absent (test doubles that do not model Discord voice) means yes.
    */
   humanAdmitted?(userId: string, admission: Admission | undefined): boolean;
+  /** Rebuild budget on this bot. Absent (test doubles) means the default retry path. */
+  recoveryBudget?(): { used: number; max: number };
   on(event: "unhealthy", cb: (reason: string) => void): unknown;
   off(event: "unhealthy", cb: (reason: string) => void): unknown;
 }
@@ -113,10 +115,24 @@ export class BridgeRuntime extends EventEmitter {
   private readonly inflightJoins = new Map<BotId, Promise<void>>();
   private readonly activations = new Set<Promise<void>>();
   private readonly tracked = new Set<Promise<unknown>>();
-  private readonly retryTimers = new Map<BotId, NodeJS.Timeout>();
+  private readonly retryTimers = new Map<BotId, { handle: NodeJS.Timeout; purpose: "backoff" | "cooldown"; gen: number }>();
+  private readonly retryTimerGen = new Map<BotId, number>();
   private readonly retryAttempts = new Map<BotId, number>();
-  /** maxRecoveries=0 never recovers by time or membership churn; only a new runtime/bot can retry. */
+  /**
+   * Failure-driven rebuild states. Membership churn never clears C, and never skips B.
+   * A. recovering, not cooling, not C: occupant left → cancel the join, restore eligibility, no token.
+   * B. budgetCooldown (RebuildBudgetExhausted or retry-exhausted, max>0): keep the slot out until
+   *    the window; rotate attempts there, then retry if demand remains, otherwise unlock. Not terminal.
+   * C. permanentlyRefused (maxRecoveries=0 / D1_DAVE_SINGLE_ATTEMPT): no failure-driven rebuild.
+   */
   private readonly permanentlyRefused = new Set<BotId>();
+  /** Failed slots owed a bounded rebuild. Never includes a permanently refused bot. */
+  private readonly recovering = new Set<BotId>();
+  /** Sliding-window wait after a spent rebuild budget or exhausted join attempts. Distinct from C. */
+  private readonly budgetCooldown = new Set<BotId>();
+  /** Original cooldown deadline (`now()`). Kept if the timer handle vanishes so a re-arm cannot extend it. */
+  private readonly cooldownDueAt = new Map<BotId, number>();
+  private readonly refuseReasons = new Map<BotId, string>();
   /** Last name Discord actually accepted. */
   private readonly appliedNick = new Map<BotId, string | null>();
   /** Current TeamSpeak-derived intent. Distinct from applied and from the in-flight REST name. */
@@ -264,7 +280,7 @@ export class BridgeRuntime extends EventEmitter {
     this.invalidateNicks();
     if (this.ticker) clearInterval(this.ticker);
     this.ticker = null;
-    for (const t of this.retryTimers.values()) clearTimeout(t);
+    for (const t of this.retryTimers.values()) clearTimeout(t.handle);
     this.retryTimers.clear();
     for (const off of this.detach) off(); // no more events reach the runtime
     this.detach.length = 0;
@@ -351,11 +367,21 @@ export class BridgeRuntime extends EventEmitter {
     if (e.client.clid === this.o.ts.clientId || this.isExcluded(e.client)) return;
     const present = e.type !== "leave" && e.client.channelId === ownChannel;
     const changes = present ? this.router.join(uid) : this.router.leave(uid);
+    this.applyRouterChanges(changes);
+    await this.sync(`ts ${e.type}`);
+  }
+
+  private applyRouterChanges(changes: SlotChange[]): void {
     for (const c of changes) {
       this.t2d.forget(c.uniqueId);
       this.emit("slotChange", c);
     }
-    await this.sync(`ts ${e.type}`);
+  }
+
+  private markBotRoute(bot: BotId, eligible: boolean): void {
+    const idx = slotIndex(bot);
+    const changes = idx === null ? this.router.setOverflowEligible(eligible) : this.router.setSlotEligible(idx, eligible);
+    this.applyRouterChanges(changes);
   }
 
   /**
@@ -371,15 +397,99 @@ export class BridgeRuntime extends EventEmitter {
     this.nickEpoch.set(bot, (this.nickEpoch.get(bot) ?? 0) + 1);
     this.election.setState(bot, { healthy: false, inChannel: false });
     this.election.fail(bot, reason); // a non-receiver failure leaves the receiver alone
+    this.markBotRoute(bot, false);
+    const max = this.o.bots.get(bot)?.recoveryBudget?.().max;
+    if (max === 0) {
+      this.refuseSlot(bot, "single-attempt-policy", true);
+      this.o.log.warn(`${bot} reconnect refused: single-attempt policy`);
+    } else if (!this.permanentlyRefused.has(bot)) {
+      this.recovering.add(bot);
+    }
     this.schedule(() => this.sync(`unhealthy ${bot}`));
+  }
+
+  /** Permanent or retry-exhausted refusal: evict, then reconcile so a replacement can join. */
+  private refuseSlot(id: BotId, reason: string, permanent: boolean): void {
+    this.refuseReasons.set(id, reason);
+    this.markBotRoute(id, false);
+    if (permanent) {
+      this.permanentlyRefused.add(id);
+      this.recovering.delete(id);
+      this.budgetCooldown.delete(id);
+      this.cooldownDueAt.delete(id);
+      this.clearRetryTimer(id);
+    }
+    this.applyRouterChanges(this.router.evictIneligible());
+  }
+
+  /** A failed slot is owed a rebuild only while it still has an occupant or overflow members. */
+  private recoveryStillNeeded(id: BotId): boolean {
+    const idx = slotIndex(id);
+    if (idx !== null) return this.router.slotOccupant(idx) !== null;
+    return this.router.overflowMembers().length > 0 || this.router.hasUnroutedOccupants();
+  }
+
+  private pruneRecovery(): void {
+    for (const id of [...this.recovering]) {
+      if (this.permanentlyRefused.has(id)) {
+        this.recovering.delete(id);
+        this.cancelRetry(id);
+        continue;
+      }
+      if (this.recoveryStillNeeded(id)) continue;
+      this.recovering.delete(id);
+      if (this.budgetCooldown.has(id)) continue;
+      this.cancelRetry(id);
+    }
+    this.reclaimIdleRoutes();
+  }
+
+  private attemptsExhausted(id: BotId): boolean {
+    return (this.retryAttempts.get(id) ?? 0) >= this.retry.maxAttempts;
+  }
+
+  private retryTimerPurpose(id: BotId): "backoff" | "cooldown" | null {
+    return this.retryTimers.get(id)?.purpose ?? null;
+  }
+
+  private nextRetryGen(id: BotId): number {
+    const gen = (this.retryTimerGen.get(id) ?? 0) + 1;
+    this.retryTimerGen.set(id, gen);
+    return gen;
+  }
+
+  /** One wake at the retry/budget boundary. Ordinary backoff is never treated as that wake. */
+  private armRetryCooldown(id: BotId): void {
+    if (this.permanentlyRefused.has(id)) return;
+    this.budgetCooldown.add(id);
+    this.markBotRoute(id, false);
+    if (this.retryTimerPurpose(id) === "cooldown") return;
+    this.scheduleWake(id, this.retry.maxMs);
+  }
+
+  /** Empty slots that are not C and not in B become eligible again so later demand can use them. */
+  private reclaimIdleRoutes(): void {
+    for (const id of this.o.bots.keys()) {
+      if (this.permanentlyRefused.has(id) || this.budgetCooldown.has(id) || this.attemptsExhausted(id) || this.recoveryStillNeeded(id)) continue;
+      const idx = slotIndex(id);
+      if (idx !== null && !this.router.slotEligible(idx)) {
+        this.refuseReasons.delete(id);
+        this.markBotRoute(id, true);
+      } else if (id === "overflow") {
+        this.refuseReasons.delete(id);
+        this.markBotRoute(id, true);
+      }
+    }
   }
 
   /** Who should be in the Discord channel, per the idle-overflow rules. */
   private desiredMembers(): Set<BotId> {
+    this.pruneRecovery();
     const want = new Set<BotId>();
     for (let i = 0; i < this.slotCount; i++) if (this.router.botCarriesAudio(slotBotId(i))) want.add(slotBotId(i));
     if (this.router.botCarriesAudio("overflow")) want.add("overflow");
-    if (this.router.occupiedSlots() === 0) want.add(slotBotId(0)); // idle receiver keeps its application name
+    if (this.router.occupiedSlots() === 0 && !this.permanentlyRefused.has(slotBotId(0))) want.add(slotBotId(0));
+    for (const id of this.recovering) want.add(id);
     return want;
   }
 
@@ -415,6 +525,14 @@ export class BridgeRuntime extends EventEmitter {
   /** Join `id` in the background. At most one join per bot is in flight. */
   private ensureJoined(id: BotId): void {
     if (!this.live() || this.inflightJoins.has(id) || this.permanentlyRefused.has(id)) return;
+    if (this.budgetCooldown.has(id)) {
+      this.scheduleWake(id, 1); // re-arm remaining time if the handle vanished; never start a join
+      return;
+    }
+    if (this.attemptsExhausted(id)) {
+      this.armRetryCooldown(id);
+      return;
+    }
     const bot = this.o.bots.get(id)!;
     const attempt = (async () => {
       try {
@@ -425,6 +543,12 @@ export class BridgeRuntime extends EventEmitter {
         }
         this.inChannel.add(id);
         this.retryAttempts.delete(id);
+        this.recovering.delete(id);
+        this.budgetCooldown.delete(id);
+        this.cooldownDueAt.delete(id);
+        this.clearRetryTimer(id);
+        this.refuseReasons.delete(id);
+        this.markBotRoute(id, true);
         this.election.setState(id, { healthy: bot.healthy, inChannel: true });
         this.schedule(() => this.sync(`joined ${id}`));
       } catch (e) {
@@ -438,14 +562,18 @@ export class BridgeRuntime extends EventEmitter {
           this.o.log.warn(`${id} reconnect refused: ${e.message}`);
           this.election.setState(id, { healthy: false, inChannel: false });
           if (e.max === 0) {
-            this.permanentlyRefused.add(id);
-            this.clearRetryTimer(id);
+            this.refuseSlot(id, "single-attempt-policy", true);
+            this.schedule(() => this.sync(`refused ${id}`));
             return;
           }
+          this.budgetCooldown.add(id);
+          this.markBotRoute(id, false);
+          this.refuseReasons.set(id, "rebuild-budget-exhausted");
           this.scheduleWake(id, e.retryInMs);
         } else {
           this.o.log.warn(`${id} could not join: ${e instanceof Error ? e.message : String(e)}`);
           this.election.setState(id, { healthy: false, inChannel: false });
+          this.refuseReasons.set(id, "join-failed");
           this.scheduleRetry(id);
         }
       } finally {
@@ -459,38 +587,71 @@ export class BridgeRuntime extends EventEmitter {
     const attempts = (this.retryAttempts.get(id) ?? 0) + 1;
     this.retryAttempts.set(id, attempts);
     if (attempts >= this.retry.maxAttempts) {
-      this.o.log.warn(`${id} join failed ${attempts} times; waiting for the next membership change`);
+      const permanent = this.o.bots.get(id)?.recoveryBudget?.().max === 0;
+      this.o.log.warn(
+        permanent ? `${id} reconnect refused: single-attempt policy` : `${id} join failed ${attempts} times; waiting for the retry window`,
+      );
+      this.refuseSlot(id, permanent ? "single-attempt-policy" : "retry-exhausted", permanent);
+      this.recovering.delete(id);
+      if (!permanent) this.armRetryCooldown(id);
+      this.schedule(() => this.sync(`join failed ${id}`));
       return;
     }
+    if (this.retryTimerPurpose(id) === "cooldown") return;
     this.clearRetryTimer(id);
     const delay = Math.min(this.retry.baseMs * 2 ** (attempts - 1), this.retry.maxMs);
-    const timer = setTimeout(() => {
+    const gen = this.nextRetryGen(id);
+    const handle = setTimeout(() => {
+      const cur = this.retryTimers.get(id);
+      if (!cur || cur.gen !== gen || cur.purpose !== "backoff") return;
       this.retryTimers.delete(id);
       this.schedule(() => this.sync(`retry ${id}`));
     }, delay);
-    timer.unref();
-    this.retryTimers.set(id, timer);
+    handle.unref();
+    this.retryTimers.set(id, { handle, purpose: "backoff", gen });
   }
 
-  /** One wake-up when the bot's rebuild budget frees. Attempt counting is the bot's business, not ours. */
+  /** One wake-up when the retry cooldown or rebuild budget frees. Attempts rotate only here. */
   private scheduleWake(id: BotId, inMs: number): void {
+    if (this.retryTimerPurpose(id) === "cooldown") return;
+    const now = this.now();
+    const dueAt = this.cooldownDueAt.get(id) ?? now + Math.max(inMs, 1) + 20;
+    this.cooldownDueAt.set(id, dueAt);
     this.clearRetryTimer(id);
-    const timer = setTimeout(() => {
+    const gen = this.nextRetryGen(id);
+    const handle = setTimeout(() => {
+      const cur = this.retryTimers.get(id);
+      if (!cur || cur.gen !== gen || cur.purpose !== "cooldown") return;
       this.retryTimers.delete(id);
+      this.budgetCooldown.delete(id);
+      this.cooldownDueAt.delete(id);
+      this.retryAttempts.delete(id);
+      if (!this.live() || this.permanentlyRefused.has(id)) return;
+      if (this.o.bots.get(id)?.recoveryBudget?.().max === 0) {
+        this.refuseSlot(id, "single-attempt-policy", true);
+        this.schedule(() => this.sync(`refused ${id}`));
+        return;
+      }
+      if (this.recoveryStillNeeded(id)) this.recovering.add(id);
+      else {
+        this.refuseReasons.delete(id);
+        this.markBotRoute(id, true);
+      }
       this.schedule(() => this.sync(`budget free ${id}`));
-    }, Math.min(Math.max(inMs, 1) + 20, 2 ** 31 - 1));
-    timer.unref();
-    this.retryTimers.set(id, timer);
+    }, Math.min(Math.max(dueAt - now, 1), 2 ** 31 - 1));
+    handle.unref();
+    this.retryTimers.set(id, { handle, purpose: "cooldown", gen });
   }
 
   private clearRetryTimer(id: BotId): void {
     const t = this.retryTimers.get(id);
-    if (t) clearTimeout(t);
+    if (t) clearTimeout(t.handle);
     this.retryTimers.delete(id);
   }
 
-  /** The bot is no longer wanted: forget its retries entirely. */
+  /** The bot is no longer wanted: forget its retries. A B-state wake and its attempt count must survive this. */
   private cancelRetry(id: BotId): void {
+    if (this.budgetCooldown.has(id)) return;
     this.clearRetryTimer(id);
     this.retryAttempts.delete(id);
   }
@@ -613,10 +774,43 @@ export class BridgeRuntime extends EventEmitter {
       tickErrors: { tsToDiscord: this.callbackErrors.count("tick: TeamSpeak to Discord overflow"), discordToTs: this.callbackErrors.count("tick: Discord to TeamSpeak mix") },
       /** Reconnects waiting on a timer (a backoff retry or a budget wake-up); at most one per bot. */
       scheduledReconnects: this.retryTimers.size,
+      retries: Object.fromEntries(
+        [...this.o.bots.keys()].map((id) => [
+          id,
+          {
+            attempts: this.retryAttempts.get(id) ?? 0,
+            cooldown: this.budgetCooldown.has(id),
+            timer: this.retryTimerPurpose(id),
+            dueAt: this.cooldownDueAt.get(id) ?? null,
+          },
+        ]),
+      ),
       receiver: this.election.receiver,
       generation: this.election.generation,
       inChannel: [...this.inChannel].sort((a, b) => a.localeCompare(b)),
       slots: Array.from({ length: this.slotCount }, (_, i) => this.router.slotOccupant(i) !== null),
+      refused: [...this.permanentlyRefused].sort((a, b) => a.localeCompare(b)),
+      refuseReasons: Object.fromEntries(this.refuseReasons),
+      unavailableRoutes: this.router.unavailableOccupants().length,
+      occupancy: Array.from({ length: this.slotCount }, (_, i) => ({
+        slot: i,
+        occupied: this.router.slotOccupant(i) !== null,
+        eligible: this.router.slotEligible(i),
+        occupant: null,
+      })),
+      slotHealth: {
+        desired: [...this.desiredMembers()].sort((a, b) => a.localeCompare(b)),
+        connected: [...this.inChannel].sort((a, b) => a.localeCompare(b)),
+        healthy: [...this.o.bots.values()].filter((b) => b.healthy).map((b) => b.id).sort((a, b) => a.localeCompare(b)),
+        unhealthy: [...this.o.bots.values()].filter((b) => !b.healthy).map((b) => b.id).sort((a, b) => a.localeCompare(b)),
+        refused: [...this.permanentlyRefused].sort((a, b) => a.localeCompare(b)),
+      },
+      recovery: Object.fromEntries(
+        [...this.o.bots.values()].map((b) => {
+          const budget = b.recoveryBudget?.();
+          return [b.id, { used: budget?.used ?? 0, max: budget?.max ?? this.retry.maxAttempts }];
+        }),
+      ),
       overflowMembers: this.router.overflowMembers().length,
       election: this.election.status(),
       duplicateReceivers: this.election.duplicateReceivers(),
@@ -654,6 +848,7 @@ export class BridgeRuntime extends EventEmitter {
         ownVoice: this.t2d.ownVoice,
         excluded: this.t2d.excluded,
         notInChannel: this.t2d.notInChannel,
+        unavailable: this.t2d.unavailable,
         decoders: this.t2d.decoderCount,
         routedIdentities: this.t2d.routedIdentities,
       },

@@ -267,6 +267,10 @@ export interface TestBot {
   completePending(): ReadyHandle | null;
   /** While set, target resolution waits for it (a slow guild/channel lookup). */
   holdTarget(): () => void;
+  /** Failed target lookups (including throws from `failTarget`). */
+  lookupAttempts: number;
+  /** While set, target resolution throws (a lookup that cannot finish). */
+  failTarget: Error | null;
   /**
    * Move a user's Discord voice state (null: disconnected), through discord.js's own gateway
    * handler, so the guild's voice-state cache and the `voiceStateUpdate` event are the real ones.
@@ -325,6 +329,8 @@ export function testBot(
   const guildId = o.guildId ?? "guild-1";
   // Production uses the same 6 s for the filter's timeout and the registry's stall threshold; a test that shortens one shortens both.
   const identityRequests = o.identityRequests === "process" ? undefined : (o.identityRequests ?? new IdentityRequests({ stallMs: o.identityLookup?.lookupTimeoutMs }));
+  let t!: TestBot;
+  let targetGate: Promise<void> | null = null;
   const bot = new DiscordBot({
     id,
     token: `token-${id}`,
@@ -336,6 +342,8 @@ export function testBot(
     onHumanClosed: o.onHumanClosed,
     bridgeUserIds: o.bridgeUserIds ?? (() => new Set()),
     voiceTarget: async () => {
+      t.lookupAttempts += 1;
+      if (t.failTarget) throw t.failTarget;
       if (targetGate) await targetGate;
       return { guildId, channelId: "channel-1", adapterCreator: adapter.creator };
     },
@@ -347,7 +355,6 @@ export function testBot(
   });
   bot.userId = o.userId ?? `user-${id}`;
   seedGuild(bot.client, guildId, bot.userId);
-  let targetGate: Promise<void> | null = null;
   const inChannel = (userId: string) => bot.client.guilds.cache.get(guildId)?.voiceStates.cache.get(userId)?.channelId === "channel-1";
   /** Speakers with an SSRC are in the channel on real Discord; tests that move people say so explicitly. */
   const withVoice = (h: ReadyHandle): ReadyHandle => {
@@ -358,13 +365,15 @@ export function testBot(
     };
     return h;
   };
-  const t: TestBot = {
+  t = {
     bot,
     adapter,
     ready: [],
     autoReady: true,
     reuseDave: false,
     autoVoice: true,
+    lookupAttempts: 0,
+    failTarget: null,
     identityRequests,
     voice: (userId, channelId, vo) => voiceStateUpdate(bot.client, guildId, userId, channelId, vo),
     latest: () => t.ready[t.ready.length - 1],

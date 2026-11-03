@@ -17,7 +17,7 @@ import {
 } from "@discordjs/voice";
 import { Client, GatewayIntentBits, PermissionFlagsBits } from "discord.js";
 import { daveEnforced, readDaveInfo } from "../core/dave-gate.js";
-import { emptyDaveSnapshot, formatDaveSnapshot, observeDave, observeDaveWs, type DaveSnapshot } from "../core/dave-observe.js";
+import { classifyDaveLifecycle, emptyDaveSnapshot, formatDaveSnapshot, observeDave, observeDaveWs, type DaveSnapshot } from "../core/dave-observe.js";
 import { DaveSessionEpochs, daveSessionIdentity } from "../core/dave-session.js";
 import { FrameFeed } from "../core/frame-feed.js";
 import type { BotId } from "../core/ids.js";
@@ -156,8 +156,8 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private failures = 0;
   /** The DAVE session that was poisoned. The replacement must be a different object. */
   private poisonedDave: object | null = null;
-  /** The DAVE session the packet waiting for dispatch was encrypted under. */
-  private preparedFor: object | null = null;
+  /** Session epoch the packet waiting for dispatch was prepared under. Null when none. */
+  private preparedForEpoch: number | null = null;
   private readonly budget: RebuildBudget;
   private readonly humans: HumanFilter;
   /** Who may be heard under the current receive generation; null while not receiving. */
@@ -186,6 +186,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private daveTrace: DaveSnapshot | null = null;
   /** Last DAVE lifecycle log identity (phase + protocol/status/membership/trace, not elapsedMs). */
   private lastDaveLifecycleKey: string | null = null;
+  private lastVoiceMembers = { members: 0, bots: 0 };
   /** When the live voice connection last became Ready; used only for elapsedMs diagnostics. */
   private connectedAt: number | null = null;
   /** Established DAVE sessions replaced by another while receiving (each one ended a receive generation). */
@@ -523,19 +524,27 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private installDaveGuards(conn: VoiceConnection): void {
     const prepare = conn.prepareAudioPacket.bind(conn);
     conn.prepareAudioPacket = (buffer) => {
-      if (!this.sendAllowed(conn)) return undefined;
-      const under = this.currentDave(conn); // the session in force when encryption starts, not when it ends
+      // Refuse and forget any prior prepare: a failed gate must not leave a stale epoch for dispatch.
+      if (!this.sendAllowed(conn)) {
+        this.preparedForEpoch = null;
+        return undefined;
+      }
+      const epoch = this.sessionEpoch(conn); // capture before encrypt; reinit mid-flight advances this
+      if (epoch === null) {
+        this.preparedForEpoch = null;
+        return undefined;
+      }
       const packet = prepare(buffer);
-      this.preparedFor = under;
+      this.preparedForEpoch = packet == null ? null : epoch;
       return packet;
     };
-    // The player prepares on one tick and dispatches on the next. DAVE can be lost in between, so
-    // the prepared packet is re-checked against the live session when it is about to leave.
+    // The player prepares on one tick and dispatches on the next. DAVE can be lost or reinited in
+    // between, so the prepared packet is re-checked against the live session epoch when it leaves.
     const dispatch = conn.dispatchAudio.bind(conn);
     conn.dispatchAudio = () => {
-      const preparedFor = this.preparedFor;
-      this.preparedFor = null;
-      if (!this.sendAllowed(conn) || preparedFor === null || preparedFor !== this.currentDave(conn)) return false;
+      const preparedForEpoch = this.preparedForEpoch;
+      this.preparedForEpoch = null; // one-shot: a stale/late callback cannot reuse the previous epoch
+      if (!this.sendAllowed(conn) || preparedForEpoch === null || preparedForEpoch !== this.sessionEpoch(conn)) return false;
       return dispatch();
     };
     const play = conn.playOpusPacket.bind(conn);
@@ -634,6 +643,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
   private updateDaveGrace(): void {
     const conn = this.connection;
     if (!conn || this.knownBotsOnly(conn)) {
+      if (this.graceTimer) this.logDaveLifecycle(conn, "grace-cancelled");
       this.clearGraceTimer();
       return;
     }
@@ -746,10 +756,13 @@ export class DiscordBot extends EventEmitter implements BotPort {
       const elapsedMs = this.connectedAt === null ? "n/a" : Date.now() - this.connectedAt;
       const status = conn?.state.status ?? "none";
       const { members, bots } = this.voiceMemberCounts();
-      const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} ${trace}`;
+      const membersChanged = members !== this.lastVoiceMembers.members || bots !== this.lastVoiceMembers.bots;
+      this.lastVoiceMembers = { members, bots };
+      const cause = classifyDaveLifecycle({ phase, lastKind: this.daveTrace?.lastKind ?? null, membersChanged });
+      const key = `${phase} ${status} protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} voiceMembers=${members} voiceBots=${bots} cause=${cause} ${trace}`;
       if (key === this.lastDaveLifecycleKey) return;
       this.lastDaveLifecycleKey = key;
-      const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} ${trace}`;
+      const line = `${this.o.id} DAVE ${phase}: protocol=${info?.protocolVersion ?? "n/a"} ready=${info?.ready ?? false} conn=${status} elapsedMs=${elapsedMs} voiceMembers=${members} voiceBots=${bots} failures=${this.failures} cause=${cause} ${trace}`;
       const severe = phase === "lost" || phase === "grace-expired" || phase === "voice-disconnected" || phase === "voice-destroyed";
       if (severe) this.o.log.warn(line);
       else this.o.log.info(line);
@@ -883,6 +896,10 @@ export class DiscordBot extends EventEmitter implements BotPort {
     return this.humans.stats();
   }
 
+  recoveryBudget(): { used: number; max: number } {
+    return { used: this.budget.used, max: this.timing.maxRecoveries };
+  }
+
   /** Admissions under the current receive generation (0 while not receiving). */
   get admittedHumans(): number {
     return this.admission?.size ?? 0;
@@ -954,7 +971,7 @@ export class DiscordBot extends EventEmitter implements BotPort {
     this.daveOk = false;
     this.daveTrace = null;
     this.connectedAt = null;
-    this.preparedFor = null;
+    this.preparedForEpoch = null;
     this.daveEpochs.forget();
     this.abortJoin?.abort();
     this.stopReceive(conn);
