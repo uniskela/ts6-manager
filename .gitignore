@@ -3,6 +3,8 @@ dist/
 build/
 .env
 .env.beta
+.env.discord-integration-test
+.env.discord-integration-test.local
 *.db
 *.db-journal
 *.log

@@ -53,6 +53,25 @@ async function main(): Promise<void> {
 
   const { text, plan } = previewSlashRegistration({ applicationId, guildId, remote });
   console.log(text);
+
+  const namesRaw = argValue(argv, '--names');
+  if (namesRaw) {
+    const wanted = new Set(namesRaw.split(',').map((n) => n.trim()).filter(Boolean));
+    const subset = {
+      create: plan.create.filter((c) => wanted.has(c.name)).map((c) => c.name),
+      update: plan.update.filter((u) => wanted.has(u.local.name)).map((u) => u.local.name),
+      unchanged: plan.unchanged.filter((u) => wanted.has(u.local.name)).map((u) => u.local.name),
+      collisions: plan.collisions.filter((c) => wanted.has(c.remote.name)).map((c) => c.remote.name),
+    };
+    console.log('--- subset filter --names ---');
+    console.log(`wanted=${[...wanted].join(',')}`);
+    console.log(`create=${subset.create.join(',') || '(none)'}`);
+    console.log(`update=${subset.update.join(',') || '(none)'}`);
+    console.log(`unchanged=${subset.unchanged.join(',') || '(none)'}`);
+    console.log(`collisions=${subset.collisions.join(',') || '(none)'}`);
+    console.log('NOTE: subset is offline planning only; apply still requires explicit names + confirms.');
+  }
+
   if (plan.validationErrors.length) {
     console.error('Validation errors:');
     for (const err of plan.validationErrors) console.error(`- ${err}`);
