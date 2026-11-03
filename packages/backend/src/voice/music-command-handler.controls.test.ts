@@ -28,14 +28,22 @@ function fixture(status = 'connected') {
   handler.reply = (_bot: unknown, _id: number, message: string) => replies.push(message);
   handler.saveMusicRequest = () => {};
   const bot = { currentConfig: { id: 1, serverConfigId: 9 }, ts3ClientId: 42,
-    queue: new PlayQueue(), status, nowPlaying: null, canSeek: true,
+    queue: new PlayQueue(), status, nowPlaying: null as any, canSeek: true,
+    stopGeneration: 0,
     playbackProgress: { position: 60, duration: 100 },
-    play: async (item: any) => played.push(item), seek: async (n: number) => seeks.push(n),
+    assertMusicCanStart() {},
+    play: async function (item: any) {
+      played.push(item);
+      this.nowPlaying = item;
+      if (this.status === 'connected') this.status = 'playing';
+    },
+    seek: async (n: number) => seeks.push(n),
     clearPlayback: () => {},
     isStreaming: false,
     stopAudio() {
       if (this.status === 'playing' || this.status === 'paused') this.status = 'connected';
       this.isStreaming = false;
+      this.nowPlaying = null;
     },
     videoSessionInfo: () => null, musicSessionInfo: () => null,
   };

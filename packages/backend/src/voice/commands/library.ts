@@ -1,4 +1,5 @@
 import type { VoiceBot } from '../voice-bot.js';
+import { MediaSessionConflictError } from '../media-session.js';
 import { QueueFullError, type QueueItem } from '../playlist/queue.js';
 import { isYouTubeHostUrl } from '../audio/youtube.js';
 
@@ -89,6 +90,21 @@ export function songsToQueueItems(songs: PlaylistSongRow[]): QueueItem[] {
   }));
 }
 
+/** Remove only this request's items; restore cursor only if that prior track is still queued. */
+function releaseOwnedPlaylistItems(
+  bot: VoiceBot,
+  owned: QueueItem[],
+  previousCurrent: QueueItem | null,
+): void {
+  for (const item of [...owned].reverse()) {
+    const index = bot.queue.getAll().indexOf(item);
+    if (index >= 0) bot.queue.removeAt(index);
+  }
+  if (!previousCurrent) return;
+  const index = bot.queue.getAll().indexOf(previousCurrent);
+  if (index >= 0) bot.queue.playAt(index);
+}
+
 export async function enqueueSavedPlaylist(
   db: PlaylistCatalog,
   bot: VoiceBot,
@@ -102,6 +118,7 @@ export async function enqueueSavedPlaylist(
   const serverConfigId = bot.currentConfig.serverConfigId;
   if (!serverConfigId) return { ok: false, message: 'No server configured.' };
   const stopGeneration = bot.stopGeneration;
+  const stillOurs = () => bot.stopGeneration === stopGeneration && opts.isCurrent?.() !== false;
   const summaries = await loadPlaylistSummaries(db, serverConfigId);
   const matches = matchNamed(summaries, query);
   if (matches.length !== 1) {
@@ -112,19 +129,69 @@ export async function enqueueSavedPlaylist(
     include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
   });
   if (!playlist?.songs.length) return { ok: false, message: 'Playlist is empty.' };
-  if (bot.stopGeneration !== stopGeneration || opts.isCurrent?.() === false) {
+  if (!stillOurs()) {
     return { ok: false, message: 'Playback was stopped before the playlist was loaded.' };
   }
   const items = songsToQueueItems(playlist.songs);
+  const replaceIds = opts.musicSwitch?.replaceSessionIds;
+  // Reject media-session conflicts before mutating the shared queue.
+  if (bot.status === 'connected' && !bot.nowPlaying) {
+    try {
+      bot.assertMusicCanStart(replaceIds);
+    } catch (err) {
+      if (err instanceof MediaSessionConflictError) return { ok: false, message: err.message };
+      throw err;
+    }
+  }
+  if (!stillOurs()) {
+    return { ok: false, message: 'Playback was stopped before the playlist was loaded.' };
+  }
+
+  const previousCurrent = bot.queue.current;
   try {
     bot.queue.addMany(items);
   } catch (err) {
     if (err instanceof QueueFullError) return { ok: false, message: err.message };
     throw err;
   }
-  if (bot.status === 'connected' && !bot.nowPlaying) {
-    const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
+
+  // Append behind active music, or leave queued when not in a startable connected state.
+  if (bot.status !== 'connected' || bot.nowPlaying) {
+    return { ok: true, name: playlist.name, count: items.length, items };
+  }
+
+  if (!stillOurs()) {
+    releaseOwnedPlaylistItems(bot, items, previousCurrent);
+    return { ok: false, message: 'Playback was stopped before the playlist was loaded.' };
+  }
+
+  try {
+    bot.assertMusicCanStart(replaceIds);
+  } catch (err) {
+    releaseOwnedPlaylistItems(bot, items, previousCurrent);
+    if (err instanceof MediaSessionConflictError) return { ok: false, message: err.message };
+    throw err;
+  }
+
+  const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
+  let started = false;
+  try {
     if (first) await bot.play(first, opts.musicSwitch);
+    started = stillOurs() && first != null && bot.nowPlaying === first;
+  } catch (err) {
+    // Clear audio only while this request still owns nowPlaying (not a newer Play B).
+    if (first && bot.nowPlaying === first) bot.stopAudio({ keepPendingRequests: true });
+    if (stillOurs()) releaseOwnedPlaylistItems(bot, items, previousCurrent);
+    if (err instanceof MediaSessionConflictError || err instanceof Error) {
+      return { ok: false, message: err.message };
+    }
+    throw err;
+  }
+  if (!started) {
+    // Stop may clear the queue then a late play() re-sets nowPlaying — clear that orphan.
+    if (first && bot.nowPlaying === first) bot.stopAudio({ keepPendingRequests: true });
+    if (stillOurs()) releaseOwnedPlaylistItems(bot, items, previousCurrent);
+    return { ok: false, message: 'Playback was stopped before the playlist was loaded.' };
   }
   return { ok: true, name: playlist.name, count: items.length, items };
 }
