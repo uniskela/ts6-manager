@@ -11,6 +11,13 @@ function envFlag(name: string): boolean {
   return v === '1' || v === 'true';
 }
 
+/** Comma-separated Discord role snowflakes; empty → fail closed until configured. */
+function envRoleIds(name: string): string[] {
+  const raw = (process.env[name] || '').trim();
+  if (!raw) return [];
+  return [...new Set(raw.split(',').map((s) => s.trim()).filter(Boolean))];
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -24,4 +31,8 @@ export const config = {
   /** Off by default. When true, requires DISCORD_PUBLIC_KEY (64-char hex). */
   discordInteractionsEnabled: envFlag('DISCORD_INTERACTIONS_ENABLED'),
   discordPublicKeyHex: (process.env.DISCORD_PUBLIC_KEY || '').trim(),
+  /** Must match DiscordGuildBinding.instanceId; no cross-instance bot fallback. */
+  discordInstanceId: (process.env.DISCORD_INSTANCE_ID || 'local').trim() || 'local',
+  discordViewerRoleIds: envRoleIds('DISCORD_VIEWER_ROLE_IDS'),
+  discordAdminRoleIds: envRoleIds('DISCORD_ADMIN_ROLE_IDS'),
 };

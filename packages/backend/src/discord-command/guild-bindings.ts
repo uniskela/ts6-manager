@@ -100,9 +100,10 @@ export function createPrismaGuildBindingLookup(db: BindingDb): GuildBindingLooku
           select: { id: true, serverConfigId: true },
         });
         return mapActive({ ...row, musicBot });
-      } catch {
-        // DB errors → fail closed at lookup; adapter also maps throws to unavailable.
-        return null;
+      } catch (err) {
+        // Propagate so the adapter maps to unavailable (not unpaired/null).
+        // Callers must not treat I/O failures as "guild not bound".
+        throw err;
       }
     },
   };

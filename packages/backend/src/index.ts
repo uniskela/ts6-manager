@@ -22,6 +22,11 @@ import { bootstrapLocalDevConnection } from './bootstrap/local-dev-connection.js
 import { ActivityJournalService } from './activity-journal/activity-journal-service.js';
 import { startMediaEgress } from './voice/egress/media-egress.js';
 import { runInOrderWithin } from './utils/ordered-shutdown.js';
+import {
+  clearDiscordCommandRuntime,
+  createBackendDiscordCommandRuntime,
+  installDiscordCommandRuntime,
+} from './discord-command/backend-runtime.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -158,6 +163,21 @@ async function main() {
   voiceBotManager.setMusicCommandHandler(musicCommandHandler);
   await musicCommandHandler.refreshAllBotChannels();
 
+  // Discord command runtime (Phase 2C Step 3A): Prisma bindings + shared VoiceBotManager.
+  // HTTP route stays gated by DISCORD_INTERACTIONS_ENABLED; follow-up left null → deferred 503.
+  // Construction does not open Discord sockets, register slash commands, or start playback.
+  const discordRuntime = createBackendDiscordCommandRuntime({
+    prisma,
+    voiceBotManager,
+    instanceId: config.discordInstanceId,
+    policy: {
+      viewerRoleIds: config.discordViewerRoleIds,
+      adminRoleIds: config.discordAdminRoleIds,
+    },
+    virtualServerIdForBot: (botId) => musicCommandHandler.virtualServerIdForBot(botId),
+  });
+  installDiscordCommandRuntime(app, discordRuntime);
+
   // TeamSpeak activity journal (#91 Slice 5) — opt-in per connection/SID
   const activityJournal = new ActivityJournalService(prisma, botEngine.getEventBridge());
   app.locals.activityJournal = activityJournal;
@@ -183,6 +203,8 @@ async function main() {
     stopAuditRetention();
     await activityJournal.stop();
 
+    // Drop Discord adapter refs before stopping bots so in-flight commands fail closed.
+    clearDiscordCommandRuntime(app);
     await voiceBotManager.stopAll();
     await botEngine.destroy();
     connectionPool.destroy();

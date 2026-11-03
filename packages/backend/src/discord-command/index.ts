@@ -46,6 +46,16 @@ export {
   type GuildBindingWriteInput,
 } from './guild-bindings.js';
 export {
+  clearDiscordCommandRuntime,
+  createAuthorisingMusicExecute,
+  createBackendDiscordCommandRuntime,
+  createInstanceScopedBindingLookup,
+  installDiscordCommandRuntime,
+  resolveBotForBinding,
+  type BackendDiscordRuntimeOpts,
+  type VoiceBotManagerPort,
+} from './backend-runtime.js';
+export {
   MUSIC_COMMANDS,
   PHASE_2A_MUSIC_COMMANDS,
   PHASE_2B_1_MUSIC_COMMANDS,
