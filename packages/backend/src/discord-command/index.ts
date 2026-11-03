@@ -48,6 +48,26 @@ export {
   type DiscordWebhookFollowUpOpts,
 } from './discord-delivery.js';
 export {
+  ackModeForHandlerCommand,
+  DISCORD_CHAT_INPUT,
+  DiscordOptionType,
+  getSupportedHandlerCommands,
+  getSupportedSlashCommands,
+  interactionDataForCommand,
+  toDiscordCommandBody,
+  validateSlashCommandDefinition,
+  validateSlashCommandRegistry,
+  type SlashCommandDefinition,
+  type SlashOptionDefinition,
+} from './slash-commands.js';
+export {
+  createSlashRegistrationClient,
+  previewSlashRegistration,
+  type RemoteGuildCommand,
+  type SlashRegistrationApplyResult,
+  type SlashRegistrationPlan,
+} from './slash-registration.js';
+export {
   discordDeferredAck,
   discordMessageFromResult,
   discordPong,

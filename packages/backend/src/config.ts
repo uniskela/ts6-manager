@@ -36,6 +36,12 @@ export const config = {
    * Required (with public key) before deferred commands can be acknowledged.
    */
   discordApplicationId: (process.env.DISCORD_APPLICATION_ID || '').trim(),
+  /**
+   * Bot token for guild slash-command registration (Step 3B.2).
+   * Never used at startup; only by an explicit dry-run/apply workflow.
+   * Prefer reading from env at apply time rather than logging this value.
+   */
+  discordBotToken: (process.env.DISCORD_BOT_TOKEN || '').trim(),
   /** Must match DiscordGuildBinding.instanceId; no cross-instance bot fallback. */
   discordInstanceId: (process.env.DISCORD_INSTANCE_ID || 'local').trim() || 'local',
   discordViewerRoleIds: envRoleIds('DISCORD_VIEWER_ROLE_IDS'),
