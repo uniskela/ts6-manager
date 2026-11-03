@@ -20,7 +20,10 @@ export function useServerIcons(enabled: boolean) {
 function toDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
+    reader.onload = () => {
+      if (typeof reader.result === 'string') resolve(reader.result);
+      else reject(new Error('Could not read icon'));
+    };
     reader.onerror = () => reject(reader.error ?? new Error('Could not read icon'));
     reader.readAsDataURL(blob);
   });
