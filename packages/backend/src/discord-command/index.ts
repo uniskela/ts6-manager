@@ -14,6 +14,30 @@ export {
 } from './adapter.js';
 export { handleSignedInteraction, parseInteractionBody, planAcknowledgement } from './interaction.js';
 export {
+  createDiscordInteractionsMisconfiguredRouter,
+  createDiscordInteractionsRouter,
+  isValidDiscordPublicKeyHex,
+  type DiscordInteractionAdapter,
+  type DiscordInteractionsHttpDeps,
+} from './interactions-http.js';
+export {
+  MemoryDiscordFollowUp,
+  type DiscordDeferredFollowUpJob,
+  type DiscordInteractionFollowUp,
+} from './follow-up.js';
+export {
+  discordDeferredAck,
+  discordMessageFromResult,
+  discordPong,
+  safeCommandFailure,
+} from './http-response.js';
+export {
+  createDiscordCommandRuntime,
+  MemoryGuildBindingLookup,
+  type DiscordCommandRuntime,
+  type GuildBindingLookup,
+} from './runtime.js';
+export {
   MUSIC_COMMANDS,
   PHASE_2A_MUSIC_COMMANDS,
   PHASE_2B_1_MUSIC_COMMANDS,

@@ -6,6 +6,11 @@ import { parseTrustProxy } from './trust-proxy.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
 
+function envFlag(name: string): boolean {
+  const v = process.env[name];
+  return v === '1' || v === 'true';
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
   nodeEnv: process.env.NODE_ENV || 'development',
@@ -16,4 +21,7 @@ export const config = {
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:5173',
   trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   tsAllowSelfSigned: process.env.TS_ALLOW_SELF_SIGNED === 'true' || process.env.TS_ALLOW_SELF_SIGNED === '1',
+  /** Off by default. When true, requires DISCORD_PUBLIC_KEY (64-char hex). */
+  discordInteractionsEnabled: envFlag('DISCORD_INTERACTIONS_ENABLED'),
+  discordPublicKeyHex: (process.env.DISCORD_PUBLIC_KEY || '').trim(),
 };
