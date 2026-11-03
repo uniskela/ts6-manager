@@ -36,7 +36,7 @@ The backend looks for:
 
 `MEDIA_FETCHER=1` on the overlay is not a safety switch. Radio always uses the fetcher. There is no supported `MEDIA_FETCHER=legacy` override.
 
-Fetcher-only variables (not needed on the backend): `JOBS_SOCK`, `PROXY_CTL`, `PROXY_HOST`, `PROXY_PORT`, `FETCHER_MAX_JOBS`, `MEDIA_FETCHER_CA_FILE` (lab CA override). `LL_WRAP=0` and `MEDIA_FETCHER_DISABLE_LANDLOCK=1` refuse to start.
+Fetcher-only variables (not needed on the backend): `JOBS_SOCK`, `PROXY_CTL`, `PROXY_CTL_TOKEN_FILE` (`/ctl/.ctl-token`), `PROXY_HOST`, `PROXY_PORT`, `FETCHER_MAX_JOBS`, `MEDIA_FETCHER_CA_FILE` (lab CA override; must not live under `/jobs` because sandboxed ffmpeg cannot read that tree). `LL_WRAP=0` and `MEDIA_FETCHER_DISABLE_LANDLOCK=1` refuse to start.
 
 ## Linux / Landlock
 
@@ -61,7 +61,8 @@ The fetcher process will not start unless Landlock can enforce TCP `CONNECT` to 
 ## Filesystem ownership and token permissions
 
 - Host token: owner-only (`umask 077` / mode `600`). Keep it that way under rootless Docker. A world-readable token is refused.
-- `media-fetcher-token` runs as container uid `0` (the rootless host user) and writes `/jobs/.token` as uid `1000` mode `600`. The fetcher (`user: "1000:1000"`) and the stock backend image (runs as root; no `USER` in `Dockerfile.backend`) both read that copy.
+- `media-fetcher-token` runs as container uid `0` with only `CAP_DAC_OVERRIDE` and `CAP_CHOWN` (all other capabilities dropped). It writes `/jobs/.token` and a separate `/ctl/.ctl-token` as uid `1000` mode `600`. The Job API token and the proxy control secret are different files. The fetcher (`user: "1000:1000"`) and the stock backend image (runs as root; no `USER` in `Dockerfile.backend`) both read the Job API token; the backend never mounts `/ctl`.
+- Rootless and rootful Compose both need those two installer capabilities so container-root can write into the node-owned volume and `chown` the secret. Rootful Docker validation outside this host remains a separate release check.
 - Rootless named volumes may be created as root. If the fetcher cannot write `/jobs` or `/ctl`:
 
 ~~~bash
@@ -69,7 +70,7 @@ docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml \
   run --rm --user 0 media-fetcher chown -R node:node /jobs /ctl
 ~~~
 
-- Fetcher and proxy run as uid `1000` with `no-new-privileges` and `cap_drop: ALL`. After rotating `.media-fetcher-token`, recreate `media-fetcher-token` so the volume copy is refreshed.
+- Fetcher and proxy run as uid `1000` with `no-new-privileges` and `cap_drop: ALL` (no CHOWN/DAC_OVERRIDE). After rotating `.media-fetcher-token`, recreate `media-fetcher-token` and restart the proxy and fetcher so both volume secrets refresh.
 
 ## If the fetcher cannot start
 

@@ -3,12 +3,16 @@
 # Without this overlay, radio fails closed. There is no legacy in-process fallback.
 #   docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml up
 # Backend stays on ts6-network only. Fetcher stays on ts6_fetch only.
-# No published fetcher/proxy ports. No Docker socket. No extra capabilities.
+# No published fetcher/proxy ports. No Docker socket. No extra capabilities on fetcher/proxy.
 #
 # Create a token file (32+ hex) before starting. Keep it owner-only on the host:
 #   umask 077; openssl rand -hex 32 > .media-fetcher-token
 # Rootless Docker maps that host file to container root. Do not chmod 644.
-# media-fetcher-token copies it into the jobs volume as uid 1000 mode 600.
+# media-fetcher-token copies it into the jobs volume as uid 1000 mode 600 and
+# writes a separate ctl secret into the ctl volume (also uid 1000 mode 600).
+# The installer is the only service that keeps CAP_DAC_OVERRIDE + CAP_CHOWN, and
+# only for that short-lived oneshot. Rootless and rootful both need those two
+# capabilities so container-root can write into the node-owned volume and chown.
 # Rootless named volumes may be root-owned; if bind fails:
 #   docker compose -f docker-compose.yml -f docker-compose.media-fetcher.yml \
 #     run --rm --user 0 media-fetcher chown -R node:node /jobs /ctl
@@ -42,12 +46,17 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
     environment:
       - TOKEN_SRC=/src/token
       - TOKEN_DEST=/jobs/.token
+      - CTL_TOKEN_DEST=/ctl/.ctl-token
     volumes:
       - ${MEDIA_FETCHER_TOKEN_FILE:-./.media-fetcher-token}:/src/token:ro
       - ts6-jobs:/jobs
+      - ts6-ctl:/ctl
     command: ["node", "/app/install-token.mjs"]
     restart: "no"
     networks:
@@ -69,10 +78,14 @@ services:
       - ALL
     environment:
       - PROXY_CTL=/ctl/proxy.sock
+      - PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token
       - PROXY_PORT=8080
     volumes:
       - ts6-ctl:/ctl
     command: ["node", "/app/proxy.mjs"]
+    depends_on:
+      media-fetcher-token:
+        condition: service_completed_successfully
     restart: unless-stopped
     networks:
       ts6_fetch:
@@ -95,6 +108,7 @@ services:
     environment:
       - JOBS_SOCK=/jobs/jobs.sock
       - PROXY_CTL=/ctl/proxy.sock
+      - PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token
       - PROXY_HOST=media-egress-proxy
       - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
       - FETCHER_MAX_JOBS=4

@@ -8,10 +8,11 @@ import { radioFfmpegArgs } from './ffmpeg-args.mjs';
 import { landlockDisabledByEnv, parseCheckOutput } from './landlock.mjs';
 import { peerPid } from './peer-pid.mjs';
 import { allocateJobId, allowTlsConnect, constrainRadioPorts, parseJobId } from './policy.mjs';
-import { assertPrivateTokenMode } from './token.mjs';
+import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
 
 const sockPath = process.env.JOBS_SOCK || '/jobs/jobs.sock';
 const ctlPath = process.env.PROXY_CTL || '/ctl/proxy.sock';
+const ctlTokenFile = process.env.PROXY_CTL_TOKEN_FILE || '/ctl/.ctl-token';
 const wrapPath = process.env.LL_WRAP_PATH || '/usr/local/bin/ll-wrap';
 const maxJobs = Number(process.env.FETCHER_MAX_JOBS || 4);
 const maxLine = Number(process.env.FETCHER_MAX_LINE || 8192);
@@ -19,12 +20,17 @@ const jobTimeoutMs = Number(process.env.FETCHER_JOB_MS || 12 * 60 * 60_000);
 const proxyHost = process.env.PROXY_HOST || 'media-egress-proxy';
 const jobs = new Map();
 
-function readToken() {
-  const file = process.env.MEDIA_FETCHER_TOKEN_FILE;
-  if (!file) throw new Error('MEDIA_FETCHER_TOKEN_FILE required');
+function readSecretFile(file, label) {
+  if (!file) throw new Error(`${label} required`);
   assertPrivateTokenMode(fs.statSync(file).mode);
   const token = fs.readFileSync(file, 'utf8').replace(/\s+/g, '');
-  if (token.length < 16) throw new Error('fetcher token too short');
+  if (token.length < 16) throw new Error(`${label} too short`);
+  return token;
+}
+
+function readToken() {
+  const file = process.env.MEDIA_FETCHER_TOKEN_FILE;
+  const token = readSecretFile(file, 'MEDIA_FETCHER_TOKEN_FILE');
   delete process.env.MEDIA_FETCHER_TOKEN;
   delete process.env.FETCHER_TOKEN;
   return token;
@@ -45,8 +51,10 @@ function requireLandlock() {
 }
 
 let fetcherToken;
+let ctlToken;
 try {
   fetcherToken = readToken();
+  ctlToken = readSecretFile(ctlTokenFile, 'PROXY_CTL_TOKEN_FILE');
   requireLandlock();
 } catch (err) {
   process.stdout.write(`FETCHER error ${err.message}\n`);
@@ -55,11 +63,13 @@ try {
 
 function ctl(method, path, body) {
   return new Promise((resolve, reject) => {
+    const headers = { authorization: `Bearer ${ctlToken}` };
+    if (body) headers['content-type'] = 'application/json';
     const req = http.request({
       socketPath: ctlPath,
       path,
       method,
-      headers: body ? { 'content-type': 'application/json' } : {},
+      headers,
     }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
@@ -162,7 +172,9 @@ function startFfmpeg(url, shimPort) {
 
 function parse(line) {
   const msg = JSON.parse(line);
-  if (!fetcherToken || msg.token !== fetcherToken) throw new Error('unauthorized');
+  if (!fetcherToken || !tokensEqual(String(msg.token ?? ''), fetcherToken)) {
+    throw new Error('unauthorized');
+  }
   return msg;
 }
 

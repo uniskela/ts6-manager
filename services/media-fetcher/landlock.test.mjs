@@ -9,9 +9,13 @@ describe('landlock gate', () => {
     assert.equal(landlockDisabledByEnv({ MEDIA_FETCHER_DISABLE_LANDLOCK: '1' }), true);
   });
 
-  it('requires ABI >= 4 from ll-wrap --check', () => {
-    assert.deepEqual(parseCheckOutput('landlock_abi=4\n', 0), { ok: true, abi: 4 });
-    assert.deepEqual(parseCheckOutput('landlock_abi=3\n', 0), { ok: false, abi: 3 });
-    assert.deepEqual(parseCheckOutput('', 1), { ok: false, abi: 0 });
+  it('requires ABI >= 4 and filesystem enforcement from ll-wrap --check', () => {
+    assert.deepEqual(
+      parseCheckOutput('landlock_abi=4\nlandlock_fs=1\nlandlock_resolve_unix=0\n', 0),
+      { ok: true, abi: 4, fs: true },
+    );
+    assert.deepEqual(parseCheckOutput('landlock_abi=4\n', 0), { ok: false, abi: 4, fs: false });
+    assert.deepEqual(parseCheckOutput('landlock_abi=3\nlandlock_fs=1\n', 0), { ok: false, abi: 3, fs: true });
+    assert.deepEqual(parseCheckOutput('', 1), { ok: false, abi: 0, fs: false });
   });
 });

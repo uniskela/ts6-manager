@@ -5,6 +5,7 @@ import {
   allowTlsConnect,
   constrainRadioPorts,
   mediaEgressRefusal,
+  parseConnectAuthority,
   parseJobId,
   pinMediaAddresses,
   RADIO_EGRESS_PORTS,
@@ -57,6 +58,17 @@ describe('media fetcher policy', () => {
     assert.equal(allowTlsConnect('http://203.0.113.10/https-hop.m3u8'), false);
     assert.equal(allowTlsConnect(''), false);
     assert.equal(allowTlsConnect({ connect: true }), false);
+  });
+
+  it('parses CONNECT authorities strictly', () => {
+    assert.deepEqual(parseConnectAuthority('origin.example:443'), { host: 'origin.example', port: 443 });
+    assert.deepEqual(parseConnectAuthority('203.0.113.10:8443'), { host: '203.0.113.10', port: 8443 });
+    assert.deepEqual(parseConnectAuthority('[2001:db8::1]:443'), { host: '2001:db8::1', port: 443 });
+    assert.equal(parseConnectAuthority('2001:db8::1:443'), null);
+    assert.equal(parseConnectAuthority('[2001:db8::1'), null);
+    assert.equal(parseConnectAuthority('host'), null);
+    assert.equal(parseConnectAuthority('host:99999'), null);
+    assert.equal(parseConnectAuthority(''), null);
   });
 });
 

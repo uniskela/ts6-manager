@@ -4,16 +4,45 @@ import { Resolver } from 'node:dns/promises';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
-import { constrainRadioPorts, pinMediaAddresses } from './policy.mjs';
+import {
+  constrainRadioPorts,
+  parseConnectAuthority,
+  parseJobId,
+  pinMediaAddresses,
+} from './policy.mjs';
+import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
 
 const listenPort = Number(process.env.PROXY_PORT || 8080);
 const ctlPath = process.env.PROXY_CTL || '/ctl/proxy.sock';
+const ctlTokenFile = process.env.PROXY_CTL_TOKEN_FILE || '/ctl/.ctl-token';
 const permitPrivate = process.env.PROXY_PERMIT_PRIVATE === '1';
 const maxJobs = Number(process.env.PROXY_MAX_JOBS || 8);
 const jobs = new Map(); // tokenHash -> state
 
+function readCtlToken() {
+  assertPrivateTokenMode(fs.statSync(ctlTokenFile).mode);
+  const token = fs.readFileSync(ctlTokenFile, 'utf8').replace(/\s+/g, '');
+  if (token.length < 16) throw new Error('ctl token too short');
+  return token;
+}
+
+let ctlToken;
+try {
+  ctlToken = readCtlToken();
+} catch (err) {
+  process.stdout.write(`PROXY error ${err.message}\n`);
+  process.exit(1);
+}
+
 function tokenHash(token) {
   return createHash('sha256').update(token).digest('hex');
+}
+
+function ctlAuthorized(req) {
+  const header = req.headers.authorization || '';
+  const m = /^Bearer (.+)$/.exec(header);
+  if (!m) return false;
+  return tokensEqual(m[1], ctlToken);
 }
 
 function jobFor(req) {
@@ -133,9 +162,13 @@ server.on('connect', async (req, socket) => {
     return;
   }
   track(job, socket);
-  const sep = req.url.lastIndexOf(':');
-  const host = req.url.slice(0, sep);
-  const port = Number(req.url.slice(sep + 1));
+  const parsed = parseConnectAuthority(req.url || '');
+  if (!parsed) {
+    socket.write('HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  const { host, port } = parsed;
   if (!job.connect || !allowedHost(job, host) || !allowedPort(job, port)) {
     socket.write('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
     socket.destroy();
@@ -184,17 +217,25 @@ function readBody(req, limit = 8192) {
 
 async function control(req, res) {
   try {
+    if (!ctlAuthorized(req)) {
+      res.writeHead(401).end();
+      return;
+    }
     if (req.method === 'POST' && req.url === '/jobs') {
       if (jobs.size >= maxJobs) {
         res.writeHead(429).end();
         return;
       }
       const body = JSON.parse((await readBody(req)) || '{}');
-      if (!body.id || !body.token || typeof body.token !== 'string' || body.token.length < 16) {
+      if (!body.token || typeof body.token !== 'string' || body.token.length < 16) {
         res.writeHead(400).end();
         return;
       }
-      const id = String(body.id);
+      const id = parseJobId(body.id);
+      if (!id) {
+        res.writeHead(400).end();
+        return;
+      }
       for (const job of jobs.values()) {
         if (job.id === id) {
           res.writeHead(409).end();
@@ -214,13 +255,18 @@ async function control(req, res) {
         sockets: new Set(),
         abort: new AbortController(),
       });
-      res.writeHead(201).end(JSON.stringify({ id: body.id }));
+      res.writeHead(201).end(JSON.stringify({ id }));
       return;
     }
     const revoke = /^\/jobs\/([^/]+)\/revoke$/.exec(req.url || '');
     if (req.method === 'POST' && revoke) {
+      const jobId = parseJobId(revoke[1]);
+      if (!jobId) {
+        res.writeHead(400).end();
+        return;
+      }
       for (const job of jobs.values()) {
-        if (job.id === revoke[1]) {
+        if (job.id === jobId) {
           destroyJob(job);
           res.writeHead(200).end(JSON.stringify({ revoked: job.id, open: job.sockets.size }));
           return;
@@ -231,18 +277,27 @@ async function control(req, res) {
     }
     const del = /^\/jobs\/([^/]+)$/.exec(req.url || '');
     if (req.method === 'DELETE' && del) {
+      const jobId = parseJobId(del[1]);
+      if (!jobId) {
+        res.writeHead(400).end();
+        return;
+      }
       for (const [hash, job] of jobs) {
-        if (job.id === del[1]) {
+        if (job.id === jobId) {
           destroyJob(job);
           jobs.delete(hash);
-          res.writeHead(200).end(JSON.stringify({ deleted: del[1], ...snapshot() }));
+          res.writeHead(200).end(JSON.stringify({ deleted: jobId, ...snapshot() }));
           return;
         }
       }
       res.writeHead(404).end();
       return;
     }
-    res.writeHead(200).end(JSON.stringify(snapshot()));
+    if (req.method === 'GET' && (req.url === '/' || req.url === '/status')) {
+      res.writeHead(200).end(JSON.stringify(snapshot()));
+      return;
+    }
+    res.writeHead(404).end();
   } catch {
     res.writeHead(400).end();
   }

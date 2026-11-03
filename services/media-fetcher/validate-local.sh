@@ -13,7 +13,7 @@ openssl rand -hex 32 > "$TOKEN_FILE"
 
 P=ts6gatec
 cleanup() {
-  docker rm -f "$P-backend" "$P-fetcher" "$P-proxy" "$P-world" "$P-noll" >/dev/null 2>&1 || true
+  docker rm -f "$P-backend" "$P-fetcher" "$P-proxy" "$P-world" "$P-noll" "$P-token" >/dev/null 2>&1 || true
   docker network rm "${P}_fetch" "${P}_world" "${P}_app" >/dev/null 2>&1 || true
   docker volume rm "${P}_jobs" "${P}_ctl" >/dev/null 2>&1 || true
 }
@@ -31,17 +31,32 @@ docker network create "${P}_world" >/dev/null
 docker network create "${P}_app" >/dev/null
 docker volume create "${P}_jobs" >/dev/null
 docker volume create "${P}_ctl" >/dev/null
-docker run --rm -u 0 -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" "$IMAGE" chown -R node:node /jobs /ctl
+
+# Match Compose installer: uid 0, no-new-privileges, cap_drop ALL, only DAC_OVERRIDE+CHOWN.
+installer_caps=(--user 0 --security-opt=no-new-privileges --cap-drop ALL --cap-add DAC_OVERRIDE --cap-add CHOWN --read-only)
 chmod 644 "$TOKEN_FILE"
-docker run --rm -u 0 -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" "$IMAGE" \
-  node /app/install-token.mjs >/dev/null 2>&1 && fail "world-readable token installed"
+docker run --rm "${installer_caps[@]}" -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
+  -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token -e CTL_TOKEN_DEST=/ctl/.ctl-token \
+  "$IMAGE" node /app/install-token.mjs >/dev/null 2>&1 && fail "world-readable token installed"
 chmod 600 "$TOKEN_FILE"
-docker run --rm -u 0 -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" \
-  -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token "$IMAGE" node /app/install-token.mjs \
-  || fail "token install"
-TOKEN_MODE=$(docker run --rm -u 1000 -v "${P}_jobs:/jobs" "$IMAGE" stat -c '%a' /jobs/.token)
-[ "$TOKEN_MODE" = "600" ] || fail "token mode $TOKEN_MODE"
-pass "token install mode $TOKEN_MODE"
+docker run --rm "${installer_caps[@]}" -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
+  -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token -e CTL_TOKEN_DEST=/ctl/.ctl-token \
+  "$IMAGE" node /app/install-token.mjs || fail "compose-cap token install"
+TOKEN_STAT=$(docker run --rm -u 1000 -v "${P}_jobs:/jobs" "$IMAGE" stat -c '%a %u %g' /jobs/.token)
+[ "$TOKEN_STAT" = "600 1000 1000" ] || fail "token stat $TOKEN_STAT"
+CTL_STAT=$(docker run --rm -u 1000 -v "${P}_ctl:/ctl" "$IMAGE" stat -c '%a %u %g' /ctl/.ctl-token)
+[ "$CTL_STAT" = "600 1000 1000" ] || fail "ctl token stat $CTL_STAT"
+pass "token+ctl install mode/owner (compose caps)"
+
+# Rotation: reinstall with a new host token under the same caps.
+openssl rand -hex 32 > "$TOKEN_FILE"
+chmod 600 "$TOKEN_FILE"
+docker run --rm "${installer_caps[@]}" -v "$TOKEN_FILE:/src/token:ro" -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
+  -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token -e CTL_TOKEN_DEST=/ctl/.ctl-token \
+  "$IMAGE" node /app/install-token.mjs || fail "token rotation install"
+ROT_STAT=$(docker run --rm -u 1000 -v "${P}_jobs:/jobs" "$IMAGE" stat -c '%a %u' /jobs/.token)
+[ "$ROT_STAT" = "600 1000" ] || fail "rotated token $ROT_STAT"
+pass "token rotation under compose caps"
 
 common=(--user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL)
 
@@ -51,22 +66,53 @@ for i in $(seq 1 80); do docker logs "$P-world" 2>&1 | grep -q 'WORLD ready' && 
 docker logs "$P-world" 2>&1 | grep -q 'WORLD ready' || fail "world start"
 docker exec "$P-world" cat /tmp/ca.crt > "$WORKDIR/ca.crt"
 chmod 644 "$WORKDIR/ca.crt"
-docker run --rm -u 0 -v "${P}_jobs:/jobs" -v "$WORKDIR/ca.crt:/ca.crt:ro" "$IMAGE" \
-  sh -c 'cp /ca.crt /jobs/ca.crt && chmod 644 /jobs/ca.crt'
+# Lab CA must live outside /jobs so sandboxed ffmpeg can still read it (/tmp is allow-listed).
+docker run --rm -u 0 -v "${P}_jobs:/jobs" "$IMAGE" \
+  sh -c 'mkdir -p /jobs/private && echo other-job-secret > /jobs/private/cred && chown -R 1000:1000 /jobs/private && chmod 600 /jobs/private/cred'
 
 docker run -d --name "$P-proxy" "${common[@]}" --network "${P}_fetch" --network-alias media-egress-proxy \
-  -v "${P}_ctl:/ctl" -e PROXY_CTL=/ctl/proxy.sock -e PROXY_PERMIT_PRIVATE=1 \
+  -v "${P}_ctl:/ctl" \
+  -e PROXY_CTL=/ctl/proxy.sock -e PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token -e PROXY_PERMIT_PRIVATE=1 \
   "$IMAGE" node /app/proxy.mjs >/dev/null
 docker network connect "${P}_world" "$P-proxy"
 for i in $(seq 1 40); do docker logs "$P-proxy" 2>&1 | grep -q 'PROXY ready' && break; sleep 0.25; done
-docker logs "$P-proxy" 2>&1 | grep -q 'PROXY ready' || fail "proxy start"
+docker logs "$P-proxy" 2>&1 | grep -q 'PROXY ready' || fail "proxy start $(docker logs "$P-proxy" 2>&1 | tail -5)"
+
+# Unauthenticated ctl must not change state (API layer; required on every ABI).
+CTL_UNAUTH=$(docker run --rm --user node --network "${P}_fetch" --security-opt=no-new-privileges \
+  --read-only --tmpfs /tmp --cap-drop ALL -v "${P}_ctl:/ctl" "$IMAGE" node -e '
+const http=require("http");
+const req=http.request({socketPath:"/ctl/proxy.sock",path:"/jobs",method:"POST",
+  headers:{"content-type":"application/json"}},res=>{
+  let b="";res.on("data",c=>b+=c);res.on("end",()=>process.stdout.write(JSON.stringify({status:res.statusCode,body:b})));
+});
+req.on("error",e=>{process.stdout.write(JSON.stringify({error:e.message}));});
+req.end(JSON.stringify({id:"evil",token:"0123456789abcdef",ports:[80],connect:true}));
+')
+echo "$CTL_UNAUTH" | grep -q '"status":401' || fail "ctl unauth $CTL_UNAUTH"
+CTL_SNAP=$(docker run --rm --user node --network "${P}_fetch" --security-opt=no-new-privileges \
+  --read-only --tmpfs /tmp --cap-drop ALL -v "${P}_ctl:/ctl" "$IMAGE" node -e '
+const http=require("http"); const fs=require("fs");
+const tok=fs.readFileSync("/ctl/.ctl-token","utf8").replace(/\s+/g,"");
+const req=http.request({socketPath:"/ctl/proxy.sock",path:"/status",method:"GET",
+  headers:{authorization:"Bearer "+tok}},res=>{
+  let b="";res.on("data",c=>b+=c);res.on("end",()=>process.stdout.write(b));
+});
+req.on("error",e=>{process.stdout.write(e.message);});
+req.end();
+')
+echo "$CTL_SNAP" | grep -q '"jobs":\[\]' || fail "ctl state after unauth $CTL_SNAP"
+pass "ctl unauthenticated register denied"
 
 docker run -d --name "$P-fetcher" "${common[@]}" --network "${P}_fetch" \
   -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
+  -v "$WORKDIR/ca.crt:/tmp/lab-ca.crt:ro" \
   -e JOBS_SOCK=/jobs/jobs.sock -e PROXY_CTL=/ctl/proxy.sock \
+  -e PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token \
   -e PROXY_HOST=media-egress-proxy \
   -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token \
-  -e MEDIA_FETCHER_CA_FILE=/jobs/ca.crt \
+  -e MEDIA_FETCHER_CA_FILE=/tmp/lab-ca.crt \
+  -e SSL_CERT_FILE=/tmp/lab-ca.crt \
   -e FETCHER_FFMPEG_LOG=/jobs/ff.err \
   "$IMAGE" node /app/fetcher.mjs >/dev/null
 for i in $(seq 1 40); do docker logs "$P-fetcher" 2>&1 | grep -q 'FETCHER ready' && break; sleep 0.25; done
@@ -83,19 +129,42 @@ backend() {
 }
 
 backend wait --ms 8000 >/dev/null || fail "job socket"
-docker exec "$P-fetcher" sh -c 'test -r /jobs/ca.crt && wc -c /jobs/ca.crt' || fail "ca.crt missing in fetcher"
 
 # Landlock actually enforced
 WRAP_CHECK=$(docker exec "$P-fetcher" /usr/local/bin/ll-wrap --check) || fail "ll-wrap --check"
 echo "$WRAP_CHECK" | grep -q 'landlock_abi=' || fail "ll-wrap abi line"
+echo "$WRAP_CHECK" | grep -q 'landlock_fs=1' || fail "ll-wrap fs line missing: $WRAP_CHECK"
 ABI=$(echo "$WRAP_CHECK" | sed -n 's/landlock_abi=//p')
 [ "${ABI:-0}" -ge 4 ] || fail "ABI $ABI < 4"
-pass "Landlock ABI $ABI"
+RESOLVE_UNIX=$(echo "$WRAP_CHECK" | sed -n 's/landlock_resolve_unix=//p')
+pass "Landlock ABI $ABI fs=1 resolve_unix=$RESOLVE_UNIX"
+
+# Sandboxed open() of secrets must fail (FS Landlock).
+FS_DENY=$(docker exec "$P-fetcher" /usr/local/bin/ll-wrap 9 sh -c \
+  'set +e; cat /jobs/.token >/dev/null 2>/tmp/tok.err; echo token_rc=$?; cat /jobs/private/cred >/dev/null 2>/tmp/cred.err; echo cred_rc=$?; cat /ctl/.ctl-token >/dev/null 2>/tmp/ctl.err; echo ctl_rc=$?; cat /tmp/lab-ca.crt >/dev/null 2>/tmp/ca.err; echo ca_rc=$?')
+echo "$FS_DENY" | grep -q 'token_rc=0' && fail "sandboxed read of /jobs/.token: $FS_DENY"
+echo "$FS_DENY" | grep -q 'cred_rc=0' && fail "sandboxed read of other job file: $FS_DENY"
+echo "$FS_DENY" | grep -q 'ctl_rc=0' && fail "sandboxed read of ctl token: $FS_DENY"
+echo "$FS_DENY" | grep -q 'ca_rc=0' || fail "sandboxed CA read should work: $FS_DENY"
+pass "FS Landlock denies /jobs and /ctl secrets"
+
+if [ "${RESOLVE_UNIX:-0}" = "1" ]; then
+  cat > "$WORKDIR/unix-probe.mjs" <<'EOF'
+import net from 'node:net';
+const s = net.connect('/ctl/proxy.sock');
+s.on('connect', () => { process.stdout.write('unix_rc=0\n'); process.exit(0); });
+s.on('error', (e) => { process.stdout.write(`unix_rc=${e.errno || 1}\n`); process.exit(0); });
+EOF
+  docker cp "$WORKDIR/unix-probe.mjs" "$P-fetcher:/tmp/unix-probe.mjs"
+  UNIX_DENY=$(docker exec "$P-fetcher" /usr/local/bin/ll-wrap 9 node /tmp/unix-probe.mjs || true)
+  echo "$UNIX_DENY" | grep -q 'unix_rc=0' && fail "ABI9+ unix connect allowed: $UNIX_DENY"
+  pass "ABI9+ pathname unix connect denied"
+else
+  pass "ABI $ABI < 9: unix connect not claimed blocked by Landlock (ctl API auth covers it)"
+fi
 
 # Networks / ports / no docker.sock
 FETC_NETS=$(docker inspect "$P-fetcher" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}')
-BACK_NETS=$(docker inspect "$P-backend" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null || true)
-# backend() is --rm; inspect a one-shot via compose-equivalent: client never joins fetch
 echo "$FETC_NETS" | grep -q "${P}_fetch" || fail "fetcher not on fetch net"
 echo "$FETC_NETS" | grep -q "${P}_app" && fail "fetcher joined app net"
 docker inspect "$P-fetcher" --format '{{json .HostConfig.PortBindings}}' | grep -q '{}' || fail "fetcher published ports"
@@ -226,19 +295,21 @@ CMDLINES=$(docker exec "$P-fetcher" sh -c 'for p in /proc/[0-9]*; do tr "\0" " "
 echo "$CMDLINES" | grep -q ffmpeg && fail "ffmpeg still running"
 TOKEN_VAL=$(tr -d '\n' < "$TOKEN_FILE")
 echo "$CMDLINES" | grep -F -q "$TOKEN_VAL" && fail "token in argv"
+CTL_VAL=$(docker exec "$P-fetcher" sh -c "tr -d '\\n' < /ctl/.ctl-token")
+echo "$CMDLINES" | grep -F -q "$CTL_VAL" && fail "ctl token in argv"
 ENVIRON_HITS=$(docker exec "$P-fetcher" sh -c 'hits=0; for p in /proc/[0-9]*; do e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null || true); echo "$e" | grep -q "^FETCHER_TOKEN=" && hits=$((hits+1)); echo "$e" | grep -q "^MEDIA_FETCHER_TOKEN=" && hits=$((hits+1)); done; echo $hits')
 [ "${ENVIRON_HITS:-0}" -eq 0 ] || fail "token in environ ($ENVIRON_HITS)"
 pass "no token in argv/environ"
 
 # Explicit Landlock disable cannot start
 NOLL=$(docker run --rm --name "$P-noll" --user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL \
-  -v "${P}_jobs:/jobs" \
-  -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token -e LL_WRAP=0 \
+  -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
+  -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token -e PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token -e LL_WRAP=0 \
   "$IMAGE" node /app/fetcher.mjs 2>&1 || true)
 echo "$NOLL" | grep -q 'landlock required' || fail "LL_WRAP=0 not refused: $NOLL"
 FAKE=$(docker run --rm --user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL \
-  -v "${P}_jobs:/jobs" \
-  -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token -e LL_WRAP_PATH=/usr/bin/ffmpeg \
+  -v "${P}_jobs:/jobs" -v "${P}_ctl:/ctl" \
+  -e MEDIA_FETCHER_TOKEN_FILE=/jobs/.token -e PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token -e LL_WRAP_PATH=/usr/bin/ffmpeg \
   "$IMAGE" node /app/fetcher.mjs 2>&1 || true)
 echo "$FAKE" | grep -Eq 'landlock unavailable|landlock wrapper missing|landlock required' || fail "fake wrap not refused: $FAKE"
 pass "Landlock disable refused"

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { assertPrivateTokenMode } from './token.mjs';
+import { assertPrivateTokenMode, tokensEqual } from './token.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -17,18 +17,28 @@ describe('fetcher token mode', () => {
     assert.throws(() => assertPrivateTokenMode(0o100666), /world/);
   });
 
-  it('installs a 600 copy and refuses a world-readable source', () => {
+  it('compares tokens in constant time', () => {
+    assert.equal(tokensEqual('0123456789abcdef', '0123456789abcdef'), true);
+    assert.equal(tokensEqual('0123456789abcdef', '0123456789abcdee'), false);
+    assert.equal(tokensEqual('short', '0123456789abcdef'), false);
+    assert.equal(tokensEqual('', ''), true);
+  });
+
+  it('installs a 600 copy, optional ctl secret, and refuses a world-readable source', () => {
     const dir = mkdtempSync(join(tmpdir(), 'ts6-token-'));
     const src = join(dir, 'src');
     const dest = join(dir, 'dest');
+    const ctlDest = join(dir, 'ctl');
     writeFileSync(src, '0123456789abcdef0123456789abcdef', { mode: 0o600 });
     const ok = spawnSync(process.execPath, [join(here, 'install-token.mjs')], {
-      env: { ...process.env, TOKEN_SRC: src, TOKEN_DEST: dest },
+      env: { ...process.env, TOKEN_SRC: src, TOKEN_DEST: dest, CTL_TOKEN_DEST: ctlDest },
       encoding: 'utf8',
     });
     assert.equal(ok.status, 0, ok.stderr);
     assert.equal(statSync(dest).mode & 0o777, 0o600);
     assert.equal(readFileSync(dest, 'utf8'), readFileSync(src, 'utf8'));
+    assert.equal(statSync(ctlDest).mode & 0o777, 0o600);
+    assert.ok(readFileSync(ctlDest, 'utf8').replace(/\s+/g, '').length >= 16);
 
     chmodSync(src, 0o644);
     const bad = spawnSync(process.execPath, [join(here, 'install-token.mjs')], {

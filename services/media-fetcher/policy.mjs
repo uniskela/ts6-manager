@@ -23,6 +23,31 @@ export function allowTlsConnect(url) {
   return typeof url === 'string' && /^https:/i.test(url);
 }
 
+/**
+ * Parse an HTTP CONNECT authority. Accepts host:port and [ipv6]:port only.
+ * Rejects unbracketed IPv6 and other ambiguous forms.
+ */
+export function parseConnectAuthority(authority) {
+  if (typeof authority !== 'string' || !authority) return null;
+  if (authority.startsWith('[')) {
+    const end = authority.indexOf(']');
+    if (end < 1 || authority[end + 1] !== ':') return null;
+    const host = authority.slice(1, end);
+    if (isIP(host) !== 6) return null;
+    const port = Number(authority.slice(end + 2));
+    if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+    return { host, port };
+  }
+  const sep = authority.lastIndexOf(':');
+  if (sep <= 0 || sep !== authority.indexOf(':')) return null;
+  const host = authority.slice(0, sep);
+  const port = Number(authority.slice(sep + 1));
+  if (!host || host.includes('[') || host.includes(']')) return null;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  if (isIP(host) === 6) return null;
+  return { host, port };
+}
+
 export function allocateJobId(existing, requested) {
   if (requested == null || requested === '') {
     return { ok: true, jobId: randomBytes(8).toString('hex') };

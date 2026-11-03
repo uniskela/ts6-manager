@@ -9,5 +9,6 @@ export function landlockDisabledByEnv(env = process.env) {
 export function parseCheckOutput(stdout, status) {
   const m = /landlock_abi=(\d+)/.exec(stdout || '');
   const abi = m ? Number(m[1]) : 0;
-  return { ok: status === 0 && abi >= MIN_LANDLOCK_ABI, abi };
+  const fs = /landlock_fs=1/.test(stdout || '');
+  return { ok: status === 0 && abi >= MIN_LANDLOCK_ABI && fs, abi, fs };
 }
