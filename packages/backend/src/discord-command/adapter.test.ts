@@ -147,6 +147,73 @@ describe('read-only Discord command adapter', () => {
     assert.equal(bridge.ack, 'immediate');
   });
 
+  it('unknown commands stay Unknown command when presence is null; presence cmds still fail closed', async () => {
+    let presenceCalls = 0;
+    let bridgeCalls = 0;
+    let musicCalls = 0;
+    const adapter = createDiscordCommandAdapter(deps({
+      presence: {
+        async snapshot() {
+          presenceCalls += 1;
+          return null;
+        },
+      },
+      bridge: {
+        async health() {
+          bridgeCalls += 1;
+          return null;
+        },
+      },
+      music: {
+        async execute() {
+          musicCalls += 1;
+          return { ok: true, ephemeral: true, content: 'played', ack: 'immediate' };
+        },
+      },
+    }));
+
+    const unknown = await adapter.handle(intent({ command: 'notacommand', userId: VIEWER }));
+    assert.equal(unknown.code, 'unauthorized');
+    assert.match(unknown.content, /Unknown command/i);
+    assert.equal(presenceCalls, 0, 'unknown must not query presence');
+
+    const online = await adapter.handle(intent({ command: 'ts.online', userId: VIEWER }));
+    assert.equal(online.code, 'unavailable');
+    assert.match(online.content, /TeamSpeak is unavailable/i);
+    assert.equal(presenceCalls, 1);
+
+    const status = await adapter.handle(intent({ command: 'ts.status', userId: ADMIN }));
+    assert.equal(status.code, 'unavailable');
+    assert.equal(presenceCalls, 2);
+
+    const bridge = await adapter.handle(intent({ command: 'ts.bridge', userId: ADMIN }));
+    assert.equal(bridge.code, 'unavailable');
+    assert.match(bridge.content, /Bridge status is unavailable/i);
+    assert.equal(bridgeCalls, 1);
+    assert.equal(presenceCalls, 2, 'bridge must not query presence');
+
+    const help = await adapter.handle(intent({ command: 'ts.help', userId: VIEWER }));
+    assert.equal(help.ok, true);
+
+    // Auth still first: unpaired / no role never reach unknown/presence.
+    const unpaired = await adapter.handle(intent({
+      command: 'notacommand',
+      userId: VIEWER,
+      guildId: '999',
+    }));
+    assert.equal(unpaired.code, 'unpaired');
+    const noRole = await adapter.handle(intent({
+      command: 'notacommand',
+      userId: 'u-none',
+      roleIds: [],
+      memberPermissions: '0',
+    }));
+    assert.equal(noRole.code, 'unauthorized');
+    assert.doesNotMatch(noRole.content, /Unknown command/i);
+
+    assert.equal(musicCalls, 0, 'no playback side effects');
+  });
+
   it('reserves Phase 2B music commands without mutating playback', async () => {
     let presenceCalls = 0;
     const adapter = createDiscordCommandAdapter(deps({

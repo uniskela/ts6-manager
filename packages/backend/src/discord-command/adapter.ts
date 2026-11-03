@@ -178,23 +178,29 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
       }
     }
 
-    try {
-      const presence = await deps.presence.snapshot();
-      if (!presence) return fail('unavailable', 'TeamSpeak is unavailable.');
-      if (intent.command === 'ts.status') {
-        return ok(
-          presence.connected ? `Connected to ${presence.serverName ?? 'TeamSpeak'}` : 'TeamSpeak is disconnected.',
-          true,
-        );
-      }
-      if (intent.command === 'ts.online') {
-        return ok(presence.nicknames.length ? presence.nicknames.join('\n') : 'No one is online.', true);
-      }
-      if (intent.command === 'ts.channels') {
+    // Presence is only for known ts.* presence commands — do not let a null
+    // snapshot turn unknown commands into "TeamSpeak is unavailable."
+    if (
+      intent.command === 'ts.status'
+      || intent.command === 'ts.online'
+      || intent.command === 'ts.channels'
+    ) {
+      try {
+        const presence = await deps.presence.snapshot();
+        if (!presence) return fail('unavailable', 'TeamSpeak is unavailable.');
+        if (intent.command === 'ts.status') {
+          return ok(
+            presence.connected ? `Connected to ${presence.serverName ?? 'TeamSpeak'}` : 'TeamSpeak is disconnected.',
+            true,
+          );
+        }
+        if (intent.command === 'ts.online') {
+          return ok(presence.nicknames.length ? presence.nicknames.join('\n') : 'No one is online.', true);
+        }
         return ok(presence.channels.length ? presence.channels.map((c) => c.name).join('\n') : 'No channels.', true);
+      } catch {
+        return fail('unavailable', 'TeamSpeak is unavailable.');
       }
-    } catch {
-      return fail('unavailable', 'TeamSpeak is unavailable.');
     }
 
     return fail('unauthorized', 'Unknown command.');
