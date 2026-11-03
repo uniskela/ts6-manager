@@ -49,14 +49,27 @@ export function isSvgDocument(text: string): boolean {
     if (/\s/.test(text[at])) at++;
     else if (text.startsWith('<?', at)) at = skipPast('?>', at + 2);
     else if (text.startsWith('<!--', at)) at = skipPast('-->', at + 4);
-    else if (text.startsWith('<!DOCTYPE', at)) {
-      const close = text.indexOf('>', at);
-      // An internal subset (`[ ... ]`) may itself contain `>`, so skip past its `]` first.
-      const subset = close < 0 ? -1 : text.slice(at, close).indexOf('[');
-      at = close < 0 ? -1 : subset < 0 ? close + 1 : skipPast('>', skipPast(']', at + subset));
-    } else return /^<svg[\s/>]/.test(text.slice(at, at + 5));
+    else if (text.startsWith('<!DOCTYPE', at)) at = skipDoctype(at + 9);
+    else return /^<svg[\s/>]/.test(text.slice(at, at + 5));
   }
   return false;
+
+  // Index just past the doctype's closing `>`. Quoted literals, and comments and processing
+  // instructions in an internal `[ ... ]` subset, may contain `>`, `]` or quotes, so they are skipped whole.
+  function skipDoctype(from: number): number {
+    let inSubset = false;
+    for (let i = from; i >= 0 && i < text.length;) {
+      const ch = text[i];
+      if (ch === '"' || ch === "'") i = skipPast(ch, i + 1);
+      else if (inSubset && text.startsWith('<!--', i)) i = skipPast('-->', i + 4);
+      else if (inSubset && text.startsWith('<?', i)) i = skipPast('?>', i + 2);
+      else if (ch === '[' && !inSubset) { inSubset = true; i++; }
+      else if (ch === ']' && inSubset) { inSubset = false; i++; }
+      else if (ch === '>' && !inSubset) return i + 1;
+      else i++;
+    }
+    return -1;
+  }
 }
 
 export function iconImageMime(image: Buffer): string | null {

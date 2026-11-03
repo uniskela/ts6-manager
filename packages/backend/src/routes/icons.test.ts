@@ -127,16 +127,20 @@ test('SVG documents are recognised; other markup is not', () => {
     Buffer.from('\uFEFF<?xml version="1.0" encoding="UTF-8"?>\n<!-- Created with Inkscape -->\n<svg\n  width="16"></svg>'),
     Buffer.from('<?xml version="1.0"?><!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg></svg>'),
     Buffer.from('<!DOCTYPE svg [ <!ENTITY ns "http://www.w3.org/2000/svg"> ]>\r\n<svg xmlns="&ns;"></svg>'),
+    Buffer.from('<!DOCTYPE svg SYSTEM "icons/a>b.dtd"><svg></svg>'),
+    Buffer.from("<!DOCTYPE svg PUBLIC 'x>y' 'z'><svg></svg>"),
+    Buffer.from('<!DOCTYPE svg [ <!ENTITY a "]>"> <!-- don\'t ]> --> <?pi ]> ?> ]><svg></svg>'),
   ];
   for (const image of svgs) assert.equal(iconImageMime(image), 'image/svg+xml', image.toString());
-  const others = ['<svgx></svgx>', '<!DOCTYPE svg [ <!ENTITY a "b">', '<html><svg></svg></html>', 'text <svg></svg>', '<!-- unclosed <svg></svg>', '<?xml version="1.0"?><SVG></SVG>', ''];
+  const others = ['<svgx></svgx>', '<!DOCTYPE svg [ <!ENTITY a "b">', '<!DOCTYPE svg "unclosed><svg></svg>', '<html><svg></svg></html>', 'text <svg></svg>', '<!-- unclosed <svg></svg>', '<?xml version="1.0"?><SVG></SVG>', ''];
   for (const text of others) assert.equal(iconImageMime(Buffer.from(text)), null, text);
   assert.equal(iconImageMime(png), 'image/png', 'raster formats still win');
 });
 
 test('SVG detection stays fast on hostile uploads', () => {
   const n = MAX_ICON_BYTES;
-  const hostile = ['<!---->'.repeat(n / 7), '<!--'.repeat(n / 4), '<?x?>'.repeat(n / 5), '<!DOCTYPE>'.repeat(n / 10), '<!DOCTYPE[]>'.repeat(n / 12), '<!DOCTYPE [' + '>'.repeat(n), ' '.repeat(n)];
+  const hostile = ['<!---->'.repeat(n / 7), '<!--'.repeat(n / 4), '<?x?>'.repeat(n / 5), '<!DOCTYPE>'.repeat(n / 10), '<!DOCTYPE[]>'.repeat(n / 12), '<!DOCTYPE [' + '>'.repeat(n),
+    '<!DOCTYPE "a">'.repeat(n / 14), '<!DOCTYPE [' + '"x"'.repeat(n / 3), '<!DOCTYPE [' + '<!---->'.repeat(n / 7), ' '.repeat(n)];
   const started = performance.now();
   for (const text of hostile) assert.equal(iconImageMime(Buffer.from(text + 'x')), null);
   assert.ok(performance.now() - started < 2000, 'each check is a single forward scan');
