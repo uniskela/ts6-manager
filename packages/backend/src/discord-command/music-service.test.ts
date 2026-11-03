@@ -1037,3 +1037,191 @@ describe('Discord /play search uses TeamSpeak findSong', () => {
     assert.equal(searched[0]?.length, 200);
   });
 });
+
+describe('Discord findings #3–5: cancel ownership, stop races, abort propagation', () => {
+  const binding = { instanceId: 'inst-1', revoked: false, botId: 1 };
+
+  it('does not let invalid Play B cancel an in-flight valid Play A', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    let releaseA!: () => void;
+    const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
+    let startedA = false;
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: {
+        ...stubPipeline(track('a', 'Track A')),
+        downloadTrack: async () => {
+          startedA = true;
+          await gateA;
+          return track('a', 'Track A');
+        },
+      },
+    }));
+    const playA = music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/a.mp3' },
+      idempotencyKey: 'play-a-valid',
+    }), binding);
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        const tick = () => (startedA ? resolve() : setImmediate(tick));
+        tick();
+      }),
+      new Promise((_r, reject) => setTimeout(() => reject(new Error('Play A never entered download')), 1000)),
+    ]);
+    const playB = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'http://127.0.0.1/evil.mp3' },
+      idempotencyKey: 'play-b-invalid',
+    }), binding);
+    assert.equal(playB.ok, false);
+    releaseA();
+    const a = await playA;
+    assert.equal(a.ok, true);
+    assert.equal(bot.queue.getAll().some((item: QueueItem) => item.title === 'Track A'), true);
+  });
+
+  it('does not let /radio play resume after /stop during catalog lookup', async () => {
+    const bot = fakeBot();
+    let release!: () => void;
+    let enteredLookup = false;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const catalog = {
+      radioStation: {
+        findMany: async () => {
+          enteredLookup = true;
+          await gate;
+          return [{ id: 1, name: 'Jazz FM', url: 'https://8.8.8.8/jazz', genre: 'Jazz', imageUrl: null }];
+        },
+      },
+      playlist: { findMany: async () => [], findFirst: async () => null, create: async () => ({}) },
+    };
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: catalog as any }));
+    const pending = music.execute(musicIntent({
+      command: 'radio',
+      args: { subcommand: 'play', station: 'Jazz FM' },
+      idempotencyKey: 'radio-late',
+    }), binding);
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        const tick = () => (enteredLookup ? resolve() : setImmediate(tick));
+        tick();
+      }),
+      new Promise((_r, reject) => setTimeout(() => reject(new Error('radio lookup never started')), 1000)),
+    ]);
+    const stopped = await music.execute(musicIntent({ command: 'stop', idempotencyKey: 'stop-radio' }), binding);
+    release();
+    const result = await pending;
+    assert.equal(stopped.ok, true);
+    assert.equal(result.ok, false);
+    assert.match(result.content, /cancelled/i);
+    assert.equal(bot.nowPlaying, null);
+  });
+
+  it('does not let a stale radio request cancel a newly accepted radio after Stop', async () => {
+    const bot = fakeBot();
+    let releaseStale!: () => void;
+    let enteredStale = false;
+    const gateStale = new Promise<void>((resolve) => { releaseStale = resolve; });
+    let lookups = 0;
+    const catalog = {
+      radioStation: {
+        findMany: async () => {
+          lookups += 1;
+          if (lookups === 1) {
+            enteredStale = true;
+            await gateStale;
+          }
+          return [{ id: 1, name: 'Jazz FM', url: 'https://8.8.8.8/jazz', genre: 'Jazz', imageUrl: null }];
+        },
+      },
+      playlist: { findMany: async () => [], findFirst: async () => null, create: async () => ({}) },
+    };
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: catalog as any }));
+    const stale = music.execute(musicIntent({
+      command: 'radio',
+      args: { subcommand: 'play', station: 'Jazz FM' },
+      idempotencyKey: 'radio-stale',
+    }), binding);
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        const tick = () => (enteredStale ? resolve() : setImmediate(tick));
+        tick();
+      }),
+      new Promise((_r, reject) => setTimeout(() => reject(new Error('stale radio never started')), 1000)),
+    ]);
+    assert.equal((await music.execute(musicIntent({ command: 'stop', idempotencyKey: 'stop-before-fresh-radio' }), binding)).ok, true);
+    const fresh = await music.execute(musicIntent({
+      command: 'radio',
+      args: { subcommand: 'play', station: 'Jazz FM' },
+      idempotencyKey: 'radio-fresh',
+    }), binding);
+    assert.equal(fresh.ok, true);
+    assert.equal(bot.nowPlaying?.source, 'radio');
+    releaseStale();
+    const staleResult = await stale;
+    assert.equal(staleResult.ok, false);
+    assert.equal(bot.nowPlaying?.source, 'radio');
+    assert.equal(bot.nowPlaying?.title, 'Jazz FM');
+  });
+
+  it('lets a new /play after /stop succeed', async () => {
+    const bot = fakeBot();
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: stubPipeline(track('after', 'After Stop')),
+    }));
+    assert.equal((await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/before.mp3' },
+      idempotencyKey: 'before-stop',
+    }), binding)).ok, true);
+    assert.equal((await music.execute(musicIntent({ command: 'stop', idempotencyKey: 'stop-then-play' }), binding)).ok, true);
+    const again = await music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/after.mp3' },
+      idempotencyKey: 'after-stop',
+    }), binding);
+    assert.equal(again.ok, true);
+    assert.equal(bot.nowPlaying?.title, 'After Stop');
+  });
+
+  it('does not enqueue a download that finishes after /stop', async () => {
+    const bot = fakeBot();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let started = false;
+    const music = createMusicCommandService(serviceOpts(bot, {
+      pipeline: {
+        ...stubPipeline(track('late', 'Late')),
+        downloadTrack: async (_url, signal) => {
+          started = true;
+          await new Promise<void>((resolve, reject) => {
+            const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+            if (signal?.aborted) fail();
+            else signal?.addEventListener('abort', fail, { once: true });
+            gate.then(() => resolve());
+          });
+          return track('late', 'Late');
+        },
+      },
+    }));
+    const pending = music.execute(musicIntent({
+      command: 'play',
+      args: { query: 'https://8.8.8.8/late.mp3' },
+      idempotencyKey: 'late-dl',
+    }), binding);
+    await Promise.race([
+      new Promise<void>((resolve) => {
+        const tick = () => (started ? resolve() : setImmediate(tick));
+        tick();
+      }),
+      new Promise((_r, reject) => setTimeout(() => reject(new Error('download never started')), 1000)),
+    ]);
+    await music.execute(musicIntent({ command: 'stop', idempotencyKey: 'stop-dl' }), binding);
+    release();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.equal(bot.nowPlaying, null);
+    assert.equal(bot.queue.length, 0);
+  });
+});

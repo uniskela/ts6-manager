@@ -206,6 +206,7 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     if (replayed) return replayed;
 
     const request = beginChatMediaRequest(binding.botId);
+    const cancelled = () => fail('unavailable', 'Search cancelled.', 'deferred');
     let url = query;
     if (!/^https?:\/\//i.test(query)) {
       const songQuery = query.trim().slice(0, MAX_SONG_QUERY_LENGTH);
@@ -214,20 +215,37 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
         const signal = AbortSignal.any([request.signal, timeout]);
         const findSong = deps.findSong ?? ((q, s) => findSongForQuery(q, undefined, s));
         const song = await findSong(songQuery, signal);
-        if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
-        if (!song) return fail('unavailable', `No results for "${songQuery}".`, 'deferred');
+        if (request.isCancelled()) {
+          request.discard();
+          return cancelled();
+        }
+        if (!song) {
+          request.discard();
+          return fail('unavailable', `No results for "${songQuery}".`, 'deferred');
+        }
         url = song.url;
       } catch (err) {
-        if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
+        const wasCancelled = request.isCancelled() || (err instanceof Error && err.name === 'AbortError');
+        request.discard();
+        if (wasCancelled) return cancelled();
         const name = err instanceof Error ? err.name : '';
         if (name === 'TimeoutError') return fail('unavailable', 'Search timed out.', 'deferred');
         return fail('unavailable', 'Search failed.', 'deferred');
       }
     }
-    if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
+    if (request.isCancelled()) {
+      request.discard();
+      return cancelled();
+    }
     const check = await (deps.validateUrl ?? validateUrl)(url);
-    if (request.isCancelled()) return fail('unavailable', 'Search cancelled.', 'deferred');
-    if (!check.valid) return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
+    if (request.isCancelled()) {
+      request.discard();
+      return cancelled();
+    }
+    if (!check.valid) {
+      request.discard();
+      return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
+    }
 
     try {
       const applied = await applyMediaUrlToBot(
@@ -243,12 +261,16 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
         request,
         deps.pipeline ?? defaultMediaUrlDeps(),
       );
-      if (!applied) return fail('unavailable', 'Could not start playback.', 'deferred');
+      if (!applied) {
+        request.discard();
+        return fail('unavailable', 'Could not start playback.', 'deferred');
+      }
       if (applied.alreadyPlaying) {
         return ok(`Queued: ${applied.first.artist ?? ''} - ${applied.first.title}${applied.playlistNote}`.replace(' - ', ' — ').trim(), 'deferred');
       }
       return ok(`Now playing: ${applied.first.artist ?? ''} — ${applied.first.title}${applied.playlistNote}`, 'deferred');
     } catch (err) {
+      request.discard();
       const message = err instanceof Error ? err.message : 'Playback failed.';
       return fail('unavailable', message, 'deferred');
     }
@@ -274,16 +296,32 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       if (!query) return fail('unavailable', 'Usage: /radio play <station>', 'deferred');
       const replayed = claim(intent, 'deferred');
       if (replayed) return replayed;
+      const request = beginChatMediaRequest(binding.botId!);
       const stations = await loadRadioStations(deps.prisma, serverConfigId);
+      if (request.isCancelled()) {
+        request.discard();
+        return fail('unavailable', 'Radio play cancelled.', 'deferred');
+      }
       const matches = matchNamed(stations, query);
       if (matches.length !== 1) {
+        request.discard();
         return fail('unavailable', formatNamedMatchError('station', matches, '/radio list'), 'deferred');
       }
       const item = radioQueueItem(matches[0]);
       try {
+        request.accept();
+        if (request.isCancelled()) {
+          request.discard();
+          return fail('unavailable', 'Radio play cancelled.', 'deferred');
+        }
         await bot.playStream(item, { replaceSessionIds: [] });
+        if (request.isCancelled()) {
+          if (bot.nowPlaying === item) bot.stopAudio({ keepPendingRequests: true });
+          return fail('unavailable', 'Radio play cancelled.', 'deferred');
+        }
         return ok(`Now playing: ${matches[0].name}`, 'deferred');
       } catch (err) {
+        request.discard();
         const message = err instanceof Error ? err.message : 'Radio playback failed.';
         return fail('unavailable', message, 'deferred');
       }

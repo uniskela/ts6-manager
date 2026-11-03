@@ -47,19 +47,24 @@ export async function handleAgain(
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
   const config = await context.prisma.musicBot.findUnique({ where: { id: botId }, select: { serverConfigId: true, virtualServerId: true } });
-  if (!isCurrent()) return;
+  if (!isCurrent()) { request.discard(); return; }
   if (config?.serverConfigId !== serverConfigId || config?.virtualServerId !== virtualServerId) {
+    request.discard();
     await context.reply(bot, userClid, 'Bot config not found.'); return;
   }
   const row = await context.prisma.musicRequest.findFirst({
     where: { ...musicRequestListWhere(serverConfigId, botId), ...(args ? { id: Number(args) } : {}) },
     orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }],
   });
-  if (!isCurrent()) return;
-  if (!row) { await context.reply(bot, userClid, 'Request not found. Use !history to list requests.'); return; }
+  if (!isCurrent()) { request.discard(); return; }
+  if (!row) {
+    request.discard();
+    await context.reply(bot, userClid, 'Request not found. Use !history to list requests.'); return;
+  }
   const ref = await replayReference(row);
-  if (!isCurrent()) return;
+  if (!isCurrent()) { request.discard(); return; }
   if (!ref.ok) {
+    request.discard();
     await markMusicRequestUnavailable(context.prisma, row.id);
     if (isCurrent()) await context.reply(bot, userClid, MEDIA_UNAVAILABLE);
     return;
@@ -70,6 +75,8 @@ export async function handleAgain(
       return;
     }
     await context.joinChannelForCommand(botId, bot, userClid);
+    if (!isCurrent()) { request.discard(); return; }
+    request.accept();
     if (!isCurrent()) return;
     const item = ref.kind === 'local'
       ? { id: `history_${row.id}`, title: row.title, artist: row.artist ?? undefined, duration: row.duration ?? undefined, source: 'local' as const, filePath: ref.filePath }
@@ -77,6 +84,7 @@ export async function handleAgain(
     const queued = await enqueueMediaItem(context, bot, item, isCurrent);
     if (queued !== null && isCurrent()) await context.reply(bot, userClid, `${queued ? 'Queued' : 'Now playing'}: ${historyText(row.title, 70)}`);
   } catch (error) {
+    request.discard();
     if (!isCurrent()) return;
     if (!isUnavailableMusicRequestError(error)) throw error;
     await markMusicRequestUnavailable(context.prisma, row.id);

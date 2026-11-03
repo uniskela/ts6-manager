@@ -68,7 +68,10 @@ export async function handleRadio(
   const request = beginChatMediaRequest(botId);
   const isCurrent = () => !request.isCancelled() && isSameBot();
   await context.joinChannelForCommand(botId, bot, userClid);
-  if (!isCurrent()) return;
+  if (!isCurrent()) {
+    request.discard();
+    return;
+  }
 
   const queueItem: QueueItem = {
     id: `radio_${station.id}`,
@@ -79,8 +82,13 @@ export async function handleRadio(
     streamUrl: station.url,
   };
 
+  request.accept();
+  if (!isCurrent()) return;
   await bot.playStream(queueItem, context.chatMusicSwitch(bot));
-  if (!isCurrent() || bot.nowPlaying !== queueItem) return;
+  if (!isCurrent() || bot.nowPlaying !== queueItem) {
+    if (bot.nowPlaying === queueItem) bot.stopAudio({ keepPendingRequests: true });
+    return;
+  }
   context.saveMusicRequest(bot, queueItem);
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
@@ -98,7 +106,10 @@ export async function handlePlay(
 ): Promise<void> {
   const request = args ? beginChatMediaRequest(botId) : undefined;
   await context.joinChannelForCommand(botId, bot, userClid);
-  if (request?.isCancelled()) return;
+  if (request?.isCancelled()) {
+    request.discard();
+    return;
+  }
 
   if (!args) {
     if (bot.status === 'paused') {
@@ -116,14 +127,20 @@ export async function handlePlay(
     context.reply(bot, userClid, `Searching YouTube Music for "${query}"...`);
     try {
       const song = await context.findSong(query, request!.signal);
-      if (request!.isCancelled()) return;
+      if (request!.isCancelled()) {
+        request!.discard();
+        return;
+      }
       if (!song) {
+        request!.discard();
         context.reply(bot, userClid, `No results for "${query}".`);
         return;
       }
       url = song.url;
     } catch (err: any) {
-      if (request!.isCancelled()) return;
+      const wasCancelled = request!.isCancelled();
+      request!.discard();
+      if (wasCancelled) return;
       context.reply(bot, userClid, `Search failed: ${err.message}`);
       return;
     }
@@ -134,7 +151,11 @@ export async function handlePlay(
   try {
     await context.enqueueMediaUrl(botId, bot, userClid, url, request);
   } catch (err: any) {
-    if (request?.isCancelled()) return;
+    if (request?.isCancelled()) {
+      request.discard();
+      return;
+    }
+    request?.discard();
     context.reply(bot, userClid, `Failed to play: ${err.message}`);
   }
 }

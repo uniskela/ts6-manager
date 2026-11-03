@@ -8,33 +8,90 @@ import type { CommandContext } from './context.js';
 import { enqueueSavedPlaylist, formatPlaylistList, loadPlaylistSummaries } from './library.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
-/** Abort pending song searches when the bot's media request is replaced or stopped. */
+/** Active accepted media request AbortController per bot. */
 const chatMediaControllers = new Map<number, AbortController>();
+/** Provisional (not yet accepted) controllers — Stop aborts them; peers do not. */
+const provisionalControllers = new Map<number, Set<AbortController>>();
 
 /** Observe pending media intent without cancelling it. */
 export function getChatMediaGeneration(botId: number): number {
   return chatPlaylistGeneration.get(botId) ?? 0;
 }
 
-/** One cancellation identity spans song search, channel movement, and queue insertion. */
+/**
+ * One cancellation identity spans song search, channel movement, and queue insertion.
+ * begin() is provisional: it does not cancel an accepted peer. Call accept() only once
+ * the request is ready to supersede others (valid URL / resolved media). discard() drops
+ * a failed provisional without bumping the bot generation.
+ */
 export interface ChatMediaRequest {
   signal: AbortSignal;
   isCancelled(): boolean;
+  accept(): void;
+  discard(): void;
 }
 
-/** Start a request using the same generation as background playlist expansion. */
+function provisionals(botId: number): Set<AbortController> {
+  let set = provisionalControllers.get(botId);
+  if (!set) {
+    set = new Set();
+    provisionalControllers.set(botId, set);
+  }
+  return set;
+}
+
+/** Start provisional media work. Does not cancel an accepted request until accept(). */
 export function beginChatMediaRequest(botId: number): ChatMediaRequest {
-  invalidateChatPlaylistExpansion(botId);
-  const generation = chatPlaylistGeneration.get(botId);
+  const generationAtStart = chatPlaylistGeneration.get(botId) ?? 0;
   const controller = new AbortController();
-  chatMediaControllers.set(botId, controller);
-  return { signal: controller.signal, isCancelled: () => chatPlaylistGeneration.get(botId) !== generation };
+  provisionals(botId).add(controller);
+  let acceptedGeneration: number | null = null;
+  let settled = false;
+
+  const isCancelled = () => {
+    if (controller.signal.aborted) return true;
+    const current = chatPlaylistGeneration.get(botId) ?? 0;
+    if (acceptedGeneration != null) return current !== acceptedGeneration;
+    return current !== generationAtStart;
+  };
+
+  return {
+    signal: controller.signal,
+    isCancelled,
+    accept() {
+      if (settled) return;
+      if (controller.signal.aborted || isCancelled()) {
+        settled = true;
+        return;
+      }
+      settled = true;
+      provisionals(botId).delete(controller);
+      // Supersede peers without aborting this controller.
+      for (const other of provisionals(botId)) other.abort();
+      provisionals(botId).clear();
+      const active = chatMediaControllers.get(botId);
+      if (active && active !== controller) active.abort();
+      chatMediaControllers.delete(botId);
+      chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
+      acceptedGeneration = chatPlaylistGeneration.get(botId)!;
+      chatMediaControllers.set(botId, controller);
+    },
+    discard() {
+      if (settled && acceptedGeneration != null) return;
+      settled = true;
+      provisionals(botId).delete(controller);
+      if (chatMediaControllers.get(botId) === controller) chatMediaControllers.delete(botId);
+      if (!controller.signal.aborted) controller.abort();
+    },
+  };
 }
 
 /** Advance a bot’s generation so pending background playlist work is discarded. */
 export function invalidateChatPlaylistExpansion(botId: number): void {
   chatMediaControllers.get(botId)?.abort();
   chatMediaControllers.delete(botId);
+  for (const controller of provisionals(botId)) controller.abort();
+  provisionalControllers.delete(botId);
   chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
 }
 
@@ -64,7 +121,11 @@ export async function startOrAppendMediaItem(
     else await bot.play(item, options);
     started = isCurrent() && bot.nowPlaying === item;
   } finally {
-    if (!started) cleanup();
+    if (!started) {
+      cleanup();
+      // play()/playStream may have started audio before the request was cancelled.
+      if (bot.nowPlaying === item) bot.stopAudio({ keepPendingRequests: true });
+    }
   }
   return started ? false : null;
 }
@@ -108,6 +169,8 @@ export async function applyMediaUrlToBot(
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
   if (!isCurrent()) return null;
+  request.accept();
+  if (!isCurrent()) return null;
   let firstCall = true;
   let alreadyPlaying = false;
   let playbackAccepted = true;
@@ -149,7 +212,7 @@ export async function applyMediaUrlToBot(
       reserve: (count) => { reservation = bot.queue.reserve(count); },
       release: () => reservation?.release(),
     },
-    { url: rawUrl, enqueueOnly: false },
+    { url: rawUrl, enqueueOnly: false, signal: request.signal },
     {
       onBackgroundError: (err, label) => {
         console.error('[MusicCmd] Failed to queue %s:', label, err);
