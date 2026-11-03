@@ -4,8 +4,8 @@ import { defaultMediaCommandPermissions, type MediaCommandPermissions } from '..
 import type { MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { createDiscordCommandAdapter, type DiscordCommandDeps, type DiscordCommandIntent } from './adapter.js';
+import { MemoryCommandIdempotency } from './idempotency.js';
 import { createMusicCommandService } from './music-service.js';
-import { MemoryReplayGuard } from './security.js';
 
 const GUILD = '111';
 const DJ = 'u-dj';
@@ -77,7 +77,7 @@ function serviceOpts(bot: any, overrides: Record<string, unknown> = {}) {
     virtualServerIdForBot: () => 2,
     loadMediaPermissions: async () => defaultMediaCommandPermissions(),
     pipeline: stubPipeline(track('t1', 'Track One')),
-    replay: new MemoryReplayGuard(),
+    idempotency: new MemoryCommandIdempotency(),
     ...overrides,
   };
 }
@@ -383,8 +383,73 @@ describe('Discord playback controls share TeamSpeak bot state', () => {
     const second = await music.execute(intent, binding);
     assert.equal(first.ok, true);
     assert.equal(second.ok, true);
+    assert.equal(second.content, first.content);
     assert.equal(bot.nowPlaying?.title, 'Two');
-    assert.match(second.content, /Already handled/);
+  });
+
+  it('finding #8: failed pause retry replays failure, never success', async () => {
+    const bot = fakeBot('connected');
+    const music = createMusicCommandService(serviceOpts(bot));
+    const intent = musicIntent({ command: 'pause', idempotencyKey: 'pause-fail-retry' });
+    const first = await music.execute(intent, binding);
+    const second = await music.execute(intent, binding);
+    assert.equal(first.ok, false);
+    assert.equal(first.code, 'unavailable');
+    assert.match(first.content, /Nothing is playing/);
+    assert.equal(second.ok, false);
+    assert.equal(second.code, first.code);
+    assert.equal(second.content, first.content);
+    assert.notEqual(second.content, 'Already handled.');
+  });
+
+  it('finding #8: concurrent identical skips execute at most once', async () => {
+    const bot = fakeBot('playing');
+    bot.queue.addMany([track('a', 'One'), track('b', 'Two'), track('c', 'Three')]);
+    bot.queue.playAt(0);
+    bot.nowPlaying = bot.queue.current;
+    let plays = 0;
+    let release!: () => void;
+    const hold = new Promise<void>((r) => { release = r; });
+    bot.play = async (item: QueueItem) => {
+      plays += 1;
+      await hold;
+      bot.nowPlaying = item;
+      bot.status = 'playing';
+    };
+    const music = createMusicCommandService(serviceOpts(bot));
+    const intent = musicIntent({ command: 'skip', idempotencyKey: 'skip-concurrent' });
+    const first = music.execute(intent, binding);
+    await new Promise((r) => setImmediate(r));
+    const second = music.execute(intent, binding);
+    await new Promise((r) => setImmediate(r));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    const results = [a, b];
+    assert.equal(results.filter((r) => r.ok).length, 1);
+    assert.equal(results.filter((r) => !r.ok && /already in progress/i.test(r.content)).length, 1);
+    assert.equal(plays, 1);
+    assert.equal(bot.nowPlaying?.title, 'Two');
+  });
+
+  it('finding #8: thrown command errors settle as failed and stay failed on retry', async () => {
+    const bot = fakeBot('playing');
+    bot.nowPlaying = track('cur', 'Current');
+    bot.applyVolume = async () => {
+      throw new Error('volume backend down');
+    };
+    const music = createMusicCommandService(serviceOpts(bot));
+    const intent = musicIntent({
+      command: 'volume',
+      args: { level: '55' },
+      idempotencyKey: 'vol-throw',
+    });
+    const first = await music.execute(intent, binding);
+    const second = await music.execute(intent, binding);
+    assert.equal(first.ok, false);
+    assert.match(first.content, /volume backend down/);
+    assert.equal(second.ok, false);
+    assert.equal(second.content, first.content);
+    assert.equal(bot.currentConfig.volume, 40);
   });
 
   it('uses the bound bot id, never a client-supplied bot id', async () => {

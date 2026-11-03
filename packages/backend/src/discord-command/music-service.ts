@@ -30,7 +30,7 @@ import type { VoiceBot } from '../voice/voice-bot.js';
 import type { CommandResult, DiscordCommandIntent, GuildBinding } from './adapter.js';
 import { formatBotNowPlaying, formatBotQueue } from './music-inspect.js';
 import { PHASE_2A_MUSIC_COMMANDS, PHASE_2B_1_MUSIC_COMMANDS, PHASE_2B_2_MUSIC_COMMANDS, isMusicCommand } from './music.js';
-import { MemoryReplayGuard, type ReplayGuard } from './security.js';
+import { MemoryCommandIdempotency, musicIdempotencyKey } from './idempotency.js';
 
 export type MusicCommandService = {
   execute(intent: DiscordCommandIntent, binding: GuildBinding | null): Promise<CommandResult>;
@@ -43,7 +43,8 @@ export type MusicServiceDeps = {
   identityForUser?(userId: string): MediaCommandIdentity | undefined;
   pipeline?: MediaUrlPipelineDeps;
   validateUrl?: (url: string) => Promise<{ valid: boolean; error?: string }>;
-  replay?: ReplayGuard;
+  /** Outcome-aware Discord interaction idempotency (not HMAC replay). */
+  idempotency?: MemoryCommandIdempotency;
   nowMs?: () => number;
   prisma?: PlaylistCatalog;
   findSong?: (query: string, signal?: AbortSignal) => ReturnType<typeof findSongForQuery>;
@@ -109,13 +110,37 @@ function mediaArgs(intent: DiscordCommandIntent): string {
 }
 
 export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandService {
-  const replay = deps.replay ?? new MemoryReplayGuard();
+  const idempotency = deps.idempotency ?? new MemoryCommandIdempotency();
 
-  function claim(intent: DiscordCommandIntent, ack: CommandResult['ack']): CommandResult | null {
-    if (intent.idempotencyKey && !replay.claim(intent.idempotencyKey, deps.nowMs?.() ?? Date.now())) {
-      return ok('Already handled.', ack);
+  async function once(
+    intent: DiscordCommandIntent,
+    ack: CommandResult['ack'],
+    run: () => Promise<CommandResult>,
+  ): Promise<CommandResult> {
+    const key = musicIdempotencyKey(intent);
+    if (!key) return run();
+    const nowMs = () => deps.nowMs?.() ?? Date.now();
+    const gate = idempotency.begin(key, nowMs());
+    if (gate.kind === 'pending') {
+      return fail('unavailable', 'Request is already in progress.', ack);
     }
-    return null;
+    if (gate.kind === 'full') {
+      return fail('unavailable', 'Too many in-flight requests. Try again shortly.', ack);
+    }
+    if (gate.kind === 'replay') return gate.result;
+    try {
+      const result = await run();
+      idempotency.complete(key, result, nowMs());
+      return result;
+    } catch (err) {
+      const failed = fail(
+        'unavailable',
+        err instanceof Error ? err.message : 'Command failed.',
+        ack,
+      );
+      idempotency.complete(key, failed, nowMs());
+      return failed;
+    }
   }
 
   async function execute(intent: DiscordCommandIntent, binding: GuildBinding | null): Promise<CommandResult> {
@@ -151,49 +176,49 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     }
 
     if (intent.command === 'pause') {
-      const replayed = claim(intent, 'immediate');
-      if (replayed) return replayed;
-      const result = pausePlayback(bot);
-      if (result === 'idle') return fail('unavailable', 'Nothing is playing.');
-      return ok('Paused.');
+      return once(intent, 'immediate', async () => {
+        const result = pausePlayback(bot);
+        if (result === 'idle') return fail('unavailable', 'Nothing is playing.');
+        return ok('Paused.');
+      });
     }
     if (intent.command === 'resume') {
-      const replayed = claim(intent, 'immediate');
-      if (replayed) return replayed;
-      const result = resumePlayback(bot);
-      if (result === 'idle') return fail('unavailable', 'Nothing is paused.');
-      return ok('Resumed.');
+      return once(intent, 'immediate', async () => {
+        const result = resumePlayback(bot);
+        if (result === 'idle') return fail('unavailable', 'Nothing is paused.');
+        return ok('Resumed.');
+      });
     }
     if (intent.command === 'skip') {
-      const replayed = claim(intent, 'immediate');
-      if (replayed) return replayed;
-      try {
-        const result = await skipPlayback(bot, { replaceSessionIds: [] });
-        if (result.kind === 'skipped') return ok(`Skipped to: ${result.title}`);
-        return ok('Queue empty — playback stopped.');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Skip failed.';
-        return fail('unavailable', message);
-      }
+      return once(intent, 'immediate', async () => {
+        try {
+          const result = await skipPlayback(bot, { replaceSessionIds: [] });
+          if (result.kind === 'skipped') return ok(`Skipped to: ${result.title}`);
+          return ok('Queue empty — playback stopped.');
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Skip failed.';
+          return fail('unavailable', message);
+        }
+      });
     }
     if (intent.command === 'stop') {
-      const replayed = claim(intent, 'immediate');
-      if (replayed) return replayed;
-      stopPlayback(bot);
-      return ok('Playback stopped.');
+      return once(intent, 'immediate', async () => {
+        stopPlayback(bot);
+        return ok('Playback stopped.');
+      });
     }
     if (intent.command === 'volume') {
       const level = parseVolumeLevel(volumeArg(intent));
       if (level == null) return fail('unavailable', 'Usage: /volume <0-100>');
-      const replayed = claim(intent, 'immediate');
-      if (replayed) return replayed;
-      try {
-        await bot.applyVolume(level);
-        return ok(`Volume set to ${bot.currentConfig.volume}%.`);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Could not set volume.';
-        return fail('unavailable', `Could not set volume: ${message}`);
-      }
+      return once(intent, 'immediate', async () => {
+        try {
+          await bot.applyVolume(level);
+          return ok(`Volume set to ${bot.currentConfig.volume}%.`);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'Could not set volume.';
+          return fail('unavailable', `Could not set volume: ${message}`);
+        }
+      });
     }
 
     if (intent.command === 'playlist' || intent.command === 'radio') {
@@ -202,78 +227,77 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
 
     const query = playQuery(intent);
     if (!query) return fail('unavailable', 'Usage: /play <url|song name>', 'deferred');
-    const replayed = claim(intent, 'deferred');
-    if (replayed) return replayed;
+    return once(intent, 'deferred', async () => {
+      const request = beginChatMediaRequest(binding.botId!);
+      const cancelled = () => fail('unavailable', 'Search cancelled.', 'deferred');
+      let url = query;
+      if (!/^https?:\/\//i.test(query)) {
+        const songQuery = query.trim().slice(0, MAX_SONG_QUERY_LENGTH);
+        try {
+          const timeout = AbortSignal.timeout(deps.searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
+          const signal = AbortSignal.any([request.signal, timeout]);
+          const findSong = deps.findSong ?? ((q, s) => findSongForQuery(q, undefined, s));
+          const song = await findSong(songQuery, signal);
+          if (request.isCancelled()) {
+            request.discard();
+            return cancelled();
+          }
+          if (!song) {
+            request.discard();
+            return fail('unavailable', `No results for "${songQuery}".`, 'deferred');
+          }
+          url = song.url;
+        } catch (err) {
+          const wasCancelled = request.isCancelled() || (err instanceof Error && err.name === 'AbortError');
+          request.discard();
+          if (wasCancelled) return cancelled();
+          const name = err instanceof Error ? err.name : '';
+          if (name === 'TimeoutError') return fail('unavailable', 'Search timed out.', 'deferred');
+          return fail('unavailable', 'Search failed.', 'deferred');
+        }
+      }
+      if (request.isCancelled()) {
+        request.discard();
+        return cancelled();
+      }
+      const check = await (deps.validateUrl ?? validateUrl)(url);
+      if (request.isCancelled()) {
+        request.discard();
+        return cancelled();
+      }
+      if (!check.valid) {
+        request.discard();
+        return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
+      }
 
-    const request = beginChatMediaRequest(binding.botId);
-    const cancelled = () => fail('unavailable', 'Search cancelled.', 'deferred');
-    let url = query;
-    if (!/^https?:\/\//i.test(query)) {
-      const songQuery = query.trim().slice(0, MAX_SONG_QUERY_LENGTH);
       try {
-        const timeout = AbortSignal.timeout(deps.searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
-        const signal = AbortSignal.any([request.signal, timeout]);
-        const findSong = deps.findSong ?? ((q, s) => findSongForQuery(q, undefined, s));
-        const song = await findSong(songQuery, signal);
-        if (request.isCancelled()) {
+        const applied = await applyMediaUrlToBot(
+          {
+            voiceBotManager: { getBot: (id) => deps.getBot(id) ?? undefined },
+            virtualServerIdForBot: deps.virtualServerIdForBot,
+            saveMusicRequest: () => {},
+            chatMusicSwitch: () => ({ replaceSessionIds: [] }),
+          },
+          binding.botId!,
+          bot,
+          url,
+          request,
+          deps.pipeline ?? defaultMediaUrlDeps(),
+        );
+        if (!applied) {
           request.discard();
-          return cancelled();
+          return fail('unavailable', 'Could not start playback.', 'deferred');
         }
-        if (!song) {
-          request.discard();
-          return fail('unavailable', `No results for "${songQuery}".`, 'deferred');
+        if (applied.alreadyPlaying) {
+          return ok(`Queued: ${applied.first.artist ?? ''} - ${applied.first.title}${applied.playlistNote}`.replace(' - ', ' — ').trim(), 'deferred');
         }
-        url = song.url;
+        return ok(`Now playing: ${applied.first.artist ?? ''} — ${applied.first.title}${applied.playlistNote}`, 'deferred');
       } catch (err) {
-        const wasCancelled = request.isCancelled() || (err instanceof Error && err.name === 'AbortError');
         request.discard();
-        if (wasCancelled) return cancelled();
-        const name = err instanceof Error ? err.name : '';
-        if (name === 'TimeoutError') return fail('unavailable', 'Search timed out.', 'deferred');
-        return fail('unavailable', 'Search failed.', 'deferred');
+        const message = err instanceof Error ? err.message : 'Playback failed.';
+        return fail('unavailable', message, 'deferred');
       }
-    }
-    if (request.isCancelled()) {
-      request.discard();
-      return cancelled();
-    }
-    const check = await (deps.validateUrl ?? validateUrl)(url);
-    if (request.isCancelled()) {
-      request.discard();
-      return cancelled();
-    }
-    if (!check.valid) {
-      request.discard();
-      return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
-    }
-
-    try {
-      const applied = await applyMediaUrlToBot(
-        {
-          voiceBotManager: { getBot: (id) => deps.getBot(id) ?? undefined },
-          virtualServerIdForBot: deps.virtualServerIdForBot,
-          saveMusicRequest: () => {},
-          chatMusicSwitch: () => ({ replaceSessionIds: [] }),
-        },
-        binding.botId,
-        bot,
-        url,
-        request,
-        deps.pipeline ?? defaultMediaUrlDeps(),
-      );
-      if (!applied) {
-        request.discard();
-        return fail('unavailable', 'Could not start playback.', 'deferred');
-      }
-      if (applied.alreadyPlaying) {
-        return ok(`Queued: ${applied.first.artist ?? ''} - ${applied.first.title}${applied.playlistNote}`.replace(' - ', ' — ').trim(), 'deferred');
-      }
-      return ok(`Now playing: ${applied.first.artist ?? ''} — ${applied.first.title}${applied.playlistNote}`, 'deferred');
-    } catch (err) {
-      request.discard();
-      const message = err instanceof Error ? err.message : 'Playback failed.';
-      return fail('unavailable', message, 'deferred');
-    }
+    });
   }
 
   async function catalogCommand(
@@ -294,37 +318,37 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       }
       const query = arg(intent, 'station', 'name', 'query', 'id');
       if (!query) return fail('unavailable', 'Usage: /radio play <station>', 'deferred');
-      const replayed = claim(intent, 'deferred');
-      if (replayed) return replayed;
-      const request = beginChatMediaRequest(binding.botId!);
-      const stations = await loadRadioStations(deps.prisma, serverConfigId);
-      if (request.isCancelled()) {
-        request.discard();
-        return fail('unavailable', 'Radio play cancelled.', 'deferred');
-      }
-      const matches = matchNamed(stations, query);
-      if (matches.length !== 1) {
-        request.discard();
-        return fail('unavailable', formatNamedMatchError('station', matches, '/radio list'), 'deferred');
-      }
-      const item = radioQueueItem(matches[0]);
-      try {
-        request.accept();
+      return once(intent, 'deferred', async () => {
+        const request = beginChatMediaRequest(binding.botId!);
+        const stations = await loadRadioStations(deps.prisma!, serverConfigId);
         if (request.isCancelled()) {
           request.discard();
           return fail('unavailable', 'Radio play cancelled.', 'deferred');
         }
-        await bot.playStream(item, { replaceSessionIds: [] });
-        if (request.isCancelled()) {
-          if (bot.nowPlaying === item) bot.stopAudio({ keepPendingRequests: true });
-          return fail('unavailable', 'Radio play cancelled.', 'deferred');
+        const matches = matchNamed(stations, query);
+        if (matches.length !== 1) {
+          request.discard();
+          return fail('unavailable', formatNamedMatchError('station', matches, '/radio list'), 'deferred');
         }
-        return ok(`Now playing: ${matches[0].name}`, 'deferred');
-      } catch (err) {
-        request.discard();
-        const message = err instanceof Error ? err.message : 'Radio playback failed.';
-        return fail('unavailable', message, 'deferred');
-      }
+        const item = radioQueueItem(matches[0]);
+        try {
+          request.accept();
+          if (request.isCancelled()) {
+            request.discard();
+            return fail('unavailable', 'Radio play cancelled.', 'deferred');
+          }
+          await bot.playStream(item, { replaceSessionIds: [] });
+          if (request.isCancelled()) {
+            if (bot.nowPlaying === item) bot.stopAudio({ keepPendingRequests: true });
+            return fail('unavailable', 'Radio play cancelled.', 'deferred');
+          }
+          return ok(`Now playing: ${matches[0].name}`, 'deferred');
+        } catch (err) {
+          request.discard();
+          const message = err instanceof Error ? err.message : 'Radio playback failed.';
+          return fail('unavailable', message, 'deferred');
+        }
+      });
     }
 
     const action = playlistAction(intent);
@@ -334,27 +358,27 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     if (action === 'play') {
       const query = arg(intent, 'name', 'playlist', 'query');
       if (!query) return fail('unavailable', 'Usage: /playlist play <name>', 'deferred');
-      const replayed = claim(intent, 'deferred');
-      if (replayed) return replayed;
-      const result = await enqueueSavedPlaylist(deps.prisma, bot, query, {
-        musicSwitch: { replaceSessionIds: [] },
-        listHint: '/playlist list',
-        isCurrent: () => deps.getBot(binding.botId!) === bot,
+      return once(intent, 'deferred', async () => {
+        const result = await enqueueSavedPlaylist(deps.prisma!, bot, query, {
+          musicSwitch: { replaceSessionIds: [] },
+          listHint: '/playlist list',
+          isCurrent: () => deps.getBot(binding.botId!) === bot,
+        });
+        if (!result.ok) return fail('unavailable', result.message, 'deferred');
+        return ok(`Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`, 'deferred');
       });
-      if (!result.ok) return fail('unavailable', result.message, 'deferred');
-      return ok(`Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`, 'deferred');
     }
     if (action === 'create') {
       const name = arg(intent, 'name', 'playlist', 'query');
-      const replayed = claim(intent, 'immediate');
-      if (replayed) return replayed;
-      const result = await createServerPlaylist(deps.prisma, {
-        name,
-        serverConfigId,
-        musicBotId: binding.botId!,
+      return once(intent, 'immediate', async () => {
+        const result = await createServerPlaylist(deps.prisma!, {
+          name,
+          serverConfigId,
+          musicBotId: binding.botId!,
+        });
+        if (!result.ok) return fail('unavailable', result.message);
+        return ok(`Created playlist "${result.name.slice(0, 60)}" [${result.id}].`);
       });
-      if (!result.ok) return fail('unavailable', result.message);
-      return ok(`Created playlist "${result.name.slice(0, 60)}" [${result.id}].`);
     }
     if (action === 'add') {
       const name = arg(intent, 'name', 'playlist');
@@ -363,20 +387,20 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       if (!/^https?:\/\//i.test(url)) return fail('unavailable', 'Playlist add accepts HTTP(S) URLs only.', 'deferred');
       const check = await (deps.validateUrl ?? validateUrl)(url);
       if (!check.valid) return fail('unavailable', check.error ?? 'That URL is not allowed.', 'deferred');
-      const replayed = claim(intent, 'deferred');
-      if (replayed) return replayed;
-      const result = await addUrlToPlaylist(deps.prisma, { query: name, url, serverConfigId });
-      if (!result.ok) return fail('unavailable', result.message, 'deferred');
-      return ok(`Added to "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`, 'deferred');
+      return once(intent, 'deferred', async () => {
+        const result = await addUrlToPlaylist(deps.prisma!, { query: name, url, serverConfigId });
+        if (!result.ok) return fail('unavailable', result.message, 'deferred');
+        return ok(`Added to "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`, 'deferred');
+      });
     }
     const name = arg(intent, 'name', 'playlist');
     const track = arg(intent, 'track', 'song', 'title');
     if (!name || !track) return fail('unavailable', 'Usage: /playlist remove <name> <track>');
-    const replayed = claim(intent, 'immediate');
-    if (replayed) return replayed;
-    const result = await removeTrackFromPlaylist(deps.prisma, { query: name, track, serverConfigId });
-    if (!result.ok) return fail('unavailable', result.message);
-    return ok(`Removed from "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`);
+    return once(intent, 'immediate', async () => {
+      const result = await removeTrackFromPlaylist(deps.prisma!, { query: name, track, serverConfigId });
+      if (!result.ok) return fail('unavailable', result.message);
+      return ok(`Removed from "${result.playlist.slice(0, 60)}": ${result.title.slice(0, 80)}`);
+    });
   }
 
   return { execute };

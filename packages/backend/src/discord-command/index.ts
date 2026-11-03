@@ -24,6 +24,7 @@ export {
   type MusicCommand,
   type MusicCommandRequest,
 } from './music.js';
+export { MemoryCommandIdempotency, musicIdempotencyKey } from './idempotency.js';
 export { createMusicCommandService, type MusicCommandService } from './music-service.js';
 export { createOutboundCommandSession, type OutboundEnvelope } from './outbound.js';
 export { presenceFromQueryRows } from './presence.js';
