@@ -31,6 +31,11 @@ export const config = {
   /** Off by default. When true, requires DISCORD_PUBLIC_KEY (64-char hex). */
   discordInteractionsEnabled: envFlag('DISCORD_INTERACTIONS_ENABLED'),
   discordPublicKeyHex: (process.env.DISCORD_PUBLIC_KEY || '').trim(),
+  /**
+   * Discord application snowflake for Edit Original Interaction Response.
+   * Required (with public key) before deferred commands can be acknowledged.
+   */
+  discordApplicationId: (process.env.DISCORD_APPLICATION_ID || '').trim(),
   /** Must match DiscordGuildBinding.instanceId; no cross-instance bot fallback. */
   discordInstanceId: (process.env.DISCORD_INSTANCE_ID || 'local').trim() || 'local',
   discordViewerRoleIds: envRoleIds('DISCORD_VIEWER_ROLE_IDS'),

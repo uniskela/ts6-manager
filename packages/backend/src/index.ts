@@ -27,6 +27,7 @@ import {
   createBackendDiscordCommandRuntime,
   installDiscordCommandRuntime,
 } from './discord-command/backend-runtime.js';
+import { createDiscordWebhookFollowUpFromConfig } from './discord-command/discord-delivery.js';
 
 async function main() {
   // C1: JWT secret startup guard
@@ -163,9 +164,13 @@ async function main() {
   voiceBotManager.setMusicCommandHandler(musicCommandHandler);
   await musicCommandHandler.refreshAllBotChannels();
 
-  // Discord command runtime (Phase 2C Step 3A): Prisma bindings + shared VoiceBotManager.
-  // HTTP route stays gated by DISCORD_INTERACTIONS_ENABLED; follow-up left null → deferred 503.
-  // Construction does not open Discord sockets, register slash commands, or start playback.
+  // Discord command runtime: Prisma bindings + shared VoiceBotManager + optional webhook follow-up.
+  // HTTP route stays gated by DISCORD_INTERACTIONS_ENABLED.
+  // Follow-up is created only when DISCORD_APPLICATION_ID is valid — no Discord HTTP at startup.
+  // Construction does not register slash commands or start playback.
+  const discordFollowUp = createDiscordWebhookFollowUpFromConfig({
+    applicationId: config.discordApplicationId,
+  });
   const discordRuntime = createBackendDiscordCommandRuntime({
     prisma,
     voiceBotManager,
@@ -175,6 +180,7 @@ async function main() {
       adminRoleIds: config.discordAdminRoleIds,
     },
     virtualServerIdForBot: (botId) => musicCommandHandler.virtualServerIdForBot(botId),
+    followUp: discordFollowUp,
   });
   installDiscordCommandRuntime(app, discordRuntime);
 

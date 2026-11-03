@@ -12,7 +12,13 @@ export {
   type PresenceSnapshot,
   type Ts6Role,
 } from './adapter.js';
-export { handleSignedInteraction, parseInteractionBody, planAcknowledgement } from './interaction.js';
+export {
+  handleSignedInteraction,
+  parseInteractionBody,
+  parseInteractionEnvelope,
+  planAcknowledgement,
+  type ParsedInteractionEnvelope,
+} from './interaction.js';
 export {
   createDiscordInteractionsMisconfiguredRouter,
   createDiscordInteractionsRouter,
@@ -25,6 +31,22 @@ export {
   type DiscordDeferredFollowUpJob,
   type DiscordInteractionFollowUp,
 } from './follow-up.js';
+export {
+  assertSafeDiscordApiBase,
+  classifyFetchNetworkError,
+  createDiscordWebhookFollowUp,
+  createDiscordWebhookFollowUpFromConfig,
+  discordEditOriginalBody,
+  DISCORD_429_WAIT_BUDGET_MS,
+  DISCORD_INTERACTION_TOKEN_TTL_MS,
+  DISCORD_MESSAGE_CONTENT_MAX,
+  isDiscordApplicationId,
+  parseDiscordRetryAfterMs,
+  truncateDiscordContent,
+  type DiscordHttpTransport,
+  type DiscordWebhookFollowUp,
+  type DiscordWebhookFollowUpOpts,
+} from './discord-delivery.js';
 export {
   discordDeferredAck,
   discordMessageFromResult,

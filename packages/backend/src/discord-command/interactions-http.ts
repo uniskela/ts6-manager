@@ -1,7 +1,7 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import express from 'express';
 import type { DiscordCommandIntent } from './adapter.js';
-import { parseInteractionBody, planAcknowledgement } from './interaction.js';
+import { parseInteractionEnvelope, planAcknowledgement } from './interaction.js';
 import { verifyDiscordSignature } from './security.js';
 import type { DiscordInteractionFollowUp } from './follow-up.js';
 import {
@@ -22,6 +22,11 @@ export type DiscordInteractionsHttpDeps = {
   /** Required for deferred commands — missing → 503 before type 5. */
   getFollowUp?(req: Request): DiscordInteractionFollowUp | null;
   /**
+   * Trusted Discord application snowflake from configuration.
+   * When set, deferred interactions must present the same application_id.
+   */
+  expectedApplicationId?: string | null;
+  /**
    * Trusted receiver clock for signature freshness (never from the request).
    * Defaults to Date.now().
    */
@@ -31,7 +36,11 @@ export type DiscordInteractionsHttpDeps = {
    * Observability for deferred delivery failures. Must not log interaction tokens
    * or signed request bodies.
    */
-  onDeliveryError?(info: { command: string; guildId: string; reason: 'follow_up_failed' | 'handler_failed' }): void;
+  onDeliveryError?(info: {
+    command: string;
+    guildId: string;
+    reason: 'follow_up_failed' | 'handler_failed';
+  }): void;
 };
 
 const SIG_HEADER = 'x-signature-ed25519';
@@ -116,12 +125,12 @@ async function handleInteraction(
     return;
   }
 
-  const parsed = parseInteractionBody(body);
-  if (parsed && 'ping' in parsed) {
+  const envelope = parseInteractionEnvelope(body);
+  if (envelope && 'ping' in envelope) {
     sendOnce(res, 200, discordPong());
     return;
   }
-  if (!parsed) {
+  if (!envelope) {
     sendOnce(res, 200, discordMessageFromResult({
       ok: false,
       code: 'unauthorized',
@@ -138,6 +147,7 @@ async function handleInteraction(
     return;
   }
 
+  const parsed = envelope.intent;
   const ack = planAcknowledgement(parsed.command);
   if (ack === 'deferred') {
     const followUp = deps.getFollowUp?.(req) ?? null;
@@ -146,9 +156,23 @@ async function handleInteraction(
       sendOnce(res, 503, { error: 'Discord follow-up delivery is unavailable.' });
       return;
     }
+    if (!envelope.applicationId || !envelope.interactionToken) {
+      sendOnce(res, 503, { error: 'Discord follow-up delivery is unavailable.' });
+      return;
+    }
+    const expected = deps.expectedApplicationId?.trim() || '';
+    if (expected && envelope.applicationId !== expected) {
+      // Signed body must match trusted config application id.
+      sendOnce(res, 401, { error: 'Invalid signature.' });
+      return;
+    }
+    // Prefer trusted config id when present; otherwise the verified body id.
+    const applicationId = expected || envelope.applicationId;
 
     // Acknowledge within Discord's deadline; do not await command work first.
+    // Exactly one initial acknowledgement (sendOnce guards against doubles).
     sendOnce(res, 200, discordDeferredAck(true));
+    const receivedAtMs = nowMs;
 
     try {
       const result = await adapter.handle(parsed);
@@ -159,6 +183,9 @@ async function handleInteraction(
           userId: parsed.userId,
           command: parsed.command,
           result,
+          applicationId,
+          interactionToken: envelope.interactionToken,
+          receivedAtMs,
         });
       } catch {
         deps.onDeliveryError?.({
@@ -180,6 +207,9 @@ async function handleInteraction(
           userId: parsed.userId,
           command: parsed.command,
           result: safeCommandFailure(),
+          applicationId,
+          interactionToken: envelope.interactionToken,
+          receivedAtMs,
         });
       } catch {
         deps.onDeliveryError?.({

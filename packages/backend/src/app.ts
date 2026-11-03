@@ -76,6 +76,7 @@ export function createApp(): Express {
         publicKeyHex: config.discordPublicKeyHex,
         getAdapter: (req) => req.app.locals.discordCommandAdapter ?? null,
         getFollowUp: (req) => req.app.locals.discordInteractionFollowUp ?? null,
+        expectedApplicationId: config.discordApplicationId || null,
         nowMs: () => Date.now(),
       }));
     }

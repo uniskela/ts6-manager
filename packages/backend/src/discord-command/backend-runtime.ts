@@ -34,8 +34,9 @@ export type BackendDiscordRuntimeOpts = {
   policy: DiscordCommandPolicy;
   virtualServerIdForBot?: (botId: number) => number;
   /**
-   * Production must leave this null until a real Discord webhook/follow-up exists.
+   * Production installs createDiscordWebhookFollowUp when DISCORD_APPLICATION_ID is set.
    * MemoryDiscordFollowUp is test-only and must be passed explicitly.
+   * Null → deferred commands stay 503 (no type-5 without delivery).
    */
   followUp?: DiscordInteractionFollowUp | null;
   identityForUser?: MusicServiceDeps['identityForUser'];
@@ -198,6 +199,12 @@ export function installDiscordCommandRuntime(
 }
 
 export function clearDiscordCommandRuntime(app: Express): void {
+  const followUp = app.locals.discordInteractionFollowUp as DiscordInteractionFollowUp | undefined;
+  try {
+    followUp?.dispose?.();
+  } catch {
+    /* shutdown must continue */
+  }
   delete app.locals.discordCommandAdapter;
   delete app.locals.discordInteractionFollowUp;
   delete app.locals.discordGuildBindingLookup;

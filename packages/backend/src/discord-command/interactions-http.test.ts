@@ -18,6 +18,8 @@ import { createDiscordCommandRuntime, MemoryGuildBindingLookup } from './runtime
 const NOW_MS = 1_700_000_000_000;
 const TIMESTAMP = '1700000000';
 const GUILD = '111';
+const APP_ID = '999000000000000001';
+const IX_TOKEN = 'test-interaction-token-not-for-prod';
 const SECRET_MARKER = 'super-secret-discord-token-do-not-leak';
 
 function ed25519() {
@@ -131,13 +133,15 @@ function commandBody(partial: {
   options?: unknown[];
   id?: string;
   topLevel?: string;
+  applicationId?: string | null;
+  token?: string | null;
 }) {
   const name = partial.topLevel ?? (partial.command?.startsWith('ts.') ? 'ts' : (partial.command ?? 'ts'));
   const sub = partial.command?.startsWith('ts.') ? partial.command.slice(3) : undefined;
   const data = name === 'ts'
     ? { name: 'ts', options: [{ name: sub ?? 'help', type: 1 }] }
     : { name, options: partial.options ?? [] };
-  return JSON.stringify({
+  const payload: Record<string, unknown> = {
     type: 2,
     id: partial.id ?? 'ix-1',
     guild_id: partial.guildId ?? GUILD,
@@ -147,7 +151,14 @@ function commandBody(partial: {
       permissions: '0',
     },
     data,
-  });
+  };
+  if (partial.applicationId !== null) {
+    payload.application_id = partial.applicationId === undefined ? APP_ID : partial.applicationId;
+  }
+  if (partial.token !== null) {
+    payload.token = partial.token === undefined ? IX_TOKEN : partial.token;
+  }
+  return JSON.stringify(payload);
 }
 
 function enabledApp(opts: {
@@ -155,6 +166,7 @@ function enabledApp(opts: {
   adapter: { handle(intent: DiscordCommandIntent): Promise<any> } | null;
   /** Omit to inject Memory stub; pass null to simulate missing follow-up. */
   followUp?: MemoryDiscordFollowUp | null;
+  expectedApplicationId?: string | null;
   nowMs?: () => number;
   onDeliveryError?: (info: { command: string; guildId: string; reason: string }) => void;
 }) {
@@ -167,6 +179,7 @@ function enabledApp(opts: {
     publicKeyHex: opts.keys.publicKeyHex,
     getAdapter: (req) => req.app.locals.discordCommandAdapter ?? null,
     getFollowUp: (req) => req.app.locals.discordInteractionFollowUp ?? null,
+    expectedApplicationId: opts.expectedApplicationId === undefined ? APP_ID : opts.expectedApplicationId,
     nowMs: opts.nowMs ?? (() => NOW_MS),
     onDeliveryError: opts.onDeliveryError,
   }));
@@ -456,6 +469,8 @@ describe('Discord interactions HTTP (Phase 2C step 1)', () => {
       });
       assert.equal(res.status, 200);
       assert.equal((res.body as any).type, 5);
+      // Ephemeral visibility is fixed on the type-5 ack (flags=64), not on the later PATCH.
+      assert.equal((res.body as any).data?.flags, 1 << 6);
       assert.equal(handled, 1);
       for (let i = 0; i < 50 && followUp.jobs.length === 0; i++) {
         await new Promise((r) => setTimeout(r, 10));
@@ -538,6 +553,37 @@ describe('Discord interactions HTTP (Phase 2C step 1)', () => {
       });
       assert.equal(res.status, 503);
       assert.doesNotMatch(res.text, /type\":\s*[45]/);
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('deferred command without interaction token is not type-5 acknowledged', async () => {
+    const keys = ed25519();
+    let handles = 0;
+    const body = commandBody({
+      command: 'play',
+      topLevel: 'play',
+      options: [{ name: 'query', type: 3, value: 'https://example.invalid/a' }],
+      token: null,
+    });
+    const app = enabledApp({
+      keys,
+      adapter: {
+        async handle() {
+          handles += 1;
+          return { ok: true, ephemeral: true, content: 'queued', ack: 'deferred' };
+        },
+      },
+    });
+    const srv = await listen(app);
+    try {
+      const res = await postInteraction(srv.port, {
+        body,
+        signatureHex: keys.sign(TIMESTAMP, body),
+      });
+      assert.equal(res.status, 503);
+      assert.equal(handles, 0);
     } finally {
       await srv.close();
     }

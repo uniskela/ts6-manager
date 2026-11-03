@@ -28,10 +28,27 @@ function collectArgs(options: InteractionOption[] | undefined, args: Record<stri
   return args;
 }
 
-export function parseInteractionBody(body: string): DiscordCommandIntent | { ping: true } | null {
+/** Signed interaction envelope: intent stays free of delivery secrets for adapters/audit. */
+export type ParsedInteractionEnvelope =
+  | { ping: true }
+  | {
+    intent: DiscordCommandIntent;
+    /** Present on real Discord payloads; required before type-5 ack. */
+    applicationId: string | null;
+    interactionToken: string | null;
+  };
+
+/**
+ * Parse a Discord interaction body into intent + optional delivery fields.
+ * Token/application_id are extracted when present; deferred HTTP requires both.
+ */
+export function parseInteractionEnvelope(body: string): ParsedInteractionEnvelope | null {
   try {
     const parsed = JSON.parse(body) as {
       type?: number;
+      id?: unknown;
+      application_id?: unknown;
+      token?: unknown;
       guild_id?: string;
       member?: { user?: { id?: string }; roles?: string[]; permissions?: string };
       data?: { name?: string; options?: InteractionOption[] };
@@ -40,19 +57,36 @@ export function parseInteractionBody(body: string): DiscordCommandIntent | { pin
     if (parsed.type !== 2) return null;
     const command = commandFromData(parsed.data);
     if (!command || !parsed.guild_id || !parsed.member?.user?.id) return null;
+    const applicationId = typeof parsed.application_id === 'string' && parsed.application_id.trim()
+      ? parsed.application_id.trim()
+      : null;
+    const interactionToken = typeof parsed.token === 'string' && parsed.token.length > 0
+      ? parsed.token
+      : null;
     const args = collectArgs(parsed.data?.options);
     return {
-      guildId: parsed.guild_id,
-      userId: parsed.member.user.id,
-      roleIds: parsed.member.roles ?? [],
-      memberPermissions: parsed.member.permissions ?? '0',
-      command,
-      args,
-      idempotencyKey: typeof (parsed as { id?: unknown }).id === 'string' ? (parsed as { id: string }).id : undefined,
+      intent: {
+        guildId: parsed.guild_id,
+        userId: parsed.member.user.id,
+        roleIds: parsed.member.roles ?? [],
+        memberPermissions: parsed.member.permissions ?? '0',
+        command,
+        args,
+        idempotencyKey: typeof parsed.id === 'string' ? parsed.id : undefined,
+      },
+      applicationId,
+      interactionToken,
     };
   } catch {
     return null;
   }
+}
+
+export function parseInteractionBody(body: string): DiscordCommandIntent | { ping: true } | null {
+  const envelope = parseInteractionEnvelope(body);
+  if (!envelope) return null;
+  if ('ping' in envelope) return envelope;
+  return envelope.intent;
 }
 
 export async function handleSignedInteraction(opts: {

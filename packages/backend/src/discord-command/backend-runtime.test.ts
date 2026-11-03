@@ -403,6 +403,8 @@ describe('Discord backend runtime wiring (Phase 2C step 3A)', () => {
       const body = JSON.stringify({
         type: 2,
         id: 'ix-play',
+        application_id: '999000000000000001',
+        token: 'deferred-token-absent-followup',
         guild_id: GUILD,
         member: { user: { id: 'u1' }, roles: [VIEWER], permissions: '0' },
         data: { name: 'play', options: [{ name: 'query', type: 3, value: 'never-play' }] },
