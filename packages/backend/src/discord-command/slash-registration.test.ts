@@ -53,6 +53,26 @@ describe('Discord slash registration client (Phase 2C step 3B.2)', () => {
     assert.deepEqual(methods, ['GET']);
   });
 
+  it('treats omitted remote options [] as equivalent to local empty options', () => {
+    const local = getSupportedSlashCommands().find((c) => c.name === 'queue')!;
+    const body = toDiscordCommandBody(local);
+    assert.ok(!('options' in body) || !body.options || (body.options as unknown[]).length === 0);
+    const { plan } = previewSlashRegistration({
+      applicationId: APP,
+      guildId: GUILD,
+      remote: [{
+        id: 'id-queue',
+        name: 'queue',
+        type: 1,
+        description: String(body.description),
+        // Discord often omits empty options rather than sending []
+        default_member_permissions: null,
+      }],
+    });
+    assert.ok(plan.unchanged.some((u) => u.local.name === 'queue'));
+    assert.equal(plan.update.length, 0);
+  });
+
   it('2–6. payloads valid; unchanged preserved; collisions reported; updates need apply; unrelated kept', async () => {
     const remote: RemoteGuildCommand[] = [
       remoteFromLocal('queue'),

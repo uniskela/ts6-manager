@@ -81,7 +81,9 @@ function redactAuth(text: string, authorization: string): string {
 }
 
 function optionFingerprint(value: unknown): string {
-  return JSON.stringify(value ?? null);
+  // Discord may omit empty options; local bodies often use []. Treat both as empty.
+  const normalized = value == null || (Array.isArray(value) && value.length === 0) ? [] : value;
+  return JSON.stringify(normalized);
 }
 
 function commandsEquivalent(local: SlashCommandDefinition, remote: RemoteGuildCommand): boolean {

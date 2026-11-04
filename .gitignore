@@ -22,3 +22,6 @@ packages/frontend/playwright-report/
 .pr-test/
 .media-fetcher-token
 bin/
+
+# Local integration-test runtime artifacts (never commit)
+.tmp/

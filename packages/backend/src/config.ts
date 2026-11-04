@@ -2,6 +2,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { parseTrustProxy } from './trust-proxy.js';
+import { resolveListenHost } from './listen-host.js';
+import { isIsolatedIntegrationMode } from './startup-isolation.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../../../.env') });
@@ -20,6 +22,11 @@ function envRoleIds(name: string): string[] {
 
 export const config = {
   port: parseInt(process.env.PORT || '3001', 10),
+  /**
+   * Optional bind address (LISTEN_HOST, else HOST).
+   * Undefined → Node default (all interfaces). Set 127.0.0.1 for isolated local tests.
+   */
+  listenHost: resolveListenHost(),
   nodeEnv: process.env.NODE_ENV || 'development',
   databaseUrl: process.env.DATABASE_URL || 'file:./data/ts6webui.db',
   jwtSecret: process.env.JWT_SECRET || 'dev-secret-change-me-in-production',
@@ -46,4 +53,9 @@ export const config = {
   discordInstanceId: (process.env.DISCORD_INSTANCE_ID || 'local').trim() || 'local',
   discordViewerRoleIds: envRoleIds('DISCORD_VIEWER_ROLE_IDS'),
   discordAdminRoleIds: envRoleIds('DISCORD_ADMIN_ROLE_IDS'),
+  /**
+   * Discord Commands & Radio isolated integration backend (Step 4C).
+   * Off by default — does not change production compose / normal local runs.
+   */
+  isolatedIntegration: isIsolatedIntegrationMode(),
 };

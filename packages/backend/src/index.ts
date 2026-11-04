@@ -28,8 +28,13 @@ import {
   installDiscordCommandRuntime,
 } from './discord-command/backend-runtime.js';
 import { createDiscordWebhookFollowUpFromConfig } from './discord-command/discord-delivery.js';
+import { listenHttpServer } from './listen-host.js';
+import { assertIsolatedIntegrationStartup } from './startup-isolation.js';
 
 async function main() {
+  const isolation = assertIsolatedIntegrationStartup();
+  const skipBackgroundJobs = isolation.skipBackgroundJobs;
+
   // C1: JWT secret startup guard
   if (config.jwtSecret === 'dev-secret-change-me-in-production') {
     if (config.nodeEnv === 'production') {
@@ -65,7 +70,9 @@ async function main() {
   }
 
   // Non-blocking diagnostic only. Production images never self-update bundled tools.
-  logYtDlpVersionInBackground();
+  if (!skipBackgroundJobs) {
+    logYtDlpVersionInBackground();
+  }
 
   const prisma = new PrismaClient();
   const app = createApp();
@@ -187,19 +194,41 @@ async function main() {
   // TeamSpeak activity journal (#91 Slice 5) — opt-in per connection/SID
   const activityJournal = new ActivityJournalService(prisma, botEngine.getEventBridge());
   app.locals.activityJournal = activityJournal;
-  await activityJournal.start();
+  if (!skipBackgroundJobs) {
+    await activityJournal.start();
+  } else {
+    console.log('[TS6 WebUI] Isolated integration: activity journal not started');
+  }
 
-  const stopIptvAutoRefresh = startIptvAutoRefresh(prisma);
-  const stopAuditRetention = startAuditRetention(prisma);
+  const stopIptvAutoRefresh = skipBackgroundJobs
+    ? () => undefined
+    : startIptvAutoRefresh(prisma);
+  const stopAuditRetention = skipBackgroundJobs
+    ? () => undefined
+    : startAuditRetention(prisma);
+  if (skipBackgroundJobs) {
+    console.log('[TS6 WebUI] Isolated integration: IPTV auto-refresh and audit retention skipped');
+  }
 
   // Media downloads connect only through the checking proxy; log its state before serving.
-  await startMediaEgress();
+  if (!skipBackgroundJobs) {
+    await startMediaEgress();
+  } else {
+    console.log('[TS6 WebUI] Isolated integration: media egress bootstrap skipped');
+  }
 
-  server.listen(config.port, () => {
-    console.log(`[TS6 WebUI] Backend running on http://localhost:${config.port}`);
+  const listenHost = config.listenHost;
+  listenHttpServer(server, config.port, listenHost, () => {
+    const where = listenHost
+      ? `http://${listenHost}:${config.port}`
+      : `http://localhost:${config.port} (all interfaces)`;
+    console.log(`[TS6 WebUI] Backend running on ${where}`);
     console.log(`[TS6 WebUI] WebSocket available at ws://localhost:${config.port}/ws`);
     console.log(`[TS6 WebUI] Environment: ${config.nodeEnv}`);
     console.log(`[TS6 WebUI] Trusted proxies: ${describeTrustProxy(config.trustProxy)}`);
+    if (skipBackgroundJobs) {
+      console.log('[TS6 WebUI] Isolated integration mode active (background jobs reduced)');
+    }
   });
 
   // Graceful shutdown
@@ -207,7 +236,9 @@ async function main() {
     console.log('\n[TS6 WebUI] Shutting down...');
     stopIptvAutoRefresh();
     stopAuditRetention();
-    await activityJournal.stop();
+    if (!skipBackgroundJobs) {
+      await activityJournal.stop();
+    }
 
     // Drop Discord adapter refs before stopping bots so in-flight commands fail closed.
     clearDiscordCommandRuntime(app);
