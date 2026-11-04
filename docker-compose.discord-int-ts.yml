@@ -1,0 +1,51 @@
+# Disposable TeamSpeak 6 lab for Commands & Radio INT-TEST only.
+# Separate Compose project/volumes from pr-test and D1. Loopback binds only.
+#
+#   docker compose -p ts6-discord-int -f docker-compose.discord-int-ts.yml up -d
+#   docker compose -p ts6-discord-int -f docker-compose.discord-int-ts.yml down -v
+#
+# Does not start the manager backend, sidecar, or any D1 stack.
+
+services:
+  teamspeak:
+    image: teamspeaksystems/teamspeak6-server:6.0.0-beta13
+    container_name: ts6-discord-int-teamspeak
+    restart: "no"
+    environment:
+      TSSERVER_LICENSE_ACCEPTED: accept
+      TSSERVER_QUERY_HTTP_ENABLED: "1"
+      TSSERVER_QUERY_HTTP_PORT: "10080"
+      TSSERVER_QUERY_HTTP_ALLOW_GUEST: "0"
+      TSSERVER_QUERY_SSH_ENABLED: "1"
+      TSSERVER_QUERY_SSH_PORT: "10022"
+      TSSERVER_QUERY_SSH_ALLOW_GUEST: "0"
+      # Disposable lab secrets — not production. Override via env if desired.
+      TSSERVER_QUERY_ADMIN_PASSWORD: ${DISCORD_INT_TS_ADMIN_PASSWORD:-discord-int-lab-query-admin}
+      TSSERVER_QUERY_ADMIN_API_KEY: ${DISCORD_INT_TS_API_KEY:-discord-int-lab-webquery-api-key-not-for-prod}
+    volumes:
+      - discord-int-teamspeak-data:/var/tsserver
+    ports:
+      # Host ports stay under 65535 and off the default pr-test / D1 mappings.
+      - "127.0.0.1:19987:9987/udp"
+      - "127.0.0.1:30034:30033/tcp"
+      - "127.0.0.1:11022:10022/tcp"
+      - "127.0.0.1:11080:10080/tcp"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/10080 && exec 4<>/dev/tcp/127.0.0.1/10022'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 20s
+    networks:
+      - ts6-discord-int
+
+volumes:
+  discord-int-teamspeak-data:
+
+networks:
+  ts6-discord-int:
+    name: ts6-discord-int
