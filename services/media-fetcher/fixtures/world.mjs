@@ -1,6 +1,7 @@
 /** Local fixture origin. Not copied into the production image. */
 import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { accessSync, constants } from 'node:fs';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import http from 'node:http';
 import https from 'node:https';
@@ -8,12 +9,29 @@ import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+/** Resolve tool binaries without depending on a mutable PATH. */
+function resolveBin(name, candidates) {
+  for (const path of candidates) {
+    try {
+      accessSync(path, constants.X_OK);
+      return path;
+    } catch {
+      /* try next */
+    }
+  }
+  throw new Error(`${name} not found in fixed paths: ${candidates.join(', ')}`);
+}
+
+const OPENSSL = resolveBin('openssl', ['/usr/bin/openssl', '/bin/openssl']);
+const FFMPEG = resolveBin('ffmpeg', ['/usr/bin/ffmpeg', '/bin/ffmpeg']);
+
 function openssl(args) {
-  const result = spawnSync('openssl', args, { encoding: 'utf8' });
+  const result = spawnSync(OPENSSL, args, { encoding: 'utf8' });
   if (result.status !== 0) throw new Error(result.stderr || 'openssl failed');
 }
 
 const dir = await mkdtemp(join(tmpdir(), 'world-'));
+const crossTargetPath = join(dir, 'cross-target');
 openssl(['req', '-x509', '-newkey', 'rsa:2048', '-keyout', join(dir, 'ca.key'), '-out', join(dir, 'ca.crt'),
   '-days', '1', '-nodes', '-subj', '/CN=TS6-FETCH-CA']);
 await writeFile(join(dir, 'san.cnf'), 'subjectAltName=DNS:origin\n');
@@ -22,11 +40,11 @@ openssl(['req', '-newkey', 'rsa:2048', '-keyout', join(dir, 'server.key'), '-out
 openssl(['x509', '-req', '-in', join(dir, 'server.csr'), '-CA', join(dir, 'ca.crt'), '-CAkey', join(dir, 'ca.key'),
   '-out', join(dir, 'server.crt'), '-days', '1', '-CAcreateserial', '-extfile', join(dir, 'san.cnf')]);
 const ts = join(dir, 'seg.ts');
-const made = spawnSync('ffmpeg', ['-hide_banner', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.4',
+const made = spawnSync(FFMPEG, ['-hide_banner', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=0.4',
   '-c:a', 'aac', '-f', 'mpegts', '-y', ts], { encoding: 'utf8' });
 if (made.status !== 0) throw new Error(made.stderr);
 const mp3 = join(dir, 'tone.mp3');
-const mp3made = spawnSync('ffmpeg', ['-hide_banner', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+const mp3made = spawnSync(FFMPEG, ['-hide_banner', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
   '-q:a', '9', '-y', mp3], { encoding: 'utf8' });
 if (mp3made.status !== 0) throw new Error(mp3made.stderr);
 const key = Buffer.alloc(16, 0x11);
@@ -34,7 +52,7 @@ openssl(['enc', '-aes-128-cbc', '-in', ts, '-out', join(dir, 'seg.enc'),
   '-K', key.toString('hex'), '-iv', '0'.repeat(32)]);
 const encrypted = await readFile(join(dir, 'seg.enc'));
 const tone = await readFile(mp3);
-await writeFile('/tmp/ca.crt', await readFile(join(dir, 'ca.crt')));
+// CA stays under private mkdtemp dir (dir/ca.crt); lab scripts discover /tmp/world-*.
 
 const trapPeers = [];
 const trap = net.createServer((socket) => {
@@ -55,7 +73,7 @@ const origin = https.createServer({
   }
   if (req.url?.startsWith('/cross.m3u8')) {
     let target = '127.0.0.1:9';
-    try { target = (await readFile('/tmp/cross-target', 'utf8')).trim() || target; } catch { /* none */ }
+    try { target = (await readFile(crossTargetPath, 'utf8')).trim() || target; } catch { /* none */ }
     res.writeHead(200, { 'Content-Type': 'application/vnd.apple.mpegurl' });
     res.end(`#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXTINF:1,\nhttpproxy://${target}/http://origin:8000/stream\n#EXT-X-ENDLIST\n`);
     return;

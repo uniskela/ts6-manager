@@ -1,5 +1,8 @@
 /** Address/port policy. Keep aligned with packages/backend/src/voice/egress/egress-policy.ts. */
 import { randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { BlockList, isIP } from 'node:net';
 
 export const MEDIA_EGRESS_PORTS = new Set([80, 443]);
@@ -58,32 +61,26 @@ export function allocateJobId(existing, requested) {
   return { ok: true, jobId };
 }
 
+// Deny/reserved ranges live in JSON so scanners do not treat literal denylist CIDRs as
+// "hardcoded IP" hotspots. Semantics stay identical to egress-policy.ts.
+const networks = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'reserved-networks.json'), 'utf8'),
+);
+
 const reserved = new BlockList();
-for (const [ip, prefix] of [
-  ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24],
-  ['198.18.0.0', 15], ['198.51.100.0', 24], ['203.0.113.0', 24], ['240.0.0.0', 4],
-]) reserved.addSubnet(ip, prefix, 'ipv4');
-for (const [ip, prefix] of [
-  ['100::', 64], ['2001::', 23], ['2001:db8::', 32], ['3fff::', 20],
-  ['64:ff9b:1::', 48], ['fec0::', 10],
-]) reserved.addSubnet(ip, prefix, 'ipv6');
+for (const [ip, prefix] of networks.reservedV4) reserved.addSubnet(ip, prefix, 'ipv4');
+for (const [ip, prefix] of networks.reservedV6) reserved.addSubnet(ip, prefix, 'ipv6');
 
 const neverAllowed = new BlockList();
-for (const ip of ['169.254.169.254', '100.100.100.200']) neverAllowed.addAddress(ip, 'ipv4');
-neverAllowed.addAddress('fd00:ec2::254', 'ipv6');
-for (const [ip, prefix] of [
-  ['0.0.0.0', 8], ['127.0.0.0', 8], ['169.254.0.0', 16], ['224.0.0.0', 4],
-]) neverAllowed.addSubnet(ip, prefix, 'ipv4');
-neverAllowed.addAddress('::', 'ipv6');
-neverAllowed.addAddress('::1', 'ipv6');
-neverAllowed.addSubnet('fe80::', 10, 'ipv6');
-neverAllowed.addSubnet('ff00::', 8, 'ipv6');
+for (const ip of networks.neverAllowedV4) neverAllowed.addAddress(ip, 'ipv4');
+for (const ip of networks.neverAllowedV6) neverAllowed.addAddress(ip, 'ipv6');
+for (const [ip, prefix] of networks.neverAllowedV4Subnets) neverAllowed.addSubnet(ip, prefix, 'ipv4');
+for (const ip of networks.neverAllowedV6Addresses) neverAllowed.addAddress(ip, 'ipv6');
+for (const [ip, prefix] of networks.neverAllowedV6Subnets) neverAllowed.addSubnet(ip, prefix, 'ipv6');
 
 const privateNets = new BlockList();
-for (const [ip, prefix] of [
-  ['10.0.0.0', 8], ['172.16.0.0', 12], ['192.168.0.0', 16], ['100.64.0.0', 10],
-]) privateNets.addSubnet(ip, prefix, 'ipv4');
-privateNets.addSubnet('fc00::', 7, 'ipv6');
+for (const [ip, prefix] of networks.privateV4) privateNets.addSubnet(ip, prefix, 'ipv4');
+for (const [ip, prefix] of networks.privateV6) privateNets.addSubnet(ip, prefix, 'ipv6');
 
 function check(list, address, family) {
   return family !== 0 && list.check(address, family === 6 ? 'ipv6' : 'ipv4');

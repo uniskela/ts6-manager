@@ -3,6 +3,7 @@ import http from 'node:http';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import test from 'node:test';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import { createDiscordInteractionsRouter } from './discord-command/interactions-http.js';
 import { authMiddleware } from './middleware/auth.js';
 import {
@@ -11,6 +12,17 @@ import {
   listenDiscordInteractionsPathFilter,
   normalizeFilterPathname,
 } from './discord-int-path-filter.js';
+
+/** Generous test limiter so authorization routes are not unthrottled. */
+function testRateLimiter() {
+  return rateLimit({
+    windowMs: 60_000,
+    max: 1_000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    validate: false,
+  });
+}
 
 function ed25519() {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
@@ -56,16 +68,18 @@ test('normalizeFilterPathname rejects trailing slash and dot-segment tricks', ()
 test('Discord router mounts before JWT auth — signed PING reaches Ed25519 handler', async () => {
   const keys = ed25519();
   const app = express();
-  // Mirror createApp order: Discord first, then global /api JWT.
+  const limiter = testRateLimiter();
+  // Mirror createApp order: Discord first (rate-limited), then global /api JWT.
   app.use(
     DISCORD_INTERACTIONS_PATH,
+    limiter,
     createDiscordInteractionsRouter({
       publicKeyHex: keys.publicKeyHex,
       getAdapter: () => null,
       nowMs: () => 1_700_000_000_000,
     }),
   );
-  app.use('/api', authMiddleware);
+  app.use('/api', limiter, authMiddleware);
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
   const upstream = await listen(app);
@@ -118,15 +132,17 @@ test('Discord router mounts before JWT auth — signed PING reaches Ed25519 hand
 test('path filter refuses health/auth and forwards signed Discord PING', async () => {
   const keys = ed25519();
   const app = express();
+  const limiter = testRateLimiter();
   app.use(
     DISCORD_INTERACTIONS_PATH,
+    limiter,
     createDiscordInteractionsRouter({
       publicKeyHex: keys.publicKeyHex,
       getAdapter: () => null,
       nowMs: () => 1_700_000_000_000,
     }),
   );
-  app.use('/api', authMiddleware);
+  app.use('/api', limiter, authMiddleware);
   app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
   const upstream = await listen(app);

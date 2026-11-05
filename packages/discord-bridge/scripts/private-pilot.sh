@@ -22,14 +22,14 @@ REQUIRED=(
 
 cmd="${1:-check}"
 CONFIRM=0
-if [ "$cmd" = "up" ]; then
+if [[ "$cmd" = "up" ]]; then
   for arg in "${@:2}"; do
     case "$arg" in
       --confirm) CONFIRM=1 ;;
       *) echo "usage: $0 up --confirm" >&2; exit 2 ;;
     esac
   done
-elif [ "$#" -gt 1 ]; then
+elif [[ "$#" -gt 1 ]]; then
   echo "usage: $0 check|pull|up --confirm|status|logs|stop" >&2
   exit 2
 fi
@@ -39,7 +39,7 @@ env_file_val() {
 }
 
 same_file() {
-  [ -e "$1" ] && [ -e "$2" ] && [ "$(stat -c '%d:%i' "$1")" = "$(stat -c '%d:%i' "$2")" ]
+  [[ -e "$1" ]] && [[ -e "$2" ]] && [[ "$(stat -c '%d:%i' "$1")" = "$(stat -c '%d:%i' "$2")" ]]
 }
 
 require_source_commit() {
@@ -57,7 +57,7 @@ verify_image_revision() {
     exit 2
   fi
   rev="$(docker image inspect "$img" --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')"
-  if [ "$rev" != "$SOURCE_COMMIT" ]; then
+  if [[ "$rev" != "$SOURCE_COMMIT" ]]; then
     echo "image revision does not match SOURCE_COMMIT" >&2
     exit 2
   fi
@@ -69,11 +69,11 @@ compose() {
 }
 
 presence() {
-  if [ ! -f "$CANONICAL_ENV" ]; then
+  if [[ ! -f "$CANONICAL_ENV" ]]; then
     echo "missing env file lab/.env.pilot" >&2
     exit 2
   fi
-  if [ ! -f "$ENV_FILE" ]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
     echo "missing env file" >&2
     exit 2
   fi
@@ -84,26 +84,26 @@ presence() {
   ENV_FILE="$CANONICAL_ENV"
   require_source_commit
   mode="$(stat -c '%a' "$ENV_FILE")"
-  if [ "$mode" != "600" ]; then
+  if [[ "$mode" != "600" ]]; then
     echo "env file must be mode 0600 (found $mode)" >&2
     exit 2
   fi
   missing=0
   for k in "${REQUIRED[@]}"; do
     val="$(env_file_val "$k")"
-    if [ -n "$val" ]; then echo "$k: SET"; else echo "$k: MISSING"; missing=1; fi
+    if [[ -n "$val" ]]; then echo "$k: SET"; else echo "$k: MISSING"; missing=1; fi
   done
   echo "runtime_mode=private-beta experimental=true restart=no published_ports=none"
   echo "pilot=external-ts ts_server_untouched=yes"
-  if [ "$missing" -ne 0 ]; then
+  if [[ "$missing" -ne 0 ]]; then
     echo "pilot blocked: required variables are MISSING"
     exit 2
   fi
-  if [ "$(env_file_val D1_PILOT_EXTERNAL_TS)" != "1" ] || [ "$(env_file_val D1_PILOT_CHANNEL_CONFIRMED)" != "1" ]; then
+  if [[ "$(env_file_val D1_PILOT_EXTERNAL_TS)" != "1" ]] || [[ "$(env_file_val D1_PILOT_CHANNEL_CONFIRMED)" != "1" ]]; then
     echo "pilot blocked: D1_PILOT_EXTERNAL_TS and D1_PILOT_CHANNEL_CONFIRMED must be 1" >&2
     exit 2
   fi
-  if [ "$(env_file_val D1_PILOT_ACK)" != "cross-platform-forwarding-informed" ]; then
+  if [[ "$(env_file_val D1_PILOT_ACK)" != "cross-platform-forwarding-informed" ]]; then
     echo "pilot blocked: D1_PILOT_ACK must be the informed-consent token (SET/MISSING only; value not printed)" >&2
     exit 2
   fi
@@ -136,7 +136,7 @@ pull() {
 
 up() {
   presence
-  if [ "$CONFIRM" -ne 1 ]; then
+  if [[ "$CONFIRM" -ne 1 ]]; then
     echo "presence complete. Live connections are not started."
     echo "after the operator approves: $0 up --confirm"
     exit 0
@@ -152,11 +152,11 @@ up() {
 status() {
   running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME" 2>/dev/null || echo false)"
   payload=""
-  if [ "$running" = "true" ]; then
+  if [[ "$running" = "true" ]]; then
     payload="$(docker exec "$CONTAINER_NAME" cat "$STATUS_IN_CONTAINER" 2>/dev/null || true)"
   fi
   file="$EVID_HOST/$HOST_STATUS_FILE"
-  if [ -z "$payload" ] && [ -r "$file" ]; then payload="$(cat "$file")"; fi
+  if [[ -z "$payload" ]] && [[ -r "$file" ]]; then payload="$(cat "$file")"; fi
   STATUS_JSON="$payload" python3 - "$running" <<'PY'
 import json, os, sys
 running = sys.argv[1] == "true"

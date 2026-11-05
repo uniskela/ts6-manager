@@ -43,9 +43,9 @@ docker run --rm "${installer_caps[@]}" -v "$TOKEN_FILE:/src/token:ro" -v "${P}_j
   -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token -e CTL_TOKEN_DEST=/ctl/.ctl-token \
   "$IMAGE" node /app/install-token.mjs || fail "compose-cap token install"
 TOKEN_STAT=$(docker run --rm -u 1000 -v "${P}_jobs:/jobs" "$IMAGE" stat -c '%a %u %g' /jobs/.token)
-[ "$TOKEN_STAT" = "600 1000 1000" ] || fail "token stat $TOKEN_STAT"
+[[ "$TOKEN_STAT" = "600 1000 1000" ]] || fail "token stat $TOKEN_STAT"
 CTL_STAT=$(docker run --rm -u 1000 -v "${P}_ctl:/ctl" "$IMAGE" stat -c '%a %u %g' /ctl/.ctl-token)
-[ "$CTL_STAT" = "600 1000 1000" ] || fail "ctl token stat $CTL_STAT"
+[[ "$CTL_STAT" = "600 1000 1000" ]] || fail "ctl token stat $CTL_STAT"
 pass "token+ctl install mode/owner (compose caps)"
 
 # Rotation: reinstall with a new host token under the same caps.
@@ -55,7 +55,7 @@ docker run --rm "${installer_caps[@]}" -v "$TOKEN_FILE:/src/token:ro" -v "${P}_j
   -e TOKEN_SRC=/src/token -e TOKEN_DEST=/jobs/.token -e CTL_TOKEN_DEST=/ctl/.ctl-token \
   "$IMAGE" node /app/install-token.mjs || fail "token rotation install"
 ROT_STAT=$(docker run --rm -u 1000 -v "${P}_jobs:/jobs" "$IMAGE" stat -c '%a %u' /jobs/.token)
-[ "$ROT_STAT" = "600 1000" ] || fail "rotated token $ROT_STAT"
+[[ "$ROT_STAT" = "600 1000" ]] || fail "rotated token $ROT_STAT"
 pass "token rotation under compose caps"
 
 common=(--user node --security-opt=no-new-privileges --read-only --tmpfs /tmp --cap-drop ALL)
@@ -64,7 +64,9 @@ docker run -d --name "$P-world" "${common[@]}" --network "${P}_world" --network-
   "$WIMAGE" >/dev/null
 for i in $(seq 1 80); do docker logs "$P-world" 2>&1 | grep -q 'WORLD ready' && break; sleep 0.25; done
 docker logs "$P-world" 2>&1 | grep -q 'WORLD ready' || fail "world start"
-docker exec "$P-world" cat /tmp/ca.crt > "$WORKDIR/ca.crt"
+WORLD_TMP=$(docker exec "$P-world" sh -c 'ls -d /tmp/world-* 2>/dev/null | head -1')
+[[ -n "$WORLD_TMP" ]] || fail "world tmp dir missing"
+docker exec "$P-world" cat "$WORLD_TMP/ca.crt" > "$WORKDIR/ca.crt"
 chmod 644 "$WORKDIR/ca.crt"
 # Lab CA must live outside /jobs so sandboxed ffmpeg can still read it (/tmp is allow-listed).
 docker run --rm -u 0 -v "${P}_jobs:/jobs" "$IMAGE" \
@@ -135,7 +137,7 @@ WRAP_CHECK=$(docker exec "$P-fetcher" /usr/local/bin/ll-wrap --check) || fail "l
 echo "$WRAP_CHECK" | grep -q 'landlock_abi=' || fail "ll-wrap abi line"
 echo "$WRAP_CHECK" | grep -q 'landlock_fs=1' || fail "ll-wrap fs line missing: $WRAP_CHECK"
 ABI=$(echo "$WRAP_CHECK" | sed -n 's/landlock_abi=//p')
-[ "${ABI:-0}" -ge 4 ] || fail "ABI $ABI < 4"
+[[ "${ABI:-0}" -ge 4 ]] || fail "ABI $ABI < 4"
 RESOLVE_UNIX=$(echo "$WRAP_CHECK" | sed -n 's/landlock_resolve_unix=//p')
 pass "Landlock ABI $ABI fs=1 resolve_unix=$RESOLVE_UNIX"
 
@@ -148,7 +150,7 @@ echo "$FS_DENY" | grep -q 'ctl_rc=0' && fail "sandboxed read of ctl token: $FS_D
 echo "$FS_DENY" | grep -q 'ca_rc=0' || fail "sandboxed CA read should work: $FS_DENY"
 pass "FS Landlock denies /jobs and /ctl secrets"
 
-if [ "${RESOLVE_UNIX:-0}" = "1" ]; then
+if [[ "${RESOLVE_UNIX:-0}" = "1" ]]; then
   cat > "$WORKDIR/unix-probe.mjs" <<'EOF'
 import net from 'node:net';
 const s = net.connect('/ctl/proxy.sock');
@@ -172,7 +174,7 @@ docker inspect "$P-proxy" --format '{{json .HostConfig.PortBindings}}' | grep -q
 docker inspect "$P-fetcher" --format '{{json .HostConfig.Binds}}' | grep -q docker.sock && fail "docker.sock"
 docker inspect "$P-fetcher" --format '{{.HostConfig.Privileged}} {{.HostConfig.CapAdd}}' | grep -qi true && fail "privileged/caps"
 SOCK_MODE=$(docker exec "$P-fetcher" stat -c '%a' /jobs/jobs.sock)
-[ "$SOCK_MODE" = "660" ] || fail "jobs.sock mode $SOCK_MODE"
+[[ "$SOCK_MODE" = "660" ]] || fail "jobs.sock mode $SOCK_MODE"
 pass "topology and socket mode $SOCK_MODE"
 
 # Auth
@@ -184,7 +186,7 @@ pass "unix auth"
 HLS=$(backend submit --id legit --url https://origin:8443/live.m3u8 --ports 8443 || true)
 echo "HLS $HLS"
 HLS_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HLS")
-if [ "$HLS_BYTES" -le 1000 ]; then
+if [[ "$HLS_BYTES" -le 1000 ]]; then
   echo "ffmpeg-log:"; docker exec "$P-fetcher" sh -c 'cat /jobs/ff.err 2>/dev/null | tail -40' || true
   docker logs "$P-proxy" 2>&1 | tail -20 || true
   fail "hls bytes $HLS_BYTES"
@@ -193,23 +195,23 @@ pass "HLS PCM $HLS_BYTES"
 
 HTTP=$(backend submit --id http1 --url http://origin:8000/stream --ports 8000 || true)
 HTTP_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HTTP")
-[ "$HTTP_BYTES" -gt 1000 ] || fail "http iceast $HTTP"
+[[ "$HTTP_BYTES" -gt 1000 ]] || fail "http iceast $HTTP"
 pass "HTTP Icecast $HTTP_BYTES"
 
 HTTPS=$(backend submit --id https1 --url https://origin:8443/stream --ports 8443 || true)
 HTTPS_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HTTPS")
-[ "$HTTPS_BYTES" -gt 1000 ] || fail "https iceast $HTTPS"
+[[ "$HTTPS_BYTES" -gt 1000 ]] || fail "https iceast $HTTPS"
 pass "HTTPS Icecast $HTTPS_BYTES"
 
 HOP=$(backend submit --id hop1 --url http://origin:8000/https-hop.m3u8 --ports 8000,8443 || true)
 HOP_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HOP")
-[ "$HOP_BYTES" -eq 0 ] || fail "HTTP-start HTTPS hop leaked $HOP"
+[[ "$HOP_BYTES" -eq 0 ]] || fail "HTTP-start HTTPS hop leaked $HOP"
 pass "HTTP-start CONNECT denied"
 
 docker exec "$P-fetcher" sh -c ': > /jobs/ff.err' || true
 BADCERT=$(backend submit --id badcert --url https://origin:8080/stream --ports 8080 || true)
 BADCERT_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$BADCERT")
-[ "$BADCERT_BYTES" -eq 0 ] || fail "untrusted HTTPS initial leaked $BADCERT"
+[[ "$BADCERT_BYTES" -eq 0 ]] || fail "untrusted HTTPS initial leaked $BADCERT"
 BADCERT_LOG=$(docker exec "$P-fetcher" sh -c 'cat /jobs/ff.err 2>/dev/null || true')
 echo "$BADCERT_LOG" | grep -Ei 'certificate|tls|gnutls|verify|self[- ]signed' >/dev/null \
   || fail "untrusted HTTPS initial not a cert error: $BADCERT_LOG"
@@ -217,20 +219,20 @@ pass "untrusted HTTPS initial blocked (cert)"
 
 BADHOP=$(backend submit --id badhop --url https://origin:8443/https-bad.m3u8 --ports 8443,8080 || true)
 BADHOP_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$BADHOP")
-[ "$BADHOP_BYTES" -eq 0 ] || fail "untrusted HTTPS hop leaked $BADHOP"
+[[ "$BADHOP_BYTES" -eq 0 ]] || fail "untrusted HTTPS hop leaked $BADHOP"
 pass "untrusted HTTPS-start hop blocked"
 
 HTTPBAD=$(backend submit --id httpbad --url http://origin:8000/https-bad.m3u8 --ports 8000,8080 || true)
 HTTPBAD_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$HTTPBAD")
-[ "$HTTPBAD_BYTES" -eq 0 ] || fail "HTTP-start untrusted HTTPS leaked $HTTPBAD"
+[[ "$HTTPBAD_BYTES" -eq 0 ]] || fail "HTTP-start untrusted HTTPS leaked $HTTPBAD"
 pass "HTTP-start untrusted HTTPS denied"
 
 FILETOK=$(backend submit --id filetok --url https://origin:8443/file-token.m3u8 --ports 8443 || true)
 FILETOK_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$FILETOK")
-[ "$FILETOK_BYTES" -eq 0 ] || fail "file token playlist leaked $FILETOK"
+[[ "$FILETOK_BYTES" -eq 0 ]] || fail "file token playlist leaked $FILETOK"
 UNIXCTL=$(backend submit --id unixctl --url https://origin:8443/unix-ctl.m3u8 --ports 8443 || true)
 UNIXCTL_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$UNIXCTL")
-[ "$UNIXCTL_BYTES" -eq 0 ] || fail "unix ctl playlist leaked $UNIXCTL"
+[[ "$UNIXCTL_BYTES" -eq 0 ]] || fail "unix ctl playlist leaked $UNIXCTL"
 pass "ffmpeg file/unix playlist blocked"
 
 BADPORT=$(backend submit --id ssh1 --url http://origin:8000/stream --ports 22 || true)
@@ -240,7 +242,7 @@ pass "ports clamped"
 # Original httpproxy HLS bypass
 BYPASS=$(backend submit --id bypass --url https://origin:8443/bypass.m3u8 --ports 8443 || true)
 BYPASS_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$BYPASS")
-[ "$BYPASS_BYTES" -eq 0 ] || fail "bypass leaked $BYPASS"
+[[ "$BYPASS_BYTES" -eq 0 ]] || fail "bypass leaked $BYPASS"
 TRAP=$(docker run --rm --network "${P}_world" "$IMAGE" node -e '
 const http=require("http"); http.get("http://origin:9500/",res=>{let b="";res.on("data",c=>b+=c);res.on("end",()=>process.stdout.write(b));});
 ')
@@ -251,12 +253,12 @@ pass "httpproxy HLS bypass blocked"
 backend hold-cancel --id jobB --url http://origin:8000/hold --ms 25000 --ports 8000 > "$WORKDIR/b.json" &
 for i in $(seq 1 40); do grep -q shimPort "$WORKDIR/b.json" 2>/dev/null && break; sleep 0.2; done
 BPORT=$(node -e "const t=require('fs').readFileSync(process.argv[1],'utf8'); const m=t.match(/\"shimPort\":(\\d+)/); if(!m) process.exit(2); process.stdout.write(m[1]);" "$WORKDIR/b.json")
-[ -n "$BPORT" ] || fail "B shim $WORKDIR/b.json"
-docker exec "$P-world" sh -c "printf '%s\n' '127.0.0.1:${BPORT}' > /tmp/cross-target"
+[[ -n "$BPORT" ]] || fail "B shim $WORKDIR/b.json"
+docker exec "$P-world" sh -c "printf '%s\n' '127.0.0.1:${BPORT}' > '${WORLD_TMP}/cross-target'"
 A_CROSS=$(backend submit --id jobA --url https://origin:8443/cross.m3u8 --ports 8443 || true)
 A2=$(backend submit --id jobA2 --url "httpproxy://127.0.0.1:${BPORT}/http://origin:8000/stream" --ports 8443 || true)
 A2_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$A2")
-[ "$A2_BYTES" -eq 0 ] || fail "cross-job inherit $A2"
+[[ "$A2_BYTES" -eq 0 ]] || fail "cross-job inherit $A2"
 BST=$(backend status || true)
 echo "$BST" | grep -q jobB || fail "B gone during A2 $BST"
 DUP=$(backend submit --id jobB --url http://origin:8000/stream --ports 8000 || true)
@@ -269,7 +271,7 @@ wait || true
 backend hold-cancel --id hold1 --url http://origin:8000/hold --ms 800 --ports 8000 >/dev/null
 sleep 0.5
 FF=$(docker exec "$P-fetcher" sh -c 'for p in /proc/[0-9]*; do c=$(tr "\0" " " < "$p/cmdline" 2>/dev/null || true); echo "$c"; done' | grep -c ffmpeg || true)
-[ "${FF:-0}" -eq 0 ] || fail "orphaned ffmpeg after cancel ($FF)"
+[[ "${FF:-0}" -eq 0 ]] || fail "orphaned ffmpeg after cancel ($FF)"
 pass "cancel cleanup"
 
 # Proxy down
@@ -287,7 +289,7 @@ for i in $(seq 1 40); do docker logs "$P-fetcher" 2>&1 | grep -q 'FETCHER ready'
 backend wait --ms 8000 >/dev/null || fail "fetcher restart socket"
 AFTER=$(backend submit --id after --url http://origin:8000/stream --ports 8000 || true)
 AFTER_BYTES=$(node -e "const j=JSON.parse(process.argv[1]); process.stdout.write(String(j.bytes||0))" "$AFTER")
-[ "$AFTER_BYTES" -gt 1000 ] || fail "after restart $AFTER"
+[[ "$AFTER_BYTES" -gt 1000 ]] || fail "after restart $AFTER"
 pass "fetcher restart"
 
 # Tokens not in argv / fetcher env
@@ -298,7 +300,7 @@ echo "$CMDLINES" | grep -F -q "$TOKEN_VAL" && fail "token in argv"
 CTL_VAL=$(docker exec "$P-fetcher" sh -c "tr -d '\\n' < /ctl/.ctl-token")
 echo "$CMDLINES" | grep -F -q "$CTL_VAL" && fail "ctl token in argv"
 ENVIRON_HITS=$(docker exec "$P-fetcher" sh -c 'hits=0; for p in /proc/[0-9]*; do e=$(tr "\0" "\n" < "$p/environ" 2>/dev/null || true); echo "$e" | grep -q "^FETCHER_TOKEN=" && hits=$((hits+1)); echo "$e" | grep -q "^MEDIA_FETCHER_TOKEN=" && hits=$((hits+1)); done; echo $hits')
-[ "${ENVIRON_HITS:-0}" -eq 0 ] || fail "token in environ ($ENVIRON_HITS)"
+[[ "${ENVIRON_HITS:-0}" -eq 0 ]] || fail "token in environ ($ENVIRON_HITS)"
 pass "no token in argv/environ"
 
 # Explicit Landlock disable cannot start

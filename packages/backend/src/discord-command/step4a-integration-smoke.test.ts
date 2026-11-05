@@ -335,7 +335,14 @@ describe('Step 4A integration preflight smoke', () => {
         assert.ok(bot.playCalls >= 1, 'play must hit fake bot');
         playCompleted = bot.playCalls >= 1;
         assert.ok(webhookHits.some((h) => h.method === 'PATCH'));
-        assert.ok(webhookHits.every((h) => !h.url.includes('discord.com')));
+        assert.ok(webhookHits.every((h) => {
+          try {
+            const host = new URL(h.url, 'http://127.0.0.1').hostname.toLowerCase();
+            return host !== 'discord.com' && !host.endsWith('.discord.com');
+          } catch {
+            return true;
+          }
+        }));
 
         // 8. /stop same bot + queue
         const beforeStop = bot.stopCalls;

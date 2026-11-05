@@ -3,7 +3,7 @@
 # usage: scripts/private-beta-container-test.sh [image]
 set -euo pipefail
 IMG="${1:-}"
-if [ -z "$IMG" ]; then
+if [[ -z "$IMG" ]]; then
   echo "usage: $0 <image>" >&2
   exit 2
 fi
@@ -30,10 +30,10 @@ docker run -d --name d1-private-beta-mount-probe \
   "$IMG" src/lab/private-beta-mount-probe.ts >/dev/null
 
 for _ in 1 2 3 4 5 6 7 8 9 10; do
-  if [ -r "$HOST/host-status.json" ]; then break; fi
+  if [[ -r "$HOST/host-status.json" ]]; then break; fi
   sleep 0.2
 done
-if [ ! -r "$HOST/host-status.json" ]; then
+if [[ ! -r "$HOST/host-status.json" ]]; then
   echo "FAIL  host cannot read host-status while container is running (rootless bind mount)" >&2
   exit 1
 fi
@@ -50,18 +50,18 @@ assert "password" not in text
 print("PASS  host can read minimal host-status while running")
 PY
 
-if [ ! -e "$HOST/private-beta-status.json" ]; then
+if [[ ! -e "$HOST/private-beta-status.json" ]]; then
   echo "FAIL  detailed status missing" >&2
   exit 1
 fi
 mode="$(stat -c '%a' "$HOST/private-beta-status.json")"
-if [ "$mode" != "600" ]; then
+if [[ "$mode" != "600" ]]; then
   echo "FAIL  detailed status must be 0600 (found $mode)" >&2
   exit 1
 fi
 owner="$(stat -c '%u' "$HOST/private-beta-status.json")"
 me="$(id -u)"
-if [ "$me" != 0 ] && [ "$owner" != "$me" ] && [ -r "$HOST/private-beta-status.json" ]; then
+if [[ "$me" != 0 ]] && [[ "$owner" != "$me" ]] && [[ -r "$HOST/private-beta-status.json" ]]; then
   echo "FAIL  host must not read detailed status; use docker exec" >&2
   exit 1
 fi
@@ -75,7 +75,7 @@ print("PASS  docker exec reads detailed status")
 PY
 
 docker stop d1-private-beta-mount-probe >/dev/null
-if [ ! -r "$HOST/host-status.json" ]; then
+if [[ ! -r "$HOST/host-status.json" ]]; then
   echo "FAIL  host-status unreadable after SIGTERM" >&2
   exit 1
 fi
@@ -85,7 +85,7 @@ s = json.load(open(sys.argv[1], encoding="utf8"))
 assert s.get("state") == "stopped"
 print("PASS  SIGTERM wrote final host-status")
 PY
-if [ ! -e "$HOST/private-beta-status.json" ]; then
+if [[ ! -e "$HOST/private-beta-status.json" ]]; then
   echo "FAIL  detailed evidence not retained after SIGTERM" >&2
   exit 1
 fi

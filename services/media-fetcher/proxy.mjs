@@ -120,12 +120,20 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(403, { Connection: 'close' }).end('refused');
     return;
   }
+  // Request only the DNS-pinned allowlisted address (not the raw user hostname).
+  const destinationIp = pinned.addresses[0];
+  if (!net.isIP(destinationIp)) {
+    res.writeHead(403, { Connection: 'close' }).end('refused');
+    return;
+  }
+  const requestPath = `${url.pathname}${url.search}`;
   const up = http.request({
-    host: pinned.addresses[0],
+    host: destinationIp,
     port,
-    path: url.pathname + url.search,
+    path: requestPath,
     method: req.method,
     headers: { host: url.host, connection: 'close' },
+    setHost: false,
     signal: job.abort.signal,
   }, (upRes) => {
     if (upRes.socket) track(job, upRes.socket);

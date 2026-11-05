@@ -6,11 +6,12 @@ One sitting. INT-TEST Discord app + disposable TeamSpeak only. No production. No
 
 - [x] Guild slash commands dry-run reviewed; **guild-only** creates applied on INT-TEST (2026-11-05)
 - [x] `/play` `/queue` `/stop` preserved; volume cosmetic drift left unapplied
+- [x] CI findings triage/fixes pushed on integration (hygiene, Sonar highs, CodeQL) — re-check PR #601 before live
 - [ ] Guild bound to MusicBot; viewer/admin role IDs or isolated-live Administrator latch
 - [ ] Disposable TS with MusicBot nickname visible
 - [ ] `yt-dlp` absolute path; no sentinel cookie jar
 - [ ] Optional for `/ts bridge`: `DISCORD_BRIDGE_STATUS_FILE` (lab JSON) — **do not** fabricate D1 status; skip bridge hear if no isolated source
-- [ ] Interactions URL via path filter + short-lived tunnel only for this session
+- [ ] Interactions URL via path filter + short-lived tunnel only for this session (**do not start tunnel until operator is available**)
 
 ## Disposable fixtures (prepare before operator joins)
 

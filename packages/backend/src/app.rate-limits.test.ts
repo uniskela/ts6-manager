@@ -77,6 +77,13 @@ async function flood(count: number, send: (from: string) => Promise<Response>) {
 }
 
 describe('app rate limiter stores', () => {
+  it('exposes a bounded Discord interactions rate-limit store', async () => {
+    const app = (await import('./app.js')).createApp();
+    const store = app.locals.discordInteractionsRateLimitStore as BoundedRateLimitStore | undefined;
+    assert.ok(store);
+    assert.equal(typeof store.increment, 'function');
+  });
+
   it('stay bounded on the listener remote path under many distinct addresses', async () => using(async f => {
     const statuses = await flood(10_500, from => f.remoteState(from));
     assert.ok(!statuses.has(503), [...statuses].join());

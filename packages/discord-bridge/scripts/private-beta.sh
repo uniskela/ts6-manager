@@ -22,20 +22,20 @@ REQUIRED=(
 cmd="${1:-check}"
 CONFIRM=0
 ROLLBACK_SHA=""
-if [ "$cmd" = "up" ]; then
+if [[ "$cmd" = "up" ]]; then
   for arg in "${@:2}"; do
     case "$arg" in
       --confirm) CONFIRM=1 ;;
       *) echo "usage: $0 up --confirm" >&2; exit 2 ;;
     esac
   done
-elif [ "$cmd" = "rollback" ]; then
+elif [[ "$cmd" = "rollback" ]]; then
   ROLLBACK_SHA="${2:-}"
-  if [ -z "$ROLLBACK_SHA" ]; then
+  if [[ -z "$ROLLBACK_SHA" ]]; then
     echo "usage: $0 rollback <full-sha>" >&2
     exit 2
   fi
-elif [ "$#" -gt 1 ]; then
+elif [[ "$#" -gt 1 ]]; then
   echo "usage: $0 check|build|up --confirm|status|logs|stop|rollback <full-sha>" >&2
   exit 2
 fi
@@ -53,34 +53,34 @@ env_file_val() {
 }
 
 presence() {
-  if [ ! -f "$ENV_FILE" ]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
     echo "missing env file" >&2
     exit 2
   fi
   mode="$(stat -c '%a' "$ENV_FILE")"
-  if [ "$mode" != "600" ]; then
+  if [[ "$mode" != "600" ]]; then
     echo "env file must be mode 0600 (found $mode)" >&2
     exit 2
   fi
   missing=0
   for k in "${REQUIRED[@]}"; do
     val="$(env_file_val "$k")"
-    if [ -n "$val" ]; then echo "$k: SET"; else echo "$k: MISSING"; missing=1; fi
+    if [[ -n "$val" ]]; then echo "$k: SET"; else echo "$k: MISSING"; missing=1; fi
   done
-  if [ "$(env_file_val D1_RUNTIME_MODE)" = "private-beta" ] || [ "${D1_RUNTIME_MODE:-}" = "private-beta" ]; then
+  if [[ "$(env_file_val D1_RUNTIME_MODE)" = "private-beta" ]] || [[ "${D1_RUNTIME_MODE:-}" = "private-beta" ]]; then
     echo "D1_RUNTIME_MODE: SET"
   else
     echo "D1_RUNTIME_MODE: MISSING"
     missing=1
   fi
-  if [ "$(env_file_val D1_DAVE_SINGLE_ATTEMPT)" = "1" ] || [ "${D1_DAVE_SINGLE_ATTEMPT:-}" = "1" ]; then
+  if [[ "$(env_file_val D1_DAVE_SINGLE_ATTEMPT)" = "1" ]] || [[ "${D1_DAVE_SINGLE_ATTEMPT:-}" = "1" ]]; then
     echo "D1_DAVE_SINGLE_ATTEMPT: SET"
   else
     echo "D1_DAVE_SINGLE_ATTEMPT: MISSING"
   fi
   echo "runtime_mode=private-beta experimental=true restart=no published_ports=none"
   echo "acceptance A-D stay in lab/ACCEPTANCE.md; do not mix those PASS/FAIL rows into usage counters"
-  if [ "$missing" -ne 0 ]; then
+  if [[ "$missing" -ne 0 ]]; then
     echo "private-beta blocked: required variables are MISSING"
     exit 2
   fi
@@ -94,7 +94,7 @@ check() {
 
 build() {
   SOURCE_COMMIT="${SOURCE_COMMIT:-$(source_commit)}"
-  if [ -z "$SOURCE_COMMIT" ]; then
+  if [[ -z "$SOURCE_COMMIT" ]]; then
     echo "set SOURCE_COMMIT (not a git checkout)" >&2
     exit 2
   fi
@@ -109,7 +109,7 @@ require_net() {
     exit 2
   fi
   internal="$(docker network inspect -f '{{.Internal}}' "$NET")"
-  if [ "$internal" = "true" ]; then
+  if [[ "$internal" = "true" ]]; then
     echo "lab network $NET is internal; Discord would be unreachable" >&2
     exit 2
   fi
@@ -117,14 +117,14 @@ require_net() {
 
 up() {
   presence
-  if [ "$CONFIRM" -ne 1 ]; then
+  if [[ "$CONFIRM" -ne 1 ]]; then
     echo "presence complete. Live Discord connections are not started."
     echo "after the operator approves: $0 up --confirm"
     exit 0
   fi
   require_net
   SOURCE_COMMIT="${SOURCE_COMMIT:-$(source_commit)}"
-  if [ -z "$SOURCE_COMMIT" ]; then
+  if [[ -z "$SOURCE_COMMIT" ]]; then
     echo "set SOURCE_COMMIT (not a git checkout)" >&2
     exit 2
   fi
@@ -151,11 +151,11 @@ container_running() {
 status() {
   running="$(container_running)"
   payload=""
-  if [ "$running" = "true" ]; then
+  if [[ "$running" = "true" ]]; then
     payload="$(docker exec "$CONTAINER_NAME" cat "$STATUS_IN_CONTAINER" 2>/dev/null || true)"
   fi
   file="$EVID_HOST/$HOST_STATUS_FILE"
-  if [ -z "$payload" ] && [ -r "$file" ]; then
+  if [[ -z "$payload" ]] && [[ -r "$file" ]]; then
     payload="$(cat "$file")"
   fi
   STATUS_JSON="$payload" python3 - "$running" <<'PY'
@@ -210,7 +210,7 @@ logs() {
 
 stop() {
   SOURCE_COMMIT="${SOURCE_COMMIT:-$(source_commit)}"
-  if [ -z "$SOURCE_COMMIT" ]; then SOURCE_COMMIT=unknown; fi
+  if [[ -z "$SOURCE_COMMIT" ]]; then SOURCE_COMMIT=unknown; fi
   export SOURCE_COMMIT
   compose stop
   compose rm -f
@@ -232,7 +232,7 @@ rollback() {
   fi
   echo "rolling back to local image ts6-discord-bridge-private-beta:$ROLLBACK_SHA (no rebuild, no pull)"
   SOURCE_COMMIT="${SOURCE_COMMIT:-$(source_commit)}"
-  if [ -z "$SOURCE_COMMIT" ]; then SOURCE_COMMIT=unknown; fi
+  if [[ -z "$SOURCE_COMMIT" ]]; then SOURCE_COMMIT=unknown; fi
   export SOURCE_COMMIT
   compose stop
   compose rm -f
