@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import type { PlaylistRemoteAccess } from '@ts6/common';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
 import { actorFromRequest, recordLocalSuccess } from '../audit/index.js';
+import { buildRow } from '../audit/writer.js';
 
 export const playlistRoutes: Router = Router();
 
@@ -193,9 +195,6 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
     const id = parseInt(req.params.id as string);
     const { name, musicBotId, mode, remoteAccess } = req.body;
 
-    const existing = await prisma.playlist.findUnique({ where: { id } });
-    if (!existing) throw new AppError(404, 'Playlist not found');
-
     const data: Record<string, unknown> = {};
     if (name != null) data.name = name;
     if (musicBotId !== undefined) data.musicBotId = musicBotId ? parseInt(musicBotId) : null;
@@ -207,26 +206,33 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
       data.remoteAccess = nextRemoteAccess;
     }
 
-    const visibilityChanged =
-      nextRemoteAccess !== undefined &&
-      nextRemoteAccess !== normalizePlaylistRemoteAccess(existing.remoteAccess);
+    await prisma.$transaction(async (tx) => {
+      const current = await tx.playlist.findUnique({ where: { id } });
+      if (!current) throw new AppError(404, 'Playlist not found');
 
-    if (visibilityChanged) {
-      await recordLocalSuccess(
-        prisma,
-        {
-          actor: actorFromRequest(req.user),
-          action: 'playlist.remote_access_update',
-          connectionId: existing.serverConfigId ?? null,
-          target: { type: 'playlist', id },
-        },
-        async (tx) => {
-          await tx.playlist.update({ where: { id }, data });
-        },
-      );
-    } else {
-      await prisma.playlist.update({ where: { id }, data });
-    }
+      if (Object.keys(data).length === 0) return;
+
+      const visibilityChanged =
+        nextRemoteAccess !== undefined &&
+        nextRemoteAccess !== normalizePlaylistRemoteAccess(current.remoteAccess);
+
+      await tx.playlist.update({ where: { id }, data });
+
+      if (visibilityChanged) {
+        await tx.adminAuditEvent.create({
+          data: buildRow({
+            actor: actorFromRequest(req.user),
+            action: 'playlist.remote_access_update',
+            connectionId: current.serverConfigId ?? null,
+            target: { type: 'playlist', id },
+            operationId: randomUUID(),
+            outcome: 'success',
+            resultCode: 'ok',
+            completedAt: new Date(),
+          }),
+        });
+      }
+    });
 
     res.json({ success: true });
   } catch (err) {
