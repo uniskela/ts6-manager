@@ -24,6 +24,27 @@ export const DEFAULT_BOT_AUTOMATION_SETTINGS: BotAutomationSettings = {
   stayInChannel: false,
 };
 
+/** Per connection + virtual server settings for whole-playlist voting. */
+export interface PlaylistVoteSettings {
+  enabled: boolean;
+  /** Whole percent from 1 to 100. */
+  thresholdPercent: number;
+  /** Maximum tracks accepted in one whole-playlist request. */
+  maxRequestSize: number;
+}
+
+export const DEFAULT_PLAYLIST_VOTE_SETTINGS: PlaylistVoteSettings = {
+  enabled: false,
+  thresholdPercent: 80,
+  maxRequestSize: 25,
+};
+
+/** Approvals needed = ceil(threshold% × listeners), at least 1 when anyone is listening. */
+export function playlistVoteApprovalsNeeded(thresholdPercent: number, listeners: number): number {
+  if (listeners <= 0) return 0;
+  return Math.max(1, Math.ceil((thresholdPercent / 100) * listeners));
+}
+
 /** What a bot's Auto-DJ and 24/7 settings mean right now, for status badges and `!help`. */
 export interface BotAutomationOverview {
   /** Auto-DJ is on and has a source to play. */
