@@ -55,6 +55,36 @@ export type MusicServiceDeps = {
 
 const SEARCH_TIMEOUT_MS = 12_000;
 
+/**
+ * Abort when `parent` aborts or `ms` elapses. Uses an explicit timer so the
+ * Node test runner (and production) always keep the event loop alive —
+ * `AbortSignal.timeout` + `AbortSignal.any` has dropped pending searches under
+ * the full CI suite on Node 20 ("event loop already resolved").
+ */
+export function abortAfter(ms: number, parent: AbortSignal): { signal: AbortSignal; clear: () => void } {
+  const ac = new AbortController();
+  const abortWith = (reason: unknown) => {
+    if (!ac.signal.aborted) ac.abort(reason);
+  };
+  const onParent = () => abortWith(parent.reason);
+  if (parent.aborted) {
+    abortWith(parent.reason);
+    return { signal: ac.signal, clear: () => {} };
+  }
+  parent.addEventListener('abort', onParent, { once: true });
+  const timer = setTimeout(
+    () => abortWith(Object.assign(new Error('Search timed out'), { name: 'TimeoutError' })),
+    ms,
+  );
+  return {
+    signal: ac.signal,
+    clear: () => {
+      clearTimeout(timer);
+      parent.removeEventListener('abort', onParent);
+    },
+  };
+}
+
 const READY = new Set<string>([...PHASE_2A_MUSIC_COMMANDS, ...PHASE_2B_1_MUSIC_COMMANDS, ...PHASE_2B_2_MUSIC_COMMANDS]);
 const PLAYLIST_EDITS = new Set(['create', 'add', 'remove']);
 
@@ -236,11 +266,10 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
       let url = query;
       if (!/^https?:\/\//i.test(query)) {
         const songQuery = query.trim().slice(0, MAX_SONG_QUERY_LENGTH);
+        const timed = abortAfter(deps.searchTimeoutMs ?? SEARCH_TIMEOUT_MS, request.signal);
         try {
-          const timeout = AbortSignal.timeout(deps.searchTimeoutMs ?? SEARCH_TIMEOUT_MS);
-          const signal = AbortSignal.any([request.signal, timeout]);
           const findSong = deps.findSong ?? ((q, s) => findSongForQuery(q, undefined, s));
-          const song = await findSong(songQuery, signal);
+          const song = await findSong(songQuery, timed.signal);
           if (request.isCancelled()) {
             request.discard();
             return cancelled();
@@ -257,6 +286,8 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
           const name = err instanceof Error ? err.name : '';
           if (name === 'TimeoutError') return fail('unavailable', 'Search timed out.', 'deferred');
           return fail('unavailable', 'Search failed.', 'deferred');
+        } finally {
+          timed.clear();
         }
       }
       if (request.isCancelled()) {

@@ -989,10 +989,11 @@ describe('Discord /play search uses TeamSpeak findSong', () => {
   function hangUntilAbort(onStart?: () => void) {
     return async (_query: string, signal?: AbortSignal) => {
       onStart?.();
+      if (!signal) throw new Error('hangUntilAbort requires an AbortSignal');
       await new Promise<void>((_resolve, reject) => {
-        const fail = () => reject(signal?.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' }));
-        if (signal?.aborted) fail();
-        else signal?.addEventListener('abort', fail, { once: true });
+        const fail = () => reject(signal.reason ?? Object.assign(new Error('aborted'), { name: 'AbortError' }));
+        if (signal.aborted) fail();
+        else signal.addEventListener('abort', fail, { once: true });
       });
       return foundSong();
     };

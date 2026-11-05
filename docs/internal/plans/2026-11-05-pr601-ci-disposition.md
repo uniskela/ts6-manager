@@ -16,6 +16,7 @@
 | TypeScript CI | `bot.stopAudio is not a function` on radio supersede in history fixture | **Fixed** — fixture provides `stopAudio`; production VoiceBot already had it |
 | TypeScript CI | `!again` during `!radio` station lookup still started radio | **Fixed** — `beginChatMediaRequest` bumps intent; radio aborts lookup on intent change |
 | Sonar S9383 (reply awaits) | Floating `context.reply` MAJOR reliability on shared voice code | **Fixed** — selected `queue.ts` / `playback.ts` replies use `void` (preserves prior fire-and-forget timing) |
+| TypeScript CI | Discord `/play` search suites `cancelledByParent` (13) under full Node 20 suite | **Fixed** — replace `AbortSignal.timeout`/`any` with explicit `setTimeout` abort helper so hung-search tests keep the event loop alive |
 
 ## Manual disposition (do not weaken controls)
 
