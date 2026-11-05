@@ -241,8 +241,18 @@ export function createDiscordWebhookFollowUp(
   const nowMs = () => opts.nowMs?.() ?? Date.now();
 
   const localAbort = new AbortController();
-  const delivered = new Set<string>();
+  /**
+   * Interaction id → instant its record may be dropped. A token is useless after
+   * its TTL, so a record never needs to outlive it; this keeps the map bounded.
+   */
+  const delivered = new Map<string, number>();
   let disposed = false;
+
+  function pruneDelivered(now: number): void {
+    for (const [key, expiresAt] of delivered) {
+      if (now >= expiresAt) delivered.delete(key);
+    }
+  }
 
   function combinedSignal(extra?: AbortSignal): AbortSignal {
     if (!extra && !opts.signal) return localAbort.signal;
@@ -321,8 +331,10 @@ export function createDiscordWebhookFollowUp(
 
     const dedupeKey = job.interactionId?.trim() || '';
     if (dedupeKey) {
+      const now = nowMs();
+      pruneDelivered(now);
       if (delivered.has(dedupeKey)) return;
-      delivered.add(dedupeKey);
+      delivered.set(dedupeKey, now + tokenTtlMs);
     }
 
     const token = job.interactionToken?.trim() ?? '';

@@ -356,6 +356,40 @@ describe('Discord deferred delivery (Phase 2C step 3B.1)', () => {
     }
   });
 
+  it('keeps dedupe records only for the interaction token lifetime (bounded memory)', async () => {
+    let patches = 0;
+    const api = await mockDiscordApi((_hit, res) => {
+      patches += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    try {
+      let now = NOW_MS;
+      const ttl = 1_000;
+      const followUp = createDiscordWebhookFollowUp({
+        applicationId: APP_ID,
+        apiBaseUrl: api.baseUrl,
+        nowMs: () => now,
+        tokenTtlMs: ttl,
+      });
+      await followUp.afterDeferred(job({ interactionId: 'ix-ttl', receivedAtMs: now }));
+      assert.equal(patches, 1);
+
+      // Still inside the token lifetime: a repeat is suppressed.
+      now = NOW_MS + ttl - 1;
+      await followUp.afterDeferred(job({ interactionId: 'ix-ttl', receivedAtMs: now }));
+      assert.equal(patches, 1);
+
+      // Past the lifetime the original token is dead, so the record is dropped
+      // rather than kept for the life of the process.
+      now = NOW_MS + ttl;
+      await followUp.afterDeferred(job({ interactionId: 'ix-ttl', receivedAtMs: now }));
+      assert.equal(patches, 2);
+    } finally {
+      await api.close();
+    }
+  });
+
   it('7. delivery timeout is bounded (ambiguous — no retry)', async () => {
     let hits = 0;
     const transport: DiscordHttpTransport = {
