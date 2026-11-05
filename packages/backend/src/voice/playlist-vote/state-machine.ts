@@ -1,9 +1,3 @@
-/**
- * Whole-playlist vote state machine (roadmap #442 B2 / K1).
- * Pure: no I/O, no Prisma, no chat. Callers inject clock and listener lists.
- * Unreachable from routes until B3 wires it.
- */
-
 import { randomBytes } from 'node:crypto';
 
 export type PlaylistVoteBallot = 'yes' | 'no';
@@ -24,9 +18,7 @@ export type PlaylistVoteEndReason =
 export type PlaylistVoteSettings = {
   /** Percent 1–100; approvals needed = ceil(percent/100 * listeners), at least 1. */
   thresholdPercent: number;
-  /** Open-window length in ms (K1 default 60_000). */
   windowMs: number;
-  /** Maximum tracks allowed in one whole-playlist request. */
   maxTracks: number;
 };
 
@@ -72,6 +64,18 @@ export type BallotInput = {
   nowMs: number;
 };
 
+/**
+ * All-or-nothing queue decision.
+ * A refusal closes the vote as failed with that reason and emits no `queue` event.
+ */
+export type QueuePlaylistHook = (input: {
+  voteId: string;
+  botKey: string;
+  channelId: string;
+  requesterUid: string;
+  playlist: PlaylistVotePlaylist;
+}) => 'queued' | 'queue_full' | 'playlist_unavailable';
+
 type InternalVote = {
   id: string;
   botKey: string;
@@ -94,13 +98,17 @@ export type PlaylistVoteEvent =
   | { type: 'announce_result'; vote: PlaylistVotePublic }
   | { type: 'queue'; playlistId: number; trackCount: number; voteId: string };
 
+export const BOT_COOLDOWN_MS = 120_000;
+export const FAILED_REQUESTER_COOLDOWN_MS = 5 * 60_000;
+export const OPEN_RATE_LIMIT = 3;
+export const OPEN_RATE_WINDOW_MS = 10 * 60_000;
+
 const DEFAULT_CLOSED_VISIBLE_MS = 30_000;
 
 function opaqueVoteId(): string {
   return randomBytes(16).toString('base64url');
 }
 
-/** Approvals needed = ceil(threshold% × listeners), at least 1. Zero listeners → 1 (but open is refused). */
 export function approvalsNeeded(thresholdPercent: number, listenerCount: number): number {
   if (listenerCount <= 0) return 1;
   const pct = Math.min(100, Math.max(1, Math.floor(thresholdPercent)));
@@ -150,21 +158,47 @@ function toPublic(
   };
 }
 
+export type PlaylistVoteMachineOptions = {
+  closedVisibleMs?: number;
+  queuePlaylist?: QueuePlaylistHook;
+  botCooldownMs?: number;
+  failedRequesterCooldownMs?: number;
+  openRateLimit?: number;
+  openRateWindowMs?: number;
+};
+
 /**
- * In-memory registry: one open vote per bot+channel.
- * Process restart drops everything (product rule).
+ * Process restart drops open votes and queues nothing.
+ * Voting-off paths stay outside this module.
  */
 export class PlaylistVoteMachine {
   private readonly open = new Map<string, InternalVote>();
   private readonly closed = new Map<string, InternalVote>();
   private readonly closedVisibleMs: number;
+  private readonly queuePlaylist: QueuePlaylistHook;
+  private readonly botCooldownMs: number;
+  private readonly failedRequesterCooldownMs: number;
+  private readonly openRateLimit: number;
+  private readonly openRateWindowMs: number;
+  private readonly botCooldownUntil = new Map<string, number>();
+  private readonly failedRequesterUntil = new Map<string, number>();
+  private readonly openAttempts = new Map<string, number[]>();
 
-  constructor(opts?: { closedVisibleMs?: number }) {
+  constructor(opts?: PlaylistVoteMachineOptions) {
     this.closedVisibleMs = opts?.closedVisibleMs ?? DEFAULT_CLOSED_VISIBLE_MS;
+    this.queuePlaylist = opts?.queuePlaylist ?? (() => 'queued');
+    this.botCooldownMs = opts?.botCooldownMs ?? BOT_COOLDOWN_MS;
+    this.failedRequesterCooldownMs = opts?.failedRequesterCooldownMs ?? FAILED_REQUESTER_COOLDOWN_MS;
+    this.openRateLimit = opts?.openRateLimit ?? OPEN_RATE_LIMIT;
+    this.openRateWindowMs = opts?.openRateWindowMs ?? OPEN_RATE_WINDOW_MS;
   }
 
   private key(botKey: string, channelId: string): string {
     return `${botKey}\0${channelId}`;
+  }
+
+  private identityKey(botKey: string, uid: string): string {
+    return `${botKey}\0${uid}`;
   }
 
   clear(): void {
@@ -172,7 +206,6 @@ export class PlaylistVoteMachine {
     this.closed.clear();
   }
 
-  /** Drop every open vote (bot restart / process recycle). Nothing is queued. */
   onRestart(): void {
     this.open.clear();
   }
@@ -205,7 +238,7 @@ export class PlaylistVoteMachine {
 
   /**
    * Open a vote, or return the existing one for the same requester+playlist.
-   * Caller must already have refused oversize playlists and voting-off / sole-listener direct queue.
+   * Sole-listener auto-pass queues through the hook with no open window.
    */
   openVote(input: OpenPlaylistVoteInput): {
     ok: true;
@@ -214,13 +247,14 @@ export class PlaylistVoteMachine {
     events: PlaylistVoteEvent[];
   } | {
     ok: false;
-    code: 'vote_running' | 'request_too_large' | 'playlist_empty' | 'listeners_unavailable';
+    code: 'vote_running' | 'request_too_large' | 'playlist_empty' | 'listeners_unavailable' | 'rate_limited';
+    retryAfterMs?: number;
   } {
     const { playlist, settings, listenerUids, requesterUid, nowMs } = input;
     if (playlist.trackCount <= 0) return { ok: false, code: 'playlist_empty' };
     if (playlist.trackCount > settings.maxTracks) return { ok: false, code: 'request_too_large' };
-    if (!listenerUids.includes(requesterUid)) return { ok: false, code: 'listeners_unavailable' };
     if (listenerUids.length === 0) return { ok: false, code: 'listeners_unavailable' };
+    if (!listenerUids.includes(requesterUid)) return { ok: false, code: 'listeners_unavailable' };
 
     const k = this.key(input.botKey, input.channelId);
     const existing = this.open.get(k);
@@ -236,9 +270,19 @@ export class PlaylistVoteMachine {
       return { ok: false, code: 'vote_running' };
     }
 
-    // Sole listener: caller should have queued directly; if they still open, treat as instant pass.
+    const limited = this.checkOpenRate(input.botKey, requesterUid, nowMs);
+    if (limited) return { ok: false, code: 'rate_limited', retryAfterMs: limited };
+    this.recordOpenAttempt(input.botKey, requesterUid, nowMs);
+
     if (listenerUids.length === 1 && listenerUids[0] === requesterUid) {
       const id = opaqueVoteId();
+      const queued = this.queuePlaylist({
+        voteId: id,
+        botKey: input.botKey,
+        channelId: input.channelId,
+        requesterUid,
+        playlist,
+      });
       const vote: InternalVote = {
         id,
         botKey: input.botKey,
@@ -248,23 +292,21 @@ export class PlaylistVoteMachine {
         thresholdPercent: settings.thresholdPercent,
         deadlineMs: nowMs + settings.windowMs,
         ballots: new Map([[requesterUid, 'yes']]),
-        status: 'passed',
-        reason: 'approved',
+        status: queued === 'queued' ? 'passed' : 'failed',
+        reason: queued === 'queued' ? 'approved' : queued,
         closedAtMs: nowMs,
         announcedOpen: false,
         announcedResult: true,
       };
       this.closed.set(k, vote);
+      this.armBotCooldown(input.botKey, nowMs);
+      if (queued !== 'queued') this.markFailedRequester(input.botKey, requesterUid, nowMs);
       const pub = toPublic(vote, requesterUid, listenerUids);
-      return {
-        ok: true,
-        created: true,
-        vote: pub,
-        events: [
-          { type: 'queue', playlistId: playlist.id, trackCount: playlist.trackCount, voteId: id },
-          { type: 'announce_result', vote: pub },
-        ],
-      };
+      const events: PlaylistVoteEvent[] = [{ type: 'announce_result', vote: pub }];
+      if (queued === 'queued') {
+        events.unshift({ type: 'queue', playlistId: playlist.id, trackCount: playlist.trackCount, voteId: id });
+      }
+      return { ok: true, created: true, vote: pub, events };
     }
 
     const id = opaqueVoteId();
@@ -287,9 +329,8 @@ export class PlaylistVoteMachine {
     const pub = toPublic(vote, requesterUid, listenerUids);
     const events: PlaylistVoteEvent[] = [{ type: 'announce_open', vote: pub }];
 
-    // Requester's automatic yes may already meet the bar (e.g. 1 of 1 already handled).
-    const passed = this.tryPass(vote, listenerUids, nowMs);
-    if (passed) {
+    const resolved = this.tryPass(vote, listenerUids, nowMs);
+    if (resolved === 'passed') {
       const after = toPublic(vote, requesterUid, listenerUids);
       return {
         ok: true,
@@ -300,6 +341,15 @@ export class PlaylistVoteMachine {
           { type: 'queue', playlistId: playlist.id, trackCount: playlist.trackCount, voteId: id },
           { type: 'announce_result', vote: after },
         ],
+      };
+    }
+    if (resolved === 'queue_failed' || resolved === 'cancelled') {
+      const after = toPublic(vote, requesterUid, listenerUids);
+      return {
+        ok: true,
+        created: true,
+        vote: after,
+        events: [...events, { type: 'announce_result', vote: after }],
       };
     }
 
@@ -326,12 +376,18 @@ export class PlaylistVoteMachine {
 
     vote.ballots.set(input.voterUid, input.choice);
     const events: PlaylistVoteEvent[] = [];
-    if (this.tryPass(vote, input.listenerUids, input.nowMs)) {
+    const resolved = this.tryPass(vote, input.listenerUids, input.nowMs);
+    if (resolved === 'passed') {
       const pub = toPublic(vote, input.voterUid, input.listenerUids);
       events.push(
         { type: 'queue', playlistId: vote.playlist.id, trackCount: vote.playlist.trackCount, voteId: vote.id },
         { type: 'announce_result', vote: pub },
       );
+      return { ok: true, vote: pub, events };
+    }
+    if (resolved === 'queue_failed' || resolved === 'cancelled') {
+      const pub = toPublic(vote, input.voterUid, input.listenerUids);
+      events.push({ type: 'announce_result', vote: pub });
       return { ok: true, vote: pub, events };
     }
     return { ok: true, vote: toPublic(vote, input.voterUid, input.listenerUids), events };
@@ -354,7 +410,6 @@ export class PlaylistVoteMachine {
     return { ok: true, vote: toPublic(vote, input.voterUid, input.listenerUids) };
   }
 
-  /** Requester cancel (DELETE /votes/:id). */
   cancelByRequester(input: {
     voteId: string;
     botKey: string;
@@ -382,12 +437,20 @@ export class PlaylistVoteMachine {
       const closed = this.close(vote, 'failed', 'listeners_unavailable', [], input.nowMs, null);
       return closed.ok ? closed.events : [];
     }
-    if (this.tryPass(vote, input.listenerUids, input.nowMs)) {
+    if (input.listenerUids.length === 0) {
+      return this.closeSilent(vote, 'failed', 'deadline', input.nowMs);
+    }
+    const resolved = this.tryPass(vote, input.listenerUids, input.nowMs);
+    if (resolved === 'passed') {
       const pub = toPublic(vote, null, input.listenerUids);
       return [
         { type: 'queue', playlistId: vote.playlist.id, trackCount: vote.playlist.trackCount, voteId: vote.id },
         { type: 'announce_result', vote: pub },
       ];
+    }
+    if (resolved === 'queue_failed' || resolved === 'cancelled') {
+      const pub = toPublic(vote, null, input.listenerUids);
+      return [{ type: 'announce_result', vote: pub }];
     }
     const closed = this.close(vote, 'failed', 'deadline', input.listenerUids, input.nowMs, null);
     return closed.ok ? closed.events : [];
@@ -415,22 +478,36 @@ export class PlaylistVoteMachine {
     return vote;
   }
 
-  private tryPass(vote: InternalVote, listenerUids: readonly string[], nowMs: number): boolean {
+  private tryPass(
+    vote: InternalVote,
+    listenerUids: readonly string[],
+    nowMs: number,
+  ): 'passed' | 'queue_failed' | 'cancelled' | false {
     if (vote.status !== 'open') return false;
     const listeners = new Set(listenerUids);
-    // Drop ballots from leavers.
     for (const uid of [...vote.ballots.keys()]) {
       if (!listeners.has(uid)) vote.ballots.delete(uid);
     }
     if (!listeners.has(vote.requesterUid)) {
       this.close(vote, 'cancelled', 'requester_left', listenerUids, nowMs, null);
-      return false;
+      return 'cancelled';
     }
-    // Requester always counts as yes while present.
     vote.ballots.set(vote.requesterUid, 'yes');
     const { yes } = countBallots(vote.ballots, listeners);
     const needed = approvalsNeeded(vote.thresholdPercent, listeners.size);
     if (yes < needed) return false;
+
+    const queued = this.queuePlaylist({
+      voteId: vote.id,
+      botKey: vote.botKey,
+      channelId: vote.channelId,
+      requesterUid: vote.requesterUid,
+      playlist: vote.playlist,
+    });
+    if (queued !== 'queued') {
+      this.close(vote, 'failed', queued, listenerUids, nowMs, null);
+      return 'queue_failed';
+    }
 
     vote.status = 'passed';
     vote.reason = 'approved';
@@ -439,7 +516,8 @@ export class PlaylistVoteMachine {
     const k = this.key(vote.botKey, vote.channelId);
     this.open.delete(k);
     this.closed.set(k, vote);
-    return true;
+    this.armBotCooldown(vote.botKey, nowMs);
+    return 'passed';
   }
 
   private close(
@@ -457,7 +535,55 @@ export class PlaylistVoteMachine {
     const k = this.key(vote.botKey, vote.channelId);
     this.open.delete(k);
     this.closed.set(k, vote);
+    this.armBotCooldown(vote.botKey, nowMs);
+    if (status === 'failed') this.markFailedRequester(vote.botKey, vote.requesterUid, nowMs);
     const pub = toPublic(vote, viewerUid, listenerUids);
     return { ok: true, vote: pub, events: [{ type: 'announce_result', vote: pub }] };
+  }
+
+  private closeSilent(
+    vote: InternalVote,
+    status: 'failed',
+    reason: PlaylistVoteEndReason,
+    nowMs: number,
+  ): PlaylistVoteEvent[] {
+    vote.status = status;
+    vote.reason = reason;
+    vote.closedAtMs = nowMs;
+    const k = this.key(vote.botKey, vote.channelId);
+    this.open.delete(k);
+    this.closed.set(k, vote);
+    this.armBotCooldown(vote.botKey, nowMs);
+    this.markFailedRequester(vote.botKey, vote.requesterUid, nowMs);
+    return [];
+  }
+
+  private checkOpenRate(botKey: string, requesterUid: string, nowMs: number): number | null {
+    const botUntil = this.botCooldownUntil.get(botKey) ?? 0;
+    if (nowMs < botUntil) return botUntil - nowMs;
+    const failedUntil = this.failedRequesterUntil.get(this.identityKey(botKey, requesterUid)) ?? 0;
+    if (nowMs < failedUntil) return failedUntil - nowMs;
+    const key = this.identityKey(botKey, requesterUid);
+    const recent = (this.openAttempts.get(key) ?? []).filter((t) => nowMs - t < this.openRateWindowMs);
+    this.openAttempts.set(key, recent);
+    if (recent.length >= this.openRateLimit) {
+      return this.openRateWindowMs - (nowMs - recent[0]!);
+    }
+    return null;
+  }
+
+  private recordOpenAttempt(botKey: string, requesterUid: string, nowMs: number): void {
+    const key = this.identityKey(botKey, requesterUid);
+    const recent = (this.openAttempts.get(key) ?? []).filter((t) => nowMs - t < this.openRateWindowMs);
+    recent.push(nowMs);
+    this.openAttempts.set(key, recent);
+  }
+
+  private armBotCooldown(botKey: string, nowMs: number): void {
+    this.botCooldownUntil.set(botKey, nowMs + this.botCooldownMs);
+  }
+
+  private markFailedRequester(botKey: string, requesterUid: string, nowMs: number): void {
+    this.failedRequesterUntil.set(this.identityKey(botKey, requesterUid), nowMs + this.failedRequesterCooldownMs);
   }
 }

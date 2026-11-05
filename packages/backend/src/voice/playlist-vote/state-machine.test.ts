@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  BOT_COOLDOWN_MS,
+  FAILED_REQUESTER_COOLDOWN_MS,
+  OPEN_RATE_LIMIT,
+  OPEN_RATE_WINDOW_MS,
   PlaylistVoteMachine,
   approvalsNeeded,
   type PlaylistVoteSettings,
+  type QueuePlaylistHook,
 } from './state-machine.js';
 
 const settings: PlaylistVoteSettings = {
@@ -57,7 +62,7 @@ describe('PlaylistVoteMachine', () => {
   });
 
   it('returns the same vote for the same requester and playlist without a new rate hit', () => {
-    const m = new PlaylistVoteMachine();
+    const m = new PlaylistVoteMachine({ botCooldownMs: 0, failedRequesterCooldownMs: 0 });
     const first = m.openVote({
       botKey: 'b1',
       channelId: 'c1',
@@ -146,7 +151,6 @@ describe('PlaylistVoteMachine', () => {
     });
     assert.equal(opened.ok, true);
     if (!opened.ok) return;
-    // 2 listeners @ 80% → need 2. Requester yes + u2 yes passes.
     const ballot = m.castBallot({
       voteId: opened.vote.id,
       botKey: 'b1',
@@ -208,6 +212,39 @@ describe('PlaylistVoteMachine', () => {
     const view = m.viewForState('b1', 'c1', 'u1', ['u1', 'u2', 'u3'], 60_001);
     assert.equal(view?.status, 'failed');
     assert.equal(view?.reason, 'deadline');
+  });
+
+  it('emits at most two channel announces per vote', () => {
+    const m = new PlaylistVoteMachine();
+    const opened = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist,
+      settings,
+      listenerUids: ['u1', 'u2'],
+      nowMs: 0,
+    });
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    assert.equal(opened.events.filter((e) => e.type.startsWith('announce')).length, 1);
+
+    const done = m.castBallot({
+      voteId: opened.vote.id,
+      botKey: 'b1',
+      channelId: 'c1',
+      voterUid: 'u2',
+      choice: 'yes',
+      listenerUids: ['u1', 'u2'],
+      nowMs: 1,
+    });
+    assert.equal(done.ok, true);
+    if (!done.ok) return;
+    const announces = [...opened.events, ...done.events].filter((e) => e.type.startsWith('announce'));
+    assert.deepEqual(
+      announces.map((e) => e.type),
+      ['announce_open', 'announce_result'],
+    );
   });
 
   it('cancels when the requester votes no', () => {
@@ -286,7 +323,6 @@ describe('PlaylistVoteMachine', () => {
       listenerUids: ['u1', 'u2', 'u3'],
       nowMs: 1,
     });
-    // u2 leaves; u4 joins. Needed for 3 listeners @80% is 3; yes so far requester only after drop.
     const afterLeave = m.castBallot({
       voteId: opened.vote.id,
       botKey: 'b1',
@@ -322,7 +358,6 @@ describe('PlaylistVoteMachine', () => {
       channelId: 'c1',
       voterUid: 'u2',
       choice: 'yes',
-      // requester missing from channel
       listenerUids: ['u2'],
       nowMs: 3,
     });
@@ -332,7 +367,12 @@ describe('PlaylistVoteMachine', () => {
   });
 
   it('drops open votes on restart without queueing', () => {
-    const m = new PlaylistVoteMachine();
+    let queues = 0;
+    const queuePlaylist: QueuePlaylistHook = () => {
+      queues += 1;
+      return 'queued';
+    };
+    const m = new PlaylistVoteMachine({ queuePlaylist });
     m.openVote({
       botKey: 'b1',
       channelId: 'c1',
@@ -345,6 +385,7 @@ describe('PlaylistVoteMachine', () => {
     m.onRestart();
     assert.equal(m.getOpen('b1', 'c1'), undefined);
     assert.equal(m.viewForState('b1', 'c1', 'u1', ['u1', 'u2'], 1), null);
+    assert.equal(queues, 0);
   });
 
   it('keeps a closed vote visible for 30s then clears it', () => {
@@ -391,5 +432,209 @@ describe('PlaylistVoteMachine', () => {
     assert.equal(empty.ok, false);
     if (empty.ok) return;
     assert.equal(empty.code, 'playlist_empty');
+  });
+
+  it('fails silently at the deadline when no listeners remain', () => {
+    const m = new PlaylistVoteMachine();
+    assert.equal(
+      m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        playlist,
+        settings,
+        listenerUids: ['u1', 'u2'],
+        nowMs: 0,
+      }).ok,
+      true,
+    );
+    const events = m.tickDeadline({
+      botKey: 'b1',
+      channelId: 'c1',
+      listenerUids: [],
+      nowMs: 60_000,
+    });
+    assert.equal(events.length, 0);
+    const view = m.viewForState('b1', 'c1', 'u1', [], 60_001);
+    assert.equal(view?.status, 'failed');
+    assert.equal(view?.reason, 'deadline');
+  });
+
+  it('calls the queue hook once and records queue_full without a queue event', () => {
+    let calls = 0;
+    const m = new PlaylistVoteMachine({
+      queuePlaylist: () => {
+        calls += 1;
+        return 'queue_full';
+      },
+    });
+    const opened = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist,
+      settings,
+      listenerUids: ['u1', 'u2'],
+      nowMs: 0,
+    });
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    const done = m.castBallot({
+      voteId: opened.vote.id,
+      botKey: 'b1',
+      channelId: 'c1',
+      voterUid: 'u2',
+      choice: 'yes',
+      listenerUids: ['u1', 'u2'],
+      nowMs: 1,
+    });
+    assert.equal(done.ok, true);
+    if (!done.ok) return;
+    assert.equal(done.vote.status, 'failed');
+    assert.equal(done.vote.reason, 'queue_full');
+    assert.equal(calls, 1);
+    assert.equal(done.events.some((e) => e.type === 'queue'), false);
+    assert.ok(done.events.some((e) => e.type === 'announce_result'));
+  });
+
+  it('enforces the 120s bot cooldown after any vote', () => {
+    const m = new PlaylistVoteMachine();
+    assert.equal(
+      m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        playlist,
+        settings,
+        listenerUids: ['u1'],
+        nowMs: 0,
+      }).ok,
+      true,
+    );
+    const blocked = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u2',
+      playlist: { ...playlist, id: 8 },
+      settings,
+      listenerUids: ['u1', 'u2'],
+      nowMs: 1,
+    });
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) {
+      assert.equal(blocked.code, 'rate_limited');
+      assert.equal(blocked.retryAfterMs, BOT_COOLDOWN_MS - 1);
+    }
+    assert.equal(
+      m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u2',
+        playlist: { ...playlist, id: 8 },
+        settings,
+        listenerUids: ['u1', 'u2'],
+        nowMs: BOT_COOLDOWN_MS,
+      }).ok,
+      true,
+    );
+  });
+
+  it('enforces the 5-minute cooldown for a requester whose vote failed', () => {
+    const m = new PlaylistVoteMachine();
+    assert.equal(
+      m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        playlist,
+        settings,
+        listenerUids: ['u1', 'u2'],
+        nowMs: 0,
+      }).ok,
+      true,
+    );
+    m.tickDeadline({
+      botKey: 'b1',
+      channelId: 'c1',
+      listenerUids: ['u1', 'u2'],
+      nowMs: 60_000,
+    });
+
+    const blocked = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist: { ...playlist, id: 9 },
+      settings,
+      listenerUids: ['u1', 'u2'],
+      nowMs: 60_000 + BOT_COOLDOWN_MS,
+    });
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) assert.equal(blocked.code, 'rate_limited');
+
+    assert.equal(
+      m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        playlist: { ...playlist, id: 9 },
+        settings,
+        listenerUids: ['u1', 'u2'],
+        nowMs: 60_000 + FAILED_REQUESTER_COOLDOWN_MS,
+      }).ok,
+      true,
+    );
+  });
+
+  it('limits a requester to three opens per ten minutes', () => {
+    const m = new PlaylistVoteMachine({
+      botCooldownMs: 0,
+      failedRequesterCooldownMs: 0,
+    });
+    for (let i = 0; i < OPEN_RATE_LIMIT; i++) {
+      const opened = m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        playlist: { ...playlist, id: 100 + i },
+        settings,
+        listenerUids: ['u1', 'u2'],
+        nowMs: i,
+      });
+      assert.equal(opened.ok, true);
+      if (!opened.ok) return;
+      m.cancelByRequester({
+        voteId: opened.vote.id,
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        listenerUids: ['u1', 'u2'],
+        nowMs: i,
+      });
+    }
+    const blocked = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist: { ...playlist, id: 999 },
+      settings,
+      listenerUids: ['u1', 'u2'],
+      nowMs: OPEN_RATE_LIMIT,
+    });
+    assert.equal(blocked.ok, false);
+    if (!blocked.ok) assert.equal(blocked.code, 'rate_limited');
+
+    assert.equal(
+      m.openVote({
+        botKey: 'b1',
+        channelId: 'c1',
+        requesterUid: 'u1',
+        playlist: { ...playlist, id: 1000 },
+        settings,
+        listenerUids: ['u1', 'u2'],
+        nowMs: OPEN_RATE_WINDOW_MS,
+      }).ok,
+      true,
+    );
   });
 });
