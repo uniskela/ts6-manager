@@ -122,6 +122,29 @@ test('again marks definite removed-source failures without mislabeling connectio
   }
 });
 
+test('!radio plays the exact station item and queries stations for the bot server only', async () => {
+  const f = fixture();
+  const queries: any[] = [];
+  f.prisma.radioStation = { findMany: async (args: any) => {
+    queries.push(args);
+    return [
+      { id: 3, name: 'Station', genre: 'Jazz', url: 'https://8.8.8.8/radio' },
+      { id: 4, name: 'No genre', genre: null, url: 'http://8.8.4.4:8000/live' },
+    ];
+  } };
+  await f.command('!radio 3');
+  await f.command('!radio 4');
+  assert.deepEqual(queries.map((q) => q), [
+    { where: { serverConfigId: 9 }, orderBy: { name: 'asc' } },
+    { where: { serverConfigId: 9 }, orderBy: { name: 'asc' } },
+  ]);
+  assert.deepEqual(f.played, [
+    { id: 'radio_3', title: 'Station', artist: 'Jazz', filePath: '', source: 'radio', streamUrl: 'https://8.8.8.8/radio' },
+    { id: 'radio_4', title: 'No genre', artist: 'Radio', filePath: '', source: 'radio', streamUrl: 'http://8.8.4.4:8000/live' },
+  ]);
+  assert.deepEqual(f.replies, ['Now playing: Station', 'Now playing: No genre']);
+});
+
 test('radio and saved playlist commands record accepted canonical items with metadata', async () => {
   const f = fixture();
   f.prisma.radioStation = { findMany: async () => [{ id: 3, name: 'Station', genre: 'Jazz', url: 'https://8.8.8.8/radio' }] };
