@@ -81,3 +81,37 @@ test('health port fetches HTTP /health with bearer secret', async () => {
     t2dForwarded: 7,
   });
 });
+
+test('health port gives up on a bridge that never answers', async () => {
+  let aborted = false;
+  const port = createDiscordBridgeHealthPort({
+    baseUrl: 'http://bridge.local',
+    secret: 's3cret',
+    timeoutMs: 25,
+    fetchImpl: ((_input, init) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        aborted = true;
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      }, { once: true });
+    })) as typeof fetch,
+  });
+  const started = Date.now();
+  assert.equal(await port.health('g1'), null);
+  assert.equal(aborted, true);
+  // Well inside Discord's 3 s window for an immediate reply.
+  assert.ok(Date.now() - started < 1_000);
+});
+
+test('health port bounds the bridge request by default', async () => {
+  let signal: AbortSignal | null | undefined;
+  const port = createDiscordBridgeHealthPort({
+    baseUrl: 'http://bridge.local',
+    secret: 's3cret',
+    fetchImpl: (async (_input, init) => {
+      signal = init?.signal;
+      return new Response('{"generation":1}', { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch,
+  });
+  assert.ok(await port.health('g1'));
+  assert.ok(signal, 'request carries an abort signal');
+});
