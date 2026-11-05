@@ -206,7 +206,7 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
       data.remoteAccess = nextRemoteAccess;
     }
 
-    await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx: any) => {
       const current = await tx.playlist.findUnique({ where: { id } });
       if (!current) throw new AppError(404, 'Playlist not found');
 
