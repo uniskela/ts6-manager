@@ -243,13 +243,13 @@ export async function enqueueMediaUrl(
   const applied = await applyMediaUrlToBot(context, botId, bot, rawUrl, request, deps);
   if (!applied) return;
   if (applied.alreadyPlaying) {
-    context.reply(
+    await context.reply(
       bot,
       userClid,
       `Queued: ${applied.first.artist} - ${applied.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${applied.playlistNote}`,
     );
   } else {
-    context.reply(bot, userClid, `Now playing: ${applied.first.artist} - ${applied.first.title}${applied.playlistNote}`);
+    await context.reply(bot, userClid, `Now playing: ${applied.first.artist} - ${applied.first.title}${applied.playlistNote}`);
   }
 }
 
@@ -262,10 +262,10 @@ export async function handlePlaylist(
   args: string,
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
-  if (!serverConfigId) { context.reply(bot, userClid, 'No server configured.'); return; }
+  if (!serverConfigId) { await context.reply(bot, userClid, 'No server configured.'); return; }
   const query = args.trim();
   if (!query) {
-    context.reply(bot, userClid, formatPlaylistList(await loadPlaylistSummaries(context.prisma, serverConfigId)));
+    await context.reply(bot, userClid, formatPlaylistList(await loadPlaylistSummaries(context.prisma, serverConfigId)));
     return;
   }
   const result = await enqueueSavedPlaylist(context.prisma, bot, query, {
@@ -274,11 +274,11 @@ export async function handlePlaylist(
     isCurrent: () => context.voiceBotManager.getBot(botId) === bot,
   });
   if (!result.ok) {
-    context.reply(bot, userClid, result.message);
+    await context.reply(bot, userClid, result.message);
     return;
   }
   context.saveMusicRequest(bot, result.items);
-  context.reply(bot, userClid, `Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`);
+  await context.reply(bot, userClid, `Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`);
 }
 
 /** Report or set the queue repeat mode after validating the requested mode. */

@@ -259,10 +259,10 @@ export async function skipPlayback(
 export async function handleSkip(context: CommandContext, bot: VoiceBot, userClid: number): Promise<void> {
   const result = await skipPlayback(bot, context.chatMusicSwitch(bot));
   if (result.kind === 'skipped') {
-    context.reply(bot, userClid, `Skipped to: ${result.title}`);
+    await context.reply(bot, userClid, `Skipped to: ${result.title}`);
     return;
   }
-  context.reply(bot, userClid, 'Queue empty — playback stopped.');
+  await context.reply(bot, userClid, 'Queue empty — playback stopped.');
 }
 
 /** Play the previous queued item or report that no earlier track exists. */

@@ -72,8 +72,8 @@ function sanitizeProxyPath(pathname, search) {
   if (!raw.startsWith('/')) return null;
   let out = '';
   for (let i = 0; i < raw.length; i += 1) {
-    const code = raw.charCodeAt(i);
-    if (code < 0x20 || code > 0x7e) return null;
+    const code = raw.codePointAt(i);
+    if (code === undefined || code < 0x20 || code > 0x7e) return null;
     out += raw[i];
   }
   return out;

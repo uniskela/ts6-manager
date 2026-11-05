@@ -65,7 +65,8 @@ async function main(): Promise<void> {
       await Promise.resolve(bot.stop?.());
     } catch { /* ignore */ }
     try {
-      await Promise.resolve((bot as { client?: { disconnect?: () => unknown } }).client?.disconnect?.());
+      const client = (bot as unknown as { client?: { disconnect?: () => unknown } }).client;
+      await Promise.resolve(client?.disconnect?.());
     } catch { /* ignore */ }
     await prisma.$disconnect();
   }

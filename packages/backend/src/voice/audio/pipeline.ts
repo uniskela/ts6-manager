@@ -79,7 +79,11 @@ export function assertFfmpegHttpsVerification(run = spawnSync): void {
   if (cachedHttpsVerify instanceof Error) throw cachedHttpsVerify;
   const help = run("ffmpeg", ["-hide_banner", "-h", "protocol=tls"], { encoding: "utf8", timeout: 8_000 });
   const text = `${help.stdout ?? ""}\n${help.stderr ?? ""}`;
-  if (help.error || help.status !== 0 || !/^\s+-tls_verify\b/m.test(text)) {
+  const hasTlsVerify = text.split(/\r?\n/).some((line) => {
+    const trimmed = line.trimStart();
+    return trimmed === "-tls_verify" || trimmed.startsWith("-tls_verify ");
+  });
+  if (help.error || help.status !== 0 || !hasTlsVerify) {
     cachedHttpsVerify = new Error("HTTPS radio requires an ffmpeg build that supports -tls_verify");
     throw cachedHttpsVerify;
   }
