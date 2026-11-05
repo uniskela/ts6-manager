@@ -1,10 +1,16 @@
 # Disposable TeamSpeak 6 lab for Commands & Radio INT-TEST only.
-# Separate Compose project/volumes from pr-test and D1. Loopback binds only.
+# Separate Compose project/volumes from pr-test and D1.
 #
+# Loopback publishes keep MusicBot on the same host working.
+# Optional Tailscale IPv4 publish lets a remote TS client on the tailnet join
+# without exposing UDP to the public Internet (no 0.0.0.0 bind).
+#
+#   export DISCORD_INT_TS_TAILSCALE_IP="$(tailscale ip -4)"
 #   docker compose -p ts6-discord-int -f docker-compose.discord-int-ts.yml up -d
 #   docker compose -p ts6-discord-int -f docker-compose.discord-int-ts.yml down -v
 #
 # Does not start the manager backend, sidecar, or any D1 stack.
+# Do not enable Tailscale Funnel for these ports.
 
 services:
   teamspeak:
@@ -26,10 +32,18 @@ services:
       - discord-int-teamspeak-data:/var/tsserver
     ports:
       # Host ports stay under 65535 and off the default pr-test / D1 mappings.
+      # Loopback voice for MusicBot on this host (never 0.0.0.0).
       - "127.0.0.1:19987:9987/udp"
       - "127.0.0.1:30034:30033/tcp"
       - "127.0.0.1:11022:10022/tcp"
       - "127.0.0.1:11080:10080/tcp"
+      # Tailscale-only voice for a remote TS client on the tailnet.
+      # Use a *different* host UDP port than loopback — rootless Docker rejects
+      # binding the same host port on two addresses. Client enters port 19988.
+      # Set DISCORD_INT_TS_TAILSCALE_IP=$(tailscale ip -4) before `up`.
+      - "${DISCORD_INT_TS_TAILSCALE_IP}:19988:9987/udp"
+      # Distinct host TCP port (rootless cannot dual-bind the same host port).
+      - "${DISCORD_INT_TS_TAILSCALE_IP}:30035:30033/tcp"
     healthcheck:
       test:
         [

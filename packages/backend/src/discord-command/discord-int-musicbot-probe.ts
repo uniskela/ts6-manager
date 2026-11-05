@@ -52,7 +52,7 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({
       phase: 'post-start',
       status: bot.status,
-      nickname: bot.nickname ?? dbBot.nickname,
+      nickname: dbBot.nickname,
     }));
   } catch (err) {
     console.log(JSON.stringify({
