@@ -1,6 +1,6 @@
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import express from 'express';
-import type { DiscordCommandIntent } from './adapter.js';
+import type { CommandResult, DiscordCommandIntent } from './adapter.js';
 import { parseInteractionEnvelope, planAcknowledgement } from './interaction.js';
 import { verifyDiscordSignature } from './security.js';
 import type { DiscordInteractionFollowUp } from './follow-up.js';
@@ -12,7 +12,7 @@ import {
 } from './http-response.js';
 
 export type DiscordInteractionAdapter = {
-  handle(intent: DiscordCommandIntent): Promise<import('./adapter.js').CommandResult>;
+  handle(intent: DiscordCommandIntent): Promise<CommandResult>;
 };
 
 export type DiscordInteractionsHttpDeps = {
@@ -174,50 +174,36 @@ async function handleInteraction(
     sendOnce(res, 200, discordDeferredAck(true));
     const receivedAtMs = nowMs;
 
+    // A handler failure is reported, then delivered as the generic safe failure.
+    let result: CommandResult;
     try {
-      const result = await adapter.handle(parsed);
-      try {
-        await followUp.afterDeferred({
-          interactionId: parsed.idempotencyKey,
-          guildId: parsed.guildId,
-          userId: parsed.userId,
-          command: parsed.command,
-          result,
-          applicationId,
-          interactionToken: envelope.interactionToken,
-          receivedAtMs,
-        });
-      } catch {
-        deps.onDeliveryError?.({
-          command: parsed.command,
-          guildId: parsed.guildId,
-          reason: 'follow_up_failed',
-        });
-      }
+      result = await adapter.handle(parsed);
     } catch {
       deps.onDeliveryError?.({
         command: parsed.command,
         guildId: parsed.guildId,
         reason: 'handler_failed',
       });
-      try {
-        await followUp.afterDeferred({
-          interactionId: parsed.idempotencyKey,
-          guildId: parsed.guildId,
-          userId: parsed.userId,
-          command: parsed.command,
-          result: safeCommandFailure(),
-          applicationId,
-          interactionToken: envelope.interactionToken,
-          receivedAtMs,
-        });
-      } catch {
-        deps.onDeliveryError?.({
-          command: parsed.command,
-          guildId: parsed.guildId,
-          reason: 'follow_up_failed',
-        });
-      }
+      result = safeCommandFailure();
+    }
+
+    try {
+      await followUp.afterDeferred({
+        interactionId: parsed.idempotencyKey,
+        guildId: parsed.guildId,
+        userId: parsed.userId,
+        command: parsed.command,
+        result,
+        applicationId,
+        interactionToken: envelope.interactionToken,
+        receivedAtMs,
+      });
+    } catch {
+      deps.onDeliveryError?.({
+        command: parsed.command,
+        guildId: parsed.guildId,
+        reason: 'follow_up_failed',
+      });
     }
     return;
   }
