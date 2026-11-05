@@ -293,10 +293,10 @@ async function handle(socket) {
     });
     child.on('close', (status) => {
       try { socket.end(); } catch { /* closed */ }
-      finish(job).catch(() => {});
+      void finish(job).catch(() => {});
       void status;
     });
-    socket.on('close', () => { finish(job); });
+    socket.on('close', () => { void finish(job).catch(() => {}); });
   });
 }
 
@@ -317,5 +317,5 @@ async function shutdown() {
   try { fs.unlinkSync(sockPath); } catch { /* gone */ }
   process.exit(0);
 }
-process.on('SIGTERM', () => { shutdown(); });
-process.on('SIGINT', () => { shutdown(); });
+process.on('SIGTERM', () => { void shutdown(); });
+process.on('SIGINT', () => { void shutdown(); });

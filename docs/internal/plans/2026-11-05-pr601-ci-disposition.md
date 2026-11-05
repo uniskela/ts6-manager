@@ -17,10 +17,11 @@
 
 | Finding | Why leave / review |
 |---------|-------------------|
-| Residual Sonar on intentional egress proxy | Proxy is a controlled allowlisted egress gateway (job token, host allowlist, port allowlist, DNS pin, private-net refusal). If S5144 remains after pin hardening, mark **Safe** in Sonar with note “intentional media egress proxy with pinMediaAddresses”. |
+| Residual Sonar S5144 on egress proxy | Proxy is a controlled allowlisted egress gateway (job token, host allowlist, port allowlist, DNS pin, path ASCII rebuild, private-net refusal). If S5144 remains after `sanitizeProxyPath` + `pinnedHttpRequest`, mark **Safe** in Sonar: “intentional media egress proxy with pinMediaAddresses”. |
 | Residual S1313 if JSON still scanned | Denylist CIDRs are security controls aligned with `egress-policy.ts`. Prefer **False positive** / Safe over deleting denials. |
-| Cognitive-complexity / nested-ternary smells | Maintainability only; not security. Out of scope for this CI batch unless they reappear as QG blockers. |
-| Sonar S2699 on delivery tests | Likely false positive on assertion-heavy suites; re-check after reanalysis before changing tests for green only. |
+| Floating `context.reply` promises in `queue.ts` / `playback.ts` | Pre-existing chat command style on shared voice code; MAJOR reliability noise on a large PR. Prefer targeted follow-up rather than mass-await churn in this CI batch unless QG still fails after shell/SSRF clears. |
+| Cognitive-complexity / nested-ternary smells | Maintainability only; not security. |
+| Sonar S2699 on delivery tests | Likely false positive on assertion-heavy suites; re-check after reanalysis. |
 
 ## Not modified
 

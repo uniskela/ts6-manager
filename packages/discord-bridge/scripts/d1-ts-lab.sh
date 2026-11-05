@@ -50,7 +50,7 @@ start() {
     tsip="$(tailscale ip -4 2>/dev/null || true)"
   fi
   extra=()
-  if [ -n "$tsip" ] && [ "$tsip" != "$LOOPBACK_BIND" ] && [ "${tsip#127.}" = "$tsip" ]; then
+  if [[ -n "$tsip" ]] && [[ "$tsip" != "$LOOPBACK_BIND" ]] && [[ "${tsip#127.}" = "$tsip" ]]; then
     extra=(-p "${tsip}:${HOST_UDP}:9987/udp")
   fi
   launch() {
@@ -64,7 +64,7 @@ start() {
       "$IMG" >/dev/null
   }
   # Rootless slirp often accepts one host mapping per container port.
-  if [ "${#extra[@]}" -gt 0 ] && launch "${extra[@]}"; then
+  if [[ "${#extra[@]}" -gt 0 ]] && launch "${extra[@]}"; then
     echo "ts_lab: tailscale_bind=ok"
   elif launch "${publish[@]}"; then
     echo "ts_lab: tailscale_bind=skipped_loopback_only"

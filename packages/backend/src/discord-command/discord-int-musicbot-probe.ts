@@ -61,8 +61,12 @@ async function main(): Promise<void> {
       error: err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200),
     }));
   } finally {
-    try { bot.stop?.(); } catch { /* ignore */ }
-    try { (bot as any).client?.disconnect?.(); } catch { /* ignore */ }
+    try {
+      await Promise.resolve(bot.stop?.());
+    } catch { /* ignore */ }
+    try {
+      await Promise.resolve((bot as { client?: { disconnect?: () => unknown } }).client?.disconnect?.());
+    } catch { /* ignore */ }
     await prisma.$disconnect();
   }
 }

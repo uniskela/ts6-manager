@@ -59,7 +59,8 @@ export function createDiscordBridgeHealthPort(opts: {
   statusFilePath?: string;
   fetchImpl?: typeof fetch;
 }): { health(guildId: string): Promise<BridgeSnapshot | null> } {
-  const base = (opts.baseUrl || '').trim().replace(/\/+$/, '');
+  let base = (opts.baseUrl || '').trim();
+  while (base.endsWith('/')) base = base.slice(0, -1);
   const secret = (opts.secret || '').trim();
   const statusFile = (opts.statusFilePath || '').trim();
   const fetchImpl = opts.fetchImpl ?? fetch;

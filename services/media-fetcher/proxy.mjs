@@ -63,6 +63,38 @@ function allowedPort(job, port) {
   return job.ports.has(Number(port));
 }
 
+/**
+ * Rebuild an HTTP path from printable ASCII only so upstream requests cannot
+ * carry CR/LF or other control bytes from the client URL.
+ */
+function sanitizeProxyPath(pathname, search) {
+  const raw = `${pathname || '/'}${search || ''}`;
+  if (!raw.startsWith('/')) return null;
+  let out = '';
+  for (let i = 0; i < raw.length; i += 1) {
+    const code = raw.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) return null;
+    out += raw[i];
+  }
+  return out;
+}
+
+function pinnedHttpRequest(opts, onResponse) {
+  const { destinationIp, port, requestPath, method, hostHeader, signal } = opts;
+  if (!net.isIP(destinationIp)) throw new Error('destination must be an IP');
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('bad port');
+  if (typeof requestPath !== 'string' || !requestPath.startsWith('/')) throw new Error('bad path');
+  return http.request({
+    host: destinationIp,
+    port,
+    path: requestPath,
+    method,
+    headers: { host: hostHeader, connection: 'close' },
+    setHost: false,
+    signal,
+  }, onResponse);
+}
+
 async function resolveHost(host, signal) {
   const literal = host.replace(/^\[|\]$/g, '');
   if (net.isIP(literal)) return pinMediaAddresses([literal], { permitPrivate });
@@ -122,33 +154,38 @@ const server = http.createServer(async (req, res) => {
   }
   // Request only the DNS-pinned allowlisted address (not the raw user hostname).
   const destinationIp = pinned.addresses[0];
-  if (!net.isIP(destinationIp)) {
+  const requestPath = sanitizeProxyPath(url.pathname, url.search);
+  if (!net.isIP(destinationIp) || !requestPath) {
     res.writeHead(403, { Connection: 'close' }).end('refused');
     return;
   }
-  const requestPath = `${url.pathname}${url.search}`;
-  const up = http.request({
-    host: destinationIp,
-    port,
-    path: requestPath,
-    method: req.method,
-    headers: { host: url.host, connection: 'close' },
-    setHost: false,
-    signal: job.abort.signal,
-  }, (upRes) => {
-    if (upRes.socket) track(job, upRes.socket);
-    if (!res.headersSent) {
-      const headers = { connection: 'close' };
-      if (upRes.headers['content-type']) headers['content-type'] = upRes.headers['content-type'];
-      res.writeHead(upRes.statusCode || 502, headers);
-    }
-    upRes.pipe(res);
-    upRes.on('end', () => {
-      res.end();
-      req.socket.destroy();
-      upRes.socket?.destroy();
+  let up;
+  try {
+    up = pinnedHttpRequest({
+      destinationIp,
+      port,
+      requestPath,
+      method: req.method,
+      hostHeader: url.host,
+      signal: job.abort.signal,
+    }, (upRes) => {
+      if (upRes.socket) track(job, upRes.socket);
+      if (!res.headersSent) {
+        const headers = { connection: 'close' };
+        if (upRes.headers['content-type']) headers['content-type'] = upRes.headers['content-type'];
+        res.writeHead(upRes.statusCode || 502, headers);
+      }
+      upRes.pipe(res);
+      upRes.on('end', () => {
+        res.end();
+        req.socket.destroy();
+        upRes.socket?.destroy();
+      });
     });
-  });
+  } catch {
+    res.writeHead(403, { Connection: 'close' }).end('refused');
+    return;
+  }
   up.on('socket', (s) => track(job, s));
   up.on('error', () => {
     if (!res.headersSent) res.writeHead(502, { Connection: 'close' }).end();

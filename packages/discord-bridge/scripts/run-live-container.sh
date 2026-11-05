@@ -24,12 +24,12 @@ for arg in "$@"; do
   esac
 done
 
-if [ ! -f "$ENV_FILE" ]; then
+if [[ ! -f "$ENV_FILE" ]]; then
   echo "missing env file" >&2
   exit 2
 fi
 mode="$(stat -c '%a' "$ENV_FILE")"
-if [ "$mode" != "600" ]; then
+if [[ "$mode" != "600" ]]; then
   echo "env file must be mode 0600 (found $mode)" >&2
   exit 2
 fi
@@ -42,27 +42,27 @@ env_file_val() {
 missing=0
 for k in "${REQUIRED[@]}"; do
   val="$(env_file_val "$k")"
-  if [ -n "$val" ]; then echo "$k: SET"; else echo "$k: MISSING"; missing=1; fi
+  if [[ -n "$val" ]]; then echo "$k: SET"; else echo "$k: MISSING"; missing=1; fi
 done
 
 # Lab diagnostic flag: host env, env file, or --single-attempt. Never printed as a raw value.
-if [ "${D1_DAVE_SINGLE_ATTEMPT:-}" = "1" ] || [ "$(env_file_val D1_DAVE_SINGLE_ATTEMPT)" = "1" ]; then
+if [[ "${D1_DAVE_SINGLE_ATTEMPT:-}" = "1" ]] || [[ "$(env_file_val D1_DAVE_SINGLE_ATTEMPT)" = "1" ]]; then
   SINGLE=1
 fi
-if [ "$SINGLE" = 1 ]; then echo "D1_DAVE_SINGLE_ATTEMPT: SET"; else echo "D1_DAVE_SINGLE_ATTEMPT: MISSING"; fi
+if [[ "$SINGLE" = 1 ]]; then echo "D1_DAVE_SINGLE_ATTEMPT: SET"; else echo "D1_DAVE_SINGLE_ATTEMPT: MISSING"; fi
 
-if [ "$missing" -ne 0 ]; then
+if [[ "$missing" -ne 0 ]]; then
   echo "live start blocked: required variables are MISSING"
   exit 2
 fi
-if [ "$CONFIRM" -ne 1 ]; then
+if [[ "$CONFIRM" -ne 1 ]]; then
   echo "presence complete. Live Discord connections are not started."
   echo "lab network: $NET (bridge joins this on --confirm; must not be --internal)"
-  echo "dave_single_attempt=$([ "$SINGLE" = 1 ] && echo on || echo off) (required for --confirm unless --allow-recovery)"
+  echo "dave_single_attempt=$([[ "$SINGLE" = 1 ]] && echo on || echo off) (required for --confirm unless --allow-recovery)"
   echo "After the operator approves the run: D1_DAVE_SINGLE_ATTEMPT=1 D1_LAB_IMAGE=... $0 --confirm --single-attempt"
   exit 0
 fi
-if [ "$SINGLE" != 1 ] && [ "$ALLOW_RECOVERY" != 1 ]; then
+if [[ "$SINGLE" != 1 ]] && [[ "$ALLOW_RECOVERY" != 1 ]]; then
   echo "live start blocked: D1_DAVE_SINGLE_ATTEMPT is MISSING"
   echo "set D1_DAVE_SINGLE_ATTEMPT=1 or pass --single-attempt (or --allow-recovery to keep 3/60s)"
   exit 2
@@ -72,15 +72,15 @@ if ! docker network inspect "$NET" >/dev/null 2>&1; then
   exit 2
 fi
 internal="$(docker network inspect -f '{{.Internal}}' "$NET")"
-if [ "$internal" = "true" ]; then
+if [[ "$internal" = "true" ]]; then
   echo "lab network $NET is internal; Discord would be unreachable" >&2
   exit 2
 fi
-if [ -n "${D1_LAB_IMAGE:-}" ]; then
+if [[ -n "${D1_LAB_IMAGE:-}" ]]; then
   IMG="$D1_LAB_IMAGE"
 else
   sha="$(git -C "$ROOT" rev-parse --short=7 HEAD 2>/dev/null || true)"
-  if [ -z "$sha" ]; then
+  if [[ -z "$sha" ]]; then
     echo "set D1_LAB_IMAGE (not a git checkout)" >&2
     exit 2
   fi
@@ -106,7 +106,7 @@ restore_evidence() {
 trap restore_evidence EXIT
 
 EXTRA_ENV=()
-if [ "$SINGLE" = 1 ]; then
+if [[ "$SINGLE" = 1 ]]; then
   EXTRA_ENV+=(-e D1_DAVE_SINGLE_ATTEMPT=1)
   echo "dave_single_attempt=on (first planned join only)"
 else

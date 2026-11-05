@@ -123,7 +123,9 @@ export function assessIsolatedSqliteTarget(
   }
 
   // Query-string smuggling: marker only in query must fail basename check above.
-  if (/\?.*discord-int-test/i.test(url) && basename !== ISOLATED_DB_BASENAME) {
+  const queryStart = url.indexOf('?');
+  const query = queryStart >= 0 ? url.slice(queryStart + 1).toLowerCase() : '';
+  if (query.includes('discord-int-test') && basename !== ISOLATED_DB_BASENAME) {
     errors.push('discord-int-test in query string is ignored; basename must match');
   }
 
