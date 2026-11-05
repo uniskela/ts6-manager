@@ -4,11 +4,20 @@ One sitting. INT-TEST Discord app + disposable TeamSpeak only. No production. No
 
 ## Preconditions
 
-- [ ] Guild slash commands dry-run reviewed; apply **guild-only** on INT-TEST if missing names
+- [x] Guild slash commands dry-run reviewed; **guild-only** creates applied on INT-TEST (2026-11-05)
+- [x] `/play` `/queue` `/stop` preserved; volume cosmetic drift left unapplied
 - [ ] Guild bound to MusicBot; viewer/admin role IDs or isolated-live Administrator latch
 - [ ] Disposable TS with MusicBot nickname visible
 - [ ] `yt-dlp` absolute path; no sentinel cookie jar
-- [ ] Optional for `/ts bridge`: `DISCORD_BRIDGE_STATUS_FILE` pointing at private-beta status JSON, or bridge URL+secret
+- [ ] Optional for `/ts bridge`: `DISCORD_BRIDGE_STATUS_FILE` (lab JSON) — **do not** fabricate D1 status; skip bridge hear if no isolated source
+- [ ] Interactions URL via path filter + short-lived tunnel only for this session
+
+## Disposable fixtures (prepare before operator joins)
+
+1. Ensure isolated DB has at least one MusicBot bound to the INT-TEST guild.
+2. Create throwaway playlist via admin `/playlist create name:live-smoke` then `/playlist add` with a short HTTPS sample (e.g. SoundHelix).
+3. If radio stations empty, insert one disposable station in the isolated DB (HTTPS stream) **or** skip `/radio play` and record skip.
+4. Pre-stage `/play` URL (HTTPS) known to work with local yt-dlp.
 
 ## Single session checklist
 
@@ -19,7 +28,7 @@ One sitting. INT-TEST Discord app + disposable TeamSpeak only. No production. No
 | 3 | `/ts channels` | Channel names | |
 | 4 | `/ts status` (admin) | Connected line | |
 | 5 | `/ts status` (viewer) | Permission denial | deny-ok |
-| 6 | `/ts bridge` (admin) | daveReady/slot/generation **or** unavailable if bridge off | |
+| 6 | `/ts bridge` (admin) | daveReady/slot/generation **or** honest unavailable | |
 | 7 | `/queue` | Empty or list | |
 | 8 | `/nowplaying` | Idle or title | |
 | 9 | `/play` SoundHelix HTTPS | Audible in TS | **need operator hear** |
@@ -34,11 +43,13 @@ One sitting. INT-TEST Discord app + disposable TeamSpeak only. No production. No
 | 18 | `/playlist remove` (admin) | Removed | |
 | 19 | `/radio list` | Stations or empty | |
 | 20 | `/radio play` | If stations exist | |
+| 21 | Viewer tries `/playlist create` | Permission denial | deny-ok |
 
-Cleanup: clear INT-TEST Interactions URL → stop tunnel/filter → interactions disabled.
+Cleanup: clear INT-TEST Interactions URL → stop tunnel/filter → interactions disabled → remove throwaway playlist/station if desired.
 
 ## Do not
 
 - Claim PASS without operator confirmation for audible steps
 - Register on production Uniskela app
 - Leave trycloudflare URL configured after the session
+- Start D1 pilot or invent bridge health JSON
