@@ -251,3 +251,30 @@ test('a pasted link uses the existing endpoint and reports rate limits', async (
   await expect(page.getByRole('alert')).toBeVisible();
   expect(bodies).toEqual([{ url: 'https://example.com/a.mp3' }, { url: 'https://example.com/b.mp3' }]);
 });
+
+test('serves the standalone remote page with a strict CSP and no violations', async ({ page }) => {
+  const cspHits: string[] = [];
+  page.on('console', (msg) => {
+    if (/content security policy/i.test(msg.text())) cspHits.push(msg.text());
+  });
+
+  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await page.route(remote('/state'), (route) => fulfill(route, playing));
+  await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, library));
+
+  const response = await page.goto(`/remote#token=${token}`);
+  expect(response?.ok()).toBe(true);
+  expect(response?.fromServiceWorker()).toBe(false);
+  const csp = response?.headers()['content-security-policy'] ?? '';
+  expect(csp).toContain("script-src 'self'");
+  expect(csp).toContain("style-src 'self'");
+  expect(csp).toContain("connect-src 'self'");
+  expect(csp).toContain("frame-ancestors 'none'");
+  expect(csp).not.toContain('unsafe-inline');
+  expect(response?.headers()['x-frame-options']?.toLowerCase()).toBe('deny');
+
+  await expect(page).toHaveTitle('Listener remote');
+  await expect(page.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
+  await expect(page.locator('a[href="/dashboard"], a[href="/login"]')).toHaveCount(0);
+  expect(cspHits).toEqual([]);
+});
