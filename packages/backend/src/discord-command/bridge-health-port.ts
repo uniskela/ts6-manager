@@ -2,6 +2,12 @@ import fs from 'node:fs/promises';
 import type { BridgeSnapshot } from './adapter.js';
 
 /**
+ * `/ts bridge` is answered immediately, and Discord drops a reply that takes
+ * longer than 3 s. Leave room for the binding lookup that runs first.
+ */
+const DEFAULT_HEALTH_TIMEOUT_MS = 2_000;
+
+/**
  * Map D1 private-beta / host status JSON (or a future HTTP /health body) into
  * the Discord `/ts bridge` snapshot. Never includes tokens or host addresses.
  */
@@ -58,12 +64,15 @@ export function createDiscordBridgeHealthPort(opts: {
   secret?: string;
   statusFilePath?: string;
   fetchImpl?: typeof fetch;
+  /** Bound on the HTTP request, body included. A slow or hung worker reads as unavailable. */
+  timeoutMs?: number;
 }): { health(guildId: string): Promise<BridgeSnapshot | null> } {
   let base = (opts.baseUrl || '').trim();
   while (base.endsWith('/')) base = base.slice(0, -1);
   const secret = (opts.secret || '').trim();
   const statusFile = (opts.statusFilePath || '').trim();
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS;
 
   return {
     async health(_guildId: string): Promise<BridgeSnapshot | null> {
@@ -77,6 +86,10 @@ export function createDiscordBridgeHealthPort(opts: {
       }
       if (!base) return null;
       if (!secret) return null;
+      // Explicit timer rather than AbortSignal.timeout(): that one is unref'd and
+      // does not keep the event loop alive on its own.
+      const abort = new AbortController();
+      const timer = setTimeout(() => abort.abort(), timeoutMs);
       try {
         const res = await fetchImpl(`${base}/health`, {
           method: 'GET',
@@ -84,12 +97,15 @@ export function createDiscordBridgeHealthPort(opts: {
             authorization: `Bearer ${secret}`,
             accept: 'application/json',
           },
+          signal: abort.signal,
         });
         if (!res.ok) return null;
         const body = await res.json();
         return mapDiscordBridgeStatus(body);
       } catch {
         return null;
+      } finally {
+        clearTimeout(timer);
       }
     },
   };
