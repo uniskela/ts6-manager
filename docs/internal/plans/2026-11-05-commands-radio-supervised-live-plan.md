@@ -9,7 +9,7 @@ One sitting. INT-TEST Discord app + disposable TeamSpeak only. No production. No
 - [x] CI findings triage/fixes pushed on integration (hygiene, Sonar highs, CodeQL, history race regressions)
 - [x] PR #601 product checks green on `6de67d3` (TypeScript/Sonar/CodeQL/hygiene); Scan backend re-run if deno CDN 504 flakes
 - [x] Architecture review commits integrated (`016660e`…`a8cd386`); release findings on `9243784` (bindings delete, fair rate limits, radio timeouts/backpressure + CI fetcher tests, redacted `discord.command` audit)
-- [ ] Confirm PR #601 CI green on tip including `9243784` before tunnel
+- [x] Confirm PR #601 CI green on tip `3196be0` (includes `9243784` release fixes) before tunnel
 - [ ] Guild bound to MusicBot; viewer/admin role IDs or isolated-live Administrator latch
 - [ ] Disposable TS with MusicBot nickname visible
 - [ ] `yt-dlp` absolute path; no sentinel cookie jar
