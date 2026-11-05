@@ -213,7 +213,7 @@ before any queue mutation. No endpoint accepts a bot, channel, server, UID,
 group, duration or media setting from the browser.
 
 **Identity key.** "Per identity" below means the bot and TeamSpeak unique
-identity of the session's binding (`botId`, `uid`), the key G1b introduces. It
+identity of the session's binding (`botId`, `uid`), the key G1b shipped. It
 survives a new `!remote`. 429 responses carry `Retry-After` as G1b defines it.
 
 **Permissions.** Names refer to the shared media command authorization:
@@ -296,7 +296,7 @@ type RemotePlaylistRequestResult =
 
 1. The playlist must pass the A3 filter, else 404 `not_found` (same body as
    A3). It must be `remoteAccess: 'request'`, else 409
-   `playlist_not_requestable` (see open question 1 for voting on).
+   `playlist_not_requestable` (working decision 1).
 2. Eligible tracks are the playlist's songs on the binding's server. None:
    422 `playlist_empty`. More than the maximum request size: 422
    `request_too_large`, message naming the limit. Nothing is queued.
@@ -381,7 +381,7 @@ Audit actions (target `music_bot`, listener actor as today):
 `listener.remote.playlist_request` (one row per POST, whether it queued or
 opened a vote) and `listener.remote.vote_cancel` (also written when the
 requester's `no` cancels). Ballots are not audited
-(open question 8). Accepted tracks go to request history with a shared request
+(working decision 8). Accepted tracks go to request history with a shared request
 reference (B4c).
 
 Security properties (R2, #465):
@@ -415,7 +415,7 @@ refuses the request without queueing. URL playlists still add only their first
 item, and that item follows the same rules. Refusals are recorded under
 `listener.remote.request` with outcome `failure` and result code
 `validation_failed`. Library songs (`POST /queue`) and playlist tracks are not
-subject to these rules (open question 13). Admin, chat and radio limits do not
+subject to these rules (working decision 13). Admin, chat and radio limits do not
 change.
 
 ### C2: search and queue a result
