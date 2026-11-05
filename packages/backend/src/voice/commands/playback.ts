@@ -1,9 +1,9 @@
 import type { VoiceBot } from '../voice-bot.js';
-import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { beginChatMediaRequest, getChatMediaGeneration, getChatMediaIntent, invalidateChatPlaylistExpansion } from './queue.js';
+import { loadRadioStations, radioQueueItem } from './library.js';
 
 // ─── Command Handlers ───────────────────────────────────────
 /** List configured radio stations or play a selected station in the requesting channel. */
@@ -29,10 +29,7 @@ export async function handleRadio(
     return;
   }
 
-  const stations = await context.prisma.radioStation.findMany({
-    where: { serverConfigId: dbBot.serverConfigId },
-    orderBy: { name: 'asc' },
-  });
+  const stations = await loadRadioStations(context.prisma, dbBot.serverConfigId);
   if (!isSameBot()) return;
 
   if (stations.length === 0) {
@@ -46,7 +43,7 @@ export async function handleRadio(
       bot,
       userClid,
       formatRadioListMessage(
-        stations.map((s: any) => ({ id: s.id, name: s.name, genre: s.genre })),
+        stations.map((s) => ({ id: s.id, name: s.name, genre: s.genre })),
       ),
     );
     return;
@@ -59,7 +56,7 @@ export async function handleRadio(
     return;
   }
 
-  const station = stations.find((s: any) => s.id === stationId);
+  const station = stations.find((s) => s.id === stationId);
   if (!station) {
     context.reply(bot, userClid, `Station #${stationId} not found. Use !radio to list stations.`);
     return;
@@ -75,14 +72,7 @@ export async function handleRadio(
     return;
   }
 
-  const queueItem: QueueItem = {
-    id: `radio_${station.id}`,
-    title: station.name,
-    artist: station.genre ?? 'Radio',
-    filePath: '',
-    source: 'radio',
-    streamUrl: station.url,
-  };
+  const queueItem = radioQueueItem(station);
 
   request.accept();
   if (!isCurrent()) return;
