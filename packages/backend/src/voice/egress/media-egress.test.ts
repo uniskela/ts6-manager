@@ -55,6 +55,21 @@ describe('media egress settings', () => {
   it('names proxy variables that media jobs ignore', () => {
     assert.deepEqual(ignoredProxyVariables({ HTTP_PROXY: 'x', no_proxy: 'y', MEDIA_EGRESS_PROXY: 'on', PATH: '/' }).sort(), ['HTTP_PROXY', 'no_proxy']);
   });
+
+  it('does not treat the image TRUST_PROXY default as an unused outbound proxy', () => {
+    for (const trust of ['loopback', 'private-peer']) {
+      assert.deepEqual(
+        ignoredProxyVariables({
+          TRUST_PROXY: trust,
+          SIDECAR_URL: 'http://127.0.0.1:9800',
+          SIDECAR_EGRESS_PROXY: 'on',
+          MEDIA_EGRESS_PROXY: 'on',
+        }),
+        [],
+        trust,
+      );
+    }
+  });
 });
 
 describe('media egress jobs', () => {
@@ -86,13 +101,34 @@ describe('media egress jobs', () => {
     assert.equal(await acquireMediaEgress('ytsearch1:artist title', 60_000), null);
     for (const target of [
       'https://soundcloud.com/a/b', 'http://www.youtube.com/watch?v=abcdefghijk', 'https://youtube.com.evil.test/x',
-      'https://user:pw@www.youtube.com/watch?v=abcdefghijk', 'not a url',
+      'https://user:pw@www.youtube.com/watch?v=abcdefghijk', 'not a url', 'https://radio.example/stream',
     ]) {
       await assert.rejects(acquireMediaEgress(target, 60_000), (err: Error) => err instanceof MediaEgressError && err.message === MEDIA_EGRESS_OFF_REFUSAL, target);
     }
     const warnings: string[] = [];
     await startMediaEgress({ log: () => {}, warn: (m: string) => warnings.push(m) });
     assert.match(warnings.join('\n'), /DISABLED by MEDIA_EGRESS_PROXY=off/);
+  });
+
+  it('starts cleanly with the container TRUST_PROXY default', async () => {
+    delete process.env.MEDIA_EGRESS_PROXY;
+    delete process.env.MEDIA_UPSTREAM_PROXY;
+    const before = { trust: process.env.TRUST_PROXY, https: process.env.HTTPS_PROXY, http: process.env.HTTP_PROXY };
+    process.env.TRUST_PROXY = 'loopback';
+    delete process.env.HTTPS_PROXY;
+    delete process.env.HTTP_PROXY;
+    try {
+      const warnings: string[] = [];
+      const logs: string[] = [];
+      await startMediaEgress({ log: (m: string) => logs.push(m), warn: (m: string) => warnings.push(m) });
+      assert.deepEqual(warnings, []);
+      assert.equal(logs[0], '[MediaEgress] radio requires the isolated media fetcher; downloads still use the in-process proxy');
+      assert.equal(logs.at(-1), '[MediaEgress] enforcing (upstream: none)');
+    } finally {
+      if (before.trust === undefined) delete process.env.TRUST_PROXY; else process.env.TRUST_PROXY = before.trust;
+      if (before.https === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = before.https;
+      if (before.http === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = before.http;
+    }
   });
 
   it('warns at start-up about proxy variables it no longer uses', async () => {
@@ -106,7 +142,8 @@ describe('media egress jobs', () => {
       await startMediaEgress({ log: (m: string) => logs.push(m), warn: (m: string) => warnings.push(m) });
       assert.match(warnings.join('\n'), /HTTPS_PROXY is set but media downloads no longer use it/);
       assert.ok(!warnings.join('\n').includes('secret'));
-      assert.deepEqual(logs, ['[MediaEgress] enforcing (upstream: none)']);
+      assert.equal(logs[0], '[MediaEgress] radio requires the isolated media fetcher; downloads still use the in-process proxy');
+      assert.equal(logs.at(-1), '[MediaEgress] enforcing (upstream: none)');
     } finally {
       if (before === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = before;
     }

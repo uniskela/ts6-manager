@@ -10,8 +10,10 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [Install as an app](pwa.md) — iPhone/iPad, Android and desktop installation, updates and offline limits
 - [Configuration](configuration.md) — required secrets, TeamSpeak connection setup, and application settings
 - [Environment variables](environment-variables.md) — backend, frontend, and sidecar settings
+- [Radio fetcher](radio-fetcher.md) — isolated radio playback, Landlock, Compose overlay, and migration
 - [Native media sidecar](native-sidecar.md) — optional release binaries for host GPU encoders
 - [Upgrading](upgrading.md) — update containers without losing credentials or database state
+- [Beta releases](beta.md) — prerelease images, tester compose, and rollback (not production)
 - [Switching from clusterzx](migrating-from-clusterzx.md) — move an existing clusterzx/ts6-manager install to these images and keep its data
 
 ## Use TS6 Manager
@@ -27,6 +29,7 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [Security](security.md) — security controls and deployment expectations
 - [TeamSpeak compatibility](teamspeak-compatibility.md) — beta13 Query settings and compatibility testing
 - [Troubleshooting](troubleshooting.md) — common connection, media, sidecar, and upgrade problems
+- [Discord bridge](discord-bridge.md) — laboratory status only; not a released product
 
 ## Project
 

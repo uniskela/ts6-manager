@@ -54,9 +54,14 @@ export default function Settings() {
   const activeTab = tabParam && availableTabs.includes(tabParam) ? tabParam : 'account';
 
   const handleTabChange = (tab: string) => {
-    const next = new URLSearchParams(searchParams);
+    // Radix can notify twice for one interaction (pointer + focus) before React
+    // renders the new controlled tab. Avoid creating duplicate history entries.
+    // Read the current browser URL rather than the render's stale searchParams.
+    const current = new URLSearchParams(window.location.search);
+    const next = new URLSearchParams(current);
     next.set('tab', tab);
     if (tab !== 'connections') next.delete('wizard');
+    if (next.toString() === current.toString()) return;
     setSearchParams(next);
   };
 

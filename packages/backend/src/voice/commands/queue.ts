@@ -5,35 +5,93 @@ import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { formatQueueMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
+import { enqueueSavedPlaylist, formatPlaylistList, loadPlaylistSummaries } from './library.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
-/** Abort pending song searches when the bot's media request is replaced or stopped. */
+/** Active accepted media request AbortController per bot. */
 const chatMediaControllers = new Map<number, AbortController>();
+/** Provisional (not yet accepted) controllers — Stop aborts them; peers do not. */
+const provisionalControllers = new Map<number, Set<AbortController>>();
 
 /** Observe pending media intent without cancelling it. */
 export function getChatMediaGeneration(botId: number): number {
   return chatPlaylistGeneration.get(botId) ?? 0;
 }
 
-/** One cancellation identity spans song search, channel movement, and queue insertion. */
+/**
+ * One cancellation identity spans song search, channel movement, and queue insertion.
+ * begin() is provisional: it does not cancel an accepted peer. Call accept() only once
+ * the request is ready to supersede others (valid URL / resolved media). discard() drops
+ * a failed provisional without bumping the bot generation.
+ */
 export interface ChatMediaRequest {
   signal: AbortSignal;
   isCancelled(): boolean;
+  accept(): void;
+  discard(): void;
 }
 
-/** Start a request using the same generation as background playlist expansion. */
+function provisionals(botId: number): Set<AbortController> {
+  let set = provisionalControllers.get(botId);
+  if (!set) {
+    set = new Set();
+    provisionalControllers.set(botId, set);
+  }
+  return set;
+}
+
+/** Start provisional media work. Does not cancel an accepted request until accept(). */
 export function beginChatMediaRequest(botId: number): ChatMediaRequest {
-  invalidateChatPlaylistExpansion(botId);
-  const generation = chatPlaylistGeneration.get(botId);
+  const generationAtStart = chatPlaylistGeneration.get(botId) ?? 0;
   const controller = new AbortController();
-  chatMediaControllers.set(botId, controller);
-  return { signal: controller.signal, isCancelled: () => chatPlaylistGeneration.get(botId) !== generation };
+  provisionals(botId).add(controller);
+  let acceptedGeneration: number | null = null;
+  let settled = false;
+
+  const isCancelled = () => {
+    if (controller.signal.aborted) return true;
+    const current = chatPlaylistGeneration.get(botId) ?? 0;
+    if (acceptedGeneration != null) return current !== acceptedGeneration;
+    return current !== generationAtStart;
+  };
+
+  return {
+    signal: controller.signal,
+    isCancelled,
+    accept() {
+      if (settled) return;
+      if (controller.signal.aborted || isCancelled()) {
+        settled = true;
+        return;
+      }
+      settled = true;
+      provisionals(botId).delete(controller);
+      // Supersede peers without aborting this controller.
+      for (const other of provisionals(botId)) other.abort();
+      provisionals(botId).clear();
+      const active = chatMediaControllers.get(botId);
+      if (active && active !== controller) active.abort();
+      chatMediaControllers.delete(botId);
+      chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
+      acceptedGeneration = chatPlaylistGeneration.get(botId)!;
+      chatMediaControllers.set(botId, controller);
+    },
+    discard() {
+      if (settled && acceptedGeneration != null) return;
+      settled = true;
+      provisionals(botId).delete(controller);
+      if (chatMediaControllers.get(botId) === controller) chatMediaControllers.delete(botId);
+      if (!controller.signal.aborted) controller.abort();
+    },
+  };
 }
 
 /** Advance a bot’s generation so pending background playlist work is discarded. */
 export function invalidateChatPlaylistExpansion(botId: number): void {
   chatMediaControllers.get(botId)?.abort();
   chatMediaControllers.delete(botId);
+  for (const controller of provisionals(botId)) controller.abort();
+  provisionalControllers.delete(botId);
   chatPlaylistGeneration.set(botId, (chatPlaylistGeneration.get(botId) ?? 0) + 1);
 }
 
@@ -63,14 +121,26 @@ export async function startOrAppendMediaItem(
     else await bot.play(item, options);
     started = isCurrent() && bot.nowPlaying === item;
   } finally {
-    if (!started) cleanup();
+    if (!started) {
+      cleanup();
+      // play()/playStream may have started audio before the request was cancelled.
+      if (bot.nowPlaying === item) bot.stopAudio({ keepPendingRequests: true });
+    }
   }
   return started ? false : null;
 }
 
+/** Shared queue mutation for TeamSpeak chat, HTTP play-url, and Discord /play. No chat reply. */
+export type MediaUrlApplyContext = {
+  voiceBotManager: { getBot(id: number): VoiceBot | undefined | null };
+  virtualServerIdForBot(botId: number): number;
+  saveMusicRequest(bot: VoiceBot, item: QueueItem | QueueItem[]): void;
+  chatMusicSwitch(bot: VoiceBot): { replaceSessionIds: string[] };
+};
+
 /** Append a resolved request, starting it only when music is idle. */
 export async function enqueueMediaItem(
-  context: CommandContext,
+  context: Pick<MediaUrlApplyContext, 'saveMusicRequest' | 'chatMusicSwitch'>,
   bot: VoiceBot,
   item: QueueItem,
   isCurrent: () => boolean,
@@ -84,38 +154,32 @@ export async function enqueueMediaItem(
   return queued;
 }
 
-/**
- * Resolve Spotify / Apple Music / YouTube Music / playlist URLs, download the first track,
- * and queue the rest in the background (same approach as play-url).
- */
-export async function enqueueMediaUrl(
-  context: CommandContext,
+export async function applyMediaUrlToBot(
+  context: MediaUrlApplyContext,
   botId: number,
   bot: VoiceBot,
-  userClid: number,
   rawUrl: string,
-  request = beginChatMediaRequest(botId),
+  request: ChatMediaRequest,
   deps: MediaUrlPipelineDeps = defaultMediaUrlDeps(),
-): Promise<void> {
+): Promise<{ alreadyPlaying: boolean; first: QueueItem; playlistNote: string } | null> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
   const isCurrent = () => !request.isCancelled()
     && context.voiceBotManager.getBot(botId) === bot
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
-  if (!isCurrent()) return;
-  await context.joinChannelForCommand(botId, bot, userClid);
-  if (!isCurrent()) return;
+  if (!isCurrent()) return null;
+  request.accept();
+  if (!isCurrent()) return null;
   let firstCall = true;
   let alreadyPlaying = false;
   let playbackAccepted = true;
-  // Room for every track of the link, held while its later tracks download.
   let reservation: QueueReservation | undefined;
 
   const result = await runMediaUrlPipeline(
     deps,
     {
-      play: async (item, opts) => {
+      play: async (item, _opts) => {
         const isFirst = firstCall;
         firstCall = false;
         const live = context.voiceBotManager.getBot(botId);
@@ -148,7 +212,7 @@ export async function enqueueMediaUrl(
       reserve: (count) => { reservation = bot.queue.reserve(count); },
       release: () => reservation?.release(),
     },
-    { url: rawUrl, enqueueOnly: false },
+    { url: rawUrl, enqueueOnly: false, signal: request.signal },
     {
       onBackgroundError: (err, label) => {
         console.error('[MusicCmd] Failed to queue %s:', label, err);
@@ -156,22 +220,36 @@ export async function enqueueMediaUrl(
     },
   );
 
-  if (!isCurrent() || !playbackAccepted) return;
-
+  if (!isCurrent() || !playbackAccepted) return null;
   const pendingTotal = result.queuedInBackground;
   const playlistNote =
     pendingTotal > 0
       ? ` (+${pendingTotal} more from${result.playlistTitle ? ` "${result.playlistTitle}"` : ' playlist'})`
       : '';
+  return { alreadyPlaying, first: result.first, playlistNote };
+}
 
-  if (alreadyPlaying) {
+export async function enqueueMediaUrl(
+  context: CommandContext,
+  botId: number,
+  bot: VoiceBot,
+  userClid: number,
+  rawUrl: string,
+  request = beginChatMediaRequest(botId),
+  deps: MediaUrlPipelineDeps = defaultMediaUrlDeps(),
+): Promise<void> {
+  if (request.isCancelled() || context.voiceBotManager.getBot(botId) !== bot) return;
+  await context.joinChannelForCommand(botId, bot, userClid);
+  const applied = await applyMediaUrlToBot(context, botId, bot, rawUrl, request, deps);
+  if (!applied) return;
+  if (applied.alreadyPlaying) {
     context.reply(
       bot,
       userClid,
-      `Queued: ${result.first.artist} - ${result.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${playlistNote}`,
+      `Queued: ${applied.first.artist} - ${applied.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${applied.playlistNote}`,
     );
   } else {
-    context.reply(bot, userClid, `Now playing: ${result.first.artist} - ${result.first.title}${playlistNote}`);
+    context.reply(bot, userClid, `Now playing: ${applied.first.artist} - ${applied.first.title}${applied.playlistNote}`);
   }
 }
 
@@ -185,55 +263,22 @@ export async function handlePlaylist(
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
   if (!serverConfigId) { context.reply(bot, userClid, 'No server configured.'); return; }
-  // A Stop, queue clear or bot restart while the playlist is looked up drops this load.
-  const stopGeneration = bot.stopGeneration;
-  const where = { OR: [{ serverConfigId }, { serverConfigId: null }] };
-  const playlists = await context.prisma.playlist.findMany({
-    where, select: { id: true, name: true }, orderBy: { name: 'asc' },
-  });
-  const query = args.trim().toLowerCase();
+  const query = args.trim();
   if (!query) {
-    context.reply(bot, userClid, playlists.length
-      ? 'Playlists (first 10):\n' + playlists.slice(0, 10).map(p => `[${p.id}] ${p.name.slice(0, 60)}`).join('\n')
-      : 'No playlists configured for this bot/server.');
+    context.reply(bot, userClid, formatPlaylistList(await loadPlaylistSummaries(context.prisma, serverConfigId)));
     return;
   }
-  const byId = /^\d+$/.test(query) ? playlists.filter(p => p.id === Number(query)) : [];
-  const exact = playlists.filter(p => p.name.toLowerCase() === query);
-  const matches = byId.length ? byId : exact.length ? exact : playlists.filter(p => p.name.toLowerCase().includes(query));
-  if (matches.length !== 1) {
-    context.reply(bot, userClid, matches.length
-      ? 'Ambiguous playlist; use an ID: ' + matches.slice(0, 5).map(p => `[${p.id}] ${p.name.slice(0, 60)}`).join(', ')
-      : 'Playlist not found. Use !playlist to list.');
-    return;
-  }
-  const playlist = await context.prisma.playlist.findFirst({
-    where: { ...where, id: matches[0].id },
-    include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
+  const result = await enqueueSavedPlaylist(context.prisma, bot, query, {
+    musicSwitch: context.chatMusicSwitch(bot),
+    listHint: '!playlist to list',
+    isCurrent: () => context.voiceBotManager.getBot(botId) === bot,
   });
-  if (!playlist?.songs.length) { context.reply(bot, userClid, 'Playlist is empty.'); return; }
-  if (context.voiceBotManager.getBot(botId) !== bot || bot.stopGeneration !== stopGeneration) {
-    void context.reply(bot, userClid, 'Playback was stopped before the playlist was loaded.');
+  if (!result.ok) {
+    context.reply(bot, userClid, result.message);
     return;
   }
-  const items: QueueItem[] = playlist.songs.map(({ song }) => ({
-    id: String(song.id), title: song.title, artist: song.artist ?? undefined,
-    duration: song.duration ?? undefined, filePath: song.filePath,
-    source: song.source as QueueItem['source'], sourceUrl: song.sourceUrl ?? undefined,
-  }));
-  try {
-    bot.queue.addMany(items);
-  } catch (err) {
-    if (!(err instanceof QueueFullError)) throw err;
-    void context.reply(bot, userClid, err.message);
-    return;
-  }
-  context.saveMusicRequest(bot, items);
-  if (bot.status === 'connected' && !bot.nowPlaying) {
-    const first = bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1);
-    if (first) await bot.play(first, context.chatMusicSwitch(bot)); // VoiceBot owns local/stream playlist resolution.
-  }
-  context.reply(bot, userClid, `Queued playlist "${playlist.name.slice(0, 60)}" (${items.length} tracks).`);
+  context.saveMusicRequest(bot, result.items);
+  context.reply(bot, userClid, `Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`);
 }
 
 /** Report or set the queue repeat mode after validating the requested mode. */

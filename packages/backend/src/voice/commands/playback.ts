@@ -68,7 +68,10 @@ export async function handleRadio(
   const request = beginChatMediaRequest(botId);
   const isCurrent = () => !request.isCancelled() && isSameBot();
   await context.joinChannelForCommand(botId, bot, userClid);
-  if (!isCurrent()) return;
+  if (!isCurrent()) {
+    request.discard();
+    return;
+  }
 
   const queueItem: QueueItem = {
     id: `radio_${station.id}`,
@@ -79,14 +82,19 @@ export async function handleRadio(
     streamUrl: station.url,
   };
 
+  request.accept();
+  if (!isCurrent()) return;
   await bot.playStream(queueItem, context.chatMusicSwitch(bot));
-  if (!isCurrent() || bot.nowPlaying !== queueItem) return;
+  if (!isCurrent() || bot.nowPlaying !== queueItem) {
+    if (bot.nowPlaying === queueItem) bot.stopAudio({ keepPendingRequests: true });
+    return;
+  }
   context.saveMusicRequest(bot, queueItem);
   context.reply(bot, userClid, `Now playing: ${station.name}`);
 }
 
-/** Longest free-text query `!play <song name>` sends to search. */
-const MAX_SONG_QUERY_LENGTH = 200;
+/** Longest free-text query `!play` / `/play` sends to search. */
+export const MAX_SONG_QUERY_LENGTH = 200;
 
 /** Resume paused playback, or resolve a media URL or song search into the queue. */
 export async function handlePlay(
@@ -98,7 +106,10 @@ export async function handlePlay(
 ): Promise<void> {
   const request = args ? beginChatMediaRequest(botId) : undefined;
   await context.joinChannelForCommand(botId, bot, userClid);
-  if (request?.isCancelled()) return;
+  if (request?.isCancelled()) {
+    request.discard();
+    return;
+  }
 
   if (!args) {
     if (bot.status === 'paused') {
@@ -116,14 +127,20 @@ export async function handlePlay(
     context.reply(bot, userClid, `Searching YouTube Music for "${query}"...`);
     try {
       const song = await context.findSong(query, request!.signal);
-      if (request!.isCancelled()) return;
+      if (request!.isCancelled()) {
+        request!.discard();
+        return;
+      }
       if (!song) {
+        request!.discard();
         context.reply(bot, userClid, `No results for "${query}".`);
         return;
       }
       url = song.url;
     } catch (err: any) {
-      if (request!.isCancelled()) return;
+      const wasCancelled = request!.isCancelled();
+      request!.discard();
+      if (wasCancelled) return;
       context.reply(bot, userClid, `Search failed: ${err.message}`);
       return;
     }
@@ -134,7 +151,11 @@ export async function handlePlay(
   try {
     await context.enqueueMediaUrl(botId, bot, userClid, url, request);
   } catch (err: any) {
-    if (request?.isCancelled()) return;
+    if (request?.isCancelled()) {
+      request.discard();
+      return;
+    }
+    request?.discard();
     context.reply(bot, userClid, `Failed to play: ${err.message}`);
   }
 }
@@ -165,16 +186,44 @@ export async function handleSeek(
   context.reply(bot, userClid, `Seeked to ${Math.floor(target)} seconds.`);
 }
 
+export type PauseResult = 'paused' | 'already_paused' | 'idle';
+export type ResumeResult = 'resumed' | 'already_playing' | 'idle';
+export type SkipResult = { kind: 'skipped'; title: string } | { kind: 'empty' };
+
+/** Explicit pause. Already-paused is a no-op success. Chat `!pause` stays a toggle. */
+export function pausePlayback(bot: VoiceBot): PauseResult {
+  if (bot.status === 'paused') return 'already_paused';
+  if (bot.status === 'playing') {
+    bot.pause();
+    return 'paused';
+  }
+  return 'idle';
+}
+
+/** Explicit resume. Already-playing is a no-op success. */
+export function resumePlayback(bot: VoiceBot): ResumeResult {
+  if (bot.status === 'playing') return 'already_playing';
+  if (bot.status === 'paused') {
+    bot.resume();
+    return 'resumed';
+  }
+  return 'idle';
+}
+
 /**
  * Cancel chat + HTTP playlist expansions and stop audio. Music stop clears the
  * queue; radio keeps it, since Up next is kept while radio plays.
  */
-export function handleStop(context: CommandContext, bot: VoiceBot, userClid: number): void {
+export function stopPlayback(bot: VoiceBot): void {
   const botId = bot.currentConfig.id;
   invalidateChatPlaylistExpansion(botId);
   invalidatePlaylistExpansion(botId);
   if (!bot.isStreaming) bot.queue.clear();
   bot.stopAudio();
+}
+
+export function handleStop(context: CommandContext, bot: VoiceBot, userClid: number): void {
+  stopPlayback(bot);
   context.reply(bot, userClid, 'Playback stopped.');
 }
 
@@ -192,20 +241,28 @@ export function handlePause(context: CommandContext, bot: VoiceBot, userClid: nu
 }
 
 /** Play the next queued item or stop audio when the queue is exhausted. */
-export async function handleSkip(context: CommandContext, bot: VoiceBot, userClid: number): Promise<void> {
+export async function skipPlayback(
+  bot: VoiceBot,
+  musicSwitch?: { replaceSessionIds: string[] },
+): Promise<SkipResult> {
   const next = bot.queue.next();
   if (next) {
-    if (next.streamUrl) {
-      await bot.playStream(next, context.chatMusicSwitch(bot));
-    } else {
-      await bot.play(next, context.chatMusicSwitch(bot));
-    }
-    context.reply(bot, userClid, `Skipped to: ${next.title}`);
-  } else {
-    // A skip is not a Stop: requests still loading are kept.
-    bot.stopAudio({ keepPendingRequests: true });
-    context.reply(bot, userClid, 'Queue empty — playback stopped.');
+    if (next.streamUrl) await bot.playStream(next, musicSwitch);
+    else await bot.play(next, musicSwitch);
+    return { kind: 'skipped', title: next.title };
   }
+  // A skip is not a Stop: requests still loading are kept.
+  bot.stopAudio({ keepPendingRequests: true });
+  return { kind: 'empty' };
+}
+
+export async function handleSkip(context: CommandContext, bot: VoiceBot, userClid: number): Promise<void> {
+  const result = await skipPlayback(bot, context.chatMusicSwitch(bot));
+  if (result.kind === 'skipped') {
+    context.reply(bot, userClid, `Skipped to: ${result.title}`);
+    return;
+  }
+  context.reply(bot, userClid, 'Queue empty — playback stopped.');
 }
 
 /** Play the previous queued item or report that no earlier track exists. */
@@ -223,6 +280,13 @@ export async function handlePrev(context: CommandContext, bot: VoiceBot, userCli
   }
 }
 
+/** Shared 0–100 volume parse for TeamSpeak `!vol` and Discord `/volume`. */
+export function parseVolumeLevel(raw: string): number | null {
+  const vol = parseInt(raw, 10);
+  if (Number.isNaN(vol) || vol < 0 || vol > 100) return null;
+  return vol;
+}
+
 /** Report or change the shared bot volume using the existing input validation. */
 export async function handleVolume(
   context: CommandContext,
@@ -236,8 +300,8 @@ export async function handleVolume(
     return;
   }
 
-  const vol = parseInt(args);
-  if (isNaN(vol) || vol < 0 || vol > 100) {
+  const vol = parseVolumeLevel(args);
+  if (vol == null) {
     context.reply(bot, userClid, 'Usage: !vol <0-100>');
     return;
   }

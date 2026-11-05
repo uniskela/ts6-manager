@@ -98,6 +98,7 @@ fi
 export JWT_SECRET=dummy
 export ENCRYPTION_KEY=dummy
 export SIDECAR_SECRET=dummy
+export TS6_BETA_TAG=v0.0.0-beta.0
 
 # Override files are not complete projects: they only make sense layered on a
 # base file, so that is how they are validated.
@@ -121,6 +122,11 @@ for compose in "${compose_files[@]}"; do
 done
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docker compose config for ${#compose_files[@]} file(s)"
+fi
+
+echo "==> beta compose isolation"
+if ! python3 "$ROOT/scripts/ci/check-beta-compose.py"; then
+  fail=1
 fi
 
 if [[ "$fail" -ne 0 ]]; then

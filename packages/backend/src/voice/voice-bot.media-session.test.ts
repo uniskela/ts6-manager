@@ -7,6 +7,7 @@ import { VoiceBotManager } from './voice-bot-manager.js';
 import { MediaSessionConflictError } from './media-session.js';
 import { AppError } from '../middleware/error-handler.js';
 import { BYTES_PER_FRAME } from './audio/pipeline.js';
+import { RADIO_FETCHER_UNAVAILABLE } from './egress/media-fetcher-client.js';
 
 function makeBot(id = 7, name = 'Bot'): VoiceBot {
   const bot = new VoiceBot({
@@ -60,6 +61,28 @@ describe('stale radio startup', () => {
       bot.clearPlayback();
     });
   }
+
+  it('play() with streamUrl uses toPcmStream and never local file ffmpeg', async () => {
+    const bot = makeBot();
+    const b = bot as any;
+    b.startIcyPolling = () => {};
+    b.updateNowPlayingNickname = () => {};
+    let usedStream = false;
+    b.pipeline.toPcmStream = async () => {
+      usedStream = true;
+      throw new Error(RADIO_FETCHER_UNAVAILABLE);
+    };
+    b.pipeline.toPcmFileStream = async () => {
+      throw new Error('must not use file ffmpeg');
+    };
+    await assert.rejects(
+      () => bot.play({
+        id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/radio',
+      }),
+      (err: Error) => err.message === RADIO_FETCHER_UNAVAILABLE,
+    );
+    assert.equal(usedStream, true);
+  });
 });
 
 function fakeVideo(bot: VoiceBot) {

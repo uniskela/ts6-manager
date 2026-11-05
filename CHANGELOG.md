@@ -2,6 +2,37 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.11.3](https://github.com/uniskela/ts6-manager/compare/v1.11.2...v1.11.3) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deps:** bump transitive qs to 6.16.2 ([#553](https://github.com/uniskela/ts6-manager/issues/553)) ([5b2ac8e](https://github.com/uniskela/ts6-manager/commit/5b2ac8e32c970b9f58b0c2925f1ff72d467fce6c))
+* **deps:** update yt-dlp to 2026.10.21 ([#525](https://github.com/uniskela/ts6-manager/issues/525)) ([c483acf](https://github.com/uniskela/ts6-manager/commit/c483acf8387e5f9195a3b4c01851da2f8e3439fd))
+* reject malformed hex in AES-GCM encrypted fields ([#549](https://github.com/uniskela/ts6-manager/issues/549)) ([1d58ebf](https://github.com/uniskela/ts6-manager/commit/1d58ebfddbfafb08d4366332d213aa74f075edda))
+* require 16-byte AES-GCM authentication tags ([#547](https://github.com/uniskela/ts6-manager/issues/547)) ([7735d99](https://github.com/uniskela/ts6-manager/commit/7735d99fb86aa6656877e6f8b1d68b00d9f9e331))
+* stop sending WebSocket upgrade headers on /api ([#548](https://github.com/uniskela/ts6-manager/issues/548)) ([030de0d](https://github.com/uniskela/ts6-manager/commit/030de0d54f74ea4ee34c7c2b1d7bf6b60b7d35cd))
+
+## [1.11.2](https://github.com/uniskela/ts6-manager/compare/v1.11.1...v1.11.2) (2026-10-25)
+
+
+### Bug Fixes
+
+* **deps:** bump body-parser 1.20.9 and multer 2.5.0 ([#513](https://github.com/uniskela/ts6-manager/issues/513)) ([c9aa0dc](https://github.com/uniskela/ts6-manager/commit/c9aa0dc42f68e7125ae47f09bfa225bf777d4147))
+* **docker:** stop the Prisma update check leaving a zombie in the backend container ([#470](https://github.com/uniskela/ts6-manager/issues/470)) ([07e11a7](https://github.com/uniskela/ts6-manager/commit/07e11a7e578bc8445e6c85fd6099a6112022a796)), closes [#466](https://github.com/uniskela/ts6-manager/issues/466)
+* **media:** do not treat TRUST_PROXY as an unused outbound proxy ([6fd23b6](https://github.com/uniskela/ts6-manager/commit/6fd23b6bb1bba030e9878276acbf2d6d403b5a6c))
+* **media:** check supported downloaded-media paths through an egress proxy, not every FFmpeg input or administrator-configured radio stream ([#479](https://github.com/uniskela/ts6-manager/issues/479)) ([ce58e77](https://github.com/uniskela/ts6-manager/commit/ce58e77b0e95aa7328a5d6a67e396ab94aa15dd0))
+* **music:** keep a removed song's file while anything else still uses it ([#483](https://github.com/uniskela/ts6-manager/issues/483)) ([bb43476](https://github.com/uniskela/ts6-manager/commit/bb4347606cda2ab156c5dd37a71b115364775c9b)), closes [#478](https://github.com/uniskela/ts6-manager/issues/478)
+* **music:** keep downloads in a verified, app-owned cache keyed by source ([#481](https://github.com/uniskela/ts6-manager/issues/481)) ([2c31922](https://github.com/uniskela/ts6-manager/commit/2c3192218aac342b1b280bd7b4fcb72c90802b69))
+* **music:** prune played tracks and cap every queue add ([#469](https://github.com/uniskela/ts6-manager/issues/469)) ([dd0f7b9](https://github.com/uniskela/ts6-manager/commit/dd0f7b9a3f9062aeee9ad449fe49eca955190f49)), closes [#445](https://github.com/uniskela/ts6-manager/issues/445)
+* **music:** remove a song only through its own server's library ([#487](https://github.com/uniskela/ts6-manager/issues/487)) ([6032e6e](https://github.com/uniskela/ts6-manager/commit/6032e6e7bcf42834c9562de306c1dda38aba1e46)), closes [#484](https://github.com/uniskela/ts6-manager/issues/484)
+* **remote:** cancel slow pasted-link requests and free their slots ([#473](https://github.com/uniskela/ts6-manager/issues/473)) ([1ad36b6](https://github.com/uniskela/ts6-manager/commit/1ad36b6c393eab08bc99041ebd47243585106525))
+* **remote:** drop media requests that finish resolving after Stop or a queue clear ([#474](https://github.com/uniskela/ts6-manager/issues/474)) ([161b80b](https://github.com/uniskela/ts6-manager/commit/161b80b9733bdb8c5b6f56bcf8dae1c1c0136a07))
+* **remote:** harden listener remote rate limits and key them by listener identity ([#471](https://github.com/uniskela/ts6-manager/issues/471)) ([46aae6b](https://github.com/uniskela/ts6-manager/commit/46aae6b5c6c02ee6139142d17253012d7122f0e8))
+* **remote:** record listener remote refusals as bounded audit totals and answer a full queue with 409 instead of 429 ([#480](https://github.com/uniskela/ts6-manager/issues/480)) ([c819615](https://github.com/uniskela/ts6-manager/commit/c8196158403d0b7d4d3ecc96ec395631912bf4b6))
+* **sidecar:** end the RTP readers without a data race on shutdown ([#459](https://github.com/uniskela/ts6-manager/issues/459)) ([2f383d3](https://github.com/uniskela/ts6-manager/commit/2f383d3f6e6075acf337d13413203d247d331e14))
+* **sidecar:** offer viewers send-only media so TeamSpeak 6.0.0-beta5 answers ([#491](https://github.com/uniskela/ts6-manager/issues/491)) ([cb43e5b](https://github.com/uniskela/ts6-manager/commit/cb43e5b5d86ad94784692f90cf8fac1dc0381136)), closes [#490](https://github.com/uniskela/ts6-manager/issues/490)
+
 ## [1.11.1](https://github.com/uniskela/ts6-manager/compare/v1.11.0...v1.11.1) (2026-10-15)
 
 

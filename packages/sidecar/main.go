@@ -186,8 +186,20 @@ func debugLogsEnabled() bool {
 
 func debugf(format string, args ...any) {
 	if debugLogsEnabled() {
-		log.Printf(format, args...)
+		log.Printf(format, quoteLogArgs(args)...)
 	}
+}
+
+func quoteLogArgs(args []any) []any {
+	out := make([]any, len(args))
+	for i, arg := range args {
+		if s, ok := arg.(string); ok {
+			out[i] = quoteLog(s)
+			continue
+		}
+		out[i] = arg
+	}
+	return out
 }
 
 // quoteLog keeps one log record. Nested newline replacement is what Sonar
@@ -881,7 +893,7 @@ func (p *Peer) videoGate(codec string, pkt *rtp.Packet) (track *webrtc.TrackLoca
 		}
 		p.Started = true
 		opening = true
-		log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", p.ID, codec, pkt.Timestamp)
+		log.Printf("[Peer %s] First %s keyframe seen at ts=%d - opening stream gate", quoteLog(p.ID), codec, pkt.Timestamp)
 	}
 	return p.VideoTrack, opening
 }
@@ -1017,7 +1029,7 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 	s.creating[id] = inflight
 	s.peersLock.Unlock()
 
-	log.Printf("[API] Creating NEW peer: %s", id)
+	log.Printf("[API] Creating NEW peer: %s", quoteLog(id))
 
 	defer func() {
 		s.peersLock.Lock()
@@ -1127,7 +1139,7 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 	}
 
 	pc.OnICEConnectionStateChange(func(state webrtc.ICEConnectionState) {
-		log.Printf("[Peer %s] ICE: %s", id, state.String())
+		log.Printf("[Peer %s] ICE: %s", quoteLog(id), state.String())
 		switch state {
 		case webrtc.ICEConnectionStateChecking:
 			peer.mu.Lock()
@@ -1145,10 +1157,10 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 					ssrc := uint32(params.Encodings[0].SSRC)
 					if sender.Track() == videoTrack {
 						videoSSRC, videoFound = ssrc, true
-						log.Printf("[Peer %s] Video SSRC resolved: %d", id, ssrc)
+						log.Printf("[Peer %s] Video SSRC resolved: %d", quoteLog(id), ssrc)
 					} else if sender.Track() == audioTrack {
 						audioSSRC, audioFound = ssrc, true
-						log.Printf("[Peer %s] Audio SSRC resolved: %d", id, ssrc)
+						log.Printf("[Peer %s] Audio SSRC resolved: %d", quoteLog(id), ssrc)
 					}
 				}
 			}
@@ -1177,9 +1189,9 @@ func (s *Sidecar) CreatePeerFor(id string, codec string, browser bool) (sdp stri
 			// "Connecting..." and asks to reconnect, which closes this peer.
 			// The browser preview reports its own ICE timeout.
 			if neverConnected && !browser {
-				log.Printf("[Peer %s] TeamSpeak viewer never connected: none of the offered addresses worked for it (%s)", id, offeredAddresses(offerSDP))
+				log.Printf("[Peer %s] TeamSpeak viewer never connected: none of the offered addresses worked for it (%s)", quoteLog(id), offeredAddresses(offerSDP))
 				if advertisesOnlyLoopback(s.iceAdvertiseIPs) {
-					log.Printf("[Peer %s] %s", id, teamSpeakReachHint)
+					log.Printf("[Peer %s] %s", quoteLog(id), teamSpeakReachHint)
 				}
 			}
 		}
@@ -1271,10 +1283,10 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 					},
 				})
 				if srCount <= 5 || srCount%30 == 0 {
-					log.Printf("[SR] Peer %s video SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, videoSSRC, videoTs, err)
+					log.Printf("[SR] Peer %s video SR #%d ssrc=%d rtpTs=%d err=%v", quoteLog(peer.ID), srCount, videoSSRC, videoTs, err)
 				}
 			} else if videoSSRC == 0 && srCount <= 5 {
-				log.Printf("[SR] Peer %s video SSRC still 0 — skipping SR", peer.ID)
+				log.Printf("[SR] Peer %s video SSRC still 0 — skipping SR", quoteLog(peer.ID))
 			}
 
 			// Send audio SR + SDES with SAME NTP time and SAME CNAME
@@ -1298,10 +1310,10 @@ func (s *Sidecar) sendSenderReports(peer *Peer) {
 					},
 				})
 				if srCount <= 5 || srCount%30 == 0 {
-					log.Printf("[SR] Peer %s audio SR #%d ssrc=%d rtpTs=%d err=%v", peer.ID, srCount, audioSSRC, audioTs, err)
+					log.Printf("[SR] Peer %s audio SR #%d ssrc=%d rtpTs=%d err=%v", quoteLog(peer.ID), srCount, audioSSRC, audioTs, err)
 				}
 			} else if audioSSRC == 0 && srCount <= 5 {
-				log.Printf("[SR] Peer %s audio SSRC still 0 — skipping SR", peer.ID)
+				log.Printf("[SR] Peer %s audio SSRC still 0 — skipping SR", quoteLog(peer.ID))
 			}
 		}
 	}
@@ -1321,13 +1333,13 @@ func (s *Sidecar) SetAnswer(id, sdp string) error {
 	if peer.PC.RemoteDescription() != nil {
 		if peer.PC.RemoteDescription().Type == webrtc.SDPTypeAnswer &&
 			peer.PC.SignalingState() == webrtc.SignalingStateStable {
-			log.Printf("[API] Ignoring duplicate answer for peer: %s", id)
+			log.Printf("[API] Ignoring duplicate answer for peer: %s", quoteLog(id))
 			return nil
 		}
 	}
 
 	if peer.PC.SignalingState() != webrtc.SignalingStateHaveLocalOffer {
-		log.Printf("[API] Ignoring answer in signaling state %s for peer: %s", peer.PC.SignalingState(), id)
+		log.Printf("[API] Ignoring answer in signaling state %s for peer: %s", quoteLog(peer.PC.SignalingState().String()), quoteLog(id))
 		return nil
 	}
 
@@ -2271,7 +2283,7 @@ func main() {
 
 		sdp, err := sidecar.CreatePeerFor(req.ID, req.Codec, req.Browser)
 		if err != nil {
-			log.Printf("[API] CreatePeer error: %v", err)
+			log.Printf("[API] CreatePeer error: %s", quoteErr(err))
 			http.Error(w, err.Error(), 500)
 			return
 		}

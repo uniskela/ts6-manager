@@ -243,6 +243,19 @@ class ReleaseWorkflowTests(unittest.TestCase):
                         environment = environment.get("name", "")
                     self.assertNotEqual(environment, "dockerhub-description")
 
+    def test_container_security_inventory_keeps_accepted_risks(self):
+        wf = workflow("container-security.yml")
+        steps = {step["name"]: step for step in wf["jobs"]["scan"]["steps"]}
+        inventory = steps["Record full vulnerability inventory"]
+        table = steps["Show all high and critical findings"]
+        gate = steps["Gate on fixable high and critical findings"]
+        self.assertNotIn("trivyignores", inventory.get("with", {}))
+        self.assertEqual(inventory.get("env", {}).get("TRIVY_IGNOREFILE"), "/dev/null")
+        self.assertEqual(table["with"]["trivyignores"], ".trivyignore")
+        self.assertEqual(gate["with"]["trivyignores"], ".trivyignore")
+        for event in ("pull_request", "push"):
+            self.assertIn(".trivyignore", wf["on"][event]["paths"])
+
     def test_missing_description_credentials_skip_with_a_warning(self):
         detect = next(step for step in self.description["jobs"]["update"]["steps"] if step.get("id") == "hub")
         self.assertEqual(
@@ -272,6 +285,418 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 continue
             with self.subTest(step=step["name"]):
                 self.assertEqual(step["if"], "steps.hub.outputs.update_hub == '1'")
+
+
+class PrereleaseWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        self.prerelease = workflow("publish-prerelease.yml")
+        self.release = workflow("release-please.yml")
+        self.publish = workflow("publish-images.yml")
+        self.validation = workflow("pr-validation.yml")
+        self.security = workflow("container-security.yml")
+
+    def test_dispatch_only_and_not_on_the_stable_path(self):
+        self.assertEqual(set(self.prerelease["on"]), {"workflow_dispatch"})
+        self.assertNotIn("pull_request", self.prerelease["on"])
+        self.assertNotIn("pull_request_target", self.prerelease["on"])
+        self.assertNotIn("push", self.prerelease["on"])
+        self.assertEqual(self.release["jobs"]["publish-images"]["uses"], "./.github/workflows/publish-images.yml")
+        self.assertNotIn("publish-prerelease", yaml.dump(self.release))
+        self.assertNotIn("publish-prerelease", yaml.dump(self.publish))
+
+    def test_requires_maintainer_environment_and_explicit_ref(self):
+        job = self.prerelease["jobs"]["resolve-ref"]
+        self.assertEqual(job["environment"], "prerelease")
+        self.assertEqual(job["if"], "github.repository == 'uniskela/ts6-manager'")
+        inputs = self.prerelease["on"]["workflow_dispatch"]["inputs"]
+        self.assertEqual(inputs["ref"]["required"], "true")
+        self.assertEqual(inputs["create_github_prerelease"]["default"], "false")
+        self.assertEqual(inputs["source_branch"]["default"], "main")
+
+    def test_default_permissions_are_empty(self):
+        self.assertEqual(self.prerelease["permissions"], {})
+
+    def test_validate_script_accepts_sha_and_prerelease_only(self):
+        guard = next(
+            step
+            for step in self.prerelease["jobs"]["resolve-ref"]["steps"]
+            if step.get("name") == "Validate prerelease ref"
+        )
+        accepted = {
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "v1.12.0-beta.1",
+            "v1.12.0-rc.2",
+            "v2.0.0-alpha.0",
+        }
+        rejected = {
+            "v1.11.2",
+            "v1.12.0",
+            "main",
+            "1.12.0-beta.1",
+            "abc1234",
+            "refs/pull/1/head",
+            "",
+        }
+        for ref in accepted | rejected:
+            with self.subTest(ref=ref):
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "REF": ref, "PRE_TAG": "", "SOURCE_BRANCH": "main"},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ref in accepted, result.stderr)
+
+        result = subprocess.run(
+            ["bash", "-c", guard["run"]],
+            env={
+                **os.environ,
+                "REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "PRE_TAG": "v1.12.0-beta.1",
+                "SOURCE_BRANCH": "main",
+            },
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = subprocess.run(
+            ["bash", "-c", guard["run"]],
+            env={
+                **os.environ,
+                "REF": "v1.12.0-beta.1",
+                "PRE_TAG": "v1.12.0-beta.2",
+                "SOURCE_BRANCH": "main",
+            },
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        result = subprocess.run(
+            ["bash", "-c", guard["run"]],
+            env={
+                **os.environ,
+                "REF": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "PRE_TAG": "",
+                "SOURCE_BRANCH": "feature/unreviewed",
+            },
+            capture_output=True,
+            timeout=5,
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_stable_tag_guard_still_rejects_prereleases(self):
+        guard = next(
+            step
+            for step in self.publish["jobs"]["build-and-push"]["steps"]
+            if step.get("name") == "Validate release tag"
+        )
+        for tag, ok in (("v1.11.2", True), ("v1.12.0-beta.1", False), ("v1.12.0-rc.1", False)):
+            with self.subTest(tag=tag):
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "TAG": tag},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ok)
+
+    def test_publish_waits_for_tests_and_security(self):
+        for name in ("build-and-push", "build-all-in-one"):
+            self.assertEqual(
+                self.prerelease["jobs"][name]["needs"],
+                ["resolve-ref", "validate", "security"],
+            )
+        self.assertEqual(self.prerelease["jobs"]["validate"]["uses"], "./.github/workflows/pr-validation.yml")
+        self.assertEqual(self.prerelease["jobs"]["security"]["uses"], "./.github/workflows/container-security.yml")
+        self.assertEqual(
+            self.prerelease["jobs"]["validate"]["with"]["ref"],
+            "${{ needs.resolve-ref.outputs.sha }}",
+        )
+
+    def test_reusable_gates_accept_a_ref(self):
+        for flow in (self.validation, self.security):
+            self.assertIn("workflow_call", flow["on"])
+            self.assertEqual(flow["on"]["workflow_call"]["inputs"]["ref"]["required"], "false")
+
+    def test_no_stable_alias_promotion(self):
+        text = (ROOT / ".github/workflows" / "publish-prerelease.yml").read_text()
+        self.assertNotIn("major_minor", text)
+        self.assertNotIn("promote-latest", self.prerelease["jobs"])
+        self.assertNotIn("promote-all-in-one-latest", self.prerelease["jobs"])
+        self.assertNotIn("update-dockerhub-description", self.prerelease["jobs"])
+        self.assertNotIn("DOCKERHUB_DESCRIPTION_TOKEN", text)
+        self.assertNotRegex(text, r"IMAGE_PREFIX\}[^ \n]*:latest")
+        for name, job in self.prerelease["jobs"].items():
+            with self.subTest(job=name):
+                self.assertNotIn("latest", name)
+
+    def test_tag_lists_are_sha_and_prerelease_only(self):
+        for job_name in ("build-and-push", "build-all-in-one"):
+            step = next(
+                s
+                for s in self.prerelease["jobs"][job_name]["steps"]
+                if s.get("name") == "Resolve image tags"
+            )
+            script = step["run"]
+            self.assertIn(":sha-${SHORT_SHA}", script)
+            self.assertIn("${TAG}", script)
+            self.assertIn("${VERSION}", script)
+            self.assertNotIn("MAJOR_MINOR", script)
+            self.assertNotIn(":latest", script)
+
+    def test_trusted_source_and_collision_guards_are_wired(self):
+        names = [step.get("name") for step in self.prerelease["jobs"]["resolve-ref"]["steps"]]
+        self.assertIn("Require trusted source", names)
+        self.assertIn("Reject tag collisions", names)
+        self.assertIn("Require prerelease environment reviewers", names)
+        text = (ROOT / ".github/workflows" / "publish-prerelease.yml").read_text()
+        self.assertIn("require-ancestor", text)
+        self.assertIn("reject-tag-collision", text)
+        self.assertIn("reject-image-collision", text)
+        self.assertIn("verify-github-release-target", text)
+        for job_name in ("build-and-push", "build-all-in-one"):
+            step = next(
+                s
+                for s in self.prerelease["jobs"][job_name]["steps"]
+                if s.get("name") == "Reject image tag collisions"
+            )
+            self.assertNotIn("if", step)
+            self.assertIn("needs.resolve-ref.outputs.short_sha", step["run"])
+            self.assertIn("reject-image-collision", step["run"])
+        matrix_step = next(
+            s
+            for s in self.prerelease["jobs"]["build-and-push"]["steps"]
+            if s.get("name") == "Reject image tag collisions"
+        )
+        self.assertIn("${{ matrix.component }}", matrix_step["run"])
+        aio_step = next(
+            s
+            for s in self.prerelease["jobs"]["build-all-in-one"]["steps"]
+            if s.get("name") == "Reject image tag collisions"
+        )
+        self.assertRegex(aio_step["run"], r"(?m)\ball-in-one\s*$")
+        self.assertNotIn("leaving it unchanged", text)
+        self.assertNotIn("ref: ${{ inputs.ref }}", text)
+        self.assertEqual(
+            self.prerelease["concurrency"]["group"],
+            "prerelease-${{ inputs.prerelease_tag || inputs.ref }}",
+        )
+        self.assertEqual(
+            self.validation["concurrency"]["group"],
+            "pr-validation-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}",
+        )
+        self.assertEqual(
+            self.security["concurrency"]["group"],
+            "container-security-${{ github.workflow }}-${{ inputs.ref || github.event.pull_request.number || github.ref }}",
+        )
+
+    def test_github_prerelease_is_opt_in_and_marked_prerelease(self):
+        job = self.prerelease["jobs"]["github-prerelease"]
+        self.assertEqual(job["if"], "inputs.create_github_prerelease && needs.resolve-ref.outputs.tag != ''")
+        script = next(step["run"] for step in job["steps"] if step.get("name") == "Publish GitHub prerelease")
+        self.assertIn("gh release create", script)
+        self.assertIn("--prerelease", script)
+        self.assertIn("verify-github-release-target", script)
+        self.assertIn("Discord voice bridge", script)
+
+    def test_checkout_paths_stay_under_workspace(self):
+        text = (ROOT / ".github/workflows" / "publish-prerelease.yml").read_text()
+        self.assertNotIn("prerelease-workflow", text)
+        self.assertNotIn("path: ${{ runner.temp }}", text)
+        guard_jobs = ("resolve-ref", "build-and-push", "build-all-in-one", "github-prerelease")
+        keep_run = None
+        for name in guard_jobs:
+            steps = self.prerelease["jobs"][name]["steps"]
+            names = [step.get("name") for step in steps]
+            self.assertIn("Checkout trusted workflow source", names)
+            self.assertIn("Verify workflow source", names)
+            self.assertIn("Keep publish-path guards", names)
+            source = steps[names.index("Checkout trusted workflow source")]
+            self.assertEqual(source["with"]["ref"], "${{ github.sha }}")
+            self.assertNotIn("path", source.get("with", {}))
+            verify = steps[names.index("Verify workflow source")]
+            self.assertIn("git merge-base --is-ancestor", verify["run"])
+            self.assertIn("$WORKFLOW_SHA", verify["run"])
+            self.assertIn("$SOURCE_BRANCH", verify["run"])
+            self.assertLess(names.index("Verify workflow source"), names.index("Keep publish-path guards"))
+            keep = steps[names.index("Keep publish-path guards")]
+            if keep_run is None:
+                keep_run = keep["run"]
+            self.assertEqual(keep["run"], keep_run)
+            self.assertIn('cp scripts/ci/prerelease-guards.sh "$RUNNER_TEMP/prerelease-guards.sh"', keep["run"])
+            if "Checkout trusted default branch" in names:
+                self.assertLess(
+                    names.index("Keep publish-path guards"),
+                    names.index("Checkout trusted default branch"),
+                )
+            for step in steps:
+                path = (step.get("with") or {}).get("path")
+                if path:
+                    self.assertFalse(str(path).startswith("${{ runner.temp"))
+                    self.assertFalse(str(path).startswith("/"))
+                if "prerelease-guards.sh" in step.get("run", ""):
+                    self.assertIn("$RUNNER_TEMP/prerelease-guards.sh", step["run"])
+                    self.assertNotIn("scripts/ci/prerelease-guards.sh", step["run"].replace(keep["run"], ""))
+
+    def test_dispatch_resolves_guard_path_without_publishing(self):
+        keep = next(
+            step
+            for step in self.prerelease["jobs"]["resolve-ref"]["steps"]
+            if step.get("name") == "Keep publish-path guards"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            temp = Path(tmp) / "runner-temp"
+            workspace = Path(tmp) / "workspace"
+            temp.mkdir()
+            workspace.mkdir()
+            copied = subprocess.run(
+                ["bash", "-c", keep["run"]],
+                cwd=ROOT,
+                env={**os.environ, "RUNNER_TEMP": str(temp)},
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(copied.returncode, 0, copied.stderr)
+            guard = temp / "prerelease-guards.sh"
+            self.assertTrue(guard.is_file())
+            (workspace / "scripts").mkdir()
+            result = subprocess.run(
+                ["bash", str(guard), "validate-source-branch", "main"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            result = subprocess.run(
+                ["bash", str(guard), "validate-source-branch", "feature/unreviewed"],
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("ghcr.io", result.stdout + result.stderr)
+            self.assertNotIn("docker", result.stdout + result.stderr)
+
+
+class PrivateBetaPublishTests(unittest.TestCase):
+    def setUp(self):
+        self.wf = workflow("publish-discord-bridge-private-beta.yml")
+        self.release = workflow("release-please.yml")
+        self.publish = workflow("publish-images.yml")
+        self.text = (ROOT / ".github/workflows/publish-discord-bridge-private-beta.yml").read_text()
+
+    def test_manual_only_and_not_on_the_stable_path(self):
+        self.assertEqual(set(self.wf["on"]), {"workflow_dispatch"})
+        self.assertNotIn("push", self.wf["on"])
+        self.assertNotIn("workflow_call", self.wf["on"])
+        self.assertNotIn("pull_request_target", self.wf["on"])
+        self.assertEqual(self.wf["env"]["SOURCE_PR"], "504")
+        for other in (self.release, self.publish):
+            self.assertNotIn("publish-discord-bridge-private-beta", yaml.dump(other))
+
+    def test_build_cannot_write_packages_and_publish_needs_approval(self):
+        self.assertEqual(self.wf["permissions"], {"contents": "read"})
+        build = self.wf["jobs"]["verify-and-build"]
+        attest = self.wf["jobs"]["attest"]
+        publish = self.wf["jobs"]["publish"]
+        self.assertEqual(build["permissions"], {"contents": "read", "pull-requests": "read"})
+        self.assertNotEqual(build["permissions"].get("packages"), "write")
+        self.assertNotEqual(build["permissions"].get("id-token"), "write")
+        self.assertEqual(attest["permissions"]["id-token"], "write")
+        self.assertEqual(attest["permissions"]["attestations"], "write")
+        self.assertNotEqual(attest["permissions"].get("packages"), "write")
+        self.assertEqual(publish["environment"], "discord-bridge-private-beta")
+        self.assertEqual(publish["needs"], ["verify-and-build", "attest"])
+        self.assertEqual(publish["permissions"]["packages"], "write")
+        self.assertNotEqual(publish["permissions"].get("id-token"), "write")
+        self.assertNotIn("contents: write", self.text)
+        for job in (build, attest, publish):
+            self.assertIn("refs/heads/main", job["if"])
+
+    def test_publish_loads_the_artifact_and_never_rebuilds(self):
+        publish = self.wf["jobs"]["publish"]
+        runs = "\n".join(step.get("run", "") for step in publish["steps"])
+        uses = [step.get("uses", "") for step in publish["steps"]]
+        self.assertTrue(any("download-artifact@" in item for item in uses))
+        checkout = [step for step in publish["steps"] if "actions/checkout@" in step.get("uses", "")]
+        self.assertEqual(len(checkout), 1)
+        self.assertEqual(checkout[0]["with"]["ref"], "${{ github.sha }}")
+        self.assertNotIn("inputs.commit", yaml.dump(checkout[0]))
+        self.assertIn("docker load", runs)
+        self.assertNotRegex(runs, r"docker build(?!x)")
+        self.assertNotIn("docker run", runs)
+        self.assertNotIn("packages/discord-bridge/scripts/", runs)
+        self.assertIn("verify_private_beta_attestation.py", runs)
+        self.assertIn("verify-after-push", runs)
+        self.assertIn("require-private", runs)
+        self.assertNotIn("-f visibility=private", self.text)
+        push = next(step for step in publish["steps"] if step.get("name") == "Push commit-specific tag only")
+        confirm = next(
+            step
+            for step in publish["steps"]
+            if step.get("name") == "Confirm private visibility and deny anonymous pull"
+        )
+        self.assertEqual(push.get("id"), "push")
+        self.assertIn("always()", confirm.get("if", ""))
+        self.assertIn("steps.push.outcome != 'skipped'", confirm.get("if", ""))
+        self.assertNotIn("provenance.json", runs)
+        self.assertIn("private-beta-", runs)
+        self.assertNotIn(":latest", runs)
+        self.assertNotIn("dockerhub", yaml.dump(self.wf).lower())
+
+    def test_confirm_token_requires_the_full_sha(self):
+        guard = next(
+            step
+            for step in self.wf["jobs"]["verify-and-build"]["steps"]
+            if step.get("name") == "Validate commit and confirm token"
+        )
+        sha = "9ea992fe84203c7cf5b6b89c6a2a876c25a297b3"
+        accepted = [(sha, f"publish-private-beta-{sha}")]
+        rejected = [
+            (sha, "publish-private-beta-deadbeef"),
+            ("deadbeef", f"publish-private-beta-{'d' * 40}"),
+            (sha.upper(), f"publish-private-beta-{sha.upper()}"),
+            ("", f"publish-private-beta-{sha}"),
+        ]
+        for commit, confirm, ok in [(c, t, True) for c, t in accepted] + [(c, t, False) for c, t in rejected]:
+            with self.subTest(commit=commit, confirm=confirm), tempfile.NamedTemporaryFile("w") as out:
+                result = subprocess.run(
+                    ["bash", "-c", guard["run"]],
+                    env={**os.environ, "COMMIT": commit, "CONFIRM": confirm, "GITHUB_OUTPUT": out.name},
+                    capture_output=True,
+                    timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, ok, result.stderr)
+
+    def test_attest_job_never_runs_pr_or_image_code(self):
+        attest = self.wf["jobs"]["attest"]
+        blob = yaml.dump(attest)
+        runs = "\n".join(step.get("run", "") for step in attest["steps"])
+        checkout = [step for step in attest["steps"] if "actions/checkout@" in step.get("uses", "")]
+        self.assertEqual(len(checkout), 1)
+        self.assertEqual(checkout[0]["with"]["ref"], "${{ github.sha }}")
+        self.assertIn("actions/attest@", " ".join(step.get("uses", "") for step in attest["steps"]))
+        self.assertIn("inputs.commit", blob)
+        self.assertIn("predicate.json", blob)
+        self.assertNotIn("docker", runs.lower())
+        self.assertNotIn("packages/discord-bridge", blob)
+        self.assertNotIn("provenance.json", blob)
+
+    def test_build_saves_a_tarball_without_self_checksum_trust(self):
+        names = [step.get("name") for step in self.wf["jobs"]["verify-and-build"]["steps"]]
+        self.assertLess(names.index("Save image tarball"), names.index("Upload image tarball"))
+        self.assertLess(names.index("Upload image tarball"), names.index("Container security and mount probe"))
+        save = next(
+            step
+            for step in self.wf["jobs"]["verify-and-build"]["steps"]
+            if step.get("name") == "Save image tarball"
+        )
+        self.assertIn("docker save", save["run"])
+        self.assertNotIn("sha256sum", save["run"])
+        self.assertNotIn("provenance.json", save["run"])
 
 
 if __name__ == "__main__":

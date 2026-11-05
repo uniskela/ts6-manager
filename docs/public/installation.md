@@ -11,7 +11,7 @@ TS6 Manager publishes four container images for immutable releases. **GitHub Con
 
 See [Docker Hub](https://hub.docker.com/r/uniskela/ts6-manager). When Hub publish is enabled, versioned Hub tags use the form `uniskela/ts6-manager:backend-1.10.1`.
 
-Release images are published after a Release Please release is created. Ordinary pushes and pull requests do not publish images.
+Release images are published after a Release Please release is created. Ordinary pushes and pull requests do not publish images. Experimental tester images use a separate prerelease channel and must not replace `latest` — see [Beta releases](beta.md).
 
 ## Split stack
 
@@ -45,6 +45,8 @@ docker compose up -d
 6. Add a TeamSpeak connection under **Settings → Connections**.
 
 The stock compose file publishes the backend API on port 3001 of the host's loopback address (`127.0.0.1`) only; the web interface reaches it through the frontend. Set `BACKEND_BIND_IP` if another machine has to call the API directly. The media sidecar HTTP API remains on the internal Docker network and is not published to the host. Browser WebRTC preview needs a published UDP mux (`WEBRTC_UDP_PORT`) and advertise IP (`WEBRTC_NAT1TO1_IP`) — see [Video streaming](video-streaming.md) and the commented mappings in `docker-compose.yml`. `docker-compose.pr-test.yml` enables UDP `10000` by default.
+
+Remote radio needs the isolated fetcher overlay (`docker-compose.media-fetcher.yml`) on Linux 6.7+ with Landlock. Without it, radio play fails closed and saved stations stay in the database. See [Radio fetcher](radio-fetcher.md).
 
 ## All-in-one
 

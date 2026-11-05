@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,88 @@ func postJSON(t *testing.T, h http.HandlerFunc, payload any) *httptest.ResponseR
 	rec := httptest.NewRecorder()
 	h(rec, req)
 	return rec
+}
+
+const logSplitMarker = "ZZLOGSPLIT"
+
+func nastyLogID() string {
+	return "pre\n" + logSplitMarker + "\r\x1b"
+}
+
+func TestQuoteLogKeepsOneRecord(t *testing.T) {
+	out := quoteLog(nastyLogID())
+	if strings.ContainsAny(out, "\r\n\x1b") {
+		t.Fatalf("quoteLog left a control character: %q", out)
+	}
+	if !strings.Contains(out, logSplitMarker) {
+		t.Fatalf("quoteLog dropped diagnostic %q: %q", logSplitMarker, out)
+	}
+	errOut := quoteErr(fmt.Errorf("create failed: %s", nastyLogID()))
+	if strings.ContainsAny(errOut, "\r\n\x1b") {
+		t.Fatalf("quoteErr left a control character: %q", errOut)
+	}
+	if !strings.Contains(errOut, logSplitMarker) {
+		t.Fatalf("quoteErr dropped diagnostic %q: %q", logSplitMarker, errOut)
+	}
+}
+
+func TestCreatePeerLogStaysOneRecord(t *testing.T) {
+	t.Setenv("STUN_SERVERS", "")
+	buf := captureLog(t)
+	s := NewSidecar()
+	id := nastyLogID()
+	if _, err := s.CreatePeer(id, ""); err != nil {
+		t.Fatalf("CreatePeer: %v", err)
+	}
+	defer s.ClosePeer(id)
+	oneRecord(t, buf.String(), logSplitMarker)
+}
+
+func TestDuplicateAnswerLogStaysOneRecord(t *testing.T) {
+	t.Setenv("STUN_SERVERS", "")
+	s := NewSidecar()
+	id := nastyLogID()
+	offer, err := s.CreatePeer(id, "")
+	if err != nil {
+		t.Fatalf("CreatePeer: %v", err)
+	}
+	defer s.ClosePeer(id)
+	if err := s.SetAnswer(id, answerFor(t, offer)); err != nil {
+		t.Fatalf("SetAnswer: %v", err)
+	}
+	buf := captureLog(t)
+	if err := s.SetAnswer(id, answerFor(t, offer)); err != nil {
+		t.Fatalf("duplicate SetAnswer: %v", err)
+	}
+	oneRecord(t, buf.String(), logSplitMarker)
+}
+
+func TestWrongStateAnswerLogStaysOneRecord(t *testing.T) {
+	t.Setenv("STUN_SERVERS", "")
+	s := NewSidecar()
+	id := nastyLogID()
+	if _, err := s.CreatePeer(id, ""); err != nil {
+		t.Fatalf("CreatePeer: %v", err)
+	}
+	defer s.ClosePeer(id)
+	s.peersLock.RLock()
+	peer := s.peers[id]
+	s.peersLock.RUnlock()
+	if err := peer.PC.Close(); err != nil {
+		t.Fatalf("close peer: %v", err)
+	}
+	buf := captureLog(t)
+	if err := s.SetAnswer(id, "v=0"); err != nil {
+		t.Fatalf("SetAnswer after close: %v", err)
+	}
+	oneRecord(t, buf.String(), logSplitMarker)
+}
+
+func TestDebugfQuotesUntrustedStrings(t *testing.T) {
+	t.Setenv("SIDECAR_DEBUG_LOGS", "1")
+	buf := captureLog(t)
+	debugf("[API] debug peer: %s", nastyLogID())
+	oneRecord(t, buf.String(), logSplitMarker)
 }
 
 func TestBufferedICEErrorStaysOneLogRecord(t *testing.T) {

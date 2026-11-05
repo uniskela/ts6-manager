@@ -144,7 +144,7 @@ Check:
 - **candidate reachability:** `WEBRTC_NAT1TO1_IP` is an IPv4 the browser can dial (not a container `172.x`; not `127.0.0.1` unless the browser is on the Docker host);
 - **Docker host binding:** `WEBRTC_UDP_PORT` is published via `WEBRTC_BIND_IP` on the host (`${WEBRTC_BIND_IP}:${WEBRTC_UDP_PORT}:…/udp`). Bind can differ from NAT1To1 when a firewall/NAT forwards the public UDP port to the host;
 - for public-Internet browsers: advertise the public IPv4 in `WEBRTC_NAT1TO1_IP`, forward UDP to the Docker host, and keep the host bind accordingly;
-- WebSocket upgrade headers on the outer reverse proxy so live UI updates still work;
+- WebSocket upgrade headers on the outer reverse proxy's `/ws` location (not on `/api`) so live UI updates still work;
 - Twitch live URLs use yt-dlp URL resolve (not a temp download) — see #203 if Twitch sources fail before the preview can attach.
 
 ### Check the browser side first
@@ -198,6 +198,34 @@ WEBRTC_NAT1TO1_IP=127.0.0.1,192.168.1.20
 
 `WEBRTC_BIND_IP=0.0.0.0` publishes the port on every host interface. To publish it only on the LAN address, set `WEBRTC_BIND_IP` to that address and use the address in place of `127.0.0.1` too. Recreate the sidecar afterwards (`docker compose -f docker-compose.pr-test.yml up -d sidecar`), then start watching again.
 
+## TeamSpeak 6.0.0-beta5 never answers a stream
+
+The bot starts streaming and the web UI preview plays, but nobody can watch in the TeamSpeak client. The client receives the stream offer and never answers it. A client trace stops at `HandleRemoteOffer ENTRY`. People who tried to watch can still be listed as viewers.
+
+This is not [stuck on "Connecting..."](#teamspeak-client-stuck-on-connecting). There the client answers the offer, then cannot reach an advertised address, and the sidecar log ends with `TeamSpeak viewer never connected`.
+
+Sidecars before 1.11.2 mark the stream's audio and video as send-and-receive (`a=sendrecv`). The TeamSpeak 6.0.0-beta5 client does not answer that offer. Older clients did. Every older sidecar sends the same offer, so downgrading does not help.
+
+Upgrade ts6-manager to 1.11.2 or newer, including the media sidecar. That sidecar offers send-only media (`a=sendonly`), which beta5 answers. A Docker sidecar follows the image tag. Replace a [native sidecar](native-sidecar.md#version-compatibility) with the 1.11.2 archive.
+
+## Radio playback needs the isolated media fetcher
+
+Chat, Discord, the web Play button, Auto-DJ radio, listener requests and queue next/prev all use the same path. If the isolated fetcher is missing, misconfigured, or down, the user-facing message is:
+
+`Radio playback needs the isolated media fetcher. Saved stations are unchanged.`
+
+This is not a database problem. Station rows are left as they are.
+
+Check:
+
+1. the split stack includes `docker-compose.media-fetcher.yml` and built `ts6-media-fetcher:local`;
+2. `.media-fetcher-token` exists, is mode `600`, and `media-fetcher-token` copied it to `/jobs/.token`;
+3. `ts6-media-fetcher` and `ts6-media-egress-proxy` are running;
+4. the host kernel is Linux 6.7+ with Landlock ABI ≥ 4 (the fetcher exits on older kernels);
+5. `/jobs` is shared between backend and fetcher and writable by the fetcher (uid 1000).
+
+There is no supported `MEDIA_FETCHER=legacy` switch. See [Radio fetcher](radio-fetcher.md).
+
 ## Appearance custom CSS made the UI unusable
 
 Custom CSS is browser-local. Open:
@@ -207,3 +235,9 @@ Custom CSS is browser-local. Open:
 Safe mode suspends custom CSS for that page load (and the rest of that document lifetime) without deleting the saved text. Use Appearance → Advanced to **Disable** or **Reset**, then reload without `?safe-ui=1`.
 
 Do not rely on a visible Disable button under hostile CSS — type or bookmark the recovery URL before enabling custom CSS. Clearing site data for the origin also removes the preference, but safe mode is the supported recovery path.
+
+## Beta or prerelease images
+
+If you pinned a `vX.Y.Z-beta.N` or `sha-*` tag and the UI or schema misbehaves, do not switch `latest` on a production compose file. Use `docker compose --env-file .env.beta -f docker-compose.beta.yml` on `main`, point that tester stack back at the previous tag or at stable `v1.11.2`, and restore the volume backup. Keep `.env.beta` private and Git-ignored. See [Beta releases — Rollback](beta.md#rollback).
+
+Discord voice is not part of manager images. A missing Discord bot is expected. See [Discord bridge](discord-bridge.md).

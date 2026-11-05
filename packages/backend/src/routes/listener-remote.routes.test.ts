@@ -224,6 +224,10 @@ describe('listener remote HTTP security boundary', () => {
       where: { serverConfigId: 2, OR: [{ title: { contains: 'Visible' } }, { artist: { contains: 'Visible' } }] },
       select: { id: true, title: true, artist: true, duration: true }, orderBy: { id: 'asc' }, skip: 25, take: 25,
     });
+    // Zod 4 migration: absent search/page fields must keep their API defaults.
+    const defaults = await f.request('/library', { session });
+    assert.equal(defaults.status, 200);
+    assert.equal((f.songQueries.at(-1) as { skip: number }).skip, 0);
   }));
 
   it('limits the queue by tracks still to play, not by tracks already played', async () => using(async f => {
@@ -572,6 +576,8 @@ describe('listener remote HTTP security boundary', () => {
     const { session, token } = await f.exchange();
     const attempts = [
       ['/exchange', { token, uid: binding.uid }], ['/queue', { songId: '11' }], ['/queue', { songId: -1 }],
+      ['/queue', { songId: 11.5 }], ['/queue', { songId: Number.MAX_SAFE_INTEGER + 1 }],
+      ['/queue', { songId: null }], ['/queue', { songId: true }],
       ['/queue', { songId: 11, botId: 999 }], ['/queue', { songId: 11, serverGroupIds: [7] }],
       ['/requests', { url: mediaUrl, channelId: 8 }], ['/requests', { url: 'not a URL' }],
     ] as const;

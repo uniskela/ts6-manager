@@ -128,8 +128,20 @@ Continue validating quality presets, source compatibility, and sidecar/media tra
 
 Shipped streaming work is listed under v1.11.0 above.
 
+### Listener remote growth — v1.12.0
+
+Tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442). Playlist browsing, external search, playlist voting (off by default), and a standalone `/remote` page. PIN sign-in and the installable app stay in v1.12.x ([#464](https://github.com/uniskela/ts6-manager/issues/464)). This lane is unchanged by the Discord bridge.
+
+### Discord voice bridge — v1.12.0
+
+Not released. Not in manager beta images. A fail-closed **D1 laboratory** can experiment with one Discord voice channel and one TeamSpeak channel; that image is not a published product. Laboratory DAVE sessions do not make the bridge a product: remaining live audio and failover rows are still open. Planned D2–D6 work (setup UI, persistence, manager integration, a supported operator workflow) stays separate until those gates pass.
+
+Public status: [Discord bridge](discord-bridge.md). This is not an import of upstream [PR #76](https://github.com/clusterzx/ts6-manager/pull/76). Do not fold it into [v1.11.2](https://github.com/uniskela/ts6-manager/pull/460).
+
 ## Explicit scope boundaries
 
-The fork currently does not plan to adopt features that weaken the sidecar/encryption boundaries or turn TS6 Manager into a general container orchestrator.
+The fork does not adopt features that weaken the sidecar/encryption boundaries or turn TS6 Manager into a general container orchestrator.
 
-Large unrelated suites such as Discord bridges, broad SSO absorption, or opportunistic framework migrations should remain separate decisions.
+SSO absorption and opportunistic framework migrations remain separate decisions.
+
+A supported Discord voice product, if it ships later, stays optional and separate from stable 1.11. It does not absorb upstream Discord/SSO/i18n suites.
