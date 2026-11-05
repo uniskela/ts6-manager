@@ -88,6 +88,8 @@ type InternalVote = {
   status: PlaylistVoteStatus;
   reason: PlaylistVoteEndReason | null;
   closedAtMs: number | null;
+  /** Listener set used for the final public tally (frozen at close). */
+  closedListenerUids: readonly string[] | null;
   /** At most one open + one result announcement. */
   announcedOpen: boolean;
   announcedResult: boolean;
@@ -135,7 +137,11 @@ function toPublic(
   listenerUids: readonly string[],
   playlistVisible = true,
 ): PlaylistVotePublic {
-  const listeners = new Set(listenerUids);
+  // Closed tallies stay frozen at the electorate that decided the result.
+  const tallyUids = vote.status === 'open' || !vote.closedListenerUids
+    ? listenerUids
+    : vote.closedListenerUids;
+  const listeners = new Set(tallyUids);
   const { yes, no } = countBallots(vote.ballots, listeners);
   const listenerCount = listeners.size;
   return {
@@ -295,6 +301,7 @@ export class PlaylistVoteMachine {
         status: queued === 'queued' ? 'passed' : 'failed',
         reason: queued === 'queued' ? 'approved' : queued,
         closedAtMs: nowMs,
+        closedListenerUids: [...listenerUids],
         announcedOpen: false,
         announcedResult: true,
       };
@@ -322,6 +329,7 @@ export class PlaylistVoteMachine {
       status: 'open',
       reason: null,
       closedAtMs: null,
+      closedListenerUids: null,
       announcedOpen: true,
       announcedResult: false,
     };
@@ -366,6 +374,9 @@ export class PlaylistVoteMachine {
   } {
     const vote = this.requireOpen(input.voteId, input.botKey, input.channelId);
     if (!vote) return { ok: false, code: 'not_found' };
+    if (!this.ensureOpenBeforeDeadline(vote, input.listenerUids, input.nowMs)) {
+      return { ok: false, code: 'not_found' };
+    }
     if (!input.listenerUids.includes(input.voterUid)) {
       return { ok: false, code: 'listeners_unavailable' };
     }
@@ -402,6 +413,9 @@ export class PlaylistVoteMachine {
   } {
     const vote = this.requireOpen(input.voteId, input.botKey, input.channelId);
     if (!vote) return { ok: false, code: 'not_found' };
+    if (!this.ensureOpenBeforeDeadline(vote, input.listenerUids, input.nowMs)) {
+      return { ok: false, code: 'not_found' };
+    }
     if (input.voterUid === vote.requesterUid) return { ok: false, code: 'invalid_request' };
     if (!input.listenerUids.includes(input.voterUid)) {
       return { ok: false, code: 'listeners_unavailable' };
@@ -421,6 +435,9 @@ export class PlaylistVoteMachine {
     const vote = this.requireOpen(input.voteId, input.botKey, input.channelId);
     if (!vote) return { ok: false, code: 'not_found' };
     if (vote.requesterUid !== input.requesterUid) return { ok: false, code: 'permission_denied' };
+    if (!this.ensureOpenBeforeDeadline(vote, input.listenerUids, input.nowMs)) {
+      return { ok: false, code: 'not_found' };
+    }
     return this.close(vote, 'cancelled', 'requester_cancelled', input.listenerUids, input.nowMs, input.requesterUid);
   }
 
@@ -478,6 +495,25 @@ export class PlaylistVoteMachine {
     return vote;
   }
 
+  /**
+   * Ballot and cancel paths must not mutate a vote after its window ends.
+   * Expire through the same deadline path as `tickDeadline`, then refuse the action.
+   */
+  private ensureOpenBeforeDeadline(
+    vote: InternalVote,
+    listenerUids: readonly string[],
+    nowMs: number,
+  ): boolean {
+    if (nowMs < vote.deadlineMs) return true;
+    this.tickDeadline({
+      botKey: vote.botKey,
+      channelId: vote.channelId,
+      listenerUids,
+      nowMs,
+    });
+    return false;
+  }
+
   private tryPass(
     vote: InternalVote,
     listenerUids: readonly string[],
@@ -512,6 +548,7 @@ export class PlaylistVoteMachine {
     vote.status = 'passed';
     vote.reason = 'approved';
     vote.closedAtMs = nowMs;
+    vote.closedListenerUids = [...listenerUids];
     vote.announcedResult = true;
     const k = this.key(vote.botKey, vote.channelId);
     this.open.delete(k);
@@ -531,6 +568,7 @@ export class PlaylistVoteMachine {
     vote.status = status;
     vote.reason = reason;
     vote.closedAtMs = nowMs;
+    vote.closedListenerUids = [...listenerUids];
     vote.announcedResult = true;
     const k = this.key(vote.botKey, vote.channelId);
     this.open.delete(k);
@@ -550,6 +588,7 @@ export class PlaylistVoteMachine {
     vote.status = status;
     vote.reason = reason;
     vote.closedAtMs = nowMs;
+    vote.closedListenerUids = [];
     const k = this.key(vote.botKey, vote.channelId);
     this.open.delete(k);
     this.closed.set(k, vote);

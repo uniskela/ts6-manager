@@ -637,4 +637,83 @@ describe('PlaylistVoteMachine', () => {
       true,
     );
   });
+
+  it('rejects ballots after the deadline and closes as deadline failure', () => {
+    const m = new PlaylistVoteMachine();
+    const opened = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist,
+      settings,
+      listenerUids: ['u1', 'u2', 'u3'],
+      nowMs: 0,
+    });
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+
+    const lateYes = m.castBallot({
+      voteId: opened.vote.id,
+      botKey: 'b1',
+      channelId: 'c1',
+      voterUid: 'u2',
+      choice: 'yes',
+      listenerUids: ['u1', 'u2', 'u3'],
+      nowMs: 60_000,
+    });
+    assert.equal(lateYes.ok, false);
+    if (!lateYes.ok) assert.equal(lateYes.code, 'not_found');
+
+    const view = m.viewForState('b1', 'c1', 'u1', ['u1', 'u2', 'u3'], 60_001);
+    assert.equal(view?.status, 'failed');
+    assert.equal(view?.reason, 'deadline');
+  });
+
+  it('freezes closed vote tallies against the closing electorate', () => {
+    const m = new PlaylistVoteMachine({ closedVisibleMs: 30_000 });
+    const opened = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist,
+      settings,
+      listenerUids: ['u1', 'u2', 'u3', 'u4', 'u5'],
+      nowMs: 0,
+    });
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+
+    m.castBallot({
+      voteId: opened.vote.id,
+      botKey: 'b1',
+      channelId: 'c1',
+      voterUid: 'u2',
+      choice: 'yes',
+      listenerUids: ['u1', 'u2', 'u3', 'u4', 'u5'],
+      nowMs: 10,
+    });
+    m.castBallot({
+      voteId: opened.vote.id,
+      botKey: 'b1',
+      channelId: 'c1',
+      voterUid: 'u3',
+      choice: 'yes',
+      listenerUids: ['u1', 'u2', 'u3', 'u4', 'u5'],
+      nowMs: 20,
+    });
+    // 3 yes of 5 listeners → needed 4 at 80%; still open, then deadline fails.
+    m.tickDeadline({
+      botKey: 'b1',
+      channelId: 'c1',
+      listenerUids: ['u1', 'u2', 'u3', 'u4', 'u5'],
+      nowMs: 60_000,
+    });
+
+    const afterLeavers = m.viewForState('b1', 'c1', 'u1', ['u1', 'u2', 'u3'], 60_500);
+    assert.equal(afterLeavers?.status, 'failed');
+    assert.equal(afterLeavers?.reason, 'deadline');
+    assert.equal(afterLeavers?.listeners, 5);
+    assert.equal(afterLeavers?.needed, 4);
+    assert.equal(afterLeavers?.yes, 3);
+  });
 });
