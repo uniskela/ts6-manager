@@ -12,6 +12,15 @@ export const RADIO_FETCHER_UNAVAILABLE =
 
 export const MEDIA_FETCHER_UNAVAILABLE = RADIO_FETCHER_UNAVAILABLE;
 
+/** Bound connect wait for the job socket. */
+export const MEDIA_FETCHER_CONNECT_TIMEOUT_MS = 3_000;
+/** Bound wait for the submit/header JSON line (before audio). */
+export const MEDIA_FETCHER_HEADER_TIMEOUT_MS = 5_000;
+/** Bound cancel RPC so Stop cannot hang on a wedged fetcher. */
+export const MEDIA_FETCHER_CANCEL_TIMEOUT_MS = 2_000;
+/** PassThrough high-water mark — pause the socket when full (backpressure). */
+export const MEDIA_FETCHER_STDOUT_HIGH_WATER_MARK = 256 * 1024;
+
 function fetcherUnavailable(): MediaEgressError {
   return new MediaEgressError(RADIO_FETCHER_UNAVAILABLE);
 }
@@ -37,26 +46,53 @@ export interface FetcherStream {
   kill: () => void;
 }
 
-function connectJob(sockPath: string): Promise<net.Socket> {
+function connectJob(sockPath: string, timeoutMs = MEDIA_FETCHER_CONNECT_TIMEOUT_MS): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = net.connect(sockPath);
-    socket.once('connect', () => resolve(socket));
-    socket.once('error', reject);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('connect-timeout'));
+    }, timeoutMs);
+    socket.once('connect', () => {
+      clearTimeout(timer);
+      resolve(socket);
+    });
+    socket.once('error', (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
   });
 }
 
-async function rpc(sockPath: string, msg: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const socket = await connectJob(sockPath);
+async function rpc(
+  sockPath: string,
+  msg: Record<string, unknown>,
+  timeoutMs = MEDIA_FETCHER_CANCEL_TIMEOUT_MS,
+): Promise<Record<string, unknown>> {
+  const socket = await connectJob(sockPath, timeoutMs);
   return new Promise((resolve, reject) => {
     let buf = '';
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('rpc-timeout'));
+    }, timeoutMs);
+    const finish = (fn: () => void) => {
+      clearTimeout(timer);
+      fn();
+    };
     socket.on('data', (chunk) => {
       buf += chunk.toString();
       const nl = buf.indexOf('\n');
       if (nl < 0) return;
       socket.end();
-      try { resolve(JSON.parse(buf.slice(0, nl))); } catch (err) { reject(err); }
+      try {
+        const parsed = JSON.parse(buf.slice(0, nl));
+        finish(() => resolve(parsed));
+      } catch (err) {
+        finish(() => reject(err));
+      }
     });
-    socket.on('error', reject);
+    socket.on('error', (err) => finish(() => reject(err)));
     socket.write(`${JSON.stringify(msg)}\n`);
   });
 }
@@ -83,11 +119,12 @@ export async function submitMediaFetch(
   } catch {
     throw fetcherUnavailable();
   }
-  const stdout = new PassThrough();
+  const stdout = new PassThrough({ highWaterMark: MEDIA_FETCHER_STDOUT_HIGH_WATER_MARK });
   const proc = new EventEmitter() as ChildProcess;
   let buf = Buffer.alloc(0);
   let killed = false;
   let jobId = '';
+  let paused = false;
 
   const kill = () => {
     if (killed) return;
@@ -96,31 +133,44 @@ export async function submitMediaFetch(
     rpc(sockPath, { op: 'cancel', token, jobId }).catch(() => {});
   };
 
+  const headerTimeoutMs = Number(env.MEDIA_FETCHER_HEADER_TIMEOUT_MS) > 0
+    ? Number(env.MEDIA_FETCHER_HEADER_TIMEOUT_MS)
+    : MEDIA_FETCHER_HEADER_TIMEOUT_MS;
+
   let header: Record<string, unknown>;
   try {
     header = await new Promise<Record<string, unknown>>((resolve, reject) => {
-    const fail = () => reject(fetcherUnavailable());
-    socket.on('error', fail);
-    socket.on('data', function onHead(chunk: Buffer) {
-      buf = Buffer.concat([buf, chunk]);
-      const nl = buf.indexOf(0x0a);
-      if (nl < 0) return;
-      socket.off('data', onHead);
-      socket.off('error', fail);
-      let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(buf.subarray(0, nl).toString()); } catch {
-        reject(fetcherUnavailable());
-        return;
+      const fail = () => reject(fetcherUnavailable());
+      const timer = setTimeout(() => {
+        socket.off('data', onHead);
+        socket.off('error', fail);
+        fail();
+      }, headerTimeoutMs);
+      function onHead(chunk: Buffer) {
+        buf = Buffer.concat([buf, chunk]);
+        const nl = buf.indexOf(0x0a);
+        if (nl < 0) return;
+        clearTimeout(timer);
+        socket.off('data', onHead);
+        socket.off('error', fail);
+        let parsed: Record<string, unknown>;
+        try {
+          parsed = JSON.parse(buf.subarray(0, nl).toString());
+        } catch {
+          reject(fetcherUnavailable());
+          return;
+        }
+        buf = buf.subarray(nl + 1);
+        resolve(parsed);
       }
-      buf = buf.subarray(nl + 1);
-      resolve(parsed);
-    });
-    socket.write(`${JSON.stringify({
-      op: 'submit',
-      token,
-      url,
-      ports: [...RADIO_EGRESS_PORTS],
-    })}\n`);
+      socket.on('error', fail);
+      socket.on('data', onHead);
+      socket.write(`${JSON.stringify({
+        op: 'submit',
+        token,
+        url,
+        ports: [...RADIO_EGRESS_PORTS],
+      })}\n`);
     });
   } catch {
     socket.destroy();
@@ -132,8 +182,27 @@ export async function submitMediaFetch(
     throw fetcherUnavailable();
   }
   jobId = String(header.jobId ?? '');
-  if (buf.length) stdout.write(buf);
-  socket.on('data', (chunk) => stdout.write(chunk));
+  if (buf.length) {
+    if (!stdout.write(buf)) {
+      paused = true;
+      socket.pause();
+    }
+  }
+
+  const resumeIfDrained = () => {
+    if (!paused || killed) return;
+    paused = false;
+    socket.resume();
+  };
+  stdout.on('drain', resumeIfDrained);
+
+  socket.on('data', (chunk) => {
+    if (killed) return;
+    if (!stdout.write(chunk)) {
+      paused = true;
+      socket.pause();
+    }
+  });
   socket.on('end', () => {
     stdout.end();
     proc.emit('close', killed ? 1 : 0);

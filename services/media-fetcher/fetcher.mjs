@@ -284,7 +284,16 @@ async function handle(socket) {
     };
     jobs.set(jobId, job);
     socket.write(JSON.stringify({ ok: true, jobId, shimPort: shim.port }) + '\n');
-    child.stdout.on('data', (c) => { try { socket.write(c); } catch { /* closed */ } });
+    // Pause ffmpeg stdout when the client socket is full so a fast VOD cannot
+    // buffer unbounded audio in this process.
+    child.stdout.on('data', (c) => {
+      try {
+        if (!socket.write(c)) child.stdout.pause();
+      } catch { /* closed */ }
+    });
+    socket.on('drain', () => {
+      try { child.stdout.resume(); } catch { /* closed */ }
+    });
     child.stderr.on('data', (c) => {
       const log = process.env.FETCHER_FFMPEG_LOG;
       if (log) {

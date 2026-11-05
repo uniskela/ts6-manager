@@ -586,6 +586,14 @@ export class VoiceBotManager extends EventEmitter {
   }
 
   async removeBot(id: number): Promise<void> {
+    // DiscordGuildBinding.musicBot uses onDelete: Restrict so a leftover (even
+    // revoked) binding blocks musicBot.delete. Detach first — product rule:
+    // deleting a music bot permanently clears every guild binding that pointed
+    // at it. Schema stays Restrict so other paths cannot silently cascade.
+    if (typeof this.prisma.discordGuildBinding?.deleteMany === 'function') {
+      await this.prisma.discordGuildBinding.deleteMany({ where: { musicBotId: id } });
+    }
+
     const automation = this.bots.get(id)?.automation;
     automation?.dispose();
     await automation?.flush();

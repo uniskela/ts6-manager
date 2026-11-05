@@ -190,6 +190,8 @@ model DiscordGuildBinding {
   serverConfigId Int
   serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
   musicBotId     Int
+  /// Restrict: accidental cascades are forbidden. VoiceBotManager.removeBot
+  /// explicitly deleteMany's bindings (including revoked) before musicBot.delete.
   musicBot       MusicBot       @relation(fields: [musicBotId], references: [id], onDelete: Restrict)
   revoked        Boolean        @default(false)
   createdAt      DateTime       @default(now())

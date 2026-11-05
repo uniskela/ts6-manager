@@ -156,4 +156,33 @@ describe('submitMediaFetch', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('fails closed when the job header never arrives (header timeout)', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ts6-fetch-hang-'));
+    const sockPath = path.join(dir, 'jobs.sock');
+    const token = path.join(dir, 'token');
+    fs.writeFileSync(token, '0123456789abcdef0123456789abcdef', { mode: 0o600 });
+    const server = net.createServer((client) => {
+      client.on('data', () => {});
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.listen(sockPath, resolve);
+      server.once('error', reject);
+    });
+    try {
+      const start = Date.now();
+      await assert.rejects(
+        () => submitMediaFetch('https://203.0.113.10/live', {
+          MEDIA_FETCHER_SOCK: sockPath,
+          MEDIA_FETCHER_TOKEN_FILE: token,
+          MEDIA_FETCHER_HEADER_TIMEOUT_MS: '40',
+        }),
+        isUnavailable,
+      );
+      assert.ok(Date.now() - start < 2_000);
+    } finally {
+      server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

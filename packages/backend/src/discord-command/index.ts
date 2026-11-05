@@ -117,7 +117,8 @@ export {
   createDiscordBridgeHealthPort,
   mapDiscordBridgeStatus,
 } from './bridge-health-port.js';
-export { MemoryCommandRateLimit } from './rate-limit.js';
+export { FairCommandRateLimit, MemoryCommandRateLimit } from './rate-limit.js';
+export { createDiscordCommandAudit, writeDiscordCommandAudit } from './command-audit.js';
 export {
   MemoryReplayGuard,
   signInvokeHmac,

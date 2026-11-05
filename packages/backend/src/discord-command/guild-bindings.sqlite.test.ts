@@ -421,4 +421,42 @@ describe('persistent Discord guild bindings (Phase 2C step 2)', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
+
+  it('music bot deletion detaches active and revoked Discord bindings (P1-1)', async () => {
+    const { root, prisma } = await openDb();
+    try {
+      const svc = createDiscordGuildBindingService(prisma as any);
+      await svc.bind({
+        guildId: GUILD_A,
+        instanceId: 'inst-1',
+        serverConfigId: 1,
+        musicBotId: 10,
+      });
+      await svc.revoke(GUILD_A);
+      await svc.bind({
+        guildId: GUILD_B,
+        instanceId: 'inst-1',
+        serverConfigId: 1,
+        musicBotId: 10,
+      });
+
+      // Direct delete still fails while bindings exist (schema Restrict).
+      await assert.rejects(
+        () => prisma.musicBot.delete({ where: { id: 10 } }),
+        (err: any) => err?.code === 'P2003' || /Foreign key|constraint/i.test(String(err?.message ?? err)),
+      );
+
+      const { VoiceBotManager } = await import('../voice/voice-bot-manager.js');
+      const manager = new VoiceBotManager(prisma as any, { clients: new Set() } as any);
+      await manager.removeBot(10);
+
+      assert.equal(await prisma.musicBot.findUnique({ where: { id: 10 } }), null);
+      assert.equal(await prisma.discordGuildBinding.count({ where: { musicBotId: 10 } }), 0);
+      // Other bots untouched.
+      assert.ok(await prisma.musicBot.findUnique({ where: { id: 20 } }));
+    } finally {
+      await prisma.$disconnect();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 });

@@ -16,6 +16,16 @@ import type { DiscordCommandRuntime, GuildBindingLookup } from './runtime.js';
 import { createBindingScopedPresence } from './ts-presence-port.js';
 import { createDiscordBridgeHealthPort } from './bridge-health-port.js';
 import type { BridgeSnapshot, PresenceSnapshot } from './adapter.js';
+import { FairCommandRateLimit, MemoryCommandRateLimit } from './rate-limit.js';
+import { createDiscordCommandAudit } from './command-audit.js';
+
+/** Per guild:user sliding window (fairness). */
+export const DISCORD_CMD_USER_LIMIT = 20;
+export const DISCORD_CMD_USER_WINDOW_MS = 60_000;
+/** Per guild flood cap across all users. */
+export const DISCORD_CMD_GUILD_LIMIT = 120;
+export const DISCORD_CMD_GUILD_WINDOW_MS = 60_000;
+export const DISCORD_CMD_RATE_MAX_KEYS = 10_000;
 
 /** Minimal VoiceBotManager surface — avoids holding a second player/queue. */
 export type VoiceBotManagerPort = {
@@ -45,6 +55,10 @@ export type BackendDiscordRuntimeOpts = {
   identityForUser?: MusicServiceDeps['identityForUser'];
   nowMs?: () => number;
   audit?: (event: { guildId: string; userId: string; command: string; result: string }) => void;
+  /** Override production command rate limit (tests). */
+  rateLimit?: { take(key: string, nowMs: number): boolean };
+  /** When false, skip default MemoryCommandRateLimit (tests that assert unlimited). Default true. */
+  enableDefaultRateLimit?: boolean;
   /**
    * Optional TeamSpeak WebQuery pool for `/ts status|online|channels`.
    * When omitted, presence stays unavailable (fail closed).
@@ -205,12 +219,29 @@ export function createBackendDiscordCommandRuntime(
     statusFilePath: opts.discordBridgeStatusFile,
   });
 
+  const rateLimit = opts.rateLimit ?? (
+    opts.enableDefaultRateLimit === false
+      ? undefined
+      : new FairCommandRateLimit(
+        new MemoryCommandRateLimit(DISCORD_CMD_USER_LIMIT, DISCORD_CMD_USER_WINDOW_MS, DISCORD_CMD_RATE_MAX_KEYS),
+        new MemoryCommandRateLimit(DISCORD_CMD_GUILD_LIMIT, DISCORD_CMD_GUILD_WINDOW_MS, DISCORD_CMD_RATE_MAX_KEYS),
+      )
+  );
+
+  const prismaAudit = opts.prisma as unknown as { adminAuditEvent?: { create?: unknown } };
+  const audit = opts.audit ?? (
+    typeof prismaAudit.adminAuditEvent?.create === 'function'
+      ? createDiscordCommandAudit(prismaAudit as Parameters<typeof createDiscordCommandAudit>[0])
+      : () => {}
+  );
+
   const adapter = createDiscordCommandAdapter({
     bindings,
     policy: opts.policy,
     presence,
     bridge,
-    audit: opts.audit ?? (() => {}),
+    audit,
+    rateLimit,
     music,
     nowMs: opts.nowMs,
   });
