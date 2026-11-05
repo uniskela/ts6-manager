@@ -8,6 +8,11 @@ import type { CommandContext } from './context.js';
 import { enqueueSavedPlaylist, formatPlaylistList, loadPlaylistSummaries } from './library.js';
 /** Cancels stale background playlist expansions for chat !play / !queue. */
 const chatPlaylistGeneration = new Map<number, number>();
+/**
+ * Bumped on every begin() so in-flight lookups (e.g. !radio station fetch) can
+ * observe a newer provisional intent without cancelling an accepted peer.
+ */
+const chatMediaIntent = new Map<number, number>();
 /** Active accepted media request AbortController per bot. */
 const chatMediaControllers = new Map<number, AbortController>();
 /** Provisional (not yet accepted) controllers — Stop aborts them; peers do not. */
@@ -16,6 +21,11 @@ const provisionalControllers = new Map<number, Set<AbortController>>();
 /** Observe pending media intent without cancelling it. */
 export function getChatMediaGeneration(botId: number): number {
   return chatPlaylistGeneration.get(botId) ?? 0;
+}
+
+/** Observe provisional begin() count without cancelling accepted playback. */
+export function getChatMediaIntent(botId: number): number {
+  return chatMediaIntent.get(botId) ?? 0;
 }
 
 /**
@@ -42,6 +52,7 @@ function provisionals(botId: number): Set<AbortController> {
 
 /** Start provisional media work. Does not cancel an accepted request until accept(). */
 export function beginChatMediaRequest(botId: number): ChatMediaRequest {
+  chatMediaIntent.set(botId, (chatMediaIntent.get(botId) ?? 0) + 1);
   const generationAtStart = chatPlaylistGeneration.get(botId) ?? 0;
   const controller = new AbortController();
   provisionals(botId).add(controller);
@@ -243,13 +254,13 @@ export async function enqueueMediaUrl(
   const applied = await applyMediaUrlToBot(context, botId, bot, rawUrl, request, deps);
   if (!applied) return;
   if (applied.alreadyPlaying) {
-    await context.reply(
+    void context.reply(
       bot,
       userClid,
       `Queued: ${applied.first.artist} - ${applied.first.title} (position #${trackNumber(bot, bot.queue.length - 1)})${applied.playlistNote}`,
     );
   } else {
-    await context.reply(bot, userClid, `Now playing: ${applied.first.artist} - ${applied.first.title}${applied.playlistNote}`);
+    void context.reply(bot, userClid, `Now playing: ${applied.first.artist} - ${applied.first.title}${applied.playlistNote}`);
   }
 }
 
@@ -262,10 +273,10 @@ export async function handlePlaylist(
   args: string,
 ): Promise<void> {
   const serverConfigId = bot.currentConfig.serverConfigId;
-  if (!serverConfigId) { await context.reply(bot, userClid, 'No server configured.'); return; }
+  if (!serverConfigId) { void context.reply(bot, userClid, 'No server configured.'); return; }
   const query = args.trim();
   if (!query) {
-    await context.reply(bot, userClid, formatPlaylistList(await loadPlaylistSummaries(context.prisma, serverConfigId)));
+    void context.reply(bot, userClid, formatPlaylistList(await loadPlaylistSummaries(context.prisma, serverConfigId)));
     return;
   }
   const result = await enqueueSavedPlaylist(context.prisma, bot, query, {
@@ -274,11 +285,11 @@ export async function handlePlaylist(
     isCurrent: () => context.voiceBotManager.getBot(botId) === bot,
   });
   if (!result.ok) {
-    await context.reply(bot, userClid, result.message);
+    void context.reply(bot, userClid, result.message);
     return;
   }
   context.saveMusicRequest(bot, result.items);
-  await context.reply(bot, userClid, `Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`);
+  void context.reply(bot, userClid, `Queued playlist "${result.name.slice(0, 60)}" (${result.count} tracks).`);
 }
 
 /** Report or set the queue repeat mode after validating the requested mode. */

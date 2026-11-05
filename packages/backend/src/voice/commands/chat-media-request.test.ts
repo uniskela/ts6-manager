@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   beginChatMediaRequest,
+  getChatMediaIntent,
   invalidateChatPlaylistExpansion,
   startOrAppendMediaItem,
 } from './queue.js';
@@ -17,7 +18,9 @@ describe('chat media request lifecycle (findings #3–5)', () => {
     first.accept();
     assert.equal(first.isCancelled(), false);
 
+    const intentBefore = getChatMediaIntent(42);
     const invalid = beginChatMediaRequest(42);
+    assert.equal(getChatMediaIntent(42), intentBefore + 1, 'begin bumps intent for in-flight lookups');
     assert.equal(first.isCancelled(), false, 'provisional peer must not bump generation');
     invalid.discard();
     assert.equal(first.isCancelled(), false);

@@ -12,6 +12,10 @@
 | CodeQL | Incomplete URL substring sanitization in smoke test | **Fixed** — hostname parse via `URL` |
 | CodeQL | Missing rate limiting on test auth routes | **Fixed** — test limiter + production Discord interactions limiter |
 | Sonar shell:S7688 | `[` vs `[[` in lab scripts | **Fixed** — converted flagged scripts |
+| TypeScript CI | `!again` unavailable mark/reply never ran after `request.discard()` | **Fixed** — identity checks use `sameBot()` after discard; replies restored |
+| TypeScript CI | `bot.stopAudio is not a function` on radio supersede in history fixture | **Fixed** — fixture provides `stopAudio`; production VoiceBot already had it |
+| TypeScript CI | `!again` during `!radio` station lookup still started radio | **Fixed** — `beginChatMediaRequest` bumps intent; radio aborts lookup on intent change |
+| Sonar S9383 (reply awaits) | Floating `context.reply` MAJOR reliability on shared voice code | **Fixed** — selected `queue.ts` / `playback.ts` replies use `void` (preserves prior fire-and-forget timing) |
 
 ## Manual disposition (do not weaken controls)
 
@@ -19,7 +23,6 @@
 |---------|-------------------|
 | Residual Sonar S5144 on egress proxy | Proxy is a controlled allowlisted egress gateway (job token, host allowlist, port allowlist, DNS pin, path ASCII rebuild, private-net refusal). If S5144 remains after `sanitizeProxyPath` + `pinnedHttpRequest`, mark **Safe** in Sonar: “intentional media egress proxy with pinMediaAddresses”. |
 | Residual S1313 if JSON still scanned | Denylist CIDRs are security controls aligned with `egress-policy.ts`. Prefer **False positive** / Safe over deleting denials. |
-| Floating `context.reply` promises in `queue.ts` / `playback.ts` | Pre-existing chat command style on shared voice code; MAJOR reliability noise on a large PR. Prefer targeted follow-up rather than mass-await churn in this CI batch unless QG still fails after shell/SSRF clears. |
 | Cognitive-complexity / nested-ternary smells | Maintainability only; not security. |
 | Sonar S2699 on delivery tests | Likely false positive on assertion-heavy suites; re-check after reanalysis. |
 

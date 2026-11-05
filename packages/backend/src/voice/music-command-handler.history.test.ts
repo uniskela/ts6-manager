@@ -42,6 +42,7 @@ function fixture(rows = [row(1)], status = 'connected', policy: object | null = 
     getCurrentChannelId: () => 5, assertMusicCanStart: () => {},
     play: async (item: any) => { bot.nowPlaying = item; played.push(item); },
     playStream: async (item: any) => { bot.nowPlaying = item; played.push(item); },
+    stopAudio: () => { bot.nowPlaying = null; },
   };
   const manager: any = { getBot: () => bot };
   const handler: any = new MusicCommandHandler(prisma, manager);
@@ -106,6 +107,7 @@ test('again validates private URLs and missing files and marks requests unavaila
   assert.deepEqual(f.marked, [1, 2]);
   assert.deepEqual(f.enqueued, []);
   assert.equal(f.bot.queue.length, 0);
+  assert.equal(f.replies.length, 2);
   assert.ok(f.replies.every(message => message === 'This media is no longer available.'));
 });
 
@@ -204,15 +206,19 @@ test('unavailable replies are discarded when the bot changes during the history 
     await new Promise(done => setImmediate(done));
     assert.ok(release);
     if (change === 'stop') {
-      f.bot.stopAudio = () => {};
       await f.command('!stop');
     } else if (change === 'replace') f.manager.getBot = () => ({ ...f.bot });
     else if (change === 'server') f.bot.currentConfig.serverConfigId = 10;
     else f.handler.botChannelConfig.get(1).virtualServerId = 3;
-    const replies = [...f.replies];
+    const repliesBefore = [...f.replies];
     release();
     await replay;
-    assert.deepEqual(f.replies, replies, change);
+    if (change === 'stop') {
+      // Stop keeps the same bot identity; the unavailable reply still applies.
+      assert.equal(f.replies.at(-1), 'This media is no longer available.', change);
+    } else {
+      assert.deepEqual(f.replies, repliesBefore, change);
+    }
   }
 });
 

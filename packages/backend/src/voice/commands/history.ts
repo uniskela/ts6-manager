@@ -42,10 +42,12 @@ export async function handleAgain(
   }
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
-  const request = beginChatMediaRequest(botId);
-  const isCurrent = () => !request.isCancelled() && context.voiceBotManager.getBot(botId) === bot
+  // discard() aborts the request, so identity checks after discard must not use isCancelled().
+  const sameBot = () => context.voiceBotManager.getBot(botId) === bot
     && bot.currentConfig.serverConfigId === serverConfigId
     && context.virtualServerIdForBot(botId) === virtualServerId;
+  const request = beginChatMediaRequest(botId);
+  const isCurrent = () => !request.isCancelled() && sameBot();
   const config = await context.prisma.musicBot.findUnique({ where: { id: botId }, select: { serverConfigId: true, virtualServerId: true } });
   if (!isCurrent()) { request.discard(); return; }
   if (config?.serverConfigId !== serverConfigId || config?.virtualServerId !== virtualServerId) {
@@ -65,8 +67,9 @@ export async function handleAgain(
   if (!isCurrent()) { request.discard(); return; }
   if (!ref.ok) {
     request.discard();
+    if (!sameBot()) return;
     await markMusicRequestUnavailable(context.prisma, row.id);
-    if (isCurrent()) await context.reply(bot, userClid, MEDIA_UNAVAILABLE);
+    if (sameBot()) await context.reply(bot, userClid, MEDIA_UNAVAILABLE);
     return;
   }
   try {
@@ -84,10 +87,11 @@ export async function handleAgain(
     const queued = await enqueueMediaItem(context, bot, item, isCurrent);
     if (queued !== null && isCurrent()) await context.reply(bot, userClid, `${queued ? 'Queued' : 'Now playing'}: ${historyText(row.title, 70)}`);
   } catch (error) {
+    const unavailable = isUnavailableMusicRequestError(error);
     request.discard();
-    if (!isCurrent()) return;
-    if (!isUnavailableMusicRequestError(error)) throw error;
+    if (!unavailable) throw error;
+    if (!sameBot()) return;
     await markMusicRequestUnavailable(context.prisma, row.id);
-    if (isCurrent()) await context.reply(bot, userClid, MEDIA_UNAVAILABLE);
+    if (sameBot()) await context.reply(bot, userClid, MEDIA_UNAVAILABLE);
   }
 }

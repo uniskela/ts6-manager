@@ -3,7 +3,7 @@ import type { QueueItem } from '../playlist/queue.js';
 import { formatRadioListMessage } from '../ts6-chat-format.js';
 import type { CommandContext } from './context.js';
 import { invalidatePlaylistExpansion } from '../playlist-expansion.js';
-import { beginChatMediaRequest, getChatMediaGeneration, invalidateChatPlaylistExpansion } from './queue.js';
+import { beginChatMediaRequest, getChatMediaGeneration, getChatMediaIntent, invalidateChatPlaylistExpansion } from './queue.js';
 
 // ─── Command Handlers ───────────────────────────────────────
 /** List configured radio stations or play a selected station in the requesting channel. */
@@ -15,6 +15,7 @@ export async function handleRadio(
   args: string,
 ): Promise<void> {
   const generation = getChatMediaGeneration(botId);
+  const intent = getChatMediaIntent(botId);
   const serverConfigId = bot.currentConfig.serverConfigId;
   const virtualServerId = context.virtualServerIdForBot(botId);
   const isSameBot = () => context.voiceBotManager.getBot(botId) === bot
@@ -64,7 +65,8 @@ export async function handleRadio(
     return;
   }
 
-  if (getChatMediaGeneration(botId) !== generation) return;
+  // Drop when Stop/accept bumped generation, or a newer provisional begin() raced the lookup.
+  if (getChatMediaGeneration(botId) !== generation || getChatMediaIntent(botId) !== intent) return;
   const request = beginChatMediaRequest(botId);
   const isCurrent = () => !request.isCancelled() && isSameBot();
   await context.joinChannelForCommand(botId, bot, userClid);
@@ -259,10 +261,10 @@ export async function skipPlayback(
 export async function handleSkip(context: CommandContext, bot: VoiceBot, userClid: number): Promise<void> {
   const result = await skipPlayback(bot, context.chatMusicSwitch(bot));
   if (result.kind === 'skipped') {
-    await context.reply(bot, userClid, `Skipped to: ${result.title}`);
+    void context.reply(bot, userClid, `Skipped to: ${result.title}`);
     return;
   }
-  await context.reply(bot, userClid, 'Queue empty — playback stopped.');
+  void context.reply(bot, userClid, 'Queue empty — playback stopped.');
 }
 
 /** Play the previous queued item or report that no earlier track exists. */
