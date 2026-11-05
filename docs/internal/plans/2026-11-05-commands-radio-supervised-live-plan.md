@@ -7,7 +7,7 @@ One sitting. INT-TEST Discord app + disposable TeamSpeak only. No production. No
 - [x] Guild slash commands dry-run reviewed; **guild-only** creates applied on INT-TEST (2026-11-05)
 - [x] `/play` `/queue` `/stop` preserved; volume cosmetic drift left unapplied
 - [x] CI findings triage/fixes pushed on integration (hygiene, Sonar highs, CodeQL, history race regressions)
-- [ ] Confirm PR #601 required checks green after latest push (TypeScript suite was the last red)
+- [x] PR #601 product checks green on `6de67d3` (TypeScript/Sonar/CodeQL/hygiene); Scan backend re-run if deno CDN 504 flakes
 - [ ] Guild bound to MusicBot; viewer/admin role IDs or isolated-live Administrator latch
 - [ ] Disposable TS with MusicBot nickname visible
 - [ ] `yt-dlp` absolute path; no sentinel cookie jar

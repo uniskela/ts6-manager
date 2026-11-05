@@ -27,8 +27,15 @@
 | Cognitive-complexity / nested-ternary smells | Maintainability only; not security. |
 | Sonar S2699 on delivery tests | Likely false positive on assertion-heavy suites; re-check after reanalysis. |
 
+## Transient / infra (not code defects)
+
+| Check | Note |
+|-------|------|
+| Scan backend (6de67d3) | Docker build `install-deno.sh` hit upstream **HTTP 504**; yt-dlp install succeeded. Re-run failed jobs — not a PR code change. |
+
 ## Not modified
 
 - Production Discord application / global slash registration
 - PR #504 / D1 lab infrastructure
 - No rule suppressions (`NOSONAR`) added
+- No merge of PR #601
