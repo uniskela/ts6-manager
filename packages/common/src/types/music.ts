@@ -149,10 +149,14 @@ export interface PlaybackState {
 
 export type PlaylistMode = 'local' | 'stream';
 
+/** Listener remote visibility for a shared playlist (#442 A1). */
+export type PlaylistRemoteAccess = 'hidden' | 'browse' | 'request';
+
 export interface PlaylistSummary {
   id: number;
   name: string;
   mode: PlaylistMode;
+  remoteAccess: PlaylistRemoteAccess;
   musicBotId: number | null;
   songCount: number;
   createdAt: string;
