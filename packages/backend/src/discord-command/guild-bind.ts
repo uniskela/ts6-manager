@@ -5,6 +5,7 @@
 import {
   assertDiscordGuildId,
   createDiscordGuildBindingService,
+  toGuildBindingRow,
   type DiscordGuildBindingRow,
   type GuildBindingWriteInput,
 } from './guild-bindings.js';
@@ -67,16 +68,7 @@ async function loadExisting(
   guildId: string,
 ): Promise<DiscordGuildBindingRow | null> {
   const row = await prisma.discordGuildBinding.findUnique({ where: { guildId } });
-  if (!row) return null;
-  return {
-    guildId: row.guildId,
-    instanceId: row.instanceId,
-    serverConfigId: row.serverConfigId,
-    musicBotId: row.musicBotId,
-    revoked: row.revoked,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-  };
+  return row ? toGuildBindingRow(row) : null;
 }
 
 export async function previewGuildBinding(
