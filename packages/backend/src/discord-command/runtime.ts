@@ -55,8 +55,8 @@ export function createDiscordCommandRuntime(opts: {
   const adapter = createDiscordCommandAdapter({
     bindings: opts.bindings,
     policy: opts.policy,
-    presence: opts.presence ?? { async snapshot() { return null; } },
-    bridge: opts.bridge ?? { async health() { return null; } },
+    presence: opts.presence ?? { async snapshot(_guildId: string) { return null; } },
+    bridge: opts.bridge ?? { async health(_guildId: string) { return null; } },
     audit: opts.audit ?? (() => {}),
     music,
     nowMs: opts.nowMs,

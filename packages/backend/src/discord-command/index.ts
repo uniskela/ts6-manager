@@ -112,6 +112,11 @@ export { MemoryCommandIdempotency, musicIdempotencyKey } from './idempotency.js'
 export { createMusicCommandService, type MusicCommandService } from './music-service.js';
 export { createOutboundCommandSession, type OutboundEnvelope } from './outbound.js';
 export { presenceFromQueryRows } from './presence.js';
+export { createBindingScopedPresence } from './ts-presence-port.js';
+export {
+  createDiscordBridgeHealthPort,
+  mapDiscordBridgeStatus,
+} from './bridge-health-port.js';
 export { MemoryCommandRateLimit } from './rate-limit.js';
 export {
   MemoryReplayGuard,

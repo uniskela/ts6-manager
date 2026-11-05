@@ -47,6 +47,11 @@ async function main() {
     console.warn('[WARN] JWT_SECRET is using the default development value. Set JWT_SECRET in production!');
   }
 
+  if (config.discordBridgeUrl && !config.discordBridgeSecret && config.nodeEnv === 'production') {
+    console.error('[FATAL] DISCORD_BRIDGE_URL is set without DISCORD_BRIDGE_SECRET.');
+    process.exit(1);
+  }
+
   // Require a distinct ENCRYPTION_KEY in production (do not fall back to JWT_SECRET)
   if (config.nodeEnv === 'production' && !process.env.ENCRYPTION_KEY) {
     console.error('[FATAL] ENCRYPTION_KEY is required in production. Set a separate AES key (do not reuse JWT_SECRET).');
@@ -193,6 +198,18 @@ async function main() {
     },
     virtualServerIdForBot: (botId) => musicCommandHandler.virtualServerIdForBot(botId),
     followUp: discordFollowUp,
+    getTsQueryClient: (serverConfigId) => {
+      try {
+        return connectionPool.hasClient(serverConfigId)
+          ? connectionPool.getClient(serverConfigId)
+          : null;
+      } catch {
+        return null;
+      }
+    },
+    discordBridgeUrl: config.discordBridgeUrl,
+    discordBridgeSecret: config.discordBridgeSecret,
+    discordBridgeStatusFile: config.discordBridgeStatusFile || undefined,
   });
   installDiscordCommandRuntime(app, discordRuntime);
 

@@ -54,6 +54,14 @@ export const config = {
   discordViewerRoleIds: envRoleIds('DISCORD_VIEWER_ROLE_IDS'),
   discordAdminRoleIds: envRoleIds('DISCORD_ADMIN_ROLE_IDS'),
   /**
+   * Optional Discord↔TS bridge worker (compose profile `discord-bridge`).
+   * Unset by default. Production refuses URL without secret (see index startup).
+   */
+  discordBridgeUrl: (process.env.DISCORD_BRIDGE_URL || '').trim(),
+  discordBridgeSecret: (process.env.DISCORD_BRIDGE_SECRET || '').trim(),
+  /** Lab-only: path to private-beta status JSON for `/ts bridge` without HTTP. */
+  discordBridgeStatusFile: (process.env.DISCORD_BRIDGE_STATUS_FILE || '').trim(),
+  /**
    * Discord Commands & Radio isolated integration backend (Step 4C).
    * Off by default — does not change production compose / normal local runs.
    */

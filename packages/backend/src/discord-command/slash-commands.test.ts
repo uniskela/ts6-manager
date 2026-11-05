@@ -55,11 +55,11 @@ function adapter() {
     },
     policy: { viewerRoleIds: [VIEWER], adminRoleIds: [ADMIN] },
     presence: {
-      async snapshot() {
+      async snapshot(_guildId: string) {
         return { connected: true, serverName: 'TS', nicknames: ['A'], channels: [{ name: 'Lobby' }] };
       },
     },
-    bridge: { async health() { return { daveReady: true, electedSlot: '0', generation: 1 }; } },
+    bridge: { async health(_guildId: string) { return { daveReady: true, electedSlot: '0', generation: 1 }; } },
     audit: () => {},
     music,
   });
@@ -120,8 +120,14 @@ describe('Discord slash-command definitions (Phase 2C step 3B.2)', () => {
       // Bound guild + roles → not unpaired/unauthorized for known commands.
       assert.notEqual(result.code, 'unauthorized', command);
       assert.notEqual(result.code, 'unpaired', command);
+      // Full registry must be wired — never silent not_implemented with deps present.
+      assert.notEqual(result.code, 'not_implemented', command);
       // play may fail unavailable without network — still routed.
       if (command === 'ts.help') assert.equal(result.ok, true);
+      if (command === 'ts.status' || command === 'ts.online' || command === 'ts.channels') {
+        assert.equal(result.ok, true, command);
+      }
+      if (command === 'ts.bridge') assert.equal(result.ok, true, command);
     }
   });
 
@@ -171,8 +177,8 @@ describe('Discord slash-command definitions (Phase 2C step 3B.2)', () => {
         get: async () => ({ instanceId: 'local', revoked: true, botId: 10, serverConfigId: 1 }),
       },
       policy: { viewerRoleIds: [VIEWER], adminRoleIds: [ADMIN] },
-      presence: { async snapshot() { return null; } },
-      bridge: { async health() { return null; } },
+      presence: { async snapshot(_guildId: string) { return null; } },
+      bridge: { async health(_guildId: string) { return null; } },
       audit: () => {},
     });
     const revoked = await revokedAdapter.handle({

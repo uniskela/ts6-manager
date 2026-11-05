@@ -37,7 +37,7 @@ function deps(overrides: Partial<DiscordCommandDeps> = {}): DiscordCommandDeps {
     },
     policy: { viewerRoleIds: [VIEWER_ROLE], adminRoleIds: [ADMIN_ROLE] },
     presence: {
-      async snapshot() {
+      async snapshot(_guildId: string) {
         return {
           connected: true,
           serverName: 'Lab TS',
@@ -47,7 +47,7 @@ function deps(overrides: Partial<DiscordCommandDeps> = {}): DiscordCommandDeps {
       },
     },
     bridge: {
-      async health() {
+      async health(_guildId: string) {
         return { daveReady: true, electedSlot: 'slot-0', generation: 4, t2dForwarded: 100 };
       },
     },
@@ -59,7 +59,7 @@ function deps(overrides: Partial<DiscordCommandDeps> = {}): DiscordCommandDeps {
 describe('read-only Discord command adapter', () => {
   it('answers /ts help without TeamSpeak', async () => {
     const adapter = createDiscordCommandAdapter(deps({
-      presence: { async snapshot() { throw new Error('should not query'); } },
+      presence: { async snapshot(_guildId: string) { throw new Error('should not query'); } },
     }));
     const result = await adapter.handle(intent({ command: 'ts.help', userId: VIEWER }));
     assert.equal(result.ok, true);
@@ -188,7 +188,7 @@ describe('read-only Discord command adapter', () => {
   it('denies an unpaired guild without querying TeamSpeak', async () => {
     let queried = false;
     const adapter = createDiscordCommandAdapter(deps({
-      presence: { async snapshot() { queried = true; return null; } },
+      presence: { async snapshot(_guildId: string) { queried = true; return null; } },
     }));
     const result = await adapter.handle(intent({ command: 'ts.online', userId: VIEWER, guildId: '999' }));
     assert.deepEqual(
@@ -217,8 +217,8 @@ describe('read-only Discord command adapter', () => {
 
   it('treats TeamSpeak or bridge failure as unavailable', async () => {
     const adapter = createDiscordCommandAdapter(deps({
-      presence: { async snapshot() { return null; } },
-      bridge: { async health() { throw new Error('worker down'); } },
+      presence: { async snapshot(_guildId: string) { return null; } },
+      bridge: { async health(_guildId: string) { throw new Error('worker down'); } },
     }));
     const online = await adapter.handle(intent({ command: 'ts.online', userId: VIEWER }));
     const bridge = await adapter.handle(intent({ command: 'ts.bridge', userId: ADMIN }));
@@ -234,13 +234,13 @@ describe('read-only Discord command adapter', () => {
     let musicCalls = 0;
     const adapter = createDiscordCommandAdapter(deps({
       presence: {
-        async snapshot() {
+        async snapshot(_guildId: string) {
           presenceCalls += 1;
           return null;
         },
       },
       bridge: {
-        async health() {
+        async health(_guildId: string) {
           bridgeCalls += 1;
           return null;
         },
@@ -298,7 +298,7 @@ describe('read-only Discord command adapter', () => {
   it('reserves Phase 2B music commands without mutating playback', async () => {
     let presenceCalls = 0;
     const adapter = createDiscordCommandAdapter(deps({
-      presence: { async snapshot() { presenceCalls += 1; return null; } },
+      presence: { async snapshot(_guildId: string) { presenceCalls += 1; return null; } },
     }));
     for (const command of ['pause', 'resume', 'skip', 'stop', 'playlist', 'radio', 'volume']) {
       const result = await adapter.handle(intent({ command, userId: ADMIN }));

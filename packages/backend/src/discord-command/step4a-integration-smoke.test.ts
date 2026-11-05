@@ -232,8 +232,8 @@ describe('Step 4A integration preflight smoke', () => {
       const adapter = createDiscordCommandAdapter({
         bindings,
         policy: { viewerRoleIds: [VIEWER], adminRoleIds: [ADMIN] },
-        presence: { async snapshot() { return null; } },
-        bridge: { async health() { return null; } },
+        presence: { async snapshot(_guildId: string) { return null; } },
+        bridge: { async health(_guildId: string) { return null; } },
         audit: () => {},
         music,
         nowMs: () => NOW_MS,

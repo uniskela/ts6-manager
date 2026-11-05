@@ -74,8 +74,10 @@ export type DiscordCommandDeps = {
   /** Sync or async; persistent stores are async. */
   bindings: { get(guildId: string): GuildBinding | null | Promise<GuildBinding | null> };
   policy: DiscordCommandPolicy;
-  presence: { snapshot(): Promise<PresenceSnapshot | null> };
-  bridge: { health(): Promise<BridgeSnapshot | null> };
+  /** Guild-scoped TeamSpeak presence (status/online/channels). */
+  presence: { snapshot(guildId: string): Promise<PresenceSnapshot | null> };
+  /** Guild-scoped Discord↔TS bridge health (`/ts bridge`). */
+  bridge: { health(guildId: string): Promise<BridgeSnapshot | null> };
   audit: (event: DiscordAuditEvent) => void;
   rateLimit?: { take(key: string, nowMs: number): boolean };
   nowMs?: () => number;
@@ -182,7 +184,7 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
 
     if (intent.command === 'ts.bridge') {
       try {
-        const health = await deps.bridge.health();
+        const health = await deps.bridge.health(intent.guildId);
         if (!health) return fail('unavailable', 'Bridge status is unavailable.');
         return ok(
           [
@@ -206,7 +208,7 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
       || intent.command === 'ts.channels'
     ) {
       try {
-        const presence = await deps.presence.snapshot();
+        const presence = await deps.presence.snapshot(intent.guildId);
         if (!presence) return fail('unavailable', 'TeamSpeak is unavailable.');
         if (intent.command === 'ts.status') {
           return ok(

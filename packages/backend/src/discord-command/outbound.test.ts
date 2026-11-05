@@ -21,11 +21,11 @@ function adapterDeps(): DiscordCommandDeps {
     bindings: { get: (guildId) => guildId === '111' ? { instanceId: 'inst-1', revoked: false } : null },
     policy: { viewerRoleIds: ['r-view'], adminRoleIds: ['r-admin'] },
     presence: {
-      async snapshot() {
+      async snapshot(_guildId: string) {
         return { connected: true, serverName: 'Lab TS', nicknames: ['alice'], channels: [{ name: 'Lobby' }] };
       },
     },
-    bridge: { async health() { return { daveReady: true, electedSlot: 'slot-0', generation: 1 }; } },
+    bridge: { async health(_guildId: string) { return { daveReady: true, electedSlot: 'slot-0', generation: 1 }; } },
     audit: () => {},
   };
 }

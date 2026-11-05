@@ -101,8 +101,8 @@ describe('persistent Discord guild bindings (Phase 2C step 2)', () => {
       const adapter = createDiscordCommandAdapter({
         bindings: svc.lookup,
         policy: { viewerRoleIds: ['r'], adminRoleIds: ['a'] },
-        presence: { async snapshot() { return null; } },
-        bridge: { async health() { return null; } },
+        presence: { async snapshot(_guildId: string) { return null; } },
+        bridge: { async health(_guildId: string) { return null; } },
         audit: () => {},
       });
       const unknown = await adapter.handle({
@@ -268,8 +268,8 @@ describe('persistent Discord guild bindings (Phase 2C step 2)', () => {
     const adapter = createDiscordCommandAdapter({
       bindings: svc.lookup,
       policy: { viewerRoleIds: ['r'], adminRoleIds: ['a'] },
-      presence: { async snapshot() { return { connected: true, serverName: 'x', nicknames: [], channels: [] }; } },
-      bridge: { async health() { return null; } },
+      presence: { async snapshot(_guildId: string) { return { connected: true, serverName: 'x', nicknames: [], channels: [] }; } },
+      bridge: { async health(_guildId: string) { return null; } },
       audit: () => {},
     });
     const result = await adapter.handle({
@@ -363,8 +363,8 @@ describe('persistent Discord guild bindings (Phase 2C step 2)', () => {
         },
       },
       policy: { viewerRoleIds: ['r'], adminRoleIds: ['a'] },
-      presence: { async snapshot() { return null; } },
-      bridge: { async health() { return null; } },
+      presence: { async snapshot(_guildId: string) { return null; } },
+      bridge: { async health(_guildId: string) { return null; } },
       audit: () => {},
     });
     const result = await adapter.handle({

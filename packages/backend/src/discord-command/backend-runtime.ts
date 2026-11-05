@@ -13,6 +13,9 @@ import { createPrismaGuildBindingLookup } from './guild-bindings.js';
 import { createMusicCommandService, type MusicServiceDeps } from './music-service.js';
 import type { DiscordInteractionFollowUp } from './follow-up.js';
 import type { DiscordCommandRuntime, GuildBindingLookup } from './runtime.js';
+import { createBindingScopedPresence } from './ts-presence-port.js';
+import { createDiscordBridgeHealthPort } from './bridge-health-port.js';
+import type { BridgeSnapshot, PresenceSnapshot } from './adapter.js';
 
 /** Minimal VoiceBotManager surface — avoids holding a second player/queue. */
 export type VoiceBotManagerPort = {
@@ -42,6 +45,27 @@ export type BackendDiscordRuntimeOpts = {
   identityForUser?: MusicServiceDeps['identityForUser'];
   nowMs?: () => number;
   audit?: (event: { guildId: string; userId: string; command: string; result: string }) => void;
+  /**
+   * Optional TeamSpeak WebQuery pool for `/ts status|online|channels`.
+   * When omitted, presence stays unavailable (fail closed).
+   */
+  getTsQueryClient?: (serverConfigId: number) => {
+    execute(
+      sid: number,
+      command: string,
+      params?: Record<string, unknown>,
+      opts?: { priority?: string },
+    ): Promise<unknown>;
+  } | null;
+  /** Optional override for presence (tests). */
+  presence?: { snapshot(guildId: string): Promise<PresenceSnapshot | null> };
+  /** Optional override for bridge health (tests). */
+  bridge?: { health(guildId: string): Promise<BridgeSnapshot | null> };
+  /** Discord bridge worker base URL (compose profile). Empty → `/ts bridge` unavailable. */
+  discordBridgeUrl?: string;
+  discordBridgeSecret?: string;
+  /** Lab-only status file path (private-beta JSON). Never used in default compose. */
+  discordBridgeStatusFile?: string;
 };
 
 function fail(code: CommandResult['code'], content: string): CommandResult {
@@ -166,11 +190,26 @@ export function createBackendDiscordCommandRuntime(
   const baseMusic = createMusicCommandService(musicDeps);
   const music = createAuthorisingMusicExecute(bindings, baseMusic, manager);
 
+  const presence = opts.presence ?? (
+    opts.getTsQueryClient
+      ? createBindingScopedPresence({
+          bindings,
+          getClient: opts.getTsQueryClient,
+          virtualServerIdForBot: opts.virtualServerIdForBot ?? (() => 1),
+        })
+      : { async snapshot() { return null; } }
+  );
+  const bridge = opts.bridge ?? createDiscordBridgeHealthPort({
+    baseUrl: opts.discordBridgeUrl,
+    secret: opts.discordBridgeSecret,
+    statusFilePath: opts.discordBridgeStatusFile,
+  });
+
   const adapter = createDiscordCommandAdapter({
     bindings,
     policy: opts.policy,
-    presence: { async snapshot() { return null; } },
-    bridge: { async health() { return null; } },
+    presence,
+    bridge,
     audit: opts.audit ?? (() => {}),
     music,
     nowMs: opts.nowMs,

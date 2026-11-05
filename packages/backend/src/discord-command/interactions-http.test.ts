@@ -364,7 +364,7 @@ describe('Discord interactions HTTP (Phase 2C step 1)', () => {
       bindings,
       policy: { viewerRoleIds: ['r-view'], adminRoleIds: ['r-admin'] },
       presence: {
-        async snapshot() {
+        async snapshot(_guildId: string) {
           return { connected: true, serverName: 'Lab', nicknames: [], channels: [] };
         },
       },
@@ -754,8 +754,8 @@ describe('Discord interactions HTTP (Phase 2C step 1)', () => {
     const adapter = createDiscordCommandAdapter({
       bindings: { get: () => ({ instanceId: 'i', revoked: false, botId: 1 }) },
       policy: { viewerRoleIds: [], adminRoleIds: ['r-admin'] },
-      presence: { async snapshot() { return null; } },
-      bridge: { async health() { return null; } },
+      presence: { async snapshot(_guildId: string) { return null; } },
+      bridge: { async health(_guildId: string) { return null; } },
       audit: () => {},
     });
     const body = commandBody({

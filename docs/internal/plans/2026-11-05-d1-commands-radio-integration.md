@@ -27,3 +27,7 @@ See `docs/internal/plans/2026-10-29-d1-live-evidence.md`. Phase 2b offline PASS 
 ## Combined runtime gap
 
 Independent suite PASS does not prove Commands slash-commands and D1 voice bridge share a production process/config safely. Any combined live test must use disposable TS + INT-TEST Discord only, with Interactions URL cleared afterward.
+
+## Full Commands & Radio registry (follow-up)
+
+Presence and `/ts bridge` health ports are now wired on the backend runtime (WebQuery pool + optional Discord bridge URL/status file). Automated registry coverage asserts no `not_implemented` for any supported handler. See `2026-11-05-commands-radio-full-registry-matrix.md` and the supervised live plan.
