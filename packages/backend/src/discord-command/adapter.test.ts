@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { createDiscordCommandAdapter, type DiscordCommandDeps, type DiscordCommandIntent } from './adapter.js';
+import {
+  createDiscordCommandAdapter,
+  resolveTs6Role,
+  type DiscordCommandDeps,
+  type DiscordCommandIntent,
+  type DiscordCommandPolicy,
+} from './adapter.js';
 import { MemoryCommandRateLimit } from './rate-limit.js';
 
 const GUILD = '111';
@@ -9,6 +15,7 @@ const ADMIN = 'u-admin';
 const VIEWER_ROLE = 'r-view';
 const ADMIN_ROLE = 'r-admin';
 const MANAGE_GUILD = String(1n << 5n);
+const ADMINISTRATOR = String(1n << 3n);
 
 function intent(partial: Partial<DiscordCommandIntent> & Pick<DiscordCommandIntent, 'command' | 'userId'>): DiscordCommandIntent {
   const admin = partial.userId === ADMIN;
@@ -89,6 +96,80 @@ describe('read-only Discord command adapter', () => {
     }));
     assert.equal(unmanaged.code, 'unauthorized');
     assert.equal(mappedViewer.code, 'unauthorized');
+  });
+
+  it('isolated-live Administrator grant maps to TS6 admin; Manage Guild alone still does not', async () => {
+    const adapter = createDiscordCommandAdapter(deps({
+      policy: {
+        viewerRoleIds: [VIEWER_ROLE],
+        adminRoleIds: [ADMIN_ROLE],
+        isolatedLiveAdministratorGrant: true,
+      },
+    }));
+    const adminBit = await adapter.handle(intent({
+      command: 'ts.online',
+      userId: 'u-owner',
+      roleIds: [],
+      memberPermissions: ADMINISTRATOR,
+    }));
+    const manageOnly = await adapter.handle(intent({
+      command: 'ts.online',
+      userId: 'u-mod',
+      roleIds: [],
+      memberPermissions: MANAGE_GUILD,
+    }));
+    assert.equal(adminBit.ok, true);
+    assert.equal(manageOnly.code, 'unauthorized');
+  });
+
+  it('Administrator bit does not grant TS6 roles when isolated-live grant is off (production default)', async () => {
+    const policy: DiscordCommandPolicy = {
+      viewerRoleIds: [VIEWER_ROLE],
+      adminRoleIds: [ADMIN_ROLE],
+    };
+    assert.equal(
+      resolveTs6Role(intent({
+        command: 'ts.online',
+        userId: 'u-owner',
+        roleIds: [],
+        memberPermissions: ADMINISTRATOR,
+      }), policy),
+      null,
+    );
+    const adapter = createDiscordCommandAdapter(deps({ policy }));
+    const denied = await adapter.handle(intent({
+      command: 'queue',
+      userId: 'u-owner',
+      roleIds: [],
+      memberPermissions: ADMINISTRATOR,
+    }));
+    assert.equal(denied.code, 'unauthorized');
+  });
+
+  it('role ID mapping still wins over Administrator when isolated-live grant is on', () => {
+    const policy: DiscordCommandPolicy = {
+      viewerRoleIds: [VIEWER_ROLE],
+      adminRoleIds: [ADMIN_ROLE],
+      isolatedLiveAdministratorGrant: true,
+    };
+    assert.equal(
+      resolveTs6Role(intent({
+        command: 'ts.online',
+        userId: VIEWER,
+        roleIds: [VIEWER_ROLE],
+        memberPermissions: ADMINISTRATOR,
+      }), policy),
+      'viewer',
+    );
+    assert.equal(
+      resolveTs6Role(intent({
+        command: 'ts.online',
+        userId: ADMIN,
+        roleIds: [ADMIN_ROLE],
+        memberPermissions: '0',
+      }), policy),
+      'admin',
+    );
   });
 
   it('keeps /ts status and /ts bridge ephemeral and secret-free', async () => {

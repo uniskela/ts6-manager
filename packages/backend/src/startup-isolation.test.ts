@@ -5,6 +5,7 @@ import {
   assertIsolatedIntegrationStartup,
   isIsolatedIntegrationMode,
   isIsolatedLiveInteractionsLatch,
+  shouldEnableIsolatedLiveAdministratorGrant,
 } from './startup-isolation.js';
 
 const isolatedDb = 'file:/tmp/discord-int-test.db';
@@ -119,6 +120,20 @@ test('live latch requires public key', () => {
   });
   assert.equal(a.ok, false);
   assert.ok(a.errors.some((e) => /PUBLIC_KEY/i.test(e)));
+});
+
+test('Administrator grant requires both isolation latches', () => {
+  assert.equal(shouldEnableIsolatedLiveAdministratorGrant({}), false);
+  assert.equal(shouldEnableIsolatedLiveAdministratorGrant({
+    TS6_ISOLATED_INTEGRATION: '1',
+  }), false);
+  assert.equal(shouldEnableIsolatedLiveAdministratorGrant({
+    TS6_ISOLATED_LIVE_INTERACTIONS: '1',
+  }), false);
+  assert.equal(shouldEnableIsolatedLiveAdministratorGrant({
+    TS6_ISOLATED_INTEGRATION: '1',
+    TS6_ISOLATED_LIVE_INTERACTIONS: '1',
+  }), true);
 });
 
 test('assertIsolatedIntegrationStartup throws when refused', () => {

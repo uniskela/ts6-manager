@@ -42,6 +42,11 @@ export type DiscordCommandPolicy = {
   viewerRoleIds: string[];
   adminRoleIds: string[];
   userRoles?: Record<string, Ts6Role>;
+  /**
+   * Isolated supervised-live only: Discord Administrator bit → TS6 admin.
+   * Manage Guild alone still does not grant (see hasManageGuild).
+   */
+  isolatedLiveAdministratorGrant?: boolean;
 };
 
 export type PresenceSnapshot = {
@@ -78,6 +83,7 @@ export type DiscordCommandDeps = {
 };
 
 const MANAGE_GUILD = 1n << 5n;
+const ADMINISTRATOR = 1n << 3n;
 const HELP = [
   '`/ts help` — this list',
   '`/ts status` — TeamSpeak and bridge status (admin)',
@@ -112,6 +118,12 @@ export function resolveTs6Role(intent: DiscordCommandIntent, policy: DiscordComm
   if (mapped) return mapped;
   if (intent.roleIds.some((id) => policy.adminRoleIds.includes(id))) return 'admin';
   if (intent.roleIds.some((id) => policy.viewerRoleIds.includes(id))) return 'viewer';
+  if (
+    policy.isolatedLiveAdministratorGrant
+    && hasBit(intent.memberPermissions, ADMINISTRATOR)
+  ) {
+    return 'admin';
+  }
   return null;
 }
 
@@ -148,7 +160,15 @@ export function createDiscordCommandAdapter(deps: DiscordCommandDeps) {
     }
 
     const role = resolveTs6Role(intent, deps.policy);
-    if (!role) return fail('unauthorized', 'You do not have permission to use this command.');
+    if (!role) {
+      if (deps.policy.isolatedLiveAdministratorGrant) {
+        // Isolated supervised-live diagnostics only — never logs tokens.
+        console.warn(
+          `[discord-cmd] unauthorized guild=${intent.guildId} user=${intent.userId} roles=${intent.roleIds.join(',') || '(none)'}`,
+        );
+      }
+      return fail('unauthorized', 'You do not have permission to use this command.');
+    }
     if (needsAdmin(intent.command) && role !== 'admin') {
       return fail('unauthorized', 'You do not have permission to use this command.');
     }

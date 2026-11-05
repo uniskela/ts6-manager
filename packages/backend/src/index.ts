@@ -29,7 +29,10 @@ import {
 } from './discord-command/backend-runtime.js';
 import { createDiscordWebhookFollowUpFromConfig } from './discord-command/discord-delivery.js';
 import { listenHttpServer } from './listen-host.js';
-import { assertIsolatedIntegrationStartup } from './startup-isolation.js';
+import {
+  assertIsolatedIntegrationStartup,
+  shouldEnableIsolatedLiveAdministratorGrant,
+} from './startup-isolation.js';
 
 async function main() {
   const isolation = assertIsolatedIntegrationStartup();
@@ -185,6 +188,8 @@ async function main() {
     policy: {
       viewerRoleIds: config.discordViewerRoleIds,
       adminRoleIds: config.discordAdminRoleIds,
+      // Dual latch only — production never sets TS6_ISOLATED_* so this stays false.
+      isolatedLiveAdministratorGrant: shouldEnableIsolatedLiveAdministratorGrant(),
     },
     virtualServerIdForBot: (botId) => musicCommandHandler.virtualServerIdForBot(botId),
     followUp: discordFollowUp,

@@ -159,3 +159,14 @@ export function assertIsolatedIntegrationStartup(
   }
   return assessment;
 }
+
+/**
+ * Discord Administrator → TS6 admin is allowed only when both isolation latches are on.
+ * Production / normal development never enable this (latches default off).
+ * Role ID and userRoles mapping remain the sole production grants.
+ */
+export function shouldEnableIsolatedLiveAdministratorGrant(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return isIsolatedIntegrationMode(env) && isIsolatedLiveInteractionsLatch(env);
+}
