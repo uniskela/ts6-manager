@@ -1,8 +1,9 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, type IndexHtmlTransformContext, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { readFileSync, writeFileSync } from 'fs';
-import { VitePWA } from 'vite-plugin-pwa';
+import { readFileSync } from 'fs';
+import { VitePWA, type VitePWAOptions } from 'vite-plugin-pwa';
+import { isListenerRemoteHtml } from './vite/remote-html';
 
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, './package.json'), 'utf-8')) as {
   version: string;
@@ -37,35 +38,35 @@ function remoteHtmlFallback(): Plugin {
   };
 }
 
-/** Keep the admin PWA manifest and SW register tags off the isolated remote entry. */
-function stripRemotePwaTags(): Plugin {
-  const scrub = (html: string) => html
-    .replace(/<link[^>]+rel=["']manifest["'][^>]*>\s*/gi, '')
-    .replace(/<script[^>]*registerSW[^>]*>[\s\S]*?<\/script>\s*/gi, '');
-  return {
-    name: 'strip-remote-pwa-tags',
-    transformIndexHtml: {
-      order: 'post',
-      handler(html, ctx) {
-        if (!ctx.filename?.endsWith('remote.html') && ctx.path !== '/remote.html' && ctx.path !== '/remote') {
-          return html;
-        }
-        return scrub(html);
+/**
+ * Run VitePWA only for the admin shell. Skipping transformIndexHtml for remote.html
+ * prevents manifest / SW register tags at source — no post-hoc HTML string scrubbing.
+ */
+function adminOnlyVitePwa(options: Partial<VitePWAOptions>): Plugin[] {
+  return VitePWA(options).map((plugin) => {
+    const transform = plugin.transformIndexHtml;
+    if (!transform) return plugin;
+
+    const apply = typeof transform === 'function'
+      ? transform
+      : transform.handler.bind(transform);
+    const order = typeof transform === 'function' ? undefined : transform.order;
+
+    return {
+      ...plugin,
+      transformIndexHtml: {
+        order,
+        handler(html: string, ctx: IndexHtmlTransformContext) {
+          if (isListenerRemoteHtml(ctx)) return html;
+          return apply(html, ctx);
+        },
       },
-    },
-    closeBundle() {
-      const file = path.resolve(__dirname, 'dist/remote.html');
-      try {
-        writeFileSync(file, scrub(readFileSync(file, 'utf8')));
-      } catch {
-        /* no remote.html in this build */
-      }
-    },
-  };
+    };
+  });
 }
 
 export default defineConfig({
-  plugins: [react(), remoteHtmlFallback(), VitePWA({
+  plugins: [react(), remoteHtmlFallback(), ...adminOnlyVitePwa({
     strategies: 'injectManifest',
     srcDir: 'pwa',
     filename: 'sw.ts',
@@ -93,7 +94,7 @@ export default defineConfig({
         { src: '/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
       ],
     },
-  }), stripRemotePwaTags()],
+  })],
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __GIT_SHA__: JSON.stringify(gitSha),
@@ -106,7 +107,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
+        // Keep the admin entry chunk named index-* so production PWA tests and
+        // existing asset expectations stay stable under the MPA build.
+        index: path.resolve(__dirname, 'index.html'),
         remote: path.resolve(__dirname, 'remote.html'),
       },
     },

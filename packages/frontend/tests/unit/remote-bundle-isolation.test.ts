@@ -62,6 +62,8 @@ describe('listener remote bundle isolation', () => {
 
     const indexHtml = readFileSync(path.join(dist, 'index.html'), 'utf8');
     assert.notEqual(indexHtml, html);
+    assert.match(indexHtml, /rel=["']manifest["']/, 'admin shell still receives the PWA manifest');
+    assert.match(indexHtml, /\/assets\/index-[^"]+\.js/, 'admin entry keeps the index-* chunk name');
     assert.equal(readdirSync(dist).includes('remote.html'), true);
   });
 });
