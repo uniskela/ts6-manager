@@ -6,6 +6,7 @@ import { defaultMediaCommandPermissions } from '../voice/media-command-permissio
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { createDiscordCommandAdapter, type DiscordCommandIntent } from './adapter.js';
 import { MemoryDiscordFollowUp } from './follow-up.js';
+import { safeCommandFailure } from './http-response.js';
 import {
   createDiscordInteractionsMisconfiguredRouter,
   createDiscordInteractionsRouter,
@@ -702,6 +703,97 @@ describe('Discord interactions HTTP (Phase 2C step 1)', () => {
       assert.deepEqual(events, [{ command: 'play', guildId: GUILD, reason: 'follow_up_failed' }]);
       assert.doesNotMatch(res.text, new RegExp(token));
       assert.doesNotMatch(JSON.stringify(events), new RegExp(token));
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('deferred handler failure delivers the safe failure with the same job fields', async () => {
+    const keys = ed25519();
+    const events: Array<{ command: string; guildId: string; reason: string }> = [];
+    const followUp = new MemoryDiscordFollowUp();
+    const body = commandBody({
+      command: 'play',
+      topLevel: 'play',
+      options: [{ name: 'query', type: 3, value: 'song' }],
+      id: 'ix-handler-fail',
+    });
+    const app = enabledApp({
+      keys,
+      followUp,
+      onDeliveryError: (info) => events.push(info),
+      adapter: {
+        async handle() {
+          throw new Error(`boom ${SECRET_MARKER}`);
+        },
+      },
+    });
+    const srv = await listen(app);
+    try {
+      const res = await postInteraction(srv.port, {
+        body,
+        signatureHex: keys.sign(TIMESTAMP, body),
+      });
+      assert.equal((res.body as any).type, 5);
+      for (let i = 0; i < 50 && followUp.jobs.length === 0; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.deepEqual(events, [{ command: 'play', guildId: GUILD, reason: 'handler_failed' }]);
+      assert.equal(followUp.jobs.length, 1);
+      const delivered = followUp.jobs[0];
+      assert.deepEqual(delivered.result, safeCommandFailure());
+      assert.equal(delivered.interactionId, 'ix-handler-fail');
+      assert.equal(delivered.guildId, GUILD);
+      assert.equal(delivered.command, 'play');
+      assert.equal(delivered.applicationId, APP_ID);
+      assert.equal(delivered.interactionToken, IX_TOKEN);
+      assert.equal(delivered.receivedAtMs, NOW_MS);
+      assert.doesNotMatch(JSON.stringify(followUp.jobs), new RegExp(SECRET_MARKER));
+    } finally {
+      await srv.close();
+    }
+  });
+
+  it('deferred handler and follow-up failures are both reported, in order', async () => {
+    const keys = ed25519();
+    const events: Array<{ command: string; guildId: string; reason: string }> = [];
+    const delivered: unknown[] = [];
+    const body = commandBody({
+      command: 'play',
+      topLevel: 'play',
+      options: [{ name: 'query', type: 3, value: 'song' }],
+      id: 'ix-both-fail',
+    });
+    const app = enabledApp({
+      keys,
+      onDeliveryError: (info) => events.push(info),
+      followUp: {
+        async afterDeferred(job: unknown) {
+          delivered.push(job);
+          throw new Error('webhook down');
+        },
+      } as unknown as MemoryDiscordFollowUp,
+      adapter: {
+        async handle() {
+          throw new Error('handler down');
+        },
+      },
+    });
+    const srv = await listen(app);
+    try {
+      const res = await postInteraction(srv.port, {
+        body,
+        signatureHex: keys.sign(TIMESTAMP, body),
+      });
+      assert.equal((res.body as any).type, 5);
+      for (let i = 0; i < 50 && events.length < 2; i++) {
+        await new Promise((r) => setTimeout(r, 10));
+      }
+      assert.deepEqual(events, [
+        { command: 'play', guildId: GUILD, reason: 'handler_failed' },
+        { command: 'play', guildId: GUILD, reason: 'follow_up_failed' },
+      ]);
+      assert.equal(delivered.length, 1);
     } finally {
       await srv.close();
     }
