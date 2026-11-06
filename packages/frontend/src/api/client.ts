@@ -163,6 +163,7 @@ function installE2EAuthHooks(): void {
       getMemoryTokens: () => { accessToken: string | null; refreshToken: string | null };
       expireAccessInMemory: () => Promise<void>;
       refreshNow: () => Promise<string | null>;
+      logoutLocal: () => void;
     };
   }).__ts6AuthTest = {
     getMemoryTokens: () => {
@@ -189,6 +190,7 @@ function installE2EAuthHooks(): void {
       }
     },
     refreshNow: () => refreshAccessToken(),
+    logoutLocal: () => useAuthStore.getState().logout(),
   };
 }
 installE2EAuthHooks();
