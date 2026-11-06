@@ -14,6 +14,7 @@ import { PrismaClient } from '../../generated/prisma/index.js';
 import { userRoutes } from './users.routes.js';
 import { authRoutes } from './auth.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
+import { assertRefreshRejected, putUser } from './test-support/http-auth-helpers.js';
 
 const directory = mkdtempSync(join(tmpdir(), 'p1a-revoke-'));
 const databaseUrl = `file:${join(directory, 'test.db')}`;
@@ -56,23 +57,6 @@ async function seedUsers() {
 
 function expiresSoon() {
   return new Date(Date.now() + 86_400_000);
-}
-
-async function putUser(base: string, body: Record<string, unknown>) {
-  return fetch(`${base}/api/users/2`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-async function assertRefreshRejected(base: string, refreshToken: string) {
-  const refresh = await fetch(`${base}/api/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  });
-  assert.equal(refresh.status, 401);
 }
 
 async function withAbortTrigger(name: string, sql: string, run: () => Promise<void>) {

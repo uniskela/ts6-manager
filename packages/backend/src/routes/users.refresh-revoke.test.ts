@@ -11,6 +11,7 @@ import { userRoutes } from './users.routes.js';
 import { authRoutes } from './auth.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { config } from '../config.js';
+import { assertRefreshRejected, putUser } from './test-support/http-auth-helpers.js';
 
 type UserRow = {
   id: number;
@@ -266,23 +267,6 @@ function seedVictimAndOther(
   });
   store.seedRefresh(2, victimToken);
   store.seedRefresh(3, otherToken);
-}
-
-async function putUser(base: string, body: Record<string, unknown>) {
-  return fetch(`${base}/api/users/2`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
-
-async function assertRefreshRejected(base: string, refreshToken: string) {
-  const refresh = await fetch(`${base}/api/auth/refresh`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
-  });
-  assert.equal(refresh.status, 401);
 }
 
 function hasUserRefresh(store: ReturnType<typeof createStore>, userId: number) {
