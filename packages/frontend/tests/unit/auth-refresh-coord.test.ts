@@ -180,6 +180,29 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     peer.close();
   });
 
+  it('first login without a prior refresh still accepts same-account peer results', async () => {
+    setAuthRefreshPeerLogoutHandler(() => {});
+    // Mimic setAuth on a cold login (previousRefreshToken null, empty cache).
+    clearAuthRefreshCoordination(null);
+    const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
+    peer.postMessage({
+      v: 1,
+      type: 'result',
+      tabId: 't-peer',
+      ok: true,
+      accessToken: 'a-peer',
+      refreshToken: 'r-peer',
+    });
+    let networkCalls = 0;
+    const pair = await coordinateRefreshOwnership(async () => {
+      networkCalls += 1;
+      return { accessToken: 'local', refreshToken: 'r-local' };
+    });
+    assert.equal(networkCalls, 0);
+    assert.deepEqual(pair, { accessToken: 'a-peer', refreshToken: 'r-peer' });
+    peer.close();
+  });
+
   it('delayed prior-account R1 (rotated successor of R0) is not cached or adopted', async () => {
     setAuthRefreshPeerLogoutHandler(() => {});
     // Account A held R0; session replace blocks R0 and flips ignorePeerResults.

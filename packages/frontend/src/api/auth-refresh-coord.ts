@@ -91,6 +91,15 @@ function isMessage(data: unknown): data is AuthRefreshBcMessage {
 }
 
 function clearCoordinationState(previousRefreshToken?: string | null): void {
+  // First login has no prior refresh — do not block peer results or same-tab
+  // followers hang for RESULT_WAIT_MS after every Sign In.
+  const hadPriorSession = Boolean(
+    previousRefreshToken
+    || lastGoodResult
+    || activeLeader
+    || resultWaiters.length > 0
+    || blockedRefreshTokens.size > 0,
+  );
   if (lastGoodResult?.refreshToken) {
     blockedRefreshTokens.add(lastGoodResult.refreshToken);
   }
@@ -103,7 +112,7 @@ function clearCoordinationState(previousRefreshToken?: string | null): void {
   }
   lastGoodResult = null;
   activeLeader = null;
-  ignorePeerResults = true;
+  if (hadPriorSession) ignorePeerResults = true;
   coordinationEpoch += 1;
   const waiters = resultWaiters;
   resultWaiters = [];
