@@ -44,5 +44,15 @@ Server-side consumed-token replay / family revoke remains authoritative.
 ## Residual risks
 
 - BroadcastChannel is not a mutex: extreme scheduling can still dual-POST; loser must not wipe peer persist (`runRefresh` 401 path adopts peer tokens with a short persist re-read). Residual dual-POST under pathological miss remains possible but was not observed in 40 LAN trials.
+- Successful `result` messages carry access/refresh tokens on the **same-origin** channel so followers beat zustand persist lag. Not URLs, logs, or cross-origin. Equivalent XSS surface to `localStorage` `ts6-auth`.
+- Logout (local or peer BC) clears `lastGoodResult` / leader / waiters so a later login on the same origin cannot adopt a prior account’s cached pair.
 - Access JWTs / established WebSockets are not torn down by refresh revoke (unchanged).
-- `authTestHooks` / `__ts6AuthTest` remain test-only seams.
+- `__ts6AuthTest` requires `localStorage ts6-e2e-hooks=1` before module load; backend `authTestHooks` are test-injected only. Not enabled for ordinary production users.
+
+## Safe merge order
+
+1. **P1-A** admin refresh revoke (independent).
+2. **Frontend** Web Lock + BroadcastChannel coordination (compatible with current `main` refresh and with P1-B; stops LAN multi-tab self-logout).
+3. **P1-B** server atomic rotation / family-scoped replay (after frontend so a residual dual-POST hits CAS 401 + adopt rather than reuse-revoke + client wipe).
+
+Do **not** land P1-B alone ahead of the frontend coordination PR. Merges to `main` run CI/Release Please bookkeeping only; **images publish only when Release Please creates a release** (`release_created`), not on ordinary feature merges.

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import {
+  broadcastAuthLogout,
   coordinateRefreshOwnership,
   pickRefreshOwner,
   resetAuthRefreshCoordForTests,
@@ -73,5 +74,17 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     });
     assert.equal(networkCalls, 1);
     assert.deepEqual(pair, { accessToken: 'a1', refreshToken: 'r1' });
+  });
+
+  it('logout clears cached result so a later cycle cannot reuse it', async () => {
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'a1', refreshToken: 'r1' }));
+    broadcastAuthLogout();
+    let networkCalls = 0;
+    const pair = await coordinateRefreshOwnership(async () => {
+      networkCalls += 1;
+      return { accessToken: 'a2', refreshToken: 'r2' };
+    });
+    assert.equal(networkCalls, 1);
+    assert.deepEqual(pair, { accessToken: 'a2', refreshToken: 'r2' });
   });
 });

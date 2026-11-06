@@ -66,6 +66,12 @@ function isMessage(data: unknown): data is AuthRefreshBcMessage {
   );
 }
 
+function clearCoordinationState(): void {
+  lastGoodResult = null;
+  activeLeader = null;
+  resultWaiters = [];
+}
+
 function ensureListener(): void {
   if (listenerInstalled) return;
   const ch = getChannel();
@@ -118,6 +124,7 @@ function ensureListener(): void {
       return;
     }
     if (msg.type === 'logout' && msg.tabId !== getAuthRefreshTabId()) {
+      clearCoordinationState();
       peerLogoutHandler?.();
     }
   });
@@ -129,6 +136,7 @@ export function setAuthRefreshPeerLogoutHandler(handler: (() => void) | null): v
 }
 
 export function broadcastAuthLogout(): void {
+  clearCoordinationState();
   if (suppressLogoutBroadcast) return;
   const ch = getChannel();
   if (!ch) return;
