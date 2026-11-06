@@ -52,13 +52,13 @@ async function fixture() {
   const audit: Record<string, unknown>[] = [];
   let downloads = 0;
   let searchCalls = 0;
-  let searchImpl: (query: string) => Promise<ListenerSearchResult[]> = async () => [
+  let searchImpl: (query: string, signal?: AbortSignal) => Promise<ListenerSearchResult[]> = async () => [
     dumpRow({ id: 'fJ9rUzIMcZQ', title: 'Bohemian Rhapsody', artist: 'Queen', durationSec: 355 }),
     dumpRow({ id: 'dQw4w9WgXcQ', title: 'Rick Live', durationSec: null }),
     dumpRow({ id: 'aaaaaaaaaaa', title: 'Too Long', durationSec: 901 }),
     dumpRow({ id: 'bbbbbbbbbbb', title: 'Ok Song', artist: 'Band', durationSec: 200 }),
   ];
-  let dumpOverride: (() => Promise<{ code: number | null; stdout: string; stderr: string }>) | null = null;
+  let dumpOverride: ((signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>) | null = null;
   const start = async (started: QueueItem) => {
     if (state.botStatus !== 'connected') return;
     state.botStatus = 'playing';
@@ -86,11 +86,14 @@ async function fixture() {
   app.use(express.json());
   app.locals.listenerRemote = remote;
   app.locals.listenerRemoteSearchNow = () => now;
+  // C1a probe must not call real yt-dlp in route tests.
+  app.locals.listenerLinkProbe = async () => ({ durationSec: item.duration ?? 180 });
+  app.locals.listenerRemoteSearchSessionCheckMs = 50;
   app.locals.listenerMusicSearchDeps = {
-    dumpMusicSearch: async (query: string) => {
+    dumpMusicSearch: async (query: string, _maxResults?: number, signal?: AbortSignal) => {
       searchCalls++;
-      if (dumpOverride) return dumpOverride();
-      const rows = await searchImpl(query);
+      if (dumpOverride) return dumpOverride(signal);
+      const rows = await searchImpl(query, signal);
       return {
         code: 0,
         stdout: rows.map((row) => JSON.stringify({
@@ -185,7 +188,7 @@ async function fixture() {
     return response.json() as Promise<{ session: string }>;
   };
   return {
-    request, exchange, queue, state, audit, bot, remote, app,
+    request, exchange, queue, state, audit, bot, remote, app, base,
     get downloads() { return downloads; },
     get searchCalls() { return searchCalls; },
     setSearch: (fn: typeof searchImpl) => { searchImpl = fn; },
@@ -281,7 +284,7 @@ describe('listener remote search (C2)', () => {
     });
   }));
 
-  it('rate-limits searches per identity and across the service', async () => using(async f => {
+  it('rate-limits searches per identity and applies per-server provider fairness', async () => using(async f => {
     const a = await f.exchange();
     for (let i = 0; i < 5; i++) {
       assert.equal((await f.request('/search', { session: a.session, body: { query: `q${i}` } })).status, 200);
@@ -303,28 +306,94 @@ describe('listener remote search (C2)', () => {
     await started.promise;
     assert.equal((await f.request('/search', { session: a.session, body: { query: 'slow-b' } })).status, 429);
 
+    // Same TeamSpeak server cannot take a second provider slot while the first is held.
     const b = await f.exchange(otherBinding);
-    const otherStarted = deferred<void>();
-    const otherGate = deferred<void>();
-    let servedOther = false;
-    f.setSearch(async () => {
-      if (!servedOther) {
-        servedOther = true;
-        otherStarted.resolve();
-        await otherGate.promise;
-        return [dumpRow({ id: 'ddddddddddd', title: 'Other', durationSec: 100 })];
-      }
-      return [dumpRow({ id: 'eeeeeeeeeee', title: 'Extra', durationSec: 100 })];
-    });
-    const pendingB = f.request('/search', { session: b.session, body: { query: 'slow-other' } });
-    await otherStarted.promise;
-    const cBinding = { ...binding, uid: 'third-listener', clid: 11 };
-    const c = await f.exchange(cBinding);
-    assert.equal((await f.request('/search', { session: c.session, body: { query: 'too-many' } })).status, 429);
+    assert.equal((await f.request('/search', { session: b.session, body: { query: 'slow-other' } })).status, 429);
+
+    const cached = await f.request('/search', { session: b.session, body: { query: 'q0' } });
+    assert.equal(cached.status, 200, 'cache hits must not require a provider slot');
+
     gate.resolve();
-    otherGate.resolve();
     assert.equal((await pending).status, 200);
-    assert.equal((await pendingB).status, 200);
+    assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-free' } })).status, 200);
+  }));
+
+  it('claims a result id before queueing so a concurrent peer gets 404', async () => using(async f => {
+    const { session } = await f.exchange();
+    const search = await f.request('/search', { session, body: { query: 'claim' } });
+    const { results } = await search.json() as { results: Array<{ id: string }> };
+    const resultId = results[0]!.id;
+    const gate = f.armDownloadGate();
+    const first = f.request('/search/queue', { session, body: { resultId } });
+    await gate.started.promise;
+    const second = await f.request('/search/queue', { session, body: { resultId } });
+    assert.equal(second.status, 404);
+    assert.deepEqual(await second.json(), { error: 'Search result not found.', code: 'not_found' });
+    gate.gate.resolve();
+    assert.equal((await first).status, 200);
+    assert.equal(f.downloads, 1);
+    assert.equal(f.audit.filter((row) => row.action === 'listener.remote.search_queue').length, 1);
+  }));
+
+  it('does not restore a claimed result after a failed queue attempt', async () => using(async f => {
+    const { session } = await f.exchange();
+    const search = await f.request('/search', { session, body: { query: 'fail-closed' } });
+    const { results } = await search.json() as { results: Array<{ id: string }> };
+    const resultId = results[0]!.id;
+    for (let i = 0; i < 500; i++) f.queue.add({ ...item, id: `filler-${i}` });
+    assert.equal((await f.request('/search/queue', { session, body: { resultId } })).status, 409);
+    assert.equal(f.downloads, 0);
+    assert.deepEqual(await (await f.request('/search/queue', { session, body: { resultId } })).json(), {
+      error: 'Search result not found.', code: 'not_found',
+    });
+  }));
+
+  it('cancels an in-flight provider search when the session is revoked and frees the slot', async () => using(async f => {
+    const a = await f.exchange();
+    f.advance(60_000);
+    const started = deferred<void>();
+    let hangOnce = true;
+    f.setSearch(async (_query, signal) => {
+      if (!hangOnce) {
+        return [dumpRow({ id: 'eeeeeeeeeee', title: 'After', durationSec: 100 })];
+      }
+      hangOnce = false;
+      started.resolve();
+      await new Promise<void>((_resolve, reject) => {
+        const onAbort = () => reject(signal?.reason ?? new Error('aborted'));
+        if (signal?.aborted) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      return [dumpRow({ id: 'ccccccccccc', title: 'Slow', durationSec: 120 })];
+    });
+    const pending = f.request('/search', { session: a.session, body: { query: 'revoke-mid-search' } });
+    await started.promise;
+    f.remote.revoke(binding.botId, binding.uid);
+    const cancelled = await pending;
+    assert.ok([401, 503, 504].includes(cancelled.status), `expected cancel status, got ${cancelled.status}`);
+
+    const b = await f.exchange(otherBinding);
+    const after = await f.request('/search', { session: b.session, body: { query: 'slot-free' } });
+    assert.equal(after.status, 200, 'provider slot must be released after search cancellation');
+  }));
+
+  it('search queue uses the C1a probe before download', async () => using(async f => {
+    const { session } = await f.exchange();
+    const search = await f.request('/search', { session, body: { query: 'probe' } });
+    const { results } = await search.json() as { results: Array<{ id: string }> };
+    let probes = 0;
+    f.app.locals.listenerLinkProbe = async () => {
+      probes++;
+      return { durationSec: 1200 };
+    };
+    const response = await f.request('/search/queue', { session, body: { resultId: results[0]!.id } });
+    assert.equal(response.status, 422);
+    assert.equal((await response.json() as { code: string }).code, 'too_long');
+    assert.equal(probes, 1);
+    assert.equal(f.downloads, 0);
   }));
 
   it('reuses the query cache without sharing result ids across listeners', async () => using(async f => {

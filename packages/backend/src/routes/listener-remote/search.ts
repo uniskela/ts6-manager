@@ -1,5 +1,5 @@
-import { createHash, randomBytes } from 'node:crypto';
-import type { Router } from 'express';
+import { randomBytes } from 'node:crypto';
+import type { Request, Router } from 'express';
 import { z } from 'zod';
 import type { ListenerRemoteSearchResponse, ListenerRemoteSearchResult } from '@ts6/common';
 import { RateWindows, monotonicNow } from '../../utils/rate-windows.js';
@@ -12,59 +12,40 @@ import {
 import {
   ListenerRemoteError,
   type Binding as ListenerRemoteBinding,
-  type ListenerRemoteService,
 } from '../../voice/listener-remote.js';
 import { appendForListener, arrivalSnapshot } from './append.js';
 import { listenerLink } from './link.js';
-import { authenticate, authorized, body, endpoint, fail, service } from './shared.js';
+import {
+  identityKey,
+  searchRuntimes,
+  type CachedTrack,
+  type SearchRuntime,
+} from './search-cache.js';
+import { authenticate, authorized, bearer, body, endpoint, fail, service } from './shared.js';
+
+export { clearAllListenerSearchResults, clearListenerSearchResults } from './search-cache.js';
 
 const RESULT_TTL_MS = 5 * 60_000;
 const QUERY_CACHE_TTL_MS = 10 * 60_000;
 const QUERY_CACHE_MAX = 200;
+const IDENTITY_RESULTS_MAX = 10_000;
 const SEARCH_RATE_WINDOW_MS = 60_000;
 const SEARCHES_PER_MINUTE = 5;
 const MAX_RESULTS = 10;
+/** Hard global bound on concurrent provider searches (all servers). */
 const MAX_SERVICE_IN_FLIGHT = 2;
+/** Per TeamSpeak server fairness: one stalled server cannot take both global slots. */
+const MAX_SERVER_IN_FLIGHT = 1;
+/** Provider search wall clock; shorter than the generic music-search default. */
+const SEARCH_PROVIDER_TIMEOUT_MS = 30_000;
+const SESSION_CHECK_MS = 2_000;
 const RESULT_ID = /^[A-Za-z0-9_-]{22}$/;
 const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
 const HTTP_URL = /^https?:\/\//i;
 
-/** Provider row kept only in process memory; never returned to the client. */
-interface CachedTrack {
-  url: string;
-  title: string;
-  artist: string | null;
-  duration: number;
-}
-
-interface QueryCacheEntry {
-  tracks: CachedTrack[];
-  expiresAt: number;
-}
-
-interface IdentityResults {
-  byId: Map<string, CachedTrack>;
-  expiresAt: number;
-}
-
-interface SearchRuntime {
-  queryCache: Map<string, QueryCacheEntry>;
-  identityResults: Map<string, IdentityResults>;
-  searchRates: RateWindows;
-  identityInFlight: Set<string>;
-  serviceInFlight: number;
-  now: () => number;
-}
-
-const runtimes = new WeakMap<ListenerRemoteService, SearchRuntime>();
-
-function identityKey(binding: ListenerRemoteBinding): string {
-  return createHash('sha256').update(JSON.stringify([binding.botId, binding.uid])).digest('hex');
-}
-
 function runtimeFor(req: Parameters<typeof service>[0]): SearchRuntime {
   const remote = service(req);
-  let runtime = runtimes.get(remote);
+  let runtime = searchRuntimes.get(remote);
   if (!runtime) {
     const clock = (req.app.locals.listenerRemoteSearchNow as (() => number) | undefined) ?? Date.now;
     runtime = {
@@ -72,10 +53,11 @@ function runtimeFor(req: Parameters<typeof service>[0]): SearchRuntime {
       identityResults: new Map(),
       searchRates: new RateWindows(10_000, SEARCH_RATE_WINDOW_MS, clock === Date.now ? monotonicNow : clock),
       identityInFlight: new Set(),
+      serverInFlight: new Map(),
       serviceInFlight: 0,
       now: clock,
     };
-    runtimes.set(remote, runtime);
+    searchRuntimes.set(remote, runtime);
   }
   return runtime;
 }
@@ -88,6 +70,17 @@ function pruneQueryCache(runtime: SearchRuntime, now: number): void {
     const oldest = runtime.queryCache.keys().next().value;
     if (oldest === undefined) break;
     runtime.queryCache.delete(oldest);
+  }
+}
+
+function pruneIdentityResults(runtime: SearchRuntime, now: number): void {
+  for (const [key, entry] of runtime.identityResults) {
+    if (entry.expiresAt <= now) runtime.identityResults.delete(key);
+  }
+  while (runtime.identityResults.size > IDENTITY_RESULTS_MAX) {
+    const oldest = runtime.identityResults.keys().next().value;
+    if (oldest === undefined) break;
+    runtime.identityResults.delete(oldest);
   }
 }
 
@@ -117,29 +110,32 @@ function refuseDuration(reason: 'too_long' | 'live_not_allowed' | 'unknown_durat
   fail(422, 'duration_unknown', 'Track duration could not be verified.');
 }
 
-function lookupResult(runtime: SearchRuntime, binding: ListenerRemoteBinding, resultId: string): CachedTrack {
+/**
+ * Atomically claim a result for queueing. Removes it from the identity map so a
+ * concurrent request cannot acquire the same id. Fail-closed: a later failure
+ * does not restore the id (listener must search again).
+ */
+function claimResult(runtime: SearchRuntime, binding: ListenerRemoteBinding, resultId: string): CachedTrack {
   const now = runtime.now();
-  const entry = runtime.identityResults.get(identityKey(binding));
+  pruneIdentityResults(runtime, now);
+  const key = identityKey(binding);
+  const entry = runtime.identityResults.get(key);
   if (!entry || entry.expiresAt <= now) {
-    if (entry) runtime.identityResults.delete(identityKey(binding));
+    if (entry) runtime.identityResults.delete(key);
     fail(404, 'not_found', 'Search result not found.');
   }
   const track = entry.byId.get(resultId);
   if (!track) fail(404, 'not_found', 'Search result not found.');
+  entry.byId.delete(resultId);
+  if (entry.byId.size === 0) runtime.identityResults.delete(key);
   return track;
-}
-
-function consumeResult(runtime: SearchRuntime, binding: ListenerRemoteBinding, resultId: string): void {
-  const key = identityKey(binding);
-  const entry = runtime.identityResults.get(key);
-  entry?.byId.delete(resultId);
-  if (entry?.byId.size === 0) runtime.identityResults.delete(key);
 }
 
 function issueResults(runtime: SearchRuntime, binding: ListenerRemoteBinding, tracks: CachedTrack[]): {
   results: ListenerRemoteSearchResult[];
   expiresAt: string;
 } {
+  pruneIdentityResults(runtime, runtime.now());
   const expiresAtMs = runtime.now() + RESULT_TTL_MS;
   const byId = new Map<string, CachedTrack>();
   const results: ListenerRemoteSearchResult[] = [];
@@ -156,29 +152,83 @@ function searchDeps(req: Parameters<typeof service>[0]): ListenerMusicSearchDeps
   return req.app.locals.listenerMusicSearchDeps as ListenerMusicSearchDeps | undefined;
 }
 
-function beginSearch(runtime: SearchRuntime, key: string): void {
+function hitSearchRate(runtime: SearchRuntime, key: string): void {
   const rate = runtime.searchRates.hit(key, [SEARCHES_PER_MINUTE], 0);
   if (rate.count > rate.limit) {
     const retryAfter = Math.max(1, Math.ceil(rate.remainingMs / 1000));
     throw new ListenerRemoteError(429, 'rate_limited', 'Too many remote requests', retryAfter);
   }
-  if (runtime.identityInFlight.has(key) || runtime.serviceInFlight >= MAX_SERVICE_IN_FLIGHT) {
-    runtime.searchRates.decrement(key, 0);
+}
+
+function beginProviderSearch(runtime: SearchRuntime, identity: string, serverConfigId: number): void {
+  if (runtime.identityInFlight.has(identity)) {
     fail(429, 'rate_limited', 'Too many remote requests');
   }
-  runtime.identityInFlight.add(key);
+  const serverCount = runtime.serverInFlight.get(serverConfigId) ?? 0;
+  if (serverCount >= MAX_SERVER_IN_FLIGHT || runtime.serviceInFlight >= MAX_SERVICE_IN_FLIGHT) {
+    fail(429, 'rate_limited', 'Too many remote requests');
+  }
+  runtime.identityInFlight.add(identity);
+  runtime.serverInFlight.set(serverConfigId, serverCount + 1);
   runtime.serviceInFlight++;
 }
 
-function endSearch(runtime: SearchRuntime, key: string): void {
-  runtime.identityInFlight.delete(key);
+function endProviderSearch(runtime: SearchRuntime, identity: string, serverConfigId: number): void {
+  runtime.identityInFlight.delete(identity);
+  const serverCount = runtime.serverInFlight.get(serverConfigId) ?? 0;
+  if (serverCount <= 1) runtime.serverInFlight.delete(serverConfigId);
+  else runtime.serverInFlight.set(serverConfigId, serverCount - 1);
   runtime.serviceInFlight = Math.max(0, runtime.serviceInFlight - 1);
 }
 
+/** Abort when the client leaves, the session dies, or the provider timeout fires. */
+function openSearchSignal(req: Request, session: string): { signal: AbortSignal; dispose: () => void } {
+  const remote = service(req);
+  const controller = new AbortController();
+  const abort = (err: ListenerRemoteError) => {
+    if (!controller.signal.aborted) controller.abort(err);
+  };
+  const onClose = () => {
+    if (!req.res?.writableEnded) {
+      abort(new ListenerRemoteError(503, 'unavailable', 'Listener remote is unavailable.'));
+    }
+  };
+  const timeoutMs = Number(req.app.locals.listenerRemoteSearchTimeoutMs) || SEARCH_PROVIDER_TIMEOUT_MS;
+  const checkMs = Number(req.app.locals.listenerRemoteSearchSessionCheckMs) || SESSION_CHECK_MS;
+  const timeout = setTimeout(() => {
+    abort(new ListenerRemoteError(504, 'timeout', 'The search took too long.'));
+  }, timeoutMs);
+  const sessionCheck = setInterval(() => {
+    if (!remote.sessionRateKey(session)) {
+      abort(new ListenerRemoteError(401, 'invalid_access', 'Listener access is invalid or expired.'));
+    }
+  }, checkMs);
+  if (req.aborted || req.res?.destroyed || req.socket?.destroyed) onClose();
+  else {
+    req.once('aborted', onClose);
+    req.once('close', onClose);
+    req.res?.once('close', onClose);
+    req.socket?.once('close', onClose);
+  }
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      clearTimeout(timeout);
+      clearInterval(sessionCheck);
+      req.off('aborted', onClose);
+      req.off('close', onClose);
+      req.res?.off('close', onClose);
+      req.socket?.off('close', onClose);
+    },
+  };
+}
+
 async function cachedOrSearch(
-  req: Parameters<typeof service>[0],
+  req: Request,
   runtime: SearchRuntime,
+  binding: ListenerRemoteBinding,
   query: string,
+  session: string,
 ): Promise<CachedTrack[]> {
   const now = runtime.now();
   pruneQueryCache(runtime, now);
@@ -186,23 +236,32 @@ async function cachedOrSearch(
   const hit = runtime.queryCache.get(cacheKey);
   if (hit && hit.expiresAt > now) return hit.tracks;
 
-  const deps = searchDeps(req);
-  let rows: ListenerSearchResult[];
+  const identity = identityKey(binding);
+  beginProviderSearch(runtime, identity, binding.serverConfigId);
+  const { signal, dispose } = openSearchSignal(req, session);
   try {
-    rows = deps
-      ? await searchListenerMusic(query, MAX_RESULTS, undefined, deps)
-      : await searchListenerMusic(query, MAX_RESULTS);
-  } catch (err) {
-    if (err instanceof ListenerRemoteError) throw err;
-    // Resolver/provider failures must not leak stderr or query text.
-    fail(503, 'unavailable', 'Listener remote is unavailable.');
-  }
+    const deps = searchDeps(req);
+    let rows: ListenerSearchResult[];
+    try {
+      rows = deps
+        ? await searchListenerMusic(query, MAX_RESULTS, signal, deps)
+        : await searchListenerMusic(query, MAX_RESULTS, signal);
+    } catch (err) {
+      if (err instanceof ListenerRemoteError) throw err;
+      if (signal.aborted && signal.reason instanceof ListenerRemoteError) throw signal.reason;
+      fail(503, 'unavailable', 'Listener remote is unavailable.');
+    }
+    signal.throwIfAborted();
 
-  const tracks = rows.map(toCachedTrack).filter((row): row is CachedTrack => row !== null).slice(0, MAX_RESULTS);
-  runtime.queryCache.delete(cacheKey);
-  runtime.queryCache.set(cacheKey, { tracks, expiresAt: now + QUERY_CACHE_TTL_MS });
-  pruneQueryCache(runtime, now);
-  return tracks;
+    const tracks = rows.map(toCachedTrack).filter((row): row is CachedTrack => row !== null).slice(0, MAX_RESULTS);
+    runtime.queryCache.delete(cacheKey);
+    runtime.queryCache.set(cacheKey, { tracks, expiresAt: runtime.now() + QUERY_CACHE_TTL_MS });
+    pruneQueryCache(runtime, runtime.now());
+    return tracks;
+  } finally {
+    dispose();
+    endProviderSearch(runtime, identity, binding.serverConfigId);
+  }
 }
 
 /** Search music and queue a chosen result (`POST /search`, `POST /search/queue`). */
@@ -211,18 +270,13 @@ export function registerSearchRoutes(router: Router): void {
     const { query: raw } = body(req, z.object({ query: z.string().max(200) }).strict());
     const query = parseSearchQuery(raw);
     const { binding } = await authorized(req, 'add', 'request');
+    const session = bearer(req);
     const runtime = runtimeFor(req);
-    const key = identityKey(binding);
-    beginSearch(runtime, key);
-    try {
-      const tracks = await cachedOrSearch(req, runtime, query);
-      // Re-check access after the potentially slow provider call.
-      await authenticate(req);
-      const payload: ListenerRemoteSearchResponse = issueResults(runtime, binding, tracks);
-      res.json(payload);
-    } finally {
-      endSearch(runtime, key);
-    }
+    hitSearchRate(runtime, identityKey(binding));
+    const tracks = await cachedOrSearch(req, runtime, binding, query, session);
+    await authenticate(req);
+    const payload: ListenerRemoteSearchResponse = issueResults(runtime, binding, tracks);
+    res.json(payload);
   }));
 
   router.post('/search/queue', endpoint(async (req, res) => {
@@ -230,7 +284,7 @@ export function registerSearchRoutes(router: Router): void {
     const arrival = arrivalSnapshot(req);
     const binding = await authenticate(req);
     const runtime = runtimeFor(req);
-    const track = lookupResult(runtime, binding, resultId);
+    const track = claimResult(runtime, binding, resultId);
     const link = listenerLink(req, binding, track.url);
     try {
       await appendForListener(
@@ -249,7 +303,6 @@ export function registerSearchRoutes(router: Router): void {
         arrival,
         () => link.check(),
       );
-      consumeResult(runtime, binding, resultId);
     } finally {
       link.dispose();
     }

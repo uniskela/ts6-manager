@@ -1,5 +1,6 @@
 import type { Router } from 'express';
 import { z } from 'zod';
+import { clearListenerSearchResults } from './search-cache.js';
 import { authenticate, body, endpoint, liveIdentity, service } from './shared.js';
 
 /** Token exchange (`POST /exchange`) and listener sign-out (`DELETE /session`). */
@@ -12,7 +13,9 @@ export function registerSessionRoutes(router: Router): void {
 
   router.delete('/session', endpoint(async (req, res) => {
     const binding = await authenticate(req);
-    service(req).revoke(binding.botId, binding.uid);
+    const remote = service(req);
+    clearListenerSearchResults(remote, binding);
+    remote.revoke(binding.botId, binding.uid);
     res.json({ ok: true });
   }));
 }
