@@ -2,7 +2,6 @@ import { randomBytes } from 'node:crypto';
 import type { Request, Router } from 'express';
 import { z } from 'zod';
 import type { ListenerRemoteSearchResponse, ListenerRemoteSearchResult } from '@ts6/common';
-import { RateWindows, monotonicNow } from '../../utils/rate-windows.js';
 import {
   checkListenerDuration,
   searchListenerMusic,
@@ -16,8 +15,8 @@ import {
 import { appendForListener, arrivalSnapshot } from './append.js';
 import { listenerLink } from './link.js';
 import {
+  getOrCreateSearchRuntime,
   identityKey,
-  searchRuntimes,
   type CachedTrack,
   type SearchRuntime,
 } from './search-cache.js';
@@ -29,7 +28,6 @@ const RESULT_TTL_MS = 5 * 60_000;
 const QUERY_CACHE_TTL_MS = 10 * 60_000;
 const QUERY_CACHE_MAX = 200;
 const IDENTITY_RESULTS_MAX = 10_000;
-const SEARCH_RATE_WINDOW_MS = 60_000;
 const SEARCHES_PER_MINUTE = 5;
 const MAX_RESULTS = 10;
 /** Hard global bound on concurrent provider searches (all servers). */
@@ -44,22 +42,8 @@ const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
 const HTTP_URL = /^https?:\/\//i;
 
 function runtimeFor(req: Parameters<typeof service>[0]): SearchRuntime {
-  const remote = service(req);
-  let runtime = searchRuntimes.get(remote);
-  if (!runtime) {
-    const clock = (req.app.locals.listenerRemoteSearchNow as (() => number) | undefined) ?? Date.now;
-    runtime = {
-      queryCache: new Map(),
-      identityResults: new Map(),
-      searchRates: new RateWindows(10_000, SEARCH_RATE_WINDOW_MS, clock === Date.now ? monotonicNow : clock),
-      identityInFlight: new Set(),
-      serverInFlight: new Map(),
-      serviceInFlight: 0,
-      now: clock,
-    };
-    searchRuntimes.set(remote, runtime);
-  }
-  return runtime;
+  const clock = (req.app.locals.listenerRemoteSearchNow as (() => number) | undefined) ?? Date.now;
+  return getOrCreateSearchRuntime(service(req), clock);
 }
 
 function pruneQueryCache(runtime: SearchRuntime, now: number): void {

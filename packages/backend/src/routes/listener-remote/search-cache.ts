@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Binding as ListenerRemoteBinding, ListenerRemoteService } from '../../voice/listener-remote.js';
+import { RateWindows, monotonicNow } from '../../utils/rate-windows.js';
 
 /** Opaque per-identity search result maps (URLs never leave process memory). */
 export interface CachedTrack {
@@ -21,17 +22,37 @@ export interface SearchRuntime {
   serverInFlight: Map<number, number>;
   serviceInFlight: number;
   now: () => number;
-  // RateWindows typed loosely here to avoid pulling the full search module graph.
-  searchRates: {
-    hit: (key: string, limits: readonly number[], index: number) => { count: number; limit: number; remainingMs: number };
-    decrement: (key: string, index: number) => void;
-  };
+  searchRates: RateWindows;
 }
 
-export const searchRuntimes = new WeakMap<ListenerRemoteService, SearchRuntime>();
+const SEARCH_RATE_WINDOW_MS = 60_000;
+
+/** Process-local runtimes keyed by the remote service instance. */
+const searchRuntimes = new WeakMap<ListenerRemoteService, SearchRuntime>();
 
 export function identityKey(binding: Pick<ListenerRemoteBinding, 'botId' | 'uid'>): string {
   return createHash('sha256').update(JSON.stringify([binding.botId, binding.uid])).digest('hex');
+}
+
+/** Create or return the process-local search runtime for this remote service. */
+export function getOrCreateSearchRuntime(
+  remote: ListenerRemoteService,
+  clock: () => number = Date.now,
+): SearchRuntime {
+  let runtime = searchRuntimes.get(remote);
+  if (!runtime) {
+    runtime = {
+      queryCache: new Map(),
+      identityResults: new Map(),
+      searchRates: new RateWindows(10_000, SEARCH_RATE_WINDOW_MS, clock === Date.now ? monotonicNow : clock),
+      identityInFlight: new Set(),
+      serverInFlight: new Map(),
+      serviceInFlight: 0,
+      now: clock,
+    };
+    searchRuntimes.set(remote, runtime);
+  }
+  return runtime;
 }
 
 /** Clear cached search results for one identity (session revoke / DELETE /session). */
