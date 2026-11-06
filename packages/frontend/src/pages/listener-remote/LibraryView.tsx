@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -30,7 +30,14 @@ export function LibraryView({ canAdd, expire, refresh }: {
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const expireRef = useRef(expire);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const requestId = useRef(0);
+  const focusKeyRef = useRef<string | null>(null);
   expireRef.current = expire;
+  const errorId = useId();
+  const statusId = useId();
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -42,16 +49,39 @@ export function LibraryView({ canAdd, expire, refresh }: {
 
   useEffect(() => {
     let stale = false;
+    const id = ++requestId.current;
     setLoading(true);
     void loadRemoteLibrary(query, page).then(
-      (data) => { if (!stale) { setLibrary(data); setError(null); } },
+      (data) => {
+        if (stale || id !== requestId.current) return;
+        setLibrary(data);
+        setError(null);
+      },
       (err: unknown) => {
-        if (stale || expireRef.current(err)) return;
+        if (stale || id !== requestId.current || expireRef.current(err)) return;
         setError(remoteErrorMessage(err));
       },
-    ).finally(() => { if (!stale) setLoading(false); });
+    ).finally(() => {
+      if (!stale && id === requestId.current) setLoading(false);
+    });
     return () => { stale = true; };
   }, [query, page]);
+
+  useLayoutEffect(() => {
+    if (loading) return;
+    const key = `${query}::${page}`;
+    if (focusKeyRef.current === key) return;
+    focusKeyRef.current = key;
+    const node = resultsRef.current;
+    if (!node) return;
+    node.scrollIntoView({ block: 'nearest' });
+    node.focus({ preventScroll: true });
+  }, [page, query, loading]);
+
+  useLayoutEffect(() => {
+    if (error) errorRef.current?.focus({ preventScroll: true });
+    else if (notice) noticeRef.current?.focus({ preventScroll: true });
+  }, [error, notice]);
 
   const add = (song: RemoteSong) => {
     if (!canAdd || lock.current) return;
@@ -70,6 +100,8 @@ export function LibraryView({ canAdd, expire, refresh }: {
   };
 
   const songs = library?.songs ?? [];
+  const showStale = loading && library !== null;
+
   return (
     <Card>
       <CardContent className="p-4">
@@ -83,22 +115,54 @@ export function LibraryView({ canAdd, expire, refresh }: {
               enterKeyHint="search"
               placeholder="Search songs"
               aria-label="Search songs"
-              className="h-11"
+              aria-busy={loading}
+              aria-describedby={statusId}
+              className="h-11 min-h-11"
               onChange={(event) => setSearch(event.target.value)}
             />
           </form>
-          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          {notice && <StatusNote>{notice}</StatusNote>}
-          <LibrarySongs songs={songs} page={page} loading={loading} library={library} canAdd={canAdd} busy={busy} add={add} />
+          <p id={statusId} className="sr-only" aria-live="polite">
+            {loading ? 'Updating library results.' : `${songs.length} songs on this page.`}
+          </p>
+          {error && (
+            <p
+              ref={errorRef}
+              id={errorId}
+              role="alert"
+              tabIndex={-1}
+              className="text-sm text-destructive outline-none"
+            >
+              {error}
+            </p>
+          )}
+          {notice && (
+            <p
+              ref={noticeRef}
+              tabIndex={-1}
+              className="outline-none"
+            >
+              <StatusNote>{notice}</StatusNote>
+            </p>
+          )}
+          <div
+            ref={resultsRef}
+            tabIndex={-1}
+            data-testid="library-results"
+            className="scroll-mt-4 space-y-3 outline-none"
+            aria-busy={loading}
+          >
+            {showStale && <StatusNote>Updating results…</StatusNote>}
+            <LibrarySongs songs={songs} page={page} loading={loading} library={library} canAdd={canAdd} busy={busy} add={add} />
+          </div>
           {(page > 1 || songs.length >= 25) && (
             <div className="flex gap-2">
               {page > 1 && (
-                <Button type="button" variant="outline" className="h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n - 1)}>
+                <Button type="button" variant="outline" className="h-11 min-h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n - 1)}>
                   Previous page
                 </Button>
               )}
               {songs.length >= 25 && (
-                <Button type="button" variant="outline" className="h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n + 1)}>
+                <Button type="button" variant="outline" className="h-11 min-h-11 flex-1" disabled={loading} onClick={() => setPage((n) => n + 1)}>
                   Next page
                 </Button>
               )}
@@ -122,19 +186,21 @@ function LibrarySongs({ songs, page, loading, library, canAdd, busy, add }: {
   if (loading && !library) return <StatusNote>Searching the library…</StatusNote>;
   if (songs.length === 0) {
     const empty = page > 1 ? 'No more songs.' : 'No songs found.';
-    return <p className="text-sm text-muted-foreground">{empty}</p>;
+    return <p className="text-sm text-foreground/80">{empty}</p>;
   }
   return (
     <ul aria-label="Songs" className="space-y-1.5">
       {songs.map((song) => (
         <li key={song.id} className="flex items-center gap-2 rounded-md border bg-card p-2">
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">{song.title}</p>
-            {song.artist && <p className="truncate text-xs text-muted-foreground">{song.artist}</p>}
+            <p className="truncate text-sm font-medium" title={song.title}>{song.title}</p>
+            {song.artist && (
+              <p className="truncate text-xs text-foreground/75" title={song.artist}>{song.artist}</p>
+            )}
           </div>
-          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{formatTrackLength(song.duration) ?? ''}</span>
+          <span className="shrink-0 font-mono text-xs tabular-nums text-foreground/75">{formatTrackLength(song.duration) ?? ''}</span>
           {canAdd && (
-            <Button type="button" variant="outline" size="icon" className="h-11 w-11" disabled={busy}
+            <Button type="button" variant="outline" size="icon" className="h-11 w-11 min-h-11 min-w-11" disabled={busy}
               aria-label={`Add ${song.title} to the queue`} onClick={() => add(song)}>
               <Plus aria-hidden="true" />
             </Button>

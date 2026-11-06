@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useId, useLayoutEffect, useRef, useState } from 'react';
+import { flushSync } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,10 +22,26 @@ export function UrlRequestView({ expire, refresh }: {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
+  const errorRef = useRef<HTMLParagraphElement>(null);
+  const noticeRef = useRef<HTMLParagraphElement>(null);
+  const errorId = useId();
+  const hintId = useId();
+
+  useLayoutEffect(() => {
+    if (error) errorRef.current?.focus({ preventScroll: true });
+    else if (notice) noticeRef.current?.focus({ preventScroll: true });
+  }, [error, notice]);
 
   const submit = () => {
     const problem = remoteMediaUrlError(url);
-    if (problem) { setError(problem); setNotice(null); return; }
+    if (problem) {
+      flushSync(() => {
+        setError(problem);
+        setNotice(null);
+      });
+      errorRef.current?.focus({ preventScroll: true });
+      return;
+    }
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
@@ -44,9 +61,13 @@ export function UrlRequestView({ expire, refresh }: {
   return (
     <Card>
       <CardContent className="p-4">
-        <form className="space-y-2" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <form
+          className="space-y-2"
+          noValidate
+          onSubmit={(event) => { event.preventDefault(); submit(); }}
+        >
           <Label htmlFor="remote-url" className="text-base font-semibold">Media URL</Label>
-          <p className="text-sm text-muted-foreground">Paste a link to add a song that is not in the library.</p>
+          <p id={hintId} className="text-sm text-foreground/80">Paste a link to add a song that is not in the library.</p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
               id="remote-url"
@@ -60,15 +81,34 @@ export function UrlRequestView({ expire, refresh }: {
               maxLength={2048}
               placeholder="https://"
               value={url}
-              className="h-11 sm:flex-1"
-              onChange={(event) => setUrl(event.target.value)}
+              className="h-11 min-h-11 sm:flex-1"
+              aria-invalid={Boolean(error)}
+              aria-describedby={error ? errorId : hintId}
+              onChange={(event) => {
+                setUrl(event.target.value);
+                if (error) setError(null);
+              }}
             />
-            <Button type="submit" className="h-11 w-full sm:w-auto" disabled={busy || url.trim().length === 0}>
+            <Button type="submit" className="h-11 min-h-11 w-full sm:w-auto" disabled={busy || url.trim().length === 0}>
               {busy ? 'Adding…' : 'Request URL'}
             </Button>
           </div>
-          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-          {notice && <StatusNote>{notice}</StatusNote>}
+          {error && (
+            <p
+              ref={errorRef}
+              id={errorId}
+              role="alert"
+              tabIndex={-1}
+              className="text-sm text-destructive outline-none"
+            >
+              {error}
+            </p>
+          )}
+          {notice && (
+            <p ref={noticeRef} tabIndex={-1} className="outline-none">
+              <StatusNote>{notice}</StatusNote>
+            </p>
+          )}
         </form>
       </CardContent>
     </Card>

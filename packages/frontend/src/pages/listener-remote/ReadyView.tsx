@@ -74,8 +74,10 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
     <div className="space-y-4 lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:items-start lg:gap-x-8 lg:gap-y-6 lg:space-y-0">
       <header className="flex items-start justify-between gap-3 lg:col-span-2">
         <div className="min-w-0">
-          <p className="text-xs text-muted-foreground">Listener remote</p>
-          <h1 className="truncate text-lg font-semibold lg:text-2xl">{state?.bot.name ?? 'Listener remote'}</h1>
+          <p className="text-xs text-foreground/75">Listener remote</p>
+          <h1 className="truncate text-lg font-semibold lg:text-2xl" title={state?.bot.name ?? 'Listener remote'}>
+            {state?.bot.name ?? 'Listener remote'}
+          </h1>
         </div>
         {state && (
           <Badge variant={state.bot.status === 'playing' ? 'default' : 'secondary'} className="shrink-0">

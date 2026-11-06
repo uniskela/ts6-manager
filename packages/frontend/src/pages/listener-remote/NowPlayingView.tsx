@@ -30,7 +30,7 @@ function NowPlayingBody({ state, loading, error, track, summary }: {
 }) {
   if (loading && !state) return <StatusNote>Loading the remote…</StatusNote>;
   if (!track) {
-    if (state || !error) return <p className="text-sm text-muted-foreground">Nothing is playing.</p>;
+    if (state || !error) return <p className="text-sm text-foreground/80">Nothing is playing.</p>;
     return null;
   }
   return (
@@ -40,8 +40,10 @@ function NowPlayingBody({ state, loading, error, track, summary }: {
           <Music className="h-6 w-6" aria-hidden="true" />
         </div>
         <div className="min-w-0">
-          <p className="truncate text-base font-semibold">{track.title}</p>
-          {track.artist && <p className="truncate text-sm text-muted-foreground">{track.artist}</p>}
+          <p className="truncate text-base font-semibold" title={track.title}>{track.title}</p>
+          {track.artist && (
+            <p className="truncate text-sm text-foreground/80" title={track.artist}>{track.artist}</p>
+          )}
         </div>
       </div>
       <progress
@@ -49,7 +51,7 @@ function NowPlayingBody({ state, loading, error, track, summary }: {
         aria-label="Playback progress"
         aria-valuetext={summary.label}
       />
-      <div className="flex justify-between font-mono text-xs tabular-nums text-muted-foreground">
+      <div className="flex justify-between font-mono text-xs tabular-nums text-foreground/75">
         <span>{summary.state}</span>
         <span>{summary.length ?? 'Live'}</span>
       </div>
