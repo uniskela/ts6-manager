@@ -3,6 +3,7 @@ import type {
   BotMediaOverview,
   BotAutomationSettings,
   MediaCommandPermissions,
+  PlaylistVoteSettings,
   QueueVideoResponse,
   StartVideoStreamRequest,
   VideoQueueState,
@@ -196,6 +197,15 @@ export const radioStationsApi = {
     api.delete(`/servers/${configId}/radio-stations/${id}`).then((r) => r.data),
   resetIds: (configId: number) =>
     api.post(`/servers/${configId}/radio-stations/reset-ids`).then((r) => r.data),
+};
+
+// === Playlist vote settings (per connection + virtual server) ===
+
+export const playlistVoteSettingsApi = {
+  get: (configId: number, sid: number): Promise<PlaylistVoteSettings> =>
+    api.get(`/servers/${configId}/playlist-vote-settings/${sid}`).then((r) => r.data),
+  save: (configId: number, sid: number, settings: PlaylistVoteSettings): Promise<PlaylistVoteSettings> =>
+    api.put(`/servers/${configId}/playlist-vote-settings/${sid}`, settings).then((r) => r.data),
 };
 
 // === Custom chat commands (!name → reply) ===
