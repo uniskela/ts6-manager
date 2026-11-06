@@ -1,5 +1,6 @@
 import type { Request } from 'express';
 import { LISTENER_MAX_DURATION_SEC, type ListenerTrackMeta } from '../../voice/audio/listener-music.js';
+import { MediaCacheError } from '../../voice/audio/media-cache.js';
 import { downloadYouTube } from '../../voice/audio/youtube.js';
 import { ListenerRemoteError, type Binding as ListenerRemoteBinding, type ListenerRemoteService } from '../../voice/listener-remote.js';
 import { abortable, defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../../voice/media-url-pipeline.js';
@@ -26,20 +27,36 @@ const notAllowed = (): never => fail(400, 'invalid_request', 'This media URL is 
 /** Injectable probe for tests; production dumps yt-dlp metadata before download. */
 export type ListenerLinkProbe = (url: string, signal?: AbortSignal) => Promise<ListenerTrackMeta>;
 
-/** Listener paste downloads: 15-minute match-filter and a tight filesize cap. */
-function listenerBoundedDownloadTrack(url: string, signal?: AbortSignal): Promise<QueueItem> {
-  return downloadYouTube(url, MUSIC_DIR, undefined, signal, {
-    maxDurationSec: LISTENER_MAX_DURATION_SEC,
-    maxFilesizeBytes: LISTENER_MAX_DOWNLOAD_BYTES,
-  }).then(({ filePath, info }) => ({
-    id: `yt_${info.id}`,
-    title: info.title,
-    artist: info.artist,
-    duration: info.duration,
-    filePath,
-    source: 'youtube' as const,
-    sourceUrl: url,
-  }));
+/** Map cache measured-duration refusals onto the listener 422 codes. */
+function mapMeasuredDurationError(err: unknown): never {
+  if (err instanceof MediaCacheError && err.code === 'too_long') {
+    refuseListenerDuration({ durationSec: LISTENER_MAX_DURATION_SEC + 1 });
+  }
+  if (err instanceof MediaCacheError && err.code === 'duration_unknown') {
+    refuseListenerDuration({ durationSec: null });
+  }
+  throw err;
+}
+
+/** Listener paste downloads: 15-minute match-filter, size cap, and measured-duration gate. */
+async function listenerBoundedDownloadTrack(url: string, signal?: AbortSignal): Promise<QueueItem> {
+  try {
+    const { filePath, info } = await downloadYouTube(url, MUSIC_DIR, undefined, signal, {
+      maxDurationSec: LISTENER_MAX_DURATION_SEC,
+      maxFilesizeBytes: LISTENER_MAX_DOWNLOAD_BYTES,
+    });
+    return {
+      id: `yt_${info.id}`,
+      title: info.title,
+      artist: info.artist,
+      duration: info.duration,
+      filePath,
+      source: 'youtube' as const,
+      sourceUrl: url,
+    };
+  } catch (err) {
+    mapMeasuredDurationError(err);
+  }
 }
 
 /** Pipeline deps for one pasted link: duration gate before and after download. */
@@ -54,7 +71,12 @@ function listenerLinkDeps(req: Request): MediaUrlPipelineDeps {
     ...base,
     downloadTrack: async (url, signal) => {
       refuseListenerDuration(await probe(url, signal));
-      const item = await base.downloadTrack(url, signal);
+      let item: QueueItem;
+      try {
+        item = await base.downloadTrack(url, signal);
+      } catch (err) {
+        mapMeasuredDurationError(err);
+      }
       refuseListenerDuration({ durationSec: item.duration ?? null });
       return item;
     },
