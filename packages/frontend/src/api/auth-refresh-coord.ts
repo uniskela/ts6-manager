@@ -39,10 +39,30 @@ let listenerInstalled = false;
 let coordinationEpoch = 0;
 /** Refresh tokens from a replaced session — ignore if a late peer still publishes them. */
 let blockedRefreshTokens = new Set<string>();
+/**
+ * After logout/login, ignore peer `result` until this tab publishes its own
+ * successful refresh. Blocks rotated successors (R1) of a prior-account R0,
+ * not only the exact blocked token string.
+ */
+let ignorePeerResults = false;
+
+/** UTF-16 code-unit order — locale-independent across browsers. */
+export function compareTabIds(a: string, b: string): number {
+  if (a < b) return -1;
+  if (a > b) return 1;
+  return 0;
+}
+
+function randomTabSuffix(): string {
+  const bytes = new Uint8Array(8);
+  // crypto.getRandomValues works in secure and insecure (HTTP LAN) contexts.
+  globalThis.crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 export function getAuthRefreshTabId(): string {
   if (tabIdMemo) return tabIdMemo;
-  tabIdMemo = `t-${Math.random().toString(36).slice(2, 12)}-${Date.now().toString(36)}`;
+  tabIdMemo = `t-${randomTabSuffix()}-${Date.now().toString(36)}`;
   return tabIdMemo;
 }
 
@@ -83,6 +103,7 @@ function clearCoordinationState(previousRefreshToken?: string | null): void {
   }
   lastGoodResult = null;
   activeLeader = null;
+  ignorePeerResults = true;
   coordinationEpoch += 1;
   const waiters = resultWaiters;
   resultWaiters = [];
@@ -114,8 +135,13 @@ function ensureListener(): void {
     }
     if (msg.type === 'result') {
       if (msg.ok) {
-        if (blockedRefreshTokens.has(msg.refreshToken)) {
-          // Prior-session leader finished after logout/login — drop it.
+        if (ignorePeerResults || blockedRefreshTokens.has(msg.refreshToken)) {
+          // Prior-session leader finished after logout/login — drop R0 and any
+          // rotated successor (R1) until this tab owns a fresh refresh.
+          if (msg.refreshToken) blockedRefreshTokens.add(msg.refreshToken);
+          if (blockedRefreshTokens.size > 8) {
+            blockedRefreshTokens = new Set([...blockedRefreshTokens].slice(-8));
+          }
           activeLeader = null;
           return;
         }
@@ -191,10 +217,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Deterministic owner among claim tab ids (lexicographically smallest). */
+/** Deterministic owner among claim tab ids (UTF-16 lexicographically smallest). */
 export function pickRefreshOwner(claimTabIds: string[]): string {
   if (claimTabIds.length === 0) return getAuthRefreshTabId();
-  return [...claimTabIds].sort()[0]!;
+  return [...claimTabIds].sort(compareTabIds)[0]!;
 }
 
 function waitForResult(timeoutMs: number): Promise<TokenPair | null> {
@@ -321,6 +347,7 @@ export async function coordinateRefreshOwnership(
     try {
       if (pair) {
         blockedRefreshTokens.delete(pair.refreshToken);
+        ignorePeerResults = false;
         lastGoodResult = { ...pair, at: Date.now() };
         ch.postMessage({
           v: 1,
@@ -361,6 +388,7 @@ export function resetAuthRefreshCoordForTests(): void {
   suppressLogoutBroadcast = false;
   coordinationEpoch = 0;
   blockedRefreshTokens = new Set();
+  ignorePeerResults = false;
   if (channel) {
     try {
       channel.close();

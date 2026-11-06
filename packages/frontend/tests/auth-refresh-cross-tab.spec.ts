@@ -1,4 +1,11 @@
-import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test, type APIRequestContext, type Browser, type Page } from '@playwright/test';
+import {
+  e2eAuth,
+  enableAuth,
+  openSecondTab,
+  refreshState,
+  signIn,
+} from './helpers/auth-refresh-e2e';
 
 type AuthBlob = {
   state: {
@@ -9,33 +16,6 @@ type AuthBlob = {
   version: number;
 };
 
-type E2EAuthTest = {
-  getMemoryTokens: () => { accessToken: string | null; refreshToken: string | null };
-  expireAccessInMemory: () => Promise<void>;
-  refreshNow: () => Promise<string | null>;
-  logoutLocal: () => void;
-};
-
-async function enableAuth(request: APIRequestContext) {
-  await request.post('/__test/reset');
-  await request.post('/__test/dashboard?scenario=normal');
-  await request.post('/__test/auth?on');
-}
-
-async function enableE2EHooks(context: BrowserContext) {
-  await context.addInitScript(() => {
-    localStorage.setItem('ts6-e2e-hooks', '1');
-  });
-}
-
-async function signIn(page: Page) {
-  await page.goto('/login');
-  await page.getByLabel('Username').fill('admin');
-  await page.getByLabel('Password', { exact: true }).fill('test-password');
-  await page.getByRole('button', { name: 'Sign In' }).click();
-  await expect(page).toHaveURL('/dashboard');
-}
-
 async function readPersistedAuth(page: Page): Promise<AuthBlob['state']> {
   return page.evaluate(() => {
     const raw = localStorage.getItem('ts6-auth');
@@ -44,49 +24,9 @@ async function readPersistedAuth(page: Page): Promise<AuthBlob['state']> {
   });
 }
 
-async function e2e(page: Page): Promise<E2EAuthTest> {
-  const hooks = await page.evaluateHandle(() => (window as unknown as { __ts6AuthTest?: E2EAuthTest }).__ts6AuthTest);
-  const value = await hooks.jsonValue();
-  if (!value) throw new Error('__ts6AuthTest hooks missing — is ts6-e2e-hooks set before load?');
-  return {
-    getMemoryTokens: () => page.evaluate(() => {
-      const h = (window as unknown as { __ts6AuthTest: E2EAuthTest }).__ts6AuthTest;
-      return h.getMemoryTokens();
-    }),
-    expireAccessInMemory: () => page.evaluate(() => (
-      (window as unknown as { __ts6AuthTest: E2EAuthTest }).__ts6AuthTest.expireAccessInMemory()
-    )),
-    refreshNow: () => page.evaluate(() => (
-      (window as unknown as { __ts6AuthTest: E2EAuthTest }).__ts6AuthTest.refreshNow()
-    )),
-    logoutLocal: () => page.evaluate(() => {
-      (window as unknown as { __ts6AuthTest: E2EAuthTest }).__ts6AuthTest.logoutLocal();
-    }),
-  };
-}
-
-async function refreshState(request: APIRequestContext) {
-  return (await request.get('/__test/refresh-state')).json() as {
-    rotateCount: number;
-    replayRevokes: number;
-    presented: string[];
-    live: string | null;
-    seq: number | null;
-    revoked: boolean;
-    consumedCount: number;
-  };
-}
-
-async function openSecondTab(context: BrowserContext, path = '/dashboard') {
-  const page = await context.newPage();
-  await page.goto(path);
-  return page;
-}
-
 test.describe('real two-tab refresh coordination', () => {
-  test.beforeEach(async ({ request, context }) => {
+  test.beforeEach(async ({ request }) => {
     await enableAuth(request);
-    await enableE2EHooks(context);
   });
 
   test('concurrent refresh from two tabs rotates once and both adopt the winner', async ({ page, context, request }) => {
@@ -96,8 +36,8 @@ test.describe('real two-tab refresh coordination', () => {
     await expect(pageB).toHaveURL('/dashboard');
     expect((await readPersistedAuth(pageB)).refreshToken).toBe(before.refreshToken);
 
-    const hooksA = await e2e(page);
-    const hooksB = await e2e(pageB);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
     await hooksA.expireAccessInMemory();
     await hooksB.expireAccessInMemory();
 
@@ -127,8 +67,8 @@ test.describe('real two-tab refresh coordination', () => {
     await signIn(page);
     const initial = await readPersistedAuth(page);
     const pageB = await openSecondTab(context);
-    const hooksA = await e2e(page);
-    const hooksB = await e2e(pageB);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
 
     await hooksA.expireAccessInMemory();
     const rotatedAccess = await hooksA.refreshNow();
@@ -136,7 +76,6 @@ test.describe('real two-tab refresh coordination', () => {
     const afterA = await readPersistedAuth(page);
     expect(afterA.refreshToken).not.toBe(initial.refreshToken);
 
-    // B still holds R1 in memory; persist already has the peer-rotated pair.
     const staleMem = await hooksB.getMemoryTokens();
     expect(staleMem.refreshToken).toBe(initial.refreshToken);
 
@@ -159,16 +98,14 @@ test.describe('real two-tab refresh coordination', () => {
   test('background tab resumes after peer refresh', async ({ page, context, request }) => {
     await signIn(page);
     const pageB = await openSecondTab(context, '/settings');
-    const hooksA = await e2e(page);
-    const hooksB = await e2e(pageB);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
 
     await hooksA.expireAccessInMemory();
     await hooksA.refreshNow();
     const peer = await readPersistedAuth(page);
 
     await pageB.bringToFront();
-    // Do not memory-expire B: persist already holds the peer rotation; refreshNow
-    // must adopt it (R1≠R2) without a second network rotate.
     const resumed = await hooksB.refreshNow();
     expect(resumed).toBeTruthy();
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(peer.refreshToken);
@@ -217,8 +154,8 @@ test.describe('real two-tab refresh coordination', () => {
     await signIn(page);
     const pageB = await openSecondTab(context);
     const before = await readPersistedAuth(page);
-    const hooksA = await e2e(page);
-    const hooksB = await e2e(pageB);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
 
     const logoutRes = await request.post('/api/auth/logout', {
       data: { refreshToken: before.refreshToken },
@@ -226,7 +163,6 @@ test.describe('real two-tab refresh coordination', () => {
     expect(logoutRes.status()).toBe(204);
     expect((await refreshState(request)).revoked).toBe(true);
 
-    // Clear memory + persist on both pages so neither rehydrates revoked creds.
     await hooksA.logoutLocal();
     await page.waitForURL('**/login', { timeout: 5000 }).catch(() => undefined);
     await hooksB.logoutLocal();
@@ -260,7 +196,6 @@ test.describe('no-Web-Lock BroadcastChannel ownership', () => {
     await enableAuth(request);
     const context = await browser.newContext();
     await context.addInitScript(() => {
-      localStorage.setItem('ts6-e2e-hooks', '1');
       Object.defineProperty(navigator, 'locks', { configurable: true, get: () => undefined });
     });
     const pageA = await context.newPage();
@@ -271,8 +206,8 @@ test.describe('no-Web-Lock BroadcastChannel ownership', () => {
       await pageB.goto('/dashboard');
       await expect(pageB).toHaveURL('/dashboard');
 
-      const hooksA = await e2e(pageA);
-      const hooksB = await e2e(pageB);
+      const hooksA = await e2eAuth(pageA);
+      const hooksB = await e2eAuth(pageB);
       await hooksA.expireAccessInMemory();
       await hooksB.expireAccessInMemory();
       const [tokenA, tokenB] = await Promise.all([hooksA.refreshNow(), hooksB.refreshNow()]);

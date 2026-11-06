@@ -230,14 +230,26 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-/** Playwright-only seam: enabled when localStorage ts6-e2e-hooks=1 before module load. */
+/** Base64url without regex backtracking (Playwright E2E builds only). */
+function toBase64UrlJson(value: unknown): string {
+  const b64 = btoa(JSON.stringify(value));
+  let out = '';
+  for (let i = 0; i < b64.length; i++) {
+    const c = b64[i]!;
+    if (c === '+') out += '-';
+    else if (c === '/') out += '_';
+    else if (c !== '=') out += c;
+  }
+  return out;
+}
+
+/**
+ * Playwright-only seam. Compiled in only when `VITE_E2E_AUTH_HOOKS=true`
+ * (`pnpm build:e2e`). Ordinary production/Docker builds tree-shake this away —
+ * a localStorage flag alone must not unlock hooks in release images.
+ */
 function installE2EAuthHooks(): void {
   if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
-  try {
-    if (localStorage.getItem('ts6-e2e-hooks') !== '1') return;
-  } catch {
-    return;
-  }
   (window as Window & {
     __ts6AuthTest?: {
       getMemoryTokens: () => { accessToken: string | null; refreshToken: string | null };
@@ -251,14 +263,8 @@ function installE2EAuthHooks(): void {
       return { accessToken, refreshToken };
     },
     expireAccessInMemory: async () => {
-      const header = btoa(JSON.stringify({ alg: 'none', typ: 'JWT' }))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '');
-      const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) - 120 }))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/g, '');
+      const header = toBase64UrlJson({ alg: 'none', typ: 'JWT' });
+      const payload = toBase64UrlJson({ exp: Math.floor(Date.now() / 1000) - 120 });
       // Memory-only expiry: leave stale refresh in memory (for adopt tests) but
       // re-assert persist so a deferred zustand flush cannot wipe a peer rotation.
       const snap = localStorage.getItem('ts6-auth');
@@ -274,7 +280,9 @@ function installE2EAuthHooks(): void {
     logoutLocal: () => useAuthStore.getState().logout(),
   };
 }
-installE2EAuthHooks();
+if (import.meta.env.VITE_E2E_AUTH_HOOKS === 'true') {
+  installE2EAuthHooks();
+}
 
 api.interceptors.response.use(
   (response) => response,

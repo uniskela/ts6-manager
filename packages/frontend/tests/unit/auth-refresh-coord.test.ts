@@ -4,7 +4,9 @@ import {
   AUTH_REFRESH_CHANNEL,
   broadcastAuthLogout,
   clearAuthRefreshCoordination,
+  compareTabIds,
   coordinateRefreshOwnership,
+  getAuthRefreshTabId,
   pickRefreshOwner,
   resetAuthRefreshCoordForTests,
   setAuthRefreshPeerLogoutHandler,
@@ -65,8 +67,23 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     delete (globalThis as { window?: unknown }).window;
   });
 
-  it('pickRefreshOwner is deterministic', () => {
+  it('pickRefreshOwner is deterministic under UTF-16 compare', () => {
     assert.equal(pickRefreshOwner(['t-b', 't-a', 't-c']), 't-a');
+    assert.equal(compareTabIds('t-a', 't-b'), -1);
+    assert.equal(pickRefreshOwner(['t-9', 't-10']), 't-10');
+  });
+
+  it('tab ids from getAuthRefreshTabId are unique across resets', () => {
+    const ids = new Set<string>();
+    for (let i = 0; i < 64; i++) {
+      resetAuthRefreshCoordForTests();
+      (globalThis as { window?: unknown }).window = globalThis;
+      ids.add(getAuthRefreshTabId());
+    }
+    assert.equal(ids.size, 64);
+    for (const id of ids) {
+      assert.match(id, /^t-[0-9a-f]{16}-[0-9a-z]+$/);
+    }
   });
 
   it('single participant refreshes once', async () => {
@@ -160,6 +177,72 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     });
     assert.equal(networkCalls, 1);
     assert.deepEqual(pair, { accessToken: 'a-fresh', refreshToken: 'r-fresh' });
+    peer.close();
+  });
+
+  it('delayed prior-account R1 (rotated successor of R0) is not cached or adopted', async () => {
+    setAuthRefreshPeerLogoutHandler(() => {});
+    // Account A held R0; session replace blocks R0 and flips ignorePeerResults.
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'a0', refreshToken: 'r0' }));
+    clearAuthRefreshCoordination('r0');
+    const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
+    // Account A's in-flight refresh completes with rotated R1 — not the blocked R0 string.
+    peer.postMessage({
+      v: 1,
+      type: 'result',
+      tabId: 't-account-a',
+      ok: true,
+      accessToken: 'a1',
+      refreshToken: 'r1',
+    });
+    let networkCalls = 0;
+    const pair = await coordinateRefreshOwnership(async () => {
+      networkCalls += 1;
+      return { accessToken: 'b1', refreshToken: 'rb1' };
+    });
+    assert.equal(networkCalls, 1, 'must not short-circuit on prior-account R1');
+    assert.deepEqual(pair, { accessToken: 'b1', refreshToken: 'rb1' });
+    // R1 must stay rejected even after Account B has refreshed (blocked set).
+    peer.postMessage({
+      v: 1,
+      type: 'result',
+      tabId: 't-account-a',
+      ok: true,
+      accessToken: 'a1-again',
+      refreshToken: 'r1',
+    });
+    let secondCalls = 0;
+    const second = await coordinateRefreshOwnership(async () => {
+      secondCalls += 1;
+      return { accessToken: 'b2', refreshToken: 'rb2' };
+    });
+    // Within TTL of B's own result — still B, never R1.
+    assert.equal(secondCalls, 0);
+    assert.deepEqual(second, { accessToken: 'b1', refreshToken: 'rb1' });
+    peer.close();
+  });
+
+  it('same-account peer results still adopt after a local refresh', async () => {
+    setAuthRefreshPeerLogoutHandler(() => {});
+    clearAuthRefreshCoordination('r-prior');
+    // Local refresh clears ignorePeerResults so same-account peers can share again.
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'local', refreshToken: 'r-local' }));
+    const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
+    peer.postMessage({
+      v: 1,
+      type: 'result',
+      tabId: 't-peer',
+      ok: true,
+      accessToken: 'peer-a',
+      refreshToken: 'peer-r',
+    });
+    let networkCalls = 0;
+    const pair = await coordinateRefreshOwnership(async () => {
+      networkCalls += 1;
+      return { accessToken: 'should-not', refreshToken: 'nope' };
+    });
+    assert.equal(networkCalls, 0);
+    assert.deepEqual(pair, { accessToken: 'peer-a', refreshToken: 'peer-r' });
     peer.close();
   });
 });
