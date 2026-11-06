@@ -106,22 +106,24 @@ async function refreshAccessToken(): Promise<string | null> {
       } catch (err: unknown) {
         const status = axios.isAxiosError(err) ? err.response?.status : undefined;
         if (status === 401 || status === 403) {
-          // Dual-start race: a peer may already have rotated into persist.
-          // Do not logout/wipe that winner's credentials.
-          const persisted = readPersistedAuthTokens();
-          if (
-            persisted.refreshToken
-            && persisted.refreshToken !== refreshToken
-            && persisted.accessToken
-          ) {
-            useAuthStore.setState({
-              accessToken: persisted.accessToken,
-              refreshToken: persisted.refreshToken,
-            });
-            return {
-              accessToken: persisted.accessToken,
-              refreshToken: persisted.refreshToken,
-            };
+          // Dual-start race: peer may have rotated; zustand persist can lag setTokens.
+          for (let i = 0; i < 3; i++) {
+            if (i > 0) await new Promise((r) => setTimeout(r, 25));
+            const persisted = readPersistedAuthTokens();
+            if (
+              persisted.refreshToken
+              && persisted.refreshToken !== refreshToken
+              && persisted.accessToken
+            ) {
+              useAuthStore.setState({
+                accessToken: persisted.accessToken,
+                refreshToken: persisted.refreshToken,
+              });
+              return {
+                accessToken: persisted.accessToken,
+                refreshToken: persisted.refreshToken,
+              };
+            }
           }
           logout();
         }
