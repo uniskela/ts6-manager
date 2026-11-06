@@ -39,10 +39,16 @@ export const DEFAULT_PLAYLIST_VOTE_SETTINGS: PlaylistVoteSettings = {
   maxRequestSize: 25,
 };
 
-/** Approvals needed = ceil(threshold% × listeners), at least 1 when anyone is listening. */
+/**
+ * Approvals needed for a live electorate (#442 / B2).
+ * Formula: ceil(threshold% × listeners), threshold clamped to 1–100, at least 1.
+ * listeners ≤ 0 returns 1 defensively — openVote must still refuse an empty electorate.
+ * B3 maps AppSetting `maxRequestSize` onto the machine's `maxTracks`.
+ */
 export function playlistVoteApprovalsNeeded(thresholdPercent: number, listeners: number): number {
-  if (listeners <= 0) return 0;
-  return Math.max(1, Math.ceil((thresholdPercent / 100) * listeners));
+  if (listeners <= 0) return 1;
+  const pct = Math.min(100, Math.max(1, Math.floor(thresholdPercent)));
+  return Math.max(1, Math.ceil((pct / 100) * listeners));
 }
 
 /** What a bot's Auto-DJ and 24/7 settings mean right now, for status badges and `!help`. */
