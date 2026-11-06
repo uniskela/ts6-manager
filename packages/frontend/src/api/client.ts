@@ -280,7 +280,8 @@ function installE2EAuthHooks(): void {
     logoutLocal: () => useAuthStore.getState().logout(),
   };
 }
-if (import.meta.env.VITE_E2E_AUTH_HOOKS === 'true') {
+// Vite injects import.meta.env; Node unit tests importing this module have no env bag.
+if (import.meta.env?.VITE_E2E_AUTH_HOOKS === 'true') {
   installE2EAuthHooks();
 }
 
