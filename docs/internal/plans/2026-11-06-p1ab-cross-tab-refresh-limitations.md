@@ -43,6 +43,6 @@ Server-side consumed-token replay / family revoke remains authoritative.
 
 ## Residual risks
 
-- BroadcastChannel is not a mutex: extreme scheduling can still dual-POST; loser must not wipe peer persist (handled in `runRefresh` 401 path). Residual dual-POST under pathological miss remains possible but was not observed in 40 LAN trials.
+- BroadcastChannel is not a mutex: extreme scheduling can still dual-POST; loser must not wipe peer persist (`runRefresh` 401 path adopts peer tokens with a short persist re-read). Residual dual-POST under pathological miss remains possible but was not observed in 40 LAN trials.
 - Access JWTs / established WebSockets are not torn down by refresh revoke (unchanged).
 - `authTestHooks` / `__ts6AuthTest` remain test-only seams.
