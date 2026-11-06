@@ -133,7 +133,7 @@ function consumeResult(runtime: SearchRuntime, binding: ListenerRemoteBinding, r
   const key = identityKey(binding);
   const entry = runtime.identityResults.get(key);
   entry?.byId.delete(resultId);
-  if (entry && entry.byId.size === 0) runtime.identityResults.delete(key);
+  if (entry?.byId.size === 0) runtime.identityResults.delete(key);
 }
 
 function issueResults(runtime: SearchRuntime, binding: ListenerRemoteBinding, tracks: CachedTrack[]): {
