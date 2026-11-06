@@ -110,6 +110,20 @@ function createStore(options?: {
         Object.assign(row, data);
         return row;
       },
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { id: number; passwordHash?: string; enabled?: boolean };
+        data: Partial<UserRow>;
+      }) => {
+        const row = users.get(where.id);
+        if (!row) return { count: 0 };
+        if (where.passwordHash != null && row.passwordHash !== where.passwordHash) return { count: 0 };
+        if (where.enabled != null && row.enabled !== where.enabled) return { count: 0 };
+        Object.assign(row, data);
+        return { count: 1 };
+      },
       delete: async ({ where }: { where: { id: number } }) => {
         users.delete(where.id);
         return { id: where.id };
