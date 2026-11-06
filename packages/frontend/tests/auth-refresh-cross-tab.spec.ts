@@ -167,7 +167,8 @@ test.describe('real two-tab refresh coordination', () => {
     const peer = await readPersistedAuth(page);
 
     await pageB.bringToFront();
-    await hooksB.expireAccessInMemory();
+    // Do not memory-expire B: persist already holds the peer rotation; refreshNow
+    // must adopt it (R1≠R2) without a second network rotate.
     const resumed = await hooksB.refreshNow();
     expect(resumed).toBeTruthy();
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(peer.refreshToken);

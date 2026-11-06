@@ -75,21 +75,7 @@ function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
 function adoptPeerTokensIfFresh(): string | null {
   const persisted = readPersistedAuthTokens();
   const mem = useAuthStore.getState();
-  if (!persisted.refreshToken) return null;
-
-  // Same refresh as memory: still adopt a fresher access token from persist
-  // (memory-only expiry after a peer rotation must not force another rotate).
-  if (persisted.refreshToken === mem.refreshToken) {
-    if (
-      persisted.accessToken
-      && persisted.accessToken !== mem.accessToken
-      && !accessTokenNeedsRefresh(persisted.accessToken)
-    ) {
-      useAuthStore.setState({ accessToken: persisted.accessToken });
-      return persisted.accessToken;
-    }
-    return null;
-  }
+  if (!persisted.refreshToken || persisted.refreshToken === mem.refreshToken) return null;
 
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
