@@ -29,9 +29,20 @@ const SEARCH_RATE_WINDOW_MS = 60_000;
 
 /** Process-local runtimes keyed by the remote service instance. */
 const searchRuntimes = new WeakMap<ListenerRemoteService, SearchRuntime>();
+/** Remotes that already clear search maps from ListenerRemoteService.remove(). */
+const searchInvalidationBound = new WeakSet<ListenerRemoteService>();
 
 export function identityKey(binding: Pick<ListenerRemoteBinding, 'botId' | 'uid'>): string {
   return createHash('sha256').update(JSON.stringify([binding.botId, binding.uid])).digest('hex');
+}
+
+/** Wire grant removal → identity result clear once per remote service. */
+function bindGrantInvalidation(remote: ListenerRemoteService): void {
+  if (searchInvalidationBound.has(remote)) return;
+  searchInvalidationBound.add(remote);
+  remote.onGrantInvalidated((binding) => {
+    clearListenerSearchResults(remote, binding);
+  });
 }
 
 /** Create or return the process-local search runtime for this remote service. */
@@ -39,6 +50,7 @@ export function getOrCreateSearchRuntime(
   remote: ListenerRemoteService,
   clock: () => number = Date.now,
 ): SearchRuntime {
+  bindGrantInvalidation(remote);
   let runtime = searchRuntimes.get(remote);
   if (!runtime) {
     runtime = {
