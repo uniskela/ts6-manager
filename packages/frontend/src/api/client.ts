@@ -109,12 +109,20 @@ export function canAdoptPersistedAuth(input: {
   return true;
 }
 
-/** Drop a late refresh response when the tab's account changed mid-flight. */
+/**
+ * Drop a late refresh response when the originating session is no longer current.
+ * Epoch covers logout and same-account re-login (JWT id alone is not enough).
+ */
 export function shouldApplyRefreshResponse(input: {
+  startEpoch: number;
+  currentEpoch: number;
   expectedAccessToken: string | null;
   currentAccessToken: string | null;
   responseAccessToken: string;
 }): 'apply' | 'discard' {
+  if (input.currentEpoch !== input.startEpoch) return 'discard';
+  // Logged out while in flight (epoch may already match if clear was skipped).
+  if (input.expectedAccessToken && !input.currentAccessToken) return 'discard';
   const expectedId = accessTokenUserId(input.expectedAccessToken);
   const responseId = accessTokenUserId(input.responseAccessToken);
   const currentId = accessTokenUserId(input.currentAccessToken);
@@ -180,6 +188,8 @@ async function refreshAccessToken(): Promise<string | null> {
         const accessToken = res.data.accessToken as string;
         const nextRefresh = res.data.refreshToken as string;
         if (shouldApplyRefreshResponse({
+          startEpoch,
+          currentEpoch: getAuthRefreshCoordinationEpoch(),
           expectedAccessToken,
           currentAccessToken: useAuthStore.getState().accessToken,
           responseAccessToken: accessToken,
@@ -195,6 +205,10 @@ async function refreshAccessToken(): Promise<string | null> {
           // Reject other-account persist even when this tab never saw logout/session BC.
           for (let i = 0; i < 3; i++) {
             if (i > 0) await new Promise((r) => setTimeout(r, 25));
+            if (getAuthRefreshCoordinationEpoch() !== startEpoch) {
+              // Newer login/logout owns the tab — do not adopt or logout over it.
+              return null;
+            }
             const persisted = readPersistedAuthTokens();
             if (canAdoptPersistedAuth({
               startEpoch,
@@ -215,6 +229,7 @@ async function refreshAccessToken(): Promise<string | null> {
               };
             }
           }
+          if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
           logout();
         }
         return null;
@@ -225,15 +240,16 @@ async function refreshAccessToken(): Promise<string | null> {
       // Peer tab may have finished while we waited for the lock / coalesced promise.
       const adopted = adoptPeerTokensIfFresh(startEpoch, expectedAccessToken);
       if (adopted) return adopted;
+      if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
       const latest = readPersistedAuthTokens().refreshToken ?? useAuthStore.getState().refreshToken;
       if (!latest) {
+        if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
         useAuthStore.getState().logout();
         return null;
       }
       const pair = await runRefresh(latest);
       return pair?.accessToken ?? null;
     };
-
     if (typeof navigator !== 'undefined' && navigator.locks) {
       return navigator.locks.request('ts6-auth-refresh', resolveRefresh);
     }
@@ -253,8 +269,10 @@ async function refreshAccessToken(): Promise<string | null> {
               return { accessToken: persisted.accessToken, refreshToken: persisted.refreshToken };
             }
           }
+          if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
           const latest = readPersistedAuthTokens().refreshToken ?? useAuthStore.getState().refreshToken;
           if (!latest) {
+            if (getAuthRefreshCoordinationEpoch() !== startEpoch) return null;
             useAuthStore.getState().logout();
             return null;
           }
@@ -262,6 +280,8 @@ async function refreshAccessToken(): Promise<string | null> {
         });
         if (!pair) return null;
         if (shouldApplyRefreshResponse({
+          startEpoch,
+          currentEpoch: getAuthRefreshCoordinationEpoch(),
           expectedAccessToken,
           currentAccessToken: useAuthStore.getState().accessToken,
           responseAccessToken: pair.accessToken,

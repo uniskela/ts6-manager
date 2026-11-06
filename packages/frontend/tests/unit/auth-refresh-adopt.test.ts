@@ -1,5 +1,5 @@
 /**
- * Account-switch adoption gates for refresh recovery (Kody finding #2).
+ * Account-switch / session-lifecycle gates for refresh recovery.
  * Pure helpers — no network; JWT payloads are unverified identity compares.
  */
 import assert from 'node:assert/strict';
@@ -25,6 +25,7 @@ function jwtWith(payload: Record<string, unknown>): string {
 
 const aliceAccess = jwtWith({ id: 1, username: 'alice', exp: Math.floor(Date.now() / 1000) + 600 });
 const aliceRotated = jwtWith({ id: 1, username: 'alice', exp: Math.floor(Date.now() / 1000) + 600 });
+const aliceRelogin = jwtWith({ id: 1, username: 'alice', exp: Math.floor(Date.now() / 1000) + 600, session: 'new' });
 const bobAccess = jwtWith({ id: 2, username: 'bob', exp: Math.floor(Date.now() / 1000) + 600 });
 
 describe('refresh persist adoption identity gates', () => {
@@ -52,10 +53,9 @@ describe('refresh persist adoption identity gates', () => {
   });
 
   it('rejects Account B persist while Account A refresh gets 401 (no logout notify)', () => {
-    // Peer rewrote localStorage as Bob without this tab seeing logout/session BC.
     assert.equal(canAdoptPersistedAuth({
       startEpoch: 1,
-      currentEpoch: 1, // epoch alone would still allow
+      currentEpoch: 1,
       expectedAccessToken: aliceAccess,
       presentedRefreshToken: 'r-alice',
       persistedAccessToken: bobAccess,
@@ -81,7 +81,7 @@ describe('refresh persist adoption identity gates', () => {
       presentedRefreshToken: 'r-alice',
       persistedAccessToken: bobAccess,
       persistedRefreshToken: 'r-bob',
-      adoptionAllowed: () => false, // ignorePeerResults / blocked
+      adoptionAllowed: () => false,
     }), false);
   });
 
@@ -98,7 +98,6 @@ describe('refresh persist adoption identity gates', () => {
   });
 
   it('discards stale 401-recovery style adopt when persist is another account', () => {
-    // Same gate used by the 401 recovery loop.
     assert.equal(canAdoptPersistedAuth({
       startEpoch: 1,
       currentEpoch: 1,
@@ -110,8 +109,39 @@ describe('refresh persist adoption identity gates', () => {
     }), false);
   });
 
-  it('discards late successful refresh response after a new login', () => {
+  it('discards late successful refresh after logout (credentials stay cleared)', () => {
+    // Pre-fix bug: currentAccessToken null + matching subject → apply restored session.
     assert.equal(shouldApplyRefreshResponse({
+      startEpoch: 1,
+      currentEpoch: 1,
+      expectedAccessToken: aliceAccess,
+      currentAccessToken: null,
+      responseAccessToken: aliceRotated,
+    }), 'discard');
+    assert.equal(shouldApplyRefreshResponse({
+      startEpoch: 1,
+      currentEpoch: 2,
+      expectedAccessToken: aliceAccess,
+      currentAccessToken: null,
+      responseAccessToken: aliceRotated,
+    }), 'discard');
+  });
+
+  it('discards late successful refresh after same-user re-login (new session survives)', () => {
+    // JWT id unchanged; epoch bump is the session generation signal.
+    assert.equal(shouldApplyRefreshResponse({
+      startEpoch: 1,
+      currentEpoch: 2,
+      expectedAccessToken: aliceAccess,
+      currentAccessToken: aliceRelogin,
+      responseAccessToken: aliceRotated,
+    }), 'discard');
+  });
+
+  it('discards late success after switching to another user', () => {
+    assert.equal(shouldApplyRefreshResponse({
+      startEpoch: 1,
+      currentEpoch: 1,
       expectedAccessToken: aliceAccess,
       currentAccessToken: bobAccess,
       responseAccessToken: aliceRotated,
@@ -120,18 +150,34 @@ describe('refresh persist adoption identity gates', () => {
 
   it('discards late success whose JWT subject is not the expected account', () => {
     assert.equal(shouldApplyRefreshResponse({
+      startEpoch: 1,
+      currentEpoch: 1,
       expectedAccessToken: aliceAccess,
       currentAccessToken: aliceAccess,
       responseAccessToken: bobAccess,
     }), 'discard');
   });
 
-  it('applies late success for the same account still in memory', () => {
+  it('applies late success for the same account still in the same session', () => {
     assert.equal(shouldApplyRefreshResponse({
+      startEpoch: 4,
+      currentEpoch: 4,
       expectedAccessToken: aliceAccess,
       currentAccessToken: aliceAccess,
       responseAccessToken: aliceRotated,
     }), 'apply');
+  });
+
+  it('late 401 must not adopt after epoch bump (newer session intact)', () => {
+    assert.equal(canAdoptPersistedAuth({
+      startEpoch: 1,
+      currentEpoch: 2,
+      expectedAccessToken: aliceAccess,
+      presentedRefreshToken: 'r-old-alice',
+      persistedAccessToken: bobAccess,
+      persistedRefreshToken: 'r-bob',
+      adoptionAllowed: () => true,
+    }), false);
   });
 
   it('persist adoption is denied after session replace until local refresh', async () => {

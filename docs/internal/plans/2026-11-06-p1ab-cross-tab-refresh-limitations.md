@@ -49,6 +49,7 @@ Server-side consumed-token replay / family revoke remains authoritative.
 - Access JWTs / established WebSockets are not torn down by refresh revoke (unchanged).
 - `__ts6AuthTest` requires `localStorage ts6-e2e-hooks=1` before module load; backend `authTestHooks` are test-injected only. Not enabled for ordinary production users.
 - Frontend adopt/401 recovery also requires matching JWT `id` on the persisted access token vs the in-flight tab’s expected access token, so a peer login that rewrites `ts6-auth` without notifying this tab cannot be adopted via epoch-alone checks.
+- Applying a successful refresh (or BC result) also requires the coordination epoch to be unchanged and a non-null current access token when the refresh started with one — so a late Account A response cannot restore credentials after logout or overwrite a same-user re-login. A late 401 similarly must not `logout()` after the epoch has advanced.
 
 ## Server: post-commit R0 vs genuine replay (Kody finding #1)
 
