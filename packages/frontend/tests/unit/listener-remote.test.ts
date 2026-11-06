@@ -9,10 +9,16 @@ import {
 } from '../../src/lib/listener-remote-launch';
 import {
   RemoteHttpError,
+  canBrowseRemotePlaylists,
   clearRemoteSession,
   exchangeRemoteToken,
   loadRemoteLibrary,
+  loadRemotePlaylistSongs,
+  loadRemotePlaylists,
   loadRemoteState,
+  parseRemotePlaylist,
+  parseRemotePlaylistPage,
+  parseRemotePlaylistSongsPage,
   playbackSummary,
   queueRemoteSong,
   remoteMediaUrlError,
@@ -118,6 +124,32 @@ describe('listener remote client', () => {
         assert.equal(url.searchParams.get('page'), '2');
         return json({ songs: [{ id: 9, title: 'Paper Moon', artist: null, duration: null }], page: 2, pageSize: 25 });
       }
+      if (url.pathname.endsWith('/playlists')) {
+        assert.equal(url.searchParams.get('search'), 'chill');
+        assert.equal(url.searchParams.get('page'), '1');
+        return json({
+          playlists: [{
+            id: 3,
+            name: 'Chill',
+            trackCount: 2,
+            duration: 400,
+            wholeRequest: true,
+            serverConfigId: 99,
+            filePath: '/secret',
+          }],
+          page: 1,
+          pageSize: 25,
+        });
+      }
+      if (/\/playlists\/\d+\/songs$/.test(url.pathname)) {
+        assert.equal(url.searchParams.get('page'), '2');
+        return json({
+          playlist: { id: 3, name: 'Chill', trackCount: 2, duration: 400, wholeRequest: false },
+          songs: [{ id: 9, title: 'Paper Moon', artist: null, duration: null, filePath: '/secret.mp3' }],
+          page: 2,
+          pageSize: 25,
+        });
+      }
       if (url.pathname.endsWith('/queue') || url.pathname.endsWith('/requests')) return json({ ok: true });
       return json({ error: 'nope', code: 'invalid_request' }, 400);
     }) as typeof fetch;
@@ -139,11 +171,54 @@ describe('listener remote client', () => {
     assert.equal(state.nowPlaying?.title, 'Neon Skyline');
     assert.equal('filePath' in (state.nowPlaying ?? {}), false);
     assert.deepEqual(state.permissions, { searchLibrary: true, addToQueue: false, requestUrl: false });
+    assert.equal('browsePlaylists' in state.permissions, false);
+    assert.equal(canBrowseRemotePlaylists(state.permissions), true);
+    assert.equal(canBrowseRemotePlaylists({ searchLibrary: true, addToQueue: false, requestUrl: false, browsePlaylists: false }), false);
+    assert.equal(canBrowseRemotePlaylists({ searchLibrary: false, addToQueue: false, requestUrl: false, browsePlaylists: true }), true);
     assert.equal(calls[1].authorization, `Bearer ${session}`);
     assert.equal(playbackSummary(state.nowPlaying, 'playing').label, 'Playing · 3:34');
     assert.equal(shouldPollRemote(false, 0, 10_000), false);
     assert.equal(shouldPollRemote(true, 0, 4_999), false);
     assert.equal(shouldPollRemote(true, 0, 5_000), true);
+  });
+
+  it('loads playlists and playlist songs with allow-listed fields only', async () => {
+    await exchangeRemoteToken(token);
+    const page = await loadRemotePlaylists('chill', 1);
+    assert.deepEqual(page.playlists[0], {
+      id: 3,
+      name: 'Chill',
+      trackCount: 2,
+      duration: 400,
+      wholeRequest: true,
+    });
+    assert.equal('serverConfigId' in page.playlists[0], false);
+    assert.equal('filePath' in page.playlists[0], false);
+    const songs = await loadRemotePlaylistSongs(3, 2);
+    assert.equal(songs.playlist.name, 'Chill');
+    assert.equal(songs.songs[0].id, 9);
+    assert.equal('filePath' in songs.songs[0], false);
+    await assert.rejects(() => loadRemotePlaylistSongs(0, 1), (error: unknown) => error instanceof RemoteHttpError && error.status === 400);
+  });
+
+  it('parses playlist payloads and rejects malformed rows', () => {
+    const playlist = parseRemotePlaylist({
+      id: 7,
+      name: 'Drive',
+      trackCount: 1,
+      duration: null,
+      wholeRequest: false,
+      mode: 'stream',
+    });
+    assert.deepEqual(playlist, { id: 7, name: 'Drive', trackCount: 1, duration: null, wholeRequest: false });
+    assert.equal('mode' in playlist, false);
+    assert.throws(() => parseRemotePlaylist({ id: 7, name: 'Drive', trackCount: 1, duration: null }));
+    assert.throws(() => parseRemotePlaylistPage({ playlists: 'nope', page: 1 }));
+    assert.throws(() => parseRemotePlaylistSongsPage({
+      playlist: { id: 7, name: 'Drive', trackCount: 1, duration: null, wholeRequest: false },
+      songs: [{ id: 'bad', title: 'x' }],
+      page: 1,
+    }));
   });
 
   it('clears the session on 401 and does not retry a mutation automatically', async () => {

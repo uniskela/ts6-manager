@@ -13,7 +13,16 @@ export class RemoteHttpError extends Error {
 
 export type RemoteSession = { session: string; expiresAt: string; botId: number };
 export type RemoteTrack = { id: string; title: string; artist: string | null; duration: number | null };
-export type RemotePermissions = { searchLibrary: boolean; addToQueue: boolean; requestUrl: boolean };
+export type RemotePermissions = {
+  searchLibrary: boolean;
+  addToQueue: boolean;
+  requestUrl: boolean;
+  /**
+   * A3+ `/state` flag for shared playlist browse. Optional so older backends that omit
+   * the key still parse; see `canBrowseRemotePlaylists`.
+   */
+  browsePlaylists?: boolean;
+};
 export type RemoteState = {
   bot: { id: number; name: string; status: string };
   nowPlaying: RemoteTrack | null;
@@ -23,6 +32,23 @@ export type RemoteState = {
 };
 export type RemoteSong = { id: number; title: string; artist: string | null; duration: number | null };
 export type RemoteLibrary = { songs: RemoteSong[]; page: number; pageSize: number };
+/** K1 / `@ts6/common` ListenerRemotePlaylist allow-list. */
+export type RemotePlaylist = {
+  id: number;
+  name: string;
+  trackCount: number;
+  duration: number | null;
+  wholeRequest: boolean;
+};
+/** `GET /playlists` page. */
+export type RemotePlaylistPage = { playlists: RemotePlaylist[]; page: number; pageSize: number };
+/** `GET /playlists/:id/songs` page. */
+export type RemotePlaylistSongsPage = {
+  playlist: RemotePlaylist;
+  songs: RemoteSong[];
+  page: number;
+  pageSize: number;
+};
 
 const unavailable = () => new RemoteHttpError(503, 'unavailable', 'Listener remote is unavailable.');
 
@@ -76,6 +102,17 @@ export function remoteErrorMessage(error: unknown): string {
 /** At most one state poll per five seconds, and only while the page is visible. */
 export function shouldPollRemote(visible: boolean, lastAt: number, now: number): boolean {
   return visible && now - lastAt >= REMOTE_POLL_MS;
+}
+
+/**
+ * Show the Playlists view when A3 advertises `browsePlaylists`, or — when that
+ * key is absent — fall back to `searchLibrary`. Both map to the same read-group
+ * permission as `GET /library`, so pre-A3 `/state` that omits the flag still
+ * reveals the UI once the A3 routes exist; an explicit `false` hides it.
+ */
+export function canBrowseRemotePlaylists(permissions: RemotePermissions): boolean {
+  if (typeof permissions.browsePlaylists === 'boolean') return permissions.browsePlaylists;
+  return permissions.searchLibrary === true;
 }
 
 export function formatTrackLength(seconds: number | null | undefined): string | null {
@@ -188,16 +225,62 @@ export function parseRemoteState(body: unknown): RemoteState {
   if (!Array.isArray(row.upNext)) throw unavailable();
   const upNext = row.upNext.map(parseTrack);
   const upNextCount = typeof row.upNextCount === 'number' ? row.upNextCount : upNext.length;
+  const parsedPermissions: RemotePermissions = {
+    searchLibrary: permRow.searchLibrary === true,
+    addToQueue: permRow.addToQueue === true,
+    requestUrl: permRow.requestUrl === true,
+  };
+  // Optional A3+ flag: omit when absent so older /state payloads stay valid.
+  if (typeof permRow.browsePlaylists === 'boolean') {
+    parsedPermissions.browsePlaylists = permRow.browsePlaylists;
+  }
   return {
     bot: { id: botRow.id, name: botRow.name, status: botRow.status },
     nowPlaying: row.nowPlaying == null ? null : parseTrack(row.nowPlaying),
     upNext,
     upNextCount,
-    permissions: {
-      searchLibrary: permRow.searchLibrary === true,
-      addToQueue: permRow.addToQueue === true,
-      requestUrl: permRow.requestUrl === true,
-    },
+    permissions: parsedPermissions,
+  };
+}
+
+export function parseRemotePlaylist(value: unknown): RemotePlaylist {
+  if (!value || typeof value !== 'object') throw unavailable();
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== 'number' || !Number.isSafeInteger(row.id) || row.id <= 0) throw unavailable();
+  if (typeof row.name !== 'string') throw unavailable();
+  if (typeof row.trackCount !== 'number' || !Number.isFinite(row.trackCount) || row.trackCount < 0) throw unavailable();
+  const duration = row.duration ?? null;
+  if (duration != null && typeof duration !== 'number') throw unavailable();
+  if (typeof row.wholeRequest !== 'boolean') throw unavailable();
+  return {
+    id: row.id,
+    name: row.name,
+    trackCount: row.trackCount,
+    duration,
+    wholeRequest: row.wholeRequest,
+  };
+}
+
+export function parseRemotePlaylistPage(body: unknown): RemotePlaylistPage {
+  if (!body || typeof body !== 'object') throw unavailable();
+  const row = body as Record<string, unknown>;
+  if (!Array.isArray(row.playlists) || typeof row.page !== 'number') throw unavailable();
+  return {
+    playlists: row.playlists.map(parseRemotePlaylist),
+    page: row.page,
+    pageSize: typeof row.pageSize === 'number' ? row.pageSize : 25,
+  };
+}
+
+export function parseRemotePlaylistSongsPage(body: unknown): RemotePlaylistSongsPage {
+  if (!body || typeof body !== 'object') throw unavailable();
+  const row = body as Record<string, unknown>;
+  if (!Array.isArray(row.songs) || typeof row.page !== 'number') throw unavailable();
+  return {
+    playlist: parseRemotePlaylist(row.playlist),
+    songs: row.songs.map(parseSong),
+    page: row.page,
+    pageSize: typeof row.pageSize === 'number' ? row.pageSize : 25,
   };
 }
 
@@ -253,6 +336,22 @@ export function loadRemoteLibrary(search: string, page: number): Promise<RemoteL
   const p = Number.isSafeInteger(page) && page >= 1 && page <= 10_000 ? page : 1;
   const path = `/library?${new URLSearchParams({ search: q, page: String(p) })}`;
   return remoteFetch(path, { method: 'GET' }, true).then(parseLibrary);
+}
+
+export function loadRemotePlaylists(search: string, page: number): Promise<RemotePlaylistPage> {
+  const q = search.slice(0, 200);
+  const p = Number.isSafeInteger(page) && page >= 1 && page <= 10_000 ? page : 1;
+  const path = `/playlists?${new URLSearchParams({ search: q, page: String(p) })}`;
+  return remoteFetch(path, { method: 'GET' }, true).then(parseRemotePlaylistPage);
+}
+
+export function loadRemotePlaylistSongs(playlistId: number, page: number): Promise<RemotePlaylistSongsPage> {
+  if (!Number.isSafeInteger(playlistId) || playlistId <= 0) {
+    return Promise.reject(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.'));
+  }
+  const p = Number.isSafeInteger(page) && page >= 1 && page <= 10_000 ? page : 1;
+  const path = `/playlists/${playlistId}/songs?${new URLSearchParams({ page: String(p) })}`;
+  return remoteFetch(path, { method: 'GET' }, true).then(parseRemotePlaylistSongsPage);
 }
 
 export function enqueueRemoteMutation<T>(task: () => Promise<T>): Promise<T> {
