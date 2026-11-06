@@ -14,6 +14,10 @@ const binding = {
   botId: 4, serverConfigId: 2, virtualServerId: 3, channelId: 8, clid: 9, uid: 'listener-secret-identity',
 };
 const otherBinding = { ...binding, uid: 'other-listener-identity', clid: 10 };
+/** Different TeamSpeak serverConfigId; channel stays fixture-aligned for live validation. */
+const serverBBinding = {
+  ...binding, uid: 'server-b-listener', clid: 12, serverConfigId: 7,
+};
 const mediaUrl = 'https://8.8.8.8/media?id=secret-search';
 const item: QueueItem = {
   id: 'song-11', title: 'Visible title', artist: 'Visible artist', duration: 123,
@@ -21,9 +25,47 @@ const item: QueueItem = {
 };
 
 function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>(done => { resolve = done; });
-  return { promise, resolve };
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+/** Wait until AbortSignal fires, or fail after `ms` so CI cannot hang. */
+function waitUntilAborted(signal: AbortSignal | undefined, ms = 2_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`provider did not abort within ${ms}ms`)), ms);
+    const finish = (err?: unknown) => {
+      clearTimeout(timer);
+      if (err) reject(err instanceof Error ? err : new Error(String(err)));
+      else resolve();
+    };
+    if (!signal) {
+      finish(new Error('missing abort signal'));
+      return;
+    }
+    if (signal.aborted) {
+      finish();
+      return;
+    }
+    signal.addEventListener('abort', () => finish(), { once: true });
+  });
+}
+
+/** Poll until `fn` succeeds or `ms` elapses (bounded slot-free checks). */
+async function eventually(fn: () => Promise<void>, ms = 1_000, step = 20): Promise<void> {
+  const deadline = Date.now() + ms;
+  let last: unknown;
+  while (Date.now() < deadline) {
+    try {
+      await fn();
+      return;
+    } catch (err) {
+      last = err;
+      await new Promise((r) => setTimeout(r, step));
+    }
+  }
+  throw last instanceof Error ? last : new Error(`eventually timed out: ${String(last)}`);
 }
 
 function dumpRow(partial: Partial<ListenerSearchResult> & Pick<ListenerSearchResult, 'id' | 'title'>): ListenerSearchResult {
@@ -107,6 +149,7 @@ async function fixture() {
   const roster = [
     { clid: binding.clid, uid: binding.uid },
     { clid: otherBinding.clid, uid: otherBinding.uid },
+    { clid: serverBBinding.clid, uid: serverBBinding.uid },
     { clid: 11, uid: 'third-listener' },
   ];
   app.locals.eventBridge = {
@@ -478,6 +521,94 @@ describe('listener remote search (C2)', () => {
       code: 'too_long',
     });
     assert.equal(f.queue.length, before);
+  }));
+
+  it('cancels an in-flight provider search when the client disconnects and frees the slot', async () => using(async f => {
+    const a = await f.exchange();
+    f.advance(60_000);
+    const started = deferred<void>();
+    let hangOnce = true;
+    f.setSearch(async (_query, signal) => {
+      if (!hangOnce) return [dumpRow({ id: 'fffffffffff', title: 'After disconnect', durationSec: 100 })];
+      hangOnce = false;
+      started.resolve();
+      await waitUntilAborted(signal);
+      throw signal?.reason ?? new Error('aborted');
+    });
+    const ac = new AbortController();
+    const pending = fetch(`${f.base}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.session}` },
+      body: JSON.stringify({ query: 'client-disconnect' }),
+      signal: ac.signal,
+    });
+    await started.promise;
+    ac.abort();
+    await assert.rejects(() => pending, (err: unknown) => err instanceof Error && err.name === 'AbortError');
+    const b = await f.exchange(otherBinding);
+    await eventually(async () => {
+      assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-disconnect' } })).status, 200);
+    });
+  }));
+
+  it('times out a stalled provider search and frees the slot', async () => using(async f => {
+    const a = await f.exchange();
+    f.advance(60_000);
+    f.app.locals.listenerRemoteSearchTimeoutMs = 40;
+    const started = deferred<void>();
+    let hangOnce = true;
+    f.setSearch(async (_query, signal) => {
+      if (!hangOnce) return [dumpRow({ id: 'ggggggggggg', title: 'After timeout', durationSec: 100 })];
+      hangOnce = false;
+      started.resolve();
+      await waitUntilAborted(signal);
+      throw signal?.reason ?? new Error('aborted');
+    });
+    const timedOut = await f.request('/search', { session: a.session, body: { query: 'provider-timeout' } });
+    assert.equal(timedOut.status, 504);
+    assert.equal((await timedOut.json() as { code: string }).code, 'timeout');
+    const b = await f.exchange(otherBinding);
+    assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-timeout' } })).status, 200);
+  }));
+
+  it('allows a simultaneous provider search on another TeamSpeak server under global capacity', async () => using(async f => {
+    const a = await f.exchange();
+    f.advance(60_000);
+    const started = deferred<void>();
+    const gate = deferred<void>();
+    let slowCalls = 0;
+    f.setSearch(async (query, signal) => {
+      if (query === 'server-a-slow') {
+        slowCalls++;
+        started.resolve();
+        await Promise.race([
+          gate.promise,
+          waitUntilAborted(signal).then(() => { throw signal?.reason ?? new Error('aborted'); }),
+        ]);
+        return [dumpRow({ id: 'hhhhhhhhhhh', title: 'Server A', durationSec: 120 })];
+      }
+      return [dumpRow({ id: 'iiiiiiiiiii', title: `Server B ${query}`, durationSec: 90 })];
+    });
+    const pendingA = f.request('/search', { session: a.session, body: { query: 'server-a-slow' } });
+    await started.promise;
+    try {
+      assert.equal((await f.request('/search', { session: a.session, body: { query: 'server-a-peer' } })).status, 429);
+      // Retarget the fixture bot/DB row so live identity accepts server B's binding.
+      f.state.botServer = serverBBinding.serverConfigId;
+      f.state.databaseServer = serverBBinding.serverConfigId;
+      const b = await f.exchange(serverBBinding);
+      const serverB = await f.request('/search', { session: b.session, body: { query: 'server-b-ok' } });
+      const serverBBody = await serverB.json() as { results: unknown[] };
+      assert.equal(serverB.status, 200, `unrelated server starved: ${JSON.stringify(serverBBody)}`);
+      assert.equal(serverBBody.results.length, 1);
+    } finally {
+      // Restore before releasing server A — search re-authenticates after the provider returns.
+      f.state.botServer = binding.serverConfigId;
+      f.state.databaseServer = binding.serverConfigId;
+      gate.resolve();
+    }
+    assert.equal((await pendingA).status, 200);
+    assert.equal(slowCalls, 1);
   }));
 });
 
