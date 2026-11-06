@@ -187,29 +187,19 @@ function createStore(options?: {
       create: async ({ data }: { data: Record<string, unknown> }) => data,
     },
     $transaction: async (fn: (tx: typeof prisma) => Promise<unknown>) => {
-      // Serialize mock transactions so admin revoke cannot interleave mid-refresh tx (SQLite-like).
-      const prev = txChain;
-      let release!: () => void;
-      txChain = new Promise<void>((r) => {
-        release = r;
-      });
-      await prev;
+      if (!options?.failTransaction) return fn(prisma);
+      // Snapshot + restore so a thrown transaction cannot leave partial success state.
+      const userSnap = new Map([...users.entries()].map(([id, u]) => [id, { ...u }]));
+      const refreshSnap = new Map([...refreshTokens.entries()].map(([id, r]) => [id, { ...r }]));
       try {
-        if (!options?.failTransaction) return await fn(prisma);
-        const userSnap = new Map([...users.entries()].map(([id, u]) => [id, { ...u }]));
-        const refreshSnap = new Map([...refreshTokens.entries()].map(([id, r]) => [id, { ...r }]));
-        try {
-          await fn(prisma);
-          throw new Error('simulated db failure');
-        } catch (err) {
-          users.clear();
-          for (const [id, u] of userSnap) users.set(id, u);
-          refreshTokens.clear();
-          for (const [id, r] of refreshSnap) refreshTokens.set(id, r);
-          throw err;
-        }
-      } finally {
-        release();
+        await fn(prisma);
+        throw new Error('simulated db failure');
+      } catch (err) {
+        users.clear();
+        for (const [id, u] of userSnap) users.set(id, u);
+        refreshTokens.clear();
+        for (const [id, r] of refreshSnap) refreshTokens.set(id, r);
+        throw err;
       }
     },
   };
