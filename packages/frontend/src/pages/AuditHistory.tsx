@@ -74,6 +74,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'settings.limits_update': 'Update app limits',
   'settings.video_streaming_update': 'Update video streaming defaults',
   'settings.iptv_network_update': 'Update allowed local IPTV hosts',
+  'settings.playlist_vote_update': 'Update playlist vote settings',
   'media.music.start': 'Start music',
   'media.music.stop': 'Stop music',
   'media.video.start': 'Start video stream',
