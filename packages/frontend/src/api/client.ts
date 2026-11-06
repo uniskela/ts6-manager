@@ -280,8 +280,9 @@ function installE2EAuthHooks(): void {
     logoutLocal: () => useAuthStore.getState().logout(),
   };
 }
-// Vite injects import.meta.env; Node unit tests importing this module have no env bag.
-if (import.meta.env?.VITE_E2E_AUTH_HOOKS === 'true') {
+// `__TS6_E2E_AUTH_HOOKS__` is a Vite define (false in Docker/release builds → DCE).
+// Node unit tests: treat an undeclared global as false.
+if (typeof __TS6_E2E_AUTH_HOOKS__ !== 'undefined' && __TS6_E2E_AUTH_HOOKS__) {
   installE2EAuthHooks();
 }
 

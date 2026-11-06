@@ -11,6 +11,8 @@ const pkg = JSON.parse(readFileSync(path.resolve(__dirname, './package.json'), '
 
 const rawSha = process.env.VITE_GIT_SHA || process.env.GITHUB_SHA || '';
 const gitSha = rawSha.replace(/^sha-/, '').slice(0, 7);
+/** Compile Playwright auth seams only for `build:e2e` / VITE_E2E_AUTH_HOOKS=true. */
+const e2eAuthHooks = process.env.VITE_E2E_AUTH_HOOKS === 'true';
 
 /** Serve /remote from remote.html in dev and preview (MPA entry lives at /remote.html). */
 function remoteHtmlFallback(): Plugin {
@@ -98,6 +100,7 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
     __GIT_SHA__: JSON.stringify(gitSha),
+    __TS6_E2E_AUTH_HOOKS__: JSON.stringify(e2eAuthHooks),
   },
   resolve: {
     alias: {
