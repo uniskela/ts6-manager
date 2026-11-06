@@ -1,6 +1,6 @@
 /**
  * P1-A corrections: real SQLite/Prisma proofs for atomic revoke + target scoping.
- * Complements the in-memory suite; does not replace commit 723bd09 production fix.
+ * Complements the in-memory suite; does not replace the P1-A production fix (c3b3a85 / tip).
  */
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
