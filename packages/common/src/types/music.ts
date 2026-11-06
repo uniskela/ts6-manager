@@ -24,6 +24,18 @@ export const DEFAULT_BOT_AUTOMATION_SETTINGS: BotAutomationSettings = {
   stayInChannel: false,
 };
 
+/**
+ * Approvals needed for a live electorate (#442 / B2).
+ * Formula: ceil(threshold% × listeners), threshold clamped to 1–100, at least 1.
+ * listeners ≤ 0 returns 1 defensively — openVote must still refuse an empty electorate.
+ * B3 maps AppSetting `maxRequestSize` onto this machine's `maxTracks`.
+ */
+export function playlistVoteApprovalsNeeded(thresholdPercent: number, listeners: number): number {
+  if (listeners <= 0) return 1;
+  const pct = Math.min(100, Math.max(1, Math.floor(thresholdPercent)));
+  return Math.max(1, Math.ceil((pct / 100) * listeners));
+}
+
 /** What a bot's Auto-DJ and 24/7 settings mean right now, for status badges and `!help`. */
 export interface BotAutomationOverview {
   /** Auto-DJ is on and has a source to play. */

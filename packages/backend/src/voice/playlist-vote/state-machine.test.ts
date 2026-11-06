@@ -20,7 +20,7 @@ const settings: PlaylistVoteSettings = {
 const playlist = { id: 7, name: 'Live smoke', trackCount: 3 };
 
 describe('approvalsNeeded', () => {
-  it('matches the roadmap 80% table', () => {
+  it('matches the roadmap 80% table and shared @ts6/common helper', () => {
     const cases: Array<[number, number]> = [
       [1, 1],
       [2, 2],
@@ -33,6 +33,23 @@ describe('approvalsNeeded', () => {
     for (const [listeners, needed] of cases) {
       assert.equal(approvalsNeeded(80, listeners), needed, `listeners=${listeners}`);
     }
+    assert.equal(approvalsNeeded(0, 5), approvalsNeeded(1, 5));
+    assert.equal(approvalsNeeded(150, 5), approvalsNeeded(100, 5));
+  });
+
+  it('refuses to open when there are zero listeners (#442)', () => {
+    const m = new PlaylistVoteMachine();
+    const opened = m.openVote({
+      botKey: 'b1',
+      channelId: 'c1',
+      requesterUid: 'u1',
+      playlist,
+      settings,
+      listenerUids: [],
+      nowMs: 0,
+    });
+    assert.equal(opened.ok, false);
+    if (!opened.ok) assert.equal(opened.code, 'listeners_unavailable');
   });
 });
 

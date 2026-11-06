@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto';
+import { playlistVoteApprovalsNeeded } from '@ts6/common';
 
 export type PlaylistVoteBallot = 'yes' | 'no';
 
@@ -19,6 +20,7 @@ export type PlaylistVoteSettings = {
   /** Percent 1–100; approvals needed = ceil(percent/100 * listeners), at least 1. */
   thresholdPercent: number;
   windowMs: number;
+  /** B3 supplies AppSetting `maxRequestSize` here. */
   maxTracks: number;
 };
 
@@ -111,11 +113,8 @@ function opaqueVoteId(): string {
   return randomBytes(16).toString('base64url');
 }
 
-export function approvalsNeeded(thresholdPercent: number, listenerCount: number): number {
-  if (listenerCount <= 0) return 1;
-  const pct = Math.min(100, Math.max(1, Math.floor(thresholdPercent)));
-  return Math.max(1, Math.ceil((pct / 100) * listenerCount));
-}
+/** Authoritative approval math lives in `@ts6/common` so B1 UI and B2 stay aligned. */
+export const approvalsNeeded = playlistVoteApprovalsNeeded;
 
 function countBallots(
   ballots: Map<string, PlaylistVoteBallot>,
