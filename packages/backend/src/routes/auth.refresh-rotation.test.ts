@@ -62,11 +62,13 @@ function createStore(options?: { onClaim?: () => Promise<void> }) {
         where,
         include,
       }: {
-        where: { token: string };
+        where: { token?: string; id?: number };
         include?: { user: boolean };
       }) => {
         for (const row of refreshTokens.values()) {
-          if (row.token !== where.token) continue;
+          if (where.token != null && row.token !== where.token) continue;
+          if (where.id != null && row.id !== where.id) continue;
+          if (where.token == null && where.id == null) continue;
           return include?.user ? { ...row, user: users.get(row.userId) } : { ...row };
         }
         return null;
