@@ -42,12 +42,7 @@ export function useRemoteSearchQuery(search: string): {
   return { query, page, setPage };
 }
 
-/** Load a remote page; ignore stale responses; map errors through expire(). */
-export function useRemotePageLoad<T>(
-  load: () => Promise<T>,
-  deps: ReadonlyArray<unknown>,
-  expire: (error: unknown) => boolean,
-): {
+type RemotePageLoadResult<T> = {
   data: T | null;
   error: string | null;
   setError: (value: string | null) => void;
@@ -56,7 +51,16 @@ export function useRemotePageLoad<T>(
   statusId: string;
   resultsRef: RefObject<HTMLDivElement>;
   errorRef: RefObject<HTMLParagraphElement>;
-} {
+};
+
+/** Load a remote page; ignore stale responses; map errors through expire(). */
+export function useRemotePageLoad<T>(
+  load: () => Promise<T>,
+  deps: ReadonlyArray<unknown>,
+  expire: (error: unknown) => boolean,
+  /** When set, skip moving focus while this search input is active. */
+  searchInputId?: string,
+): RemotePageLoadResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -95,12 +99,20 @@ export function useRemotePageLoad<T>(
   useLayoutEffect(() => {
     if (loading) return;
     if (focusKeyRef.current === pageKey) return;
+    // Search refreshes must not steal the search input.
+    if (searchInputId) {
+      const searchInput = document.getElementById(searchInputId);
+      if (searchInput && document.activeElement === searchInput) {
+        focusKeyRef.current = pageKey;
+        return;
+      }
+    }
     focusKeyRef.current = pageKey;
     const node = resultsRef.current;
     if (!node) return;
     node.scrollIntoView({ block: 'nearest' });
     node.focus({ preventScroll: true });
-  }, [pageKey, loading]);
+  }, [pageKey, loading, searchInputId]);
 
   useLayoutEffect(() => {
     if (error) errorRef.current?.focus({ preventScroll: true });
@@ -115,63 +127,8 @@ export function useRemoteSearchPageLoad<T>(
   deps: ReadonlyArray<unknown>,
   expire: (error: unknown) => boolean,
   searchInputId: string,
-): ReturnType<typeof useRemotePageLoad<T>> {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const expireRef = useRef(expire);
-  const resultsRef = useRef<HTMLDivElement>(null!);
-  const errorRef = useRef<HTMLParagraphElement>(null!);
-  const requestId = useRef(0);
-  const focusKeyRef = useRef<string | null>(null);
-  expireRef.current = expire;
-  const errorId = useId();
-  const statusId = useId();
-  const page = deps[deps.length - 1];
-  const pageKey = String(page ?? '');
-
-  useEffect(() => {
-    let stale = false;
-    const id = ++requestId.current;
-    setLoading(true);
-    void load().then(
-      (next) => {
-        if (stale || id !== requestId.current) return;
-        setData(next);
-        setError(null);
-      },
-      (err: unknown) => {
-        if (stale || id !== requestId.current || expireRef.current(err)) return;
-        setError(remoteErrorMessage(err));
-      },
-    ).finally(() => {
-      if (!stale && id === requestId.current) setLoading(false);
-    });
-    return () => { stale = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional external deps
-  }, deps);
-
-  useLayoutEffect(() => {
-    if (loading) return;
-    // Page changes only — search refreshes must not steal the search input.
-    if (focusKeyRef.current === pageKey) return;
-    const searchInput = document.getElementById(searchInputId);
-    if (searchInput && document.activeElement === searchInput) {
-      focusKeyRef.current = pageKey;
-      return;
-    }
-    focusKeyRef.current = pageKey;
-    const node = resultsRef.current;
-    if (!node) return;
-    node.scrollIntoView({ block: 'nearest' });
-    node.focus({ preventScroll: true });
-  }, [pageKey, loading, searchInputId]);
-
-  useLayoutEffect(() => {
-    if (error) errorRef.current?.focus({ preventScroll: true });
-  }, [error]);
-
-  return { data, error, setError, loading, errorId, statusId, resultsRef, errorRef };
+): RemotePageLoadResult<T> {
+  return useRemotePageLoad(load, deps, expire, searchInputId);
 }
 
 export function useQueueRemoteSong(
