@@ -234,7 +234,11 @@ const LISTENER_REMOTE_RESULTS: Readonly<Record<string, AdminAuditResultCode>> = 
   cancelled: 'cancelled',
   timeout: 'timeout',
   unavailable: 'unavailable',
+<<<<<<< HEAD
   // C1a/C2 duration refusals share one allow-listed result; never echo provider text.
+=======
+  // C1a duration/live refusals: public API codes stay specific; the attempt row is validation_failed.
+>>>>>>> origin/feat/listener-c1a-paste-duration
   too_long: 'validation_failed',
   live_not_allowed: 'validation_failed',
   duration_unknown: 'validation_failed',

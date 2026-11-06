@@ -139,6 +139,8 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     expandYouTube: async () => null,
     downloadTrack: async () => { downloads++; return item; },
   };
+  // C1a: default probe matches the fixture track so existing /requests tests stay green.
+  app.locals.listenerLinkProbe = async () => ({ durationSec: item.duration ?? 123 });
   if (!fullApp) app.use('/api/listener-remote', listenerRemoteIpGuard, listenerRemoteRoutes);
   if (!fullApp) app.use('/api/listener-remote-admin', (req, _res, next) => {
     if (role) (req as any).user = { id: 1, username: 'administrator', role };
@@ -526,6 +528,43 @@ describe('listener remote HTTP security boundary', () => {
       assert.deepEqual(f.audit, [], 'a disallowed link opens no audit attempt');
     });
   });
+
+  it('applies C1a duration and live rules to POST /requests only, with validation_failed audit', async () => using(async f => {
+    const { LISTENER_MAX_DURATION_SEC } = await import('../voice/audio/listener-music.js');
+    const { session } = await f.exchange();
+    const before = f.queue.length;
+
+    for (const [label, probe, code] of [
+      ['too_long', async () => ({ durationSec: LISTENER_MAX_DURATION_SEC + 1 }), 'too_long'],
+      ['live', async () => ({ durationSec: 120, isLive: true }), 'live_not_allowed'],
+      ['unknown', async () => ({ durationSec: null }), 'duration_unknown'],
+    ] as const) {
+      f.app.locals.listenerLinkProbe = probe;
+      const refused = await f.request('/requests', { session, body: { url: `${mediaUrl}&${label}` } });
+      assert.equal(refused.status, 422, label);
+      assert.equal((await refused.json() as { code: string }).code, code, label);
+      assert.equal(f.downloads, 0, label);
+      assert.equal(f.queue.length, before, label);
+      const completion = f.audit.find((row: any) => row.where?.operationId && row.data?.resultCode === 'validation_failed') as any;
+      assert.ok(completion, `${label} audited as validation_failed`);
+      assert.equal(completion.data.outcome, 'failure', label);
+    }
+
+    f.app.locals.listenerLinkProbe = async () => ({ durationSec: LISTENER_MAX_DURATION_SEC });
+    let boundaryDownloads = 0;
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => {
+      boundaryDownloads++;
+      return { ...item, duration: LISTENER_MAX_DURATION_SEC };
+    };
+    assert.equal((await f.request('/requests', { session, body: { url: `${mediaUrl}&boundary` } })).status, 200);
+    assert.equal(boundaryDownloads, 1);
+    assert.equal(f.queue.length, before + 1);
+
+    // Library POST /queue is not subject to the paste-link duration rules.
+    f.app.locals.listenerLinkProbe = async () => ({ durationSec: LISTENER_MAX_DURATION_SEC + 1, isLive: true });
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+    assert.equal(f.queue.length, before + 2);
+  }));
 
   it('sanitizes resolver and audit-storage failures, and records successful actions without credential material', async () => using(async f => {
     const { session, token } = await f.exchange();
