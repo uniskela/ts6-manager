@@ -31,7 +31,6 @@ export function LibraryView({ canAdd, expire, refresh }: {
   const lock = useRef(false);
   const expireRef = useRef(expire);
   const resultsRef = useRef<HTMLDivElement>(null);
-  const noticeRef = useRef<HTMLParagraphElement>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const requestId = useRef(0);
   const focusKeyRef = useRef<string | null>(null);
@@ -69,19 +68,24 @@ export function LibraryView({ canAdd, expire, refresh }: {
 
   useLayoutEffect(() => {
     if (loading) return;
-    const key = `${query}::${page}`;
-    if (focusKeyRef.current === key) return;
-    focusKeyRef.current = key;
+    // Page changes only — search refreshes must not steal the search input.
+    if (focusKeyRef.current === String(page)) return;
+    const searchInput = document.getElementById('remote-search');
+    if (searchInput && document.activeElement === searchInput) {
+      focusKeyRef.current = String(page);
+      return;
+    }
+    focusKeyRef.current = String(page);
     const node = resultsRef.current;
     if (!node) return;
     node.scrollIntoView({ block: 'nearest' });
     node.focus({ preventScroll: true });
-  }, [page, query, loading]);
+  }, [page, loading]);
 
   useLayoutEffect(() => {
+    // Errors take focus; success stays an aria-live StatusNote so Add stays in the list.
     if (error) errorRef.current?.focus({ preventScroll: true });
-    else if (notice) noticeRef.current?.focus({ preventScroll: true });
-  }, [error, notice]);
+  }, [error]);
 
   const add = (song: RemoteSong) => {
     if (!canAdd || lock.current) return;
@@ -135,15 +139,7 @@ export function LibraryView({ canAdd, expire, refresh }: {
               {error}
             </p>
           )}
-          {notice && (
-            <p
-              ref={noticeRef}
-              tabIndex={-1}
-              className="outline-none"
-            >
-              <StatusNote>{notice}</StatusNote>
-            </p>
-          )}
+          {notice && <StatusNote>{notice}</StatusNote>}
           <div
             ref={resultsRef}
             tabIndex={-1}
