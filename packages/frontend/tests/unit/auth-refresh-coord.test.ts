@@ -51,6 +51,20 @@ class FakeBroadcastChannel {
   }
 }
 
+function postPeerResult(
+  peer: FakeBroadcastChannel,
+  opts: { tabId: string; accessToken: string; refreshToken: string },
+) {
+  peer.postMessage({
+    v: 1,
+    type: 'result',
+    tabId: opts.tabId,
+    ok: true,
+    accessToken: opts.accessToken,
+    refreshToken: opts.refreshToken,
+  });
+}
+
 describe('BroadcastChannel refresh ownership helpers', () => {
   beforeEach(() => {
     FakeBroadcastChannel.reset();
@@ -132,11 +146,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     await new Promise((r) => setTimeout(r, 30));
     clearAuthRefreshCoordination();
     // Stale success from the prior account's leader after session replace.
-    peer.postMessage({
-      v: 1,
-      type: 'result',
+    postPeerResult(peer, {
       tabId: 't-prior-account',
-      ok: true,
       accessToken: 'a-old',
       refreshToken: 'r-old',
     });
@@ -162,11 +173,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     await coordinateRefreshOwnership(async () => ({ accessToken: 'a-stale', refreshToken: 'r-stale' }));
     clearAuthRefreshCoordination('r-stale');
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
-    peer.postMessage({
-      v: 1,
-      type: 'result',
+    postPeerResult(peer, {
       tabId: 't-stale',
-      ok: true,
       accessToken: 'a-stale',
       refreshToken: 'r-stale',
     });
@@ -185,11 +193,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     // Mimic setAuth on a cold login (previousRefreshToken null, empty cache).
     clearAuthRefreshCoordination(null);
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
-    peer.postMessage({
-      v: 1,
-      type: 'result',
+    postPeerResult(peer, {
       tabId: 't-peer',
-      ok: true,
       accessToken: 'a-peer',
       refreshToken: 'r-peer',
     });
@@ -210,11 +215,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     clearAuthRefreshCoordination('r0');
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
     // Account A's in-flight refresh completes with rotated R1 — not the blocked R0 string.
-    peer.postMessage({
-      v: 1,
-      type: 'result',
+    postPeerResult(peer, {
       tabId: 't-account-a',
-      ok: true,
       accessToken: 'a1',
       refreshToken: 'r1',
     });
@@ -226,11 +228,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     assert.equal(networkCalls, 1, 'must not short-circuit on prior-account R1');
     assert.deepEqual(pair, { accessToken: 'b1', refreshToken: 'rb1' });
     // R1 must stay rejected even after Account B has refreshed (blocked set).
-    peer.postMessage({
-      v: 1,
-      type: 'result',
+    postPeerResult(peer, {
       tabId: 't-account-a',
-      ok: true,
       accessToken: 'a1-again',
       refreshToken: 'r1',
     });
@@ -251,11 +250,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     // Local refresh clears ignorePeerResults so same-account peers can share again.
     await coordinateRefreshOwnership(async () => ({ accessToken: 'local', refreshToken: 'r-local' }));
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
-    peer.postMessage({
-      v: 1,
-      type: 'result',
+    postPeerResult(peer, {
       tabId: 't-peer',
-      ok: true,
       accessToken: 'peer-a',
       refreshToken: 'peer-r',
     });
