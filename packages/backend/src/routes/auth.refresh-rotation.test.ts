@@ -1,9 +1,6 @@
 /**
- * P1-B reproduction: refresh-token rotation and reuse detection.
- * These tests encode the intended security contract. On main (pre-fix) the
- * reuse-detection cases fail because the consumed row is deleted and the miss
- * path looks up `replacedBy: presentedToken` (parent-of) rather than the
- * presented token's own consumed state.
+ * P1-B: refresh-token rotation and reuse detection (in-memory contract tests).
+ * Complements auth.refresh-rotation.sqlite.test.ts for real SQLite concurrency.
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -117,14 +114,21 @@ function createStore(options?: { onClaim?: () => Promise<void> }) {
       deleteMany: async ({
         where,
       }: {
-        where: { id?: number; token?: string; userId?: number; family?: string };
+        where: {
+          id?: number;
+          token?: string;
+          userId?: number;
+          family?: string | null;
+          expiresAt?: { lt: Date };
+        };
       }) => {
         let count = 0;
         for (const [id, row] of [...refreshTokens.entries()]) {
           if (where.id != null && row.id !== where.id) continue;
           if (where.token != null && row.token !== where.token) continue;
           if (where.userId != null && row.userId !== where.userId) continue;
-          if (where.family != null && row.family !== where.family) continue;
+          if ('family' in where && row.family !== where.family) continue;
+          if (where.expiresAt?.lt && !(row.expiresAt < where.expiresAt.lt)) continue;
           refreshTokens.delete(id);
           count++;
         }
