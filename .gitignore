@@ -3,6 +3,8 @@ dist/
 build/
 .env
 .env.beta
+.env.discord-integration-test
+.env.discord-integration-test.local
 *.db
 *.db-journal
 *.log
@@ -18,4 +20,8 @@ build-and-push.ps1
 packages/frontend/test-results/
 packages/frontend/playwright-report/
 .pr-test/
+.media-fetcher-token
 bin/
+
+# Local integration-test runtime artifacts (never commit)
+.tmp/

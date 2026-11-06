@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { embeddedIPv4, ipv6Bytes, MEDIA_EGRESS_PORTS, mediaEgressRefusal } from './egress-policy.js';
+import { embeddedIPv4, ipv6Bytes, MEDIA_EGRESS_PORTS, RADIO_EGRESS_PORTS, mediaEgressRefusal, pinMediaAddresses } from './egress-policy.js';
 
 describe('media egress address policy', () => {
   it('allows public addresses', () => {
@@ -58,5 +58,17 @@ describe('media egress address policy', () => {
 
   it('allows only ports 80 and 443', () => {
     assert.deepEqual([...MEDIA_EGRESS_PORTS].sort((a, b) => a - b), [80, 443]);
+  });
+
+  it('adds Icecast HTTP and HTTPS ports for radio only', () => {
+    assert.deepEqual([...RADIO_EGRESS_PORTS].sort((a, b) => a - b), [80, 443, 8000, 8008, 8080, 8443]);
+  });
+
+  it('refuses a mixed DNS result instead of keeping the public answers', () => {
+    assert.deepEqual(pinMediaAddresses(['93.184.215.14', '10.0.0.8']).addresses, []);
+    assert.deepEqual(pinMediaAddresses(['2606:4700::1', '::ffff:10.0.0.1']).addresses, []);
+    assert.deepEqual(pinMediaAddresses(['93.184.215.14', '2606:4700::1']).addresses, ['93.184.215.14', '2606:4700::1']);
+    assert.deepEqual(pinMediaAddresses(['127.0.0.1'], (address) => address === '127.0.0.1').addresses, ['127.0.0.1']);
+    assert.deepEqual(pinMediaAddresses(['10.0.0.1', '127.0.0.1'], (address) => address === '127.0.0.1').addresses, []);
   });
 });

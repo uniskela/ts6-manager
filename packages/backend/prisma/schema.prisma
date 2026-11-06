@@ -77,6 +77,7 @@ model TsServerConfig {
   playlists     Playlist[]
   iptvPlaylists IptvPlaylist[]
   iptvChannelPicks IptvChannelPick[]
+  discordGuildBindings DiscordGuildBinding[]
 }
 
 model BotFlow {
@@ -176,6 +177,28 @@ model MusicBot {
   updatedAt       DateTime  @updatedAt
 
   playlists Playlist[]
+  discordGuildBindings DiscordGuildBinding[]
+}
+
+/// Discord guild → TeamSpeak music bot binding (Phase 2C).
+/// guildId is the Discord snowflake string (never coerced to JS number).
+/// One row per guild; revoke in place rather than deleting history of the pair.
+model DiscordGuildBinding {
+  id             Int            @id @default(autoincrement())
+  guildId        String         @unique
+  instanceId     String
+  serverConfigId Int
+  serverConfig   TsServerConfig @relation(fields: [serverConfigId], references: [id], onDelete: Cascade)
+  musicBotId     Int
+  /// Restrict: accidental cascades are forbidden. VoiceBotManager.removeBot
+  /// explicitly deleteMany's bindings (including revoked) before musicBot.delete.
+  musicBot       MusicBot       @relation(fields: [musicBotId], references: [id], onDelete: Restrict)
+  revoked        Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([serverConfigId])
+  @@index([musicBotId])
 }
 
 model Song {
@@ -197,6 +220,10 @@ model Song {
 model Playlist {
   id                Int            @id @default(autoincrement())
   name              String
+  /// trim + JS toLowerCase(); uniqueness via partial SQLite indexes in migration SQL
+  /// (per serverConfigId, and separately among shared/null rows). Not @@unique here —
+  /// Prisma cannot express those partial indexes.
+  nameKey           String         @default("")
   /// local = library uploads / local files only; stream = YouTube/URL tracks only.
   mode              String         @default("local")
   musicBotId        Int?
@@ -207,6 +234,8 @@ model Playlist {
   createdAt         DateTime       @default(now())
 
   songs PlaylistSong[]
+
+  @@index([nameKey])
 }
 
 model PlaylistSong {

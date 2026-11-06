@@ -215,9 +215,9 @@ export async function runMediaUrlPipeline(
       };
 
       const queueUrl = async (url: string): Promise<boolean> => {
-        if (target.isCancelled?.()) return false;
-        const downloaded = await deps.downloadTrack(url);
-        if (target.isCancelled?.()) return false;
+        if (target.isCancelled?.() || signal?.aborted) return false;
+        const downloaded = await deps.downloadTrack(url, signal);
+        if (target.isCancelled?.() || signal?.aborted) return false;
         if (!req.enqueueOnly && target.isIdle()) {
           await target.play(downloaded, {});
         } else {
@@ -227,25 +227,27 @@ export async function runMediaUrlPipeline(
       };
 
       for (const url of rest) {
-        if (target.isCancelled?.()) return;
+        if (target.isCancelled?.() || signal?.aborted) return;
         try {
           if (!await queueUrl(url)) return;
         } catch (error) {
+          if (signal?.aborted || target.isCancelled?.()) return;
           report(error, url);
         }
       }
 
       for (const track of pendingTracks) {
-        if (target.isCancelled?.()) return;
+        if (target.isCancelled?.() || signal?.aborted) return;
         const label = `${track.artist} - ${track.title}`;
         try {
-          const url = await deps.appleTrackToYouTube(track);
+          const url = await deps.appleTrackToYouTube(track, signal);
           if (!url) {
             report(new Error(`No YouTube match for ${pendingSource} track: ${label}`), label);
             continue;
           }
           if (!await queueUrl(url)) return;
         } catch (error) {
+          if (signal?.aborted || target.isCancelled?.()) return;
           report(error, label);
         }
       }

@@ -78,6 +78,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'listener.remote.rate_limited',
   'listener.remote.denied',
   'listener.remote.capacity',
+  /** Discord slash-command handling (allow-listed fields only; no option values). */
+  'discord.command',
 ] as const;
 
 export type AdminAuditAction = (typeof ADMIN_AUDIT_ACTIONS)[number];
@@ -132,6 +134,8 @@ export const ADMIN_AUDIT_TARGET_TYPES = [
   'server_icon',
   /** A window's total of refusals; the id holds the count (`n=12`) and context. */
   'listener_remote_refusals',
+  /** Discord guild snowflake (digits only) plus command name in targetId. */
+  'discord_guild',
 ] as const;
 
 export type AdminAuditTargetType = (typeof ADMIN_AUDIT_TARGET_TYPES)[number];

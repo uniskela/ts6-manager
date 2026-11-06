@@ -1,0 +1,8 @@
+FROM ts6-media-fetcher:local
+USER root
+RUN apt-get update \
+  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends openssl \
+  && rm -rf /var/lib/apt/lists/*
+COPY world.mjs /app/world.mjs
+USER node
+CMD ["node", "/app/world.mjs"]

@@ -1,29 +1,25 @@
 import { Router, Request, Response } from 'express';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
+import {
+  catalogScopeWhere,
+  effectivePlaylistMode,
+  normalizePlaylistMode,
+  playlistModeMismatchMessage,
+  songMatchesMode,
+} from '../voice/commands/library.js';
+import {
+  ensurePlaylistNameKeyConstraintsReady,
+  findPlaylistNameOccupant,
+  isPlaylistNameUniqueViolation,
+  normalizePlaylistDisplayName,
+  normalizePlaylistNameKey,
+  PlaylistNameConflictError,
+} from '../voice/commands/playlist-name.js';
 
 export const playlistRoutes: Router = Router();
 
 playlistRoutes.use(requireRole('admin'));
-
-type PlaylistMode = 'local' | 'stream';
-
-function normalizePlaylistMode(raw: unknown, fallback: PlaylistMode = 'local'): PlaylistMode {
-  if (raw === 'stream' || raw === 'local') return raw;
-  return fallback;
-}
-
-/** YouTube-imported playlists must stay stream-mode even if DB defaulted to local. */
-function effectivePlaylistMode(p: { mode: string; youtubePlaylistId?: string | null }): PlaylistMode {
-  if (p.youtubePlaylistId) return 'stream';
-  return normalizePlaylistMode(p.mode);
-}
-
-function songMatchesMode(source: string, mode: PlaylistMode): boolean {
-  if (mode === 'local') return source === 'local';
-  // stream playlists accept youtube + direct url tracks
-  return source === 'youtube' || source === 'url';
-}
 
 function mapPlaylistSummary(p: {
   id: number;
@@ -59,12 +55,7 @@ playlistRoutes.get('/', async (req: Request, res: Response, next) => {
     const playlists = await prisma.playlist.findMany({
       // Legacy playlists without an explicit server can still belong to a bot.
       // Match the same server eligibility enforced when choosing an Auto-DJ source.
-      where: serverConfigId ? {
-        AND: [
-          { OR: [{ serverConfigId }, { serverConfigId: null }] },
-          { OR: [{ musicBot: null }, { musicBot: { serverConfigId } }] },
-        ],
-      } : undefined,
+      where: serverConfigId ? catalogScopeWhere(serverConfigId) : undefined,
       include: { _count: { select: { songs: true } } },
       orderBy: { createdAt: 'desc' },
     });
@@ -121,7 +112,9 @@ playlistRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const { name, musicBotId, mode, serverConfigId } = req.body;
-    if (!name) throw new AppError(400, 'name is required');
+    if (name == null || String(name).trim() === '') throw new AppError(400, 'name is required');
+    const displayName = normalizePlaylistDisplayName(String(name));
+    const nameKey = normalizePlaylistNameKey(displayName);
     const playlistMode = normalizePlaylistMode(mode, 'local');
     // Playlists belong to the server they were created on; without one they stay
     // shared like legacy playlists.
@@ -131,21 +124,31 @@ playlistRoutes.post('/', async (req: Request, res: Response, next) => {
     if (serverConfigId != null && !(await prisma.tsServerConfig.findUnique({ where: { id: serverConfigId }, select: { id: true } }))) {
       throw new AppError(400, `Server ${serverConfigId} does not exist`);
     }
+    await ensurePlaylistNameKeyConstraintsReady(prisma);
+    const scopeId = serverConfigId ?? null;
+    const occupant = await findPlaylistNameOccupant(prisma, nameKey, scopeId);
+    if (occupant) throw new PlaylistNameConflictError(displayName, occupant.id);
 
-    const playlist = await prisma.playlist.create({
-      data: {
-        name,
-        mode: playlistMode,
-        musicBotId: musicBotId ? parseInt(musicBotId) : null,
-        serverConfigId: serverConfigId ?? null,
-      },
-    });
+    try {
+      const playlist = await prisma.playlist.create({
+        data: {
+          name: displayName,
+          nameKey,
+          mode: playlistMode,
+          musicBotId: musicBotId ? parseInt(musicBotId) : null,
+          serverConfigId: scopeId,
+        },
+      });
 
-    res.status(201).json({
-      id: playlist.id,
-      name: playlist.name,
-      mode: normalizePlaylistMode(playlist.mode),
-    });
+      res.status(201).json({
+        id: playlist.id,
+        name: playlist.name,
+        mode: normalizePlaylistMode(playlist.mode),
+      });
+    } catch (err) {
+      if (isPlaylistNameUniqueViolation(err)) throw new PlaylistNameConflictError(displayName);
+      throw err;
+    }
   } catch (err) {
     next(err);
   }
@@ -158,12 +161,31 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
     const id = parseInt(req.params.id as string);
     const { name, musicBotId, mode } = req.body;
 
+    const existing = await prisma.playlist.findUnique({ where: { id } });
+    if (!existing) throw new AppError(404, 'Playlist not found');
+
     const data: Record<string, unknown> = {};
-    if (name != null) data.name = name;
+    if (name != null) {
+      const displayName = normalizePlaylistDisplayName(String(name));
+      if (!displayName) throw new AppError(400, 'name is required');
+      await ensurePlaylistNameKeyConstraintsReady(prisma);
+      const nameKey = normalizePlaylistNameKey(displayName);
+      const occupant = await findPlaylistNameOccupant(prisma, nameKey, existing.serverConfigId, id);
+      if (occupant) throw new PlaylistNameConflictError(displayName, occupant.id);
+      data.name = displayName;
+      data.nameKey = nameKey;
+    }
     if (musicBotId !== undefined) data.musicBotId = musicBotId ? parseInt(musicBotId) : null;
     if (mode !== undefined) data.mode = normalizePlaylistMode(mode);
 
-    await prisma.playlist.update({ where: { id }, data });
+    try {
+      await prisma.playlist.update({ where: { id }, data });
+    } catch (err) {
+      if (isPlaylistNameUniqueViolation(err)) {
+        throw new PlaylistNameConflictError(String(data.name ?? existing.name));
+      }
+      throw err;
+    }
 
     res.json({ success: true });
   } catch (err) {
@@ -263,12 +285,7 @@ playlistRoutes.post('/:id/songs', async (req: Request, res: Response, next) => {
 
     const mode = effectivePlaylistMode(playlist);
     if (songs.some((song) => !songMatchesMode(song.source, mode))) {
-      throw new AppError(
-        400,
-        mode === 'local'
-          ? 'This local playlist only accepts local library songs'
-          : 'This stream playlist only accepts YouTube / URL songs',
-      );
+      throw new AppError(400, playlistModeMismatchMessage(mode));
     }
 
     const added = await appendSongsToPlaylist(prisma, playlistId, ids);

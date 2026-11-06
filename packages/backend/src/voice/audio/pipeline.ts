@@ -1,8 +1,9 @@
-import { spawn, type ChildProcess } from "child_process";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
 import type { Readable } from "stream";
 import OpusScript from "opusscript";
 import { validateUrl } from "../../utils/url-validator.js";
 import { acquireMediaEgress, egressEnvironment, mediaEgressEnabled } from "../egress/media-egress.js";
+import { submitMediaFetch } from "../egress/media-fetcher-client.js";
 
 export const SAMPLE_RATE = 48000;
 export const CHANNELS = 2;
@@ -16,8 +17,11 @@ export function isRemoteInput(input: string): boolean {
 }
 
 /**
- * Protocols ffmpeg may open for a resolved track URL: HTTP(S) to the media
- * egress proxy only, so a playlist or redirect cannot open anything else.
+ * Protocols ffmpeg may open for a resolved track URL. HTTPS-via-proxy on
+ * Debian ffmpeg nests `httpproxy` (tls.c → httpproxy://proxy/origin), so that
+ * name has to stay. HLS 5.1 treats any proto prefix `http` as allowed, which
+ * includes `httpproxy://` segment URLs; those are a known remaining gap
+ * (playlist-named httpproxy is not the job proxy).
  */
 const REMOTE_PROTOCOLS = "http,https,tls,tcp,httpproxy,crypto";
 
@@ -26,6 +30,12 @@ const REMOTE_PROTOCOLS = "http,https,tls,tcp,httpproxy,crypto";
  * are refused, so ffmpeg never opens addresses named inside the response.
  */
 const REMOTE_FORMATS = "matroska,webm,mov,mp4,m4a,mp3,ogg,aac,flac,wav";
+
+/**
+ * Radio may be Icecast or HLS. Segment and redirect fetches still go through
+ * the media egress proxy, so addresses named in a playlist are checked again.
+ */
+const RADIO_FORMATS = `${REMOTE_FORMATS},hls,mpegts`;
 
 /** Longest a resolved track may stream through one proxy token. */
 const FILE_STREAM_EGRESS_TTL_MS = 12 * 60 * 60_000;
@@ -52,6 +62,62 @@ export function buildPcmFileArgs(input: string, startSeconds = 0): string[] {
     "pipe:1",
   );
   return args;
+}
+
+/** ffmpeg TLS defaults to verify=0; this is required for every HTTPS hop including HLS. */
+export const RADIO_TLS_VERIFY_ARGS = ["-tls_verify", "1"] as const;
+
+let cachedHttpsVerify: Error | true | undefined;
+
+/**
+ * Refuse HTTPS radio unless this ffmpeg can verify certificates and host names
+ * on each request (GnuTLS/libtls/mbedtls). OpenSSL-only builds skip hostname
+ * checks unless a single -verifyhost is set, which breaks multi-host HLS.
+ */
+export function assertFfmpegHttpsVerification(run = spawnSync): void {
+  if (cachedHttpsVerify === true) return;
+  if (cachedHttpsVerify instanceof Error) throw cachedHttpsVerify;
+  const help = run("ffmpeg", ["-hide_banner", "-h", "protocol=tls"], { encoding: "utf8", timeout: 8_000 });
+  const text = `${help.stdout ?? ""}\n${help.stderr ?? ""}`;
+  const hasTlsVerify = text.split(/\r?\n/).some((line) => {
+    const trimmed = line.trimStart();
+    return trimmed === "-tls_verify" || trimmed.startsWith("-tls_verify ");
+  });
+  if (help.error || help.status !== 0 || !hasTlsVerify) {
+    cachedHttpsVerify = new Error("HTTPS radio requires an ffmpeg build that supports -tls_verify");
+    throw cachedHttpsVerify;
+  }
+  const version = run("ffmpeg", ["-hide_banner", "-version"], { encoding: "utf8", timeout: 8_000 });
+  const config = `${version.stdout ?? ""}\n${version.stderr ?? ""}`;
+  const opensslOnly = /--enable-openssl\b/.test(config)
+    && !/--enable-gnutls\b/.test(config)
+    && !/--enable-libtls\b/.test(config)
+    && !/--enable-mbedtls\b/.test(config)
+    && !/--enable-libcurl\b/.test(config);
+  if (opensslOnly) {
+    cachedHttpsVerify = new Error("HTTPS radio requires an ffmpeg TLS backend that verifies host names on each request");
+    throw cachedHttpsVerify;
+  }
+  cachedHttpsVerify = true;
+}
+
+export function resetFfmpegHttpsVerificationForTests(): void {
+  cachedHttpsVerify = undefined;
+}
+
+export function buildPcmStreamArgs(input: string): string[] {
+  return [
+    "-protocol_whitelist", REMOTE_PROTOCOLS, "-format_whitelist", RADIO_FORMATS,
+    ...(/^https:/i.test(input) ? RADIO_TLS_VERIFY_ARGS : []),
+    "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
+    "-i", input,
+    "-f", "s16le",
+    "-acodec", "pcm_s16le",
+    "-ar", String(SAMPLE_RATE),
+    "-ac", String(CHANNELS),
+    "-loglevel", "error",
+    "pipe:1",
+  ];
 }
 
 export class AudioPipeline {
@@ -148,36 +214,14 @@ export class AudioPipeline {
   }
 
   /**
-   * Stream audio from a URL to raw PCM (for live radio streams).
-   * Returns a readable stdout stream + kill function. Does NOT buffer the entire stream.
+   * Stream live radio through the isolated media fetcher.
+   * Never starts local ffmpeg. Missing or failed fetcher fails closed.
    */
   async toPcmStream(url: string): Promise<{ stdout: Readable; process: ChildProcess; kill: () => void }> {
-    // C4: Validate URL before passing to ffmpeg
     const urlCheck = await validateUrl(url, { allowedProtocols: ['http:', 'https:'] });
     if (!urlCheck.valid) {
       throw new Error(`Stream URL blocked: ${urlCheck.error}`);
     }
-
-    const args = [
-      "-reconnect", "1",
-      "-reconnect_streamed", "1",
-      "-reconnect_delay_max", "5",
-      "-i", url,
-      "-f", "s16le",
-      "-acodec", "pcm_s16le",
-      "-ar", String(SAMPLE_RATE),
-      "-ac", String(CHANNELS),
-      "-loglevel", "error",
-      "pipe:1",
-    ];
-
-    const ffmpeg = spawn("ffmpeg", args, { shell: false });
-    return {
-      stdout: ffmpeg.stdout,
-      process: ffmpeg,
-      kill: () => {
-        try { ffmpeg.kill("SIGKILL"); } catch { }
-      },
-    };
+    return submitMediaFetch(url);
   }
 }

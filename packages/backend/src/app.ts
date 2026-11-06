@@ -45,6 +45,11 @@ import { BoundedRateLimitStore } from './utils/rate-windows.js';
 
 import { applyTrustProxy, forwardedHeaderWarning } from './trust-proxy.js';
 import { requireServerAccess } from './middleware/server-access.js';
+import {
+  createDiscordInteractionsMisconfiguredRouter,
+  createDiscordInteractionsRouter,
+  isValidDiscordPublicKeyHex,
+} from './discord-command/interactions-http.js';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
@@ -59,6 +64,37 @@ export function createApp(): Express {
 
   app.use(helmet());
   app.use(cors({ origin: config.frontendUrl, credentials: true }));
+
+  // Discord Interactions need the exact raw body for Ed25519. Mount before json().
+  // Disabled by default (DISCORD_INTERACTIONS_ENABLED). Adapter + follow-up are
+  // injected via app.locals — never unsigned fallback, never silent Memory follow-up.
+  // Rate-limit the public interactions path (mounted before JWT) against flood/DoS.
+  const discordInteractionsStore = new BoundedRateLimitStore({ capacity: 50_000 });
+  const discordInteractionsLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 120,
+    store: discordInteractionsStore,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many Discord interaction requests', code: 'rate_limited' },
+    keyGenerator: (req) => clientRateKey(req),
+    validate: false,
+  });
+  if (config.discordInteractionsEnabled) {
+    if (!isValidDiscordPublicKeyHex(config.discordPublicKeyHex)) {
+      app.use('/api/discord/interactions', discordInteractionsLimiter, createDiscordInteractionsMisconfiguredRouter());
+    } else {
+      app.use('/api/discord/interactions', discordInteractionsLimiter, createDiscordInteractionsRouter({
+        publicKeyHex: config.discordPublicKeyHex,
+        getAdapter: (req) => req.app.locals.discordCommandAdapter ?? null,
+        getFollowUp: (req) => req.app.locals.discordInteractionFollowUp ?? null,
+        expectedApplicationId: config.discordApplicationId || null,
+        nowMs: () => Date.now(),
+      }));
+    }
+  }
+  app.locals.discordInteractionsRateLimitStore = discordInteractionsStore;
+
   // Parse remote requests separately so body-parser errors cannot echo token material.
   // Bounded stores: a flood of new addresses cannot grow limiter memory without limit.
   // Live listeners have their own store, which only verified sessions can fill,

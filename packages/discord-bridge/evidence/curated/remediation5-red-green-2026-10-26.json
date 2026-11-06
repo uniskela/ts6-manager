@@ -1,0 +1,157 @@
+{
+ "label": "SIMULATED (real discord.js UserManager, REST, REST route queue and VOICE_STATE_UPDATE handler; real @discordjs/voice receiver; only the REST wire (makeRequest), the voice network edge and the native davey session are fakes). Not live Discord.",
+ "reviewedHead": "b13185f133642dc7a96d1d885fc6ee3937c0226e",
+ "reproductionFile": "src/adapters/discord-bot.identity-lifecycle.test.ts (describe 'Codex R1 lifecycle reproductions')",
+ "beforeMethod": "b13185f's packages/discord-bridge/src extracted with git archive; production code verbatim. Added only the new harness files (src/testing/controlled-rest.ts, src/testing/fake-voice.ts), the test file, and a stub src/core/identity-requests.ts exporting an empty IdentityRequests class (the harness passes it; b13185f ignores the option).",
+ "R1-A": {
+  "scenario": "A human speaks in the source channel; their REST identity request is on the wire; they leave (VOICE_STATE_UPDATE channel_id null); the request answers bot:false; their packets keep arriving for 300 ms.",
+  "before": {
+   "result": "FAIL",
+   "framesForwardedAfterDeparture": 13
+  },
+  "after": {
+   "result": "PASS",
+   "measured": "framesForwardedAfterDeparture=0 openSubscriptions=0 identity=bot:false membership=null"
+  }
+ },
+ "R1-B": {
+  "scenario": "A human speaks; their REST identity request is unsettled; they leave and rejoin while still speaking.",
+  "before": {
+   "result": "FAIL",
+   "restOperationsForUser": 2
+  },
+  "after": {
+   "result": "PASS",
+   "measured": "restOperationsForUser=1 unsettledTotal=1"
+  }
+ },
+ "R1-C": {
+  "scenario": "Three DiscordBot instances created one after another in one process (each destroyed before the next), each with the production default identity registry and 10 new unknown speakers; every REST request stalls.",
+  "before": {
+   "result": "FAIL",
+   "unsettledAfterEachInstance": [
+    8,
+    16,
+    24
+   ]
+  },
+  "after": {
+   "result": "PASS",
+   "measured": "unsettledAfterEachInstance=8,8,8 maxUnsettled=8"
+  }
+ },
+ "mutations": [
+  {
+   "id": "M1",
+   "mutation": "pipeline ignores admission (humanAdmitted always true)",
+   "exit": 1,
+   "failingTests": [
+    "leaving and rejoining grants a new admission; the old one never becomes valid again",
+    "frames queued before a departure are dropped at mix; after a rejoin only frames under the new admission reach TeamSpeak",
+    "a departure and a rejoin with no packet or check in between still end the old admission: frames queued before it are not mixed",
+    "a new receive session invalidates every admission of the old one: queued and late-delivered frames from it are dropped",
+    "a replacement bot instance never honours an admission of the instance it replaced",
+    "receiver failover: the failed receiver's admissions are dead, the successor admits only present humans, and a departure stops TeamSpeak output",
+    "participant churn: no departed user is ever mixed into TeamSpeak, every present human is, and identity requests stay bounded",
+    "audio flows again once DAVE is established, and the loss reaches the election through the normal path"
+   ]
+  },
+  {
+   "id": "M2",
+   "mutation": "admission skips the membership check",
+   "exit": 1,
+   "failingTests": [
+    "R1-A: a human who left while their identity lookup was out is not forwarded when the late answer arrives",
+    "a cached bot:false identity does not override a revoked admission: forwarding stops at the departure and the identity stays known",
+    "a known human whose packets arrive but who is not in the source channel is never subscribed, and is heard once they enter it",
+    "leaving and rejoining grants a new admission; the old one never becomes valid again",
+    "repeated leave and rejoin while the request is out: one REST operation, then the answer admits only while present",
+    "eight indefinitely stalled requests: unknown speakers stay excluded, the diagnostics are the real count, and known humans keep speaking",
+    "receiver failover: the failed receiver's admissions are dead, the successor admits only present humans, and a departure stops TeamSpeak output",
+    "participant churn: no departed user is ever mixed into TeamSpeak, every present human is, and identity requests stay bounded",
+    "an answer that arrives after the bot left, or after the human left the channel, admits nobody",
+    "admits a verified human only while the gateway puts them in the source channel, and checks membership before identity",
+    "a validity check that finds the user gone revokes the admission, so it stays dead if they come back"
+   ]
+  },
+  {
+   "id": "M3",
+   "mutation": "departure event does not revoke",
+   "exit": 1,
+   "failingTests": [
+    "a cached bot:false identity does not override a revoked admission: forwarding stops at the departure and the identity stays known",
+    "a departure and a rejoin with no packet or check in between still end the old admission: frames queued before it are not mixed"
+   ]
+  },
+  {
+   "id": "M4",
+   "mutation": "supervisor does not re-check admission per packet",
+   "exit": 1,
+   "failingTests": [
+    "drops a packet whose admission has ended, closes that stream, and re-opens the user only under a new admission"
+   ]
+  },
+  {
+   "id": "M5",
+   "mutation": "a revoked admission is restored on rejoin (same token)",
+   "exit": 1,
+   "failingTests": [
+    "a cached bot:false identity does not override a revoked admission: forwarding stops at the departure and the identity stays known",
+    "leaving and rejoining grants a new admission; the old one never becomes valid again",
+    "frames queued before a departure are dropped at mix; after a rejoin only frames under the new admission reach TeamSpeak",
+    "a departure and a rejoin with no packet or check in between still end the old admission: frames queued before it are not mixed",
+    "revoke ends an admission for good; a return is a new admission and the old one never becomes valid again",
+    "a validity check that finds the user gone revokes the admission, so it stays dead if they come back"
+   ]
+  },
+  {
+   "id": "M6",
+   "mutation": "registry has no per-user de-duplication",
+   "exit": 1,
+   "failingTests": [
+    "reset() ends the session: answers that arrive afterwards are dropped, and the slots come back only as the requests settle",
+    "timeout, cooldown, reset and dispose never free a slot or start a second request for the same user",
+    "holds each request until it settles, one per user, and refuses over the cap without queueing"
+   ]
+  },
+  {
+   "id": "M7",
+   "mutation": "each filter gets its own registry (no process-wide budget)",
+   "exit": 1,
+   "failingTests": [
+    "R1-C: three successive in-process bot replacements cannot accumulate more than eight unsettled identity requests (24 before)",
+    "filter timeout, cooldown, session reset (leave), a new session and dispose (destroy) never release the requests or duplicate them",
+    "eight indefinitely stalled requests: unknown speakers stay excluded, the diagnostics are the real count, and known humans keep speaking",
+    "a slot is released only when its REST request settles; then only a positive human answer admits, and the next speakers are looked up within the cap",
+    "100 distinct unknown speakers whose lookups never settle start at most maxPending lookups and keep every one excluded",
+    "does not queue what it refused: nothing starts when a slot frees unless that speaker is asked about again",
+    "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
+    "reset() ends the session: answers that arrive afterwards are dropped, and the slots come back only as the requests settle",
+    "timeout, cooldown, reset and dispose never free a slot or start a second request for the same user",
+    "a replacement filter on the same registry cannot add requests on top of the ones its predecessor left out"
+   ]
+  },
+  {
+   "id": "M8",
+   "mutation": "registry frees the slot on the filter timeout",
+   "exit": 1,
+   "failingTests": [
+    "filter timeout, cooldown, session reset (leave), a new session and dispose (destroy) never release the requests or duplicate them",
+    "eight indefinitely stalled requests: unknown speakers stay excluded, the diagnostics are the real count, and known humans keep speaking",
+    "with the production timing, three batches of eight unidentified speakers never have more than eight REST requests unsettled (24 before)",
+    "a slot is released only when its REST request settles; then only a positive human answer admits, and the next speakers are looked up within the cap",
+    "a stalled lookup times out, puts its user on a cooldown, but keeps its slot until the lookup really settles",
+    "a user whose lookup is stalled is not looked up again while it is out, even after the cooldown, so one user cannot fill the slots",
+    "timeout, cooldown, reset and dispose never free a slot or start a second request for the same user"
+   ]
+  },
+  {
+   "id": "M9",
+   "mutation": "admission not closed with its receive session",
+   "exit": 1,
+   "failingTests": [
+    "close ends every admission and admits nobody afterwards"
+   ]
+  }
+ ]
+}

@@ -6,6 +6,12 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import type { PrismaClient, Song } from '../../../generated/prisma/index.js';
+import {
+  allocateUniquePlaylistDisplayName,
+  ensurePlaylistNameKeyConstraintsReady,
+  isPlaylistNameUniqueViolation,
+  normalizePlaylistDisplayName,
+} from '../commands/playlist-name.js';
 import { parseYouTubeUrl, getYouTubeUrlInfo, downloadYouTube, isSpotifyShareUrl } from './youtube.js';
 import { resolveSpotifyCollection } from './spotify.js';
 import { isYouTubePlaylistUrl, planImport, youtubeWatchUrl } from './playlist-import-plan.js';
@@ -408,7 +414,13 @@ async function runImport(
 
   if (playlistTarget) {
     try {
+      await ensurePlaylistNameKeyConstraintsReady(prisma);
       if (playlistId) {
+        const rename = options.playlistName
+          ? await allocateUniquePlaylistDisplayName(prisma, options.playlistName, serverConfigId, {
+            excludeId: playlistId,
+          })
+          : null;
         await prisma.playlist.update({
           where: { id: playlistId },
           data: {
@@ -418,20 +430,38 @@ async function runImport(
                   mode: 'stream',
                   ...(listId ? { youtubePlaylistId: listId, serverConfigId } : { serverConfigId }),
                 }),
-            ...(options.playlistName ? { name: options.playlistName } : {}),
+            ...(rename ? { name: rename.displayName, nameKey: rename.nameKey } : {}),
           },
         });
       } else {
-        const created = await prisma.playlist.create({
-          data: {
-            name: options.playlistName || title || 'Imported Playlist',
-            mode: 'stream',
-            youtubePlaylistId: listId ?? null,
-            serverConfigId,
-          },
-        });
-        playlistId = created.id;
-        playlistMode = 'stream';
+        let allocated = await allocateUniquePlaylistDisplayName(
+          prisma,
+          options.playlistName || title || 'Imported Playlist',
+          serverConfigId,
+        );
+        for (let attempt = 0; attempt < 8; attempt++) {
+          try {
+            const created = await prisma.playlist.create({
+              data: {
+                name: allocated.displayName,
+                nameKey: allocated.nameKey,
+                mode: 'stream',
+                youtubePlaylistId: listId ?? null,
+                serverConfigId,
+              },
+            });
+            playlistId = created.id;
+            playlistMode = 'stream';
+            break;
+          } catch (err) {
+            if (!isPlaylistNameUniqueViolation(err) || attempt === 7) throw err;
+            allocated = await allocateUniquePlaylistDisplayName(
+              prisma,
+              `${normalizePlaylistDisplayName(options.playlistName || title || 'Imported Playlist')} (${attempt + 2})`,
+              serverConfigId,
+            );
+          }
+        }
       }
     } catch (err) {
       reservation?.release();

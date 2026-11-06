@@ -1,0 +1,40 @@
+{
+  "name": "@ts6/discord-bridge",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Bridge-D1 lab: isolated Node 24 Discord <-> TeamSpeak voice bridge feasibility proof. Not part of the pnpm workspace and not shipped.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "sync:tslib": "node scripts/sync-tslib.mjs",
+    "pretypecheck": "node scripts/sync-tslib.mjs",
+    "typecheck": "tsc --noEmit",
+    "pretest": "node scripts/sync-tslib.mjs",
+    "test": "node scripts/run-tests.mjs",
+    "test:update-expected": "node scripts/run-tests.mjs --update",
+    "smoke:deps": "tsx src/lab/smoke-deps.ts",
+    "lab:ts-live": "tsx src/lab/ts-live.ts",
+    "lab:ts-handshake": "tsx src/lab/ts-handshake.ts",
+    "lab:live": "tsx src/lab/live.ts",
+    "beta:private": "tsx src/lab/private-beta.ts",
+    "lab:setup": "tsx src/lab/setup.ts",
+    "prelab:ts-live": "node scripts/sync-tslib.mjs",
+    "prelab:live": "node scripts/sync-tslib.mjs",
+    "churn": "node --expose-gc --import tsx src/lab/churn.ts"
+  },
+  "dependencies": {
+    "@discordjs/opus": "0.10.0",
+    "@discordjs/voice": "0.19.2",
+    "@snazzah/davey": "0.1.12",
+    "discord.js": "14.27.0",
+    "opusscript": "0.1.1",
+    "libsodium-wrappers-sumo": "0.8.4"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3"
+  }
+}

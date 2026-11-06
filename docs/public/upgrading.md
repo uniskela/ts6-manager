@@ -19,6 +19,23 @@ Preserve:
 
 Changing `ENCRYPTION_KEY` prevents the backend from decrypting previously stored API keys and SSH passwords.
 
+### Radio isolated fetcher
+
+**Breaking change for radio playback.** Remote radio no longer starts ffmpeg inside the backend. Every radio entry point (TeamSpeak, Discord, web, Auto-DJ, listener requests, queue next/prev) uses the isolated media fetcher. If the fetcher is not running, radio fails with *Radio playback needs the isolated media fetcher. Saved stations are unchanged.* There is no silent fallback and no public `MEDIA_FETCHER=legacy` override.
+
+This is a documented security change. Treat the release that ships it as **major** (`feat!:`) because existing installs lose radio until the overlay is added. Station rows are not modified.
+
+**What to do**
+
+1. Keep the existing database volume. Station records stay as they are.
+2. Add the [Radio fetcher](radio-fetcher.md) overlay to the split stack (`docker-compose.yml` + `docker-compose.media-fetcher.yml`).
+3. Create `.media-fetcher-token` with `umask 077` (mode `600`, not `644`) and confirm the host has Linux 6.7+ with Landlock ABI ≥ 4. The overlay copies that file into the jobs volume; keep the host file owner-only.
+4. Play a saved station. Music and YouTube are unchanged.
+
+**All-in-one and native installs.** Radio fails closed until an equivalent fetcher is running. Do not expect the all-in-one image alone to play radio after this change.
+
+`MEDIA_EGRESS_PROXY=off` is still not a way to play radio.
+
 ### Upgrading to 1.10.0
 
 **Back up the database before starting the 1.10.0 backend.** Stop the backend first and make a consistent copy of its persistent data volume, including `ts6webui.db`, any SQLite journal/WAL files, uploaded IPTV playlists, bot avatars and hosted channel banners. Keep the backup and the previous image tag until the upgrade is verified. A rollback must restore the matching database backup as well as the old image.
@@ -99,12 +116,12 @@ Cloud metadata addresses stay blocked even when listed.
 **Breaking change for some setups** (an outbound proxy set through `HTTP_PROXY`/`HTTPS_PROXY`, or media on your local network). Every media download (yt-dlp for music and video, and ffmpeg playing a track URL yt-dlp resolved) now connects through a checking proxy inside the backend; see [Security — Media downloads](security.md#media-downloads). There is no schema change and no Compose change. Most links work as before. These changes may affect you:
 
 - **Outbound proxy settings.** Media downloads no longer use `HTTP_PROXY`, `HTTPS_PROXY` or `ALL_PROXY` from the backend's environment. If the backend can only reach the internet through an outbound proxy, set `MEDIA_UPSTREAM_PROXY=http://host:port`. The backend logs a startup warning when one of the old variables is set and `MEDIA_UPSTREAM_PROXY` is not. The outbound proxy is asked for `CONNECT` tunnels to IP addresses on ports 80 and 443, not host names. A proxy that only allows named domains, or refuses `CONNECT` to port 80, will refuse these requests, and the backend must be able to resolve public DNS names itself.
-- **Links to your local network.** Pasted links, `!play` links and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance; radio is unchanged.
-- **Ports other than 80 and 443.** Media hosted on another port, such as `https://media.example.com:8443/track.mp3`, is refused.
+- **Links to your local network.** Pasted links, `!play` links, radio streams and Media Library downloads that point at a NAS, home server or any other private, Tailscale or link-local address now fail with "This media link could not be loaded." There is no exception for them, including for administrators. Upload the file in the Media Library, or copy it into the music folder and run **Scan**. IPTV playlists and channels keep their **IPTV → Local hosts** allowance.
+- **Ports other than 80 and 443.** Downloaded tracks hosted on another port, such as `https://media.example.com:8443/track.mp3`, are refused. Radio streams may use 8000, 8008, 8080 or 8443 in addition to 80 and 443.
 - **Formats that are not HTTP.** Sources that offer only RTMP, RTSP, MMS or similar streams are refused. HTTP(S), HLS and DASH work. The few HTTPS streams that yt-dlp can only download by handing them to ffmpeg are refused too.
 - **yt-dlp configuration files.** Media downloads ignore yt-dlp configuration files and plugin folders on the host. On a native install, options you set in a yt-dlp config file no longer apply; cookies still come from **Settings → YouTube** or `YT_COOKIE_FILE`. A native install needs a yt-dlp at least as new as the version pinned in `.yt-dlp-version`; older releases lack options the backend now passes, and every download then fails.
 - **Host-file overrides.** Media downloads resolve host names through DNS (`/etc/resolv.conf`), not `/etc/hosts`. Docker's DNS, systemd-resolved and Tailscale MagicDNS work as before.
-- **Emergency switch.** If downloads break because of the proxy, `MEDIA_EGRESS_PROXY=off` restores direct connections while you report the problem. It is not a supported way to run: only YouTube links and searches are accepted while it is off, and the Runtime / media check (Settings → YouTube, Media Library → Library) reports it as a failure.
+- **Emergency switch.** If downloads break because of the proxy, `MEDIA_EGRESS_PROXY=off` restores direct connections for YouTube links and searches only while you report the problem. Radio and other non-YouTube URLs fail closed (no direct connection). It is not a supported way to run, and the Runtime / media check (Settings → YouTube, Media Library → Library) reports it as a failure.
 
 #### Downloads go into a separate cache folder
 
