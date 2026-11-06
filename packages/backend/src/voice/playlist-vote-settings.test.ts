@@ -77,6 +77,7 @@ describe('playlist vote settings', () => {
       [1, 2, 3, 4, 5, 6, 10].map((n) => playlistVoteApprovalsNeeded(80, n)),
       [1, 2, 3, 4, 4, 5, 8],
     );
-    assert.equal(playlistVoteApprovalsNeeded(80, 0), 0);
+    // Defensive floor — openVote must still refuse an empty electorate (#442).
+    assert.equal(playlistVoteApprovalsNeeded(80, 0), 1);
   });
 });
