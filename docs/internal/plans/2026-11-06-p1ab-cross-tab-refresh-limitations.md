@@ -48,6 +48,19 @@ Server-side consumed-token replay / family revoke remains authoritative.
 - Logout (local or peer BC) and `setAuth` session replace (`ts6-auth-session`) clear `lastGoodResult` / leader / waiters (pending waiters get `ok:false`) so a later login cannot adopt a prior account’s cached pair. Same-account refresh via `setTokens` does not clear.
 - Access JWTs / established WebSockets are not torn down by refresh revoke (unchanged).
 - `__ts6AuthTest` requires `localStorage ts6-e2e-hooks=1` before module load; backend `authTestHooks` are test-injected only. Not enabled for ordinary production users.
+- Frontend adopt/401 recovery also requires matching JWT `id` on the persisted access token vs the in-flight tab’s expected access token, so a peer login that rewrites `ts6-auth` without notifying this tab cannot be adopted via epoch-alone checks.
+
+## Server: post-commit R0 vs genuine replay (Kody finding #1)
+
+Under the current opaque-refresh protocol, a second POST that presents already-consumed `R0` after `R0→R1` has committed is **wire-identical** to attacker replay: both see `replacedBy` set and take the pre-transaction family-revoke path. SQLite proof: `post-commit second presenter of R0 gets 401, family-revokes, and R1 is unusable` in `auth.refresh-rotation.sqlite.test.ts`. Pre-commit dual-POST still uses in-transaction CAS (`updateMany` count 0 → 401 **without** family revoke).
+
+**Trade-off (no grace period without explicit review):** prefer false-positive family revoke (benign late dual-POST logs both tabs out) over missing replay detection (stolen `R0` must kill `R1`). Frontend Web Lock + BroadcastChannel is the primary dual-POST mitigator.
+
+**Smallest defensible options (not implemented here):**
+
+1. Keep current revoke-on-`replacedBy` (default; security-biased; document residual).
+2. Add `consumedAt` + grace window so “fresh” losers 401 without revoke — weakens replay until grace elapses; needs explicit security review.
+3. Protocol change (e.g. sender-bound refresh / DPoP-style) so concurrent losers are distinguishable from theft — larger redesign.
 
 ## Safe merge order (two PRs)
 

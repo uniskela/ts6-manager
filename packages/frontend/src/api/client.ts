@@ -6,6 +6,8 @@ import {
   broadcastAuthLogout,
   clearAuthRefreshCoordination,
   coordinateRefreshOwnership,
+  getAuthRefreshCoordinationEpoch,
+  isPersistedRefreshAdoptionAllowed,
   runWithoutLogoutBroadcast,
   setAuthRefreshPeerLogoutHandler,
 } from './auth-refresh-coord';
@@ -51,19 +53,78 @@ export function readPersistedRefreshToken(): string | null {
   return readPersistedAuthTokens().refreshToken;
 }
 
-function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
+function decodeAccessPayload(token: string): { id?: unknown; exp?: unknown } | null {
   try {
     const payloadPart = token.split('.')[1];
-    if (!payloadPart) return false;
+    if (!payloadPart) return null;
     const base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
     const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(padded)) as { exp?: number };
-    return typeof payload.exp === 'number'
-      && payload.exp * 1000 <= Date.now() + skewSeconds * 1000;
+    return JSON.parse(atob(padded)) as { id?: unknown; exp?: unknown };
   } catch {
+    return null;
+  }
+}
+
+function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
+  const payload = decodeAccessPayload(token);
+  if (!payload || typeof payload.exp !== 'number') {
     // Leave malformed/non-JWT tokens to the normal 401 response path.
     return false;
   }
+  return payload.exp * 1000 <= Date.now() + skewSeconds * 1000;
+}
+
+/** JWT `id` claim from an access token (unverified decode — identity compare only). */
+export function accessTokenUserId(token: string | null | undefined): number | null {
+  if (!token) return null;
+  const payload = decodeAccessPayload(token);
+  return typeof payload?.id === 'number' ? payload.id : null;
+}
+
+/**
+ * Persist/BC adoption gate: epoch + blocked set + same JWT subject.
+ * Subject check covers peer login that rewrote `ts6-auth` without notifying this tab.
+ */
+export function canAdoptPersistedAuth(input: {
+  startEpoch: number;
+  currentEpoch: number;
+  expectedAccessToken: string | null;
+  presentedRefreshToken: string | null;
+  persistedAccessToken: string | null;
+  persistedRefreshToken: string | null;
+  adoptionAllowed: (refreshToken: string) => boolean;
+}): boolean {
+  if (input.currentEpoch !== input.startEpoch) return false;
+  if (!input.persistedRefreshToken || !input.persistedAccessToken) return false;
+  if (
+    input.presentedRefreshToken
+    && input.persistedRefreshToken === input.presentedRefreshToken
+  ) {
+    return false;
+  }
+  if (!input.adoptionAllowed(input.persistedRefreshToken)) return false;
+  const expectedId = accessTokenUserId(input.expectedAccessToken);
+  const persistedId = accessTokenUserId(input.persistedAccessToken);
+  if (expectedId == null || persistedId == null || expectedId !== persistedId) return false;
+  return true;
+}
+
+/** Drop a late refresh response when the tab's account changed mid-flight. */
+export function shouldApplyRefreshResponse(input: {
+  expectedAccessToken: string | null;
+  currentAccessToken: string | null;
+  responseAccessToken: string;
+}): 'apply' | 'discard' {
+  const expectedId = accessTokenUserId(input.expectedAccessToken);
+  const responseId = accessTokenUserId(input.responseAccessToken);
+  const currentId = accessTokenUserId(input.currentAccessToken);
+  if (expectedId == null) {
+    if (currentId != null && responseId !== currentId) return 'discard';
+    return 'apply';
+  }
+  if (responseId !== expectedId) return 'discard';
+  if (currentId != null && currentId !== expectedId) return 'discard';
+  return 'apply';
 }
 
 /**
@@ -72,10 +133,23 @@ function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
  * Only adopt when the refresh token changed — a memory-only access expiry must
  * still hit the network with the current refresh token.
  */
-function adoptPeerTokensIfFresh(): string | null {
+function adoptPeerTokensIfFresh(
+  startEpoch: number,
+  expectedAccessToken: string | null,
+): string | null {
   const persisted = readPersistedAuthTokens();
   const mem = useAuthStore.getState();
-  if (!persisted.refreshToken || persisted.refreshToken === mem.refreshToken) return null;
+  if (!canAdoptPersistedAuth({
+    startEpoch,
+    currentEpoch: getAuthRefreshCoordinationEpoch(),
+    expectedAccessToken,
+    presentedRefreshToken: mem.refreshToken,
+    persistedAccessToken: persisted.accessToken,
+    persistedRefreshToken: persisted.refreshToken,
+    adoptionAllowed: isPersistedRefreshAdoptionAllowed,
+  })) {
+    return null;
+  }
 
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
@@ -91,6 +165,9 @@ async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
+    const startEpoch = getAuthRefreshCoordinationEpoch();
+    const expectedAccessToken = useAuthStore.getState().accessToken;
+
     const runRefresh = async (refreshToken: string): Promise<{ accessToken: string; refreshToken: string } | null> => {
       const { setTokens, logout } = useAuthStore.getState();
 
@@ -102,27 +179,39 @@ async function refreshAccessToken(): Promise<string | null> {
         );
         const accessToken = res.data.accessToken as string;
         const nextRefresh = res.data.refreshToken as string;
+        if (shouldApplyRefreshResponse({
+          expectedAccessToken,
+          currentAccessToken: useAuthStore.getState().accessToken,
+          responseAccessToken: accessToken,
+        }) === 'discard') {
+          return null;
+        }
         setTokens(accessToken, nextRefresh);
         return { accessToken, refreshToken: nextRefresh };
       } catch (err: unknown) {
         const status = axios.isAxiosError(err) ? err.response?.status : undefined;
         if (status === 401 || status === 403) {
           // Dual-start race: peer may have rotated; zustand persist can lag setTokens.
+          // Reject other-account persist even when this tab never saw logout/session BC.
           for (let i = 0; i < 3; i++) {
             if (i > 0) await new Promise((r) => setTimeout(r, 25));
             const persisted = readPersistedAuthTokens();
-            if (
-              persisted.refreshToken
-              && persisted.refreshToken !== refreshToken
-              && persisted.accessToken
-            ) {
+            if (canAdoptPersistedAuth({
+              startEpoch,
+              currentEpoch: getAuthRefreshCoordinationEpoch(),
+              expectedAccessToken,
+              presentedRefreshToken: refreshToken,
+              persistedAccessToken: persisted.accessToken,
+              persistedRefreshToken: persisted.refreshToken,
+              adoptionAllowed: isPersistedRefreshAdoptionAllowed,
+            })) {
               useAuthStore.setState({
                 accessToken: persisted.accessToken,
                 refreshToken: persisted.refreshToken,
               });
               return {
-                accessToken: persisted.accessToken,
-                refreshToken: persisted.refreshToken,
+                accessToken: persisted.accessToken!,
+                refreshToken: persisted.refreshToken!,
               };
             }
           }
@@ -134,9 +223,8 @@ async function refreshAccessToken(): Promise<string | null> {
 
     const resolveRefresh = async (): Promise<string | null> => {
       // Peer tab may have finished while we waited for the lock / coalesced promise.
-      const adopted = adoptPeerTokensIfFresh();
+      const adopted = adoptPeerTokensIfFresh(startEpoch, expectedAccessToken);
       if (adopted) return adopted;
-
       const latest = readPersistedAuthTokens().refreshToken ?? useAuthStore.getState().refreshToken;
       if (!latest) {
         useAuthStore.getState().logout();
@@ -153,12 +241,12 @@ async function refreshAccessToken(): Promise<string | null> {
     // No Web Lock (plain HTTP LAN, older browsers): elect one refresher via
     // BroadcastChannel, followers wait for the result instead of dual-POST.
     const owned = async (): Promise<string | null> => {
-      const adopted = adoptPeerTokensIfFresh();
+      const adopted = adoptPeerTokensIfFresh(startEpoch, expectedAccessToken);
       if (adopted) return adopted;
 
       const attempt = async (): Promise<string | null> => {
         const pair = await coordinateRefreshOwnership(async () => {
-          const again = adoptPeerTokensIfFresh();
+          const again = adoptPeerTokensIfFresh(startEpoch, expectedAccessToken);
           if (again) {
             const persisted = readPersistedAuthTokens();
             if (persisted.accessToken && persisted.refreshToken) {
@@ -173,6 +261,13 @@ async function refreshAccessToken(): Promise<string | null> {
           return runRefresh(latest);
         });
         if (!pair) return null;
+        if (shouldApplyRefreshResponse({
+          expectedAccessToken,
+          currentAccessToken: useAuthStore.getState().accessToken,
+          responseAccessToken: pair.accessToken,
+        }) === 'discard') {
+          return null;
+        }
         useAuthStore.setState({
           accessToken: pair.accessToken,
           refreshToken: pair.refreshToken,
@@ -183,7 +278,7 @@ async function refreshAccessToken(): Promise<string | null> {
       const first = await attempt();
       if (first) return first;
       // Winner crashed / message lost: one bounded retry after re-reading persist.
-      const adoptedAfter = adoptPeerTokensIfFresh();
+      const adoptedAfter = adoptPeerTokensIfFresh(startEpoch, expectedAccessToken);
       if (adoptedAfter) return adoptedAfter;
       return attempt();
     };
@@ -263,8 +358,13 @@ function installE2EAuthHooks(): void {
       return { accessToken, refreshToken };
     },
     expireAccessInMemory: async () => {
+      const priorId = accessTokenUserId(useAuthStore.getState().accessToken);
       const header = toBase64UrlJson({ alg: 'none', typ: 'JWT' });
-      const payload = toBase64UrlJson({ exp: Math.floor(Date.now() / 1000) - 120 });
+      // Keep subject `id` so same-account adopt gates still work after expiry.
+      const payload = toBase64UrlJson({
+        ...(priorId != null ? { id: priorId } : {}),
+        exp: Math.floor(Date.now() / 1000) - 120,
+      });
       // Memory-only expiry: leave stale refresh in memory (for adopt tests) but
       // re-assert persist so a deferred zustand flush cannot wipe a peer rotation.
       const snap = localStorage.getItem('ts6-auth');

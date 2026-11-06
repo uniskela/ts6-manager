@@ -190,6 +190,64 @@ describe('P1-B refresh rotation against real SQLite', () => {
     ]);
     const statuses = [a.status, b.status].sort();
     assert.deepEqual(statuses, [200, 401]);
+    // Pre-commit CAS loser must not wipe the winner's family (one live successor).
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race', replacedBy: null } }), 1);
+  });
+
+  it('post-commit second presenter of R0 gets 401, family-revokes, and R1 is unusable', async () => {
+    // Kody finding #1: after R0→R1 commits, another legitimate R0 POST is
+    // wire-identical to attacker replay — protocol cannot tell them apart.
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.create({
+      data: { token: 'R0-post', userId: 1, expiresAt, family: 'fam-post' },
+    });
+    const base = await baseUrl();
+
+    const first = await fetch(`${base}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: 'R0-post' }),
+    });
+    assert.equal(first.status, 200);
+    const { refreshToken: r1 } = (await first.json()) as { refreshToken: string };
+    assert.equal(await prisma.refreshToken.count({ where: { token: r1 } }), 1);
+
+    const late = await fetch(`${base}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: 'R0-post' }),
+    });
+    assert.equal(late.status, 401);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-post' } }), 0);
+
+    const r1Reuse = await fetch(`${base}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: r1 }),
+    });
+    assert.equal(r1Reuse.status, 401);
+  });
+
+  it('genuine consumed-token replay still family-revokes (separate from CAS loser)', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.createMany({
+      data: [
+        { token: 'R0-replay', userId: 1, expiresAt, family: 'fam-rp', replacedBy: 'R1-replay' },
+        { token: 'R1-replay', userId: 1, expiresAt, family: 'fam-rp' },
+        { token: 'other-fam', userId: 1, expiresAt, family: 'fam-keep' },
+      ],
+    });
+    const base = await baseUrl();
+    const replay = await fetch(`${base}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: 'R0-replay' }),
+    });
+    assert.equal(replay.status, 401);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-rp' } }), 0);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'other-fam' } }), 1);
   });
 
   it('admin-style deleteMany of user tokens cannot leave a post-reset successor when refresh is transactional', async () => {

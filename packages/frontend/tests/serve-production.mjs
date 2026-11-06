@@ -274,10 +274,12 @@ function b64urlJson(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-/** Mint a JWT-shaped access token the frontend expiry parser understands. */
+/** Mint a JWT-shaped access token the frontend expiry/subject parsers understand. */
 function mintAccessToken({ seq, ttlSeconds = 900 }) {
   const header = b64urlJson({ alg: 'none', typ: 'JWT' });
   const payload = b64urlJson({
+    id: 1,
+    username: testRole,
     exp: Math.floor(Date.now() / 1000) + ttlSeconds,
     seq,
     role: testRole,

@@ -127,6 +127,23 @@ export function clearAuthRefreshCoordination(previousRefreshToken?: string | nul
   clearCoordinationState(previousRefreshToken);
 }
 
+/** Epoch bumped on logout / session replace — in-flight refresh must not adopt across a bump. */
+export function getAuthRefreshCoordinationEpoch(): number {
+  return coordinationEpoch;
+}
+
+/**
+ * Whether persist/BC may adopt this refresh string.
+ * False after logout/session replace until this tab completes its own refresh
+ * (`ignorePeerResults`), or when the token is in the blocked prior-session set.
+ */
+export function isPersistedRefreshAdoptionAllowed(refreshToken: string): boolean {
+  if (!refreshToken) return false;
+  if (ignorePeerResults) return false;
+  if (blockedRefreshTokens.has(refreshToken)) return false;
+  return true;
+}
+
 function ensureListener(): void {
   if (listenerInstalled) return;
   const ch = getChannel();
