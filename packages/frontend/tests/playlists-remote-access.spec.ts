@@ -1,15 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-
-async function signIn(page: Page, request: APIRequestContext) {
-  await request.post('/__test/reset');
-  await request.post('/__test/dashboard?scenario=normal');
-  await request.post('/__test/auth?on');
-  await page.goto('/login');
-  await page.getByLabel('Username').fill('admin');
-  await page.getByLabel('Password', { exact: true }).fill('test-password');
-  await page.getByRole('button', { name: 'Sign In' }).click();
-  await expect(page).toHaveURL('/dashboard');
-}
+import { expect, test } from '@playwright/test';
+import { signInAsAdmin } from './helpers/admin-sign-in';
 
 test('Playlists tab shows remote visibility and saves remoteAccess via Edit', async ({ page, request }) => {
   await page.setViewportSize({ width: 1400, height: 1000 });
@@ -45,7 +35,7 @@ test('Playlists tab shows remote visibility and saves remoteAccess via Edit', as
     return r.fulfill({ json: detail });
   });
 
-  await signIn(page, request);
+  await signInAsAdmin(page, request);
   await page.goto('/media-bots?tab=playlists');
 
   const row = page.getByText('Lounge Mix').locator('..');
