@@ -155,6 +155,13 @@ authRoutes.post('/refresh', async (req: Request, res: Response, next) => {
         throw new AppError(401, 'Invalid refresh token');
       }
 
+      // If another connection deleted the claimed row (mock interleaving / exotic isolation),
+      // do not mint a successor that would outlive an admin revoke.
+      const claimed = await tx.refreshToken.findUnique({ where: { id: stored.id } });
+      if (!claimed || claimed.replacedBy !== newRefreshToken) {
+        throw new AppError(401, 'Invalid refresh token');
+      }
+
       await tx.refreshToken.create({
         data: { token: newRefreshToken, userId: stored.userId, expiresAt, family },
       });
