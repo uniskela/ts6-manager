@@ -42,10 +42,28 @@ const LOCK_RE = /^[0-9a-f]{64}\.lock$/;
 /** Staging folders older than this are left over from a crash. */
 const STAGING_STALE_MS = 60 * 60_000;
 
+/** Optional machine-readable cause for caller mapping (listener remote duration gates). */
+export type MediaCacheErrorCode = 'too_long' | 'duration_unknown';
+
 export class MediaCacheError extends Error {
-  constructor(message: string) {
+  readonly code?: MediaCacheErrorCode;
+  constructor(message: string, code?: MediaCacheErrorCode) {
     super(message);
     this.name = 'MediaCacheError';
+    this.code = code;
+  }
+}
+
+/**
+ * When a caller sets `maxDurationSec` on fetch, refuse measured lengths that are
+ * unknown or over the ceiling before the entry is returned or published.
+ */
+export function enforceMeasuredDurationCap(durationSec: number | null, maxDurationSec: number): void {
+  if (durationSec == null || !Number.isFinite(durationSec) || durationSec <= 0) {
+    throw new MediaCacheError('The length of the downloaded file could not be read.', 'duration_unknown');
+  }
+  if (durationSec > maxDurationSec) {
+    throw new MediaCacheError('The downloaded file is longer than the allowed limit.', 'too_long');
   }
 }
 
@@ -453,8 +471,8 @@ export class MediaCache {
     }
   }
 
-  /** The cached file for `key`, or null. Only a complete, intact entry (manifest last) counts. */
-  async lookup(key: string): Promise<string | null> {
+  /** Intact cache entry for `key`, or null. */
+  private async lookupEntry(key: string): Promise<{ file: string; durationSec: number | null } | null> {
     if (!KEY_RE.test(key)) return null;
     await this.init();
     await this.assertLayout(['', 'v2']);
@@ -477,7 +495,20 @@ export class MediaCache {
       if (!(await check)) return null;
       this.verified.set(key, fingerprint);
     }
-    return file;
+    const durationSec = typeof manifest.durationSec === 'number' && Number.isFinite(manifest.durationSec) && manifest.durationSec > 0
+      ? manifest.durationSec
+      : null;
+    return { file, durationSec };
+  }
+
+  /** The cached file for `key`, or null. Only a complete, intact entry (manifest last) counts. */
+  async lookup(key: string): Promise<string | null> {
+    return (await this.lookupEntry(key))?.file ?? null;
+  }
+
+  /** Probed duration recorded when `key` was published, or null. */
+  async measuredDuration(key: string): Promise<number | null> {
+    return (await this.lookupEntry(key))?.durationSec ?? null;
   }
 
   /**
@@ -485,19 +516,24 @@ export class MediaCache {
    * same key share one download and its progress; a request that is cancelled
    * just stops waiting, and the download stops when nobody waits any more.
    * `download` writes into the staging folder it is given and reports its file.
+   * Optional `maxDurationSec` uses the existing probe (or cached measured length)
+   * and refuses before publish / before returning a hit — admin callers omit it.
    */
   async fetch<P = never>(
     key: string,
     download: (stagingDir: string, signal: AbortSignal, progress: ProgressListener<P>) => Promise<StagedDownload>,
-    options: { signal?: AbortSignal; onProgress?: ProgressListener<P> } = {},
+    options: { signal?: AbortSignal; onProgress?: ProgressListener<P>; maxDurationSec?: number } = {},
   ): Promise<string> {
-    const { signal, onProgress } = options;
+    const { signal, onProgress, maxDurationSec } = options;
     if (!KEY_RE.test(key)) throw new MediaCacheError('Invalid cache key.');
     signal?.throwIfAborted();
-    const hit = await this.lookup(key);
+    const hit = await this.lookupEntry(key);
     // Cancelled while the cache was checked: no result, even for a hit.
     signal?.throwIfAborted();
-    if (hit) return hit;
+    if (hit) {
+      if (maxDurationSec != null && maxDurationSec > 0) enforceMeasuredDurationCap(hit.durationSec, maxDurationSec);
+      return hit.file;
+    }
     // Nothing is downloaded when the file could not be checked afterwards.
     await this.probeReady();
     signal?.throwIfAborted();
@@ -516,7 +552,7 @@ export class MediaCache {
           }
         }
       };
-      created.promise = this.produce(key, (dir, jobSignal) => download(dir, jobSignal, report), controller.signal)
+      created.promise = this.produce(key, (dir, jobSignal) => download(dir, jobSignal, report), controller.signal, maxDurationSec)
         .finally(() => { if (this.flights.get(key) === created) this.flights.delete(key); });
       // Waiters handle the outcome; this keeps an abandoned flight's rejection from going unhandled.
       created.promise.catch(() => undefined);
@@ -536,15 +572,24 @@ export class MediaCache {
       if (listener) current.listeners.delete(listener);
       if (cancelled && current.waiters === 0) current.controller.abort(new MediaCacheError('Download cancelled.'));
     };
+    const finish = async (file: string): Promise<string> => {
+      // Joining an uncapped shared flight still applies this caller's ceiling using the
+      // measured duration already recorded by the single probe at publish time.
+      if (maxDurationSec != null && maxDurationSec > 0) {
+        const entry = await this.lookupEntry(key);
+        enforceMeasuredDurationCap(entry?.durationSec ?? null, maxDurationSec);
+      }
+      return file;
+    };
     try {
-      if (!signal) return await current.promise;
+      if (!signal) return await finish(await current.promise);
       return await new Promise<string>((resolve, reject) => {
         const onAbort = () => { leave(true); reject(signal.reason); };
         signal.addEventListener('abort', onAbort, { once: true });
         // Cancelled between the checks above and here: abort events are not replayed.
         if (signal.aborted) { onAbort(); return; }
         current.promise.then(
-          (file) => { signal.removeEventListener('abort', onAbort); resolve(file); },
+          (file) => { signal.removeEventListener('abort', onAbort); resolve(finish(file)); },
           (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
         );
       });
@@ -558,6 +603,7 @@ export class MediaCache {
     key: string,
     download: (stagingDir: string, signal: AbortSignal) => Promise<StagedDownload>,
     signal: AbortSignal,
+    maxDurationSec?: number,
   ): Promise<string> {
     await this.init();
     await this.assertLayout();
@@ -565,8 +611,11 @@ export class MediaCache {
     const staging = path.join(this.v2, 'staging', randomBytes(16).toString('hex'));
     try {
       // Another process may have finished it while we waited for the lock.
-      const done = await this.lookup(key);
-      if (done) return done;
+      const done = await this.lookupEntry(key);
+      if (done) {
+        if (maxDurationSec != null && maxDurationSec > 0) enforceMeasuredDurationCap(done.durationSec, maxDurationSec);
+        return done.file;
+      }
       // Private: the info document can hold signed media links and cookies.
       await mkdir(staging, { mode: 0o700 });
       const result = await download(staging, signal);
@@ -574,6 +623,7 @@ export class MediaCache {
       const staged = await checkStagedFile(staging, result.reportedPaths);
       const durationSec = checkProbe(await this.probe(staged.file), result.expectedDurationSec);
       signal.throwIfAborted();
+      if (maxDurationSec != null && maxDurationSec > 0) enforceMeasuredDurationCap(durationSec, maxDurationSec);
       return await this.publish(key, staged, result, durationSec);
     } finally {
       await rm(staging, { recursive: true, force: true }).catch(() => undefined);

@@ -99,4 +99,24 @@ describe('listener remote helpers', () => {
       (err: unknown) => err instanceof ListenerRemoteError && err.status === 422 && err.code === 'too_long',
     );
   });
+
+  it('maps MediaCache measured-duration refusals onto listener 422 codes', async () => {
+    const { MediaCacheError } = await import('../../voice/audio/media-cache.js');
+    const req = await request(
+      async () => { throw new MediaCacheError('The downloaded file is longer than the allowed limit.', 'too_long'); },
+      async () => ({ durationSec: 600 }),
+    );
+    await assert.rejects(
+      resolveListenerLink(req, binding, 'https://8.8.8.8/media?id=cache-too-long'),
+      (err: unknown) => err instanceof ListenerRemoteError && err.status === 422 && err.code === 'too_long',
+    );
+    const unknownReq = await request(
+      async () => { throw new MediaCacheError('The length of the downloaded file could not be read.', 'duration_unknown'); },
+      async () => ({ durationSec: 600 }),
+    );
+    await assert.rejects(
+      resolveListenerLink(unknownReq, binding, 'https://8.8.8.8/media?id=cache-unknown'),
+      (err: unknown) => err instanceof ListenerRemoteError && err.status === 422 && err.code === 'duration_unknown',
+    );
+  });
 });

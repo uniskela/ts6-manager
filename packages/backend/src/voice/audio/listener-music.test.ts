@@ -121,6 +121,8 @@ describe('searchListenerMusic', () => {
         durationSec: 355,
         thumbnail: 'https://img.example/q.jpg',
         url: 'https://www.youtube.com/watch?v=fJ9rUzIMcZQ',
+        isLive: false,
+        liveStatus: null,
       },
       {
         id: 'dQw4w9WgXcQ',
@@ -129,8 +131,28 @@ describe('searchListenerMusic', () => {
         durationSec: null,
         thumbnail: '',
         url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
+        isLive: false,
+        liveStatus: null,
       },
     ]);
+  });
+
+  it('preserves live flags from flat search JSON for listener filtering', async () => {
+    const stdout = JSON.stringify({
+      id: 'dQw4w9WgXcQ',
+      title: 'Live Show',
+      artists: ['Band'],
+      duration: 240,
+      is_live: true,
+      live_status: 'is_live',
+    });
+    const results = await searchListenerMusic('live', 5, undefined, {
+      dumpMusicSearch: dump({ code: 0, stdout, stderr: '' }),
+    });
+    assert.equal(results.length, 1);
+    assert.equal(results[0]!.isLive, true);
+    assert.equal(results[0]!.liveStatus, 'is_live');
+    assert.equal(results[0]!.durationSec, 240);
   });
 
   it('fails closed when yt-dlp exits non-zero', async () => {

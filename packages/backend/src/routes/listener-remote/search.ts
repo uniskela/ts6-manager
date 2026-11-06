@@ -82,7 +82,11 @@ function parseSearchQuery(raw: string): string {
 }
 
 function toCachedTrack(row: ListenerSearchResult): CachedTrack | null {
-  const verdict = checkListenerDuration({ durationSec: row.durationSec });
+  const verdict = checkListenerDuration({
+    durationSec: row.durationSec,
+    isLive: row.isLive,
+    liveStatus: row.liveStatus,
+  });
   if (!verdict.ok) return null;
   const artist = row.artist.trim() ? row.artist : null;
   return { url: row.url, title: row.title, artist, duration: verdict.durationSec };

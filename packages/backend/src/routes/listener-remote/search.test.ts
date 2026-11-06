@@ -140,6 +140,7 @@ async function fixture() {
         code: 0,
         stdout: rows.map((row) => JSON.stringify({
           id: row.id, title: row.title, artists: [row.artist], duration: row.durationSec ?? 0, thumbnail: row.thumbnail,
+          is_live: row.isLive === true, live_status: row.liveStatus ?? undefined,
         })).join('\n'),
         stderr: '',
       };
@@ -285,6 +286,19 @@ describe('listener remote search (C2)', () => {
     assert.deepEqual(f.audit, []);
   }));
 
+  it('omits confirmed live rows even when they report a positive duration', async () => using(async f => {
+    f.setSearch(async () => [
+      dumpRow({ id: 'fJ9rUzIMcZQ', title: 'Safe Song', durationSec: 200 }),
+      dumpRow({ id: 'dQw4w9WgXcQ', title: 'Live Concert', durationSec: 240, isLive: true }),
+      dumpRow({ id: 'bbbbbbbbbbb', title: 'Also Live', durationSec: 90, liveStatus: 'is_live' }),
+    ]);
+    const { session } = await f.exchange();
+    const response = await f.request('/search', { session, body: { query: 'live-filter' } });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { results: Array<{ title: string }> };
+    assert.deepEqual(body.results.map((row) => row.title), ['Safe Song']);
+  }));
+
   it('binds result ids to the searching identity and hides cross-listener reuse', async () => using(async f => {
     const first = await f.exchange();
     const search = await f.request('/search', { session: first.session, body: { query: 'queen' } });
@@ -325,6 +339,38 @@ describe('listener remote search (C2)', () => {
     assert.deepEqual(await (await f.request('/search/queue', { session, body: { resultId: kept } })).json(), {
       error: 'Search result not found.', code: 'not_found',
     });
+  }));
+
+  it('clears search results on lifecycle revoke and when a new grant replaces the old one', async () => using(async f => {
+    const first = await f.exchange();
+    const search = await f.request('/search', { session: first.session, body: { query: 'revoke-clear' } });
+    const { results } = await search.json() as { results: Array<{ id: string }> };
+    const resultId = results[0]!.id;
+
+    // Lifecycle revoke (disconnect / departure) — not only DELETE /session.
+    assert.equal(f.remote.revoke(binding.botId, binding.uid), 1);
+    const reissued = await f.exchange();
+    assert.deepEqual(await (await f.request('/search/queue', {
+      session: reissued.session, body: { resultId },
+    })).json(), { error: 'Search result not found.', code: 'not_found' });
+
+    const again = await f.request('/search', { session: reissued.session, body: { query: 'replace-clear' } });
+    const { results: next } = await again.json() as { results: Array<{ id: string }> };
+    const keptId = next[0]!.id;
+    // New !remote for the same identity replaces the grant and invalidates prior ids.
+    const replacedGrant = await f.exchange();
+    assert.deepEqual(await (await f.request('/search/queue', {
+      session: replacedGrant.session, body: { resultId: keptId },
+    })).json(), { error: 'Search result not found.', code: 'not_found' });
+
+    // Unaffected other identity keeps its own results.
+    const other = await f.exchange(otherBinding);
+    const otherSearch = await f.request('/search', { session: other.session, body: { query: 'other-keep' } });
+    const { results: otherResults } = await otherSearch.json() as { results: Array<{ id: string }> };
+    f.remote.revoke(binding.botId, binding.uid);
+    assert.equal((await f.request('/search/queue', {
+      session: other.session, body: { resultId: otherResults[0]!.id },
+    })).status, 200);
   }));
 
   it('rate-limits searches per identity and applies per-server provider fairness', async () => using(async f => {

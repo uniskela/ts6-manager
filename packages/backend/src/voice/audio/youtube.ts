@@ -19,6 +19,9 @@ export interface YouTubeSearchResult {
   artist: string;
   duration: number;
   thumbnail: string;
+  /** Present when flat-search JSON includes live flags (listener remote filters on these). */
+  isLive?: boolean;
+  liveStatus?: string | null;
 }
 
 export interface ParsedYouTubeUrl {
@@ -608,7 +611,10 @@ export async function downloadYouTube(
     url: mediaUrl,
   };
 
-  const filePath = await mediaCacheFor(outputDir).fetch<ProgressUpdate>(cacheKey(identity), async (stagingDir, jobSignal, report) => {
+  const cache = mediaCacheFor(outputDir);
+  const key = cacheKey(identity);
+  const maxDurationSec = limits?.maxDurationSec && limits.maxDurationSec > 0 ? limits.maxDurationSec : undefined;
+  const filePath = await cache.fetch<ProgressUpdate>(key, async (stagingDir, jobSignal, report) => {
     const infoFile = path.join(stagingDir, "info.json");
     // Private: it can hold signed media links and, with cookies configured, cookie values.
     await fs.promises.writeFile(infoFile, JSON.stringify(parsedInfo), { flag: "wx", mode: 0o600 });
@@ -619,7 +625,13 @@ export async function downloadYouTube(
       kind: identity.kind,
       extractor: String(parsedInfo.extractor_key),
     };
-  }, { signal, onProgress });
+  }, { signal, onProgress, maxDurationSec });
+
+  // Listener caps use the cache probe's measured length (no second ffprobe).
+  if (maxDurationSec != null) {
+    const measured = await cache.measuredDuration(key);
+    if (measured != null) info.duration = measured;
+  }
 
   return { filePath, info };
 }
@@ -1002,6 +1014,7 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
   try {
     const entry = JSON.parse(line);
     if (!entry || typeof entry.id !== "string" || !entry.id) return null;
+    const liveStatus = typeof entry.live_status === "string" ? entry.live_status : null;
     return {
       id: entry.id,
       title: entry.title || "Unknown",
@@ -1013,6 +1026,8 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
         "Unknown",
       duration: entry.duration || 0,
       thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+      isLive: entry.is_live === true || liveStatus === "is_live",
+      liveStatus,
     };
   } catch {
     return null;
