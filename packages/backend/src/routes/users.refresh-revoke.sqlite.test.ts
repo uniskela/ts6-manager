@@ -182,13 +182,49 @@ describe('P1-A refresh revoke against real SQLite', () => {
     );
   });
 
-  it('documents non-atomic refresh mint after admin reset under current auth.routes (P1-B)', async () => {
-    // Deterministic mock-style interleaving is covered in the unit suite.
-    // Here we only assert the steady-state contract after a completed reset.
+  it('rolls back password update when refresh-token delete fails inside the transaction', async () => {
     await seedUsers();
     const expiresAt = new Date(Date.now() + 86_400_000);
     await prisma.refreshToken.create({
-      data: { token: 'pre-reset', userId: 2, expiresAt, family: 'fam-r' },
+      data: { token: 'victim-del-fail', userId: 2, expiresAt, family: 'fam-df' },
+    });
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: 2 } });
+
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER IF NOT EXISTS abort_refresh_token_delete
+      BEFORE DELETE ON RefreshToken
+      BEGIN
+        SELECT RAISE(ABORT, 'forced refresh delete failure');
+      END;
+    `);
+
+    const base = await baseUrl();
+    try {
+      const put = await fetch(`${base}/api/users/2`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'NewPass1a', enabled: false }),
+      });
+      assert.ok(put.status >= 500, `expected server error, got ${put.status}`);
+
+      const afterUser = await prisma.user.findUniqueOrThrow({ where: { id: 2 } });
+      assert.equal(afterUser.passwordHash, before.passwordHash);
+      assert.equal(afterUser.enabled, true);
+      assert.equal(await prisma.refreshToken.count({ where: { userId: 2 } }), 1);
+      assert.equal(await prisma.adminAuditEvent.count(), 0);
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS abort_refresh_token_delete;`);
+    }
+  });
+
+  it('enabled:true with live tokens does not revoke sessions', async () => {
+    await seedUsers();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.createMany({
+      data: [
+        { token: 'victim-live-en', userId: 2, expiresAt, family: 'fam-en' },
+        { token: 'other-live-en', userId: 3, expiresAt, family: 'fam-en-o' },
+      ],
     });
     const base = await baseUrl();
     assert.equal(
@@ -196,21 +232,12 @@ describe('P1-A refresh revoke against real SQLite', () => {
         await fetch(`${base}/api/users/2`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: 'NewPass1a' }),
+          body: JSON.stringify({ enabled: true }),
         })
       ).status,
       204,
     );
-    assert.equal(await prisma.refreshToken.count({ where: { userId: 2 } }), 0);
-    assert.equal(
-      (
-        await fetch(`${base}/api/auth/refresh`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ refreshToken: 'pre-reset' }),
-        })
-      ).status,
-      401,
-    );
+    assert.equal(await prisma.refreshToken.count({ where: { userId: 2 } }), 1);
+    assert.equal(await prisma.refreshToken.count({ where: { userId: 3 } }), 1);
   });
 });

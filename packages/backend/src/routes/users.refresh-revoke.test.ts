@@ -295,7 +295,11 @@ describe('P1-A admin refresh-token revocation', () => {
         body: JSON.stringify({ enabled: false }),
       });
       assert.equal(put.status, 204);
-      assert.equal([...store.refreshTokens.values()].some((r) => r.userId === 2), false);
+      assert.equal(
+        [...store.refreshTokens.values()].filter((r) => r.userId === 2).length,
+        0,
+        'disable must delete refresh rows immediately, not only fail later /refresh',
+      );
       assert.equal([...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-2'), true);
       assert.equal(store.users.get(2)!.enabled, false);
 
@@ -382,6 +386,27 @@ describe('P1-A admin refresh-token revocation', () => {
       // Token still present; /refresh would mint access if user hash/compare path OK.
       // Here we only assert the row survived the metadata update.
       assert.ok([...store.refreshTokens.values()].some((r) => r.token === 'refresh-victim-4'));
+    } finally {
+      await close();
+    }
+  });
+
+  it('enabled:true with live tokens does not revoke sessions', async () => {
+    const store = createStore();
+    store.seedRefresh(2, 'refresh-victim-enabled-true');
+    const { base, close } = await mountApp(store.prisma);
+    try {
+      const put = await fetch(`${base}/api/users/2`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: true }),
+      });
+      assert.equal(put.status, 204);
+      assert.equal(store.users.get(2)!.enabled, true);
+      assert.ok(
+        [...store.refreshTokens.values()].some((r) => r.token === 'refresh-victim-enabled-true'),
+        'enabling must not revoke live tokens',
+      );
     } finally {
       await close();
     }
@@ -477,9 +502,11 @@ describe('P1-A admin refresh-token revocation', () => {
     }
   });
 
-  it('non-atomic refresh after claim mints a successor despite admin reset (P1-B residual)', async () => {
-    // With current auth.routes (mark → create → delete), create() runs after admin
-    // revoke when claim is held open. Assert that deterministic residual: 200 + successor.
+  it('documents known admin-reset/refresh race defect pending P1-B (not final behaviour)', async () => {
+    // Known defect / release blocker: in-flight refresh can mint a usable successor after
+    // admin password reset. This is NOT acceptable final behaviour. P1-B must close it;
+    // invert this test to expect 401 and no successor when that fix lands.
+    // Harness: claim held open → admin deleteMany → create() after revoke.
     let releaseClaim!: () => void;
     const claimGate = new Promise<void>((resolve) => {
       releaseClaim = resolve;
@@ -518,13 +545,17 @@ describe('P1-A admin refresh-token revocation', () => {
       releaseClaim();
       const refreshRes = await refreshPromise;
       const body = (await refreshRes.json()) as { refreshToken?: string };
-      assert.equal(refreshRes.status, 200, 'current rotation mints after revoke — closed only by P1-B');
+      assert.equal(
+        refreshRes.status,
+        200,
+        'defect pinned: successor mint after reset — must become 401 under P1-B',
+      );
       assert.ok(body.refreshToken);
       assert.notEqual(body.refreshToken, 'refresh-race-1');
       assert.equal(
         [...store.refreshTokens.values()].some((r) => r.token === body.refreshToken),
         true,
-        'successor survives admin reset when create() races after revoke',
+        'defect pinned: live successor after reset — must be absent under P1-B',
       );
     } finally {
       await close();
