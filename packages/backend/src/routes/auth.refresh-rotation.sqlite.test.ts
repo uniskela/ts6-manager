@@ -201,22 +201,8 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(r1Reuse.status, 401);
   });
 
-  it('genuine consumed-token replay still family-revokes (separate from CAS loser)', async () => {
-    await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.createMany({
-      data: [
-        { token: 'R0-replay', userId: 1, expiresAt, family: 'fam-rp', replacedBy: 'R1-replay' },
-        { token: 'R1-replay', userId: 1, expiresAt, family: 'fam-rp' },
-        { token: 'other-fam', userId: 1, expiresAt, family: 'fam-keep' },
-      ],
-    });
-    const base = await baseUrl();
-    const replay = await postRefresh(base, 'R0-replay');
-    assert.equal(replay.status, 401);
-    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-rp' } }), 0);
-    assert.equal(await prisma.refreshToken.count({ where: { token: 'other-fam' } }), 1);
-  });
+  // Genuine consumed-token replay (family revoke, other families intact) remains
+  // covered by "rotates atomically and detects consumed-token replay…".
 
   it('admin-style deleteMany of user tokens cannot leave a post-reset successor when refresh is transactional', async () => {
     await seedAlice();

@@ -6,9 +6,7 @@ import {
   clearAuthRefreshCoordination,
   compareTabIds,
   coordinateRefreshOwnership,
-  getAuthRefreshCoordinationEpoch,
   getAuthRefreshTabId,
-  isPersistedRefreshAdoptionAllowed,
   pickRefreshOwner,
   resetAuthRefreshCoordForTests,
   setAuthRefreshPeerLogoutHandler,
@@ -265,17 +263,5 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     assert.equal(networkCalls, 0);
     assert.deepEqual(pair, { accessToken: 'peer-a', refreshToken: 'peer-r' });
     peer.close();
-  });
-
-  it('persist adoption is denied after session replace until local refresh', async () => {
-    await coordinateRefreshOwnership(async () => ({ accessToken: 'a0', refreshToken: 'r0' }));
-    assert.equal(isPersistedRefreshAdoptionAllowed('r-other'), true);
-    const epochBefore = getAuthRefreshCoordinationEpoch();
-    clearAuthRefreshCoordination('r0');
-    assert.ok(getAuthRefreshCoordinationEpoch() > epochBefore);
-    assert.equal(isPersistedRefreshAdoptionAllowed('r-other'), false, 'ignore peer after replace');
-    assert.equal(isPersistedRefreshAdoptionAllowed('r0'), false, 'blocked prior refresh');
-    await coordinateRefreshOwnership(async () => ({ accessToken: 'a1', refreshToken: 'r1' }));
-    assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), true);
   });
 });

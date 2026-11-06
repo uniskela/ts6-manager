@@ -3,12 +3,19 @@
  * Pure helpers — no network; JWT payloads are unverified identity compares.
  */
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import {
   accessTokenUserId,
   canAdoptPersistedAuth,
   shouldApplyRefreshResponse,
 } from '../../src/api/client.ts';
+import {
+  clearAuthRefreshCoordination,
+  coordinateRefreshOwnership,
+  getAuthRefreshCoordinationEpoch,
+  isPersistedRefreshAdoptionAllowed,
+  resetAuthRefreshCoordForTests,
+} from '../../src/api/auth-refresh-coord.ts';
 
 function jwtWith(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'none', typ: 'JWT' })).toString('base64url');
@@ -21,6 +28,10 @@ const aliceRotated = jwtWith({ id: 1, username: 'alice', exp: Math.floor(Date.no
 const bobAccess = jwtWith({ id: 2, username: 'bob', exp: Math.floor(Date.now() / 1000) + 600 });
 
 describe('refresh persist adoption identity gates', () => {
+  beforeEach(() => {
+    resetAuthRefreshCoordForTests();
+  });
+
   it('parses JWT subject id', () => {
     assert.equal(accessTokenUserId(aliceAccess), 1);
     assert.equal(accessTokenUserId(bobAccess), 2);
@@ -121,5 +132,17 @@ describe('refresh persist adoption identity gates', () => {
       currentAccessToken: aliceAccess,
       responseAccessToken: aliceRotated,
     }), 'apply');
+  });
+
+  it('persist adoption is denied after session replace until local refresh', async () => {
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'a0', refreshToken: 'r0' }));
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-other'), true);
+    const epochBefore = getAuthRefreshCoordinationEpoch();
+    clearAuthRefreshCoordination('r0');
+    assert.ok(getAuthRefreshCoordinationEpoch() > epochBefore);
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-other'), false);
+    assert.equal(isPersistedRefreshAdoptionAllowed('r0'), false);
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'a1', refreshToken: 'r1' }));
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), true);
   });
 });

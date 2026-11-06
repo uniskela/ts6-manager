@@ -291,7 +291,15 @@ export async function coordinateRefreshOwnership(
 ): Promise<TokenPair | null> {
   const ch = getChannel();
   ensureListener();
-  if (!ch) return executeRefresh();
+  if (!ch) {
+    const pair = await executeRefresh();
+    if (pair) {
+      blockedRefreshTokens.delete(pair.refreshToken);
+      ignorePeerResults = false;
+      lastGoodResult = { ...pair, at: Date.now() };
+    }
+    return pair;
+  }
 
   const startEpoch = coordinationEpoch;
 

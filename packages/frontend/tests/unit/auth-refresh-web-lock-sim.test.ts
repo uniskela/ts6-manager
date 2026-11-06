@@ -50,7 +50,7 @@ describe('simulated cross-tab Web Lock refresh', () => {
     }
   }
 
-  it('stale memory refresh under lock would present the pre-rotation token (bug class)', async () => {
+  async function twoTabPresent(reReadPersist: boolean): Promise<string[]> {
     writeAuth({ state: { accessToken: 'a1', refreshToken: 'R1' } });
     const tabAMemory = { refreshToken: 'R1' };
     const tabBMemory = { refreshToken: 'R1' };
@@ -62,32 +62,18 @@ describe('simulated cross-tab Web Lock refresh', () => {
       tabAMemory.refreshToken = 'R2';
     });
     await withLock(async () => {
-      // Bug: use memory only after peer rotation.
+      if (reReadPersist) {
+        const latest = readPersistedRefreshToken() ?? tabBMemory.refreshToken;
+        if (tabBMemory.refreshToken !== latest) tabBMemory.refreshToken = latest!;
+      }
       presented.push(tabBMemory.refreshToken);
     });
+    return presented;
+  }
 
-    assert.deepEqual(presented, ['R1', 'R1']);
+  it('stale memory under lock presents pre-rotation token; persist re-read does not', async () => {
+    assert.deepEqual(await twoTabPresent(false), ['R1', 'R1']);
     assert.equal(readPersistedRefreshToken(), 'R2');
-  });
-
-  it('re-reading persist after lock acquisition uses the rotated token', async () => {
-    writeAuth({ state: { accessToken: 'a1', refreshToken: 'R1' } });
-    const tabAMemory = { refreshToken: 'R1' };
-    const tabBMemory = { refreshToken: 'R1' };
-    const presented: string[] = [];
-
-    await withLock(async () => {
-      presented.push(tabAMemory.refreshToken);
-      writeAuth({ state: { accessToken: 'a2', refreshToken: 'R2' } });
-      tabAMemory.refreshToken = 'R2';
-    });
-    await withLock(async () => {
-      const latest = readPersistedRefreshToken() ?? tabBMemory.refreshToken;
-      if (tabBMemory.refreshToken !== latest) tabBMemory.refreshToken = latest!;
-      presented.push(tabBMemory.refreshToken);
-    });
-
-    assert.deepEqual(presented, ['R1', 'R2']);
-    assert.notEqual(presented[1], 'R1', 'second tab must not replay R1 after peer rotate');
+    assert.deepEqual(await twoTabPresent(true), ['R1', 'R2']);
   });
 });

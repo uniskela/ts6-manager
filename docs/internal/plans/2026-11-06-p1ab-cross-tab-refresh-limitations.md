@@ -52,7 +52,7 @@ Server-side consumed-token replay / family revoke remains authoritative.
 
 ## Server: post-commit R0 vs genuine replay (Kody finding #1)
 
-Under the current opaque-refresh protocol, a second POST that presents already-consumed `R0` after `R0→R1` has committed is **wire-identical** to attacker replay: both see `replacedBy` set and take the pre-transaction family-revoke path. SQLite proof: `post-commit second presenter of R0 gets 401, family-revokes, and R1 is unusable` in `auth.refresh-rotation.sqlite.test.ts`. Pre-commit dual-POST still uses in-transaction CAS (`updateMany` count 0 → 401 **without** family revoke).
+Under the current opaque-refresh protocol, a second POST that presents already-consumed `R0` after `R0→R1` has committed is **wire-identical** to attacker replay: both see `replacedBy` set and take the pre-transaction family-revoke path. SQLite proofs in `auth.refresh-rotation.sqlite.test.ts`: `post-commit second presenter of R0…` (late R0 after commit; R1 unusable) and `rotates atomically and detects consumed-token replay…` (genuine replay family-only revoke). Pre-commit dual-POST still uses in-transaction CAS (`updateMany` count 0 → 401 **without** family revoke).
 
 **Trade-off (no grace period without explicit review):** prefer false-positive family revoke (benign late dual-POST logs both tabs out) over missing replay detection (stolen `R0` must kill `R1`). Frontend Web Lock + BroadcastChannel is the primary dual-POST mitigator.
 
