@@ -35,6 +35,8 @@ describe('approvalsNeeded', () => {
     }
     assert.equal(approvalsNeeded(0, 5), approvalsNeeded(1, 5));
     assert.equal(approvalsNeeded(150, 5), approvalsNeeded(100, 5));
+    assert.equal(approvalsNeeded(7, 100), 7);
+    assert.equal(approvalsNeeded(14, 50), 7);
   });
 
   it('refuses to open when there are zero listeners (#442)', () => {
