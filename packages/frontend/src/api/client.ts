@@ -75,7 +75,21 @@ function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
 function adoptPeerTokensIfFresh(): string | null {
   const persisted = readPersistedAuthTokens();
   const mem = useAuthStore.getState();
-  if (!persisted.refreshToken || persisted.refreshToken === mem.refreshToken) return null;
+  if (!persisted.refreshToken) return null;
+
+  // Same refresh as memory: still adopt a fresher access token from persist
+  // (memory-only expiry after a peer rotation must not force another rotate).
+  if (persisted.refreshToken === mem.refreshToken) {
+    if (
+      persisted.accessToken
+      && persisted.accessToken !== mem.accessToken
+      && !accessTokenNeedsRefresh(persisted.accessToken)
+    ) {
+      useAuthStore.setState({ accessToken: persisted.accessToken });
+      return persisted.accessToken;
+    }
+    return null;
+  }
 
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
@@ -259,10 +273,24 @@ function installE2EAuthHooks(): void {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/g, '');
-      // Memory-only expiry: restore persist after setState so a peer tab's
-      // rotated refresh is not overwritten by stale in-memory state.
+      // Memory-only access expiry: keep refresh aligned with persist so a
+      // deferred zustand persist flush cannot resurrect a pre-peer-rotation token.
       const snap = localStorage.getItem('ts6-auth');
-      useAuthStore.setState({ accessToken: `${header}.${payload}.e2e-expired` });
+      let refreshToken = useAuthStore.getState().refreshToken;
+      if (snap) {
+        try {
+          const parsed = JSON.parse(snap) as { state?: { refreshToken?: string | null } };
+          if (typeof parsed.state?.refreshToken === 'string' && parsed.state.refreshToken.length > 0) {
+            refreshToken = parsed.state.refreshToken;
+          }
+        } catch {
+          // keep memory refresh
+        }
+      }
+      useAuthStore.setState({
+        accessToken: `${header}.${payload}.e2e-expired`,
+        refreshToken,
+      });
       if (snap) {
         localStorage.setItem('ts6-auth', snap);
         await Promise.resolve();
