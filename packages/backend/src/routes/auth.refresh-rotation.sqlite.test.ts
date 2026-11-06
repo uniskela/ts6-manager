@@ -326,4 +326,107 @@ describe('P1-B refresh rotation against real SQLite', () => {
       await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS abort_refresh_token_insert;`);
     }
   });
+
+  it('self-service password change revokes refresh tokens atomically with the hash update', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.create({
+      data: { token: 'self-live', userId: 1, expiresAt, family: 'fam-self' },
+    });
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: 1 } });
+    const accessToken = jwt.sign(
+      { id: 1, username: 'alice', role: 'admin' },
+      config.jwtSecret,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    const base = await baseUrl();
+    const res = await fetch(`${base}/api/auth/password`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ currentPassword: 'AlicePass1', newPassword: 'NewPass1a' }),
+    });
+    assert.equal(res.status, 204);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: 1 } });
+    assert.notEqual(after.passwordHash, before.passwordHash);
+    assert.equal(await prisma.refreshToken.count({ where: { userId: 1 } }), 0);
+  });
+
+  it('self-service password change rolls back when refresh revoke fails', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.create({
+      data: { token: 'self-del-fail', userId: 1, expiresAt, family: 'fam-sdf' },
+    });
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: 1 } });
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER IF NOT EXISTS abort_refresh_token_delete_pw
+      BEFORE DELETE ON RefreshToken
+      BEGIN
+        SELECT RAISE(ABORT, 'forced refresh delete failure');
+      END;
+    `);
+    const accessToken = jwt.sign(
+      { id: 1, username: 'alice', role: 'admin' },
+      config.jwtSecret,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    const base = await baseUrl();
+    try {
+      const res = await fetch(`${base}/api/auth/password`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${accessToken}`,
+        },
+        body: JSON.stringify({ currentPassword: 'AlicePass1', newPassword: 'NewPass1a' }),
+      });
+      assert.ok(res.status >= 500);
+      const after = await prisma.user.findUniqueOrThrow({ where: { id: 1 } });
+      assert.equal(after.passwordHash, before.passwordHash);
+      assert.equal(await prisma.refreshToken.count({ where: { userId: 1 } }), 1);
+    } finally {
+      await prisma.$executeRawUnsafe(`DROP TRIGGER IF EXISTS abort_refresh_token_delete_pw;`);
+    }
+  });
+
+  it('self-service password change cannot overwrite an admin reset that lands after verify', async () => {
+    await seedAlice();
+    const accessToken = jwt.sign(
+      { id: 1, username: 'alice', role: 'admin' },
+      config.jwtSecret,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    setHooks({
+      afterPasswordVerified: async () => {
+        await adminResetPassword('AdminSetPass1');
+      },
+    });
+    const base = await baseUrl();
+    const res = await fetch(`${base}/api/auth/password`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ currentPassword: 'AlicePass1', newPassword: 'StaleSelfPass1' }),
+    });
+    assert.equal(res.status, 401);
+    setHooks(undefined);
+    // Admin reset password still works; stale self-change did not win.
+    const login = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'alice', password: 'AdminSetPass1' }),
+    });
+    assert.equal(login.status, 200);
+    const stale = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'alice', password: 'StaleSelfPass1' }),
+    });
+    assert.equal(stale.status, 401);
+  });
 });

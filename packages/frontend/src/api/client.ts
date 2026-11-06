@@ -14,16 +14,26 @@ let refreshPromise: Promise<string | null> | null = null;
 
 const REFRESH_TIMEOUT_MS = 15000;
 
+/** Latest refresh token from zustand persist (`ts6-auth`), not possibly-stale memory. */
+export function readPersistedRefreshToken(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('ts6-auth');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { state?: { refreshToken?: string | null } };
+    const token = parsed.state?.refreshToken;
+    return typeof token === 'string' && token.length > 0 ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const runRefresh = async (): Promise<string | null> => {
-      const { refreshToken, setTokens, logout } = useAuthStore.getState();
-      if (!refreshToken) {
-        logout();
-        return null;
-      }
+    const runRefresh = async (refreshToken: string): Promise<string | null> => {
+      const { setTokens, logout } = useAuthStore.getState();
 
       try {
         const res = await axios.post(
@@ -44,16 +54,30 @@ async function refreshAccessToken(): Promise<string | null> {
 
     if (typeof navigator !== 'undefined' && navigator.locks) {
       return navigator.locks.request('ts6-auth-refresh', async () => {
-        const persisted = useAuthStore.getState();
-        if (!persisted.refreshToken) {
-          persisted.logout();
+        // Re-read after acquiring the lock so a peer tab's rotation is visible.
+        // Memory-only getState() can still hold the pre-rotation token and would
+        // present as replay, revoking the whole family.
+        const latest = readPersistedRefreshToken() ?? useAuthStore.getState().refreshToken;
+        if (!latest) {
+          useAuthStore.getState().logout();
           return null;
         }
-        return runRefresh();
+        const mem = useAuthStore.getState();
+        if (mem.refreshToken !== latest) {
+          // Sync memory to peer-tab rotation without inventing an access token.
+          useAuthStore.setState({ refreshToken: latest });
+        }
+        return runRefresh(latest);
       });
     }
 
-    return runRefresh();
+    // No Web Lock: still prefer persisted token over possibly-stale memory.
+    const token = readPersistedRefreshToken() ?? useAuthStore.getState().refreshToken;
+    if (!token) {
+      useAuthStore.getState().logout();
+      return null;
+    }
+    return runRefresh(token);
   })().finally(() => {
     refreshPromise = null;
   });

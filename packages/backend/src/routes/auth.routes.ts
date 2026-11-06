@@ -208,14 +208,27 @@ authRoutes.put('/password', authMiddleware, async (req: Request, res: Response, 
     const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
     if (!user) throw new AppError(404, 'User not found');
 
-    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    const passwordHashAtAuth = user.passwordHash;
+    const valid = await bcrypt.compare(currentPassword, passwordHashAtAuth);
     if (!valid) throw new AppError(401, 'Current password is incorrect');
 
-    const passwordHash = await bcrypt.hash(newPassword, 12);
-    await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+    const hooks = req.app.locals.authTestHooks as AuthTestHooks | undefined;
+    if (hooks?.afterPasswordVerified) await hooks.afterPasswordVerified();
 
-    // Revoke all refresh tokens on password change
-    await prisma.refreshToken.deleteMany({ where: { userId: user.id } });
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+    // Hash update + refresh revoke are one transaction. The update is conditioned
+    // on the verified hash and enabled so an admin reset/disable mid-flight cannot
+    // be overwritten by a stale self-service change.
+    await prisma.$transaction(async (tx: typeof prisma) => {
+      const updated = await tx.user.updateMany({
+        where: { id: user.id, passwordHash: passwordHashAtAuth, enabled: true },
+        data: { passwordHash },
+      });
+      if (updated.count === 0) {
+        throw new AppError(401, 'Current password is incorrect');
+      }
+      await tx.refreshToken.deleteMany({ where: { userId: user.id } });
+    });
 
     res.status(204).send();
   } catch (err) { next(err); }
