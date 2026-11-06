@@ -19,6 +19,9 @@ export interface YouTubeSearchResult {
   artist: string;
   duration: number;
   thumbnail: string;
+  /** Present when flat-search JSON includes live flags (listener remote filters on these). */
+  isLive?: boolean;
+  liveStatus?: string | null;
 }
 
 export interface ParsedYouTubeUrl {
@@ -1011,6 +1014,7 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
   try {
     const entry = JSON.parse(line);
     if (!entry || typeof entry.id !== "string" || !entry.id) return null;
+    const liveStatus = typeof entry.live_status === "string" ? entry.live_status : null;
     return {
       id: entry.id,
       title: entry.title || "Unknown",
@@ -1022,6 +1026,8 @@ function mapFlatSearchEntry(line: string): YouTubeSearchResult | null {
         "Unknown",
       duration: entry.duration || 0,
       thumbnail: entry.thumbnails?.[0]?.url || entry.thumbnail || "",
+      isLive: entry.is_live === true || liveStatus === "is_live",
+      liveStatus,
     };
   } catch {
     return null;

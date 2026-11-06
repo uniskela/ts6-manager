@@ -234,7 +234,7 @@ const LISTENER_REMOTE_RESULTS: Readonly<Record<string, AdminAuditResultCode>> = 
   cancelled: 'cancelled',
   timeout: 'timeout',
   unavailable: 'unavailable',
-  // C1a duration/live refusals: public API codes stay specific; the attempt row is validation_failed.
+  // C1a/C2 duration refusals: public API codes stay specific; attempt row is validation_failed.
   too_long: 'validation_failed',
   live_not_allowed: 'validation_failed',
   duration_unknown: 'validation_failed',
