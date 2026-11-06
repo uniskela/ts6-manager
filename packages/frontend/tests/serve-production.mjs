@@ -736,9 +736,19 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(data));
     return;
   }
+  const REMOTE_CSP = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'none'; manifest-src 'none'";
+  if (url.pathname === '/remote/') {
+    res.writeHead(301, { Location: `/remote${url.search}` });
+    res.end();
+    return;
+  }
   const staticPath = /^\/(assets|icons)\//.test(url.pathname)
-    || ['/sw.js', '/favicon.svg', '/manifest.webmanifest'].includes(url.pathname);
-  const file = staticPath ? url.pathname.slice(1) : 'index.html';
+    || ['/sw.js', '/favicon.svg', '/manifest.webmanifest', '/remote.html'].includes(url.pathname);
+  const file = url.pathname === '/remote' || url.pathname === '/remote.html'
+    ? 'remote.html'
+    : staticPath
+      ? url.pathname.slice(1)
+      : 'index.html';
   if (file.includes('..')) { res.writeHead(400); res.end(); return; }
   try {
     let data = await readFile(new URL(file, dist));
@@ -748,6 +758,11 @@ const server = createServer(async (req, res) => {
       html: 'text/html', js: 'application/javascript', css: 'text/css', png: 'image/png',
       svg: 'image/svg+xml', webmanifest: 'application/manifest+json',
     }[ext] || 'application/octet-stream');
+    if (file === 'remote.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Content-Security-Policy', REMOTE_CSP);
+    }
     res.end(data);
   } catch { res.writeHead(404); res.end('Not found'); }
 });
