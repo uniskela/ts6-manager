@@ -40,6 +40,15 @@ export const useAuthStore = create<AuthStore>()(
         // Clear auth first so a localStorage throw while persisting
         // ts6-server cannot leave the session active.
         set({ accessToken: null, refreshToken: null, user: null });
+        // Peer-tab logout sync (BroadcastChannel) is wired from the API client
+        // via this event — keeps the store free of api/ imports.
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('ts6-auth-logout'));
+          }
+        } catch {
+          // Coordination is best-effort; local logout must still complete.
+        }
         // Drop persisted connection selection with the session. Leaving
         // selectedConfigId/selectedSid in ts6-server after logout can strand
         // Dashboard on an indefinite PageLoader when /api/servers never loads

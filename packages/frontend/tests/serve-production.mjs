@@ -8,10 +8,15 @@ let generation = 0;
 let unavailable = false;
 let accessExpired = false;
 let accessLogins = 0;
-const APP_ORIGIN = 'http://127.0.0.1:4175';
+const APP_ORIGIN = process.env.APP_ORIGIN || 'http://127.0.0.1:4175';
 let mutations = 0;
 let needsSetup = false;
 let allowTestAuth = false;
+/** Rotating refresh-family fixture for two-tab Playwright (test server only). */
+let refreshFamily = null;
+let refreshRotateCount = 0;
+let refreshReplayRevokes = 0;
+let refreshPresented = [];
 let dashboardScenario = 'no-connections';
 let dashboardRequests = 0;
 let permissionScenario = 'normal';
@@ -265,6 +270,98 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+function b64urlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+/** Mint a JWT-shaped access token the frontend expiry parser understands. */
+function mintAccessToken({ seq, ttlSeconds = 900 }) {
+  const header = b64urlJson({ alg: 'none', typ: 'JWT' });
+  const payload = b64urlJson({
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    seq,
+    role: testRole,
+  });
+  return `${header}.${payload}.test`;
+}
+
+function mintRefreshToken(seq) {
+  return `brand-test-refresh-${seq}`;
+}
+
+function resetRefreshFamily() {
+  refreshFamily = null;
+  refreshRotateCount = 0;
+  refreshReplayRevokes = 0;
+  refreshPresented = [];
+}
+
+function ensureRefreshFamily() {
+  // Keep a revoked family until /__test/reset — recreating would mint the same
+  // brand-test-refresh-1 again and make post-logout refresh look valid.
+  if (refreshFamily) return refreshFamily;
+  refreshFamily = {
+    family: `test-family-${Date.now()}`,
+    live: mintRefreshToken(1),
+    seq: 1,
+    consumed: new Map(),
+    revoked: false,
+  };
+  return refreshFamily;
+}
+
+function authUserPayload() {
+  return {
+    id: 1,
+    username: testRole,
+    displayName: testRole === 'admin' ? 'Administrator' : 'Viewer',
+    role: testRole,
+  };
+}
+
+function loginTokenPair() {
+  // A fresh login after revoke starts a new family (mirrors server mint).
+  if (!refreshFamily || refreshFamily.revoked || !refreshFamily.live) {
+    resetRefreshFamily();
+  }
+  const family = ensureRefreshFamily();
+  return {
+    accessToken: mintAccessToken({ seq: family.seq, ttlSeconds: 900 }),
+    refreshToken: family.live,
+    user: authUserPayload(),
+  };
+}
+
+function rotateRefresh(presented) {
+  refreshPresented.push(presented);
+  const family = ensureRefreshFamily();
+  if (family.revoked) {
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  if (family.consumed.has(presented)) {
+    family.revoked = true;
+    family.live = null;
+    refreshReplayRevokes++;
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  if (presented !== family.live) {
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  const nextSeq = family.seq + 1;
+  const nextRefresh = mintRefreshToken(nextSeq);
+  family.consumed.set(presented, nextRefresh);
+  family.live = nextRefresh;
+  family.seq = nextSeq;
+  refreshRotateCount++;
+  return {
+    status: 200,
+    body: {
+      accessToken: mintAccessToken({ seq: nextSeq, ttlSeconds: 900 }),
+      refreshToken: nextRefresh,
+    },
+  };
+}
+
 const connections = [
   { id: 1, name: 'Primary connection', host: 'voice.example.test', webqueryPort: 10080, sshPort: 10022, useHttps: true },
   { id: 2, name: 'Secondary connection', host: 'backup.example.test', webqueryPort: 10080, sshPort: 10022, useHttps: true },
@@ -329,6 +426,7 @@ const server = createServer(async (req, res) => {
       mutations = 0;
       needsSetup = false;
       allowTestAuth = false;
+      resetRefreshFamily();
       dashboardScenario = 'no-connections';
       dashboardRequests = 0;
       permissionScenario = 'normal';
@@ -396,6 +494,19 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === '/__test/auth' && url.searchParams.has('role')) {
       testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
+    }
+    if (url.pathname === '/__test/refresh-state') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        rotateCount: refreshRotateCount,
+        replayRevokes: refreshReplayRevokes,
+        presented: refreshPresented,
+        live: refreshFamily?.live ?? null,
+        seq: refreshFamily?.seq ?? null,
+        revoked: refreshFamily?.revoked ?? false,
+        consumedCount: refreshFamily?.consumed?.size ?? 0,
+      }));
+      return;
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ mutations, accessLogins, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests, channelScenario, channelRequests, logsScenario, logsRequests }));
@@ -495,16 +606,30 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (allowTestAuth && url.pathname === '/api/auth/refresh' && req.method === 'POST') {
+      const body = await readJson(req);
+      const result = rotateRefresh(body.refreshToken);
+      res.statusCode = result.status;
+      res.end(JSON.stringify(result.body));
+      return;
+    }
+    if (allowTestAuth && url.pathname === '/api/auth/logout' && req.method === 'POST') {
+      await readJson(req);
+      if (refreshFamily) {
+        refreshFamily.revoked = true;
+        refreshFamily.live = null;
+      }
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const data = url.pathname === '/api/health' ? { status: 'ok' }
       : url.pathname === '/api/setup/status' ? { needsSetup }
-      : url.pathname === '/api/auth/login' && allowTestAuth ? {
-        accessToken: 'brand-test-access-token',
-        refreshToken: 'brand-test-refresh-token',
-        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
-      }
+      : url.pathname === '/api/auth/login' && allowTestAuth ? loginTokenPair()
       : url.pathname === '/api/auth/login' ? { error: 'Invalid credentials' }
       : url.pathname === '/api/auth/me' && allowTestAuth ? {
-        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
+        user: authUserPayload(),
       }
       : url.pathname === '/api/servers/deployment-check' && allowTestAuth ? {
         managerInDocker: false,
@@ -772,6 +897,8 @@ server.on('error', (err) => {
   console.error('[serve-production] listen failed:', err);
   process.exit(1);
 });
-server.listen(4175, '127.0.0.1', () => {
-  console.log('[serve-production] ready on http://127.0.0.1:4175');
+const listenPort = Number(process.env.PORT || 4175);
+const listenHost = process.env.HOST || '127.0.0.1';
+server.listen(listenPort, listenHost, () => {
+  console.log(`[serve-production] ready on http://${listenHost}:${listenPort} (APP_ORIGIN=${APP_ORIGIN})`);
 });

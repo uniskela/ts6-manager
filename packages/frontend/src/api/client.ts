@@ -2,6 +2,12 @@ import axios from 'axios';
 import { useAuthStore } from '../stores/auth.store';
 import { useMediaSwitchStore } from '../stores/media-switch.store';
 import { conflictIsReplaceable, isMediaSessionConflict, withReplaceSessionIds } from '../lib/media-switch';
+import {
+  broadcastAuthLogout,
+  coordinateRefreshOwnership,
+  runWithoutLogoutBroadcast,
+  setAuthRefreshPeerLogoutHandler,
+} from './auth-refresh-coord';
 
 const api = axios.create({
   baseURL: '/api',
@@ -84,7 +90,7 @@ async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
 
   refreshPromise = (async () => {
-    const runRefresh = async (refreshToken: string): Promise<string | null> => {
+    const runRefresh = async (refreshToken: string): Promise<{ accessToken: string; refreshToken: string } | null> => {
       const { setTokens, logout } = useAuthStore.getState();
 
       try {
@@ -93,11 +99,30 @@ async function refreshAccessToken(): Promise<string | null> {
           { refreshToken },
           { timeout: REFRESH_TIMEOUT_MS },
         );
-        setTokens(res.data.accessToken, res.data.refreshToken);
-        return res.data.accessToken as string;
+        const accessToken = res.data.accessToken as string;
+        const nextRefresh = res.data.refreshToken as string;
+        setTokens(accessToken, nextRefresh);
+        return { accessToken, refreshToken: nextRefresh };
       } catch (err: unknown) {
         const status = axios.isAxiosError(err) ? err.response?.status : undefined;
         if (status === 401 || status === 403) {
+          // Dual-start race: a peer may already have rotated into persist.
+          // Do not logout/wipe that winner's credentials.
+          const persisted = readPersistedAuthTokens();
+          if (
+            persisted.refreshToken
+            && persisted.refreshToken !== refreshToken
+            && persisted.accessToken
+          ) {
+            useAuthStore.setState({
+              accessToken: persisted.accessToken,
+              refreshToken: persisted.refreshToken,
+            });
+            return {
+              accessToken: persisted.accessToken,
+              refreshToken: persisted.refreshToken,
+            };
+          }
           logout();
         }
         return null;
@@ -114,22 +139,69 @@ async function refreshAccessToken(): Promise<string | null> {
         useAuthStore.getState().logout();
         return null;
       }
-      return runRefresh(latest);
+      const pair = await runRefresh(latest);
+      return pair?.accessToken ?? null;
     };
 
     if (typeof navigator !== 'undefined' && navigator.locks) {
       return navigator.locks.request('ts6-auth-refresh', resolveRefresh);
     }
 
-    // No Web Lock: prefer persisted tokens, but concurrent tabs can still race
-    // (localStorage re-read alone is not atomic coordination). See
-    // docs/internal/plans/2026-11-06-p1ab-cross-tab-refresh-limitations.md.
-    return resolveRefresh();
+    // No Web Lock (plain HTTP LAN, older browsers): elect one refresher via
+    // BroadcastChannel, followers wait for the result instead of dual-POST.
+    const owned = async (): Promise<string | null> => {
+      const adopted = adoptPeerTokensIfFresh();
+      if (adopted) return adopted;
+
+      const attempt = async (): Promise<string | null> => {
+        const pair = await coordinateRefreshOwnership(async () => {
+          const again = adoptPeerTokensIfFresh();
+          if (again) {
+            const persisted = readPersistedAuthTokens();
+            if (persisted.accessToken && persisted.refreshToken) {
+              return { accessToken: persisted.accessToken, refreshToken: persisted.refreshToken };
+            }
+          }
+          const latest = readPersistedAuthTokens().refreshToken ?? useAuthStore.getState().refreshToken;
+          if (!latest) {
+            useAuthStore.getState().logout();
+            return null;
+          }
+          return runRefresh(latest);
+        });
+        if (!pair) return null;
+        useAuthStore.setState({
+          accessToken: pair.accessToken,
+          refreshToken: pair.refreshToken,
+        });
+        return pair.accessToken;
+      };
+
+      const first = await attempt();
+      if (first) return first;
+      // Winner crashed / message lost: one bounded retry after re-reading persist.
+      const adoptedAfter = adoptPeerTokensIfFresh();
+      if (adoptedAfter) return adoptedAfter;
+      return attempt();
+    };
+
+    return owned();
   })().finally(() => {
     refreshPromise = null;
   });
 
   return refreshPromise;
+}
+
+if (typeof window !== 'undefined') {
+  setAuthRefreshPeerLogoutHandler(() => {
+    runWithoutLogoutBroadcast(() => {
+      useAuthStore.getState().logout();
+    });
+  });
+  window.addEventListener('ts6-auth-logout', () => {
+    broadcastAuthLogout();
+  });
 }
 
 api.interceptors.request.use(async (config) => {

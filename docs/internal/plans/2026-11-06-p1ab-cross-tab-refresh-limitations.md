@@ -2,6 +2,12 @@
 
 Status: local security gate evidence (not a public release note).
 
+## Product principle
+
+Basic LAN deployment must stay easy: no mandatory HTTPS, reverse proxies, custom domains, VPNs, or external auth gateways for day-to-day use. Security coordination should engage automatically.
+
+The same principle applies to future native TOTP (guided account-security page + QR + recovery codes) and passkeys (offered when the origin is a supported secure context, without blocking password login on LAN HTTP). Advanced reverse-proxy / external MFA setups remain optional documentation, not prerequisites.
+
 ## Secure-context / Web Lock matrix (Chromium evidence)
 
 | Origin class | Example | `isSecureContext` | `navigator.locks` | `BroadcastChannel` |
@@ -10,49 +16,33 @@ Status: local security gate evidence (not a public release note).
 | HTTPS | reverse-proxy / TLS | yes | yes | yes |
 | LAN / private HTTP | `http://192.168.x.x`, `http://lan.ts6.test` | **no** | **no** | yes |
 
-Measured with Chromium via Playwright host-resolver mapping (non-localhost HTTP hostname → 127.0.0.1). Web Locks require a [secure context](https://developer.mozilla.org/en-US/docs/Web/Security/Secure_Contexts); loopback is treated as trustworthy, ordinary LAN HTTP is not.
+## What works
 
-## What works (secure context + `navigator.locks`)
+### Secure context + `navigator.locks`
 
-Across two same-origin pages sharing one browser storage partition:
+1. Refresh serializes on `ts6-auth-refresh`.
+2. After lock acquire, re-read zustand persist; adopt peer pair when refresh token changed and access still fresh.
+3. Server replay detection unchanged.
 
-1. Refresh is serialized on the `ts6-auth-refresh` Web Lock.
-2. After the lock is acquired, the client re-reads zustand persist (`ts6-auth`) so a peer tab’s rotation is visible before the network call.
-3. If persist already holds a newer refresh token **and** a still-valid access token, the waiting tab adopts that pair and does **not** perform another rotation.
-4. Consumed-token replay still revokes the refresh family on the server; the frontend does not weaken that check.
+### No Web Lock + `BroadcastChannel` (`auth-refresh-coord.ts`)
 
-## No-Web-Lock path (LAN HTTP) — measured hazard
+1. Short claim window elects one refresher (lexicographically smallest tab id).
+2. Winner announces `leader` **before** the network POST; followers wait for a bounded `result` (or time out and retry once).
+3. Logout broadcasts so peer tabs clear credentials without restoring revoked refresh tokens.
+4. Tokens travel only on the same-origin BroadcastChannel (not URLs, logs, or cross-origin).
 
-When `navigator.locks` is missing, the client still prefers the persisted refresh token over in-memory state. That re-read is **not** atomic coordination:
+Server-side consumed-token replay / family revoke remains authoritative.
 
-- Two tabs can both observe the same live refresh token and both POST `/api/auth/refresh`.
-- The server correctly treats the second presentation as reuse and revokes the family.
-- **Playwright on `http://lan.ts6.test` (insecure): 6 of 8 concurrent two-tab refresh trials revoked the family** (`revokeHits=6`, `singleWinner=2`). See `tests/auth-refresh-http-lan-nolock.spec.ts`.
+## Measured HTTP LAN evidence (Chromium, `lan.ts6.test` insecure origin)
 
-Do **not** soften server-side replay detection to paper over this race. Do **not** treat silent multi-tab logout on LAN HTTP as normal product behaviour.
+- Caps: `isSecureContext=false`, no `navigator.locks`, `BroadcastChannel` present.
+- 2-tab / 3-tab concurrent refresh: single rotation, no family revoke.
+- Close-tab / slow-leader / reload-during-refresh / logout sync covered in Playwright.
+- 40-trial concurrent refresh: `revokeHits=0`, `singleWinner=40` (prior no-BC baseline ≈6/8 revokes).
+- Genuine consumed-token replay still revokes the family.
 
-### Compatibility policy (proposed for owner acceptance)
+## Residual risks
 
-| Deployment | Multi-tab refresh | Disposition |
-|---|---|---|
-| HTTPS reverse-proxy | Supported (Web Locks) | GO |
-| `localhost` / `127.0.0.1` HTTP | Supported (secure-context exception) | GO |
-| Plain HTTP on LAN / private IP | **Unsupported** for concurrent multi-tab refresh until BroadcastChannel coordination ships | CONDITIONAL — document + warn |
-| Older browsers without Web Locks even on HTTPS | Rare; same as no-lock path | CONDITIONAL |
-
-**Safe user-facing behaviour until a coordination fallback lands:**
-
-1. Release / ops note: prefer HTTPS (or localhost) for multi-tab use.
-2. Optional UI: when `!window.isSecureContext`, show a durable settings/login hint that multiple tabs may end the session if they refresh together.
-3. Do not claim “seamless multi-tab” on plain HTTP LAN in docs.
-
-### Smallest viable correction (recommended follow-up, not on tip unless owner asks)
-
-Same-origin `BroadcastChannel('ts6-auth-refresh')` to publish the winning access/refresh pair so followers adopt without a second POST when locks are unavailable. BroadcastChannel is available in insecure contexts (proven above). Keep consumed-row retention and family revoke server semantics unchanged. Avoid localStorage spinlocks.
-
-## Remaining JWT / WebSocket limits (unchanged by P1-A/B)
-
-- Access JWTs remain bearer tokens until expiry; WebSocket auth is not re-checked on every refresh rotation mid-connection.
-- Logout / password change / admin disable revoke refresh rows; an already-accepted WebSocket may continue until disconnect or access JWT expiry depending on existing gateway checks.
-- `authTestHooks` exist only on `app.locals` for deterministic tests and are never bound to request body, query, or env toggles from untrusted input.
-- Frontend `__ts6AuthTest` requires `localStorage ts6-e2e-hooks=1` before module load (Playwright only).
+- BroadcastChannel is not a mutex: extreme scheduling can still dual-POST; loser must not wipe peer persist (handled in `runRefresh` 401 path). Residual dual-POST under pathological miss remains possible but was not observed in 40 LAN trials.
+- Access JWTs / established WebSockets are not torn down by refresh revoke (unchanged).
+- `authTestHooks` / `__ts6AuthTest` remain test-only seams.
