@@ -166,12 +166,17 @@ function createStore(options?: {
         refreshTokens.delete(where.id);
         return { id: where.id };
       },
-      deleteMany: async ({ where }: { where: { id?: number; token?: string; userId?: number } }) => {
+      deleteMany: async ({
+        where,
+      }: {
+        where: { id?: number; token?: string; userId?: number; expiresAt?: { lt: Date } };
+      }) => {
         let count = 0;
         for (const [id, row] of [...refreshTokens.entries()]) {
           if (where.id != null && row.id !== where.id) continue;
           if (where.token != null && row.token !== where.token) continue;
           if (where.userId != null && row.userId !== where.userId) continue;
+          if (where.expiresAt?.lt && !(row.expiresAt < where.expiresAt.lt)) continue;
           refreshTokens.delete(id);
           count++;
         }
@@ -182,19 +187,29 @@ function createStore(options?: {
       create: async ({ data }: { data: Record<string, unknown> }) => data,
     },
     $transaction: async (fn: (tx: typeof prisma) => Promise<unknown>) => {
-      if (!options?.failTransaction) return fn(prisma);
-      // Snapshot + restore so a thrown transaction cannot leave partial success state.
-      const userSnap = new Map([...users.entries()].map(([id, u]) => [id, { ...u }]));
-      const refreshSnap = new Map([...refreshTokens.entries()].map(([id, r]) => [id, { ...r }]));
+      // Serialize mock transactions so admin revoke cannot interleave mid-refresh tx (SQLite-like).
+      const prev = txChain;
+      let release!: () => void;
+      txChain = new Promise<void>((r) => {
+        release = r;
+      });
+      await prev;
       try {
-        await fn(prisma);
-        throw new Error('simulated db failure');
-      } catch (err) {
-        users.clear();
-        for (const [id, u] of userSnap) users.set(id, u);
-        refreshTokens.clear();
-        for (const [id, r] of refreshSnap) refreshTokens.set(id, r);
-        throw err;
+        if (!options?.failTransaction) return await fn(prisma);
+        const userSnap = new Map([...users.entries()].map(([id, u]) => [id, { ...u }]));
+        const refreshSnap = new Map([...refreshTokens.entries()].map(([id, r]) => [id, { ...r }]));
+        try {
+          await fn(prisma);
+          throw new Error('simulated db failure');
+        } catch (err) {
+          users.clear();
+          for (const [id, u] of userSnap) users.set(id, u);
+          refreshTokens.clear();
+          for (const [id, r] of refreshSnap) refreshTokens.set(id, r);
+          throw err;
+        }
+      } finally {
+        release();
       }
     },
   };
@@ -503,9 +518,9 @@ describe('P1-A admin refresh-token revocation', () => {
   });
 
   it('documents known admin-reset/refresh race defect pending P1-B (not final behaviour)', async () => {
-    // Known defect / release blocker: in-flight refresh can mint a usable successor after
-    // admin password reset. This is NOT acceptable final behaviour. P1-B must close it;
-    // invert this test to expect 401 and no successor when that fix lands.
+    // Known defect on P1-A alone / release blocker until P1-B: in-flight refresh can mint
+    // a usable successor after admin password reset. Invert to 401 / no successor when
+    // merging with P1-B (see security/p1ab-integration-gate).
     // Harness: claim held open → admin deleteMany → create() after revoke.
     let releaseClaim!: () => void;
     const claimGate = new Promise<void>((resolve) => {
@@ -548,7 +563,7 @@ describe('P1-A admin refresh-token revocation', () => {
       assert.equal(
         refreshRes.status,
         200,
-        'defect pinned: successor mint after reset — must become 401 under P1-B',
+        'defect pinned on P1-A alone: successor mint after reset — invert under P1-B merge',
       );
       assert.ok(body.refreshToken);
       assert.notEqual(body.refreshToken, 'refresh-race-1');
