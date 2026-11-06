@@ -88,6 +88,14 @@ async function putSelfPassword(base: string, body: { currentPassword: string; ne
   });
 }
 
+function postRefresh(base: string, refreshToken: string) {
+  return fetch(`${base}/api/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+  });
+}
+
 before(() => {
   execFileSync('pnpm', ['exec', 'prisma', 'db', 'push', '--skip-generate'], {
     env: { ...process.env, DATABASE_URL: databaseUrl },
@@ -113,11 +121,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     });
     const base = await baseUrl();
 
-    const first = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'fam1-a' }),
-    });
+    const first = await postRefresh(base, 'fam1-a');
     assert.equal(first.status, 200);
     const { refreshToken: fam1B } = (await first.json()) as { refreshToken: string };
 
@@ -125,11 +129,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.ok(consumed);
     assert.equal(consumed!.replacedBy, fam1B);
 
-    const replay = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'fam1-a' }),
-    });
+    const replay = await postRefresh(base, 'fam1-a');
     assert.equal(replay.status, 401);
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-1' } }), 0);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'fam2-c' } }), 1);
@@ -146,11 +146,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     });
     const base = await baseUrl();
 
-    const first = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'legacy-a' }),
-    });
+    const first = await postRefresh(base, 'legacy-a');
     assert.equal(first.status, 200);
     const { refreshToken: next } = (await first.json()) as { refreshToken: string };
     const consumed = await prisma.refreshToken.findUniqueOrThrow({ where: { token: 'legacy-a' } });
@@ -158,11 +154,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(consumed.replacedBy, next);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'legacy-other' } }), 1);
 
-    const replay = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'legacy-a' }),
-    });
+    const replay = await postRefresh(base, 'legacy-a');
     assert.equal(replay.status, 401);
     assert.equal(await prisma.refreshToken.count({ where: { family: consumed.family } }), 0);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'legacy-other' } }), 1);
@@ -177,16 +169,8 @@ describe('P1-B refresh rotation against real SQLite', () => {
     const base = await baseUrl();
 
     const [a, b] = await Promise.all([
-      fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'race-token' }),
-      }),
-      fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'race-token' }),
-      }),
+      postRefresh(base, 'race-token'),
+      postRefresh(base, 'race-token'),
     ]);
     const statuses = [a.status, b.status].sort();
     assert.deepEqual(statuses, [200, 401]);
@@ -204,28 +188,16 @@ describe('P1-B refresh rotation against real SQLite', () => {
     });
     const base = await baseUrl();
 
-    const first = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'R0-post' }),
-    });
+    const first = await postRefresh(base, 'R0-post');
     assert.equal(first.status, 200);
     const { refreshToken: r1 } = (await first.json()) as { refreshToken: string };
     assert.equal(await prisma.refreshToken.count({ where: { token: r1 } }), 1);
 
-    const late = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'R0-post' }),
-    });
+    const late = await postRefresh(base, 'R0-post');
     assert.equal(late.status, 401);
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-post' } }), 0);
 
-    const r1Reuse = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: r1 }),
-    });
+    const r1Reuse = await postRefresh(base, r1);
     assert.equal(r1Reuse.status, 401);
   });
 
@@ -240,11 +212,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
       ],
     });
     const base = await baseUrl();
-    const replay = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'R0-replay' }),
-    });
+    const replay = await postRefresh(base, 'R0-replay');
     assert.equal(replay.status, 401);
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-rp' } }), 0);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'other-fam' } }), 1);
@@ -258,11 +226,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     });
     const base = await baseUrl();
 
-    const refreshPromise = fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'pre-admin' }),
-    });
+    const refreshPromise = postRefresh(base, 'pre-admin');
     const adminPromise = prisma.$transaction(async (tx) => {
       await tx.refreshToken.deleteMany({ where: { userId: 1 } });
     });
@@ -363,11 +327,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
         await adminDisable();
       },
     });
-    const res = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'pre-disable' }),
-    });
+    const res = await postRefresh(base, 'pre-disable');
     assert.equal(res.status, 401);
     assert.equal(await prisma.refreshToken.count({ where: { userId: 1 } }), 0);
   });
@@ -387,11 +347,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     `);
     const base = await baseUrl();
     try {
-      const res = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'pre-fail' }),
-      });
+      const res = await postRefresh(base, 'pre-fail');
       assert.ok(res.status >= 500);
       const row = await prisma.refreshToken.findUniqueOrThrow({ where: { token: 'pre-fail' } });
       assert.equal(row.replacedBy, null, 'failed rotate must not leave a half-consumed token');
@@ -508,11 +464,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
       },
     });
     const base = await baseUrl();
-    const refresh = await fetch(`${base}/api/auth/refresh`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: 'inflight-live' }),
-    });
+    const refresh = await postRefresh(base, 'inflight-live');
     assert.equal(refresh.status, 401);
     setHooks(undefined);
     assert.equal(await prisma.refreshToken.count({ where: { userId: 1 } }), 0);
