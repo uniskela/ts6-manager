@@ -235,7 +235,16 @@ async function mountApp(prisma: unknown) {
 describe('P1-A admin refresh-token revocation', () => {
   it('admin password reset revokes outstanding refresh tokens (401 on /refresh)', async () => {
     const store = createStore();
+    store.users.set(3, {
+      id: 3,
+      username: 'other',
+      displayName: 'Other',
+      role: 'viewer',
+      enabled: true,
+      passwordHash: '',
+    });
     store.seedRefresh(2, 'refresh-victim-1');
+    store.seedRefresh(3, 'refresh-other-1');
     const { base, close } = await mountApp(store.prisma);
     try {
       const put = await fetch(`${base}/api/users/2`, {
@@ -244,7 +253,16 @@ describe('P1-A admin refresh-token revocation', () => {
         body: JSON.stringify({ password: 'NewPass1a' }),
       });
       assert.equal(put.status, 204);
-      assert.equal(store.refreshTokens.size, 0, 'all target refresh rows must be deleted');
+      assert.equal(
+        [...store.refreshTokens.values()].some((r) => r.userId === 2),
+        false,
+        'target refresh rows must be deleted',
+      );
+      assert.equal(
+        [...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-1'),
+        true,
+        'other users must keep their refresh tokens',
+      );
 
       const refresh = await fetch(`${base}/api/auth/refresh`, {
         method: 'POST',
@@ -259,7 +277,16 @@ describe('P1-A admin refresh-token revocation', () => {
 
   it('admin disable revokes outstanding refresh tokens', async () => {
     const store = createStore();
+    store.users.set(3, {
+      id: 3,
+      username: 'other',
+      displayName: 'Other',
+      role: 'viewer',
+      enabled: true,
+      passwordHash: '',
+    });
     store.seedRefresh(2, 'refresh-victim-2');
+    store.seedRefresh(3, 'refresh-other-2');
     const { base, close } = await mountApp(store.prisma);
     try {
       const put = await fetch(`${base}/api/users/2`, {
@@ -268,7 +295,8 @@ describe('P1-A admin refresh-token revocation', () => {
         body: JSON.stringify({ enabled: false }),
       });
       assert.equal(put.status, 204);
-      assert.equal(store.refreshTokens.size, 0);
+      assert.equal([...store.refreshTokens.values()].some((r) => r.userId === 2), false);
+      assert.equal([...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-2'), true);
       assert.equal(store.users.get(2)!.enabled, false);
 
       const refresh = await fetch(`${base}/api/auth/refresh`, {
@@ -284,7 +312,16 @@ describe('P1-A admin refresh-token revocation', () => {
 
   it('re-enabling an account does not restore previously revoked refresh tokens', async () => {
     const store = createStore();
+    store.users.set(3, {
+      id: 3,
+      username: 'other',
+      displayName: 'Other',
+      role: 'viewer',
+      enabled: true,
+      passwordHash: '',
+    });
     store.seedRefresh(2, 'refresh-victim-3');
+    store.seedRefresh(3, 'refresh-other-3');
     const { base, close } = await mountApp(store.prisma);
     try {
       assert.equal(
@@ -297,7 +334,7 @@ describe('P1-A admin refresh-token revocation', () => {
         ).status,
         204,
       );
-      assert.equal(store.refreshTokens.size, 0);
+      assert.equal([...store.refreshTokens.values()].some((r) => r.userId === 2), false);
 
       assert.equal(
         (
@@ -310,7 +347,12 @@ describe('P1-A admin refresh-token revocation', () => {
         204,
       );
       assert.equal(store.users.get(2)!.enabled, true);
-      assert.equal(store.refreshTokens.size, 0, 're-enable must not resurrect tokens');
+      assert.equal(
+        [...store.refreshTokens.values()].some((r) => r.userId === 2),
+        false,
+        're-enable must not resurrect tokens',
+      );
+      assert.equal([...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-3'), true);
 
       const refresh = await fetch(`${base}/api/auth/refresh`, {
         method: 'POST',
@@ -435,9 +477,9 @@ describe('P1-A admin refresh-token revocation', () => {
     }
   });
 
-  it('documents residual race: refresh past claim can mint a token after admin revoke (P1-B)', async () => {
-    // Reproduce the window where auth.routes refresh has already claimed the row
-    // (updateMany) before admin deleteMany runs, then create() runs afterward.
+  it('non-atomic refresh after claim mints a successor despite admin reset (P1-B residual)', async () => {
+    // With current auth.routes (mark → create → delete), create() runs after admin
+    // revoke when claim is held open. Assert that deterministic residual: 200 + successor.
     let releaseClaim!: () => void;
     const claimGate = new Promise<void>((resolve) => {
       releaseClaim = resolve;
@@ -449,7 +491,6 @@ describe('P1-A admin refresh-token revocation', () => {
 
     const store = createStore({
       onRefreshClaim: async () => {
-        // Signal that refresh holds the claim; wait until admin reset finishes.
         adminDone();
         await claimGate;
       },
@@ -472,31 +513,19 @@ describe('P1-A admin refresh-token revocation', () => {
         body: JSON.stringify({ password: 'NewPass1a' }),
       });
       assert.equal(put.status, 204);
-      // P1-A must have removed the claimed row by the time the admin update commits.
-      assert.equal(
-        store.refreshTokens.has(claimedId),
-        false,
-        'admin password reset must delete the claimed refresh row inside the update transaction',
-      );
+      assert.equal(store.refreshTokens.has(claimedId), false);
 
       releaseClaim();
       const refreshRes = await refreshPromise;
-
-      // auth.routes creates the successor after updateMany. If create() runs after
-      // admin revoke, a new refresh token can appear — P1-A cannot close that window
-      // without atomic rotation (P1-B). Either outcome below is acceptable for P1-A:
-      // refresh loses (401) or refresh mints a post-revoke successor (documented residual).
-      const leftover = [...store.refreshTokens.values()];
-      assert.ok(
-        leftover.every((r) => r.token !== 'refresh-race-1'),
-        'the presented consumed token must never remain as a live credential',
+      const body = (await refreshRes.json()) as { refreshToken?: string };
+      assert.equal(refreshRes.status, 200, 'current rotation mints after revoke — closed only by P1-B');
+      assert.ok(body.refreshToken);
+      assert.notEqual(body.refreshToken, 'refresh-race-1');
+      assert.equal(
+        [...store.refreshTokens.values()].some((r) => r.token === body.refreshToken),
+        true,
+        'successor survives admin reset when create() races after revoke',
       );
-      if (refreshRes.status === 200) {
-        assert.ok(leftover.length >= 1, 'successor minted after revoke — residual until P1-B');
-      } else {
-        assert.equal(refreshRes.status, 401);
-        assert.equal(leftover.length, 0);
-      }
     } finally {
       await close();
     }
