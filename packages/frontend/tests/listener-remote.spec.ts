@@ -251,3 +251,79 @@ test('a pasted link uses the existing endpoint and reports rate limits', async (
   await expect(page.getByRole('alert')).toBeVisible();
   expect(bodies).toEqual([{ url: 'https://example.com/a.mp3' }, { url: 'https://example.com/b.mp3' }]);
 });
+
+test('keeps library pagination focusable and announces URL form errors', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  let libraryPage = 1;
+  await openRemote(page, playing, async (p) => {
+    await p.unroute(/\/api\/listener-remote\/library/);
+    await p.route(/\/api\/listener-remote\/library/, async (route) => {
+      const url = new URL(route.request().url());
+      libraryPage = Number(url.searchParams.get('page') || '1');
+      await fulfill(route, {
+        songs: Array.from({ length: 25 }, (_, i) => ({
+          id: (libraryPage - 1) * 25 + i + 1,
+          title: `Song ${(libraryPage - 1) * 25 + i + 1}`,
+          artist: 'Artist',
+          duration: 100,
+        })),
+        page: libraryPage,
+        pageSize: 25,
+      });
+    });
+  });
+
+  const results = page.getByTestId('library-results');
+  await page.getByRole('button', { name: 'Next page' }).click();
+  await expect(page.getByText('Song 26')).toBeVisible();
+  await expect(page.getByText('Updating results…')).toHaveCount(0);
+  await expect(results).toHaveAttribute('aria-busy', 'false');
+  await expect(results).toBeFocused();
+
+  const upNext = page.getByRole('list', { name: 'Up next' });
+  await upNext.focus();
+  await expect(upNext).toBeFocused();
+
+  await page.getByLabel('Media URL').fill('not-a-url');
+  await page.getByRole('button', { name: 'Request URL' }).click();
+  const alert = page.getByRole('alert').filter({ hasText: /http or https URL/i });
+  await expect(alert).toBeVisible();
+  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-describedby', /.+/);
+  await expect(alert).toBeFocused();
+});
+
+test('exposes full truncated track titles for assistive reading', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openRemote(page);
+  await expect(page.getByRole('heading', { name: 'Aurora Radio' })).toHaveAttribute('title', 'Aurora Radio');
+  await expect(page.getByText(title)).toHaveAttribute('title', title);
+  await expect(page.getByRole('list', { name: 'Up next' }).getByText('Glass Harbor')).toHaveAttribute('title', 'Glass Harbor');
+});
+
+test('serves the standalone remote page with a strict CSP and no violations', async ({ page }) => {
+  const cspHits: string[] = [];
+  page.on('console', (msg) => {
+    if (/content security policy/i.test(msg.text())) cspHits.push(msg.text());
+  });
+
+  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await page.route(remote('/state'), (route) => fulfill(route, playing));
+  await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, library));
+
+  const response = await page.goto(`/remote#token=${token}`);
+  expect(response?.ok()).toBe(true);
+  expect(response?.fromServiceWorker()).toBe(false);
+  const csp = response?.headers()['content-security-policy'] ?? '';
+  expect(csp).toContain("script-src 'self'");
+  expect(csp).toContain("style-src 'self'");
+  expect(csp).toContain("connect-src 'self'");
+  expect(csp).toContain("frame-ancestors 'none'");
+  expect(csp).not.toContain('unsafe-inline');
+  expect(response?.headers()['x-frame-options']?.toLowerCase()).toBe('deny');
+
+  await expect(page).toHaveTitle('Listener remote');
+  await expect(page.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
+  await expect(page.locator('a[href="/dashboard"], a[href="/login"]')).toHaveCount(0);
+  expect(cspHits).toEqual([]);
+});
