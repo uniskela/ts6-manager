@@ -29,6 +29,8 @@ describe('playlistVoteApprovalsNeeded parity with B2', () => {
     assert.equal(playlistVoteApprovalsNeeded(0, 5), playlistVoteApprovalsNeeded(1, 5));
     assert.equal(playlistVoteApprovalsNeeded(150, 5), playlistVoteApprovalsNeeded(100, 5));
     assert.equal(playlistVoteApprovalsNeeded(80.9, 5), playlistVoteApprovalsNeeded(80, 5));
+    assert.equal(playlistVoteApprovalsNeeded(7, 100), 7);
+    assert.equal(playlistVoteApprovalsNeeded(14, 50), 7);
   });
 
   it('treats an empty electorate defensively while openVote must still refuse it', () => {

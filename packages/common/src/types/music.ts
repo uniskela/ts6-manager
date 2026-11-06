@@ -48,7 +48,8 @@ export const DEFAULT_PLAYLIST_VOTE_SETTINGS: PlaylistVoteSettings = {
 export function playlistVoteApprovalsNeeded(thresholdPercent: number, listeners: number): number {
   if (listeners <= 0) return 1;
   const pct = Math.min(100, Math.max(1, Math.floor(thresholdPercent)));
-  return Math.max(1, Math.ceil((pct / 100) * listeners));
+  // Integer multiply before divide — avoids float products like 0.07*100 that ceil one too high.
+  return Math.max(1, Math.ceil((pct * listeners) / 100));
 }
 
 /** What a bot's Auto-DJ and 24/7 settings mean right now, for status badges and `!help`. */
