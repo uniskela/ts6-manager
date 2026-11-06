@@ -55,6 +55,7 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.iptv_network_update',
   'music_bot.avatar_update',
   'music_bot.automation_update',
+  'playlist.remote_access_update',
   'channel_banner.upload',
   'channel_banner.delete',
   'server_icon.upload',
@@ -128,6 +129,7 @@ export const ADMIN_AUDIT_TARGET_TYPES = [
   'user',
   'settings',
   'music_bot',
+  'playlist',
   'channel_banner',
   'server_icon',
   /** A window's total of refusals; the id holds the count (`n=12`) and context. */
