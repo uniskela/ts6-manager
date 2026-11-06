@@ -13,6 +13,7 @@ import {
 import { LibraryView } from './LibraryView';
 import { NowPlayingView } from './NowPlayingView';
 import { PlaylistsView } from './PlaylistsView';
+import { SearchView } from './SearchView';
 import { UpNextView } from './UpNextView';
 import { UrlRequestView } from './UrlRequestView';
 
@@ -94,6 +95,9 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
       </div>
       <div className="min-w-0 space-y-4">
         {state?.permissions.requestUrl && <UrlRequestView expire={expire} refresh={() => loadRef.current(true)} />}
+        {state?.permissions.searchMusic && (
+          <SearchView expire={expire} refresh={() => loadRef.current(true)} />
+        )}
         {state?.permissions.searchLibrary && (
           <LibraryView canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
         )}

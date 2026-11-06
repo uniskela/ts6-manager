@@ -3,6 +3,15 @@
 export const REMOTE_POLL_MS = 5_000;
 
 const SESSION = /^[A-Za-z0-9_-]{43}$/;
+const SEARCH_RESULT_ID = /^[A-Za-z0-9_-]{22}$/;
+const CONTROL_CHARS = /[\u0000-\u001F\u007F]/;
+const HTTP_URL = /^https?:\/\//i;
+
+const DURATION_REFUSAL_MESSAGES: Record<string, string> = {
+  too_long: 'This track is longer than 15 minutes.',
+  live_not_allowed: 'Live streams are not allowed.',
+  duration_unknown: 'Track duration could not be verified.',
+};
 
 export class RemoteHttpError extends Error {
   constructor(readonly status: number, readonly code: string, message: string) {
@@ -22,6 +31,8 @@ export type RemotePermissions = {
    * the key still parse; see `canBrowseRemotePlaylists`.
    */
   browsePlaylists?: boolean;
+  /** C2+ `/state` flag; missing means false. See `canSearchRemoteMusic`. */
+  searchMusic: boolean;
 };
 export type RemoteState = {
   bot: { id: number; name: string; status: string };
@@ -49,6 +60,9 @@ export type RemotePlaylistSongsPage = {
   page: number;
   pageSize: number;
 };
+/** Opaque search hit; no source URLs. */
+export type RemoteSearchResult = { id: string; title: string; artist: string | null; duration: number };
+export type RemoteSearchResponse = { results: RemoteSearchResult[]; expiresAt: string };
 
 const unavailable = () => new RemoteHttpError(503, 'unavailable', 'Listener remote is unavailable.');
 
@@ -97,6 +111,25 @@ export function resetRemoteClientForTests(): void {
 
 export function remoteErrorMessage(error: unknown): string {
   return error instanceof RemoteHttpError ? error.message : 'Listener remote is unavailable.';
+}
+
+/** Prefer clear duration refusals; otherwise keep server text (e.g. queue_full). */
+export function remoteSearchQueueErrorMessage(error: unknown): string {
+  if (error instanceof RemoteHttpError) {
+    const mapped = DURATION_REFUSAL_MESSAGES[error.code];
+    if (mapped) return mapped;
+  }
+  return remoteErrorMessage(error);
+}
+
+/** Client-side checks for POST /search (2–100 chars, no http(s) URLs). */
+export function remoteSearchQueryError(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return 'Enter at least 2 characters.';
+  if (trimmed.length > 100) return 'Search queries can be at most 100 characters.';
+  if (CONTROL_CHARS.test(trimmed) || trimmed.startsWith('-')) return 'That search is not allowed.';
+  if (HTTP_URL.test(trimmed)) return 'Paste a song name, not a link.';
+  return null;
 }
 
 /** At most one state poll per five seconds, and only while the page is visible. */
@@ -229,6 +262,7 @@ export function parseRemoteState(body: unknown): RemoteState {
     searchLibrary: permRow.searchLibrary === true,
     addToQueue: permRow.addToQueue === true,
     requestUrl: permRow.requestUrl === true,
+    searchMusic: permRow.searchMusic === true,
   };
   // Optional A3+ flag: omit when absent so older /state payloads stay valid.
   if (typeof permRow.browsePlaylists === 'boolean') {
@@ -281,6 +315,29 @@ export function parseRemotePlaylistSongsPage(body: unknown): RemotePlaylistSongs
     songs: row.songs.map(parseSong),
     page: row.page,
     pageSize: typeof row.pageSize === 'number' ? row.pageSize : 25,
+  };
+}
+
+function parseSearchResult(value: unknown): RemoteSearchResult {
+  if (!value || typeof value !== 'object') throw unavailable();
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== 'string' || !SEARCH_RESULT_ID.test(row.id)) throw unavailable();
+  if (typeof row.title !== 'string') throw unavailable();
+  const artist = row.artist ?? null;
+  if (artist != null && typeof artist !== 'string') throw unavailable();
+  if (typeof row.duration !== 'number' || !Number.isFinite(row.duration)) throw unavailable();
+  // Keep only the public fields — never pass through source URLs or provider ids.
+  return { id: row.id, title: row.title, artist, duration: row.duration };
+}
+
+export function parseRemoteSearchResponse(body: unknown): RemoteSearchResponse {
+  if (!body || typeof body !== 'object') throw unavailable();
+  const row = body as Record<string, unknown>;
+  if (!Array.isArray(row.results)) throw unavailable();
+  if (typeof row.expiresAt !== 'string' || Number.isNaN(Date.parse(row.expiresAt))) throw unavailable();
+  return {
+    results: row.results.map(parseSearchResult),
+    expiresAt: row.expiresAt,
   };
 }
 
@@ -371,4 +428,18 @@ export function requestRemoteUrl(url: string): Promise<void> {
   const problem = remoteMediaUrlError(url);
   if (problem) return Promise.reject(new RemoteHttpError(400, 'invalid_request', problem));
   return remoteFetch('/requests', { method: 'POST', body: JSON.stringify({ url: url.trim() }) }, true).then(() => undefined);
+}
+
+export function searchRemoteMusic(query: string): Promise<RemoteSearchResponse> {
+  const problem = remoteSearchQueryError(query);
+  if (problem) return Promise.reject(new RemoteHttpError(400, 'invalid_request', problem));
+  return remoteFetch('/search', { method: 'POST', body: JSON.stringify({ query: query.trim() }) }, true)
+    .then(parseRemoteSearchResponse);
+}
+
+export function queueRemoteSearchResult(resultId: string): Promise<void> {
+  if (!SEARCH_RESULT_ID.test(resultId)) {
+    return Promise.reject(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.'));
+  }
+  return remoteFetch('/search/queue', { method: 'POST', body: JSON.stringify({ resultId }) }, true).then(() => undefined);
 }
