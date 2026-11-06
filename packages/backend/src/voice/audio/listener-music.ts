@@ -54,6 +54,8 @@ export interface ListenerSearchResult {
   durationSec: number | null;
   thumbnail: string;
   url: string;
+  isLive?: boolean;
+  liveStatus?: string | null;
 }
 
 const PLAYABLE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -67,6 +69,8 @@ function toListenerResult(item: YouTubeSearchResult): ListenerSearchResult | nul
     durationSec: item.duration > 0 ? item.duration : null,
     thumbnail: item.thumbnail,
     url: `https://www.youtube.com/watch?v=${item.id}`,
+    isLive: item.isLive === true,
+    liveStatus: item.liveStatus ?? null,
   };
 }
 

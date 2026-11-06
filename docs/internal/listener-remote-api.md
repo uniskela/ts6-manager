@@ -422,6 +422,13 @@ change.
 
 ### C2: search and queue a result
 
+> **Implemented** on `POST /search` and `POST /search/queue` (requires C1a
+> download wrappers on the same tip so `/search/queue` inherits paste limits).
+> Result ids are claimed atomically before any async queue work (fail-closed on
+> failure). Provider searches cancel on session loss or client disconnect, take
+> a provider slot only on cache miss, and are fair-capped per TeamSpeak server
+> under the global in-flight bound.
+
 | Method/path | Auth | Request | Success |
 | --- | --- | --- | --- |
 | POST `/search` | queue | `{query: string}`, 2–100 characters after trimming, no control characters, not an `http(s)` URL | 200, `{results: RemoteSearchResult[], expiresAt: string}` |
@@ -438,10 +445,11 @@ RemoteSearchResult = { id: string; title: string; artist: string | null; duratio
 - No source URLs, provider IDs, thumbnails or other third-party URLs.
 - `id` is a random 128-bit value with no relation to the source. It is valid
   only for the identity whose search returned it, until that identity's next
-  search replaces the set, for 5 minutes, and for one successful queue.
-  Anything else returns 404 `not_found` with `Search result not found.`,
-  identically whether unknown, expired, replaced, consumed or another
-  listener's.
+  search replaces the set, for 5 minutes, and for one **claim** (the id is
+  removed before download/queue work begins; a failed attempt does not restore
+  it). Anything else returns 404 `not_found` with `Search result not found.`,
+  identically whether unknown, expired, replaced, claimed, or another
+  listener's. Session revoke and `DELETE /session` clear that identity's set.
 - `POST /search/queue` resolves through the same pipeline and limits as
   `POST /requests`, including the C1a rules (which can still refuse with 422
   if the provider's answer changed), the one-pending-resolution-per-bot and
@@ -453,10 +461,13 @@ RemoteSearchResult = { id: string; title: string; artist: string | null; duratio
   at most 200 queries. The cache holds results, never identities; result IDs
   are issued per identity on every response.
 
-Limits: 5 searches per identity per minute; one search in flight per identity
-and two across the service (429 `rate_limited`). Audit:
-`listener.remote.search_queue` for each queue attempt. Searches are reads and
-are not audited; the query text is never logged or audited.
+Limits: 5 searches per identity per minute; one provider search in flight per
+identity; at most one provider search per TeamSpeak server and two across the
+service (429 `rate_limited`). Cache hits do not take a provider slot. In-flight
+searches abort when the session ends or the client disconnects (and on a
+30-second provider timeout). Audit: `listener.remote.search_queue` for each
+queue attempt. Searches are reads and are not audited; the query text is never
+logged or audited.
 
 Errors: 400 `invalid_request`, 401, 403 `permission_denied`, 404 `not_found`,
 422 `too_long` / `live_not_allowed` / `duration_unknown` (queue only), 429,
