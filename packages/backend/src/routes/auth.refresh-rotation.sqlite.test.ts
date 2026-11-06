@@ -429,4 +429,102 @@ describe('P1-B refresh rotation against real SQLite', () => {
     });
     assert.equal(stale.status, 401);
   });
+
+  it('disabled account cannot complete self-service password change', async () => {
+    await seedAlice();
+    const accessToken = jwt.sign(
+      { id: 1, username: 'alice', role: 'admin' },
+      config.jwtSecret,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    setHooks({
+      afterPasswordVerified: async () => {
+        await adminDisable();
+      },
+    });
+    const before = await prisma.user.findUniqueOrThrow({ where: { id: 1 } });
+    const base = await baseUrl();
+    const res = await fetch(`${base}/api/auth/password`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ currentPassword: 'AlicePass1', newPassword: 'DisabledPass1' }),
+    });
+    assert.equal(res.status, 401);
+    setHooks(undefined);
+    const after = await prisma.user.findUniqueOrThrow({ where: { id: 1 } });
+    assert.equal(after.enabled, false);
+    assert.equal(after.passwordHash, before.passwordHash);
+  });
+
+  it('in-flight refresh cannot leave a live token after password-change revocation', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.create({
+      data: { token: 'inflight-live', userId: 1, expiresAt, family: 'fam-if' },
+    });
+    const accessToken = jwt.sign(
+      { id: 1, username: 'alice', role: 'admin' },
+      config.jwtSecret,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    setHooks({
+      beforeRefreshRotate: async () => {
+        const base = await baseUrl();
+        const pw = await fetch(`${base}/api/auth/password`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({ currentPassword: 'AlicePass1', newPassword: 'AfterRevoke1a' }),
+        });
+        assert.equal(pw.status, 204);
+      },
+    });
+    const base = await baseUrl();
+    const refresh = await fetch(`${base}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken: 'inflight-live' }),
+    });
+    assert.equal(refresh.status, 401);
+    setHooks(undefined);
+    assert.equal(await prisma.refreshToken.count({ where: { userId: 1 } }), 0);
+  });
+
+  it('legitimate self-service password change succeeds and subsequent login works', async () => {
+    await seedAlice();
+    const accessToken = jwt.sign(
+      { id: 1, username: 'alice', role: 'admin' },
+      config.jwtSecret,
+      { algorithm: 'HS256', expiresIn: '15m' },
+    );
+    const base = await baseUrl();
+    const res = await fetch(`${base}/api/auth/password`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({ currentPassword: 'AlicePass1', newPassword: 'LegitPass1a' }),
+    });
+    assert.equal(res.status, 204);
+    const oldLogin = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'alice', password: 'AlicePass1' }),
+    });
+    assert.equal(oldLogin.status, 401);
+    const newLogin = await fetch(`${base}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: 'alice', password: 'LegitPass1a' }),
+    });
+    assert.equal(newLogin.status, 200);
+    const body = (await newLogin.json()) as { refreshToken?: string };
+    assert.ok(body.refreshToken);
+  });
 });
