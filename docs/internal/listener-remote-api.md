@@ -402,6 +402,8 @@ Security properties (R2, #465):
 
 ### C1a: duration rules for `POST /requests`
 
+> **Implemented** on `POST /requests` (paste links only).
+
 Request and success shapes do not change. After resolution and before any
 download:
 
