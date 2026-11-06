@@ -4,6 +4,7 @@ import { useMediaSwitchStore } from '../stores/media-switch.store';
 import { conflictIsReplaceable, isMediaSessionConflict, withReplaceSessionIds } from '../lib/media-switch';
 import {
   broadcastAuthLogout,
+  clearAuthRefreshCoordination,
   coordinateRefreshOwnership,
   runWithoutLogoutBroadcast,
   setAuthRefreshPeerLogoutHandler,
@@ -203,6 +204,9 @@ if (typeof window !== 'undefined') {
   });
   window.addEventListener('ts6-auth-logout', () => {
     broadcastAuthLogout();
+  });
+  window.addEventListener('ts6-auth-session', () => {
+    clearAuthRefreshCoordination();
   });
 }
 

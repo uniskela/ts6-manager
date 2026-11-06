@@ -45,14 +45,13 @@ Server-side consumed-token replay / family revoke remains authoritative.
 
 - BroadcastChannel is not a mutex: extreme scheduling can still dual-POST; loser must not wipe peer persist (`runRefresh` 401 path adopts peer tokens with a short persist re-read). Residual dual-POST under pathological miss remains possible but was not observed in 40 LAN trials.
 - Successful `result` messages carry access/refresh tokens on the **same-origin** channel so followers beat zustand persist lag. Not URLs, logs, or cross-origin. Equivalent XSS surface to `localStorage` `ts6-auth`.
-- Logout (local or peer BC) clears `lastGoodResult` / leader / waiters so a later login on the same origin cannot adopt a prior account’s cached pair.
+- Logout (local or peer BC) and `setAuth` session replace (`ts6-auth-session`) clear `lastGoodResult` / leader / waiters (pending waiters get `ok:false`) so a later login cannot adopt a prior account’s cached pair. Same-account refresh via `setTokens` does not clear.
 - Access JWTs / established WebSockets are not torn down by refresh revoke (unchanged).
 - `__ts6AuthTest` requires `localStorage ts6-e2e-hooks=1` before module load; backend `authTestHooks` are test-injected only. Not enabled for ordinary production users.
 
-## Safe merge order
+## Safe merge order (two PRs)
 
-1. **P1-A** admin refresh revoke (independent).
-2. **Frontend** Web Lock + BroadcastChannel coordination (compatible with current `main` refresh and with P1-B; stops LAN multi-tab self-logout).
-3. **P1-B** server atomic rotation / family-scoped replay (after frontend so a residual dual-POST hits CAS 401 + adopt rather than reuse-revoke + client wipe).
+1. **PR1 — P1-A** admin password-reset / disable refresh revoke.
+2. **PR2 — P1-B + frontend** atomic rotation, family-scoped replay, password concurrency, Web Lock + BroadcastChannel (depends on PR1).
 
-Do **not** land P1-B alone ahead of the frontend coordination PR. Merges to `main` run CI/Release Please bookkeeping only; **images publish only when Release Please creates a release** (`release_created`), not on ordinary feature merges.
+Do **not** land P1-B server alone ahead of the frontend coordination. Merges to `main` run CI/Release Please bookkeeping only; **images publish only when Release Please creates a release** (`release_created`), not on ordinary feature merges.

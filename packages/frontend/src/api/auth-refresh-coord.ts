@@ -35,6 +35,8 @@ let resultWaiters: Array<(msg: AuthRefreshBcMessage & { type: 'result' }) => voi
 let peerLogoutHandler: (() => void) | null = null;
 let suppressLogoutBroadcast = false;
 let listenerInstalled = false;
+/** After logout/session replace, ignore peer success until this tab refreshes. */
+let acceptPeerResults = true;
 
 export function getAuthRefreshTabId(): string {
   if (tabIdMemo) return tabIdMemo;
@@ -69,7 +71,18 @@ function isMessage(data: unknown): data is AuthRefreshBcMessage {
 function clearCoordinationState(): void {
   lastGoodResult = null;
   activeLeader = null;
+  acceptPeerResults = false;
+  const waiters = resultWaiters;
   resultWaiters = [];
+  // Fail pending followers immediately — do not leave them to adopt a prior account.
+  for (const w of waiters) {
+    w({ v: 1, type: 'result', tabId: getAuthRefreshTabId(), ok: false });
+  }
+}
+
+/** Call when a new login/session replaces credentials (not on same-account token refresh). */
+export function clearAuthRefreshCoordination(): void {
+  clearCoordinationState();
 }
 
 function ensureListener(): void {
@@ -89,6 +102,11 @@ function ensureListener(): void {
     }
     if (msg.type === 'result') {
       if (msg.ok) {
+        if (!acceptPeerResults) {
+          // Prior-session leader finished after logout/login — drop it.
+          activeLeader = null;
+          return;
+        }
         lastGoodResult = {
           accessToken: msg.accessToken,
           refreshToken: msg.refreshToken,
@@ -222,6 +240,8 @@ export async function coordinateRefreshOwnership(
   if (activeLeader && activeLeader !== getAuthRefreshTabId()) {
     const waited = await waitForResult(RESULT_WAIT_MS);
     if (waited) return waited;
+    // Session replaced while waiting — do not continue with prior-account state.
+    if (!acceptPeerResults) return null;
   }
 
   const claims = new Set<string>([getAuthRefreshTabId()]);
@@ -253,11 +273,15 @@ export async function coordinateRefreshOwnership(
   if (activeLeader && activeLeader !== getAuthRefreshTabId()) {
     const waited = await waitForResult(RESULT_WAIT_MS);
     if (waited) return waited;
+    if (!acceptPeerResults) return null;
   }
 
   const winner = pickRefreshOwner([...claims]);
   if (winner !== getAuthRefreshTabId()) {
-    return waitForResult(RESULT_WAIT_MS);
+    const waited = await waitForResult(RESULT_WAIT_MS);
+    if (waited) return waited;
+    if (!acceptPeerResults) return null;
+    return null;
   }
 
   activeLeader = getAuthRefreshTabId();
@@ -269,13 +293,17 @@ export async function coordinateRefreshOwnership(
   // Brief settle so a smaller-id leader can steal before we POST.
   await sleep(30);
   if (activeLeader && activeLeader !== getAuthRefreshTabId()) {
-    return waitForResult(RESULT_WAIT_MS);
+    const waited = await waitForResult(RESULT_WAIT_MS);
+    if (waited) return waited;
+    if (!acceptPeerResults) return null;
+    return null;
   }
 
   try {
     const pair = await executeRefresh();
     try {
       if (pair) {
+        acceptPeerResults = true;
         lastGoodResult = { ...pair, at: Date.now() };
         ch.postMessage({
           v: 1,
@@ -314,6 +342,7 @@ export function resetAuthRefreshCoordForTests(): void {
   lastGoodResult = null;
   resultWaiters = [];
   suppressLogoutBroadcast = false;
+  acceptPeerResults = true;
   if (channel) {
     try {
       channel.close();
