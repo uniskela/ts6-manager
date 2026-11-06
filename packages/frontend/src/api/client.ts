@@ -62,15 +62,13 @@ function accessTokenNeedsRefresh(token: string, skewSeconds = 30): boolean {
 /**
  * If a peer tab already rotated into persist with a still-valid access token,
  * adopt that pair and skip another network rotation.
+ * Only adopt when the refresh token changed — a memory-only access expiry must
+ * still hit the network with the current refresh token.
  */
 function adoptPeerTokensIfFresh(): string | null {
   const persisted = readPersistedAuthTokens();
   const mem = useAuthStore.getState();
-  if (!persisted.refreshToken) return null;
-
-  const refreshChanged = persisted.refreshToken !== mem.refreshToken;
-  const accessChanged = Boolean(persisted.accessToken && persisted.accessToken !== mem.accessToken);
-  if (!refreshChanged && !accessChanged) return null;
+  if (!persisted.refreshToken || persisted.refreshToken === mem.refreshToken) return null;
 
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
@@ -82,7 +80,6 @@ function adoptPeerTokensIfFresh(): string | null {
   }
   return null;
 }
-
 async function refreshAccessToken(): Promise<string | null> {
   if (refreshPromise) return refreshPromise;
 
