@@ -35,8 +35,10 @@ let resultWaiters: Array<(msg: AuthRefreshBcMessage & { type: 'result' }) => voi
 let peerLogoutHandler: (() => void) | null = null;
 let suppressLogoutBroadcast = false;
 let listenerInstalled = false;
-/** After logout/session replace, ignore peer success until this tab refreshes. */
-let acceptPeerResults = true;
+/** Bumped on logout/session replace so in-flight waits abort instead of adopting prior-account tokens. */
+let coordinationEpoch = 0;
+/** Refresh tokens from a replaced session — ignore if a late peer still publishes them. */
+let blockedRefreshTokens = new Set<string>();
 
 export function getAuthRefreshTabId(): string {
   if (tabIdMemo) return tabIdMemo;
@@ -68,10 +70,20 @@ function isMessage(data: unknown): data is AuthRefreshBcMessage {
   );
 }
 
-function clearCoordinationState(): void {
+function clearCoordinationState(previousRefreshToken?: string | null): void {
+  if (lastGoodResult?.refreshToken) {
+    blockedRefreshTokens.add(lastGoodResult.refreshToken);
+  }
+  if (previousRefreshToken) {
+    blockedRefreshTokens.add(previousRefreshToken);
+  }
+  // Bound memory: keep only the most recent few blocked tokens.
+  if (blockedRefreshTokens.size > 8) {
+    blockedRefreshTokens = new Set([...blockedRefreshTokens].slice(-8));
+  }
   lastGoodResult = null;
   activeLeader = null;
-  acceptPeerResults = false;
+  coordinationEpoch += 1;
   const waiters = resultWaiters;
   resultWaiters = [];
   // Fail pending followers immediately — do not leave them to adopt a prior account.
@@ -81,8 +93,8 @@ function clearCoordinationState(): void {
 }
 
 /** Call when a new login/session replaces credentials (not on same-account token refresh). */
-export function clearAuthRefreshCoordination(): void {
-  clearCoordinationState();
+export function clearAuthRefreshCoordination(previousRefreshToken?: string | null): void {
+  clearCoordinationState(previousRefreshToken);
 }
 
 function ensureListener(): void {
@@ -102,7 +114,7 @@ function ensureListener(): void {
     }
     if (msg.type === 'result') {
       if (msg.ok) {
-        if (!acceptPeerResults) {
+        if (blockedRefreshTokens.has(msg.refreshToken)) {
           // Prior-session leader finished after logout/login — drop it.
           activeLeader = null;
           return;
@@ -229,6 +241,8 @@ export async function coordinateRefreshOwnership(
   ensureListener();
   if (!ch) return executeRefresh();
 
+  const startEpoch = coordinationEpoch;
+
   if (lastGoodResult && Date.now() - lastGoodResult.at < 2_000) {
     return {
       accessToken: lastGoodResult.accessToken,
@@ -241,7 +255,7 @@ export async function coordinateRefreshOwnership(
     const waited = await waitForResult(RESULT_WAIT_MS);
     if (waited) return waited;
     // Session replaced while waiting — do not continue with prior-account state.
-    if (!acceptPeerResults) return null;
+    if (coordinationEpoch !== startEpoch) return null;
   }
 
   const claims = new Set<string>([getAuthRefreshTabId()]);
@@ -269,18 +283,20 @@ export async function coordinateRefreshOwnership(
     ch.removeEventListener('message', onClaim);
   }
 
+  if (coordinationEpoch !== startEpoch) return null;
+
   // Leader may have appeared while we claimed.
   if (activeLeader && activeLeader !== getAuthRefreshTabId()) {
     const waited = await waitForResult(RESULT_WAIT_MS);
     if (waited) return waited;
-    if (!acceptPeerResults) return null;
+    if (coordinationEpoch !== startEpoch) return null;
   }
 
   const winner = pickRefreshOwner([...claims]);
   if (winner !== getAuthRefreshTabId()) {
     const waited = await waitForResult(RESULT_WAIT_MS);
     if (waited) return waited;
-    if (!acceptPeerResults) return null;
+    if (coordinationEpoch !== startEpoch) return null;
     return null;
   }
 
@@ -292,10 +308,11 @@ export async function coordinateRefreshOwnership(
   }
   // Brief settle so a smaller-id leader can steal before we POST.
   await sleep(30);
+  if (coordinationEpoch !== startEpoch) return null;
   if (activeLeader && activeLeader !== getAuthRefreshTabId()) {
     const waited = await waitForResult(RESULT_WAIT_MS);
     if (waited) return waited;
-    if (!acceptPeerResults) return null;
+    if (coordinationEpoch !== startEpoch) return null;
     return null;
   }
 
@@ -303,7 +320,7 @@ export async function coordinateRefreshOwnership(
     const pair = await executeRefresh();
     try {
       if (pair) {
-        acceptPeerResults = true;
+        blockedRefreshTokens.delete(pair.refreshToken);
         lastGoodResult = { ...pair, at: Date.now() };
         ch.postMessage({
           v: 1,
@@ -342,7 +359,8 @@ export function resetAuthRefreshCoordForTests(): void {
   lastGoodResult = null;
   resultWaiters = [];
   suppressLogoutBroadcast = false;
-  acceptPeerResults = true;
+  coordinationEpoch = 0;
+  blockedRefreshTokens = new Set();
   if (channel) {
     try {
       channel.close();

@@ -142,7 +142,8 @@ describe('BroadcastChannel refresh ownership helpers', () => {
 
   it('late peer success after session replace is ignored', async () => {
     setAuthRefreshPeerLogoutHandler(() => {});
-    clearAuthRefreshCoordination();
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'a-stale', refreshToken: 'r-stale' }));
+    clearAuthRefreshCoordination('r-stale');
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
     peer.postMessage({
       v: 1,

@@ -32,12 +32,15 @@ export const useAuthStore = create<AuthStore>()(
       refreshToken: null,
       user: null,
       setAuth: (accessToken, refreshToken, user) => {
+        const previousRefreshToken = get().refreshToken;
         set({ accessToken, refreshToken, user });
         // New login/session — drop cross-tab refresh cache so a prior account's
         // tokens cannot be adopted. Same-account refresh uses setTokens only.
         try {
           if (typeof window !== 'undefined') {
-            window.dispatchEvent(new Event('ts6-auth-session'));
+            window.dispatchEvent(new CustomEvent('ts6-auth-session', {
+              detail: { previousRefreshToken },
+            }));
           }
         } catch {
           // Coordination is best-effort; login must still complete.

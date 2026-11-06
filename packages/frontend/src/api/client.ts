@@ -205,8 +205,10 @@ if (typeof window !== 'undefined') {
   window.addEventListener('ts6-auth-logout', () => {
     broadcastAuthLogout();
   });
-  window.addEventListener('ts6-auth-session', () => {
-    clearAuthRefreshCoordination();
+  window.addEventListener('ts6-auth-session', (ev: Event) => {
+    const previousRefreshToken = (ev as CustomEvent<{ previousRefreshToken?: string | null }>).detail
+      ?.previousRefreshToken ?? null;
+    clearAuthRefreshCoordination(previousRefreshToken);
   });
 }
 
