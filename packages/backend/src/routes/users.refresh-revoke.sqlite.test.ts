@@ -92,6 +92,31 @@ async function assertPasswordDisableRolledBack(beforeHash: string) {
   assert.equal(await prisma.adminAuditEvent.count(), 0);
 }
 
+/** Shared seed + put + rollback assert; each caller supplies a distinct abort trigger. */
+async function assertPasswordDisableRollsBackOnTrigger(opts: {
+  token: string;
+  family: string;
+  triggerName: string;
+  triggerSql: string;
+}) {
+  await seedUsers();
+  await prisma.refreshToken.create({
+    data: {
+      token: opts.token,
+      userId: 2,
+      expiresAt: expiresSoon(),
+      family: opts.family,
+    },
+  });
+  const before = await prisma.user.findUniqueOrThrow({ where: { id: 2 } });
+  const base = await baseUrl();
+  await withAbortTrigger(opts.triggerName, opts.triggerSql, async () => {
+    const put = await putUser(base, { password: 'NewPass1a', enabled: false });
+    assert.ok(put.status >= 500, `expected server error, got ${put.status}`);
+    await assertPasswordDisableRolledBack(before.passwordHash);
+  });
+}
+
 before(() => {
   execFileSync('pnpm', ['exec', 'prisma', 'db', 'push', '--skip-generate'], {
     env: { ...process.env, DATABASE_URL: databaseUrl },
@@ -107,28 +132,18 @@ after(async () => {
 
 describe('P1-A refresh revoke against real SQLite', () => {
   it('rolls back password/disable/revoke/audit when audit insert fails', async () => {
-    await seedUsers();
-    await prisma.refreshToken.create({
-      data: { token: 'victim-live', userId: 2, expiresAt: expiresSoon(), family: 'fam-v' },
-    });
-    const before = await prisma.user.findUniqueOrThrow({ where: { id: 2 } });
-    const base = await baseUrl();
-
-    await withAbortTrigger(
-      'abort_admin_audit_insert',
-      `
+    await assertPasswordDisableRollsBackOnTrigger({
+      token: 'victim-live',
+      family: 'fam-v',
+      triggerName: 'abort_admin_audit_insert',
+      triggerSql: `
       CREATE TRIGGER IF NOT EXISTS abort_admin_audit_insert
       BEFORE INSERT ON AdminAuditEvent
       BEGIN
         SELECT RAISE(ABORT, 'forced audit failure');
       END;
     `,
-      async () => {
-        const put = await putUser(base, { password: 'NewPass1a', enabled: false });
-        assert.ok(put.status >= 500, `expected server error, got ${put.status}`);
-        await assertPasswordDisableRolledBack(before.passwordHash);
-      },
-    );
+    });
   });
 
   it('password reset revokes only the target user family of refresh tokens', async () => {
@@ -171,28 +186,18 @@ describe('P1-A refresh revoke against real SQLite', () => {
   });
 
   it('rolls back password update when refresh-token delete fails inside the transaction', async () => {
-    await seedUsers();
-    await prisma.refreshToken.create({
-      data: { token: 'victim-del-fail', userId: 2, expiresAt: expiresSoon(), family: 'fam-df' },
-    });
-    const before = await prisma.user.findUniqueOrThrow({ where: { id: 2 } });
-    const base = await baseUrl();
-
-    await withAbortTrigger(
-      'abort_refresh_token_delete',
-      `
+    await assertPasswordDisableRollsBackOnTrigger({
+      token: 'victim-del-fail',
+      family: 'fam-df',
+      triggerName: 'abort_refresh_token_delete',
+      triggerSql: `
       CREATE TRIGGER IF NOT EXISTS abort_refresh_token_delete
       BEFORE DELETE ON RefreshToken
       BEGIN
         SELECT RAISE(ABORT, 'forced refresh delete failure');
       END;
     `,
-      async () => {
-        const put = await putUser(base, { password: 'NewPass1a', enabled: false });
-        assert.ok(put.status >= 500, `expected server error, got ${put.status}`);
-        await assertPasswordDisableRolledBack(before.passwordHash);
-      },
-    );
+    });
   });
 
   it('enabled:true with live tokens does not revoke sessions', async () => {
