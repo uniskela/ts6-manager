@@ -1,0 +1,57 @@
+{
+  "label": "SIMULATED (real @discordjs/voice VoiceConnection, VoiceReceiver and DAVESession wrapper; real discord.js UserManager, REST, route queue and VOICE_STATE_UPDATE handler; real native Opus. Only the voice network edge, the REST wire (makeRequest) and, except where noted, the native davey session are fakes). Not live Discord.",
+  "reviewedHead": "08041a920648097544bac73542ca716286a41ec2",
+  "beforeMethod": "08041a9's packages/discord-bridge extracted with git archive; production code verbatim. Added only the harness files (src/testing/fake-voice.ts with the new test-only reinitDave(), src/testing/gc.ts) and the new or extended test files. Tests that read a diagnostic added by the fix (daveSession, receiveDaveSession, stats().subscribers) or call the new registry API also fail there by construction; the measurements below are from the tests that use only APIs 08041a9 already had.",
+  "finding1": {
+    "title": "DAVE session replacement preserves stale admission",
+    "reproductionFile": "src/adapters/discord-bot.dave-session.test.ts (describe 'DAVE session replacement: Codex's queued-frame reproduction')",
+    "scenario": "A receiver-issued admission; a frame queued under it; the established DAVE session replaced by another established one; the next mix tick, in the same synchronous stretch, with the watchdog held off (5 s). Two replacements: a new DAVESession object (replaceDave), and the library's own in-place DAVESession.reinit(), where the connection, Networking, wrapper and native session objects stay the same and the session never reports unready.",
+    "before": {
+      "realRuntime_replaceDave": { "result": "FAIL", "staleFramesForwarded": 1, "admissionDropped": 0 },
+      "realRuntime_inPlaceReinit": { "result": "FAIL", "staleFramesForwarded": 1, "admissionDropped": 0 },
+      "barePipeline_replaceDave": { "result": "FAIL", "queued": 4, "staleFramesForwarded": 4, "admissionDropped": 0 },
+      "barePipeline_inPlaceReinit": { "result": "FAIL", "queued": 4, "staleFramesForwarded": 4, "admissionDropped": 0 },
+      "simultaneousSpeech": { "result": "FAIL", "observed": "three speakers kept being mixed under their session A admissions for the whole 2 s wait; no session B admission was ever issued" }
+    },
+    "after": {
+      "realRuntime_replaceDave": { "result": "PASS", "staleFramesForwarded": 0, "admissionDropped": 1 },
+      "realRuntime_inPlaceReinit": { "result": "PASS", "staleFramesForwarded": 0, "admissionDropped": 1 },
+      "barePipeline_replaceDave": { "result": "PASS", "queued": 4, "staleFramesForwarded": 0, "admissionDropped": 4 },
+      "barePipeline_inPlaceReinit": { "result": "PASS", "queued": 4, "staleFramesForwarded": 0, "admissionDropped": 4 },
+      "simultaneousSpeech": { "result": "PASS", "staleFramesMixedAfterReplacement": 0, "duplicateReceivers": 0, "streamsPerSpeaker": 1 },
+      "sessionFencing": {
+        "replaceDave": { "before": { "daveSession": 1, "receiveSession": 1, "generation": 2 }, "after": { "daveSession": 2, "receiveSession": 2, "generation": 4 }, "oldAdmissionSession": 1, "freshAdmissionSession": 2, "replacements": 1 },
+        "inPlaceReinit": { "before": { "daveSession": 1, "receiveSession": 1, "generation": 2 }, "after": { "daveSession": 2, "receiveSession": 2, "generation": 4 }, "oldAdmissionSession": 1, "freshAdmissionSession": 2, "replacements": 1 }
+      },
+      "realNativeDavey": "src/core/dave-session.test.ts: with the real @snazzah/davey session, DAVESession.reinit() keeps the same native object (object identity alone cannot see it) and the epoch still moves 1 -> 2"
+    },
+    "stableOver": "3 consecutive verified full-suite runs, identical counts"
+  },
+  "finding2": {
+    "title": "Stalled promises retain destroyed bot/filter instances",
+    "reproductionFile": "src/adapters/discord-bot.identity-retention.test.ts",
+    "scenario": "30 DiscordBot instances created one after another in one process, each with the production lookup (real UserManager.fetch and REST queue) and one shared IdentityRequests registry; each hears the same unknown speaker, waits on the identity request, and is destroyed. The one request on the wire never settles and is kept reachable as an open socket would keep it. Reachability measured with WeakRef after forced full collections.",
+    "before": { "result": "FAIL", "restOperations": 1, "unsettled": 1, "retainedBots": 30, "retainedFilters": 30, "retainedClients": 30 },
+    "after": {
+      "result": "PASS",
+      "restOperations": 1,
+      "unsettled": 1,
+      "registrySubscribers": 0,
+      "retainedBots": 0,
+      "retainedFilters": 0,
+      "retainedClients": 1,
+      "retainedClientIs": "the client that started the request (its discord.js REST manager owns the unsettled request)",
+      "afterSettlement": { "retainedClients": 0, "retainedBots": 0 }
+    },
+    "stableOver": "3 consecutive verified full-suite runs, identical counts"
+  },
+  "mutations": [
+    { "id": "M1", "mutation": "VoiceAdmission ignores sessionLive", "tests": "dave-session (bot) + voice-admission", "failing": 11 },
+    { "id": "M2", "mutation": "session identity ignores the reinit counter (object identity only)", "tests": "dave-session (bot) + dave-session (unit)", "failing": 9 },
+    { "id": "M3", "mutation": "HumanFilter.reset() does not cancel its subscriptions", "tests": "human-filter + identity-retention", "failing": 4 },
+    { "id": "M4", "mutation": "production lookup as an async closure awaiting on the bot", "tests": "identity-retention", "failing": 1, "measured": "retainedBots=1 retainedFilters=1" },
+    { "id": "M5", "mutation": "destroy() leaves the voiceStateUpdate listener on the client", "tests": "identity-retention", "failing": 1 },
+    { "id": "M6", "mutation": "subscription created in the same scope as the registry's settlement callback", "tests": "identity-requests + human-filter", "failing": 3, "measured": "1 of 30 callers retained" },
+    { "id": "M7", "mutation": "the registry's settlement callback captures start", "tests": "identity-requests + identity-retention", "failing": 1 }
+  ]
+}
