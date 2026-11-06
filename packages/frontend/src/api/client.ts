@@ -259,28 +259,15 @@ function installE2EAuthHooks(): void {
         .replace(/\+/g, '-')
         .replace(/\//g, '_')
         .replace(/=+$/g, '');
-      // Memory-only access expiry: keep refresh aligned with persist so a
-      // deferred zustand persist flush cannot resurrect a pre-peer-rotation token.
+      // Memory-only expiry: leave stale refresh in memory (for adopt tests) but
+      // re-assert persist so a deferred zustand flush cannot wipe a peer rotation.
       const snap = localStorage.getItem('ts6-auth');
-      let refreshToken = useAuthStore.getState().refreshToken;
+      useAuthStore.setState({ accessToken: `${header}.${payload}.e2e-expired` });
       if (snap) {
-        try {
-          const parsed = JSON.parse(snap) as { state?: { refreshToken?: string | null } };
-          if (typeof parsed.state?.refreshToken === 'string' && parsed.state.refreshToken.length > 0) {
-            refreshToken = parsed.state.refreshToken;
-          }
-        } catch {
-          // keep memory refresh
+        for (let i = 0; i < 3; i++) {
+          localStorage.setItem('ts6-auth', snap);
+          await Promise.resolve();
         }
-      }
-      useAuthStore.setState({
-        accessToken: `${header}.${payload}.e2e-expired`,
-        refreshToken,
-      });
-      if (snap) {
-        localStorage.setItem('ts6-auth', snap);
-        await Promise.resolve();
-        localStorage.setItem('ts6-auth', snap);
       }
     },
     refreshNow: () => refreshAccessToken(),
