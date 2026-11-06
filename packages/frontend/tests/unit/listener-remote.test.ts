@@ -13,12 +13,17 @@ import {
   exchangeRemoteToken,
   loadRemoteLibrary,
   loadRemoteState,
+  parseRemoteSearchResponse,
   playbackSummary,
+  queueRemoteSearchResult,
   queueRemoteSong,
   remoteMediaUrlError,
+  remoteSearchQueryError,
+  remoteSearchQueueErrorMessage,
   remoteSession,
   requestRemoteUrl,
   resetRemoteClientForTests,
+  searchRemoteMusic,
   settleRemoteExchange,
   shouldPollRemote,
 } from '../../src/lib/listener-remote';
@@ -118,7 +123,21 @@ describe('listener remote client', () => {
         assert.equal(url.searchParams.get('page'), '2');
         return json({ songs: [{ id: 9, title: 'Paper Moon', artist: null, duration: null }], page: 2, pageSize: 25 });
       }
-      if (url.pathname.endsWith('/queue') || url.pathname.endsWith('/requests')) return json({ ok: true });
+      if (url.pathname.endsWith('/search/queue') || url.pathname.endsWith('/queue') || url.pathname.endsWith('/requests')) {
+        return json({ ok: true });
+      }
+      if (url.pathname.endsWith('/search')) {
+        return json({
+          results: [{
+            id: 'r'.repeat(22),
+            title: 'Neon Skyline',
+            artist: 'Midnight Transit',
+            duration: 214,
+            url: 'https://secret.example/track',
+          }],
+          expiresAt: future,
+        });
+      }
       return json({ error: 'nope', code: 'invalid_request' }, 400);
     }) as typeof fetch;
   });
@@ -138,7 +157,12 @@ describe('listener remote client', () => {
     const state = await loadRemoteState();
     assert.equal(state.nowPlaying?.title, 'Neon Skyline');
     assert.equal('filePath' in (state.nowPlaying ?? {}), false);
-    assert.deepEqual(state.permissions, { searchLibrary: true, addToQueue: false, requestUrl: false });
+    assert.deepEqual(state.permissions, {
+      searchLibrary: true,
+      addToQueue: false,
+      requestUrl: false,
+      searchMusic: false,
+    });
     assert.equal(calls[1].authorization, `Bearer ${session}`);
     assert.equal(playbackSummary(state.nowPlaying, 'playing').label, 'Playing · 3:34');
     assert.equal(shouldPollRemote(false, 0, 10_000), false);
@@ -234,6 +258,59 @@ describe('listener remote client', () => {
     assert.deepEqual(settleRemoteExchange(ready, session, 'b'.repeat(43), null), { kind: 'ready', nonce: 4 });
     assert.deepEqual(settleRemoteExchange(opening, null, session, null), { kind: 'ready', nonce: 1 });
     assert.deepEqual(settleRemoteExchange(opening, null, null, null), { kind: 'ended', message: 'Remote access is invalid or expired' });
+  });
+
+  it('validates search queries and strips source URLs from search results', async () => {
+    assert.equal(remoteSearchQueryError('a'), 'Enter at least 2 characters.');
+    assert.equal(remoteSearchQueryError('x'.repeat(101)), 'Search queries can be at most 100 characters.');
+    assert.equal(remoteSearchQueryError('https://example.com/song'), 'Paste a song name, not a link.');
+    assert.equal(remoteSearchQueryError('HTTP://evil.test/x'), 'Paste a song name, not a link.');
+    assert.equal(remoteSearchQueryError('  neon skyline  '), null);
+
+    await exchangeRemoteToken(token);
+    await assert.rejects(() => searchRemoteMusic('https://example.com/a'));
+    assert.equal(calls.length, 1);
+    calls.length = 0;
+
+    const found = await searchRemoteMusic('  neon skyline  ');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body, JSON.stringify({ query: 'neon skyline' }));
+    assert.deepEqual(found, {
+      results: [{ id: 'r'.repeat(22), title: 'Neon Skyline', artist: 'Midnight Transit', duration: 214 }],
+      expiresAt: future,
+    });
+    assert.equal('url' in found.results[0], false);
+
+    await queueRemoteSearchResult('r'.repeat(22));
+    assert.equal(calls[1].body, JSON.stringify({ resultId: 'r'.repeat(22) }));
+    await assert.rejects(() => queueRemoteSearchResult('short'));
+  });
+
+  it('maps duration refusals and keeps queue_full messaging', () => {
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(422, 'too_long', 'ignored')),
+      'This track is longer than 15 minutes.',
+    );
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(422, 'live_not_allowed', 'ignored')),
+      'Live streams are not allowed.',
+    );
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(422, 'duration_unknown', 'ignored')),
+      'Track duration could not be verified.',
+    );
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(409, 'queue_full', 'The queue is full.')),
+      'The queue is full.',
+    );
+    assert.deepEqual(
+      parseRemoteSearchResponse({
+        results: [{ id: 'a'.repeat(22), title: 'A', artist: null, duration: 90, sourceUrl: 'https://x' }],
+        expiresAt: future,
+      }),
+      { results: [{ id: 'a'.repeat(22), title: 'A', artist: null, duration: 90 }], expiresAt: future },
+    );
+    assert.throws(() => parseRemoteSearchResponse({ results: [{ id: 'bad', title: 'A', artist: null, duration: 1 }], expiresAt: future }));
   });
 });
 
