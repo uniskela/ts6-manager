@@ -23,12 +23,12 @@ async function send(app: Express, path: string) {
 }
 
 const rows = [
-  { id: 1, name: 'Server one', mode: 'local', musicBotId: 11, musicBot: { serverConfigId: 1 }, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-01'), _count: { songs: 1 } },
-  { id: 2, name: 'Server two', mode: 'local', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: 2, createdAt: new Date('2026-10-02'), _count: { songs: 2 } },
-  { id: 3, name: 'Legacy shared', mode: 'local', musicBotId: null, musicBot: null, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-03'), _count: { songs: 3 } },
-  { id: 4, name: 'Legacy server one bot', mode: 'local', musicBotId: 11, musicBot: { serverConfigId: 1 }, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-04'), _count: { songs: 4 } },
-  { id: 5, name: 'Legacy server two bot', mode: 'local', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-05'), _count: { songs: 5 } },
-  { id: 6, name: 'Conflicting server and bot', mode: 'local', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-06'), _count: { songs: 6 } },
+  { id: 1, name: 'Server one', mode: 'local', remoteAccess: 'hidden', musicBotId: 11, musicBot: { serverConfigId: 1 }, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-01'), _count: { songs: 1 } },
+  { id: 2, name: 'Server two', mode: 'local', remoteAccess: 'hidden', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: 2, createdAt: new Date('2026-10-02'), _count: { songs: 2 } },
+  { id: 3, name: 'Legacy shared', mode: 'local', remoteAccess: 'hidden', musicBotId: null, musicBot: null, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-03'), _count: { songs: 3 } },
+  { id: 4, name: 'Legacy server one bot', mode: 'local', remoteAccess: 'hidden', musicBotId: 11, musicBot: { serverConfigId: 1 }, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-04'), _count: { songs: 4 } },
+  { id: 5, name: 'Legacy server two bot', mode: 'local', remoteAccess: 'hidden', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: null, createdAt: new Date('2026-10-05'), _count: { songs: 5 } },
+  { id: 6, name: 'Conflicting server and bot', mode: 'local', remoteAccess: 'hidden', musicBotId: 22, musicBot: { serverConfigId: 2 }, youtubePlaylistId: null, serverConfigId: 1, createdAt: new Date('2026-10-06'), _count: { songs: 6 } },
 ];
 
 // Apply both top-level AND conditions and OR branches, as Prisma does.

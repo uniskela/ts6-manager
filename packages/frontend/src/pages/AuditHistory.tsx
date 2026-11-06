@@ -91,6 +91,7 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'listener.remote.rate_limited': 'Listener remote: rate limited (total for 5 minutes)',
   'listener.remote.denied': 'Listener remote: permission denied',
   'listener.remote.capacity': 'Listener remote: queue full',
+  'playlist.remote_access_update': 'Update playlist remote access',
   'music_bot.avatar_update': 'Update bot avatar',
   'music_bot.automation_update': 'Update bot automation',
   'channel_banner.upload': 'Upload channel banner',
