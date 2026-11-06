@@ -83,7 +83,16 @@ function listenerRateSource(res: Response): string | undefined {
   return typeof source === 'string' ? source : undefined;
 }
 
-const ROUTE_LABELS = new Set(['state', 'library', 'queue', 'requests', 'search', 'exchange', 'session']);
+const ROUTE_LABELS = new Set([
+  'state',
+  'library',
+  'playlists',
+  'queue',
+  'requests',
+  'search',
+  'exchange',
+  'session',
+]);
 
 /** Fixed label of the route, for refusal totals; never text from the request. */
 export function routeLabel(req: Request): string {
