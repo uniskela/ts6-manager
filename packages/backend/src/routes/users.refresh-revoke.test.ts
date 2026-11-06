@@ -251,44 +251,58 @@ async function mountApp(prisma: unknown) {
   return listen(app);
 }
 
+function seedVictimAndOther(
+  store: ReturnType<typeof createStore>,
+  victimToken: string,
+  otherToken: string,
+) {
+  store.users.set(3, {
+    id: 3,
+    username: 'other',
+    displayName: 'Other',
+    role: 'viewer',
+    enabled: true,
+    passwordHash: '',
+  });
+  store.seedRefresh(2, victimToken);
+  store.seedRefresh(3, otherToken);
+}
+
+async function putUser(base: string, body: Record<string, unknown>) {
+  return fetch(`${base}/api/users/2`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function assertRefreshRejected(base: string, refreshToken: string) {
+  const refresh = await fetch(`${base}/api/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+  });
+  assert.equal(refresh.status, 401);
+}
+
+function hasUserRefresh(store: ReturnType<typeof createStore>, userId: number) {
+  return [...store.refreshTokens.values()].some((r) => r.userId === userId);
+}
+
+function hasToken(store: ReturnType<typeof createStore>, token: string) {
+  return [...store.refreshTokens.values()].some((r) => r.token === token);
+}
+
 describe('P1-A admin refresh-token revocation', () => {
   it('admin password reset revokes outstanding refresh tokens (401 on /refresh)', async () => {
     const store = createStore();
-    store.users.set(3, {
-      id: 3,
-      username: 'other',
-      displayName: 'Other',
-      role: 'viewer',
-      enabled: true,
-      passwordHash: '',
-    });
-    store.seedRefresh(2, 'refresh-victim-1');
-    store.seedRefresh(3, 'refresh-other-1');
+    seedVictimAndOther(store, 'refresh-victim-1', 'refresh-other-1');
     const { base, close } = await mountApp(store.prisma);
     try {
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: 'NewPass1a' }),
-      });
-      assert.equal(put.status, 204);
-      assert.equal(
-        [...store.refreshTokens.values()].some((r) => r.userId === 2),
-        false,
-        'target refresh rows must be deleted',
-      );
-      assert.equal(
-        [...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-1'),
-        true,
-        'other users must keep their refresh tokens',
-      );
-
-      const refresh = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'refresh-victim-1' }),
-      });
-      assert.equal(refresh.status, 401);
+      assert.equal((await putUser(base, { password: 'NewPass1a' })).status, 204);
+      assert.equal(hasUserRefresh(store, 2), false, 'target refresh rows must be deleted');
+      assert.equal(hasToken(store, 'refresh-other-1'), true, 'other users must keep their refresh tokens');
+      await assertRefreshRejected(base, 'refresh-victim-1');
     } finally {
       await close();
     }
@@ -296,38 +310,18 @@ describe('P1-A admin refresh-token revocation', () => {
 
   it('admin disable revokes outstanding refresh tokens', async () => {
     const store = createStore();
-    store.users.set(3, {
-      id: 3,
-      username: 'other',
-      displayName: 'Other',
-      role: 'viewer',
-      enabled: true,
-      passwordHash: '',
-    });
-    store.seedRefresh(2, 'refresh-victim-2');
-    store.seedRefresh(3, 'refresh-other-2');
+    seedVictimAndOther(store, 'refresh-victim-2', 'refresh-other-2');
     const { base, close } = await mountApp(store.prisma);
     try {
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: false }),
-      });
-      assert.equal(put.status, 204);
+      assert.equal((await putUser(base, { enabled: false })).status, 204);
       assert.equal(
         [...store.refreshTokens.values()].filter((r) => r.userId === 2).length,
         0,
         'disable must delete refresh rows immediately, not only fail later /refresh',
       );
-      assert.equal([...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-2'), true);
+      assert.equal(hasToken(store, 'refresh-other-2'), true);
       assert.equal(store.users.get(2)!.enabled, false);
-
-      const refresh = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'refresh-victim-2' }),
-      });
-      assert.equal(refresh.status, 401);
+      await assertRefreshRejected(base, 'refresh-victim-2');
     } finally {
       await close();
     }
@@ -335,54 +329,17 @@ describe('P1-A admin refresh-token revocation', () => {
 
   it('re-enabling an account does not restore previously revoked refresh tokens', async () => {
     const store = createStore();
-    store.users.set(3, {
-      id: 3,
-      username: 'other',
-      displayName: 'Other',
-      role: 'viewer',
-      enabled: true,
-      passwordHash: '',
-    });
-    store.seedRefresh(2, 'refresh-victim-3');
-    store.seedRefresh(3, 'refresh-other-3');
+    seedVictimAndOther(store, 'refresh-victim-3', 'refresh-other-3');
     const { base, close } = await mountApp(store.prisma);
     try {
-      assert.equal(
-        (
-          await fetch(`${base}/api/users/2`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: false }),
-          })
-        ).status,
-        204,
-      );
-      assert.equal([...store.refreshTokens.values()].some((r) => r.userId === 2), false);
+      assert.equal((await putUser(base, { enabled: false })).status, 204);
+      assert.equal(hasUserRefresh(store, 2), false);
 
-      assert.equal(
-        (
-          await fetch(`${base}/api/users/2`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ enabled: true }),
-          })
-        ).status,
-        204,
-      );
+      assert.equal((await putUser(base, { enabled: true })).status, 204);
       assert.equal(store.users.get(2)!.enabled, true);
-      assert.equal(
-        [...store.refreshTokens.values()].some((r) => r.userId === 2),
-        false,
-        're-enable must not resurrect tokens',
-      );
-      assert.equal([...store.refreshTokens.values()].some((r) => r.token === 'refresh-other-3'), true);
-
-      const refresh = await fetch(`${base}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: 'refresh-victim-3' }),
-      });
-      assert.equal(refresh.status, 401);
+      assert.equal(hasUserRefresh(store, 2), false, 're-enable must not resurrect tokens');
+      assert.equal(hasToken(store, 'refresh-other-3'), true);
+      await assertRefreshRejected(base, 'refresh-victim-3');
     } finally {
       await close();
     }
@@ -393,11 +350,7 @@ describe('P1-A admin refresh-token revocation', () => {
     store.seedRefresh(2, 'refresh-victim-4');
     const { base, close } = await mountApp(store.prisma);
     try {
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ displayName: 'Renamed' }),
-      });
+      const put = await putUser(base, { displayName: 'Renamed' });
       assert.equal(put.status, 204);
       assert.equal(store.refreshTokens.size, 1);
       assert.equal(store.users.get(2)!.displayName, 'Renamed');
@@ -415,11 +368,7 @@ describe('P1-A admin refresh-token revocation', () => {
     store.seedRefresh(2, 'refresh-victim-enabled-true');
     const { base, close } = await mountApp(store.prisma);
     try {
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ enabled: true }),
-      });
+      const put = await putUser(base, { enabled: true });
       assert.equal(put.status, 204);
       assert.equal(store.users.get(2)!.enabled, true);
       assert.ok(
@@ -436,11 +385,7 @@ describe('P1-A admin refresh-token revocation', () => {
     store.seedRefresh(2, 'refresh-victim-5');
     const { base, close } = await mountApp(store.prisma);
     try {
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ role: 'viewer', displayName: 'Still Viewer' }),
-      });
+      const put = await putUser(base, { role: 'viewer', displayName: 'Still Viewer' });
       assert.equal(put.status, 204);
       assert.equal(store.refreshTokens.size, 1);
     } finally {
@@ -506,11 +451,7 @@ describe('P1-A admin refresh-token revocation', () => {
     const beforeHash = store.users.get(2)!.passwordHash;
     const { base, close } = await mountApp(store.prisma);
     try {
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: 'NewPass1a' }),
-      });
+      const put = await putUser(base, { password: 'NewPass1a' });
       assert.notEqual(put.status, 204);
       assert.ok(put.status >= 500);
       assert.equal(store.users.get(2)!.passwordHash, beforeHash);
@@ -553,11 +494,7 @@ describe('P1-A admin refresh-token revocation', () => {
       });
 
       await adminGate;
-      const put = await fetch(`${base}/api/users/2`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: 'NewPass1a' }),
-      });
+      const put = await putUser(base, { password: 'NewPass1a' });
       assert.equal(put.status, 204);
       assert.equal(store.refreshTokens.has(claimedId), false);
 
