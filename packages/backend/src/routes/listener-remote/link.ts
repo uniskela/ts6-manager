@@ -1,8 +1,16 @@
 import type { Request } from 'express';
+import { LISTENER_MAX_DURATION_SEC, type ListenerTrackMeta } from '../../voice/audio/listener-music.js';
+import { MediaCacheError } from '../../voice/audio/media-cache.js';
+import { downloadYouTube } from '../../voice/audio/youtube.js';
 import { ListenerRemoteError, type Binding as ListenerRemoteBinding, type ListenerRemoteService } from '../../voice/listener-remote.js';
 import { abortable, defaultMediaUrlDeps, runMediaUrlPipeline, type MediaUrlPipelineDeps } from '../../voice/media-url-pipeline.js';
 import { validateUrl } from '../../utils/url-validator.js';
 import type { QueueItem } from '../../voice/playlist/queue.js';
+import {
+  LISTENER_MAX_DOWNLOAD_BYTES,
+  probeListenerLinkMeta,
+  refuseListenerDuration,
+} from './duration.js';
 import { bearer, fail, service } from './shared.js';
 
 const resolvingBots = new WeakMap<ListenerRemoteService, Set<number>>();
@@ -12,7 +20,68 @@ export const LINK_DEADLINE_MS = 120_000;
 /** How often a pending link checks that its session is still live. */
 const SESSION_CHECK_MS = 2_000;
 
+const MUSIC_DIR = process.env.MUSIC_DIR || '/data/music';
+
 const notAllowed = (): never => fail(400, 'invalid_request', 'This media URL is not allowed.');
+
+/** Injectable probe for tests; production dumps yt-dlp metadata before download. */
+export type ListenerLinkProbe = (url: string, signal?: AbortSignal) => Promise<ListenerTrackMeta>;
+
+/** Map cache measured-duration refusals onto the listener 422 codes. */
+function mapMeasuredDurationError(err: unknown): never {
+  if (err instanceof MediaCacheError && err.code === 'too_long') {
+    refuseListenerDuration({ durationSec: LISTENER_MAX_DURATION_SEC + 1 });
+  }
+  if (err instanceof MediaCacheError && err.code === 'duration_unknown') {
+    refuseListenerDuration({ durationSec: null });
+  }
+  throw err;
+}
+
+/** Listener paste downloads: 15-minute match-filter, size cap, and measured-duration gate. */
+async function listenerBoundedDownloadTrack(url: string, signal?: AbortSignal): Promise<QueueItem> {
+  try {
+    const { filePath, info } = await downloadYouTube(url, MUSIC_DIR, undefined, signal, {
+      maxDurationSec: LISTENER_MAX_DURATION_SEC,
+      maxFilesizeBytes: LISTENER_MAX_DOWNLOAD_BYTES,
+    });
+    return {
+      id: `yt_${info.id}`,
+      title: info.title,
+      artist: info.artist,
+      duration: info.duration,
+      filePath,
+      source: 'youtube' as const,
+      sourceUrl: url,
+    };
+  } catch (err) {
+    mapMeasuredDurationError(err);
+  }
+}
+
+/** Pipeline deps for one pasted link: duration gate before and after download. */
+function listenerLinkDeps(req: Request): MediaUrlPipelineDeps {
+  const injected = req.app.locals.mediaUrlPipelineDeps as MediaUrlPipelineDeps | undefined;
+  const base = injected ?? {
+    ...defaultMediaUrlDeps(),
+    downloadTrack: listenerBoundedDownloadTrack,
+  };
+  const probe: ListenerLinkProbe = req.app.locals.listenerLinkProbe ?? probeListenerLinkMeta;
+  return {
+    ...base,
+    downloadTrack: async (url, signal) => {
+      refuseListenerDuration(await probe(url, signal));
+      let item: QueueItem;
+      try {
+        item = await base.downloadTrack(url, signal);
+      } catch (err) {
+        mapMeasuredDurationError(err);
+      }
+      refuseListenerDuration({ durationSec: item.duration ?? null });
+      return item;
+    },
+  };
+}
 
 /**
  * Refuse, without any lookup, a link that is not plain http(s), carries
@@ -91,8 +160,9 @@ export function listenerLink(req: Request, binding: ListenerRemoteBinding, url: 
 
     async resolve() {
       if (!checked) fail(503, 'unavailable', 'Listener remote is unavailable.');
-      // Use the normal resolver/download path; no admin LAN exception and no playlist background work.
-      const deps: MediaUrlPipelineDeps = req.app.locals.mediaUrlPipelineDeps ?? defaultMediaUrlDeps();
+      // Duration/live rules (C1a) run inside the download wrapper before and after the file lands.
+      // No admin LAN exception and no playlist background work (cap 1 = first playlist item only).
+      const deps = listenerLinkDeps(req);
       let resolved: QueueItem | undefined;
       await runMediaUrlPipeline(deps, {
         play: () => Promise.reject(new ListenerRemoteError(503, 'unavailable', 'Listener remote is unavailable.')),
