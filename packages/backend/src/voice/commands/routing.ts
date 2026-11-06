@@ -498,8 +498,8 @@ export async function onTextMessage(
 }
 
 /**
- * Send a command reply. When the command came from another channel, prefers the
- * SSH command-channel listener so the user sees the message where they typed.
+ * Send command replies through checked SSH sends, including in the bot's channel.
+ * Native voice sends do not report delivery failures back to this caller.
  * Await this before joinChannel/refreshBotChannels — those disconnect the
  * listener and optimistically change the bot's channel id.
  */
@@ -514,15 +514,10 @@ export async function reply(
   const botId = bot.currentConfig.id;
   const replyChannelId = context.activeReplyChannel.get(`${botId}:${targetClid}`);
   const cfg = context.botChannelConfig.get(botId);
-  // Actual voice presence only — defaultChannel fallback made cross-channel
-  // replies take the home-channel path while the bot was still elsewhere.
-  const homeCid = bot.getCurrentChannelId() || 0;
-
   if (
     replyChannelId &&
     cfg &&
-    context.eventBridge &&
-    (homeCid <= 0 || replyChannelId !== homeCid)
+    context.eventBridge
   ) {
     const ok = await context.eventBridge.sendChannelText(
       cfg.serverConfigId,
@@ -533,7 +528,7 @@ export async function reply(
     );
     if (!ok) {
       console.warn(
-        `[MusicCmd] Cross-channel reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
+        `[MusicCmd] SSH reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
       );
       try {
         bot.sendChannelMessage(msg);
