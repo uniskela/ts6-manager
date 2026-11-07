@@ -28,24 +28,31 @@ const REFRESH_TIMEOUT_MS = 15000;
 export function readPersistedAuthTokens(): {
   accessToken: string | null;
   refreshToken: string | null;
+  authRev: number;
 } {
   if (typeof localStorage === 'undefined') {
-    return { accessToken: null, refreshToken: null };
+    return { accessToken: null, refreshToken: null, authRev: 0 };
   }
   try {
     const raw = localStorage.getItem('ts6-auth');
-    if (!raw) return { accessToken: null, refreshToken: null };
+    if (!raw) return { accessToken: null, refreshToken: null, authRev: 0 };
     const parsed = JSON.parse(raw) as {
-      state?: { accessToken?: string | null; refreshToken?: string | null };
+      state?: {
+        accessToken?: string | null;
+        refreshToken?: string | null;
+        authRev?: number;
+      };
     };
     const access = parsed.state?.accessToken;
     const refresh = parsed.state?.refreshToken;
+    const rev = parsed.state?.authRev;
     return {
       accessToken: typeof access === 'string' && access.length > 0 ? access : null,
       refreshToken: typeof refresh === 'string' && refresh.length > 0 ? refresh : null,
+      authRev: typeof rev === 'number' && Number.isFinite(rev) ? rev : 0,
     };
   } catch {
-    return { accessToken: null, refreshToken: null };
+    return { accessToken: null, refreshToken: null, authRev: 0 };
   }
 }
 
@@ -162,6 +169,7 @@ function adoptPeerTokensIfFresh(
 
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
+    authRev: persisted.authRev,
     ...(persisted.accessToken ? { accessToken: persisted.accessToken } : {}),
   });
 
@@ -223,6 +231,7 @@ async function refreshAccessToken(): Promise<string | null> {
               useAuthStore.setState({
                 accessToken: persisted.accessToken,
                 refreshToken: persisted.refreshToken,
+                authRev: persisted.authRev,
               });
               return {
                 accessToken: persisted.accessToken!,
@@ -292,10 +301,19 @@ async function refreshAccessToken(): Promise<string | null> {
         }) === 'discard') {
           return null;
         }
-        useAuthStore.setState({
-          accessToken: pair.accessToken,
-          refreshToken: pair.refreshToken,
-        });
+        // Prefer setTokens so authRev advances on rotation; fall back to
+        // persist rev when this follower only mirrors a peer-owned result.
+        const prev = useAuthStore.getState().refreshToken;
+        if (prev !== pair.refreshToken) {
+          useAuthStore.getState().setTokens(pair.accessToken, pair.refreshToken);
+        } else {
+          const persisted = readPersistedAuthTokens();
+          useAuthStore.setState({
+            accessToken: pair.accessToken,
+            refreshToken: pair.refreshToken,
+            authRev: Math.max(useAuthStore.getState().authRev, persisted.authRev),
+          });
+        }
         return pair.accessToken;
       };
 

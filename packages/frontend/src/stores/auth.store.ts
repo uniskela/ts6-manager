@@ -50,6 +50,10 @@ function isClearedAuth(blob: PersistedAuthBlob): boolean {
  * Refuse to let a stale tab rewrite `ts6-auth` over a newer session revision.
  * Ordering uses persisted `authRev` (bumped on login / refresh rotation /
  * logout) — never JWT `exp`, which can tie across rotations or lag a new login.
+ *
+ * authRev is per-tab until each bump reads max(memory, persist); it is not a
+ * globally synchronized clock. Equal-rev different-refresh ties keep the
+ * existing blob (first persist wins) — rare when bumps observe persist.
  */
 export function shouldPersistAuthBlob(existingRaw: string | null, incomingRaw: string): boolean {
   if (!existingRaw) return true;
@@ -59,8 +63,13 @@ export function shouldPersistAuthBlob(existingRaw: string | null, incomingRaw: s
     const exRev = blobRev(existing);
     const inRev = blobRev(incoming);
 
-    // Explicit logout / clear always wins (caller bumps authRev first).
-    if (isClearedAuth(incoming)) return true;
+    // Logout / clear over a live session must strictly exceed persist rev so a
+    // tab one step behind a peer rotation (memory N → tombstone N+1 vs peer N+1)
+    // cannot wipe the peer. Over an existing tombstone, same-or-newer is enough.
+    if (isClearedAuth(incoming)) {
+      if (isClearedAuth(existing)) return inRev >= exRev;
+      return inRev > exRev;
+    }
 
     // Never-authenticated empty slot (no tombstone rev).
     if (isClearedAuth(existing) && exRev === 0) return true;
@@ -71,8 +80,9 @@ export function shouldPersistAuthBlob(existingRaw: string | null, incomingRaw: s
     const exRef = existing.state?.refreshToken;
     const inRef = incoming.state?.refreshToken;
 
-    // Same refresh: allow access-only updates (e.g. e2e memory expiry pin).
-    if (exRef && inRef && exRef === inRef) return true;
+    // Same refresh: allow access-only updates (e.g. e2e memory expiry pin),
+    // but never rewind the persisted revision.
+    if (exRef && inRef && exRef === inRef) return inRev >= exRev;
 
     // Different refresh (rotation, account switch) or missing side: newer rev wins.
     return inRev > exRev;
@@ -86,8 +96,11 @@ const authStorage = createJSONStorage(() => {
   return {
     getItem: (name) => base.getItem(name),
     setItem: (name, value) => {
-      if (name === 'ts6-auth' && !shouldPersistAuthBlob(base.getItem(name), value)) {
-        return;
+      if (name === 'ts6-auth') {
+        // Best-effort re-check only — localStorage has no CAS. A peer write
+        // between the second read and setItem can still land a stale blob.
+        if (!shouldPersistAuthBlob(base.getItem(name), value)) return;
+        if (!shouldPersistAuthBlob(base.getItem(name), value)) return;
       }
       base.setItem(name, value);
     },
@@ -95,8 +108,29 @@ const authStorage = createJSONStorage(() => {
   };
 });
 
-function nextAuthRev(current: number): number {
-  return current + 1;
+/** Persisted authRev from `ts6-auth`, or 0 when missing/unreadable. */
+export function readPersistedAuthRev(): number {
+  if (typeof localStorage === 'undefined') return 0;
+  try {
+    const raw = localStorage.getItem('ts6-auth');
+    if (!raw) return 0;
+    return blobRev(JSON.parse(raw) as PersistedAuthBlob);
+  } catch {
+    return 0;
+  }
+}
+
+/** Bump past both in-memory and persisted rev so a lagging login/rotation cannot tie. */
+function nextAuthRev(memoryRev: number): number {
+  return Math.max(memoryRev, readPersistedAuthRev()) + 1;
+}
+
+/**
+ * Logout bump stays local to this tab's memory. Using persist-max here would
+ * let a stale tab mint a tombstone newer than a peer login and wipe it.
+ */
+function nextLogoutAuthRev(memoryRev: number): number {
+  return memoryRev + 1;
 }
 
 // M9: Tokens stored in localStorage. This is an accepted tradeoff — no XSS vectors
@@ -143,13 +177,15 @@ export const useAuthStore = create<AuthStore>()(
       setUser: (user) => set({ user }),
       logout: () => {
         // Clear auth first so a localStorage throw while persisting
-        // ts6-server cannot leave the session active. Bump authRev so a
-        // delayed stale tab cannot restore the prior pair over the tombstone.
+        // ts6-server cannot leave the session active. Memory-only bump +
+        // shouldPersistAuthBlob (cleared-over-live needs inRev > exRev) so a
+        // stale tab cannot wipe a peer session, while same-tab logout still
+        // tombstones ahead of delayed restores.
         set({
           accessToken: null,
           refreshToken: null,
           user: null,
-          authRev: nextAuthRev(get().authRev),
+          authRev: nextLogoutAuthRev(get().authRev),
         });
         // Peer-tab logout sync (BroadcastChannel) is wired from the API client
         // via this event — keeps the store free of api/ imports.

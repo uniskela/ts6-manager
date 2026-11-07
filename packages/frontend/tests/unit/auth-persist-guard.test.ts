@@ -41,13 +41,23 @@ describe('shouldPersistAuthBlob', () => {
     assert.equal(shouldPersistAuthBlob(null, blob({ refresh: 'R1', authRev: 1 })), true);
   });
 
-  it('allows same-refresh updates without requiring a newer authRev', () => {
+  it('allows same-refresh updates when authRev is equal or newer', () => {
     assert.equal(
       shouldPersistAuthBlob(
         blob({ refresh: 'R1', accessExp: 100, authRev: 2 }),
         blob({ refresh: 'R1', accessExp: 90, authRev: 2 }),
       ),
       true,
+    );
+  });
+
+  it('blocks same-refresh writes that rewind authRev', () => {
+    assert.equal(
+      shouldPersistAuthBlob(
+        blob({ refresh: 'R2', accessExp: 200, authRev: 10 }),
+        blob({ refresh: 'R2', accessExp: 200, authRev: 1 }),
+      ),
+      false,
     );
   });
 
@@ -97,6 +107,43 @@ describe('shouldPersistAuthBlob', () => {
     assert.equal(shouldPersistAuthBlob(blob({ refresh: 'R2', authRev: 4 }), cleared(5)), true);
   });
 
+  it('blocks a stale-tab logout tombstone over a newer peer session', () => {
+    assert.equal(
+      shouldPersistAuthBlob(blob({ refresh: 'R_new', authRev: 7 }), cleared(4)),
+      false,
+    );
+  });
+
+  it('blocks stale logout when tombstone rev only ties the peer session', () => {
+    // Peer rotated 5→6; stale tab at memory 5 logs out → cleared(6). Must not wipe.
+    assert.equal(
+      shouldPersistAuthBlob(blob({ refresh: 'R_peer', authRev: 6 }), cleared(6)),
+      false,
+    );
+  });
+
+  it('allows replacing an older logout tombstone with a newer one', () => {
+    assert.equal(shouldPersistAuthBlob(cleared(5), cleared(6)), true);
+  });
+
+  it('blocks equal-rev different-refresh writes (first persist wins)', () => {
+    // Two tabs independently advanced from the same base to the same rev.
+    assert.equal(
+      shouldPersistAuthBlob(
+        blob({ refresh: 'Ra', authRev: 6, userId: 1 }),
+        blob({ refresh: 'Rb', authRev: 6, userId: 2 }),
+      ),
+      false,
+    );
+  });
+
+  it('allows a newer login after a stale tab logout tombstone', () => {
+    assert.equal(
+      shouldPersistAuthBlob(cleared(4), blob({ refresh: 'R_new', accessExp: 100, authRev: 5 })),
+      true,
+    );
+  });
+
   it('blocks restore over a logout tombstone with an older authRev', () => {
     assert.equal(
       shouldPersistAuthBlob(cleared(5), blob({ refresh: 'R1', accessExp: 100, authRev: 4 })),
@@ -109,6 +156,29 @@ describe('shouldPersistAuthBlob', () => {
       shouldPersistAuthBlob(cleared(5), blob({ refresh: 'R1', accessExp: 100, authRev: 6 })),
       true,
     );
+  });
+
+  it('rejects when a peer advances between the first and second guard reads', () => {
+    // Mirrors authStorage setItem's double shouldPersistAuthBlob check.
+    // Not CAS: a write after the second read can still race past the guard.
+    const incoming = blob({ refresh: 'R2', authRev: 6 });
+    const firstExisting = blob({ refresh: 'R1', authRev: 5 });
+    assert.equal(shouldPersistAuthBlob(firstExisting, incoming), true);
+    const peerAdvanced = blob({ refresh: 'R3', authRev: 7 });
+    assert.equal(shouldPersistAuthBlob(peerAdvanced, incoming), false);
+  });
+
+  it('treats missing authRev as 0 so older missing-rev blobs lose to a real bump', () => {
+    const noRev = JSON.stringify({
+      state: {
+        accessToken: 'a.b.c',
+        refreshToken: 'R_old',
+        user: { id: 1, username: 'u', displayName: 'U', role: 'admin' },
+      },
+      version: 0,
+    });
+    assert.equal(shouldPersistAuthBlob(noRev, blob({ refresh: 'R_new', authRev: 1 })), true);
+    assert.equal(shouldPersistAuthBlob(blob({ refresh: 'R_new', authRev: 1 }), noRev), false);
   });
 
   it('fails open on malformed persist data so first-time sign-in is not blocked', () => {
