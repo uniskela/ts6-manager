@@ -18,6 +18,7 @@ import { listHumanMediaListeners } from '../media-listeners.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { CommandContext } from './context.js';
 import { tryClaimChatInfoReply } from './dedupe.js';
+import { mediaScope } from './media-access.js';
 
 function privateReply(context: CommandContext, bot: VoiceBot, clid: number, message: string): void {
   if (bot.floodHoldActive) return;
@@ -30,18 +31,6 @@ function privateReply(context: CommandContext, bot: VoiceBot, clid: number, mess
     const msg = err instanceof Error ? err.message : 'unknown';
     console.warn(`[MusicCmd] Private playlistvote reply failed: ${msg}`);
   }
-}
-
-async function mediaScope(context: CommandContext, bot: VoiceBot) {
-  const mapped = context.botChannelConfig.get(bot.currentConfig.id);
-  const config = mapped ?? await context.prisma.musicBot.findUnique({
-    where: { id: bot.currentConfig.id }, select: { serverConfigId: true, virtualServerId: true },
-  });
-  if (!config || config.serverConfigId !== bot.currentConfig.serverConfigId
-    || !Number.isSafeInteger(config.virtualServerId) || config.virtualServerId <= 0) {
-    throw new Error('Media server scope is unavailable');
-  }
-  return { configId: config.serverConfigId, sid: config.virtualServerId };
 }
 
 function loadPlaylist(prisma: PrismaClient, serverConfigId: number, playlistId: number): Promise<RequestPlaylist | null> {
