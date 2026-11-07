@@ -6,8 +6,10 @@
  *   only that userId+family (null family = legacy null-family rows only).
  * - First rotate of a null-family row assigns a nanoid family.
  * - Concurrent same-token refresh: CAS updateMany — one winner; loser 401
- *   without family revoke. Frontend multi-tab uses Web Lock `ts6-auth-refresh`;
- *   browsers without locks still rely on CAS (loser retries with new token).
+ *   without family revoke (proven with beforeRefreshRotate barriers). Uncontrolled
+ *   dual POST can land as post-commit R0 replay (family revoke) instead.
+ *   Frontend multi-tab uses Web Lock `ts6-auth-refresh`; browsers without locks
+ *   still rely on CAS (loser retries with new token).
  * - Admin deleteMany vs in-flight rotate: closed by mint inside $transaction
  *   (no sessionEpoch / shared helper required with P1-A).
  * - Login mint rechecks enabled + passwordHash in the same transaction as
@@ -88,12 +90,110 @@ async function putSelfPassword(base: string, body: { currentPassword: string; ne
   });
 }
 
-function postRefresh(base: string, refreshToken: string) {
-  return fetch(`${base}/api/auth/refresh`, {
+function postAuth(base: string, path: 'refresh' | 'logout', refreshToken: string) {
+  return fetch(`${base}/api/auth/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
   });
+}
+
+const postRefresh = (base: string, refreshToken: string) => postAuth(base, 'refresh', refreshToken);
+const postLogout = (base: string, refreshToken: string) => postAuth(base, 'logout', refreshToken);
+
+function weekFromNow() {
+  return new Date(Date.now() + 86_400_000);
+}
+
+async function seedRefreshRows(
+  rows: Array<{ token: string; family?: string | null; userId?: number }>,
+) {
+  const expiresAt = weekFromNow();
+  await prisma.refreshToken.createMany({
+    data: rows.map((row) => ({
+      token: row.token,
+      userId: row.userId ?? 1,
+      expiresAt,
+      family: row.family === undefined ? null : row.family,
+    })),
+  });
+}
+
+/** Pause every refresh after live lookup; release when `arriveAt` handlers park. */
+function armRefreshGate(arriveAt: number) {
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let arrived = 0;
+  let releaseArrived!: () => void;
+  const arrivedP = new Promise<void>((resolve) => {
+    releaseArrived = resolve;
+  });
+  setHooks({
+    beforeRefreshRotate: async () => {
+      arrived += 1;
+      if (arrived === arriveAt) releaseArrived();
+      await gate;
+    },
+  });
+  return {
+    waitUntilArrived: () => arrivedP,
+    release: () => releaseGate(),
+    clear: () => setHooks(undefined),
+  };
+}
+
+/** Rotate R0→R1, logout presenting R0, assert family gone and R1 dead. */
+async function assertLogoutOfConsumedPredecessor(opts: {
+  r0: string;
+  family: string | null;
+  keepToken: string;
+  keepFamily: string | null;
+}) {
+  await seedAlice();
+  await seedRefreshRows([
+    { token: opts.r0, family: opts.family },
+    { token: opts.keepToken, family: opts.keepFamily },
+  ]);
+  const base = await baseUrl();
+  const rotated = await postRefresh(base, opts.r0);
+  assert.equal(rotated.status, 200);
+  const { refreshToken: r1 } = (await rotated.json()) as { refreshToken: string };
+  const consumed = await prisma.refreshToken.findUniqueOrThrow({ where: { token: opts.r0 } });
+  assert.ok(consumed.family);
+  assert.equal(await prisma.refreshToken.count({ where: { token: opts.keepToken } }), 1);
+
+  const logout = await postLogout(base, opts.r0);
+  assert.equal(logout.status, 204);
+  assert.equal(await prisma.refreshToken.count({ where: { family: consumed.family } }), 0);
+  assert.equal(await prisma.refreshToken.count({ where: { token: opts.keepToken } }), 1);
+  assert.equal((await postRefresh(base, r1)).status, 401);
+}
+
+/** Logout while refresh is parked at beforeRefreshRotate — family must end empty. */
+async function assertLogoutInterleavesInFlightRefresh(token: string, family: string) {
+  await seedAlice();
+  await seedRefreshRows([{ token, family }]);
+  const base = await baseUrl();
+  const parked = armRefreshGate(1);
+  try {
+    const refreshInFlight = postRefresh(base, token);
+    await parked.waitUntilArrived();
+    assert.equal((await postLogout(base, token)).status, 204);
+    parked.release();
+    const refreshOutcome = await refreshInFlight;
+    assert.equal(await prisma.refreshToken.count({ where: { family } }), 0);
+    if (refreshOutcome.status === 200) {
+      const minted = (await refreshOutcome.json()) as { refreshToken: string };
+      assert.equal((await postRefresh(base, minted.refreshToken)).status, 401);
+    } else {
+      assert.equal(refreshOutcome.status, 401);
+    }
+  } finally {
+    parked.release();
+    parked.clear();
+  }
 }
 
 before(() => {
@@ -160,25 +260,32 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(await prisma.refreshToken.count({ where: { token: 'legacy-other' } }), 1);
   });
 
-  it('allows only one of two concurrent refreshes of the same token to succeed', async () => {
+  it('pre-commit CAS race: one winner; loser 401 without family revoke', async () => {
+    // Uncontrolled Promise.all can finish as post-commit replay (0 live rows).
+    // Gate both handlers after the live findUnique and before $transaction.
     await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.create({
-      data: { token: 'race-token', userId: 1, expiresAt, family: 'fam-race' },
-    });
+    await seedRefreshRows([{ token: 'race-token', family: 'fam-race' }]);
     const base = await baseUrl();
+    const barrier = armRefreshGate(2);
 
-    const [a, b] = await Promise.all([
-      postRefresh(base, 'race-token'),
-      postRefresh(base, 'race-token'),
-    ]);
+    const pendingA = postRefresh(base, 'race-token');
+    const pendingB = postRefresh(base, 'race-token');
+    await barrier.waitUntilArrived();
+    assert.equal(
+      await prisma.refreshToken.count({ where: { token: 'race-token', replacedBy: null } }),
+      1,
+      'both requests must still see a live R0 before either commits',
+    );
+    barrier.release();
+    const [a, b] = await Promise.all([pendingA, pendingB]);
+    barrier.clear();
     const statuses = [a.status, b.status].sort();
     assert.deepEqual(statuses, [200, 401]);
-    // Pre-commit CAS loser must not wipe the winner's family (one live successor).
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race', replacedBy: null } }), 1);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race' } }), 2);
   });
 
-  it('post-commit second presenter of R0 gets 401, family-revokes, and R1 is unusable', async () => {
+  it('post-commit duplicate R0: 401, family revoke, R1 unusable (no grace period)', async () => {
     // Kody finding #1: after R0→R1 commits, another legitimate R0 POST is
     // wire-identical to attacker replay — protocol cannot tell them apart.
     await seedAlice();
@@ -475,5 +582,34 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(newLogin.status, 200);
     const body = (await newLogin.json()) as { refreshToken?: string };
     assert.ok(body.refreshToken);
+  });
+
+  it('logout revokes presented family (named, null-legacy, unknown no-op)', async () => {
+    for (const opts of [
+      { r0: 'logout-r0', family: 'fam-logout' as string | null, keepToken: 'logout-other', keepFamily: 'fam-keep' as string | null },
+      { r0: 'null-r0', family: null, keepToken: 'other-null', keepFamily: null },
+    ]) {
+      await assertLogoutOfConsumedPredecessor(opts);
+    }
+
+    await seedAlice();
+    await seedRefreshRows([
+      { token: 'live-new', family: 'fam-new' },
+      { token: 'null-live', family: null },
+      { token: 'null-sibling', family: null },
+      { token: 'named-keep', family: 'fam-named' },
+    ]);
+    const base = await baseUrl();
+    assert.equal((await postLogout(base, 'stale-other-family-token')).status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'live-new' } }), 1);
+    assert.equal((await postRefresh(base, 'live-new')).status, 200);
+
+    assert.equal((await postLogout(base, 'null-live')).status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { userId: 1, family: null } }), 0);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'named-keep' } }), 1);
+  });
+
+  it('logout racing refresh cannot leave a live successor', async () => {
+    await assertLogoutInterleavesInFlightRefresh('race-logout', 'fam-race-lo');
   });
 });

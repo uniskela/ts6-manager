@@ -287,8 +287,11 @@ function mintAccessToken({ seq, ttlSeconds = 900 }) {
   return `${header}.${payload}.test`;
 }
 
-function mintRefreshToken(seq) {
-  return `brand-test-refresh-${seq}`;
+let refreshMintSeq = 0;
+
+function mintRefreshToken() {
+  refreshMintSeq += 1;
+  return `brand-test-refresh-${refreshMintSeq}`;
 }
 
 function resetRefreshFamily() {
@@ -299,12 +302,13 @@ function resetRefreshFamily() {
 }
 
 function ensureRefreshFamily() {
-  // Keep a revoked family until /__test/reset — recreating would mint the same
-  // brand-test-refresh-1 again and make post-logout refresh look valid.
+  // Keep a revoked family until /__test/reset — recreating must not reuse a
+  // previously issued refresh string (logout/replay of an abandoned family
+  // would otherwise collide with the new live token).
   if (refreshFamily) return refreshFamily;
   refreshFamily = {
-    family: `test-family-${Date.now()}`,
-    live: mintRefreshToken(1),
+    family: `test-family-${Date.now()}-${refreshMintSeq}`,
+    live: mintRefreshToken(),
     seq: 1,
     consumed: new Map(),
     revoked: false,
@@ -322,16 +326,23 @@ function authUserPayload() {
 }
 
 function loginTokenPair() {
-  // A fresh login after revoke starts a new family (mirrors server mint).
-  if (!refreshFamily || refreshFamily.revoked || !refreshFamily.live) {
-    resetRefreshFamily();
-  }
+  // Each login mints a new family (mirrors server). A prior live family is
+  // abandoned — logout presenting its tokens must not revoke this new family.
+  resetRefreshFamily();
   const family = ensureRefreshFamily();
   return {
     accessToken: mintAccessToken({ seq: family.seq, ttlSeconds: 900 }),
     refreshToken: family.live,
     user: authUserPayload(),
   };
+}
+
+function logoutPresented(presented) {
+  if (!refreshFamily || !presented) return;
+  if (presented === refreshFamily.live || refreshFamily.consumed.has(presented)) {
+    refreshFamily.revoked = true;
+    refreshFamily.live = null;
+  }
 }
 
 function rotateRefresh(presented) {
@@ -350,7 +361,7 @@ function rotateRefresh(presented) {
     return { status: 401, body: { error: 'Invalid refresh token' } };
   }
   const nextSeq = family.seq + 1;
-  const nextRefresh = mintRefreshToken(nextSeq);
+  const nextRefresh = mintRefreshToken();
   family.consumed.set(presented, nextRefresh);
   family.live = nextRefresh;
   family.seq = nextSeq;
@@ -616,11 +627,8 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (allowTestAuth && url.pathname === '/api/auth/logout' && req.method === 'POST') {
-      await readJson(req);
-      if (refreshFamily) {
-        refreshFamily.revoked = true;
-        refreshFamily.live = null;
-      }
+      const body = await readJson(req);
+      logoutPresented(body.refreshToken);
       res.statusCode = 204;
       res.end();
       return;
