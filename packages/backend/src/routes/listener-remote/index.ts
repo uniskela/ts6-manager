@@ -2,6 +2,7 @@ import { Router, json } from 'express';
 import { registerAdminRoutes } from './admin.js';
 import { registerLibraryRoutes } from './library.js';
 import { registerPlaylistRoutes } from './playlists.js';
+import { registerPlaylistRequestRoutes } from './playlist-requests.js';
 import { registerRequestRoutes } from './requests.js';
 import { registerSearchRoutes } from './search.js';
 import { registerSessionRoutes } from './session.js';
@@ -16,6 +17,7 @@ listenerRemoteRoutes.use(json({ limit: '4kb' }));
 registerSessionRoutes(listenerRemoteRoutes);
 registerLibraryRoutes(listenerRemoteRoutes);
 registerPlaylistRoutes(listenerRemoteRoutes);
+registerPlaylistRequestRoutes(listenerRemoteRoutes);
 registerRequestRoutes(listenerRemoteRoutes);
 registerSearchRoutes(listenerRemoteRoutes);
 
