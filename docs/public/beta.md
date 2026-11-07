@@ -134,7 +134,7 @@ It refuses stable `vX.Y.Z` tags. Those stay on [publish-images.yml](https://gith
 
 ## Documentation versions
 
-After this page merges to `main`, [uniskela/com](https://github.com/uniskela/com) can import it on **Next** (`/docs/ts6-manager/next/beta/`). The stable 1.11 site (`/docs/ts6-manager/1.11/` and `/docs/ts6-manager/latest/`) stays on the last 1.11 release snapshot. Do not run a 1.11 docs correction to add this page.
+After this page merges to `main`, the [TS6 Manager website](https://github.com/uniskela/ts6-manager-website) can import it on **Next** (`/docs/next/beta/`). The stable 1.11 site (`/docs/1.11/` and `/docs/latest/`) stays on the last 1.11 release snapshot. Do not run a 1.11 docs correction to add this page.
 
 Until then, read the file in the pull request on GitHub.
 
