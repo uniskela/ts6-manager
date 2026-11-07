@@ -1,6 +1,6 @@
 # B3 → B4 / B4a / B4b dependency notes
 
-Status: B3 implements remote propose/vote/queue. Chat voting (B4+) waits on B3 + R2 + owner GO.
+Status: **B3 merged** to `main` as `9ec216a5b0acc0c75539fb449d0c62efbf8ff6cb` (#624, reviewed tip `9f03e54`). Chat voting (B4+) waits on its own R2 + owner GO. See `2026-11-07-b4-playlistvote-integration.md`.
 
 ## Shared voting code (do not parallel-edit)
 
