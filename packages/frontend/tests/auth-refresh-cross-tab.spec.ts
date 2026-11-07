@@ -2,9 +2,13 @@ import { expect, test, type APIRequestContext, type Browser, type Page } from '@
 import {
   e2eAuth,
   enableAuth,
+  muteAuthPersist,
   openSecondTab,
+  redactAuthDiag,
+  redactRefreshStateDiag,
   refreshState,
   signIn,
+  unmuteAuthPersist,
 } from './helpers/auth-refresh-e2e';
 
 type AuthBlob = {
@@ -12,6 +16,7 @@ type AuthBlob = {
     accessToken: string | null;
     refreshToken: string | null;
     user: { id: number; username: string; displayName: string; role: string } | null;
+    authRev?: number;
   };
   version: number;
 };
@@ -70,19 +75,9 @@ test.describe('real two-tab refresh coordination', () => {
     const hooksA = await e2eAuth(page);
     const hooksB = await e2eAuth(pageB);
 
-    // Tab B still holds R1 in memory. Mute its ts6-auth writes so a same-refresh
-    // re-persist of valid access cannot undo Tab A's memory-only expiry and make
-    // refreshNow adopt without rotating.
-    await pageB.evaluate(() => {
-      const raw = localStorage.setItem.bind(localStorage);
-      localStorage.setItem = (key: string, value: string) => {
-        if (key === 'ts6-auth') return;
-        raw(key, value);
-      };
-      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist = () => {
-        localStorage.setItem = raw;
-      };
-    });
+    // Sequencing only: mute follower writes while the leader expires+rotates.
+    // Production stale-write coverage lives in the unmuted test below.
+    await muteAuthPersist(pageB);
 
     await hooksA.expireAccessInMemory();
     const memAfterExpire = await hooksA.getMemoryTokens();
@@ -91,15 +86,18 @@ test.describe('real two-tab refresh coordination', () => {
     expect(rotatedAccess).toBeTruthy();
     try {
       await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).not.toBe(initial.refreshToken);
-    } catch (err) {
+    } catch {
       const mem = await hooksA.getMemoryTokens();
       const persisted = await readPersistedAuth(page);
       const state = await refreshState(request);
       throw new Error(
         `Tab A did not persist rotation after refreshNow. `
-        + `beforeRefresh mem=${JSON.stringify(memAfterExpire)} persist=${JSON.stringify(persistAfterExpire)} `
-        + `after mem=${JSON.stringify(mem)} persist=${JSON.stringify(persisted)} `
-        + `refreshState=${JSON.stringify(state)} rotatedAccessEqInitial=${rotatedAccess === initial.accessToken}`,
+        + `beforeRefresh mem=${JSON.stringify(redactAuthDiag(memAfterExpire))} `
+        + `persist=${JSON.stringify(redactAuthDiag(persistAfterExpire))} `
+        + `after mem=${JSON.stringify(redactAuthDiag(mem))} `
+        + `persist=${JSON.stringify(redactAuthDiag(persisted))} `
+        + `refreshState=${JSON.stringify(redactRefreshStateDiag(state))} `
+        + `rotatedAccessEqInitial=${rotatedAccess === initial.accessToken}`,
       );
     }
     const afterA = await readPersistedAuth(page);
@@ -108,15 +106,11 @@ test.describe('real two-tab refresh coordination', () => {
     const staleMem = await hooksB.getMemoryTokens();
     expect(staleMem.refreshToken).toBe(initial.refreshToken);
 
-    // Tab B must observe Tab A's persist before memory-only expiry (shared LS).
     await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(afterA.refreshToken);
 
-    await pageB.evaluate(() => {
-      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist?.();
-    });
+    await unmuteAuthPersist(pageB);
 
     await hooksB.expireAccessInMemory();
-    // Harness must not rewind peer rotation when expiring access in memory.
     await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(afterA.refreshToken);
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
 
@@ -126,7 +120,9 @@ test.describe('real two-tab refresh coordination', () => {
       const persisted = await readPersistedAuth(pageB);
       const state = await refreshState(request);
       throw new Error(
-        `adopt returned null mem=${JSON.stringify(mem)} persist=${JSON.stringify(persisted)} refreshState=${JSON.stringify(state)}`,
+        `adopt returned null mem=${JSON.stringify(redactAuthDiag(mem))} `
+        + `persist=${JSON.stringify(redactAuthDiag(persisted))} `
+        + `refreshState=${JSON.stringify(redactRefreshStateDiag(state))}`,
       );
     }
     expect(adopted).toBe(afterA.accessToken);
@@ -142,6 +138,36 @@ test.describe('real two-tab refresh coordination', () => {
     expect(state.revoked).toBe(false);
   });
 
+  test('persist guard blocks unmuted stale follower rewrite after peer rotation', async ({ page, context, request }) => {
+    await signIn(page);
+    const initial = await readPersistedAuth(page);
+    const pageB = await openSecondTab(context);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
+
+    const staleBefore = await hooksB.getMemoryTokens();
+    expect(staleBefore.refreshToken).toBe(initial.refreshToken);
+    expect(staleBefore.authRev).toBe(initial.authRev ?? 0);
+
+    // No mute: follower may flush freely. Leader rotates to a newer authRev.
+    await hooksA.expireAccessInMemory();
+    const rotated = await hooksA.refreshNow();
+    expect(rotated).toBeTruthy();
+    await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).not.toBe(initial.refreshToken);
+    const afterA = await readPersistedAuth(page);
+    expect((afterA.authRev ?? 0)).toBeGreaterThan(initial.authRev ?? 0);
+    expect((await refreshState(request)).rotateCount).toBe(1);
+
+    // Follower still holds R0 + old authRev in memory — flush through zustand persist.
+    expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
+    await hooksB.flushPersistFromMemory();
+
+    const afterStaleFlush = await readPersistedAuth(page);
+    expect(afterStaleFlush.refreshToken).toBe(afterA.refreshToken);
+    expect(afterStaleFlush.accessToken).toBe(afterA.accessToken);
+    expect(afterStaleFlush.authRev).toBe(afterA.authRev);
+  });
+
   test('after logout+login, Web Lock refresh restores peer adoption', async ({ page, context, request }) => {
     // Secure loopback has navigator.locks — exercises resolveRefresh + markLocalRefreshSuccess.
     await signIn(page);
@@ -153,7 +179,6 @@ test.describe('real two-tab refresh coordination', () => {
     expect(caps.secure).toBe(true);
 
     const hooksA = await e2eAuth(page);
-    // logoutLocal navigates to /login (AppLayout) — wait so evaluate is not aborted.
     await Promise.all([
       page.waitForURL('**/login'),
       page.evaluate(() => {
@@ -163,7 +188,6 @@ test.describe('real two-tab refresh coordination', () => {
     await signIn(page);
     const hooksAfterLogin = await e2eAuth(page);
 
-    // Local refresh after session replace must clear ignorePeerResults.
     await hooksAfterLogin.expireAccessInMemory();
     const localRefresh = await hooksAfterLogin.refreshNow();
     expect(localRefresh).toBeTruthy();
@@ -177,7 +201,6 @@ test.describe('real two-tab refresh coordination', () => {
     const afterPeer = await readPersistedAuth(page);
     expect(afterPeer.refreshToken).not.toBe(afterLocal.refreshToken);
 
-    // Tab A still holds the pre-peer refresh in memory — must adopt, not logout.
     const staleA = await hooksAfterLogin.getMemoryTokens();
     expect(staleA.refreshToken).toBe(afterLocal.refreshToken);
     await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).toBe(afterPeer.refreshToken);
@@ -200,21 +223,11 @@ test.describe('real two-tab refresh coordination', () => {
     const hooksA = await e2eAuth(page);
     const hooksB = await e2eAuth(pageB);
 
-    await pageB.evaluate(() => {
-      const raw = localStorage.setItem.bind(localStorage);
-      localStorage.setItem = (key: string, value: string) => {
-        if (key === 'ts6-auth') return;
-        raw(key, value);
-      };
-      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist = () => {
-        localStorage.setItem = raw;
-      };
-    });
+    await muteAuthPersist(pageB);
 
     await hooksA.expireAccessInMemory();
     const rotated = await hooksA.refreshNow();
     expect(rotated).toBeTruthy();
-    // Persist can briefly lag or be contested by the peer tab's store; wait for R1.
     await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).not.toBe(initial.refreshToken);
     const peer = await readPersistedAuth(page);
     expect((await refreshState(request)).rotateCount).toBeGreaterThanOrEqual(1);
@@ -223,9 +236,7 @@ test.describe('real two-tab refresh coordination', () => {
     await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(peer.refreshToken);
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
 
-    await pageB.evaluate(() => {
-      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist?.();
-    });
+    await unmuteAuthPersist(pageB);
 
     const resumed = await hooksB.refreshNow();
     if (!resumed) {
@@ -233,7 +244,9 @@ test.describe('real two-tab refresh coordination', () => {
       const persisted = await readPersistedAuth(pageB);
       const state = await refreshState(request);
       throw new Error(
-        `resume returned null mem=${JSON.stringify(mem)} persist=${JSON.stringify(persisted)} refreshState=${JSON.stringify(state)}`,
+        `resume returned null mem=${JSON.stringify(redactAuthDiag(mem))} `
+        + `persist=${JSON.stringify(redactAuthDiag(persisted))} `
+        + `refreshState=${JSON.stringify(redactRefreshStateDiag(state))}`,
       );
     }
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(peer.refreshToken);
@@ -251,6 +264,7 @@ test.describe('real two-tab refresh coordination', () => {
     const after = await readPersistedAuth(page);
     expect(after.refreshToken).toBe(before.refreshToken);
     expect(after.accessToken).toBe(before.accessToken);
+    expect(after.authRev).toBe(before.authRev);
   });
 
   test('consumed refresh replay revokes the family', async ({ page, request }) => {

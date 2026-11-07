@@ -371,15 +371,25 @@ function installE2EAuthHooks(): void {
   if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
   (window as Window & {
     __ts6AuthTest?: {
-      getMemoryTokens: () => { accessToken: string | null; refreshToken: string | null };
+      getMemoryTokens: () => {
+        accessToken: string | null;
+        refreshToken: string | null;
+        authRev: number;
+      };
       expireAccessInMemory: () => Promise<void>;
+      /** Re-persist current in-memory auth through zustand (exercises shouldPersistAuthBlob). */
+      flushPersistFromMemory: () => void;
       refreshNow: () => Promise<string | null>;
       logoutLocal: () => void;
     };
   }).__ts6AuthTest = {
     getMemoryTokens: () => {
-      const { accessToken, refreshToken } = useAuthStore.getState();
-      return { accessToken, refreshToken };
+      const { accessToken, refreshToken, authRev } = useAuthStore.getState();
+      return { accessToken, refreshToken, authRev };
+    },
+    flushPersistFromMemory: () => {
+      const { accessToken, refreshToken, user, authRev } = useAuthStore.getState();
+      useAuthStore.setState({ accessToken, refreshToken, user, authRev });
     },
     expireAccessInMemory: async () => {
       const mem = useAuthStore.getState();

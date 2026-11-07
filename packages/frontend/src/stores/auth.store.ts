@@ -13,6 +13,12 @@ interface AuthStore {
   accessToken: string | null;
   refreshToken: string | null;
   user: UserInfo | null;
+  /**
+   * Monotonic session revision persisted with tokens. Bumped on login,
+   * refresh-token rotation, and logout so a stale tab cannot rewrite
+   * `ts6-auth` over a peer advance. Not derived from JWT `exp`.
+   */
+  authRev: number;
   setAuth: (accessToken: string, refreshToken: string, user: UserInfo) => void;
   setTokens: (accessToken: string, refreshToken: string) => void;
   setUser: (user: UserInfo) => void;
@@ -27,42 +33,49 @@ type PersistedAuthBlob = {
     accessToken?: string | null;
     refreshToken?: string | null;
     user?: UserInfo | null;
+    authRev?: number;
   };
 };
 
-function accessExp(token: string | null | undefined): number | null {
-  if (!token) return null;
-  try {
-    const part = token.split('.')[1];
-    if (!part) return null;
-    const base64 = part.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, '=');
-    const payload = JSON.parse(atob(padded)) as { exp?: unknown };
-    return typeof payload.exp === 'number' ? payload.exp : null;
-  } catch {
-    return null;
-  }
+function blobRev(blob: PersistedAuthBlob): number {
+  const rev = blob.state?.authRev;
+  return typeof rev === 'number' && Number.isFinite(rev) ? rev : 0;
+}
+
+function isClearedAuth(blob: PersistedAuthBlob): boolean {
+  return !blob.state?.accessToken && !blob.state?.refreshToken;
 }
 
 /**
- * Refuse to let a stale tab rewrite `ts6-auth` over a peer rotation.
- * When refresh tokens differ, keep the blob whose access JWT has the newer `exp`.
+ * Refuse to let a stale tab rewrite `ts6-auth` over a newer session revision.
+ * Ordering uses persisted `authRev` (bumped on login / refresh rotation /
+ * logout) — never JWT `exp`, which can tie across rotations or lag a new login.
  */
 export function shouldPersistAuthBlob(existingRaw: string | null, incomingRaw: string): boolean {
   if (!existingRaw) return true;
   try {
     const existing = JSON.parse(existingRaw) as PersistedAuthBlob;
     const incoming = JSON.parse(incomingRaw) as PersistedAuthBlob;
+    const exRev = blobRev(existing);
+    const inRev = blobRev(incoming);
+
+    // Explicit logout / clear always wins (caller bumps authRev first).
+    if (isClearedAuth(incoming)) return true;
+
+    // Never-authenticated empty slot (no tombstone rev).
+    if (isClearedAuth(existing) && exRev === 0) return true;
+
+    // Logout tombstone: only a newer revision (fresh login) may restore tokens.
+    if (isClearedAuth(existing)) return inRev > exRev;
+
     const exRef = existing.state?.refreshToken;
     const inRef = incoming.state?.refreshToken;
-    if (!exRef || !inRef || exRef === inRef) return true;
-    // Clear/logout always wins.
-    if (!incoming.state?.accessToken && !inRef) return true;
-    if (!incoming.state?.accessToken) return true;
-    const exExp = accessExp(existing.state?.accessToken ?? null);
-    const inExp = accessExp(incoming.state?.accessToken ?? null);
-    if (exExp == null || inExp == null) return true;
-    return inExp >= exExp;
+
+    // Same refresh: allow access-only updates (e.g. e2e memory expiry pin).
+    if (exRef && inRef && exRef === inRef) return true;
+
+    // Different refresh (rotation, account switch) or missing side: newer rev wins.
+    return inRev > exRev;
   } catch {
     return true;
   }
@@ -82,6 +95,10 @@ const authStorage = createJSONStorage(() => {
   };
 });
 
+function nextAuthRev(current: number): number {
+  return current + 1;
+}
+
 // M9: Tokens stored in localStorage. This is an accepted tradeoff — no XSS vectors
 // exist in the frontend (no dangerouslySetInnerHTML, no eval). If XSS is introduced,
 // consider moving to httpOnly cookies or in-memory storage.
@@ -91,9 +108,15 @@ export const useAuthStore = create<AuthStore>()(
       accessToken: null,
       refreshToken: null,
       user: null,
+      authRev: 0,
       setAuth: (accessToken, refreshToken, user) => {
         const previousRefreshToken = get().refreshToken;
-        set({ accessToken, refreshToken, user });
+        set({
+          accessToken,
+          refreshToken,
+          user,
+          authRev: nextAuthRev(get().authRev),
+        });
         // New login/session — drop cross-tab refresh cache so a prior account's
         // tokens cannot be adopted. Same-account refresh uses setTokens only.
         try {
@@ -106,13 +129,28 @@ export const useAuthStore = create<AuthStore>()(
           // Coordination is best-effort; login must still complete.
         }
       },
-      setTokens: (accessToken, refreshToken) =>
-        set({ accessToken, refreshToken }),
+      setTokens: (accessToken, refreshToken) => {
+        const prevRefresh = get().refreshToken;
+        // Bump only when the refresh token changes (rotation / session replace).
+        // Same-refresh access updates keep authRev so peers with an older rev
+        // cannot win by rewriting access alone after a rotation.
+        if (prevRefresh !== refreshToken) {
+          set({ accessToken, refreshToken, authRev: nextAuthRev(get().authRev) });
+        } else {
+          set({ accessToken, refreshToken });
+        }
+      },
       setUser: (user) => set({ user }),
       logout: () => {
         // Clear auth first so a localStorage throw while persisting
-        // ts6-server cannot leave the session active.
-        set({ accessToken: null, refreshToken: null, user: null });
+        // ts6-server cannot leave the session active. Bump authRev so a
+        // delayed stale tab cannot restore the prior pair over the tombstone.
+        set({
+          accessToken: null,
+          refreshToken: null,
+          user: null,
+          authRev: nextAuthRev(get().authRev),
+        });
         // Peer-tab logout sync (BroadcastChannel) is wired from the API client
         // via this event — keeps the store free of api/ imports.
         try {
