@@ -32,6 +32,7 @@ export const BUILTIN_COMMAND_HELP: { name: string; usage: string; blurb: string 
   { name: 'pause', usage: '!pause', blurb: 'Pause / resume' },
   { name: 'skip', usage: '!skip', blurb: 'Skip to next track' },
   { name: 'voteskip', usage: '!voteskip', blurb: 'Vote to skip: more than half of human listeners in the bot channel' },
+  { name: 'playlistvote', usage: '!playlistvote yes|no', blurb: 'Vote on an open whole-playlist request in the bot channel' },
   { name: 'remote', usage: '!remote [bot name]', blurb: 'Get a private one-time listener remote link for a bot in your channel' },
   { name: 'next', usage: '!next', blurb: 'Alias for !skip' },
   { name: 'prev', usage: '!prev', blurb: 'Previous track' },

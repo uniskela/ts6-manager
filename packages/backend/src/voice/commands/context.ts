@@ -164,6 +164,8 @@ export interface CommandContext extends CommandMethods {
   registeredBots: Set<number>;
   eventBridge: EventBridge | null;
   readonly listenerRemote: ListenerRemoteService | null;
+  /** Controllable clock for playlist-vote deadlines (tests); defaults to Date.now. */
+  playlistVoteNow(): number;
   readonly flowCommandLookup: FlowCommandLookup | null;
   eventBridgeListening: boolean;
   botChannelConfig: Map<number, BotChannelConfig>;
