@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { useAuthStore } from '../stores/auth.store';
+import { shouldPersistAuthBlob, useAuthStore } from '../stores/auth.store';
 import { useMediaSwitchStore } from '../stores/media-switch.store';
 import { conflictIsReplaceable, isMediaSessionConflict, withReplaceSessionIds } from '../lib/media-switch';
 import {
@@ -428,7 +428,11 @@ function installE2EAuthHooks(): void {
         useAuthStore.setState({ accessToken: expiredAccess });
       } finally {
         localStorage.setItem = rawSet;
-        rawSet('ts6-auth', pinned);
+        // Re-check at commit time: a peer rotation may have landed after snapRaw.
+        // Bypass authStorage otherwise and rewind R2→R1.
+        if (shouldPersistAuthBlob(localStorage.getItem('ts6-auth'), pinned)) {
+          rawSet('ts6-auth', pinned);
+        }
       }
     },
     refreshNow: () => refreshAccessToken(),

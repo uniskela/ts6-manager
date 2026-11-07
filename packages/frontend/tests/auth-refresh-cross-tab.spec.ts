@@ -70,6 +70,20 @@ test.describe('real two-tab refresh coordination', () => {
     const hooksA = await e2eAuth(page);
     const hooksB = await e2eAuth(pageB);
 
+    // Tab B still holds R1 in memory. Mute its ts6-auth writes so a same-refresh
+    // re-persist of valid access cannot undo Tab A's memory-only expiry and make
+    // refreshNow adopt without rotating.
+    await pageB.evaluate(() => {
+      const raw = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (key: string, value: string) => {
+        if (key === 'ts6-auth') return;
+        raw(key, value);
+      };
+      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist = () => {
+        localStorage.setItem = raw;
+      };
+    });
+
     await hooksA.expireAccessInMemory();
     const memAfterExpire = await hooksA.getMemoryTokens();
     const persistAfterExpire = await readPersistedAuth(page);
@@ -96,6 +110,10 @@ test.describe('real two-tab refresh coordination', () => {
 
     // Tab B must observe Tab A's persist before memory-only expiry (shared LS).
     await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(afterA.refreshToken);
+
+    await pageB.evaluate(() => {
+      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist?.();
+    });
 
     await hooksB.expireAccessInMemory();
     // Harness must not rewind peer rotation when expiring access in memory.
@@ -182,6 +200,17 @@ test.describe('real two-tab refresh coordination', () => {
     const hooksA = await e2eAuth(page);
     const hooksB = await e2eAuth(pageB);
 
+    await pageB.evaluate(() => {
+      const raw = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (key: string, value: string) => {
+        if (key === 'ts6-auth') return;
+        raw(key, value);
+      };
+      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist = () => {
+        localStorage.setItem = raw;
+      };
+    });
+
     await hooksA.expireAccessInMemory();
     const rotated = await hooksA.refreshNow();
     expect(rotated).toBeTruthy();
@@ -193,6 +222,10 @@ test.describe('real two-tab refresh coordination', () => {
     await pageB.bringToFront();
     await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(peer.refreshToken);
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
+
+    await pageB.evaluate(() => {
+      (window as unknown as { __ts6UnmuteAuthPersist?: () => void }).__ts6UnmuteAuthPersist?.();
+    });
 
     const resumed = await hooksB.refreshNow();
     if (!resumed) {
