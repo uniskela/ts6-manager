@@ -14,6 +14,7 @@ import {
   coordinateRefreshOwnership,
   getAuthRefreshCoordinationEpoch,
   isPersistedRefreshAdoptionAllowed,
+  markLocalRefreshSuccess,
   resetAuthRefreshCoordForTests,
 } from '../../src/api/auth-refresh-coord.ts';
 
@@ -190,5 +191,32 @@ describe('refresh persist adoption identity gates', () => {
     assert.equal(isPersistedRefreshAdoptionAllowed('r0'), false);
     await coordinateRefreshOwnership(async () => ({ accessToken: 'a1', refreshToken: 'r1' }));
     assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), true);
+  });
+
+  it('markLocalRefreshSuccess restores peer adoption only for the current epoch', () => {
+    clearAuthRefreshCoordination('r-prior');
+    const epoch = getAuthRefreshCoordinationEpoch();
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), false);
+    assert.equal(
+      markLocalRefreshSuccess({ accessToken: aliceRotated, refreshToken: 'r-local' }, epoch - 1),
+      false,
+      'stale epoch must not clear guards',
+    );
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), false);
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-prior'), false, 'blocked prior preserved');
+    assert.equal(
+      markLocalRefreshSuccess({ accessToken: aliceRotated, refreshToken: 'r-local' }, epoch),
+      true,
+    );
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), true);
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-prior'), false, 'blocked prior still preserved');
+  });
+
+  it('failed or empty pairs do not clear session-replacement guards', () => {
+    clearAuthRefreshCoordination('r-old');
+    const epoch = getAuthRefreshCoordinationEpoch();
+    assert.equal(markLocalRefreshSuccess({ accessToken: '', refreshToken: 'r-x' }, epoch), false);
+    assert.equal(markLocalRefreshSuccess({ accessToken: aliceAccess, refreshToken: '' }, epoch), false);
+    assert.equal(isPersistedRefreshAdoptionAllowed('r-peer'), false);
   });
 });

@@ -8,6 +8,7 @@ import {
   coordinateRefreshOwnership,
   getAuthRefreshCoordinationEpoch,
   isPersistedRefreshAdoptionAllowed,
+  markLocalRefreshSuccess,
   runWithoutLogoutBroadcast,
   setAuthRefreshPeerLogoutHandler,
 } from './auth-refresh-coord';
@@ -248,7 +249,10 @@ async function refreshAccessToken(): Promise<string | null> {
         return null;
       }
       const pair = await runRefresh(latest);
-      return pair?.accessToken ?? null;
+      if (!pair) return null;
+      // Web Lock path must clear ignorePeerResults like BC ownership does.
+      markLocalRefreshSuccess(pair, startEpoch);
+      return pair.accessToken;
     };
     if (typeof navigator !== 'undefined' && navigator.locks) {
       return navigator.locks.request('ts6-auth-refresh', resolveRefresh);

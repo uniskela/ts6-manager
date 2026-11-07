@@ -95,6 +95,55 @@ test.describe('real two-tab refresh coordination', () => {
     expect(state.revoked).toBe(false);
   });
 
+  test('after logout+login, Web Lock refresh restores peer adoption', async ({ page, context, request }) => {
+    // Secure loopback has navigator.locks — exercises resolveRefresh + markLocalRefreshSuccess.
+    await signIn(page);
+    const caps = await page.evaluate(() => ({
+      locks: typeof navigator !== 'undefined' && Boolean(navigator.locks),
+      secure: window.isSecureContext,
+    }));
+    expect(caps.locks).toBe(true);
+    expect(caps.secure).toBe(true);
+
+    const hooksA = await e2eAuth(page);
+    // logoutLocal navigates to /login (AppLayout) — wait so evaluate is not aborted.
+    await Promise.all([
+      page.waitForURL('**/login'),
+      page.evaluate(() => {
+        (window as unknown as { __ts6AuthTest: { logoutLocal: () => void } }).__ts6AuthTest.logoutLocal();
+      }),
+    ]);
+    await signIn(page);
+    const hooksAfterLogin = await e2eAuth(page);
+
+    // Local refresh after session replace must clear ignorePeerResults.
+    await hooksAfterLogin.expireAccessInMemory();
+    const localRefresh = await hooksAfterLogin.refreshNow();
+    expect(localRefresh).toBeTruthy();
+    const afterLocal = await readPersistedAuth(page);
+
+    const pageB = await openSecondTab(context);
+    const hooksB = await e2eAuth(pageB);
+    await hooksB.expireAccessInMemory();
+    const peerRotated = await hooksB.refreshNow();
+    expect(peerRotated).toBeTruthy();
+    const afterPeer = await readPersistedAuth(page);
+    expect(afterPeer.refreshToken).not.toBe(afterLocal.refreshToken);
+
+    // Tab A still holds the pre-peer refresh in memory — must adopt, not logout.
+    const staleA = await hooksAfterLogin.getMemoryTokens();
+    expect(staleA.refreshToken).toBe(afterLocal.refreshToken);
+    await hooksAfterLogin.expireAccessInMemory();
+    const adopted = await hooksAfterLogin.refreshNow();
+    expect(adopted).toBeTruthy();
+    expect(adopted).toBe(afterPeer.accessToken);
+    expect((await hooksAfterLogin.getMemoryTokens()).refreshToken).toBe(afterPeer.refreshToken);
+
+    const state = await refreshState(request);
+    expect(state.replayRevokes).toBe(0);
+    expect(state.revoked).toBe(false);
+  });
+
   test('background tab resumes after peer refresh', async ({ page, context, request }) => {
     await signIn(page);
     const pageB = await openSecondTab(context, '/settings');

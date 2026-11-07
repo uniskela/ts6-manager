@@ -25,7 +25,7 @@ export type AuthRefreshBcMessage =
   | { v: 1; type: 'result'; tabId: string; ok: false }
   | { v: 1; type: 'logout'; tabId: string };
 
-type TokenPair = { accessToken: string; refreshToken: string };
+export type TokenPair = { accessToken: string; refreshToken: string };
 
 let tabIdMemo: string | null = null;
 let channel: BroadcastChannel | null | undefined;
@@ -141,6 +141,21 @@ export function isPersistedRefreshAdoptionAllowed(refreshToken: string): boolean
   if (!refreshToken) return false;
   if (ignorePeerResults) return false;
   if (blockedRefreshTokens.has(refreshToken)) return false;
+  return true;
+}
+
+/**
+ * After a successful *local* refresh that still belongs to `startEpoch`,
+ * re-enable same-account peer adoption. Does not clear blocked prior-session
+ * tokens. No-op when the session was replaced mid-flight.
+ */
+export function markLocalRefreshSuccess(pair: TokenPair, startEpoch: number): boolean {
+  if (!pair.accessToken || !pair.refreshToken) return false;
+  if (coordinationEpoch !== startEpoch) return false;
+  // Only unstick the new live token if it was previously blocked; keep others.
+  blockedRefreshTokens.delete(pair.refreshToken);
+  ignorePeerResults = false;
+  lastGoodResult = { ...pair, at: Date.now() };
   return true;
 }
 
@@ -292,12 +307,9 @@ export async function coordinateRefreshOwnership(
   const ch = getChannel();
   ensureListener();
   if (!ch) {
+    const startEpoch = coordinationEpoch;
     const pair = await executeRefresh();
-    if (pair) {
-      blockedRefreshTokens.delete(pair.refreshToken);
-      ignorePeerResults = false;
-      lastGoodResult = { ...pair, at: Date.now() };
-    }
+    if (pair) markLocalRefreshSuccess(pair, startEpoch);
     return pair;
   }
 
@@ -380,9 +392,7 @@ export async function coordinateRefreshOwnership(
     const pair = await executeRefresh();
     try {
       if (pair) {
-        blockedRefreshTokens.delete(pair.refreshToken);
-        ignorePeerResults = false;
-        lastGoodResult = { ...pair, at: Date.now() };
+        markLocalRefreshSuccess(pair, startEpoch);
         ch.postMessage({
           v: 1,
           type: 'result',
