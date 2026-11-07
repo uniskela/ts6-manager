@@ -112,7 +112,7 @@ describe('BroadcastChannel refresh ownership helpers', () => {
 
   it('logout clears cached result so a later cycle cannot reuse it', async () => {
     await coordinateRefreshOwnership(async () => ({ accessToken: 'a1', refreshToken: 'r1' }));
-    broadcastAuthLogout();
+    broadcastAuthLogout(1);
     let networkCalls = 0;
     const pair = await coordinateRefreshOwnership(async () => {
       networkCalls += 1;
@@ -120,6 +120,49 @@ describe('BroadcastChannel refresh ownership helpers', () => {
     });
     assert.equal(networkCalls, 1);
     assert.deepEqual(pair, { accessToken: 'a2', refreshToken: 'r2' });
+  });
+
+  it('ignored peer logout leaves refresh coordination intact', async () => {
+    await coordinateRefreshOwnership(async () => ({ accessToken: 'a1', refreshToken: 'r1' }));
+    let applied = 0;
+    // Mirror shouldApplyPeerAuthLogout: live persist@7 beats origin@6 even if mem is 4.
+    setAuthRefreshPeerLogoutHandler((originAuthRev) => {
+      const localMemoryAuthRev = 4;
+      const persistedAuthRev = 7;
+      const persistedLive = true;
+      if (
+        typeof originAuthRev === 'number'
+        && persistedLive
+        && persistedAuthRev >= originAuthRev
+      ) {
+        return false;
+      }
+      if (typeof originAuthRev === 'number' && !(originAuthRev > localMemoryAuthRev)) {
+        return false;
+      }
+      applied += 1;
+      return true;
+    });
+    const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
+    peer.postMessage({ v: 1, type: 'logout', tabId: 't-stale', authRev: 6 });
+    assert.equal(applied, 0);
+    let networkCalls = 0;
+    const kept = await coordinateRefreshOwnership(async () => {
+      networkCalls += 1;
+      return { accessToken: 'a2', refreshToken: 'r2' };
+    });
+    assert.equal(networkCalls, 0, 'stale logout must not clear the refresh cache');
+    assert.deepEqual(kept, { accessToken: 'a1', refreshToken: 'r1' });
+
+    // Genuine newer logout (persist already cleared) still applies.
+    setAuthRefreshPeerLogoutHandler((originAuthRev) => {
+      if (typeof originAuthRev === 'number' && !(originAuthRev > 4)) return false;
+      applied += 1;
+      return true;
+    });
+    peer.postMessage({ v: 1, type: 'logout', tabId: 't-newer', authRev: 8 });
+    assert.equal(applied, 1);
+    peer.close();
   });
 
   it('session replace clears cache without blocking a later same-tab refresh', async () => {
@@ -135,7 +178,7 @@ describe('BroadcastChannel refresh ownership helpers', () => {
   });
 
   it('session replace during a pending wait does not restore prior-account tokens', async () => {
-    setAuthRefreshPeerLogoutHandler(() => {});
+    setAuthRefreshPeerLogoutHandler(() => true);
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
     peer.postMessage({ v: 1, type: 'leader', tabId: 't-prior-account' });
     let networkCalls = 0;
@@ -169,7 +212,7 @@ describe('BroadcastChannel refresh ownership helpers', () => {
   });
 
   it('late peer success after session replace is ignored', async () => {
-    setAuthRefreshPeerLogoutHandler(() => {});
+    setAuthRefreshPeerLogoutHandler(() => true);
     await coordinateRefreshOwnership(async () => ({ accessToken: 'a-stale', refreshToken: 'r-stale' }));
     clearAuthRefreshCoordination('r-stale');
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
@@ -189,7 +232,7 @@ describe('BroadcastChannel refresh ownership helpers', () => {
   });
 
   it('first login without a prior refresh still accepts same-account peer results', async () => {
-    setAuthRefreshPeerLogoutHandler(() => {});
+    setAuthRefreshPeerLogoutHandler(() => true);
     // Mimic setAuth on a cold login (previousRefreshToken null, empty cache).
     clearAuthRefreshCoordination(null);
     const peer = new FakeBroadcastChannel(AUTH_REFRESH_CHANNEL);
@@ -209,7 +252,7 @@ describe('BroadcastChannel refresh ownership helpers', () => {
   });
 
   it('delayed prior-account R1 (rotated successor of R0) is not cached or adopted', async () => {
-    setAuthRefreshPeerLogoutHandler(() => {});
+    setAuthRefreshPeerLogoutHandler(() => true);
     // Account A held R0; session replace blocks R0 and flips ignorePeerResults.
     await coordinateRefreshOwnership(async () => ({ accessToken: 'a0', refreshToken: 'r0' }));
     clearAuthRefreshCoordination('r0');
@@ -245,7 +288,7 @@ describe('BroadcastChannel refresh ownership helpers', () => {
   });
 
   it('same-account peer results still adopt after a local refresh', async () => {
-    setAuthRefreshPeerLogoutHandler(() => {});
+    setAuthRefreshPeerLogoutHandler(() => true);
     clearAuthRefreshCoordination('r-prior');
     // Local refresh clears ignorePeerResults so same-account peers can share again.
     await coordinateRefreshOwnership(async () => ({ accessToken: 'local', refreshToken: 'r-local' }));

@@ -1,5 +1,10 @@
 import axios from 'axios';
-import { useAuthStore } from '../stores/auth.store';
+import {
+  shouldApplyPeerAuthLogout,
+  shouldBroadcastAuthLogout,
+  shouldPersistAuthBlob,
+  useAuthStore,
+} from '../stores/auth.store';
 import { useMediaSwitchStore } from '../stores/media-switch.store';
 import { conflictIsReplaceable, isMediaSessionConflict, withReplaceSessionIds } from '../lib/media-switch';
 import {
@@ -12,6 +17,7 @@ import {
   runWithoutLogoutBroadcast,
   setAuthRefreshPeerLogoutHandler,
 } from './auth-refresh-coord';
+import type { E2EAuthTestHooks } from './e2e-auth-test-types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -24,28 +30,71 @@ let refreshPromise: Promise<string | null> | null = null;
 
 const REFRESH_TIMEOUT_MS = 15000;
 
+/**
+ * Merge a coordinated refresh pair into store state without treating adoption
+ * as a local rotation. Used by BroadcastChannel followers (and the leader
+ * after setTokens already ran) so authRev is never inflated per follower.
+ */
+export function applyAdoptedRefreshPair(
+  pair: { accessToken: string; refreshToken: string },
+  opts: {
+    memoryAuthRev: number;
+    persistedAuthRev: number;
+    persistedSessionKey?: string | null;
+  },
+): {
+  accessToken: string;
+  refreshToken: string;
+  authRev: number;
+  sessionKey?: string;
+} {
+  const next: {
+    accessToken: string;
+    refreshToken: string;
+    authRev: number;
+    sessionKey?: string;
+  } = {
+    accessToken: pair.accessToken,
+    refreshToken: pair.refreshToken,
+    authRev: Math.max(opts.memoryAuthRev, opts.persistedAuthRev),
+  };
+  if (opts.persistedSessionKey) next.sessionKey = opts.persistedSessionKey;
+  return next;
+}
+
 /** Latest auth tokens from zustand persist (`ts6-auth`), not possibly-stale memory. */
 export function readPersistedAuthTokens(): {
   accessToken: string | null;
   refreshToken: string | null;
+  authRev: number;
+  sessionKey: string | null;
 } {
   if (typeof localStorage === 'undefined') {
-    return { accessToken: null, refreshToken: null };
+    return { accessToken: null, refreshToken: null, authRev: 0, sessionKey: null };
   }
   try {
     const raw = localStorage.getItem('ts6-auth');
-    if (!raw) return { accessToken: null, refreshToken: null };
+    if (!raw) return { accessToken: null, refreshToken: null, authRev: 0, sessionKey: null };
     const parsed = JSON.parse(raw) as {
-      state?: { accessToken?: string | null; refreshToken?: string | null };
+      state?: {
+        accessToken?: string | null;
+        refreshToken?: string | null;
+        authRev?: number;
+        sessionKey?: string | null;
+      };
     };
     const access = parsed.state?.accessToken;
     const refresh = parsed.state?.refreshToken;
+    const rev = parsed.state?.authRev;
+    const sessionKey = parsed.state?.sessionKey;
     return {
       accessToken: typeof access === 'string' && access.length > 0 ? access : null,
       refreshToken: typeof refresh === 'string' && refresh.length > 0 ? refresh : null,
+      authRev: typeof rev === 'number' && Number.isFinite(rev) ? rev : 0,
+      sessionKey: typeof sessionKey === 'string' && sessionKey.length > 0 ? sessionKey : null,
     };
   } catch {
-    return { accessToken: null, refreshToken: null };
+    return { accessToken: null, refreshToken: null, authRev: 0, sessionKey: null };
   }
 }
 
@@ -162,6 +211,8 @@ function adoptPeerTokensIfFresh(
 
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
+    authRev: persisted.authRev,
+    ...(persisted.sessionKey ? { sessionKey: persisted.sessionKey } : {}),
     ...(persisted.accessToken ? { accessToken: persisted.accessToken } : {}),
   });
 
@@ -223,6 +274,8 @@ async function refreshAccessToken(): Promise<string | null> {
               useAuthStore.setState({
                 accessToken: persisted.accessToken,
                 refreshToken: persisted.refreshToken,
+                authRev: persisted.authRev,
+                ...(persisted.sessionKey ? { sessionKey: persisted.sessionKey } : {}),
               });
               return {
                 accessToken: persisted.accessToken!,
@@ -292,10 +345,15 @@ async function refreshAccessToken(): Promise<string | null> {
         }) === 'discard') {
           return null;
         }
-        useAuthStore.setState({
-          accessToken: pair.accessToken,
-          refreshToken: pair.refreshToken,
+        // Leader already bumped authRev inside runRefresh→setTokens. Followers
+        // must adopt the peer pair without setTokens or each tab inflates rev.
+        const persisted = readPersistedAuthTokens();
+        const adopted = applyAdoptedRefreshPair(pair, {
+          memoryAuthRev: useAuthStore.getState().authRev,
+          persistedAuthRev: persisted.authRev,
+          persistedSessionKey: persisted.sessionKey,
         });
+        useAuthStore.setState(adopted);
         return pair.accessToken;
       };
 
@@ -316,13 +374,32 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 if (typeof window !== 'undefined') {
-  setAuthRefreshPeerLogoutHandler(() => {
+  setAuthRefreshPeerLogoutHandler((originAuthRev) => {
+    const persisted = readPersistedAuthTokens();
+    if (!shouldApplyPeerAuthLogout({
+      originAuthRev,
+      localMemoryAuthRev: useAuthStore.getState().authRev,
+      persistedAuthRev: persisted.authRev,
+      persistedLive: Boolean(persisted.accessToken || persisted.refreshToken),
+    })) {
+      return false;
+    }
     runWithoutLogoutBroadcast(() => {
       useAuthStore.getState().logout();
     });
+    return true;
   });
   window.addEventListener('ts6-auth-logout', () => {
-    broadcastAuthLogout();
+    const authRev = useAuthStore.getState().authRev;
+    const persisted = readPersistedAuthTokens();
+    const live = Boolean(persisted.accessToken || persisted.refreshToken);
+    // Tombstone rejected by shouldPersistAuthBlob — clear local refresh
+    // coordination only; do not relay a stale logout to peers.
+    if (!shouldBroadcastAuthLogout(live)) {
+      clearAuthRefreshCoordination();
+      return;
+    }
+    broadcastAuthLogout(authRev);
   });
   window.addEventListener('ts6-auth-session', (ev: Event) => {
     const previousRefreshToken = (ev as CustomEvent<{ previousRefreshToken?: string | null }>).detail
@@ -369,34 +446,69 @@ function toBase64UrlJson(value: unknown): string {
  */
 function installE2EAuthHooks(): void {
   if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
-  (window as Window & {
-    __ts6AuthTest?: {
-      getMemoryTokens: () => { accessToken: string | null; refreshToken: string | null };
-      expireAccessInMemory: () => Promise<void>;
-      refreshNow: () => Promise<string | null>;
-      logoutLocal: () => void;
-    };
-  }).__ts6AuthTest = {
+  (window as Window & { __ts6AuthTest?: E2EAuthTestHooks }).__ts6AuthTest = {
     getMemoryTokens: () => {
-      const { accessToken, refreshToken } = useAuthStore.getState();
-      return { accessToken, refreshToken };
+      const { accessToken, refreshToken, authRev, sessionKey } = useAuthStore.getState();
+      return { accessToken, refreshToken, authRev, sessionKey };
+    },
+    flushPersistFromMemory: () => {
+      const { accessToken, refreshToken, user, authRev, sessionKey } = useAuthStore.getState();
+      useAuthStore.setState({ accessToken, refreshToken, user, authRev, sessionKey });
+    },
+    replaceSession: (accessToken, refreshToken, user) => {
+      useAuthStore.getState().setAuth(accessToken, refreshToken, user);
     },
     expireAccessInMemory: async () => {
-      const priorId = accessTokenUserId(useAuthStore.getState().accessToken);
+      const mem = useAuthStore.getState();
+      const priorId = accessTokenUserId(mem.accessToken);
       const header = toBase64UrlJson({ alg: 'none', typ: 'JWT' });
       // Keep subject `id` so same-account adopt gates still work after expiry.
       const payload = toBase64UrlJson({
         ...(priorId != null ? { id: priorId } : {}),
         exp: Math.floor(Date.now() / 1000) - 120,
       });
-      // Memory-only expiry: leave stale refresh in memory (for adopt tests) but
-      // re-assert persist so a deferred zustand flush cannot wipe a peer rotation.
-      const snap = localStorage.getItem('ts6-auth');
-      useAuthStore.setState({ accessToken: `${header}.${payload}.e2e-expired` });
-      if (snap) {
-        for (let i = 0; i < 3; i++) {
-          localStorage.setItem('ts6-auth', snap);
-          await Promise.resolve();
+      const expiredAccess = `${header}.${payload}.e2e-expired`;
+      const snapRaw = localStorage.getItem('ts6-auth');
+      // setState persists {expiredAccess, memoryRefresh} and can rewind a peer
+      // rotation. Pin ts6-auth during setState:
+      // - peer advanced (persist refresh ≠ memory): keep full peer snap (valid
+      //   access) so adoptPeerTokensIfFresh can skip a second network rotate;
+      // - otherwise expire access in persist too so we cannot "adopt" the same
+      //   login access without rotating.
+      let pinned = snapRaw;
+      if (snapRaw) {
+        try {
+          const snap = JSON.parse(snapRaw) as {
+            state?: { accessToken?: string; refreshToken?: string; user?: unknown };
+            version?: number;
+          };
+          const persistRefresh = snap.state?.refreshToken;
+          if (!persistRefresh || !mem.refreshToken || persistRefresh === mem.refreshToken) {
+            pinned = JSON.stringify({
+              ...snap,
+              state: { ...snap.state, accessToken: expiredAccess },
+            });
+          }
+        } catch {
+          pinned = snapRaw;
+        }
+      }
+      if (!pinned) {
+        useAuthStore.setState({ accessToken: expiredAccess });
+        return;
+      }
+      const rawSet = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (key: string, value: string) => {
+        rawSet(key, key === 'ts6-auth' ? pinned! : value);
+      };
+      try {
+        useAuthStore.setState({ accessToken: expiredAccess });
+      } finally {
+        localStorage.setItem = rawSet;
+        // Re-check at commit time: a peer rotation may have landed after snapRaw.
+        // Bypass authStorage otherwise and rewind R2→R1.
+        if (shouldPersistAuthBlob(localStorage.getItem('ts6-auth'), pinned)) {
+          rawSet('ts6-auth', pinned);
         }
       }
     },

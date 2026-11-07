@@ -173,7 +173,14 @@ authRoutes.post('/logout', async (req: Request, res: Response, next) => {
     const { refreshToken } = req.body;
     if (refreshToken) {
       const prisma = req.app.locals.prisma;
-      await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+      // Revoke the whole refresh family. Deleting only the presented token leaves
+      // a rotated successor live when a lagging tab logs out with a consumed R0.
+      const existing = await prisma.refreshToken.findUnique({
+        where: { token: refreshToken },
+      });
+      if (existing) {
+        await revokeRefreshFamily(prisma, existing.userId, existing.family);
+      }
     }
     res.status(204).send();
   } catch (err) { next(err); }

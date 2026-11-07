@@ -16,6 +16,7 @@ import * as summon from './summon.js';
 import * as dedupe from './dedupe.js';
 import { findSongForQuery } from '../audio/youtube.js';
 import type { ListenerRemoteService } from '../listener-remote.js';
+import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 
 /** Stable facade for voice and SSH chat commands. Implementations live in the command groups. */
 export class MusicCommandHandler {
@@ -211,6 +212,7 @@ export class MusicCommandHandler {
 
   unregisterBot(botId: number): void {
     this.listenerRemote?.revoke(botId);
+    cancelPlaylistVotesBotUnavailable(this.listenerRemote, botId);
     return channelOwnership.unregisterBot(this.context, botId);
   }
 

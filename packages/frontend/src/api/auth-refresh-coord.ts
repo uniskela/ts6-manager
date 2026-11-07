@@ -23,7 +23,7 @@ export type AuthRefreshBcMessage =
     refreshToken: string;
   }
   | { v: 1; type: 'result'; tabId: string; ok: false }
-  | { v: 1; type: 'logout'; tabId: string };
+  | { v: 1; type: 'logout'; tabId: string; authRev?: number };
 
 export type TokenPair = { accessToken: string; refreshToken: string };
 
@@ -32,7 +32,8 @@ let channel: BroadcastChannel | null | undefined;
 let activeLeader: string | null = null;
 let lastGoodResult: (TokenPair & { at: number }) | null = null;
 let resultWaiters: Array<(msg: AuthRefreshBcMessage & { type: 'result' }) => void> = [];
-let peerLogoutHandler: (() => void) | null = null;
+/** Return false to ignore a peer logout (e.g. origin authRev does not beat ours). */
+let peerLogoutHandler: ((originAuthRev: number | undefined) => boolean) | null = null;
 let suppressLogoutBroadcast = false;
 let listenerInstalled = false;
 /** Bumped on logout/session replace so in-flight waits abort instead of adopting prior-account tokens. */
@@ -221,25 +222,32 @@ function ensureListener(): void {
       return;
     }
     if (msg.type === 'logout' && msg.tabId !== getAuthRefreshTabId()) {
-      clearCoordinationState();
-      peerLogoutHandler?.();
+      const applied = peerLogoutHandler?.(msg.authRev) ?? true;
+      if (applied) clearCoordinationState();
     }
   });
 }
 
-export function setAuthRefreshPeerLogoutHandler(handler: (() => void) | null): void {
+export function setAuthRefreshPeerLogoutHandler(
+  handler: ((originAuthRev: number | undefined) => boolean) | null,
+): void {
   peerLogoutHandler = handler;
   ensureListener();
 }
 
-export function broadcastAuthLogout(): void {
+export function broadcastAuthLogout(authRev: number): void {
   clearCoordinationState();
   if (suppressLogoutBroadcast) return;
   const ch = getChannel();
   if (!ch) return;
   ensureListener();
   try {
-    ch.postMessage({ v: 1, type: 'logout', tabId: getAuthRefreshTabId() } satisfies AuthRefreshBcMessage);
+    ch.postMessage({
+      v: 1,
+      type: 'logout',
+      tabId: getAuthRefreshTabId(),
+      authRev,
+    } satisfies AuthRefreshBcMessage);
   } catch {
     // Channel closed / unavailable — local logout still proceeds.
   }

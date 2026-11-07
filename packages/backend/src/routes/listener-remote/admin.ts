@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { z } from 'zod';
 import { requireRole } from '../../middleware/rbac.js';
 import { actorFromRequest, runRemoteAudited } from '../../audit/index.js';
+import { playlistVotesForRemote } from '../../voice/playlist-vote/lifecycle.js';
 import { clearAllListenerSearchResults, clearListenerSearchResults } from './search-cache.js';
 import { body, endpoint, fail, service } from './shared.js';
 
@@ -22,7 +23,15 @@ export function registerAdminRoutes(router: Router): void {
     }, () => {
       if (uid) clearListenerSearchResults(remote, { botId, uid });
       else clearAllListenerSearchResults(remote);
-      return remote.revoke(botId, uid);
+      const count = remote.revoke(botId, uid);
+      // Cancel open playlist votes immediately (grant hook also covers requester uid).
+      const votes = playlistVotesForRemote(remote);
+      const nowMs = Date.now();
+      if (votes) {
+        if (uid) votes.cancelRequesterRevoked(botId, uid, nowMs);
+        else votes.cancelAllRevoked(botId, nowMs);
+      }
+      return count;
     });
     res.json({ revoked });
   }));
