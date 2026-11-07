@@ -14,9 +14,10 @@ Avoid a second machine instance for chat. B4a must call the same runtime so remo
 
 ## B4 — `!playlistvote yes/no`
 
-- Depends on: B3 merged (R2 + GO), B2 machine.
+- Depends on: B3 on `main` (done), B2 machine, **B4 R2 + GO**.
 - Scope: chat ballots → `castBallot` / requester `no` cancel; no new vote rules.
 - Do not fork tally math; map chat identity → UID the same way as voteskip.
+- Must settle/restash through the same ownership-aware path as remote B3.
 
 ## B4a — chat `!playlist` opens / joins the B3 vote when voting is on
 
