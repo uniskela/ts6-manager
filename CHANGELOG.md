@@ -2,6 +2,31 @@
 
 All notable changes to this opinionated fork of [clusterzx/ts6-manager](https://github.com/clusterzx/ts6-manager) are documented here. See [CREDITS.md](CREDITS.md) for upstream and fork attribution.
 
+## [1.12.0](https://github.com/uniskela/ts6-manager/compare/v1.11.4...v1.12.0) (2026-11-07)
+
+
+### Features
+
+* **music:** music search with listener duration rules ([#603](https://github.com/uniskela/ts6-manager/issues/603)) ([ac8e7a8](https://github.com/uniskela/ts6-manager/commit/ac8e7a87ce89f6359f0e50fef1c1fe05d84518a5))
+* **music:** playlist vote settings ([#605](https://github.com/uniskela/ts6-manager/issues/605)) ([6633aac](https://github.com/uniskela/ts6-manager/commit/6633aac42358e4f157a010630d8eac844fa07440))
+* **music:** playlist vote state machine ([#602](https://github.com/uniskela/ts6-manager/issues/602)) ([6e12f0c](https://github.com/uniskela/ts6-manager/commit/6e12f0c1b5c41a8432bfc7171cfd680314ba7965))
+* **playlists:** choose which playlists the listener remote can see ([#604](https://github.com/uniskela/ts6-manager/issues/604)) ([7d1627a](https://github.com/uniskela/ts6-manager/commit/7d1627ac6841c2e315a56acfa3d500fb76854377))
+* **remote:** apply the 15-minute and no-live rules to pasted links ([e5bbafa](https://github.com/uniskela/ts6-manager/commit/e5bbafa8acccf02d74010d5d37eeab4dda842599))
+* **remote:** browse shared playlists ([7b483b8](https://github.com/uniskela/ts6-manager/commit/7b483b800947c71d92d0416753cad8dedc4d6150))
+* **remote:** Playlists view ([40afc3e](https://github.com/uniskela/ts6-manager/commit/40afc3e87f86352b4b0bf437282384fd839278d7))
+* **remote:** propose and vote on a whole playlist ([9ec216a](https://github.com/uniskela/ts6-manager/commit/9ec216a5b0acc0c75539fb449d0c62efbf8ff6cb))
+* **remote:** search and queue a result ([68aa0a9](https://github.com/uniskela/ts6-manager/commit/68aa0a9853e48d16b350c9b4ac5acfc4ee83becb))
+* **remote:** serve the listener remote as its own page ([#606](https://github.com/uniskela/ts6-manager/issues/606)) ([bdd8c32](https://github.com/uniskela/ts6-manager/commit/bdd8c32ca415f585ecd59d128102e22c61603b28))
+* **ui:** playlist visibility in the media library ([ac8bf26](https://github.com/uniskela/ts6-manager/commit/ac8bf2669a667ba122f133d78f617637402cdb2a))
+
+
+### Bug Fixes
+
+* **auth:** atomic refresh rotation and cross-tab coordination ([#620](https://github.com/uniskela/ts6-manager/issues/620)) ([582763b](https://github.com/uniskela/ts6-manager/commit/582763bd542c5a5fc953a538b25796c5203b731d))
+* **auth:** revoke refresh tokens on admin password reset or disable ([895ab5b](https://github.com/uniskela/ts6-manager/commit/895ab5b3a2a18bfa3e49bf2157b16daf24352950))
+* route in-channel command replies through SSH helper ([806abde](https://github.com/uniskela/ts6-manager/commit/806abdea1454e9b66e1ea992febdc1b7b843fe3f))
+* route in-channel command replies through SSH helper ([cb0d4c0](https://github.com/uniskela/ts6-manager/commit/cb0d4c0ba187cf2ab3113ee8703f57cd6986b59d))
+
 ## [1.11.4](https://github.com/uniskela/ts6-manager/compare/v1.11.3...v1.11.4) (2026-11-03)
 
 
