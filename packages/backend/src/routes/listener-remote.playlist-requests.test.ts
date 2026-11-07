@@ -600,7 +600,11 @@ describe('B3 R2 security matrix', () => {
 
   const third = { clid: 11, uid: 'third-listener-uid' };
 
-  async function openNearPassThenHide(f: Awaited<ReturnType<typeof fixture>>) {
+  /** Open vote, peer yes (still open), optional access change, shrink electorate, cross deadline. */
+  async function openNearPassThenDeadline(
+    f: Awaited<ReturnType<typeof fixture>>,
+    access: 'request' | 'browse' | 'hidden' = 'request',
+  ) {
     enableVoting(f, { thresholdPercent: 100 });
     f.seed(requestable(2));
     const { session } = await f.exchangeAs(binding);
@@ -608,22 +612,23 @@ describe('B3 R2 security matrix', () => {
     await assertOk(opened);
     const { vote } = await opened.json() as { vote: { id: string } };
     const peerAuth = await asPeer(f);
-    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
       session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    });
-    await assertOk(ballot);
+    }));
     assert.equal(f.queue.length, 0, '2/3 yes keeps the vote open');
-    f.seed({
-      id: 1, name: 'Requestable', remoteAccess: 'hidden', serverConfigId: 2,
-      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
-    });
+    if (access !== 'request') {
+      f.seed({
+        id: 1, name: 'Requestable', remoteAccess: access, serverConfigId: 2,
+        songs: [link(1, 0, song(100)), link(2, 1, song(101))],
+      });
+    }
     f.setPeers([peer]); // deadline electorate 2 with 2 yes — would pass on stale stash
     f.advance(61_000);
     return { session, vote, peerAuth };
   }
 
   it('post-deadline cancel after hide does not queue', async () => using([peer, third], async (f) => {
-    const { session, vote } = await openNearPassThenHide(f);
+    const { session, vote } = await openNearPassThenDeadline(f, 'hidden');
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
@@ -632,7 +637,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline withdraw after hide does not queue', async () => using([peer, third], async (f) => {
-    const { vote, peerAuth } = await openNearPassThenHide(f);
+    const { vote, peerAuth } = await openNearPassThenDeadline(f, 'hidden');
     f.state.uid = peer.uid;
     const withdraw = await f.request(`/votes/${vote.id}/ballot`, {
       session: peerAuth.session, method: 'DELETE',
@@ -642,22 +647,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline cancel after remoteAccess demotion does not queue', async () => using([peer, third], async (f) => {
-    enableVoting(f, { thresholdPercent: 100 });
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-    const peerAuth = await asPeer(f);
-    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
-      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    }));
-    f.seed({
-      id: 1, name: 'Requestable', remoteAccess: 'browse', serverConfigId: 2,
-      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
-    });
-    f.setPeers([peer]);
-    f.advance(61_000);
+    const { session, vote } = await openNearPassThenDeadline(f, 'browse');
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
@@ -665,18 +655,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline cancel of still-requestable playlist may pass once after re-read', async () => using([peer, third], async (f) => {
-    enableVoting(f, { thresholdPercent: 100 });
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-    const peerAuth = await asPeer(f);
-    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
-      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    }));
-    f.setPeers([peer]);
-    f.advance(61_000);
+    const { session, vote } = await openNearPassThenDeadline(f);
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
@@ -689,18 +668,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('deadline settle via /state records history once; repeat settle does not duplicate', async () => using([peer, third], async (f) => {
-    enableVoting(f, { thresholdPercent: 100 });
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-    const peerAuth = await asPeer(f);
-    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
-      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    }));
-    f.setPeers([peer]);
-    f.advance(61_000);
+    const { session } = await openNearPassThenDeadline(f);
     f.state.uid = binding.uid;
     await assertOk(await f.request('/state', { session }));
     assert.equal(f.queue.length, 2);
@@ -711,7 +679,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline hide does not write request history', async () => using([peer, third], async (f) => {
-    const { session, vote } = await openNearPassThenHide(f);
+    const { session, vote } = await openNearPassThenDeadline(f, 'hidden');
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
