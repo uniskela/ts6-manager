@@ -158,14 +158,11 @@ describe('shouldPersistAuthBlob', () => {
     );
   });
 
-  it('rejects when a peer advances between the first and second guard reads', () => {
-    // Mirrors authStorage setItem's double shouldPersistAuthBlob check.
-    // Not CAS: a write after the second read can still race past the guard.
+  it('documents that a peer advance after the guard read can still race setItem', () => {
+    // authStorage checks once then setItem — localStorage has no CAS.
     const incoming = blob({ refresh: 'R2', authRev: 6 });
-    const firstExisting = blob({ refresh: 'R1', authRev: 5 });
-    assert.equal(shouldPersistAuthBlob(firstExisting, incoming), true);
-    const peerAdvanced = blob({ refresh: 'R3', authRev: 7 });
-    assert.equal(shouldPersistAuthBlob(peerAdvanced, incoming), false);
+    assert.equal(shouldPersistAuthBlob(blob({ refresh: 'R1', authRev: 5 }), incoming), true);
+    assert.equal(shouldPersistAuthBlob(blob({ refresh: 'R3', authRev: 7 }), incoming), false);
   });
 
   it('treats missing authRev as 0 so older missing-rev blobs lose to a real bump', () => {

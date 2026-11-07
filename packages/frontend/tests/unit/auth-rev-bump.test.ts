@@ -158,4 +158,44 @@ describe('authRev bump observes persist', () => {
     assert.equal(persisted.state.accessToken, null);
     assert.equal(persisted.state.authRev, 5);
   });
+
+  it('login after a peer logout tombstone advances past the tombstone rev', () => {
+    localStorage.setItem('ts6-auth', JSON.stringify({
+      state: { accessToken: null, refreshToken: null, user: null, authRev: 5 },
+      version: 0,
+    }));
+    useAuthStore.setState({ authRev: 5 });
+
+    useAuthStore.getState().setAuth('a.b.c', 'R_after', {
+      id: 3,
+      username: 'again',
+      displayName: 'Again',
+      role: 'admin',
+    });
+
+    assert.equal(useAuthStore.getState().authRev, 6);
+    assert.equal(JSON.parse(localStorage.getItem('ts6-auth')!).state.refreshToken, 'R_after');
+    assert.equal(JSON.parse(localStorage.getItem('ts6-auth')!).state.authRev, 6);
+  });
+
+  it('account switch bumps past the prior account persist rev', () => {
+    seedPersist('Ra', 4, 1);
+    useAuthStore.setState({
+      accessToken: 'a.old',
+      refreshToken: 'Ra',
+      authRev: 4,
+      user: { id: 1, username: 'a', displayName: 'A', role: 'admin' },
+    });
+
+    useAuthStore.getState().setAuth('a.new', 'Rb', {
+      id: 2,
+      username: 'b',
+      displayName: 'B',
+      role: 'admin',
+    });
+
+    assert.equal(useAuthStore.getState().authRev, 5);
+    assert.equal(useAuthStore.getState().user?.id, 2);
+    assert.equal(JSON.parse(localStorage.getItem('ts6-auth')!).state.refreshToken, 'Rb');
+  });
 });

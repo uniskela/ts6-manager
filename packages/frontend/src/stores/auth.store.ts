@@ -96,12 +96,10 @@ const authStorage = createJSONStorage(() => {
   return {
     getItem: (name) => base.getItem(name),
     setItem: (name, value) => {
-      if (name === 'ts6-auth') {
-        // Best-effort re-check only — localStorage has no CAS. A peer write
-        // between the second read and setItem can still land a stale blob.
-        if (!shouldPersistAuthBlob(base.getItem(name), value)) return;
-        if (!shouldPersistAuthBlob(base.getItem(name), value)) return;
+      if (name === 'ts6-auth' && !shouldPersistAuthBlob(base.getItem(name), value)) {
+        return;
       }
+      // localStorage has no CAS; a peer write after this check can still race.
       base.setItem(name, value);
     },
     removeItem: (name) => base.removeItem(name),
@@ -118,6 +116,52 @@ export function readPersistedAuthRev(): number {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Cross-tab logout policy (intentional):
+ *
+ * - Explicit logout that successfully tombstones `ts6-auth` is a *family*
+ *   logout: broadcast the tombstone `authRev` so peers still on an older
+ *   memory rev clear too (shared refresh family must not survive one tab's
+ *   intentional sign-out).
+ * - A stale tab whose tombstone is rejected by `shouldPersistAuthBlob`
+ *   (peer already holds a live newer/tied session) must **not** broadcast —
+ *   peers keep the winning session (`shouldBroadcastAuthLogout`).
+ * - Receivers ignore a logout BC when the origin rev does not beat local
+ *   memory, or when live persist is already at/above that rev (login or
+ *   rotation won storage while this tab lagged).
+ * - Legacy BC messages without `authRev` still apply (fail toward logout).
+ * - Login/rotation bumps use max(memory, persist)+1; logout bumps are
+ *   memory-only so a stale tab cannot mint past a peer login.
+ */
+
+/**
+ * Whether a peer-tab logout BC message should clear this tab.
+ * Compares origin tombstone rev to both memory and persisted live session —
+ * not memory alone (a lagging receiver can sit below persist).
+ */
+export function shouldApplyPeerAuthLogout(input: {
+  originAuthRev: number | undefined;
+  localMemoryAuthRev: number;
+  persistedAuthRev: number;
+  persistedLive: boolean;
+}): boolean {
+  if (typeof input.originAuthRev !== 'number' || !Number.isFinite(input.originAuthRev)) {
+    // Legacy messages without authRev keep prior global-logout behaviour.
+    return true;
+  }
+  // Live persist at/above the logout rev means a newer session won storage —
+  // ignore the stale relay even if this tab's memory still lags.
+  if (input.persistedLive && input.persistedAuthRev >= input.originAuthRev) {
+    return false;
+  }
+  return input.originAuthRev > input.localMemoryAuthRev;
+}
+
+/** After local logout persist: broadcast only when the tombstone actually landed. */
+export function shouldBroadcastAuthLogout(persistedLive: boolean): boolean {
+  return !persistedLive;
 }
 
 /** Bump past both in-memory and persisted rev so a lagging login/rotation cannot tie. */

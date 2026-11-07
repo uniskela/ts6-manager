@@ -1,5 +1,10 @@
 import axios from 'axios';
-import { shouldPersistAuthBlob, useAuthStore } from '../stores/auth.store';
+import {
+  shouldApplyPeerAuthLogout,
+  shouldBroadcastAuthLogout,
+  shouldPersistAuthBlob,
+  useAuthStore,
+} from '../stores/auth.store';
 import { useMediaSwitchStore } from '../stores/media-switch.store';
 import { conflictIsReplaceable, isMediaSessionConflict, withReplaceSessionIds } from '../lib/media-switch';
 import {
@@ -334,13 +339,32 @@ async function refreshAccessToken(): Promise<string | null> {
 }
 
 if (typeof window !== 'undefined') {
-  setAuthRefreshPeerLogoutHandler(() => {
+  setAuthRefreshPeerLogoutHandler((originAuthRev) => {
+    const persisted = readPersistedAuthTokens();
+    if (!shouldApplyPeerAuthLogout({
+      originAuthRev,
+      localMemoryAuthRev: useAuthStore.getState().authRev,
+      persistedAuthRev: persisted.authRev,
+      persistedLive: Boolean(persisted.accessToken || persisted.refreshToken),
+    })) {
+      return false;
+    }
     runWithoutLogoutBroadcast(() => {
       useAuthStore.getState().logout();
     });
+    return true;
   });
   window.addEventListener('ts6-auth-logout', () => {
-    broadcastAuthLogout();
+    const authRev = useAuthStore.getState().authRev;
+    const persisted = readPersistedAuthTokens();
+    const live = Boolean(persisted.accessToken || persisted.refreshToken);
+    // Tombstone rejected by shouldPersistAuthBlob — clear local refresh
+    // coordination only; do not relay a stale logout to peers.
+    if (!shouldBroadcastAuthLogout(live)) {
+      clearAuthRefreshCoordination();
+      return;
+    }
+    broadcastAuthLogout(authRev);
   });
   window.addEventListener('ts6-auth-session', (ev: Event) => {
     const previousRefreshToken = (ev as CustomEvent<{ previousRefreshToken?: string | null }>).detail
