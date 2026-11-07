@@ -82,10 +82,12 @@ export class PlaylistVoteRuntime {
           return 'playlist_unavailable';
         }
         const queued = this.addAllOrNothing(pending.botId, pending.items);
-        if (queued.result === 'queued' && queued.startItem) {
+        // Always retain the queued snapshot for history / start — even when the bot
+        // is already playing (startItem null) so deadline/ballot callers can persist once.
+        if (queued.result === 'queued' && pending.items.length > 0) {
           this.starts.set(input.voteId, {
             botId: pending.botId,
-            item: queued.startItem,
+            item: queued.startItem ?? pending.items[0]!,
             items: pending.items.slice(),
           });
         }
