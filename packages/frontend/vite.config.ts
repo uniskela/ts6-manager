@@ -77,7 +77,7 @@ export default defineConfig({
     // Only these build outputs enter Cache Storage. No runtime caching.
     // remote.html stays off the precache list so the root worker never owns /remote.
     injectManifest: {
-      globPatterns: ['index.html', 'manifest.webmanifest', 'assets/*.{js,css,woff,woff2}', 'icons/*.png', 'favicon.svg'],
+      globPatterns: ['index.html', 'manifest.webmanifest', 'assets/*.{js,css,woff,woff2}', 'icons/*.{png,svg}', 'favicon.svg'],
     },
     includeManifestIcons: false,
     manifest: {
