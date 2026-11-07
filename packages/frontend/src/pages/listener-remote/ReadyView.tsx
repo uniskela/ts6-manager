@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   REMOTE_POLL_MS,
   RemoteHttpError,
+  canBrowseRemotePlaylists,
   loadRemoteState,
   remoteErrorMessage,
   remoteSession,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/listener-remote';
 import { LibraryView } from './LibraryView';
 import { NowPlayingView } from './NowPlayingView';
+import { PlaylistsView } from './PlaylistsView';
 import { UpNextView } from './UpNextView';
 import { UrlRequestView } from './UrlRequestView';
 
@@ -94,6 +96,9 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
         {state?.permissions.requestUrl && <UrlRequestView expire={expire} refresh={() => loadRef.current(true)} />}
         {state?.permissions.searchLibrary && (
           <LibraryView canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
+        )}
+        {state && canBrowseRemotePlaylists(state.permissions) && (
+          <PlaylistsView canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
         )}
       </div>
     </div>
