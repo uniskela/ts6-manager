@@ -13,6 +13,12 @@ import {
   type PlaylistVoteRuntime,
   type VoteBot,
 } from '../../voice/playlist-vote/runtime.js';
+import {
+  playlistSongsToQueueItems,
+  restashForApproval as restashShared,
+  settleExpiredPlaylistVote,
+  type RequestPlaylist,
+} from '../../voice/playlist-vote/approval-settle.js';
 import type { PlaylistVotePublic } from '../../voice/playlist-vote/state-machine.js';
 import type { QueueItem } from '../../voice/playlist/queue.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../../voice/music-request-history.js';
@@ -98,29 +104,7 @@ async function humanListenerUids(req: Request, binding: { botId: number; serverC
   return listeners.map((listener) => listener.uid);
 }
 
-type SongRow = {
-  id: number;
-  title: string;
-  artist: string | null;
-  duration: number | null;
-  filePath: string;
-  source: string;
-  sourceUrl: string | null;
-};
-
-function toQueueItems(songs: SongRow[]): QueueItem[] {
-  return songs.map((song) => ({
-    id: String(song.id),
-    title: song.title,
-    artist: song.artist ?? undefined,
-    duration: song.duration ?? undefined,
-    filePath: song.filePath,
-    source: song.source as QueueItem['source'],
-    sourceUrl: song.sourceUrl ?? undefined,
-  }));
-}
-
-async function loadRequestPlaylist(req: Request, serverConfigId: number, playlistId: number) {
+async function loadRequestPlaylist(req: Request, serverConfigId: number, playlistId: number): Promise<RequestPlaylist | null> {
   return req.app.locals.prisma.playlist.findFirst({
     where: { id: playlistId, ...visibleWhere(serverConfigId) },
     select: {
@@ -140,12 +124,11 @@ async function loadRequestPlaylist(req: Request, serverConfigId: number, playlis
         orderBy: [{ position: 'asc' }, { id: 'asc' }],
       },
     },
-  }) as Promise<{
-    id: number;
-    name: string;
-    remoteAccess: string;
-    songs: Array<{ song: SongRow }>;
-  } | null>;
+  }) as Promise<RequestPlaylist | null>;
+}
+
+function toQueueItems(songs: RequestPlaylist['songs'][number]['song'][]): QueueItem[] {
+  return playlistSongsToQueueItems(songs);
 }
 
 async function playlistVisible(req: Request, serverConfigId: number, playlistId: number | null): Promise<boolean> {
@@ -207,10 +190,6 @@ async function sendBallotVote(
   res.json({ ok: true, vote: toRemoteVote(vote, visible) });
 }
 
-/**
- * Re-read playlist at approval; stash tracks for the sync queue hook.
- * After the await, refuse to write if another vote now owns the channel.
- */
 async function restashForApproval(
   req: Request,
   runtime: PlaylistVoteRuntime,
@@ -220,35 +199,20 @@ async function restashForApproval(
   nowMs: number,
   expectVoteId?: string,
 ): Promise<void> {
-  const botKey = botKeyFor(binding.botId);
-  const channelId = channelIdFor(binding.channelId);
-  const before = runtime.machine.getOpen(botKey, channelId);
-  if (!before || before.playlist.id !== playlistId) return;
-  if (expectVoteId && before.id !== expectVoteId) return;
-
-  const playlist = await loadRequestPlaylist(req, binding.serverConfigId, playlistId);
-  const still = runtime.machine.getOpen(botKey, channelId);
-  if (!still || still.playlist.id !== playlistId) return;
-  if (expectVoteId && still.id !== expectVoteId) return;
-  if (before.id !== still.id) return;
-
-  if (!playlist || playlist.remoteAccess !== 'request') {
-    runtime.stash(botKey, channelId, {
-      botId: binding.botId, playlistId, maxTracks, items: [], refreshedAtMs: nowMs,
-    });
-    return;
-  }
-  const items = toQueueItems(playlist.songs.map((link) => link.song));
-  runtime.stash(botKey, channelId, {
-    botId: binding.botId, playlistId, maxTracks, items, refreshedAtMs: nowMs,
+  await restashShared({
+    runtime,
+    botId: binding.botId,
+    channelId: binding.channelId,
+    playlistId,
+    maxTracks,
+    nowMs,
+    expectVoteId,
+    serverConfigId: binding.serverConfigId,
+    loadPlaylist: (serverConfigId, id) => loadRequestPlaylist(req, serverConfigId, id),
   });
 }
 
-/**
- * Close an open vote whose window has ended. `listenerUids === null` means
- * lookup failed (fail closed as listeners_unavailable); `[]` is a real empty channel.
- * Every HTTP path that can tick a deadline must call this (or restash) first.
- */
+/** Every HTTP path that can tick a deadline must call this (or restash) first. */
 async function settleExpiredVote(
   req: Request,
   runtime: PlaylistVoteRuntime,
@@ -257,34 +221,22 @@ async function settleExpiredVote(
   maxTracks: number,
   nowMs: number,
 ): Promise<{ queued: boolean; start: { botId: number; item: QueueItem; items: QueueItem[] } | null }> {
-  const botKey = botKeyFor(binding.botId);
-  const channelId = channelIdFor(binding.channelId);
-  const open = runtime.machine.getOpen(botKey, channelId);
-  if (!open || nowMs < open.deadlineMs) return { queued: false, start: null };
-  const voteId = open.id;
-
-  if (listenerUids !== null) {
-    await restashForApproval(req, runtime, binding, open.playlist.id, maxTracks, nowMs, voteId);
-  }
-
-  // Ownership: a slow restash must not tick or clearStash a successor vote.
-  const still = runtime.machine.getOpen(botKey, channelId);
-  if (!still || still.id !== voteId) return { queued: false, start: null };
-
-  const events = runtime.machine.tickDeadline({
-    botKey,
-    channelId,
+  return settleExpiredPlaylistVote({
+    runtime,
+    botId: binding.botId,
+    channelId: binding.channelId,
+    serverConfigId: binding.serverConfigId,
     listenerUids,
+    maxTracks,
     nowMs,
+    loadPlaylist: (serverConfigId, id) => loadRequestPlaylist(req, serverConfigId, id),
+    onQueued: async (start) => {
+      await maybeStart(req, start.botId, start.item);
+      const manager = req.app.locals.voiceBotManager as VoiceBotManager;
+      const bot = manager.getBot(start.botId) as ListenerBot | undefined;
+      if (bot) await saveHistory(req, bot, start.items);
+    },
   });
-  if (eventsQueued(events)) {
-    const start = runtime.takeStart(voteId);
-    if (start) await maybeStart(req, start.botId, start.item);
-    return { queued: true, start };
-  }
-  // Sync after our tick of voteId — no await, so no successor can appear here.
-  runtime.clearStash(botKey, channelId);
-  return { queued: false, start: null };
 }
 
 export function registerPlaylistRequestRoutes(router: Router): void {
