@@ -171,6 +171,30 @@ async function assertLogoutOfConsumedPredecessor(opts: {
   assert.equal((await postRefresh(base, r1)).status, 401);
 }
 
+/** Logout while refresh is parked at beforeRefreshRotate — family must end empty. */
+async function assertLogoutInterleavesInFlightRefresh(token: string, family: string) {
+  await seedAlice();
+  await seedRefreshRows([{ token, family }]);
+  const base = await baseUrl();
+  const parked = armRefreshGate(1);
+  try {
+    const refreshInFlight = postRefresh(base, token);
+    await parked.waitUntilArrived();
+    assert.equal((await postLogout(base, token)).status, 204);
+    parked.release();
+    const refreshOutcome = await refreshInFlight;
+    assert.equal(await prisma.refreshToken.count({ where: { family } }), 0);
+    if (refreshOutcome.status === 200) {
+      const minted = (await refreshOutcome.json()) as { refreshToken: string };
+      assert.equal((await postRefresh(base, minted.refreshToken)).status, 401);
+    } else {
+      assert.equal(refreshOutcome.status, 401);
+    }
+  } finally {
+    parked.clear();
+  }
+}
+
 before(() => {
   execFileSync('pnpm', ['exec', 'prisma', 'db', 'push', '--skip-generate'], {
     env: { ...process.env, DATABASE_URL: databaseUrl },
@@ -582,5 +606,9 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal((await postLogout(base, 'null-live')).status, 204);
     assert.equal(await prisma.refreshToken.count({ where: { userId: 1, family: null } }), 0);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'named-keep' } }), 1);
+  });
+
+  it('logout racing refresh cannot leave a live successor', async () => {
+    await assertLogoutInterleavesInFlightRefresh('race-logout', 'fam-race-lo');
   });
 });
