@@ -5,7 +5,7 @@ import {
   shouldBroadcastAuthLogout,
 } from '../../src/stores/auth.store.ts';
 
-describe('shouldApplyPeerAuthLogout / shouldBroadcastAuthLogout', () => {
+describe('cross-tab logout relay policy', () => {
   it('propagates normal logout to an older peer tab', () => {
     // Sender wrote tombstone@6; persist no longer live; receiver memory still 4.
     assert.equal(shouldApplyPeerAuthLogout({
@@ -26,7 +26,7 @@ describe('shouldApplyPeerAuthLogout / shouldBroadcastAuthLogout', () => {
     }), false);
   });
 
-  it('rejects stale logout when origin ties the receiver memory but persist is newer', () => {
+  it('rejects stale logout when origin ties receiver memory but persist is newer', () => {
     assert.equal(shouldApplyPeerAuthLogout({
       originAuthRev: 6,
       localMemoryAuthRev: 6,
@@ -35,7 +35,7 @@ describe('shouldApplyPeerAuthLogout / shouldBroadcastAuthLogout', () => {
     }), false);
   });
 
-  it('rejects when origin does not beat local memory and persist is already cleared', () => {
+  it('rejects when origin does not beat local memory after persist cleared', () => {
     assert.equal(shouldApplyPeerAuthLogout({
       originAuthRev: 5,
       localMemoryAuthRev: 5,
@@ -44,20 +44,20 @@ describe('shouldApplyPeerAuthLogout / shouldBroadcastAuthLogout', () => {
     }), false);
   });
 
-  it('legacy logout messages without authRev still apply', () => {
-    assert.equal(shouldApplyPeerAuthLogout({
-      originAuthRev: undefined,
-      localMemoryAuthRev: 99,
-      persistedAuthRev: 99,
-      persistedLive: true,
-    }), true);
-  });
-
   it('does not broadcast when the local tombstone failed to persist', () => {
     assert.equal(shouldBroadcastAuthLogout(true), false);
   });
 
   it('broadcasts when the tombstone cleared live persist', () => {
     assert.equal(shouldBroadcastAuthLogout(false), true);
+  });
+
+  it('legacy logout messages without authRev still apply', () => {
+    assert.equal(shouldApplyPeerAuthLogout({
+      originAuthRev: undefined,
+      localMemoryAuthRev: 4,
+      persistedAuthRev: 7,
+      persistedLive: true,
+    }), true);
   });
 });
