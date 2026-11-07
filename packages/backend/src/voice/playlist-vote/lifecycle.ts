@@ -1,13 +1,20 @@
-import type { Binding, ListenerRemoteService } from '../listener-remote.js';
+import type { Binding, GrantInvalidationReason, ListenerRemoteService } from '../listener-remote.js';
 import type { PlaylistVoteRuntime } from './runtime.js';
 
 /** Process-local: one runtime per remote service (same cardinality as search cache). */
 const runtimes = new WeakMap<ListenerRemoteService, PlaylistVoteRuntime>();
 const bound = new WeakSet<ListenerRemoteService>();
 
+/** Reasons that mean the listener is gone or was explicitly cut off — not mere credential TTL. */
+function cancelsOpenVote(reason: GrantInvalidationReason): boolean {
+  return reason === 'revoked' || reason === 'rejected';
+}
+
 /**
- * Wire grant invalidation → requester vote cancel, and remember the runtime for
- * bot disconnect paths that revoke without going through HTTP.
+ * Wire grant invalidation → requester vote cancel (reason-aware), and remember
+ * the runtime for bot disconnect paths that revoke without going through HTTP.
+ *
+ * #442: ordinary session expiry / !remote replacement must not cancel a vote.
  */
 export function bindPlaylistVoteLifecycle(
   remote: ListenerRemoteService,
@@ -16,7 +23,8 @@ export function bindPlaylistVoteLifecycle(
   runtimes.set(remote, runtime);
   if (bound.has(remote)) return;
   bound.add(remote);
-  remote.onGrantInvalidated((binding: Binding) => {
+  remote.onGrantInvalidated((binding: Binding, reason: GrantInvalidationReason) => {
+    if (!cancelsOpenVote(reason)) return;
     const votes = runtimes.get(remote);
     if (!votes) return;
     votes.cancelRequesterRevoked(binding.botId, binding.uid, Date.now());

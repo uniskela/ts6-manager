@@ -21,7 +21,17 @@ Tip after remediation: see PR #624 HEAD. Spec #442 / security #465.
 
 **Root cause:** `POST .../revoke` dropped sessions only; peers could still pass an open vote.
 
-**Fix:** Admin revoke calls `cancelRequesterRevoked` (uid) or `cancelAllRevoked` (bot-wide). Grant invalidation also cancels when the requester’s grant is removed (`onGrantInvalidated` multicast). Unrelated botKeys untouched.
+**Fix:** Admin revoke calls `cancelRequesterRevoked` (uid) or `cancelAllRevoked` (bot-wide). Grant invalidation cancels only on `revoked` / `rejected` (see lifecycle correction below). Unrelated botKeys untouched.
+
+## Spec correction — session expiry must not cancel (#442)
+
+**Root cause:** `onGrantInvalidated` → `cancelRequesterRevoked` ran for every `remove()`, including `prune()` expiry and `issue()` replacement of a prior `!remote` grant.
+
+**Fix:** `ListenerRemoteService.remove(grant, reason)` with
+`expired | replaced | revoked | rejected | error`. Search still clears on all reasons.
+Playlist-vote lifecycle cancels only for `revoked` (admin / leave / bot revoke) and
+`rejected` (live identity check failed). Expiry and `!remote` replacement leave the
+vote open while the requester remains a channel listener.
 
 ## Low — status
 

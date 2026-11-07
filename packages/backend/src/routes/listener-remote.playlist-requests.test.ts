@@ -52,8 +52,10 @@ function link(id: number, position: number, track: PlaylistRow['songs'][number][
 }
 
 async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = {}) {
-  let now = 1_700_000_000_000;
-  const remote = new ListenerRemoteService(() => now);
+  // Separate clocks so session TTL can elapse without forcing the 60s vote window closed.
+  let voteNow = 1_700_000_000_000;
+  let remoteNow = 1_700_000_000_000;
+  const remote = new ListenerRemoteService(() => remoteNow);
   const queue = new PlayQueue();
   let peers = [...(opts.peers ?? [])];
   const state = {
@@ -91,7 +93,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   app.locals.listenerRemote = remote;
   app.locals.voiceBotManager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
   app.locals.playlistVotes = runtime;
-  app.locals.playlistVoteClock = () => now;
+  app.locals.playlistVoteClock = () => voteNow;
   app.locals.eventBridge = {
     executeCommand: async (server: number, virtualServer: number, cmd: string) => {
       assert.equal(server, binding.serverConfigId);
@@ -196,8 +198,10 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
 
   return {
     remote, request, exchangeAs, state, seed, bot, queue, audit, runtime,
-    now: () => now,
-    advance: (ms: number) => { now += ms; },
+    now: () => voteNow,
+    advance: (ms: number) => { voteNow += ms; remoteNow += ms; },
+    /** Elapse credential TTL without closing an open vote window. */
+    advanceRemote: (ms: number) => { remoteNow += ms; },
     setPeers: (next: Array<{ clid: number; uid: string }>) => { peers = [...next]; },
     resetClientlistCalls: () => { clientlistCalls = 0; },
     close: () => new Promise<void>((resolve, reject) => {
@@ -688,6 +692,46 @@ describe('B3 R2 security matrix', () => {
     f.runtime.cancelAllRevoked(binding.botId, f.now());
     assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
     assert.ok(f.runtime.machine.getOpen('99', '8'), 'unrelated bot vote untouched');
+    assert.equal(f.queue.length, 0);
+  }));
+
+  it('session expiry alone does not cancel a vote while requester stays in channel', async () => using([peer], async (f) => {
+    const { session, vote } = await openVoteAsRequester(f);
+    assert.ok(f.runtime.machine.getOpen('4', '8'));
+    // Session TTL is 15 minutes; advance credential clock only (vote window stays open).
+    f.advanceRemote(15 * 60_000 + 1);
+    f.remote.checkIp('127.0.0.1', false);
+    assert.ok(f.runtime.machine.getOpen('4', '8'), 'expired credentials must not cancel the vote (#442)');
+    // Requester session is dead; peer can still approve.
+    const peerAuth = await asPeer(f);
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    await assertOk(ballot);
+    assert.equal((await ballot.json() as { vote: { status: string } }).vote.status, 'passed');
+    assert.equal(f.queue.length, 2);
+    f.state.uid = binding.uid;
+    assert.equal((await f.request('/state', { session })).status, 401);
+  }));
+
+  it('replacement !remote link does not cancel an open vote', async () => using([peer], async (f) => {
+    await openVoteAsRequester(f);
+    assert.ok(f.runtime.machine.getOpen('4', '8'));
+    const again = f.remote.issue(binding);
+    assert.ok(again.token);
+    assert.ok(f.runtime.machine.getOpen('4', '8'), '!remote replacement must not cancel (#442)');
+    assert.equal(f.queue.length, 0);
+  }));
+
+  it('channel departure revokeClient cancels the requester vote', async () => using([peer], async (f) => {
+    const { vote } = await openVoteAsRequester(f);
+    f.remote.revokeClient(binding.serverConfigId, binding.virtualServerId, binding.clid);
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    const peerAuth = await asPeer(f);
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    assert.equal(ballot.status, 404);
     assert.equal(f.queue.length, 0);
   }));
 });

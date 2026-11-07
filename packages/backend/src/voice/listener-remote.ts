@@ -10,6 +10,17 @@ export interface Binding {
   uid: string;
 }
 
+/**
+ * Why a grant was removed. Search clears on every reason; playlist votes cancel
+ * only for `revoked` / `rejected` (#442: expiry alone must not cancel a vote).
+ */
+export type GrantInvalidationReason =
+  | 'expired'
+  | 'replaced'
+  | 'revoked'
+  | 'rejected'
+  | 'error';
+
 export class ListenerRemoteError extends Error {
   /** `retryAfter`: whole seconds until a rate limit's window resets. */
   constructor(public readonly status: number, public readonly code: string, message: string, public readonly retryAfter?: number) {
@@ -60,7 +71,7 @@ export class ListenerRemoteService {
    */
   private readonly credentialRates: RateWindows;
   /** Optional hooks for search maps / playlist votes tied to a grant's lifetime. */
-  private readonly grantInvalidated: Array<(binding: Binding) => void> = [];
+  private readonly grantInvalidated: Array<(binding: Binding, reason: GrantInvalidationReason) => void> = [];
 
   /** A test clock drives both credential lifetimes and rate windows; otherwise rate windows are monotonic. */
   constructor(now?: () => number) {
@@ -70,10 +81,11 @@ export class ListenerRemoteService {
   }
 
   /**
-   * Register a listener for grant removal (revoke, replace, expiry, failed
-   * validation). Multiple handlers are supported (search + playlist vote).
+   * Register a listener for grant removal. Multiple handlers are supported
+   * (search + playlist vote). Handlers receive a reason so votes can ignore
+   * ordinary expiry / !remote replacement while search still clears.
    */
-  onGrantInvalidated(handler: (binding: Binding) => void): void {
+  onGrantInvalidated(handler: (binding: Binding, reason: GrantInvalidationReason) => void): void {
     this.grantInvalidated.push(handler);
   }
 
@@ -123,7 +135,7 @@ export class ListenerRemoteService {
     this.limit(this.credentialRates, hash(key), IDENTITY_LIMITS, ISSUES);
     const previous = this.grants.get(key);
     if (!previous && this.grants.size >= MAX_ENTRIES) this.unavailable();
-    if (previous) this.remove(previous);
+    if (previous) this.remove(previous, 'replaced');
     const token = randomBytes(32).toString('base64url');
     const grant: Grant = {
       binding: Object.freeze({ ...binding }), expiresAt: this.now() + TOKEN_TTL, tokenHash: hash(token),
@@ -166,7 +178,7 @@ export class ListenerRemoteService {
     let count = 0;
     for (const grant of this.grants.values()) {
       if (grant.binding.botId === botId && (uid === undefined || grant.binding.uid === uid)) {
-        this.remove(grant);
+        this.remove(grant, 'revoked');
         count++;
       }
     }
@@ -178,7 +190,7 @@ export class ListenerRemoteService {
     for (const grant of this.grants.values()) {
       const binding = grant.binding;
       if (binding.serverConfigId === serverConfigId && binding.virtualServerId === virtualServerId && binding.clid === clid) {
-        this.remove(grant);
+        this.remove(grant, 'revoked');
       }
     }
   }
@@ -188,11 +200,20 @@ export class ListenerRemoteService {
     try {
       valid = await validate({ ...grant.binding });
     } catch {
-      this.remove(grant);
+      // Query failure: drop the credential, but do not treat as verified departure.
+      this.remove(grant, 'error');
       throw denied();
     }
-    if (!valid || grant.expiresAt <= this.now() || this.grants.get(bindingKey(grant.binding)) !== grant) {
-      this.remove(grant);
+    if (grant.expiresAt <= this.now()) {
+      this.remove(grant, 'expired');
+      throw denied();
+    }
+    if (this.grants.get(bindingKey(grant.binding)) !== grant) {
+      this.remove(grant, 'replaced');
+      throw denied();
+    }
+    if (!valid) {
+      this.remove(grant, 'rejected');
       throw denied();
     }
   }
@@ -202,18 +223,18 @@ export class ListenerRemoteService {
     return hash(credential);
   }
 
-  private remove(grant: Grant): void {
+  private remove(grant: Grant, reason: GrantInvalidationReason): void {
     const key = bindingKey(grant.binding);
     if (this.grants.get(key) === grant) this.grants.delete(key);
     if (grant.tokenHash) this.tokens.delete(grant.tokenHash);
     if (grant.sessionHash) this.sessions.delete(grant.sessionHash);
     const binding = { ...grant.binding };
-    for (const handler of this.grantInvalidated) handler(binding);
+    for (const handler of this.grantInvalidated) handler(binding, reason);
   }
 
   private prune(): void {
     const now = this.now();
-    for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant);
+    for (const grant of this.grants.values()) if (grant.expiresAt <= now) this.remove(grant, 'expired');
     this.rates.prune();
     this.credentialRates.prune();
   }
