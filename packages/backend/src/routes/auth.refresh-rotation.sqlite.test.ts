@@ -98,6 +98,14 @@ function postRefresh(base: string, refreshToken: string) {
   });
 }
 
+function postLogout(base: string, refreshToken: string) {
+  return fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refreshToken }),
+  });
+}
+
 before(() => {
   execFileSync('pnpm', ['exec', 'prisma', 'db', 'push', '--skip-generate'], {
     env: { ...process.env, DATABASE_URL: databaseUrl },
@@ -502,5 +510,47 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(newLogin.status, 200);
     const body = (await newLogin.json()) as { refreshToken?: string };
     assert.ok(body.refreshToken);
+  });
+
+  it('logout with a consumed predecessor revokes the rotated successor family', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.createMany({
+      data: [
+        { token: 'logout-r0', userId: 1, expiresAt, family: 'fam-logout' },
+        { token: 'logout-other', userId: 1, expiresAt, family: 'fam-keep' },
+      ],
+    });
+    const base = await baseUrl();
+
+    const rotated = await postRefresh(base, 'logout-r0');
+    assert.equal(rotated.status, 200);
+    const { refreshToken: r1 } = (await rotated.json()) as { refreshToken: string };
+    assert.ok(r1);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-logout' } }), 2);
+
+    const logout = await postLogout(base, 'logout-r0');
+    assert.equal(logout.status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-logout' } }), 0);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'logout-other' } }), 1);
+
+    const resurrect = await postRefresh(base, r1);
+    assert.equal(resurrect.status, 401);
+  });
+
+  it('logout with an unknown prior-session token does not wipe an independent family', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.create({
+      data: { token: 'live-new', userId: 1, expiresAt, family: 'fam-new' },
+    });
+    const base = await baseUrl();
+
+    const logout = await postLogout(base, 'stale-other-family-token');
+    assert.equal(logout.status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'live-new' } }), 1);
+
+    const stillLive = await postRefresh(base, 'live-new');
+    assert.equal(stillLive.status, 200);
   });
 });

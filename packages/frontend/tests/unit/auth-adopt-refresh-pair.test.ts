@@ -26,10 +26,11 @@ describe('applyAdoptedRefreshPair', () => {
     // Leader rotated memory/persist to 6; follower still at 5 with old refresh.
     const next = applyAdoptedRefreshPair(
       { accessToken: 'a1', refreshToken: 'R1' },
-      { memoryAuthRev: 5, persistedAuthRev: 6 },
+      { memoryAuthRev: 5, persistedAuthRev: 6, persistedSessionKey: 'SK1' },
     );
     assert.equal(next.authRev, 6);
     assert.equal(next.refreshToken, 'R1');
+    assert.equal(next.sessionKey, 'SK1');
   });
 
   it('keeps the higher of memory and persist without +1', () => {

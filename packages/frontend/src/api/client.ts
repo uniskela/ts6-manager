@@ -36,13 +36,29 @@ const REFRESH_TIMEOUT_MS = 15000;
  */
 export function applyAdoptedRefreshPair(
   pair: { accessToken: string; refreshToken: string },
-  opts: { memoryAuthRev: number; persistedAuthRev: number },
-): { accessToken: string; refreshToken: string; authRev: number } {
-  return {
+  opts: {
+    memoryAuthRev: number;
+    persistedAuthRev: number;
+    persistedSessionKey?: string | null;
+  },
+): {
+  accessToken: string;
+  refreshToken: string;
+  authRev: number;
+  sessionKey?: string;
+} {
+  const next: {
+    accessToken: string;
+    refreshToken: string;
+    authRev: number;
+    sessionKey?: string;
+  } = {
     accessToken: pair.accessToken,
     refreshToken: pair.refreshToken,
     authRev: Math.max(opts.memoryAuthRev, opts.persistedAuthRev),
   };
+  if (opts.persistedSessionKey) next.sessionKey = opts.persistedSessionKey;
+  return next;
 }
 
 /** Latest auth tokens from zustand persist (`ts6-auth`), not possibly-stale memory. */
@@ -50,30 +66,34 @@ export function readPersistedAuthTokens(): {
   accessToken: string | null;
   refreshToken: string | null;
   authRev: number;
+  sessionKey: string | null;
 } {
   if (typeof localStorage === 'undefined') {
-    return { accessToken: null, refreshToken: null, authRev: 0 };
+    return { accessToken: null, refreshToken: null, authRev: 0, sessionKey: null };
   }
   try {
     const raw = localStorage.getItem('ts6-auth');
-    if (!raw) return { accessToken: null, refreshToken: null, authRev: 0 };
+    if (!raw) return { accessToken: null, refreshToken: null, authRev: 0, sessionKey: null };
     const parsed = JSON.parse(raw) as {
       state?: {
         accessToken?: string | null;
         refreshToken?: string | null;
         authRev?: number;
+        sessionKey?: string | null;
       };
     };
     const access = parsed.state?.accessToken;
     const refresh = parsed.state?.refreshToken;
     const rev = parsed.state?.authRev;
+    const sessionKey = parsed.state?.sessionKey;
     return {
       accessToken: typeof access === 'string' && access.length > 0 ? access : null,
       refreshToken: typeof refresh === 'string' && refresh.length > 0 ? refresh : null,
       authRev: typeof rev === 'number' && Number.isFinite(rev) ? rev : 0,
+      sessionKey: typeof sessionKey === 'string' && sessionKey.length > 0 ? sessionKey : null,
     };
   } catch {
-    return { accessToken: null, refreshToken: null, authRev: 0 };
+    return { accessToken: null, refreshToken: null, authRev: 0, sessionKey: null };
   }
 }
 
@@ -191,6 +211,7 @@ function adoptPeerTokensIfFresh(
   useAuthStore.setState({
     refreshToken: persisted.refreshToken,
     authRev: persisted.authRev,
+    ...(persisted.sessionKey ? { sessionKey: persisted.sessionKey } : {}),
     ...(persisted.accessToken ? { accessToken: persisted.accessToken } : {}),
   });
 
@@ -253,6 +274,7 @@ async function refreshAccessToken(): Promise<string | null> {
                 accessToken: persisted.accessToken,
                 refreshToken: persisted.refreshToken,
                 authRev: persisted.authRev,
+                ...(persisted.sessionKey ? { sessionKey: persisted.sessionKey } : {}),
               });
               return {
                 accessToken: persisted.accessToken!,
@@ -324,9 +346,11 @@ async function refreshAccessToken(): Promise<string | null> {
         }
         // Leader already bumped authRev inside runRefresh→setTokens. Followers
         // must adopt the peer pair without setTokens or each tab inflates rev.
+        const persisted = readPersistedAuthTokens();
         const adopted = applyAdoptedRefreshPair(pair, {
           memoryAuthRev: useAuthStore.getState().authRev,
-          persistedAuthRev: readPersistedAuthTokens().authRev,
+          persistedAuthRev: persisted.authRev,
+          persistedSessionKey: persisted.sessionKey,
         });
         useAuthStore.setState(adopted);
         return pair.accessToken;
@@ -427,21 +451,31 @@ function installE2EAuthHooks(): void {
         accessToken: string | null;
         refreshToken: string | null;
         authRev: number;
+        sessionKey: string | null;
       };
       expireAccessInMemory: () => Promise<void>;
       /** Re-persist current in-memory auth through zustand (exercises shouldPersistAuthBlob). */
       flushPersistFromMemory: () => void;
       refreshNow: () => Promise<string | null>;
       logoutLocal: () => void;
+      /** Mint a new login lineage (new sessionKey) without going through logout BC. */
+      replaceSession: (
+        accessToken: string,
+        refreshToken: string,
+        user: { id: number; username: string; displayName: string; role: 'admin' | 'viewer' },
+      ) => void;
     };
   }).__ts6AuthTest = {
     getMemoryTokens: () => {
-      const { accessToken, refreshToken, authRev } = useAuthStore.getState();
-      return { accessToken, refreshToken, authRev };
+      const { accessToken, refreshToken, authRev, sessionKey } = useAuthStore.getState();
+      return { accessToken, refreshToken, authRev, sessionKey };
     },
     flushPersistFromMemory: () => {
-      const { accessToken, refreshToken, user, authRev } = useAuthStore.getState();
-      useAuthStore.setState({ accessToken, refreshToken, user, authRev });
+      const { accessToken, refreshToken, user, authRev, sessionKey } = useAuthStore.getState();
+      useAuthStore.setState({ accessToken, refreshToken, user, authRev, sessionKey });
+    },
+    replaceSession: (accessToken, refreshToken, user) => {
+      useAuthStore.getState().setAuth(accessToken, refreshToken, user);
     },
     expireAccessInMemory: async () => {
       const mem = useAuthStore.getState();

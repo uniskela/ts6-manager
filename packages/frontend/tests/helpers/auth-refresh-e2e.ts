@@ -5,11 +5,17 @@ export type E2EAuthTest = {
     accessToken: string | null;
     refreshToken: string | null;
     authRev: number;
+    sessionKey: string | null;
   };
   expireAccessInMemory: () => Promise<void>;
   flushPersistFromMemory: () => void;
   refreshNow: () => Promise<string | null>;
   logoutLocal: () => void;
+  replaceSession: (
+    accessToken: string,
+    refreshToken: string,
+    user: { id: number; username: string; displayName: string; role: 'admin' | 'viewer' },
+  ) => void;
 };
 
 export type RefreshState = {
@@ -58,6 +64,9 @@ export async function e2eAuth(page: Page): Promise<E2EAuthTest> {
     logoutLocal: () => page.evaluate(() => {
       (window as unknown as { __ts6AuthTest: E2EAuthTest }).__ts6AuthTest.logoutLocal();
     }),
+    replaceSession: (accessToken, refreshToken, user) => page.evaluate(({ accessToken: a, refreshToken: r, user: u }) => {
+      (window as unknown as { __ts6AuthTest: E2EAuthTest }).__ts6AuthTest.replaceSession(a, r, u);
+    }, { accessToken, refreshToken, user }),
   };
 }
 

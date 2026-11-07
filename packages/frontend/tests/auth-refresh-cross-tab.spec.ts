@@ -17,6 +17,7 @@ type AuthBlob = {
     refreshToken: string | null;
     user: { id: number; username: string; displayName: string; role: string } | null;
     authRev?: number;
+    sessionKey?: string | null;
   };
   version: number;
 };
@@ -290,6 +291,103 @@ test.describe('real two-tab refresh coordination', () => {
       data: { refreshToken: rotated.refreshToken },
     });
     expect(afterRevoke.status()).toBe(401);
+  });
+
+  test('logout after peer rotation tombstones successor and revokes family', async ({ page, context, request }) => {
+    await signIn(page);
+    const initial = await readPersistedAuth(page);
+    expect(initial.sessionKey).toBeTruthy();
+    const pageB = await openSecondTab(context);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
+
+    // Keep Tab B on R0 in memory while Tab A rotates to R1 (same sessionKey).
+    await muteAuthPersist(pageB);
+    await hooksA.expireAccessInMemory();
+    const rotatedAccess = await hooksA.refreshNow();
+    expect(rotatedAccess).toBeTruthy();
+    await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).not.toBe(initial.refreshToken);
+    const afterRotate = await readPersistedAuth(page);
+    expect(afterRotate.sessionKey).toBe(initial.sessionKey);
+    expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
+    expect((await hooksB.getMemoryTokens()).sessionKey).toBe(initial.sessionKey);
+    await unmuteAuthPersist(pageB);
+
+    const stale = await hooksB.getMemoryTokens();
+    const logoutRes = await request.post('/api/auth/logout', {
+      data: { refreshToken: stale.refreshToken },
+    });
+    expect(logoutRes.status()).toBe(204);
+    expect((await refreshState(request)).revoked).toBe(true);
+
+    await hooksB.logoutLocal();
+    await expect.poll(async () => {
+      const raw = await pageB.evaluate(() => localStorage.getItem('ts6-auth'));
+      if (!raw) return true;
+      const state = (JSON.parse(raw) as AuthBlob).state;
+      return !state.accessToken && !state.refreshToken;
+    }).toBe(true);
+
+    await expect.poll(async () => {
+      const memA = await hooksA.getMemoryTokens();
+      return memA.refreshToken === null && memA.accessToken === null;
+    }).toBe(true);
+
+    const resurrect = await request.post('/api/auth/refresh', {
+      data: { refreshToken: afterRotate.refreshToken },
+    });
+    expect(resurrect.status()).toBe(401);
+  });
+
+  test('stale logout after same-account new login leaves the new session intact', async ({ page, context, request }) => {
+    await signIn(page);
+    const first = await readPersistedAuth(page);
+    const pageB = await openSecondTab(context);
+    const hooksA = await e2eAuth(page);
+    const hooksB = await e2eAuth(pageB);
+
+    // Freeze Tab A on the first lineage while Tab B mints a genuine new login
+    // (new family + sessionKey) without a logout BC that would clear Tab A.
+    await muteAuthPersist(page);
+    const minted = await request.post('/api/auth/login', {
+      data: { username: 'admin', password: 'test-password' },
+    });
+    expect(minted.status()).toBe(200);
+    const pair = await minted.json() as {
+      accessToken: string;
+      refreshToken: string;
+      user: { id: number; username: string; displayName: string; role: 'admin' | 'viewer' };
+    };
+    await hooksB.replaceSession(pair.accessToken, pair.refreshToken, pair.user);
+    const second = await readPersistedAuth(pageB);
+    expect(second.refreshToken).toBe(pair.refreshToken);
+    expect(second.sessionKey).toBeTruthy();
+    expect(second.sessionKey).not.toBe(first.sessionKey);
+
+    const stale = await hooksA.getMemoryTokens();
+    expect(stale.refreshToken).toBe(first.refreshToken);
+    expect(stale.sessionKey).toBe(first.sessionKey);
+
+    const logoutRes = await request.post('/api/auth/logout', {
+      data: { refreshToken: stale.refreshToken },
+    });
+    expect(logoutRes.status()).toBe(204);
+    // Prior-family token is unknown to the new family — must not revoke it.
+    expect((await refreshState(request)).revoked).toBe(false);
+    expect((await refreshState(request)).live).toBe(second.refreshToken);
+
+    await hooksA.logoutLocal();
+    await unmuteAuthPersist(page);
+
+    const persisted = await readPersistedAuth(pageB);
+    expect(persisted.refreshToken).toBe(second.refreshToken);
+    expect(persisted.sessionKey).toBe(second.sessionKey);
+    expect((await hooksB.getMemoryTokens()).refreshToken).toBe(second.refreshToken);
+
+    const stillLive = await request.post('/api/auth/refresh', {
+      data: { refreshToken: second.refreshToken },
+    });
+    expect(stillLive.status()).toBe(200);
   });
 
   test('logout and failed refresh do not restore revoked credentials', async ({ page, context, request }) => {

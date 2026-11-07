@@ -19,6 +19,13 @@ interface AuthStore {
    * `ts6-auth` over a peer advance. Not derived from JWT `exp`.
    */
   authRev: number;
+  /**
+   * Opaque client session lineage. Minted on login (`setAuth`), kept across
+   * refresh rotation (`setTokens`), cleared on logout. Distinguishes same-family
+   * rotation from a new login (including same account) without using JWT subject
+   * or raw refresh tokens.
+   */
+  sessionKey: string | null;
   setAuth: (accessToken: string, refreshToken: string, user: UserInfo) => void;
   setTokens: (accessToken: string, refreshToken: string) => void;
   setUser: (user: UserInfo) => void;
@@ -34,8 +41,16 @@ type PersistedAuthBlob = {
     refreshToken?: string | null;
     user?: UserInfo | null;
     authRev?: number;
+    sessionKey?: string | null;
   };
 };
+
+function newSessionKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 function blobRev(blob: PersistedAuthBlob): number {
   const rev = blob.state?.authRev;
@@ -118,36 +133,41 @@ export function readPersistedAuthRev(): number {
   }
 }
 
-function readPersistedAuthSnapshot(): { authRev: number; refreshToken: string | null } {
-  if (typeof localStorage === 'undefined') return { authRev: 0, refreshToken: null };
+function readPersistedAuthSnapshot(): {
+  authRev: number;
+  refreshToken: string | null;
+  sessionKey: string | null;
+} {
+  if (typeof localStorage === 'undefined') {
+    return { authRev: 0, refreshToken: null, sessionKey: null };
+  }
   try {
     const raw = localStorage.getItem('ts6-auth');
-    if (!raw) return { authRev: 0, refreshToken: null };
+    if (!raw) return { authRev: 0, refreshToken: null, sessionKey: null };
     const parsed = JSON.parse(raw) as PersistedAuthBlob;
     const refresh = parsed.state?.refreshToken;
+    const sessionKey = parsed.state?.sessionKey;
     return {
       authRev: blobRev(parsed),
       refreshToken: typeof refresh === 'string' ? refresh : null,
+      sessionKey: typeof sessionKey === 'string' && sessionKey.length > 0 ? sessionKey : null,
     };
   } catch {
-    return { authRev: 0, refreshToken: null };
+    return { authRev: 0, refreshToken: null, sessionKey: null };
   }
 }
 
 /**
  * Cross-tab logout policy (intentional):
  *
- * - Explicit logout that successfully tombstones `ts6-auth` is a *family*
- *   logout: broadcast the tombstone `authRev` so peers still on an older
- *   memory rev clear too (shared refresh family must not survive one tab's
- *   intentional sign-out).
- * - A stale tab whose memory refresh no longer matches persist (peer already
- *   rotated/logged in) must not wipe that peer: memory-only tombstone rev,
- *   no broadcast when persist stays live (`shouldBroadcastAuthLogout`).
- * - Same-session lag (same refresh, memory rev behind persist) still
- *   tombstones: bump past persist so sign-out sticks and peers clear.
- * - Receivers ignore a logout BC when the origin rev does not beat local
- *   memory, or when live persist is already at/above that rev.
+ * - `sessionKey` is the client lineage: same across refresh rotation, new on
+ *   login. Refresh-token equality alone cannot tell rotation from re-login.
+ * - Explicit logout for the *same* sessionKey tombstones past persist and
+ *   broadcasts so peers on a rotated successor clear too.
+ * - Stale logout after a *new* login (different sessionKey, including same
+ *   account) stays memory-only and does not broadcast when persist stays live.
+ * - Receivers ignore a logout BC when live persist is already at/above the
+ *   origin rev, or when origin does not beat local memory.
  * - Legacy BC messages without `authRev` still apply (fail toward logout).
  * - Login/rotation bumps use max(memory, persist)+1.
  */
@@ -187,21 +207,32 @@ function nextAuthRev(memoryRev: number): number {
 
 /**
  * Logout revision for a tombstone write.
- * - Same refresh as persist → same session, only rev lagged → beat persist.
- * - Different refresh → peer already replaced the session → memory-only bump
- *   so we cannot wipe the peer login/rotation.
+ * - Same `sessionKey` as persist (refresh may have rotated) → beat persist.
+ * - Legacy blobs without sessionKey: same refresh still beats persist.
+ * - Different sessionKey / different refresh without keys → memory-only bump
+ *   so a new login (including same account) is not wiped.
  */
 export function nextLogoutAuthRev(input: {
   memoryRev: number;
   memoryRefresh: string | null;
+  memorySessionKey: string | null;
   persistedRev: number;
   persistedRefresh: string | null;
+  persistedSessionKey: string | null;
 }): number {
-  if (
-    input.memoryRefresh
+  const sameSession = Boolean(
+    input.memorySessionKey
+    && input.persistedSessionKey
+    && input.memorySessionKey === input.persistedSessionKey,
+  );
+  const sameRefreshLegacy = Boolean(
+    !input.memorySessionKey
+    && !input.persistedSessionKey
+    && input.memoryRefresh
     && input.persistedRefresh
-    && input.memoryRefresh === input.persistedRefresh
-  ) {
+    && input.memoryRefresh === input.persistedRefresh,
+  );
+  if (sameSession || sameRefreshLegacy) {
     return Math.max(input.memoryRev, input.persistedRev) + 1;
   }
   return input.memoryRev + 1;
@@ -217,6 +248,7 @@ export const useAuthStore = create<AuthStore>()(
       refreshToken: null,
       user: null,
       authRev: 0,
+      sessionKey: null,
       setAuth: (accessToken, refreshToken, user) => {
         const previousRefreshToken = get().refreshToken;
         set({
@@ -224,6 +256,7 @@ export const useAuthStore = create<AuthStore>()(
           refreshToken,
           user,
           authRev: nextAuthRev(get().authRev),
+          sessionKey: newSessionKey(),
         });
         // New login/session — drop cross-tab refresh cache so a prior account's
         // tokens cannot be adopted. Same-account refresh uses setTokens only.
@@ -242,30 +275,36 @@ export const useAuthStore = create<AuthStore>()(
         // Bump only when the refresh token changes (rotation / session replace).
         // Same-refresh access updates keep authRev so peers with an older rev
         // cannot win by rewriting access alone after a rotation.
+        // sessionKey is unchanged across rotation; mint if a pre-sessionKey
+        // blob is still live so later logout can recognise the lineage.
+        const sessionKey = get().sessionKey ?? newSessionKey();
         if (prevRefresh !== refreshToken) {
-          set({ accessToken, refreshToken, authRev: nextAuthRev(get().authRev) });
+          set({ accessToken, refreshToken, authRev: nextAuthRev(get().authRev), sessionKey });
         } else {
-          set({ accessToken, refreshToken });
+          set({ accessToken, refreshToken, sessionKey });
         }
       },
       setUser: (user) => set({ user }),
       logout: () => {
         // Clear auth first so a localStorage throw while persisting
-        // ts6-server cannot leave the session active. Same-refresh lag still
-        // tombstones past persist; a replaced peer session keeps memory-only
-        // rev so shouldPersistAuthBlob refuses to wipe the peer.
+        // ts6-server cannot leave the session active. Same sessionKey (peer
+        // may have rotated refresh) tombstones past persist; a new login with
+        // a different sessionKey keeps memory-only rev so the peer survives.
         const persisted = readPersistedAuthSnapshot();
         const tombstoneRev = nextLogoutAuthRev({
           memoryRev: get().authRev,
           memoryRefresh: get().refreshToken,
+          memorySessionKey: get().sessionKey,
           persistedRev: persisted.authRev,
           persistedRefresh: persisted.refreshToken,
+          persistedSessionKey: persisted.sessionKey,
         });
         set({
           accessToken: null,
           refreshToken: null,
           user: null,
           authRev: tombstoneRev,
+          sessionKey: null,
         });
         // Peer-tab logout sync (BroadcastChannel) is wired from the API client
         // via this event — keeps the store free of api/ imports.
