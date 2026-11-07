@@ -29,6 +29,22 @@ let refreshPromise: Promise<string | null> | null = null;
 
 const REFRESH_TIMEOUT_MS = 15000;
 
+/**
+ * Merge a coordinated refresh pair into store state without treating adoption
+ * as a local rotation. Used by BroadcastChannel followers (and the leader
+ * after setTokens already ran) so authRev is never inflated per follower.
+ */
+export function applyAdoptedRefreshPair(
+  pair: { accessToken: string; refreshToken: string },
+  opts: { memoryAuthRev: number; persistedAuthRev: number },
+): { accessToken: string; refreshToken: string; authRev: number } {
+  return {
+    accessToken: pair.accessToken,
+    refreshToken: pair.refreshToken,
+    authRev: Math.max(opts.memoryAuthRev, opts.persistedAuthRev),
+  };
+}
+
 /** Latest auth tokens from zustand persist (`ts6-auth`), not possibly-stale memory. */
 export function readPersistedAuthTokens(): {
   accessToken: string | null;
@@ -306,19 +322,13 @@ async function refreshAccessToken(): Promise<string | null> {
         }) === 'discard') {
           return null;
         }
-        // Prefer setTokens so authRev advances on rotation; fall back to
-        // persist rev when this follower only mirrors a peer-owned result.
-        const prev = useAuthStore.getState().refreshToken;
-        if (prev !== pair.refreshToken) {
-          useAuthStore.getState().setTokens(pair.accessToken, pair.refreshToken);
-        } else {
-          const persisted = readPersistedAuthTokens();
-          useAuthStore.setState({
-            accessToken: pair.accessToken,
-            refreshToken: pair.refreshToken,
-            authRev: Math.max(useAuthStore.getState().authRev, persisted.authRev),
-          });
-        }
+        // Leader already bumped authRev inside runRefresh→setTokens. Followers
+        // must adopt the peer pair without setTokens or each tab inflates rev.
+        const adopted = applyAdoptedRefreshPair(pair, {
+          memoryAuthRev: useAuthStore.getState().authRev,
+          persistedAuthRev: readPersistedAuthTokens().authRev,
+        });
+        useAuthStore.setState(adopted);
         return pair.accessToken;
       };
 

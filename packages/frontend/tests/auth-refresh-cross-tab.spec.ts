@@ -366,4 +366,46 @@ test.describe('no-Web-Lock BroadcastChannel ownership', () => {
       await context.close();
     }
   });
+
+  test('followers adopt leader authRev without inflating it', async ({ browser, request }: { browser: Browser; request: APIRequestContext }) => {
+    await enableAuth(request);
+    const context = await browser.newContext();
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, 'locks', { configurable: true, get: () => undefined });
+    });
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+    const pageC = await context.newPage();
+    try {
+      await signIn(pageA);
+      const before = await readPersistedAuth(pageA);
+      await pageB.goto('/dashboard');
+      await pageC.goto('/dashboard');
+      await expect(pageB).toHaveURL('/dashboard');
+      await expect(pageC).toHaveURL('/dashboard');
+
+      const hooks = await Promise.all([pageA, pageB, pageC].map((p) => e2eAuth(p)));
+      await Promise.all(hooks.map((h) => h.expireAccessInMemory()));
+      const tokens = await Promise.all(hooks.map((h) => h.refreshNow()));
+      expect(new Set(tokens.filter(Boolean)).size).toBe(1);
+
+      const memRevs = await Promise.all(hooks.map(async (h) => (await h.getMemoryTokens()).authRev));
+      const persistA = await readPersistedAuth(pageA);
+      const persistB = await readPersistedAuth(pageB);
+      const persistC = await readPersistedAuth(pageC);
+
+      // One leader rotation bump only — not +1 per follower.
+      expect(persistA.authRev).toBe((before.authRev ?? 0) + 1);
+      expect(persistB.authRev).toBe(persistA.authRev);
+      expect(persistC.authRev).toBe(persistA.authRev);
+      expect(new Set(memRevs).size).toBe(1);
+      expect(memRevs[0]).toBe(persistA.authRev);
+
+      const state = await refreshState(request);
+      expect(state.rotateCount).toBe(1);
+      expect(state.replayRevokes).toBe(0);
+    } finally {
+      await context.close();
+    }
+  });
 });
