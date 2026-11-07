@@ -16,6 +16,9 @@ Authoritative: #465. Functional spec: #442. Draft PR must not merge without R2 +
 | Session expiry / revocation | Existing listener-remote session auth (shared) | covered by listener-remote suite |
 | Concurrency / fail-closed | `vote_running`; listener list null → 503; sync single queue decision in B2 hook | covered |
 | No voter PII in API | `/state` and vote payloads omit UIDs / voter names | covered |
+| Pending stash isolation | Rejected Playlist B propose / clearStash must not wipe Playlist A's tracks; A still queues once | covered |
+| Deadline without `/state` | Past window + next propose terminalises the open vote (no indefinite `vote_running`) | covered |
+| Unavailable ≠ empty electorate | Electorate lookup null → ballot 503 / deadline `listeners_unavailable`; `[]` → B2 deadline closeSilent | covered |
 
 ## Manual / follow-up in R2 review
 

@@ -51,7 +51,8 @@ function link(id: number, position: number, track: PlaylistRow['songs'][number][
 }
 
 async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = {}) {
-  const remote = new ListenerRemoteService();
+  let now = 1_700_000_000_000;
+  const remote = new ListenerRemoteService(() => now);
   const queue = new PlayQueue();
   const peers = opts.peers ?? [];
   const state = {
@@ -60,7 +61,10 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     botServer: binding.serverConfigId, databaseServer: binding.serverConfigId,
     virtualServer: binding.virtualServerId, botStatus: 'playing' as string,
     voteSettings: null as string | null,
+    /** Fail the 2nd+ clientlist in a request (electorate) while auth's first list still works. */
+    failElectorate: false,
   };
+  let clientlistCalls = 0;
   const playlists = new Map<number, PlaylistRow>();
   const seed = (row: PlaylistRow) => { playlists.set(row.id, row); return row; };
   const audit: Array<{ action: string }> = [];
@@ -85,6 +89,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   app.locals.listenerRemote = remote;
   app.locals.voiceBotManager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
   app.locals.playlistVotes = runtime;
+  app.locals.playlistVoteClock = () => now;
   app.locals.eventBridge = {
     executeCommand: async (server: number, virtualServer: number, cmd: string) => {
       assert.equal(server, binding.serverConfigId);
@@ -93,6 +98,8 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
         return `client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
       }
       assert.equal(cmd, 'clientlist -uid');
+      clientlistCalls += 1;
+      if (state.failElectorate && clientlistCalls > 1) throw new Error('clientlist offline');
       if (state.channelId !== binding.channelId) return 'error id=0 msg=ok';
       const rows = [
         `clid=${binding.clid} cid=${binding.channelId} client_unique_identifier=${binding.uid} client_type=0`,
@@ -187,6 +194,9 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
 
   return {
     remote, request, exchangeAs, state, seed, bot, queue, audit, runtime,
+    now: () => now,
+    advance: (ms: number) => { now += ms; },
+    resetClientlistCalls: () => { clientlistCalls = 0; },
     close: () => new Promise<void>((resolve, reject) => {
       server.close((err) => err ? reject(err) : resolve());
       server.closeAllConnections();
@@ -438,5 +448,106 @@ describe('B3 R2 security matrix', () => {
     const text = JSON.stringify(state);
     assert.ok(!text.includes(binding.uid));
     assert.ok(!text.includes(peer.uid));
+  }));
+
+  it('rejected Playlist B propose does not corrupt Playlist A pending tracks', async () => using([peer], async (f) => {
+    enableVoting(f);
+    f.seed(requestable(2));
+    f.seed({
+      id: 2, name: 'Other', remoteAccess: 'request', serverConfigId: 2,
+      songs: [link(20, 0, song(200)), link(21, 1, song(201)), link(22, 2, song(202))],
+    });
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const { vote } = await opened.json() as { vote: { id: string } };
+
+    const conflict = await f.request('/playlist-requests', { session, body: { playlistId: 2 } });
+    assert.equal(conflict.status, 409);
+    assert.equal((await conflict.json() as { code: string }).code, 'vote_running');
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.runtime.machine.getOpen('4', '8')?.playlist.id, 1);
+
+    // Same-request idempotent retry must also leave A's stash intact.
+    const again = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(again);
+    assert.equal((await again.json() as { created: boolean }).created, false);
+
+    const peerAuth = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
+    f.state.uid = peer.uid;
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    await assertOk(ballot);
+    const body = await ballot.json() as { vote: { status: string; reason: string | null } };
+    assert.equal(body.vote.status, 'passed');
+    assert.equal(body.vote.reason, 'approved');
+    assert.equal(f.queue.length, 2, 'Playlist A queued exactly once');
+    assert.deepEqual(f.queue.getAll().map((item) => item.id), ['100', '101']);
+  }));
+
+  it('expired vote is terminalised on the next propose without a /state poll', async () => using([peer], async (f) => {
+    enableVoting(f);
+    f.seed(requestable(2));
+    f.seed({ id: 2, name: 'Other', remoteAccess: 'request', serverConfigId: 2, songs: [link(9, 0, song(9))] });
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    assert.ok(f.runtime.machine.getOpen('4', '8'));
+
+    f.advance(61_000);
+    const after = await f.request('/playlist-requests', { session, body: { playlistId: 2 } });
+    // Deadline close arms the bot cooldown; a new open may 429, but must not leave A open.
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    assert.ok(after.status === 429 || after.status === 200);
+    assert.equal(f.queue.length, 0);
+  }));
+
+  it('listener lookup failure refuses ballots and fails the vote at deadline (not empty electorate)', async () => using([peer], async (f) => {
+    enableVoting(f);
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const { vote } = await opened.json() as { vote: { id: string } };
+
+    const peerAuth = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
+    f.state.uid = peer.uid;
+    f.resetClientlistCalls();
+    f.state.failElectorate = true;
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    assert.equal(ballot.status, 503);
+    assert.equal(f.queue.length, 0);
+    assert.ok(f.runtime.machine.getOpen('4', '8'), 'vote stays open until deadline when lookup fails mid-window');
+
+    f.advance(61_000);
+    f.state.uid = binding.uid;
+    f.resetClientlistCalls();
+    // Auth succeeds (1st clientlist); electorate lookup fails (2nd) → tick with null, not [].
+    const stateRes = await f.request('/state', { session });
+    assert.equal(stateRes.status, 200);
+    const state = await stateRes.json() as { vote: { status: string; reason: string | null } | null };
+    assert.equal(state.vote?.status, 'failed');
+    assert.equal(state.vote?.reason, 'listeners_unavailable');
+    assert.equal(f.queue.length, 0);
+
+    // Contrast on B2: genuine empty electorate is deadline/closeSilent, never listeners_unavailable.
+    // Use a distinct botKey so prior cooldowns on bot "4" do not rate-limit this check.
+    const openedEmpty = f.runtime.machine.openVote({
+      botKey: 'contrast', channelId: '8', requesterUid: binding.uid,
+      playlist: { id: 1, name: 'Requestable', trackCount: 2 },
+      settings: { thresholdPercent: 100, windowMs: 60_000, maxTracks: 25 },
+      listenerUids: [binding.uid, peer.uid], nowMs: f.now(),
+    });
+    assert.equal(openedEmpty.ok, true);
+    f.advance(61_000);
+    const emptyTick = f.runtime.machine.tickDeadline({
+      botKey: 'contrast', channelId: '8', listenerUids: [], nowMs: f.now(),
+    });
+    assert.deepEqual(emptyTick, []);
+    assert.equal(f.runtime.machine.getOpen('contrast', '8'), undefined);
+    assert.equal(f.queue.length, 0);
   }));
 });
