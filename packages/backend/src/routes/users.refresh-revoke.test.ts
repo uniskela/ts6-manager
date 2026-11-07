@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import express, { type Express } from 'express';
+import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { userRoutes } from './users.routes.js';
@@ -12,6 +12,7 @@ import { authRoutes } from './auth.routes.js';
 import { errorHandler } from '../middleware/error-handler.js';
 import { config } from '../config.js';
 import { assertRefreshRejected, putUser } from './test-support/http-auth-helpers.js';
+import { listen } from './test-support/listen-loopback.js';
 
 type UserRow = {
   id: number;
@@ -31,26 +32,6 @@ type RefreshRow = {
   replacedBy: string | null;
   user?: UserRow;
 };
-
-function listen(app: Express): Promise<{ base: string; close: () => Promise<void> }> {
-  const server = app.listen(0, '127.0.0.1');
-  return new Promise((resolve, reject) => {
-    server.once('listening', () => {
-      const address = server.address();
-      if (!address || typeof address === 'string') reject(new Error('expected TCP address'));
-      else {
-        resolve({
-          base: `http://127.0.0.1:${address.port}`,
-          close: () =>
-            new Promise((res, rej) => {
-              server.closeAllConnections?.();
-              server.close((err) => (err ? rej(err) : res()));
-            }),
-        });
-      }
-    });
-  });
-}
 
 function createStore(options?: {
   /** Throw inside $transaction after mutate begins (simulates DB failure). */

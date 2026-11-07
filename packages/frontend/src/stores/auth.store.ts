@@ -31,8 +31,21 @@ export const useAuthStore = create<AuthStore>()(
       accessToken: null,
       refreshToken: null,
       user: null,
-      setAuth: (accessToken, refreshToken, user) =>
-        set({ accessToken, refreshToken, user }),
+      setAuth: (accessToken, refreshToken, user) => {
+        const previousRefreshToken = get().refreshToken;
+        set({ accessToken, refreshToken, user });
+        // New login/session — drop cross-tab refresh cache so a prior account's
+        // tokens cannot be adopted. Same-account refresh uses setTokens only.
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new CustomEvent('ts6-auth-session', {
+              detail: { previousRefreshToken },
+            }));
+          }
+        } catch {
+          // Coordination is best-effort; login must still complete.
+        }
+      },
       setTokens: (accessToken, refreshToken) =>
         set({ accessToken, refreshToken }),
       setUser: (user) => set({ user }),
@@ -40,6 +53,15 @@ export const useAuthStore = create<AuthStore>()(
         // Clear auth first so a localStorage throw while persisting
         // ts6-server cannot leave the session active.
         set({ accessToken: null, refreshToken: null, user: null });
+        // Peer-tab logout sync (BroadcastChannel) is wired from the API client
+        // via this event — keeps the store free of api/ imports.
+        try {
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(new Event('ts6-auth-logout'));
+          }
+        } catch {
+          // Coordination is best-effort; local logout must still complete.
+        }
         // Drop persisted connection selection with the session. Leaving
         // selectedConfigId/selectedSid in ts6-server after logout can strand
         // Dashboard on an indefinite PageLoader when /api/servers never loads

@@ -101,6 +101,10 @@ jobs:
       - name: Install Chromium for PWA tests
         run: pnpm --filter @ts6/frontend exec playwright install --with-deps chromium
 
+      # Rebuild frontend with Playwright auth hooks (tree-shaken from Docker/release builds).
+      - name: Build frontend for E2E
+        run: pnpm --filter @ts6/frontend run build:e2e
+
       # Step cap is tighter than the job (15m) so a hung Playwright/Chromium run
       # fails fast instead of cancelling after the whole TypeScript job times out.
       - name: Test production PWA
