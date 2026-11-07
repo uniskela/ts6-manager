@@ -10,6 +10,7 @@ import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { playlistVoteSettingsKey } from '../voice/playlist-vote-settings.js';
 import { bindPlaylistVoteLifecycle } from '../voice/playlist-vote/lifecycle.js';
 import { PlaylistVoteRuntime } from '../voice/playlist-vote/runtime.js';
+import { BOT_COOLDOWN_MS } from '../voice/playlist-vote/state-machine.js';
 
 async function assertOk(response: Response, label = 'response'): Promise<void> {
   if (response.status === 200) return;
@@ -71,6 +72,27 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   const playlists = new Map<number, PlaylistRow>();
   const seed = (row: PlaylistRow) => { playlists.set(row.id, row); return row; };
   const audit: Array<{ action: string }> = [];
+  /** Next playlist findFirst parks until `releasePlaylistReadGate` (deferred restash). */
+  let deferNextPlaylistRead = false;
+  let playlistReadWait: Promise<void> | null = null;
+  let releasePlaylistReads: (() => void) | null = null;
+  let signalPlaylistReadEntered: (() => void) | null = null;
+  let playlistReadEntered: Promise<void> | null = null;
+  const armPlaylistReadGate = () => {
+    deferNextPlaylistRead = true;
+    playlistReadEntered = new Promise<void>((resolve) => { signalPlaylistReadEntered = resolve; });
+    playlistReadWait = new Promise<void>((resolve) => { releasePlaylistReads = resolve; });
+  };
+  const waitPlaylistReadEntered = () => {
+    assert.ok(playlistReadEntered, 'armPlaylistReadGate first');
+    return playlistReadEntered;
+  };
+  const releasePlaylistReadGate = () => {
+    releasePlaylistReads?.();
+    releasePlaylistReads = null;
+    playlistReadWait = null;
+    deferNextPlaylistRead = false;
+  };
 
   const bot = {
     currentConfig: { id: binding.botId, serverConfigId: binding.serverConfigId, name: 'Music bot', password: 'bot-secret' },
@@ -127,6 +149,12 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     musicBot: { findUnique: async () => ({ serverConfigId: state.databaseServer, virtualServerId: state.virtualServer }) },
     playlist: {
       findFirst: async (query: { where: Record<string, unknown> }) => {
+        if (deferNextPlaylistRead && playlistReadWait) {
+          deferNextPlaylistRead = false;
+          signalPlaylistReadEntered?.();
+          signalPlaylistReadEntered = null;
+          await playlistReadWait;
+        }
         const id = query.where.id as number;
         const row = playlists.get(id);
         if (!row) return null;
@@ -204,6 +232,9 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     advanceRemote: (ms: number) => { remoteNow += ms; },
     setPeers: (next: Array<{ clid: number; uid: string }>) => { peers = [...next]; },
     resetClientlistCalls: () => { clientlistCalls = 0; },
+    armPlaylistReadGate,
+    waitPlaylistReadEntered,
+    releasePlaylistReadGate,
     close: () => new Promise<void>((resolve, reject) => {
       server.close((err) => err ? reject(err) : resolve());
       server.closeAllConnections();
@@ -733,5 +764,89 @@ describe('B3 R2 security matrix', () => {
     });
     assert.equal(ballot.status, 404);
     assert.equal(f.queue.length, 0);
+  }));
+
+  it('delayed settle for cancelled A cannot tick or clear successor B pending', async () => using([peer], async (f) => {
+    enableVoting(f);
+    f.seed(requestable(2));
+    f.seed({
+      id: 2, name: 'Successor', remoteAccess: 'request', serverConfigId: 2,
+      songs: [link(20, 0, song(200)), link(21, 1, song(201)), link(22, 2, song(202))],
+    });
+    const { session } = await f.exchangeAs(binding);
+    const openedA = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(openedA);
+    const { vote: voteA } = await openedA.json() as { vote: { id: string } };
+    assert.equal(voteA.id.length, 22);
+
+    // Unrelated bot/channel vote must stay untouched through the race.
+    const unrelated = f.runtime.machine.openVote({
+      botKey: '99', channelId: '7', requesterUid: 'other-req',
+      playlist: { id: 9, name: 'X', trackCount: 1 },
+      settings: { thresholdPercent: 100, windowMs: 60_000, maxTracks: 25 },
+      listenerUids: ['other-req', peer.uid], nowMs: f.now(),
+    });
+    assert.equal(unrelated.ok, true);
+    const unrelatedId = unrelated.ok ? unrelated.vote.id : '';
+
+    f.advance(61_000);
+    f.armPlaylistReadGate();
+    f.state.uid = binding.uid;
+    const settleA = f.request(`/votes/${voteA.id}`, { session, method: 'DELETE' });
+    await f.waitPlaylistReadEntered();
+
+    // Terminate A while its approval-time re-read is parked.
+    f.runtime.cancelBotUnavailable(binding.botId, f.now());
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    assert.equal(f.queue.length, 0);
+
+    f.advance(BOT_COOLDOWN_MS);
+    const openedB = await f.request('/playlist-requests', { session, body: { playlistId: 2 } });
+    await assertOk(openedB);
+    const { vote: voteB } = await openedB.json() as { vote: { id: string } };
+    assert.notEqual(voteB.id, voteA.id);
+    assert.ok(f.runtime.machine.getOpen('4', '8'));
+    const pendingKey = `4${'\0'}8`;
+    const pendingBefore = (f.runtime as unknown as {
+      pending: Map<string, { items: QueueItem[]; playlistId: number }>;
+    }).pending.get(pendingKey);
+    assert.ok(pendingBefore);
+    assert.equal(pendingBefore.playlistId, 2);
+    assert.equal(pendingBefore.items.length, 3);
+
+    f.releasePlaylistReadGate();
+    const settleRes = await settleA;
+    assert.equal(settleRes.status, 404);
+    assert.equal(f.queue.length, 0, 'cancelled A must not queue');
+
+    const stillB = f.runtime.machine.getOpen('4', '8');
+    assert.ok(stillB);
+    assert.equal(stillB.id, voteB.id, 'A settle must not tick B');
+    const pendingAfter = (f.runtime as unknown as {
+      pending: Map<string, { items: QueueItem[]; playlistId: number }>;
+    }).pending.get(pendingKey);
+    assert.ok(pendingAfter, 'failed A settle must not clear B pending');
+    assert.equal(pendingAfter.playlistId, 2);
+    assert.equal(pendingAfter.items.length, 3);
+
+    assert.equal(f.runtime.machine.getOpen('99', '7')?.id, unrelatedId);
+
+    const peerAuth = await asPeer(f);
+    const ballot = await f.request(`/votes/${voteB.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    await assertOk(ballot);
+    assert.equal((await ballot.json() as { vote: { status: string } }).vote.status, 'passed');
+    assert.equal(f.queue.length, 3, 'B queues exactly once');
+    assert.deepEqual(
+      f.queue.getAll().map((item) => item.id),
+      ['200', '201', '202'],
+    );
+
+    const replay = await f.request(`/votes/${voteB.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    assert.equal(replay.status, 404);
+    assert.equal(f.queue.length, 3);
   }));
 });

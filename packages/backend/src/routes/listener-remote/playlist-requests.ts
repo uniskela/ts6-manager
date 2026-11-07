@@ -261,10 +261,16 @@ async function settleExpiredVote(
   const channelId = channelIdFor(binding.channelId);
   const open = runtime.machine.getOpen(botKey, channelId);
   if (!open || nowMs < open.deadlineMs) return { queued: false, start: null };
+  const voteId = open.id;
 
   if (listenerUids !== null) {
-    await restashForApproval(req, runtime, binding, open.playlist.id, maxTracks, nowMs, open.id);
+    await restashForApproval(req, runtime, binding, open.playlist.id, maxTracks, nowMs, voteId);
   }
+
+  // Ownership: a slow restash must not tick or clearStash a successor vote.
+  const still = runtime.machine.getOpen(botKey, channelId);
+  if (!still || still.id !== voteId) return { queued: false, start: null };
+
   const events = runtime.machine.tickDeadline({
     botKey,
     channelId,
@@ -272,10 +278,11 @@ async function settleExpiredVote(
     nowMs,
   });
   if (eventsQueued(events)) {
-    const start = runtime.takeStart(open.id);
+    const start = runtime.takeStart(voteId);
     if (start) await maybeStart(req, start.botId, start.item);
     return { queued: true, start };
   }
+  // Sync after our tick of voteId — no await, so no successor can appear here.
   runtime.clearStash(botKey, channelId);
   return { queued: false, start: null };
 }
