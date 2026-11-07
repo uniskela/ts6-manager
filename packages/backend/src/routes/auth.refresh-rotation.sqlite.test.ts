@@ -90,20 +90,85 @@ async function putSelfPassword(base: string, body: { currentPassword: string; ne
   });
 }
 
-function postRefresh(base: string, refreshToken: string) {
-  return fetch(`${base}/api/auth/refresh`, {
+function postAuth(base: string, path: 'refresh' | 'logout', refreshToken: string) {
+  return fetch(`${base}/api/auth/${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
   });
 }
 
-function postLogout(base: string, refreshToken: string) {
-  return fetch(`${base}/api/auth/logout`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ refreshToken }),
+const postRefresh = (base: string, refreshToken: string) => postAuth(base, 'refresh', refreshToken);
+const postLogout = (base: string, refreshToken: string) => postAuth(base, 'logout', refreshToken);
+
+function weekFromNow() {
+  return new Date(Date.now() + 86_400_000);
+}
+
+async function seedRefreshRows(
+  rows: Array<{ token: string; family?: string | null; userId?: number }>,
+) {
+  const expiresAt = weekFromNow();
+  await prisma.refreshToken.createMany({
+    data: rows.map((row) => ({
+      token: row.token,
+      userId: row.userId ?? 1,
+      expiresAt,
+      family: row.family === undefined ? null : row.family,
+    })),
   });
+}
+
+/** Pause every refresh after live lookup; release when `arriveAt` handlers park. */
+function armRefreshGate(arriveAt: number) {
+  let releaseGate!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseGate = resolve;
+  });
+  let arrived = 0;
+  let releaseArrived!: () => void;
+  const arrivedP = new Promise<void>((resolve) => {
+    releaseArrived = resolve;
+  });
+  setHooks({
+    beforeRefreshRotate: async () => {
+      arrived += 1;
+      if (arrived === arriveAt) releaseArrived();
+      await gate;
+    },
+  });
+  return {
+    waitUntilArrived: () => arrivedP,
+    release: () => releaseGate(),
+    clear: () => setHooks(undefined),
+  };
+}
+
+/** Rotate R0→R1, logout presenting R0, assert family gone and R1 dead. */
+async function assertLogoutOfConsumedPredecessor(opts: {
+  r0: string;
+  family: string | null;
+  keepToken: string;
+  keepFamily: string | null;
+}) {
+  await seedAlice();
+  await seedRefreshRows([
+    { token: opts.r0, family: opts.family },
+    { token: opts.keepToken, family: opts.keepFamily },
+  ]);
+  const base = await baseUrl();
+  const rotated = await postRefresh(base, opts.r0);
+  assert.equal(rotated.status, 200);
+  const { refreshToken: r1 } = (await rotated.json()) as { refreshToken: string };
+  const consumed = await prisma.refreshToken.findUniqueOrThrow({ where: { token: opts.r0 } });
+  assert.ok(consumed.family);
+  assert.equal(await prisma.refreshToken.count({ where: { token: opts.keepToken } }), 1);
+
+  const logout = await postLogout(base, opts.r0);
+  assert.equal(logout.status, 204);
+  assert.equal(await prisma.refreshToken.count({ where: { family: consumed.family } }), 0);
+  assert.equal(await prisma.refreshToken.count({ where: { token: opts.keepToken } }), 1);
+  assert.equal((await postRefresh(base, r1)).status, 401);
 }
 
 before(() => {
@@ -174,39 +239,21 @@ describe('P1-B refresh rotation against real SQLite', () => {
     // Uncontrolled Promise.all can finish as post-commit replay (0 live rows).
     // Gate both handlers after the live findUnique and before $transaction.
     await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.create({
-      data: { token: 'race-token', userId: 1, expiresAt, family: 'fam-race' },
-    });
+    await seedRefreshRows([{ token: 'race-token', family: 'fam-race' }]);
     const base = await baseUrl();
-
-    let releaseGate!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve;
-    });
-    let arrived = 0;
-    let releaseArrived!: () => void;
-    const bothArrived = new Promise<void>((resolve) => {
-      releaseArrived = resolve;
-    });
-    setHooks({
-      beforeRefreshRotate: async () => {
-        arrived += 1;
-        if (arrived === 2) releaseArrived();
-        await gate;
-      },
-    });
+    const barrier = armRefreshGate(2);
 
     const pendingA = postRefresh(base, 'race-token');
     const pendingB = postRefresh(base, 'race-token');
-    await bothArrived;
+    await barrier.waitUntilArrived();
     assert.equal(
       await prisma.refreshToken.count({ where: { token: 'race-token', replacedBy: null } }),
       1,
       'both requests must still see a live R0 before either commits',
     );
-    releaseGate();
+    barrier.release();
     const [a, b] = await Promise.all([pendingA, pendingB]);
+    barrier.clear();
     const statuses = [a.status, b.status].sort();
     assert.deepEqual(statuses, [200, 401]);
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race', replacedBy: null } }), 1);
@@ -513,123 +560,59 @@ describe('P1-B refresh rotation against real SQLite', () => {
   });
 
   it('logout with a consumed predecessor revokes the rotated successor family', async () => {
-    await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.createMany({
-      data: [
-        { token: 'logout-r0', userId: 1, expiresAt, family: 'fam-logout' },
-        { token: 'logout-other', userId: 1, expiresAt, family: 'fam-keep' },
-      ],
+    await assertLogoutOfConsumedPredecessor({
+      r0: 'logout-r0',
+      family: 'fam-logout',
+      keepToken: 'logout-other',
+      keepFamily: 'fam-keep',
     });
-    const base = await baseUrl();
-
-    const rotated = await postRefresh(base, 'logout-r0');
-    assert.equal(rotated.status, 200);
-    const { refreshToken: r1 } = (await rotated.json()) as { refreshToken: string };
-    assert.ok(r1);
-    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-logout' } }), 2);
-
-    const logout = await postLogout(base, 'logout-r0');
-    assert.equal(logout.status, 204);
-    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-logout' } }), 0);
-    assert.equal(await prisma.refreshToken.count({ where: { token: 'logout-other' } }), 1);
-
-    const resurrect = await postRefresh(base, r1);
-    assert.equal(resurrect.status, 401);
   });
 
   it('logout with an unknown prior-session token does not wipe an independent family', async () => {
     await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.create({
-      data: { token: 'live-new', userId: 1, expiresAt, family: 'fam-new' },
-    });
+    await seedRefreshRows([{ token: 'live-new', family: 'fam-new' }]);
     const base = await baseUrl();
 
-    const logout = await postLogout(base, 'stale-other-family-token');
-    assert.equal(logout.status, 204);
+    assert.equal((await postLogout(base, 'stale-other-family-token')).status, 204);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'live-new' } }), 1);
-
-    const stillLive = await postRefresh(base, 'live-new');
-    assert.equal(stillLive.status, 200);
+    assert.equal((await postRefresh(base, 'live-new')).status, 200);
   });
 
   it('logout of a live null-family token revokes only null-family rows for that user', async () => {
     await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.createMany({
-      data: [
-        { token: 'null-live', userId: 1, expiresAt, family: null },
-        { token: 'null-sibling', userId: 1, expiresAt, family: null },
-        { token: 'named-keep', userId: 1, expiresAt, family: 'fam-named' },
-      ],
-    });
+    await seedRefreshRows([
+      { token: 'null-live', family: null },
+      { token: 'null-sibling', family: null },
+      { token: 'named-keep', family: 'fam-named' },
+    ]);
     const base = await baseUrl();
 
-    const logout = await postLogout(base, 'null-live');
-    assert.equal(logout.status, 204);
+    assert.equal((await postLogout(base, 'null-live')).status, 204);
     assert.equal(await prisma.refreshToken.count({ where: { userId: 1, family: null } }), 0);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'named-keep' } }), 1);
   });
 
   it('logout of a consumed null-family predecessor revokes the assigned rotate family', async () => {
-    await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.createMany({
-      data: [
-        { token: 'null-r0', userId: 1, expiresAt, family: null },
-        { token: 'other-null', userId: 1, expiresAt, family: null },
-      ],
+    await assertLogoutOfConsumedPredecessor({
+      r0: 'null-r0',
+      family: null,
+      keepToken: 'other-null',
+      keepFamily: null,
     });
-    const base = await baseUrl();
-
-    const rotated = await postRefresh(base, 'null-r0');
-    assert.equal(rotated.status, 200);
-    const { refreshToken: r1 } = (await rotated.json()) as { refreshToken: string };
-    const consumed = await prisma.refreshToken.findUniqueOrThrow({ where: { token: 'null-r0' } });
-    assert.ok(consumed.family);
-    assert.equal(await prisma.refreshToken.count({ where: { token: 'other-null' } }), 1);
-
-    const logout = await postLogout(base, 'null-r0');
-    assert.equal(logout.status, 204);
-    assert.equal(await prisma.refreshToken.count({ where: { family: consumed.family } }), 0);
-    assert.equal(await prisma.refreshToken.count({ where: { token: 'other-null' } }), 1);
-
-    const resurrect = await postRefresh(base, r1);
-    assert.equal(resurrect.status, 401);
   });
 
   it('logout racing refresh cannot leave a live successor', async () => {
     await seedAlice();
-    const expiresAt = new Date(Date.now() + 86_400_000);
-    await prisma.refreshToken.create({
-      data: { token: 'race-logout', userId: 1, expiresAt, family: 'fam-race-lo' },
-    });
+    await seedRefreshRows([{ token: 'race-logout', family: 'fam-race-lo' }]);
     const base = await baseUrl();
-
-    let releaseGate!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve;
-    });
-    let arrived = 0;
-    let releaseArrived!: () => void;
-    const bothArrived = new Promise<void>((resolve) => {
-      releaseArrived = resolve;
-    });
-    setHooks({
-      beforeRefreshRotate: async () => {
-        arrived += 1;
-        if (arrived === 1) releaseArrived();
-        await gate;
-      },
-    });
+    const barrier = armRefreshGate(1);
 
     const refreshP = postRefresh(base, 'race-logout');
-    await bothArrived;
+    await barrier.waitUntilArrived();
     const logoutP = postLogout(base, 'race-logout');
-    releaseGate();
+    barrier.release();
     const [refreshRes, logoutRes] = await Promise.all([refreshP, logoutP]);
-    setHooks(undefined);
+    barrier.clear();
 
     assert.equal(logoutRes.status, 204);
     // Refresh may win (200 then family revoked by logout) or lose (401).
@@ -637,8 +620,7 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race-lo' } }), 0);
     if (refreshRes.status === 200) {
       const { refreshToken: r1 } = (await refreshRes.json()) as { refreshToken: string };
-      const resurrect = await postRefresh(base, r1);
-      assert.equal(resurrect.status, 401);
+      assert.equal((await postRefresh(base, r1)).status, 401);
     }
   });
 });
