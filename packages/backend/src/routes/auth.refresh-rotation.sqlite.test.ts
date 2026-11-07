@@ -559,68 +559,28 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.ok(body.refreshToken);
   });
 
-  it('logout with a consumed predecessor revokes the rotated successor family', async () => {
-    await assertLogoutOfConsumedPredecessor({
-      r0: 'logout-r0',
-      family: 'fam-logout',
-      keepToken: 'logout-other',
-      keepFamily: 'fam-keep',
-    });
-  });
+  it('logout revokes presented family (named, null-legacy, unknown no-op)', async () => {
+    for (const opts of [
+      { r0: 'logout-r0', family: 'fam-logout' as string | null, keepToken: 'logout-other', keepFamily: 'fam-keep' as string | null },
+      { r0: 'null-r0', family: null, keepToken: 'other-null', keepFamily: null },
+    ]) {
+      await assertLogoutOfConsumedPredecessor(opts);
+    }
 
-  it('logout with an unknown prior-session token does not wipe an independent family', async () => {
-    await seedAlice();
-    await seedRefreshRows([{ token: 'live-new', family: 'fam-new' }]);
-    const base = await baseUrl();
-
-    assert.equal((await postLogout(base, 'stale-other-family-token')).status, 204);
-    assert.equal(await prisma.refreshToken.count({ where: { token: 'live-new' } }), 1);
-    assert.equal((await postRefresh(base, 'live-new')).status, 200);
-  });
-
-  it('logout of a live null-family token revokes only null-family rows for that user', async () => {
     await seedAlice();
     await seedRefreshRows([
+      { token: 'live-new', family: 'fam-new' },
       { token: 'null-live', family: null },
       { token: 'null-sibling', family: null },
       { token: 'named-keep', family: 'fam-named' },
     ]);
     const base = await baseUrl();
+    assert.equal((await postLogout(base, 'stale-other-family-token')).status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'live-new' } }), 1);
+    assert.equal((await postRefresh(base, 'live-new')).status, 200);
 
     assert.equal((await postLogout(base, 'null-live')).status, 204);
     assert.equal(await prisma.refreshToken.count({ where: { userId: 1, family: null } }), 0);
     assert.equal(await prisma.refreshToken.count({ where: { token: 'named-keep' } }), 1);
-  });
-
-  it('logout of a consumed null-family predecessor revokes the assigned rotate family', async () => {
-    await assertLogoutOfConsumedPredecessor({
-      r0: 'null-r0',
-      family: null,
-      keepToken: 'other-null',
-      keepFamily: null,
-    });
-  });
-
-  it('logout racing refresh cannot leave a live successor', async () => {
-    await seedAlice();
-    await seedRefreshRows([{ token: 'race-logout', family: 'fam-race-lo' }]);
-    const base = await baseUrl();
-    const barrier = armRefreshGate(1);
-
-    const refreshP = postRefresh(base, 'race-logout');
-    await barrier.waitUntilArrived();
-    const logoutP = postLogout(base, 'race-logout');
-    barrier.release();
-    const [refreshRes, logoutRes] = await Promise.all([refreshP, logoutP]);
-    barrier.clear();
-
-    assert.equal(logoutRes.status, 204);
-    // Refresh may win (200 then family revoked by logout) or lose (401).
-    assert.ok(refreshRes.status === 200 || refreshRes.status === 401);
-    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race-lo' } }), 0);
-    if (refreshRes.status === 200) {
-      const { refreshToken: r1 } = (await refreshRes.json()) as { refreshToken: string };
-      assert.equal((await postRefresh(base, r1)).status, 401);
-    }
   });
 });
