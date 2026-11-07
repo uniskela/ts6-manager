@@ -72,6 +72,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   const playlists = new Map<number, PlaylistRow>();
   const seed = (row: PlaylistRow) => { playlists.set(row.id, row); return row; };
   const audit: Array<{ action: string }> = [];
+  const historyWrites: Array<{ create?: { url?: string; title?: string; musicBotId?: number } }> = [];
   /** Next playlist findFirst parks until `releasePlaylistReadGate` (deferred restash). */
   let deferNextPlaylistRead = false;
   let playlistReadWait: Promise<void> | null = null;
@@ -182,7 +183,10 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     },
     musicRequest: {
       createMany: async () => ({ count: 0 }),
-      upsert: async () => ({}),
+      upsert: async (args: { create?: { url?: string; title?: string; musicBotId?: number } }) => {
+        historyWrites.push(args);
+        return {};
+      },
       findMany: async () => [],
       deleteMany: async () => ({ count: 0 }),
     },
@@ -225,9 +229,8 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   };
 
   return {
-    remote, request, exchangeAs, state, seed, bot, queue, audit, runtime,
-    now: () => voteNow,
-    advance: (ms: number) => { voteNow += ms; remoteNow += ms; },
+    remote, request, exchangeAs, state, seed, bot, queue, audit, historyWrites, runtime,
+    now: () => voteNow,    advance: (ms: number) => { voteNow += ms; remoteNow += ms; },
     /** Elapse credential TTL without closing an open vote window. */
     advanceRemote: (ms: number) => { remoteNow += ms; },
     setPeers: (next: Array<{ clid: number; uid: string }>) => { peers = [...next]; },
@@ -678,6 +681,42 @@ describe('B3 R2 security matrix', () => {
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
     assert.equal(f.queue.length, 2, 'eligible deadline pass still queues exactly once');
+    assert.equal(f.historyWrites.length, 2, 'deadline queue records exact track snapshot once');
+    assert.deepEqual(
+      f.historyWrites.map((row) => row.create?.url).sort(),
+      ['/secret/100.mp3', '/secret/101.mp3'],
+    );
+  }));
+
+  it('deadline settle via /state records history once; repeat settle does not duplicate', async () => using([peer, third], async (f) => {
+    enableVoting(f, { thresholdPercent: 100 });
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const { vote } = await opened.json() as { vote: { id: string } };
+    const peerAuth = await asPeer(f);
+    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    }));
+    f.setPeers([peer]);
+    f.advance(61_000);
+    f.state.uid = binding.uid;
+    await assertOk(await f.request('/state', { session }));
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    await assertOk(await f.request('/state', { session }));
+    assert.equal(f.queue.length, 2, 'exactly-once queue');
+    assert.equal(f.historyWrites.length, 2, 'no duplicate history on re-settle');
+  }));
+
+  it('post-deadline hide does not write request history', async () => using([peer, third], async (f) => {
+    const { session, vote } = await openNearPassThenHide(f);
+    f.state.uid = binding.uid;
+    const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
+    assert.equal(cancel.status, 404);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
   }));
 
   it('bot_unavailable cancels open vote and clears stash without queueing', async () => using([peer], async (f) => {

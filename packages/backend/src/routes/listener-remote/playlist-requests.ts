@@ -279,7 +279,13 @@ async function settleExpiredVote(
   });
   if (eventsQueued(events)) {
     const start = runtime.takeStart(voteId);
-    if (start) await maybeStart(req, start.botId, start.item);
+    if (start) {
+      await maybeStart(req, start.botId, start.item);
+      // Deadline pass must record the exact queued snapshot once (all settle callers).
+      const manager = req.app.locals.voiceBotManager as VoiceBotManager;
+      const bot = manager.getBot(start.botId) as ListenerBot | undefined;
+      if (bot) await saveHistory(req, bot, start.items);
+    }
     return { queued: true, start };
   }
   // Sync after our tick of voteId — no await, so no successor can appear here.
