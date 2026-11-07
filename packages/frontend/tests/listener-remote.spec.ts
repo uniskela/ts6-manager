@@ -9,7 +9,9 @@ const playing = {
   nowPlaying: { id: '1', title, artist: 'Midnight Transit', duration: 214 },
   upNext: [{ id: '2', title: 'Glass Harbor', artist: 'Northline', duration: 180 }],
   upNextCount: 2,
-  permissions: { searchLibrary: true, addToQueue: true, requestUrl: true },
+  // Explicit false: omitted browsePlaylists falls back to searchLibrary and mounts
+  // PlaylistsView, which either 503s (second role=alert) or steals focus on load.
+  permissions: { searchLibrary: true, addToQueue: true, requestUrl: true, browsePlaylists: false },
 };
 
 const library = {
@@ -114,7 +116,7 @@ test('hides library actions the listener is not allowed to use', async ({ page }
   await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
   await page.route(remote('/state'), (route) => fulfill(route, {
     ...playing,
-    permissions: { searchLibrary: true, addToQueue: false, requestUrl: false },
+    permissions: { searchLibrary: true, addToQueue: false, requestUrl: false, browsePlaylists: false },
   }));
   await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, library));
   await page.goto(`/remote#token=${token}`);
@@ -225,7 +227,7 @@ test('no horizontal overflow at common widths', async ({ page }) => {
 
 test('hides the add controls when adding is denied', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await openRemote(page, { ...playing, permissions: { searchLibrary: true, addToQueue: false, requestUrl: false } });
+  await openRemote(page, { ...playing, permissions: { searchLibrary: true, addToQueue: false, requestUrl: false, browsePlaylists: false } });
   await expect(page.getByLabel('Media URL')).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Add .+ to the queue/ })).toHaveCount(0);
   await expect(page.getByLabel('Search songs')).toBeVisible();
@@ -248,7 +250,12 @@ test('a pasted link uses the existing endpoint and reports rate limits', async (
   await expect(page.getByText('Added the link to the queue.')).toBeVisible();
   await page.getByLabel('Media URL').fill('https://example.com/b.mp3');
   await page.getByRole('button', { name: 'Request URL' }).click();
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'Too many requests. Try again shortly.' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'Listener remote is unavailable.' }),
+  ).toHaveCount(0);
   expect(bodies).toEqual([{ url: 'https://example.com/a.mp3' }, { url: 'https://example.com/b.mp3' }]);
 });
 
