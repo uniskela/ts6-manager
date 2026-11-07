@@ -6,8 +6,10 @@
  *   only that userId+family (null family = legacy null-family rows only).
  * - First rotate of a null-family row assigns a nanoid family.
  * - Concurrent same-token refresh: CAS updateMany — one winner; loser 401
- *   without family revoke. Frontend multi-tab uses Web Lock `ts6-auth-refresh`;
- *   browsers without locks still rely on CAS (loser retries with new token).
+ *   without family revoke (proven with beforeRefreshRotate barriers). Uncontrolled
+ *   dual POST can land as post-commit R0 replay (family revoke) instead.
+ *   Frontend multi-tab uses Web Lock `ts6-auth-refresh`; browsers without locks
+ *   still rely on CAS (loser retries with new token).
  * - Admin deleteMany vs in-flight rotate: closed by mint inside $transaction
  *   (no sessionEpoch / shared helper required with P1-A).
  * - Login mint rechecks enabled + passwordHash in the same transaction as
@@ -160,7 +162,9 @@ describe('P1-B refresh rotation against real SQLite', () => {
     assert.equal(await prisma.refreshToken.count({ where: { token: 'legacy-other' } }), 1);
   });
 
-  it('allows only one of two concurrent refreshes of the same token to succeed', async () => {
+  it('pre-commit CAS race: one winner; loser 401 without family revoke', async () => {
+    // Uncontrolled Promise.all can finish as post-commit replay (0 live rows).
+    // Gate both handlers after the live findUnique and before $transaction.
     await seedAlice();
     const expiresAt = new Date(Date.now() + 86_400_000);
     await prisma.refreshToken.create({
@@ -168,17 +172,40 @@ describe('P1-B refresh rotation against real SQLite', () => {
     });
     const base = await baseUrl();
 
-    const [a, b] = await Promise.all([
-      postRefresh(base, 'race-token'),
-      postRefresh(base, 'race-token'),
-    ]);
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let arrived = 0;
+    let releaseArrived!: () => void;
+    const bothArrived = new Promise<void>((resolve) => {
+      releaseArrived = resolve;
+    });
+    setHooks({
+      beforeRefreshRotate: async () => {
+        arrived += 1;
+        if (arrived === 2) releaseArrived();
+        await gate;
+      },
+    });
+
+    const pendingA = postRefresh(base, 'race-token');
+    const pendingB = postRefresh(base, 'race-token');
+    await bothArrived;
+    assert.equal(
+      await prisma.refreshToken.count({ where: { token: 'race-token', replacedBy: null } }),
+      1,
+      'both requests must still see a live R0 before either commits',
+    );
+    releaseGate();
+    const [a, b] = await Promise.all([pendingA, pendingB]);
     const statuses = [a.status, b.status].sort();
     assert.deepEqual(statuses, [200, 401]);
-    // Pre-commit CAS loser must not wipe the winner's family (one live successor).
     assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race', replacedBy: null } }), 1);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race' } }), 2);
   });
 
-  it('post-commit second presenter of R0 gets 401, family-revokes, and R1 is unusable', async () => {
+  it('post-commit duplicate R0: 401, family revoke, R1 unusable (no grace period)', async () => {
     // Kody finding #1: after R0→R1 commits, another legitimate R0 POST is
     // wire-identical to attacker replay — protocol cannot tell them apart.
     await seedAlice();

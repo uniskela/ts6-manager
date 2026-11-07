@@ -382,22 +382,53 @@ function installE2EAuthHooks(): void {
       return { accessToken, refreshToken };
     },
     expireAccessInMemory: async () => {
-      const priorId = accessTokenUserId(useAuthStore.getState().accessToken);
+      const mem = useAuthStore.getState();
+      const priorId = accessTokenUserId(mem.accessToken);
       const header = toBase64UrlJson({ alg: 'none', typ: 'JWT' });
       // Keep subject `id` so same-account adopt gates still work after expiry.
       const payload = toBase64UrlJson({
         ...(priorId != null ? { id: priorId } : {}),
         exp: Math.floor(Date.now() / 1000) - 120,
       });
-      // Memory-only expiry: leave stale refresh in memory (for adopt tests) but
-      // re-assert persist so a deferred zustand flush cannot wipe a peer rotation.
-      const snap = localStorage.getItem('ts6-auth');
-      useAuthStore.setState({ accessToken: `${header}.${payload}.e2e-expired` });
-      if (snap) {
-        for (let i = 0; i < 3; i++) {
-          localStorage.setItem('ts6-auth', snap);
-          await Promise.resolve();
+      const expiredAccess = `${header}.${payload}.e2e-expired`;
+      const snapRaw = localStorage.getItem('ts6-auth');
+      // setState persists {expiredAccess, memoryRefresh} and can rewind a peer
+      // rotation. Pin ts6-auth during setState:
+      // - peer advanced (persist refresh ≠ memory): keep full peer snap (valid
+      //   access) so adoptPeerTokensIfFresh can skip a second network rotate;
+      // - otherwise expire access in persist too so we cannot "adopt" the same
+      //   login access without rotating.
+      let pinned = snapRaw;
+      if (snapRaw) {
+        try {
+          const snap = JSON.parse(snapRaw) as {
+            state?: { accessToken?: string; refreshToken?: string; user?: unknown };
+            version?: number;
+          };
+          const persistRefresh = snap.state?.refreshToken;
+          if (!persistRefresh || !mem.refreshToken || persistRefresh === mem.refreshToken) {
+            pinned = JSON.stringify({
+              ...snap,
+              state: { ...snap.state, accessToken: expiredAccess },
+            });
+          }
+        } catch {
+          pinned = snapRaw;
         }
+      }
+      if (!pinned) {
+        useAuthStore.setState({ accessToken: expiredAccess });
+        return;
+      }
+      const rawSet = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (key: string, value: string) => {
+        rawSet(key, key === 'ts6-auth' ? pinned! : value);
+      };
+      try {
+        useAuthStore.setState({ accessToken: expiredAccess });
+      } finally {
+        localStorage.setItem = rawSet;
+        rawSet('ts6-auth', pinned);
       }
     },
     refreshNow: () => refreshAccessToken(),

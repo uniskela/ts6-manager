@@ -71,17 +71,46 @@ test.describe('real two-tab refresh coordination', () => {
     const hooksB = await e2eAuth(pageB);
 
     await hooksA.expireAccessInMemory();
+    const memAfterExpire = await hooksA.getMemoryTokens();
+    const persistAfterExpire = await readPersistedAuth(page);
     const rotatedAccess = await hooksA.refreshNow();
     expect(rotatedAccess).toBeTruthy();
+    try {
+      await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).not.toBe(initial.refreshToken);
+    } catch (err) {
+      const mem = await hooksA.getMemoryTokens();
+      const persisted = await readPersistedAuth(page);
+      const state = await refreshState(request);
+      throw new Error(
+        `Tab A did not persist rotation after refreshNow. `
+        + `beforeRefresh mem=${JSON.stringify(memAfterExpire)} persist=${JSON.stringify(persistAfterExpire)} `
+        + `after mem=${JSON.stringify(mem)} persist=${JSON.stringify(persisted)} `
+        + `refreshState=${JSON.stringify(state)} rotatedAccessEqInitial=${rotatedAccess === initial.accessToken}`,
+      );
+    }
     const afterA = await readPersistedAuth(page);
-    expect(afterA.refreshToken).not.toBe(initial.refreshToken);
+    expect((await refreshState(request)).rotateCount).toBe(1);
 
     const staleMem = await hooksB.getMemoryTokens();
     expect(staleMem.refreshToken).toBe(initial.refreshToken);
 
+    // Tab B must observe Tab A's persist before memory-only expiry (shared LS).
+    await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(afterA.refreshToken);
+
     await hooksB.expireAccessInMemory();
+    // Harness must not rewind peer rotation when expiring access in memory.
+    await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(afterA.refreshToken);
+    expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
+
     const adopted = await hooksB.refreshNow();
-    expect(adopted).toBeTruthy();
+    if (!adopted) {
+      const mem = await hooksB.getMemoryTokens();
+      const persisted = await readPersistedAuth(pageB);
+      const state = await refreshState(request);
+      throw new Error(
+        `adopt returned null mem=${JSON.stringify(mem)} persist=${JSON.stringify(persisted)} refreshState=${JSON.stringify(state)}`,
+      );
+    }
     expect(adopted).toBe(afterA.accessToken);
 
     const memB = await hooksB.getMemoryTokens();
@@ -133,7 +162,9 @@ test.describe('real two-tab refresh coordination', () => {
     // Tab A still holds the pre-peer refresh in memory — must adopt, not logout.
     const staleA = await hooksAfterLogin.getMemoryTokens();
     expect(staleA.refreshToken).toBe(afterLocal.refreshToken);
+    await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).toBe(afterPeer.refreshToken);
     await hooksAfterLogin.expireAccessInMemory();
+    await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).toBe(afterPeer.refreshToken);
     const adopted = await hooksAfterLogin.refreshNow();
     expect(adopted).toBeTruthy();
     expect(adopted).toBe(afterPeer.accessToken);
@@ -146,17 +177,32 @@ test.describe('real two-tab refresh coordination', () => {
 
   test('background tab resumes after peer refresh', async ({ page, context, request }) => {
     await signIn(page);
+    const initial = await readPersistedAuth(page);
     const pageB = await openSecondTab(context, '/settings');
     const hooksA = await e2eAuth(page);
     const hooksB = await e2eAuth(pageB);
 
     await hooksA.expireAccessInMemory();
-    await hooksA.refreshNow();
+    const rotated = await hooksA.refreshNow();
+    expect(rotated).toBeTruthy();
+    // Persist can briefly lag or be contested by the peer tab's store; wait for R1.
+    await expect.poll(async () => (await readPersistedAuth(page)).refreshToken).not.toBe(initial.refreshToken);
     const peer = await readPersistedAuth(page);
+    expect((await refreshState(request)).rotateCount).toBeGreaterThanOrEqual(1);
 
     await pageB.bringToFront();
+    await expect.poll(async () => (await readPersistedAuth(pageB)).refreshToken).toBe(peer.refreshToken);
+    expect((await hooksB.getMemoryTokens()).refreshToken).toBe(initial.refreshToken);
+
     const resumed = await hooksB.refreshNow();
-    expect(resumed).toBeTruthy();
+    if (!resumed) {
+      const mem = await hooksB.getMemoryTokens();
+      const persisted = await readPersistedAuth(pageB);
+      const state = await refreshState(request);
+      throw new Error(
+        `resume returned null mem=${JSON.stringify(mem)} persist=${JSON.stringify(persisted)} refreshState=${JSON.stringify(state)}`,
+      );
+    }
     expect((await hooksB.getMemoryTokens()).refreshToken).toBe(peer.refreshToken);
 
     const state = await refreshState(request);
