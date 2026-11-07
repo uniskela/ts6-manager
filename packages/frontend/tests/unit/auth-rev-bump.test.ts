@@ -44,6 +44,44 @@ function seedPersist(refresh: string, authRev: number, userId = 1, sessionKey: s
   }));
 }
 
+function persistState() {
+  return JSON.parse(localStorage.getItem('ts6-auth')!).state as {
+    accessToken: string | null;
+    refreshToken: string | null;
+    authRev: number;
+    sessionKey: string | null;
+  };
+}
+
+/** Lagging memory vs peer persist — shared setup for logout lineage tests. */
+function seedLaggingLogout(opts: {
+  useAuthStore: typeof import('../../src/stores/auth.store.ts').useAuthStore;
+  persistRefresh: string;
+  persistRev: number;
+  persistKey: string | null;
+  memoryRefresh: string;
+  memoryRev: number;
+  memoryKey: string | null;
+  persistUserId?: number;
+  memoryUserId?: number;
+}) {
+  const persistUserId = opts.persistUserId ?? 1;
+  const memoryUserId = opts.memoryUserId ?? persistUserId;
+  seedPersist(opts.persistRefresh, opts.persistRev, persistUserId, opts.persistKey);
+  opts.useAuthStore.setState({
+    accessToken: 'stale.access',
+    refreshToken: opts.memoryRefresh,
+    authRev: opts.memoryRev,
+    sessionKey: opts.memoryKey,
+    user: {
+      id: memoryUserId,
+      username: memoryUserId === 1 ? 'u' : 'old',
+      displayName: memoryUserId === 1 ? 'U' : 'Old',
+      role: 'admin',
+    },
+  });
+}
+
 describe('authRev bump observes persist', () => {
   let storage: MemoryStorage;
   let useAuthStore: typeof import('../../src/stores/auth.store.ts').useAuthStore;
@@ -110,81 +148,78 @@ describe('authRev bump observes persist', () => {
   });
 
   it('stale logout does not wipe a newer persisted peer login (different account)', () => {
-    seedPersist('R_new', 7, 2, 'SK_peer');
-    useAuthStore.setState({
-      accessToken: 'stale.access',
-      refreshToken: 'R_old',
-      authRev: 3,
-      sessionKey: 'SK_old',
-      user: { id: 1, username: 'old', displayName: 'Old', role: 'admin' },
+    seedLaggingLogout({
+      useAuthStore,
+      persistRefresh: 'R_new',
+      persistRev: 7,
+      persistKey: 'SK_peer',
+      persistUserId: 2,
+      memoryRefresh: 'R_old',
+      memoryRev: 3,
+      memoryKey: 'SK_old',
+      memoryUserId: 1,
     });
-
     useAuthStore.getState().logout();
-
     assert.equal(useAuthStore.getState().refreshToken, null);
     assert.equal(useAuthStore.getState().authRev, 4);
-    const persisted = JSON.parse(localStorage.getItem('ts6-auth')!);
-    assert.equal(persisted.state.refreshToken, 'R_new');
-    assert.equal(persisted.state.authRev, 7);
+    assert.equal(persistState().refreshToken, 'R_new');
+    assert.equal(persistState().authRev, 7);
   });
 
   it('logout after peer rotation with same sessionKey tombstones the successor', () => {
     // Tab B rotated R0→R1 @ rev 6; Tab A still holds R0 @ rev 5, same lineage.
-    seedPersist('R_peer', 6, 1, 'SK1');
-    useAuthStore.setState({
-      accessToken: 'stale.access',
-      refreshToken: 'R_old',
-      authRev: 5,
-      sessionKey: 'SK1',
-      user: { id: 1, username: 'u', displayName: 'U', role: 'admin' },
+    seedLaggingLogout({
+      useAuthStore,
+      persistRefresh: 'R_peer',
+      persistRev: 6,
+      persistKey: 'SK1',
+      memoryRefresh: 'R_old',
+      memoryRev: 5,
+      memoryKey: 'SK1',
     });
-
     useAuthStore.getState().logout();
-
     assert.equal(useAuthStore.getState().authRev, 7);
-    const persisted = JSON.parse(localStorage.getItem('ts6-auth')!);
-    assert.equal(persisted.state.refreshToken, null);
-    assert.equal(persisted.state.accessToken, null);
-    assert.equal(persisted.state.authRev, 7);
-    assert.equal(persisted.state.sessionKey, null);
+    const p = persistState();
+    assert.equal(p.refreshToken, null);
+    assert.equal(p.accessToken, null);
+    assert.equal(p.authRev, 7);
+    assert.equal(p.sessionKey, null);
   });
 
   it('stale logout after same-account new login does not wipe the new session', () => {
     // Account IDs match; sessionKey must decide lineage, not user id.
-    seedPersist('R_new', 7, 1, 'SK_new');
-    useAuthStore.setState({
-      accessToken: 'stale.access',
-      refreshToken: 'R_old',
-      authRev: 5,
-      sessionKey: 'SK_old',
-      user: { id: 1, username: 'u', displayName: 'U', role: 'admin' },
+    seedLaggingLogout({
+      useAuthStore,
+      persistRefresh: 'R_new',
+      persistRev: 7,
+      persistKey: 'SK_new',
+      memoryRefresh: 'R_old',
+      memoryRev: 5,
+      memoryKey: 'SK_old',
     });
-
     useAuthStore.getState().logout();
-
     assert.equal(useAuthStore.getState().authRev, 6);
-    const persisted = JSON.parse(localStorage.getItem('ts6-auth')!);
-    assert.equal(persisted.state.refreshToken, 'R_new');
-    assert.equal(persisted.state.authRev, 7);
-    assert.equal(persisted.state.sessionKey, 'SK_new');
+    assert.equal(persistState().refreshToken, 'R_new');
+    assert.equal(persistState().authRev, 7);
+    assert.equal(persistState().sessionKey, 'SK_new');
   });
 
   it('same-tab logout still tombstones its own session', () => {
-    seedPersist('R1', 4, 1, 'SK1');
-    useAuthStore.setState({
-      accessToken: 'a.b.c',
-      refreshToken: 'R1',
-      authRev: 4,
-      sessionKey: 'SK1',
-      user: { id: 1, username: 'u', displayName: 'U', role: 'admin' },
+    seedLaggingLogout({
+      useAuthStore,
+      persistRefresh: 'R1',
+      persistRev: 4,
+      persistKey: 'SK1',
+      memoryRefresh: 'R1',
+      memoryRev: 4,
+      memoryKey: 'SK1',
     });
-
+    useAuthStore.setState({ accessToken: 'a.b.c' });
     useAuthStore.getState().logout();
-
-    const persisted = JSON.parse(localStorage.getItem('ts6-auth')!);
-    assert.equal(persisted.state.refreshToken, null);
-    assert.equal(persisted.state.accessToken, null);
-    assert.equal(persisted.state.authRev, 5);
+    const p = persistState();
+    assert.equal(p.refreshToken, null);
+    assert.equal(p.accessToken, null);
+    assert.equal(p.authRev, 5);
   });
 
   it('login after a peer logout tombstone advances past the tombstone rev', () => {
@@ -229,21 +264,20 @@ describe('authRev bump observes persist', () => {
 
   it('same-session logout with lagging memory rev still clears persist', () => {
     // Same refresh R2 already at persist@6; this tab still holds R2 @ memory 5.
-    seedPersist('R2', 6, 1, 'SK1');
-    useAuthStore.setState({
-      accessToken: 'lag.access',
-      refreshToken: 'R2',
-      authRev: 5,
-      sessionKey: 'SK1',
-      user: { id: 1, username: 'u', displayName: 'U', role: 'admin' },
+    seedLaggingLogout({
+      useAuthStore,
+      persistRefresh: 'R2',
+      persistRev: 6,
+      persistKey: 'SK1',
+      memoryRefresh: 'R2',
+      memoryRev: 5,
+      memoryKey: 'SK1',
     });
-
+    useAuthStore.setState({ accessToken: 'lag.access' });
     useAuthStore.getState().logout();
-
     assert.equal(useAuthStore.getState().authRev, 7);
-    const persisted = JSON.parse(localStorage.getItem('ts6-auth')!);
-    assert.equal(persisted.state.refreshToken, null);
-    assert.equal(persisted.state.authRev, 7);
+    assert.equal(persistState().refreshToken, null);
+    assert.equal(persistState().authRev, 7);
   });
 
   it('setAuth mints a new sessionKey; setTokens keeps it across rotation', () => {
