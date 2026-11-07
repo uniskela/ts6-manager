@@ -36,4 +36,4 @@ The application uses TeamSpeak **WebQuery HTTP** for management operations. Opti
 - [API errors](api-errors.md) — user-facing error contract and reason codes
 - [Roadmap](roadmap.md) — implemented phases and public follow-up direction
 
-The source repository remains the canonical implementation. Hosted docs at [www.uniskela.com/docs/ts6-manager](https://www.uniskela.com/docs/ts6-manager/) are generated from these reviewed pages. `docs/manifest.json` lists them; the `public` directory is not part of the URL.
+The source repository remains the canonical implementation. Hosted docs at [ts6manager.com/docs](https://ts6manager.com/docs/) are generated from these reviewed pages. `docs/manifest.json` lists them; the `public` directory is not part of the URL.

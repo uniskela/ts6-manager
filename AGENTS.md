@@ -8,7 +8,7 @@
 | `docs/internal/` | Implementation plans and maintainer notes. Not published. |
 | `docs/agents/` | Agent-only working notes. Not published. |
 
-Local setup is [Development](docs/public/development.md). Do not add `docs/internal/` or `docs/agents/` paths to the publication manifest. URL slugs stay stable (`/docs/ts6-manager/latest/<slug>/`).
+Local setup is [Development](docs/public/development.md). Do not add `docs/internal/` or `docs/agents/` paths to the publication manifest. URL slugs stay stable (`/docs/latest/<slug>/` on the TS6 Manager website; formerly `/docs/ts6-manager/latest/<slug>/` on uniskela.com).
 
 ## Releases (Release Please)
 
