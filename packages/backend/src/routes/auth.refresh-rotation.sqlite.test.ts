@@ -191,6 +191,7 @@ async function assertLogoutInterleavesInFlightRefresh(token: string, family: str
       assert.equal(refreshOutcome.status, 401);
     }
   } finally {
+    parked.release();
     parked.clear();
   }
 }
