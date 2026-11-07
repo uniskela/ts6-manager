@@ -1,0 +1,118 @@
+name: Notify TS6 Manager website
+
+# Tells uniskela/ts6-manager-website that documentation may have changed:
+#  - after README/docs changes merge to main (refreshes Next), and
+#  - after a Release Please run that published a release (moves stable).
+# The website only treats this as a trigger. It re-resolves the latest release and
+# main itself, runs its checks and opens a draft PR for review. Nothing is
+# published from here.
+#
+# Inactive until the repository variable TS6_WEBSITE_DOCS_NOTIFY is "true".
+# Setup: .github/docs-sync.md. This workflow is separate from (and does not
+# change) notify-uniskela-docs.yml or release-please.yml.
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - docs/**
+      - .github/workflows/notify-website-docs.yml
+  workflow_run:
+    workflows: [Release Please]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: notify-website-docs
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    if: >-
+      github.repository == 'uniskela/ts6-manager' &&
+      vars.TS6_WEBSITE_DOCS_NOTIFY == 'true' &&
+      (
+        (github.event_name != 'workflow_run' && github.ref == 'refs/heads/main') ||
+        (github.event_name == 'workflow_run' &&
+         github.event.workflow_run.conclusion == 'success' &&
+         github.event.workflow_run.event == 'push' &&
+         github.event.workflow_run.head_branch == 'main' &&
+         github.event.workflow_run.head_repository.full_name == github.repository)
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Work out what to announce
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PUSH_SHA: ${{ github.sha }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          release=""
+          if [ "$EVENT" = workflow_run ]; then
+            sha="$RUN_SHA"
+            # Release Please tags the release PR's merge commit. Announce a release only
+            # if the latest published release points at the commit this run built.
+            tag=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || true)
+            if [ -n "$tag" ] && [ "$(gh api "repos/$REPO/commits/$tag" --jq .sha)" = "$sha" ]; then
+              release="$tag"
+            fi
+            if [ -z "$release" ]; then
+              echo "This Release Please run did not publish a release; nothing to announce."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          else
+            sha="$PUSH_SHA"
+          fi
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Unexpected commit SHA"; exit 1; }
+          if [ -n "$release" ] && ! [[ "$release" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Unexpected release tag"; exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "Announcing ${release:-a docs change} at $sha"
+
+      - name: Check App configuration
+        if: steps.source.outputs.skip != 'true'
+        env:
+          APP_ID: ${{ vars.TS6_WEBSITE_NOTIFY_APP_ID }}
+          APP_KEY: ${{ secrets.TS6_WEBSITE_NOTIFY_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
+            echo '::error::Configure TS6_WEBSITE_NOTIFY_APP_ID and TS6_WEBSITE_NOTIFY_APP_PRIVATE_KEY; see .github/docs-sync.md.'
+            exit 1
+          fi
+
+      # Actions: write on the website repository only. Enough to start a
+      # workflow_dispatch run; it cannot push code or open PRs.
+      - name: Create short-lived website token
+        if: steps.source.outputs.skip != 'true'
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.TS6_WEBSITE_NOTIFY_APP_ID }}
+          private-key: ${{ secrets.TS6_WEBSITE_NOTIFY_APP_PRIVATE_KEY }}
+          owner: uniskela
+          repositories: ts6-manager-website
+          permission-actions: write
+
+      - name: Start the website's documentation update
+        if: steps.source.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SHA: ${{ steps.source.outputs.sha }}
+          RELEASE: ${{ steps.source.outputs.release }}
+        run: |
+          gh api --method POST repos/uniskela/ts6-manager-website/actions/workflows/docs-update.yml/dispatches \
+            -f ref=main -f "inputs[notification_sha]=$SHA" -f "inputs[notification_release]=$RELEASE"
+          echo "Dispatched docs-update.yml on uniskela/ts6-manager-website."
