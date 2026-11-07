@@ -1,5 +1,6 @@
 import { loadPublicUrl } from '../../utils/app-settings.js';
 import { resolveMediaIdentity, listHumanMediaListeners } from '../media-listeners.js';
+import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { CommandContext } from './context.js';
 import { tryClaimChatInfoReply } from './dedupe.js';
@@ -29,6 +30,7 @@ export function revokeDepartedRemote(
     if (cfg.serverConfigId === configId && cfg.virtualServerId === sid
       && context.voiceBotManager.getBot(botId)?.ts3ClientId === clid) {
       context.listenerRemote?.revoke(botId);
+      cancelPlaylistVotesBotUnavailable(context.listenerRemote, botId);
     }
   }
 }

@@ -17,6 +17,7 @@ export function registerLibraryRoutes(router: Router): void {
     const canAdd = authorizeMediaCommand(policy, 'add', identity, 'request');
     const canBrowse = authorizeMediaCommand(policy, 'queue', identity);
     const canRequestPlaylist = authorizeMediaCommand(policy, 'playlist', identity, 'request');
+    const canVote = authorizeMediaCommand(policy, 'voteskip', identity);
     const voteFields = await playlistVoteStateFields(req, binding);
     res.json({
       bot: { id: binding.botId, name: bot.currentConfig.name, status: bot.status },
@@ -29,7 +30,7 @@ export function registerLibraryRoutes(router: Router): void {
         browsePlaylists: canBrowse,
         requestPlaylist: canRequestPlaylist,
         searchMusic: canBrowse,
-        vote: true,
+        vote: canVote,
       },
       ...voteFields,
     });

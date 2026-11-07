@@ -12,8 +12,8 @@ Authoritative: #465. Functional spec: #442. Draft PR must not merge without R2 +
 | Listener / channel membership | Human electorate from live clientlist; requester leave cancels on `/state` tick | covered (cancel path + state maintenance) |
 | Playlist visibility changes | Hidden/non-request at approval → `playlist_unavailable`, nothing queued | covered |
 | Request size / queue limits | empty / `request_too_large` / `queue_full` all-or-nothing | covered |
-| Bot restart / disconnection | `onRestart` drops open votes; nothing queued | covered |
-| Session expiry / revocation | Existing listener-remote session auth (shared) | covered by listener-remote suite |
+| Bot restart / disconnection | `onRestart` + `bot_unavailable` on move/disconnect/stop; nothing queued | covered |
+| Session expiry / revocation | Requester/bot-wide revoke cancels open vote; peers cannot approve | covered |
 | Concurrency / fail-closed | `vote_running`; listener list null → 503; sync single queue decision in B2 hook | covered |
 | No voter PII in API | `/state` and vote payloads omit UIDs / voter names | covered |
 | Pending stash isolation | Rejected Playlist B propose / clearStash must not wipe Playlist A's tracks; A still queues once | covered |

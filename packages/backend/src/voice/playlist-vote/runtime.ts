@@ -36,6 +36,12 @@ type Pending = {
   playlistId: number;
   maxTracks: number;
   items: QueueItem[];
+  /**
+   * Clock when this stash was last loaded from live playlist state.
+   * Post-deadline queue requires refreshedAtMs >= vote.deadlineMs so open-time
+   * contents cannot be queued without an approval-time re-read.
+   */
+  refreshedAtMs: number;
 };
 
 function chan(botKey: string, channelId: string): string {
@@ -53,7 +59,7 @@ function ident(botKey: string, uid: string): string {
 export class PlaylistVoteRuntime {
   readonly machine: PlaylistVoteMachine;
   private readonly pending = new Map<string, Pending>();
-  private readonly starts = new Map<string, { botId: number; item: QueueItem }>();
+  private readonly starts = new Map<string, { botId: number; item: QueueItem; items: QueueItem[] }>();
   private readonly getBot: (botId: number) => VoteBot | null | undefined;
 
   private readonly botCooldownUntil = new Map<string, number>();
@@ -71,9 +77,17 @@ export class PlaylistVoteRuntime {
         if (pending.items.length === 0 || pending.items.length > pending.maxTracks) {
           return 'playlist_unavailable';
         }
+        // Defense in depth: never queue a pre-deadline stash after the window ends.
+        if (input.nowMs >= input.deadlineMs && pending.refreshedAtMs < input.deadlineMs) {
+          return 'playlist_unavailable';
+        }
         const queued = this.addAllOrNothing(pending.botId, pending.items);
         if (queued.result === 'queued' && queued.startItem) {
-          this.starts.set(input.voteId, { botId: pending.botId, item: queued.startItem });
+          this.starts.set(input.voteId, {
+            botId: pending.botId,
+            item: queued.startItem,
+            items: pending.items.slice(),
+          });
         }
         this.pending.delete(key);
         return queued.result === 'queued' ? 'queued' : queued.result;
@@ -89,10 +103,63 @@ export class PlaylistVoteRuntime {
     this.pending.delete(chan(botKey, channelId));
   }
 
-  takeStart(voteId: string): { botId: number; item: QueueItem } | null {
+  takeStart(voteId: string): { botId: number; item: QueueItem; items: QueueItem[] } | null {
     const start = this.starts.get(voteId) ?? null;
     if (start) this.starts.delete(voteId);
     return start;
+  }
+
+  /** Process / bot restart: drop open votes and any pending stash (no queue). */
+  onRestart(): void {
+    this.machine.onRestart();
+    this.pending.clear();
+    this.starts.clear();
+  }
+
+  /** Bot move / disconnect / stop — cancel every open vote for this bot. */
+  cancelBotUnavailable(botId: number, nowMs: number): void {
+    const botKey = botKeyFor(botId);
+    for (const open of this.machine.listOpenForBot(botKey)) {
+      this.machine.cancelExternal({
+        botKey,
+        channelId: open.channelId,
+        reason: 'bot_unavailable',
+        listenerUids: [],
+        nowMs,
+      });
+      this.clearStash(botKey, open.channelId);
+    }
+  }
+
+  /** Admin/session revoke of one listener — cancel if they are the requester. */
+  cancelRequesterRevoked(botId: number, uid: string, nowMs: number): void {
+    const botKey = botKeyFor(botId);
+    for (const open of this.machine.listOpenForBot(botKey)) {
+      if (open.requesterUid !== uid) continue;
+      this.machine.cancelExternal({
+        botKey,
+        channelId: open.channelId,
+        reason: 'revoked',
+        listenerUids: [],
+        nowMs,
+      });
+      this.clearStash(botKey, open.channelId);
+    }
+  }
+
+  /** Admin bot-wide revoke — cancel every open vote on that bot. */
+  cancelAllRevoked(botId: number, nowMs: number): void {
+    const botKey = botKeyFor(botId);
+    for (const open of this.machine.listOpenForBot(botKey)) {
+      this.machine.cancelExternal({
+        botKey,
+        channelId: open.channelId,
+        reason: 'revoked',
+        listenerUids: [],
+        nowMs,
+      });
+      this.clearStash(botKey, open.channelId);
+    }
   }
 
   /** Voting-off path: same all-or-nothing rules as the vote hook. */

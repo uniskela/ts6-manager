@@ -59,8 +59,8 @@ export class ListenerRemoteService {
    * a grant, so unknown credentials cannot fill this store.
    */
   private readonly credentialRates: RateWindows;
-  /** Optional hook for search-result maps (and similar) tied to a grant's lifetime. */
-  private grantInvalidated: ((binding: Binding) => void) | undefined;
+  /** Optional hooks for search maps / playlist votes tied to a grant's lifetime. */
+  private readonly grantInvalidated: Array<(binding: Binding) => void> = [];
 
   /** A test clock drives both credential lifetimes and rate windows; otherwise rate windows are monotonic. */
   constructor(now?: () => number) {
@@ -70,11 +70,11 @@ export class ListenerRemoteService {
   }
 
   /**
-   * Register a single listener for grant removal (revoke, replace, expiry, failed
-   * validation). Replaces any previous handler; search registers once per service.
+   * Register a listener for grant removal (revoke, replace, expiry, failed
+   * validation). Multiple handlers are supported (search + playlist vote).
    */
   onGrantInvalidated(handler: (binding: Binding) => void): void {
-    this.grantInvalidated = handler;
+    this.grantInvalidated.push(handler);
   }
 
   /** `ip` is a client address key (see utils/client-address); only its hash is kept. */
@@ -207,7 +207,8 @@ export class ListenerRemoteService {
     if (this.grants.get(key) === grant) this.grants.delete(key);
     if (grant.tokenHash) this.tokens.delete(grant.tokenHash);
     if (grant.sessionHash) this.sessions.delete(grant.sessionHash);
-    this.grantInvalidated?.({ ...grant.binding });
+    const binding = { ...grant.binding };
+    for (const handler of this.grantInvalidated) handler(binding);
   }
 
   private prune(): void {

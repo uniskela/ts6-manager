@@ -8,6 +8,7 @@ import { ListenerRemoteService } from '../voice/listener-remote.js';
 import { defaultMediaCommandPermissions } from '../voice/media-command-permissions.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { playlistVoteSettingsKey } from '../voice/playlist-vote-settings.js';
+import { bindPlaylistVoteLifecycle } from '../voice/playlist-vote/lifecycle.js';
 import { PlaylistVoteRuntime } from '../voice/playlist-vote/runtime.js';
 
 async function assertOk(response: Response, label = 'response'): Promise<void> {
@@ -54,7 +55,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   let now = 1_700_000_000_000;
   const remote = new ListenerRemoteService(() => now);
   const queue = new PlayQueue();
-  const peers = opts.peers ?? [];
+  let peers = [...(opts.peers ?? [])];
   const state = {
     uid: binding.uid, channelId: binding.channelId, groups: '7',
     policy: null as string | null, botChannel: binding.channelId,
@@ -83,6 +84,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   Object.defineProperty(bot.currentConfig, 'serverConfigId', { get: () => state.botServer });
 
   const runtime = new PlaylistVoteRuntime(() => bot);
+  bindPlaylistVoteLifecycle(remote, runtime);
   const app = express();
   app.set('trust proxy', false);
   app.use(express.json());
@@ -196,6 +198,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     remote, request, exchangeAs, state, seed, bot, queue, audit, runtime,
     now: () => now,
     advance: (ms: number) => { now += ms; },
+    setPeers: (next: Array<{ clid: number; uid: string }>) => { peers = [...next]; },
     resetClientlistCalls: () => { clientlistCalls = 0; },
     close: () => new Promise<void>((resolve, reject) => {
       server.close((err) => err ? reject(err) : resolve());
@@ -437,7 +440,7 @@ describe('B3 R2 security matrix', () => {
     const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
     await assertOk(opened);
     assert.equal((await opened.json() as { vote: { status: string } }).vote.status, 'open');
-    f.runtime.machine.onRestart();
+    f.runtime.onRestart();
     assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
     const state = await (await f.request('/state', { session })).json() as { vote: null };
     assert.equal(state.vote, null);
@@ -554,6 +557,137 @@ describe('B3 R2 security matrix', () => {
     });
     assert.deepEqual(emptyTick, []);
     assert.equal(f.runtime.machine.getOpen('contrast', '8'), undefined);
+    assert.equal(f.queue.length, 0);
+  }));
+
+  const third = { clid: 11, uid: 'third-listener-uid' };
+
+  async function openNearPassThenHide(f: Awaited<ReturnType<typeof fixture>>) {
+    enableVoting(f, { thresholdPercent: 100 });
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const { vote } = await opened.json() as { vote: { id: string } };
+    const peerAuth = await asPeer(f);
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    await assertOk(ballot);
+    assert.equal(f.queue.length, 0, '2/3 yes keeps the vote open');
+    f.seed({
+      id: 1, name: 'Requestable', remoteAccess: 'hidden', serverConfigId: 2,
+      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
+    });
+    f.setPeers([peer]); // deadline electorate 2 with 2 yes — would pass on stale stash
+    f.advance(61_000);
+    return { session, vote, peerAuth };
+  }
+
+  it('post-deadline cancel after hide does not queue', async () => using([peer, third], async (f) => {
+    const { session, vote } = await openNearPassThenHide(f);
+    f.state.uid = binding.uid;
+    const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
+    assert.equal(cancel.status, 404);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+  }));
+
+  it('post-deadline withdraw after hide does not queue', async () => using([peer, third], async (f) => {
+    const { vote, peerAuth } = await openNearPassThenHide(f);
+    f.state.uid = peer.uid;
+    const withdraw = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'DELETE',
+    });
+    assert.equal(withdraw.status, 404);
+    assert.equal(f.queue.length, 0);
+  }));
+
+  it('post-deadline cancel after remoteAccess demotion does not queue', async () => using([peer, third], async (f) => {
+    enableVoting(f, { thresholdPercent: 100 });
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const { vote } = await opened.json() as { vote: { id: string } };
+    const peerAuth = await asPeer(f);
+    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    }));
+    f.seed({
+      id: 1, name: 'Requestable', remoteAccess: 'browse', serverConfigId: 2,
+      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
+    });
+    f.setPeers([peer]);
+    f.advance(61_000);
+    f.state.uid = binding.uid;
+    const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
+    assert.equal(cancel.status, 404);
+    assert.equal(f.queue.length, 0);
+  }));
+
+  it('post-deadline cancel of still-requestable playlist may pass once after re-read', async () => using([peer, third], async (f) => {
+    enableVoting(f, { thresholdPercent: 100 });
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const { vote } = await opened.json() as { vote: { id: string } };
+    const peerAuth = await asPeer(f);
+    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    }));
+    f.setPeers([peer]);
+    f.advance(61_000);
+    f.state.uid = binding.uid;
+    const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
+    assert.equal(cancel.status, 404);
+    assert.equal(f.queue.length, 2, 'eligible deadline pass still queues exactly once');
+  }));
+
+  it('bot_unavailable cancels open vote and clears stash without queueing', async () => using([peer], async (f) => {
+    const { session, vote } = await openVoteAsRequester(f);
+    assert.ok(f.runtime.machine.getOpen('4', '8'));
+    f.runtime.cancelBotUnavailable(binding.botId, f.now());
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    f.advance(61_000);
+    f.state.uid = binding.uid;
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session, method: 'PUT', body: { choice: 'yes' },
+    });
+    assert.equal(ballot.status, 404);
+    assert.equal(f.queue.length, 0);
+  }));
+
+  it('requester revoke cancels open vote; peer cannot approve afterward', async () => using([peer], async (f) => {
+    const { session, vote } = await openVoteAsRequester(f);
+    assert.equal(f.remote.revoke(binding.botId, binding.uid), 1);
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    const peerAuth = await asPeer(f);
+    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    assert.equal(ballot.status, 404);
+    assert.equal(f.queue.length, 0);
+    // Original requester session is dead.
+    f.state.uid = binding.uid;
+    const state = await f.request('/state', { session });
+    assert.equal(state.status, 401);
+  }));
+
+  it('bot-wide revoke cancels open votes for that bot only', async () => using([peer], async (f) => {
+    await openVoteAsRequester(f);
+    const other = f.runtime.machine.openVote({
+      botKey: '99', channelId: '8', requesterUid: 'other-req',
+      playlist: { id: 9, name: 'X', trackCount: 1 },
+      settings: { thresholdPercent: 100, windowMs: 60_000, maxTracks: 25 },
+      listenerUids: ['other-req', peer.uid], nowMs: f.now(),
+    });
+    assert.equal(other.ok, true);
+    f.remote.revoke(binding.botId);
+    f.runtime.cancelAllRevoked(binding.botId, f.now());
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    assert.ok(f.runtime.machine.getOpen('99', '8'), 'unrelated bot vote untouched');
     assert.equal(f.queue.length, 0);
   }));
 });

@@ -26,3 +26,8 @@ export {
   channelIdFor,
   playlistVotesOf,
 } from './runtime.js';
+export {
+  bindPlaylistVoteLifecycle,
+  cancelPlaylistVotesBotUnavailable,
+  playlistVotesForRemote,
+} from './lifecycle.js';

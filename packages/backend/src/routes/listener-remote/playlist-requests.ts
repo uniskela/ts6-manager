@@ -207,28 +207,47 @@ async function sendBallotVote(
   res.json({ ok: true, vote: toRemoteVote(vote, visible) });
 }
 
-/** Re-read playlist at approval; stash tracks for the sync queue hook. */
+/**
+ * Re-read playlist at approval; stash tracks for the sync queue hook.
+ * After the await, refuse to write if another vote now owns the channel.
+ */
 async function restashForApproval(
   req: Request,
   runtime: PlaylistVoteRuntime,
   binding: { botId: number; serverConfigId: number; channelId: number },
   playlistId: number,
   maxTracks: number,
+  nowMs: number,
+  expectVoteId?: string,
 ): Promise<void> {
   const botKey = botKeyFor(binding.botId);
   const channelId = channelIdFor(binding.channelId);
+  const before = runtime.machine.getOpen(botKey, channelId);
+  if (!before || before.playlist.id !== playlistId) return;
+  if (expectVoteId && before.id !== expectVoteId) return;
+
   const playlist = await loadRequestPlaylist(req, binding.serverConfigId, playlistId);
+  const still = runtime.machine.getOpen(botKey, channelId);
+  if (!still || still.playlist.id !== playlistId) return;
+  if (expectVoteId && still.id !== expectVoteId) return;
+  if (before.id !== still.id) return;
+
   if (!playlist || playlist.remoteAccess !== 'request') {
-    runtime.stash(botKey, channelId, { botId: binding.botId, playlistId, maxTracks, items: [] });
+    runtime.stash(botKey, channelId, {
+      botId: binding.botId, playlistId, maxTracks, items: [], refreshedAtMs: nowMs,
+    });
     return;
   }
   const items = toQueueItems(playlist.songs.map((link) => link.song));
-  runtime.stash(botKey, channelId, { botId: binding.botId, playlistId, maxTracks, items });
+  runtime.stash(botKey, channelId, {
+    botId: binding.botId, playlistId, maxTracks, items, refreshedAtMs: nowMs,
+  });
 }
 
 /**
  * Close an open vote whose window has ended. `listenerUids === null` means
  * lookup failed (fail closed as listeners_unavailable); `[]` is a real empty channel.
+ * Every HTTP path that can tick a deadline must call this (or restash) first.
  */
 async function settleExpiredVote(
   req: Request,
@@ -237,14 +256,14 @@ async function settleExpiredVote(
   listenerUids: readonly string[] | null,
   maxTracks: number,
   nowMs: number,
-): Promise<void> {
+): Promise<{ queued: boolean; start: { botId: number; item: QueueItem; items: QueueItem[] } | null }> {
   const botKey = botKeyFor(binding.botId);
   const channelId = channelIdFor(binding.channelId);
   const open = runtime.machine.getOpen(botKey, channelId);
-  if (!open || nowMs < open.deadlineMs) return;
+  if (!open || nowMs < open.deadlineMs) return { queued: false, start: null };
 
   if (listenerUids !== null) {
-    await restashForApproval(req, runtime, binding, open.playlist.id, maxTracks);
+    await restashForApproval(req, runtime, binding, open.playlist.id, maxTracks, nowMs, open.id);
   }
   const events = runtime.machine.tickDeadline({
     botKey,
@@ -255,9 +274,10 @@ async function settleExpiredVote(
   if (eventsQueued(events)) {
     const start = runtime.takeStart(open.id);
     if (start) await maybeStart(req, start.botId, start.item);
-  } else {
-    runtime.clearStash(botKey, channelId);
+    return { queued: true, start };
   }
+  runtime.clearStash(botKey, channelId);
+  return { queued: false, start: null };
 }
 
 export function registerPlaylistRequestRoutes(router: Router): void {
@@ -345,6 +365,7 @@ export function registerPlaylistRequestRoutes(router: Router): void {
         playlistId: fresh.id,
         maxTracks: settings.maxRequestSize,
         items: freshItems,
+        refreshedAtMs: nowMs,
       });
 
       const opened = runtime.machine.openVote({
@@ -375,8 +396,12 @@ export function registerPlaylistRequestRoutes(router: Router): void {
 
       if (eventsQueued(opened.events)) {
         const start = runtime.takeStart(opened.vote.id);
-        if (start) await maybeStart(req, start.botId, start.item);
-        await saveHistory(req, bot, freshItems);
+        if (start) {
+          await maybeStart(req, start.botId, start.item);
+          await saveHistory(req, bot, start.items);
+        } else {
+          await saveHistory(req, bot, freshItems);
+        }
       }
 
       // Sole-listener / immediate pass → outcome queued (API contract).
@@ -424,7 +449,7 @@ export function registerPlaylistRequestRoutes(router: Router): void {
     if (!listeners) fail(503, 'unavailable', 'Listener remote is unavailable.');
     if (!open || open.id !== voteId) fail(404, 'not_found', 'Vote not found.');
 
-    await restashForApproval(req, runtime, binding, open.playlist.id, settings.maxRequestSize);
+    await restashForApproval(req, runtime, binding, open.playlist.id, settings.maxRequestSize, nowMs, open.id);
 
     // Requester `no` cancels — audit like DELETE /votes/:voteId.
     const cancel = choice === 'no' && open.requesterUid === binding.uid;
@@ -457,10 +482,10 @@ export function registerPlaylistRequestRoutes(router: Router): void {
 
     if (eventsQueued(result.events)) {
       const start = runtime.takeStart(voteId);
-      if (start) await maybeStart(req, start.botId, start.item);
-      const pendingItems = (await loadRequestPlaylist(req, binding.serverConfigId, open.playlist.id))
-        ?.songs.map((link) => link.song) ?? [];
-      await saveHistory(req, bot, toQueueItems(pendingItems));
+      if (start) {
+        await maybeStart(req, start.botId, start.item);
+        await saveHistory(req, bot, start.items);
+      }
     }
 
     await sendBallotVote(req, res, binding, result.vote);
@@ -472,8 +497,14 @@ export function registerPlaylistRequestRoutes(router: Router): void {
     const limited = runtime.checkBallotRate(botKey, binding.uid, nowMs);
     if (limited) rateLimited(limited);
 
+    const settings = await loadPlaylistVoteSettings(
+      req.app.locals.prisma, binding.serverConfigId, binding.virtualServerId,
+    );
     const listeners = await humanListenerUids(req, binding);
     if (!listeners) fail(503, 'unavailable', 'Listener remote is unavailable.');
+
+    // Same approval-time settle as PUT/propose — never tick with a stale stash.
+    await settleExpiredVote(req, runtime, binding, listeners, settings.maxRequestSize, nowMs);
 
     const result = runtime.machine.withdrawBallot({
       voteId,
@@ -491,6 +522,9 @@ export function registerPlaylistRequestRoutes(router: Router): void {
   router.delete('/votes/:voteId', endpoint(async (req, res) => {
     // Cancel stays available after losing playlist permission; still requires a live listener.
     const { voteId, binding, runtime, botKey, channelId, nowMs } = await voteRouteContext(req);
+    const settings = await loadPlaylistVoteSettings(
+      req.app.locals.prisma, binding.serverConfigId, binding.virtualServerId,
+    );
     const listeners = await humanListenerUids(req, binding);
     if (!listeners) fail(503, 'unavailable', 'Listener remote is unavailable.');
 
@@ -503,6 +537,8 @@ export function registerPlaylistRequestRoutes(router: Router): void {
     }, async () => {
       if (req.res) req.res.locals.listenerRemoteAttemptOpened = true;
       await authorized(req, 'voteskip');
+      // Settle+restash before cancel so a past-deadline pass revalidates the playlist.
+      await settleExpiredVote(req, runtime, binding, listeners, settings.maxRequestSize, nowMs);
       const result = runtime.machine.cancelByRequester({
         voteId,
         botKey,
@@ -560,6 +596,8 @@ export async function playlistVoteStateFields(req: Request, binding: {
     }
   }
 
+  // Display-only: null lookup still renders via []; settlement above never treats null as [].
+  // (Low: tallies can look empty while the vote remains open mid-window.)
   const viewListeners = listeners ?? [];
   const vote = runtime.view(botKey, channelId, binding.uid, viewListeners, nowMs);
   const visible = vote ? await playlistVisible(req, binding.serverConfigId, vote.playlist.id) : false;
