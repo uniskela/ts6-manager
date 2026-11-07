@@ -553,4 +553,92 @@ describe('P1-B refresh rotation against real SQLite', () => {
     const stillLive = await postRefresh(base, 'live-new');
     assert.equal(stillLive.status, 200);
   });
+
+  it('logout of a live null-family token revokes only null-family rows for that user', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.createMany({
+      data: [
+        { token: 'null-live', userId: 1, expiresAt, family: null },
+        { token: 'null-sibling', userId: 1, expiresAt, family: null },
+        { token: 'named-keep', userId: 1, expiresAt, family: 'fam-named' },
+      ],
+    });
+    const base = await baseUrl();
+
+    const logout = await postLogout(base, 'null-live');
+    assert.equal(logout.status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { userId: 1, family: null } }), 0);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'named-keep' } }), 1);
+  });
+
+  it('logout of a consumed null-family predecessor revokes the assigned rotate family', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.createMany({
+      data: [
+        { token: 'null-r0', userId: 1, expiresAt, family: null },
+        { token: 'other-null', userId: 1, expiresAt, family: null },
+      ],
+    });
+    const base = await baseUrl();
+
+    const rotated = await postRefresh(base, 'null-r0');
+    assert.equal(rotated.status, 200);
+    const { refreshToken: r1 } = (await rotated.json()) as { refreshToken: string };
+    const consumed = await prisma.refreshToken.findUniqueOrThrow({ where: { token: 'null-r0' } });
+    assert.ok(consumed.family);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'other-null' } }), 1);
+
+    const logout = await postLogout(base, 'null-r0');
+    assert.equal(logout.status, 204);
+    assert.equal(await prisma.refreshToken.count({ where: { family: consumed.family } }), 0);
+    assert.equal(await prisma.refreshToken.count({ where: { token: 'other-null' } }), 1);
+
+    const resurrect = await postRefresh(base, r1);
+    assert.equal(resurrect.status, 401);
+  });
+
+  it('logout racing refresh cannot leave a live successor', async () => {
+    await seedAlice();
+    const expiresAt = new Date(Date.now() + 86_400_000);
+    await prisma.refreshToken.create({
+      data: { token: 'race-logout', userId: 1, expiresAt, family: 'fam-race-lo' },
+    });
+    const base = await baseUrl();
+
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+    let arrived = 0;
+    let releaseArrived!: () => void;
+    const bothArrived = new Promise<void>((resolve) => {
+      releaseArrived = resolve;
+    });
+    setHooks({
+      beforeRefreshRotate: async () => {
+        arrived += 1;
+        if (arrived === 1) releaseArrived();
+        await gate;
+      },
+    });
+
+    const refreshP = postRefresh(base, 'race-logout');
+    await bothArrived;
+    const logoutP = postLogout(base, 'race-logout');
+    releaseGate();
+    const [refreshRes, logoutRes] = await Promise.all([refreshP, logoutP]);
+    setHooks(undefined);
+
+    assert.equal(logoutRes.status, 204);
+    // Refresh may win (200 then family revoked by logout) or lose (401).
+    assert.ok(refreshRes.status === 200 || refreshRes.status === 401);
+    assert.equal(await prisma.refreshToken.count({ where: { family: 'fam-race-lo' } }), 0);
+    if (refreshRes.status === 200) {
+      const { refreshToken: r1 } = (await refreshRes.json()) as { refreshToken: string };
+      const resurrect = await postRefresh(base, r1);
+      assert.equal(resurrect.status, 401);
+    }
+  });
 });

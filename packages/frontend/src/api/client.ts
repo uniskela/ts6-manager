@@ -17,6 +17,7 @@ import {
   runWithoutLogoutBroadcast,
   setAuthRefreshPeerLogoutHandler,
 } from './auth-refresh-coord';
+import type { E2EAuthTestHooks } from './e2e-auth-test-types';
 
 const api = axios.create({
   baseURL: '/api',
@@ -445,27 +446,7 @@ function toBase64UrlJson(value: unknown): string {
  */
 function installE2EAuthHooks(): void {
   if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
-  (window as Window & {
-    __ts6AuthTest?: {
-      getMemoryTokens: () => {
-        accessToken: string | null;
-        refreshToken: string | null;
-        authRev: number;
-        sessionKey: string | null;
-      };
-      expireAccessInMemory: () => Promise<void>;
-      /** Re-persist current in-memory auth through zustand (exercises shouldPersistAuthBlob). */
-      flushPersistFromMemory: () => void;
-      refreshNow: () => Promise<string | null>;
-      logoutLocal: () => void;
-      /** Mint a new login lineage (new sessionKey) without going through logout BC. */
-      replaceSession: (
-        accessToken: string,
-        refreshToken: string,
-        user: { id: number; username: string; displayName: string; role: 'admin' | 'viewer' },
-      ) => void;
-    };
-  }).__ts6AuthTest = {
+  (window as Window & { __ts6AuthTest?: E2EAuthTestHooks }).__ts6AuthTest = {
     getMemoryTokens: () => {
       const { accessToken, refreshToken, authRev, sessionKey } = useAuthStore.getState();
       return { accessToken, refreshToken, authRev, sessionKey };

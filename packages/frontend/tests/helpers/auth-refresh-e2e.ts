@@ -1,22 +1,7 @@
 import { expect, type APIRequestContext, type BrowserContext, type Page } from '@playwright/test';
+import type { E2EAuthTestHooks } from '../../src/api/e2e-auth-test-types.ts';
 
-export type E2EAuthTest = {
-  getMemoryTokens: () => {
-    accessToken: string | null;
-    refreshToken: string | null;
-    authRev: number;
-    sessionKey: string | null;
-  };
-  expireAccessInMemory: () => Promise<void>;
-  flushPersistFromMemory: () => void;
-  refreshNow: () => Promise<string | null>;
-  logoutLocal: () => void;
-  replaceSession: (
-    accessToken: string,
-    refreshToken: string,
-    user: { id: number; username: string; displayName: string; role: 'admin' | 'viewer' },
-  ) => void;
-};
+export type E2EAuthTest = E2EAuthTestHooks;
 
 export type RefreshState = {
   rotateCount: number;

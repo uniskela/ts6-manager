@@ -1,33 +1,6 @@
 import assert from 'node:assert/strict';
 import { before, beforeEach, describe, it } from 'node:test';
-
-class MemoryStorage implements Storage {
-  #map = new Map<string, string>();
-
-  get length() {
-    return this.#map.size;
-  }
-
-  clear() {
-    this.#map.clear();
-  }
-
-  getItem(key: string) {
-    return this.#map.has(key) ? this.#map.get(key)! : null;
-  }
-
-  key(index: number) {
-    return [...this.#map.keys()][index] ?? null;
-  }
-
-  removeItem(key: string) {
-    this.#map.delete(key);
-  }
-
-  setItem(key: string, value: string) {
-    this.#map.set(key, String(value));
-  }
-}
+import { MemoryStorage } from './helpers/memory-storage.ts';
 
 function seedPersist(refresh: string, authRev: number, userId = 1, sessionKey: string | null = 'SK1') {
   const header = Buffer.from(JSON.stringify({ alg: 'none' })).toString('base64url');
