@@ -41,6 +41,7 @@ function bindGrantInvalidation(remote: ListenerRemoteService): void {
   if (searchInvalidationBound.has(remote)) return;
   searchInvalidationBound.add(remote);
   remote.onGrantInvalidated((binding) => {
+    // Clear on every reason (expiry, replace, revoke, reject) — search maps are credential-bound.
     clearListenerSearchResults(remote, binding);
   });
 }

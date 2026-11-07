@@ -88,6 +88,8 @@ const ACTION_LABELS: Record<AdminAuditAction, string> = {
   'listener.remote.issue': 'Issue listener remote link',
   'listener.remote.request': 'Listener remote: request link',
   'listener.remote.search_queue': 'Listener remote: queue search result',
+  'listener.remote.playlist_request': 'Listener remote: whole-playlist request',
+  'listener.remote.vote_cancel': 'Listener remote: cancel playlist vote',
   'listener.remote.revoke': 'Revoke listener remote access',
   'listener.remote.auth_failed': 'Listener remote: refused access (total for 5 minutes)',
   'listener.remote.rate_limited': 'Listener remote: rate limited (total for 5 minutes)',

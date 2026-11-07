@@ -87,6 +87,8 @@ const ROUTE_LABELS = new Set([
   'state',
   'library',
   'playlists',
+  'playlist-requests',
+  'votes',
   'queue',
   'requests',
   'search',

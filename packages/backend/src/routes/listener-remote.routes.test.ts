@@ -311,12 +311,17 @@ describe('listener remote HTTP security boundary', () => {
     }
     const restrictedState = await f.request('/state', { session });
     assert.equal(restrictedState.status, 200);
-    assert.deepEqual((await restrictedState.json() as any).permissions, { searchLibrary: true, addToQueue: false, requestUrl: false });
+    assert.deepEqual((await restrictedState.json() as any).permissions, {
+      searchLibrary: true, addToQueue: false, requestUrl: false,
+      browsePlaylists: true, requestPlaylist: false, searchMusic: true, vote: true,
+    });
     assert.equal((await f.request('/library', { session })).status, 200);
     assert.equal(f.queue.length, 2);
     assert.equal(f.downloads, 0);
     assert.ok(f.settingQueries.length > 0);
-    for (const query of f.settingQueries) assert.deepEqual(query, { where: { key: 'media_command_permissions:2:3' } });
+    const keys = new Set(f.settingQueries.map((query: { where: { key: string } }) => query.where.key));
+    assert.ok(keys.has('media_command_permissions:2:3'));
+    assert.ok(keys.has('playlist_vote_settings:2:3'));
     f.state.policy = '{malformed';
     assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 403);
   }));

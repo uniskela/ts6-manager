@@ -75,6 +75,8 @@ export const ADMIN_AUDIT_ACTIONS = [
   'listener.remote.issue',
   'listener.remote.request',
   'listener.remote.search_queue',
+  'listener.remote.playlist_request',
+  'listener.remote.vote_cancel',
   'listener.remote.revoke',
   // Refusals recorded as bounded per-window totals (listener remote audit policy).
   'listener.remote.auth_failed',

@@ -2,6 +2,7 @@ import type { Router } from 'express';
 import { z } from 'zod';
 import { authorizeMediaCommand } from '../../voice/media-command-permissions.js';
 import type { QueueItem } from '../../voice/playlist/queue.js';
+import { playlistVoteStateFields } from './playlist-requests.js';
 import { authenticate, authorized, deny, endpoint, fail } from './shared.js';
 
 function track(item: QueueItem | null) {
@@ -14,11 +15,24 @@ export function registerLibraryRoutes(router: Router): void {
     const { binding, bot, policy, identity } = await authorized(req, 'np');
     if (!authorizeMediaCommand(policy, 'queue', identity)) deny(req, 'queue');
     const canAdd = authorizeMediaCommand(policy, 'add', identity, 'request');
+    const canBrowse = authorizeMediaCommand(policy, 'queue', identity);
+    const canRequestPlaylist = authorizeMediaCommand(policy, 'playlist', identity, 'request');
+    const canVote = authorizeMediaCommand(policy, 'voteskip', identity);
+    const voteFields = await playlistVoteStateFields(req, binding);
     res.json({
       bot: { id: binding.botId, name: bot.currentConfig.name, status: bot.status },
       nowPlaying: track(bot.nowPlaying), upNext: bot.queue.upcoming(50).map(item => track(item)),
       upNextCount: bot.queue.upcomingCount,
-      permissions: { searchLibrary: true, addToQueue: canAdd, requestUrl: canAdd },
+      permissions: {
+        searchLibrary: true,
+        addToQueue: canAdd,
+        requestUrl: canAdd,
+        browsePlaylists: canBrowse,
+        requestPlaylist: canRequestPlaylist,
+        searchMusic: canBrowse,
+        vote: canVote,
+      },
+      ...voteFields,
     });
   }));
 

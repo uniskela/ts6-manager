@@ -8,6 +8,7 @@ import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.j
 import { channelCommandKey, claimChannelCommand } from './dedupe.js';
 import { checkMediaCommand, handleVoteSkip } from './media-access.js';
 import { handleListenerRemote, revokeDepartedRemote } from './listener-remote.js';
+import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 const loggableMessage = (message: string) => /^\s*!remote(?:\s|$)/i.test(message) ? '!remote [redacted]' : message;
@@ -130,9 +131,15 @@ export function registerBot(context: CommandContext, botId: number, bot: VoiceBo
       revokeDepartedRemote(context, cfg.serverConfigId, cfg.virtualServerId, command.name, data);
     }
   });
-  bot.on('disconnected', () => context.listenerRemote?.revoke(botId));
+  bot.on('disconnected', () => {
+    context.listenerRemote?.revoke(botId);
+    cancelPlaylistVotesBotUnavailable(context.listenerRemote, botId);
+  });
   bot.on('statusChange', (status) => {
-    if (status === 'stopped' || status === 'error') context.listenerRemote?.revoke(botId);
+    if (status === 'stopped' || status === 'error') {
+      context.listenerRemote?.revoke(botId);
+      cancelPlaylistVotesBotUnavailable(context.listenerRemote, botId);
+    }
   });
 
   bot.on('textMessage', (data: Record<string, string>) => {

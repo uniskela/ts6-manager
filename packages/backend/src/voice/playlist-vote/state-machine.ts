@@ -76,6 +76,9 @@ export type QueuePlaylistHook = (input: {
   channelId: string;
   requesterUid: string;
   playlist: PlaylistVotePlaylist;
+  /** Wall clock for the decision; used with deadlineMs to refuse stale post-deadline stash. */
+  nowMs: number;
+  deadlineMs: number;
 }) => 'queued' | 'queue_full' | 'playlist_unavailable';
 
 type InternalVote = {
@@ -219,6 +222,17 @@ export class PlaylistVoteMachine {
     return this.open.get(this.key(botKey, channelId));
   }
 
+  /** Open votes for one bot (any channel). Snapshot for lifecycle cancel. */
+  listOpenForBot(botKey: string): Array<{ id: string; channelId: string; requesterUid: string }> {
+    const out: Array<{ id: string; channelId: string; requesterUid: string }> = [];
+    for (const vote of this.open.values()) {
+      if (vote.botKey === botKey && vote.status === 'open') {
+        out.push({ id: vote.id, channelId: vote.channelId, requesterUid: vote.requesterUid });
+      }
+    }
+    return out;
+  }
+
   /**
    * View for `/state`: open vote, or last closed vote while within visibility window.
    */
@@ -281,12 +295,15 @@ export class PlaylistVoteMachine {
 
     if (listenerUids.length === 1 && listenerUids[0] === requesterUid) {
       const id = opaqueVoteId();
+      const deadlineMs = nowMs + settings.windowMs;
       const queued = this.queuePlaylist({
         voteId: id,
         botKey: input.botKey,
         channelId: input.channelId,
         requesterUid,
         playlist,
+        nowMs,
+        deadlineMs,
       });
       const vote: InternalVote = {
         id,
@@ -295,7 +312,7 @@ export class PlaylistVoteMachine {
         requesterUid,
         playlist: { ...playlist },
         thresholdPercent: settings.thresholdPercent,
-        deadlineMs: nowMs + settings.windowMs,
+        deadlineMs,
         ballots: new Map([[requesterUid, 'yes']]),
         status: queued === 'queued' ? 'passed' : 'failed',
         reason: queued === 'queued' ? 'approved' : queued,
@@ -538,6 +555,8 @@ export class PlaylistVoteMachine {
       channelId: vote.channelId,
       requesterUid: vote.requesterUid,
       playlist: vote.playlist,
+      nowMs,
+      deadlineMs: vote.deadlineMs,
     });
     if (queued !== 'queued') {
       this.close(vote, 'failed', queued, listenerUids, nowMs, null);
