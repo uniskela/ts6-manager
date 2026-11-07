@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  nextLogoutAuthRev,
   shouldApplyPeerAuthLogout,
   shouldBroadcastAuthLogout,
 } from '../../src/stores/auth.store.ts';
@@ -59,5 +60,23 @@ describe('cross-tab logout relay policy', () => {
       persistedAuthRev: 7,
       persistedLive: true,
     }), true);
+  });
+
+  it('same-session rev lag bumps past persist so logout can tombstone', () => {
+    assert.equal(nextLogoutAuthRev({
+      memoryRev: 5,
+      memoryRefresh: 'R2',
+      persistedRev: 6,
+      persistedRefresh: 'R2',
+    }), 7);
+  });
+
+  it('peer-replaced refresh stays memory-only so logout cannot wipe the peer', () => {
+    assert.equal(nextLogoutAuthRev({
+      memoryRev: 5,
+      memoryRefresh: 'R_old',
+      persistedRev: 7,
+      persistedRefresh: 'R_new',
+    }), 6);
   });
 });

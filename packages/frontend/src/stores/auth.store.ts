@@ -118,6 +118,22 @@ export function readPersistedAuthRev(): number {
   }
 }
 
+function readPersistedAuthSnapshot(): { authRev: number; refreshToken: string | null } {
+  if (typeof localStorage === 'undefined') return { authRev: 0, refreshToken: null };
+  try {
+    const raw = localStorage.getItem('ts6-auth');
+    if (!raw) return { authRev: 0, refreshToken: null };
+    const parsed = JSON.parse(raw) as PersistedAuthBlob;
+    const refresh = parsed.state?.refreshToken;
+    return {
+      authRev: blobRev(parsed),
+      refreshToken: typeof refresh === 'string' ? refresh : null,
+    };
+  } catch {
+    return { authRev: 0, refreshToken: null };
+  }
+}
+
 /**
  * Cross-tab logout policy (intentional):
  *
@@ -125,15 +141,15 @@ export function readPersistedAuthRev(): number {
  *   logout: broadcast the tombstone `authRev` so peers still on an older
  *   memory rev clear too (shared refresh family must not survive one tab's
  *   intentional sign-out).
- * - A stale tab whose tombstone is rejected by `shouldPersistAuthBlob`
- *   (peer already holds a live newer/tied session) must **not** broadcast —
- *   peers keep the winning session (`shouldBroadcastAuthLogout`).
+ * - A stale tab whose memory refresh no longer matches persist (peer already
+ *   rotated/logged in) must not wipe that peer: memory-only tombstone rev,
+ *   no broadcast when persist stays live (`shouldBroadcastAuthLogout`).
+ * - Same-session lag (same refresh, memory rev behind persist) still
+ *   tombstones: bump past persist so sign-out sticks and peers clear.
  * - Receivers ignore a logout BC when the origin rev does not beat local
- *   memory, or when live persist is already at/above that rev (login or
- *   rotation won storage while this tab lagged).
+ *   memory, or when live persist is already at/above that rev.
  * - Legacy BC messages without `authRev` still apply (fail toward logout).
- * - Login/rotation bumps use max(memory, persist)+1; logout bumps are
- *   memory-only so a stale tab cannot mint past a peer login.
+ * - Login/rotation bumps use max(memory, persist)+1.
  */
 
 /**
@@ -170,11 +186,25 @@ function nextAuthRev(memoryRev: number): number {
 }
 
 /**
- * Logout bump stays local to this tab's memory. Using persist-max here would
- * let a stale tab mint a tombstone newer than a peer login and wipe it.
+ * Logout revision for a tombstone write.
+ * - Same refresh as persist → same session, only rev lagged → beat persist.
+ * - Different refresh → peer already replaced the session → memory-only bump
+ *   so we cannot wipe the peer login/rotation.
  */
-function nextLogoutAuthRev(memoryRev: number): number {
-  return memoryRev + 1;
+export function nextLogoutAuthRev(input: {
+  memoryRev: number;
+  memoryRefresh: string | null;
+  persistedRev: number;
+  persistedRefresh: string | null;
+}): number {
+  if (
+    input.memoryRefresh
+    && input.persistedRefresh
+    && input.memoryRefresh === input.persistedRefresh
+  ) {
+    return Math.max(input.memoryRev, input.persistedRev) + 1;
+  }
+  return input.memoryRev + 1;
 }
 
 // M9: Tokens stored in localStorage. This is an accepted tradeoff — no XSS vectors
@@ -221,15 +251,21 @@ export const useAuthStore = create<AuthStore>()(
       setUser: (user) => set({ user }),
       logout: () => {
         // Clear auth first so a localStorage throw while persisting
-        // ts6-server cannot leave the session active. Memory-only bump +
-        // shouldPersistAuthBlob (cleared-over-live needs inRev > exRev) so a
-        // stale tab cannot wipe a peer session, while same-tab logout still
-        // tombstones ahead of delayed restores.
+        // ts6-server cannot leave the session active. Same-refresh lag still
+        // tombstones past persist; a replaced peer session keeps memory-only
+        // rev so shouldPersistAuthBlob refuses to wipe the peer.
+        const persisted = readPersistedAuthSnapshot();
+        const tombstoneRev = nextLogoutAuthRev({
+          memoryRev: get().authRev,
+          memoryRefresh: get().refreshToken,
+          persistedRev: persisted.authRev,
+          persistedRefresh: persisted.refreshToken,
+        });
         set({
           accessToken: null,
           refreshToken: null,
           user: null,
-          authRev: nextLogoutAuthRev(get().authRev),
+          authRev: tombstoneRev,
         });
         // Peer-tab logout sync (BroadcastChannel) is wired from the API client
         // via this event — keeps the store free of api/ imports.

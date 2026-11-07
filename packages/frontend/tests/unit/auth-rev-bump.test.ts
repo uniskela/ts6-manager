@@ -198,4 +198,23 @@ describe('authRev bump observes persist', () => {
     assert.equal(useAuthStore.getState().user?.id, 2);
     assert.equal(JSON.parse(localStorage.getItem('ts6-auth')!).state.refreshToken, 'Rb');
   });
+
+  it('same-session logout with lagging memory rev still clears persist', () => {
+    // Peer rotated access-only... actually same refresh R2 already at persist@6;
+    // this tab still holds R2 @ memory 5.
+    seedPersist('R2', 6);
+    useAuthStore.setState({
+      accessToken: 'lag.access',
+      refreshToken: 'R2',
+      authRev: 5,
+      user: { id: 1, username: 'u', displayName: 'U', role: 'admin' },
+    });
+
+    useAuthStore.getState().logout();
+
+    assert.equal(useAuthStore.getState().authRev, 7);
+    const persisted = JSON.parse(localStorage.getItem('ts6-auth')!);
+    assert.equal(persisted.state.refreshToken, null);
+    assert.equal(persisted.state.authRev, 7);
+  });
 });
