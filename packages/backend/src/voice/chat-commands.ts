@@ -60,6 +60,17 @@ export interface ChatCommandPreset {
   response: string;
 }
 
+/** Shared canned body for !info / !about presets (admins edit per-command after seed). */
+const COMMUNITY_ABOUT_PRESET = [
+  '## About',
+  '',
+  'Welcome to our TeamSpeak community. Music bots, radio, and chat commands keep the lobby moving.',
+  '',
+  'Type **!help** for music commands or **!commands** for custom replies.',
+  '',
+  '_Edit this blurb in Music Bots → Commands._',
+].join('\n');
+
 export const CHAT_COMMAND_PRESETS: ChatCommandPreset[] = [
   {
     name: 'rules',
@@ -102,28 +113,12 @@ export const CHAT_COMMAND_PRESETS: ChatCommandPreset[] = [
   {
     name: 'info',
     description: 'Short server / community blurb',
-    response: [
-      '## About',
-      '',
-      'Welcome to our TeamSpeak community. Music bots, radio, and chat commands keep the lobby moving.',
-      '',
-      'Type **!help** for music commands or **!commands** for custom replies.',
-      '',
-      '_Edit this blurb in Music Bots → Commands._',
-    ].join('\n'),
+    response: COMMUNITY_ABOUT_PRESET,
   },
   {
     name: 'about',
     description: 'Alias-style community blurb (same idea as !info)',
-    response: [
-      '## About',
-      '',
-      'Welcome to our TeamSpeak community. Music bots, radio, and chat commands keep the lobby moving.',
-      '',
-      'Type **!help** for music commands or **!commands** for custom replies.',
-      '',
-      '_Edit this blurb in Music Bots → Commands._',
-    ].join('\n'),
+    response: COMMUNITY_ABOUT_PRESET,
   },
 ];
 
