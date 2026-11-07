@@ -174,6 +174,39 @@ async function maybeStart(req: Request, botId: number, item: QueueItem | null): 
   if (bot) await startCurrentIfIdle(bot, item);
 }
 
+/** Shared vote-route prelude so ballot handlers do not duplicate auth/key wiring. */
+async function voteRouteContext(req: Request) {
+  const voteId = voteIdParam(req.params.voteId);
+  const { binding, bot } = await authorized(req, 'voteskip');
+  const runtime = runtimeOf(req);
+  return {
+    voteId,
+    binding,
+    bot,
+    runtime,
+    botKey: botKeyFor(binding.botId),
+    channelId: channelIdFor(binding.channelId),
+    nowMs: nowMsOf(req),
+  };
+}
+
+function refuseBallotResult(result: { ok: true } | { ok: false; code: string }): asserts result is { ok: true } {
+  if (result.ok) return;
+  if (result.code === 'listeners_unavailable') fail(503, 'unavailable', 'Listener remote is unavailable.');
+  if (result.code === 'invalid_request') fail(400, 'invalid_request', 'Invalid listener request.');
+  fail(404, 'not_found', 'Vote not found.');
+}
+
+async function sendBallotVote(
+  req: Request,
+  res: { json: (body: unknown) => void },
+  binding: { serverConfigId: number },
+  vote: PlaylistVotePublic,
+): Promise<void> {
+  const visible = await playlistVisible(req, binding.serverConfigId, vote.playlist.id);
+  res.json({ ok: true, vote: toRemoteVote(vote, visible) });
+}
+
 /** Re-read playlist at approval; stash tracks for the sync queue hook. */
 async function restashForApproval(
   req: Request,
@@ -371,13 +404,8 @@ export function registerPlaylistRequestRoutes(router: Router): void {
   }));
 
   router.put('/votes/:voteId/ballot', endpoint(async (req, res) => {
-    const voteId = voteIdParam(req.params.voteId);
     const { choice } = body(req, ballotBody);
-    const { binding, bot } = await authorized(req, 'voteskip');
-    const runtime = runtimeOf(req);
-    const botKey = botKeyFor(binding.botId);
-    const channelId = channelIdFor(binding.channelId);
-    const nowMs = nowMsOf(req);
+    const { voteId, binding, bot, runtime, botKey, channelId, nowMs } = await voteRouteContext(req);
 
     const limited = runtime.checkBallotRate(botKey, binding.uid, nowMs);
     if (limited) rateLimited(limited);
@@ -425,11 +453,7 @@ export function registerPlaylistRequestRoutes(router: Router): void {
       : cast();
 
     runtime.recordBallot(botKey, binding.uid, nowMs);
-    if (!result.ok) {
-      if (result.code === 'listeners_unavailable') fail(503, 'unavailable', 'Listener remote is unavailable.');
-      if (result.code === 'invalid_request') fail(400, 'invalid_request', 'Invalid listener request.');
-      fail(404, 'not_found', 'Vote not found.');
-    }
+    refuseBallotResult(result);
 
     if (eventsQueued(result.events)) {
       const start = runtime.takeStart(voteId);
@@ -439,17 +463,11 @@ export function registerPlaylistRequestRoutes(router: Router): void {
       await saveHistory(req, bot, toQueueItems(pendingItems));
     }
 
-    const visible = await playlistVisible(req, binding.serverConfigId, result.vote.playlist.id);
-    res.json({ ok: true, vote: toRemoteVote(result.vote, visible) });
+    await sendBallotVote(req, res, binding, result.vote);
   }));
 
   router.delete('/votes/:voteId/ballot', endpoint(async (req, res) => {
-    const voteId = voteIdParam(req.params.voteId);
-    const { binding } = await authorized(req, 'voteskip');
-    const runtime = runtimeOf(req);
-    const botKey = botKeyFor(binding.botId);
-    const channelId = channelIdFor(binding.channelId);
-    const nowMs = nowMsOf(req);
+    const { voteId, binding, runtime, botKey, channelId, nowMs } = await voteRouteContext(req);
 
     const limited = runtime.checkBallotRate(botKey, binding.uid, nowMs);
     if (limited) rateLimited(limited);
@@ -466,23 +484,13 @@ export function registerPlaylistRequestRoutes(router: Router): void {
       nowMs,
     });
     runtime.recordBallot(botKey, binding.uid, nowMs);
-    if (!result.ok) {
-      if (result.code === 'invalid_request') fail(400, 'invalid_request', 'Invalid listener request.');
-      if (result.code === 'listeners_unavailable') fail(503, 'unavailable', 'Listener remote is unavailable.');
-      fail(404, 'not_found', 'Vote not found.');
-    }
-    const visible = await playlistVisible(req, binding.serverConfigId, result.vote.playlist.id);
-    res.json({ ok: true, vote: toRemoteVote(result.vote, visible) });
+    refuseBallotResult(result);
+    await sendBallotVote(req, res, binding, result.vote);
   }));
 
   router.delete('/votes/:voteId', endpoint(async (req, res) => {
-    const voteId = voteIdParam(req.params.voteId);
     // Cancel stays available after losing playlist permission; still requires a live listener.
-    const { binding } = await authorized(req, 'voteskip');
-    const runtime = runtimeOf(req);
-    const botKey = botKeyFor(binding.botId);
-    const channelId = channelIdFor(binding.channelId);
-    const nowMs = nowMsOf(req);
+    const { voteId, binding, runtime, botKey, channelId, nowMs } = await voteRouteContext(req);
     const listeners = await humanListenerUids(req, binding);
     if (!listeners) fail(503, 'unavailable', 'Listener remote is unavailable.');
 

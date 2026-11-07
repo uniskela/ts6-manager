@@ -229,6 +229,26 @@ function requestable(tracks = 2): PlaylistRow {
   };
 }
 
+/** Open a whole-playlist vote as the requester (voting on, requestable playlist 1). */
+async function openVoteAsRequester(
+  f: Awaited<ReturnType<typeof fixture>>,
+  tracks = 2,
+): Promise<{ session: string; vote: { id: string } }> {
+  enableVoting(f);
+  f.seed(requestable(tracks));
+  const { session } = await f.exchangeAs(binding);
+  const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+  await assertOk(opened);
+  const { vote } = await opened.json() as { vote: { id: string } };
+  return { session, vote };
+}
+
+async function asPeer(f: Awaited<ReturnType<typeof fixture>>) {
+  const peerAuth = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
+  f.state.uid = peer.uid;
+  return peerAuth;
+}
+
 describe('B3 whole-playlist propose/vote', () => {
   it('queues directly when voting is off (all-or-nothing)', async () => using([], async (f) => {
     f.seed(requestable(3));
@@ -295,15 +315,8 @@ describe('B3 whole-playlist propose/vote', () => {
   }));
 
   it('passes on threshold and queues atomically once', async () => using([peer], async (f) => {
-    enableVoting(f);
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-
-    const peerAuth = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
-    f.state.uid = peer.uid;
+    const { vote } = await openVoteAsRequester(f);
+    const peerAuth = await asPeer(f);
     const ballot = await f.request(`/votes/${vote.id}/ballot`, {
       session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
     });
@@ -504,15 +517,8 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('listener lookup failure refuses ballots and fails the vote at deadline (not empty electorate)', async () => using([peer], async (f) => {
-    enableVoting(f);
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-
-    const peerAuth = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
-    f.state.uid = peer.uid;
+    const { session, vote } = await openVoteAsRequester(f);
+    const peerAuth = await asPeer(f);
     f.resetClientlistCalls();
     f.state.failElectorate = true;
     const ballot = await f.request(`/votes/${vote.id}/ballot`, {

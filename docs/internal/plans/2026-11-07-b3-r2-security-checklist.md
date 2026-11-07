@@ -27,3 +27,8 @@ Authoritative: #465. Functional spec: #442. Draft PR must not merge without R2 +
 - [ ] Confirm ballot rate limit 10/min under load
 - [ ] Confirm bot cooldown 120s and failed-requester 5m after real closes
 - [ ] Code review: queue hook re-reads songs at approval; no partial `addMany`
+- [ ] **Stash ownership:** concurrent foreign propose / same-playlist retry must not clear or replace another open vote's pending tracks
+- [ ] **Unavailable electorate:** lookup `null` must not be treated as `[]`; ballots 503; deadline → `listeners_unavailable` (no pass)
+- [ ] **Deadline without further API activity:** open vote stays open until a later request/state settles it; must not block forever once something authenticates after the window
+- [ ] **Mid-vote permission/settings changes:** playlist hide / remoteAccess demotion / maxRequestSize shrink at approval fail closed; threshold changes do not rewrite an already-open vote's stored percent
+- [ ] **Exactly-once queue:** proposal sole-pass, ballot threshold pass, and deadline tick each queue at most once through the sync hook
