@@ -113,6 +113,13 @@ test('canonical brand mark is shared by product surfaces', async ({ page, reques
   expect(favicon).toContain('viewBox="0 0 512 512"');
   expect(favicon).toContain('currentColor');
   expect(favicon).not.toMatch(/<text|>TS</i);
+  // The tab icon wraps the same glyph in the brand gradient and tile.
+  const glyph = favicon.match(/<path d="([^"]+)"/)![1];
+  const appIcon = await (await request.get('/icons/app-icon.svg')).text();
+  expect(appIcon).toContain(`d="${glyph}"`);
+  expect(appIcon).toContain('#4fd3e2');
+  expect(appIcon).toContain('#9483ff');
+  expect(appIcon).not.toContain('currentColor');
 
   await controlled(page);
   await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
@@ -240,6 +247,7 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
           primaryForeground: computed.backgroundColor,
           ring: computed.borderColor,
           mark: getComputedStyle(document.querySelector<HTMLElement>('[data-brand-mark]')!).backgroundColor,
+          markGradient: getComputedStyle(document.querySelector<HTMLElement>('[data-brand-mark]')!).backgroundImage,
           neutral: Object.fromEntries(['--background', '--card', '--secondary', '--muted', '--border', '--accent'].map(name => [name, root.getPropertyValue(name).trim()])),
           semantic: Object.fromEntries(['--destructive', '--success', '--warning'].map(name => [name, root.getPropertyValue(name).trim()])),
         };
@@ -284,6 +292,7 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
       expect(contrastRatio(buttonColours.foreground, buttonColours.background), `${baseTheme}/${accent} primary hover contrast`).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(badgeColours.foreground, badgeColours.background), `${baseTheme}/${accent} primary badge contrast`).toBeGreaterThanOrEqual(4.5);
       expect(colours.mark, `${baseTheme}/${accent} BrandMark inheritance`).toBe(colours.primary);
+      expect(colours.markGradient, `${baseTheme}/${accent} BrandMark gradient starts at the accent`).toContain(`linear-gradient(135deg, ${colours.primary} 15%`);
 
       neutralBaseline ??= colours.neutral;
       semanticBaseline ??= colours.semantic;
@@ -398,7 +407,7 @@ test('real worker caches only public build output; private traffic stays live', 
   });
   expect(cached.length).toBeGreaterThan(10);
   for (const item of cached) {
-    expect(item.path).toMatch(/^\/(index\.html|manifest\.webmanifest|favicon\.svg|icons\/[^/]+\.png|assets\/[^/]+\.(js|css|woff2?))$/);
+    expect(item.path).toMatch(/^\/(index\.html|manifest\.webmanifest|favicon\.svg|icons\/[^/]+\.(png|svg)|assets\/[^/]+\.(js|css|woff2?))$/);
     expect(item.body).not.toContain('test-only-sensitive-response');
     expect(item.body).not.toContain('test-secret');
     expect(item.body).not.toContain('private-action');

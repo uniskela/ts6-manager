@@ -203,8 +203,11 @@
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
 
+  /* The T6 glyph in a gradient from the current accent to the brand violet.
+     With the default cyan accent this matches the app icon and the website. */
   .brand-mark {
     background-color: currentColor;
+    background-image: linear-gradient(135deg, currentColor 15%, #9483ff 90%);
     -webkit-mask: url('/favicon.svg') center / contain no-repeat;
     mask: url('/favicon.svg') center / contain no-repeat;
   }
