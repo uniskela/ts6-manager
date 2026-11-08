@@ -276,7 +276,8 @@ test('limits and permissions are explained before anyone asks', async ({ page })
 
   current.state = baseState({}, { requestPlaylist: false });
   await page.getByRole('button', { name: 'Back to playlists' }).click();
-  await expect.poll(() => current.stateCalls).toBeGreaterThan(1);
+  // Polls run at most every 5 s, so the next one can take up to 10 s.
+  await expect.poll(() => current.stateCalls, { timeout: 12_000 }).toBeGreaterThan(1);
   await openPlaylist(page);
   await expect(page.getByText('You can add songs one at a time. Requesting the whole playlist is not allowed for you.')).toBeVisible({ timeout: 12_000 });
   await expect(page.getByRole('button', { name: 'Start a vote for this playlist' })).toHaveCount(0);
