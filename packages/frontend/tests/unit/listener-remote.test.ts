@@ -10,6 +10,7 @@ import {
 import {
   RemoteHttpError,
   canBrowseRemotePlaylists,
+  canSearchRemoteMusic,
   clearRemoteSession,
   exchangeRemoteToken,
   loadRemoteLibrary,
@@ -19,12 +20,19 @@ import {
   parseRemotePlaylist,
   parseRemotePlaylistPage,
   parseRemotePlaylistSongsPage,
+  parseRemoteSearchResponse,
   playbackSummary,
+  queueRemoteSearchResult,
   queueRemoteSong,
   remoteMediaUrlError,
+  remoteSearchErrorMessage,
+  remoteSearchQueryError,
+  remoteSearchQueueErrorMessage,
   remoteSession,
   requestRemoteUrl,
   resetRemoteClientForTests,
+  searchQueueFailure,
+  searchRemoteMusic,
   settleRemoteExchange,
   shouldPollRemote,
 } from '../../src/lib/listener-remote';
@@ -124,6 +132,18 @@ describe('listener remote client', () => {
         assert.equal(url.searchParams.get('page'), '2');
         return json({ songs: [{ id: 9, title: 'Paper Moon', artist: null, duration: null }], page: 2, pageSize: 25 });
       }
+      if (url.pathname.endsWith('/search')) {
+        return json({
+          results: [{
+            id: 'r'.repeat(22),
+            title: 'Neon Skyline',
+            artist: 'Midnight Transit',
+            duration: 214,
+            url: 'https://secret.example/track',
+          }],
+          expiresAt: future,
+        });
+      }
       if (url.pathname.endsWith('/playlists')) {
         assert.equal(url.searchParams.get('search'), 'chill');
         assert.equal(url.searchParams.get('page'), '1');
@@ -150,7 +170,7 @@ describe('listener remote client', () => {
           pageSize: 25,
         });
       }
-      if (url.pathname.endsWith('/queue') || url.pathname.endsWith('/requests')) return json({ ok: true });
+      if (url.pathname.endsWith('/search/queue') || url.pathname.endsWith('/queue') || url.pathname.endsWith('/requests')) return json({ ok: true });
       return json({ error: 'nope', code: 'invalid_request' }, 400);
     }) as typeof fetch;
   });
@@ -170,11 +190,16 @@ describe('listener remote client', () => {
     const state = await loadRemoteState();
     assert.equal(state.nowPlaying?.title, 'Neon Skyline');
     assert.equal('filePath' in (state.nowPlaying ?? {}), false);
-    assert.deepEqual(state.permissions, { searchLibrary: true, addToQueue: false, requestUrl: false });
+    assert.deepEqual(state.permissions, {
+      searchLibrary: true,
+      addToQueue: false,
+      requestUrl: false,
+      searchMusic: false,
+    });
     assert.equal('browsePlaylists' in state.permissions, false);
     assert.equal(canBrowseRemotePlaylists(state.permissions), true);
-    assert.equal(canBrowseRemotePlaylists({ searchLibrary: true, addToQueue: false, requestUrl: false, browsePlaylists: false }), false);
-    assert.equal(canBrowseRemotePlaylists({ searchLibrary: false, addToQueue: false, requestUrl: false, browsePlaylists: true }), true);
+    assert.equal(canBrowseRemotePlaylists({ searchLibrary: true, addToQueue: false, requestUrl: false, searchMusic: false, browsePlaylists: false }), false);
+    assert.equal(canBrowseRemotePlaylists({ searchLibrary: false, addToQueue: false, requestUrl: false, searchMusic: false, browsePlaylists: true }), true);
     assert.equal(calls[1].authorization, `Bearer ${session}`);
     assert.equal(playbackSummary(state.nowPlaying, 'playing').label, 'Playing · 3:34');
     assert.equal(shouldPollRemote(false, 0, 10_000), false);
@@ -309,6 +334,96 @@ describe('listener remote client', () => {
     assert.deepEqual(settleRemoteExchange(ready, session, 'b'.repeat(43), null), { kind: 'ready', nonce: 4 });
     assert.deepEqual(settleRemoteExchange(opening, null, session, null), { kind: 'ready', nonce: 1 });
     assert.deepEqual(settleRemoteExchange(opening, null, null, null), { kind: 'ended', message: 'Remote access is invalid or expired' });
+  });
+
+  it('validates search queries and strips source URLs from search results', async () => {
+    assert.equal(remoteSearchQueryError('a'), 'Enter at least 2 characters.');
+    assert.equal(remoteSearchQueryError('x'.repeat(101)), 'Search queries can be at most 100 characters.');
+    assert.equal(remoteSearchQueryError('https://example.com/song'), 'Paste a song name, not a link.');
+    assert.equal(remoteSearchQueryError('HTTP://evil.test/x'), 'Paste a song name, not a link.');
+    assert.equal(remoteSearchQueryError('  neon skyline  '), null);
+
+    await exchangeRemoteToken(token);
+    await assert.rejects(() => searchRemoteMusic('https://example.com/a'));
+    assert.equal(calls.length, 1);
+    calls.length = 0;
+
+    const found = await searchRemoteMusic('  neon skyline  ');
+    assert.equal(calls[0].method, 'POST');
+    assert.equal(calls[0].body, JSON.stringify({ query: 'neon skyline' }));
+    assert.deepEqual(found, {
+      results: [{ id: 'r'.repeat(22), title: 'Neon Skyline', artist: 'Midnight Transit', duration: 214 }],
+      expiresAt: future,
+    });
+    assert.equal('url' in found.results[0], false);
+
+    await queueRemoteSearchResult('r'.repeat(22));
+    assert.equal(calls[1].body, JSON.stringify({ resultId: 'r'.repeat(22) }));
+    await assert.rejects(() => queueRemoteSearchResult('short'));
+  });
+
+  it('maps duration refusals and keeps queue_full messaging', () => {
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(422, 'too_long', 'ignored')),
+      'This track is longer than 15 minutes.',
+    );
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(422, 'live_not_allowed', 'ignored')),
+      'Live streams are not allowed.',
+    );
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(422, 'duration_unknown', 'ignored')),
+      'Track duration could not be verified.',
+    );
+    assert.equal(
+      remoteSearchQueueErrorMessage(new RemoteHttpError(409, 'queue_full', 'The queue is full.')),
+      'The queue is full.',
+    );
+    assert.deepEqual(
+      parseRemoteSearchResponse({
+        results: [{ id: 'a'.repeat(22), title: 'A', artist: null, duration: 90, sourceUrl: 'https://x' }],
+        expiresAt: future,
+      }),
+      { results: [{ id: 'a'.repeat(22), title: 'A', artist: null, duration: 90 }], expiresAt: future },
+    );
+    assert.throws(() => parseRemoteSearchResponse({ results: [{ id: 'bad', title: 'A', artist: null, duration: 1 }], expiresAt: future }));
+  });
+
+  it('shows search only when the listener can also queue the result', () => {
+    const base = { searchLibrary: true, requestUrl: false };
+    assert.equal(canSearchRemoteMusic({ ...base, addToQueue: true, searchMusic: true }), true);
+    // `/search` checks `add`; a read-only listener would only ever get 403.
+    assert.equal(canSearchRemoteMusic({ ...base, addToQueue: false, searchMusic: true }), false);
+    assert.equal(canSearchRemoteMusic({ ...base, addToQueue: true, searchMusic: false }), false);
+  });
+
+  it('drops spent search results after a failed queue attempt', () => {
+    const tooLong = searchQueueFailure(new RemoteHttpError(422, 'too_long', 'ignored'));
+    assert.deepEqual(tooLong, { message: 'This track is longer than 15 minutes.', drop: 'row' });
+
+    const full = searchQueueFailure(new RemoteHttpError(409, 'queue_full', 'The queue is full.'));
+    assert.deepEqual(full, { message: 'The queue is full. Search again to try this song.', drop: 'row' });
+
+    const limited = searchQueueFailure(new RemoteHttpError(429, 'rate_limited', 'Too many remote requests'));
+    assert.equal(limited.drop, 'row');
+    assert.match(limited.message, /^Too many requests right now\. Wait a minute, then try again\. Search again/);
+
+    const gone = searchQueueFailure(new RemoteHttpError(404, 'not_found', 'Search result not found.'));
+    assert.deepEqual(gone, { message: 'These search results have run out. Search again.', drop: 'all' });
+
+    const denied = searchQueueFailure(new RemoteHttpError(403, 'permission_denied', 'You are not allowed to use this command.'));
+    assert.deepEqual(denied, { message: 'You are not allowed to use this command.', drop: 'row' });
+
+    // Refused in the browser before the claim: the result is still valid.
+    assert.equal(searchQueueFailure(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.')).drop, 'none');
+    // A network failure may or may not have reached the claim; treat it as spent.
+    assert.equal(searchQueueFailure(new Error('offline')).drop, 'row');
+
+    assert.equal(
+      remoteSearchErrorMessage(new RemoteHttpError(429, 'rate_limited', 'Too many remote requests')),
+      'Too many searches right now. Wait a minute, then try again.',
+    );
+    assert.equal(remoteSearchErrorMessage(new RemoteHttpError(503, 'unavailable', 'Listener remote is unavailable.')), 'Listener remote is unavailable.');
   });
 });
 
