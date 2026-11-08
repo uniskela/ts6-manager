@@ -4,6 +4,7 @@ import {
   REMOTE_POLL_MS,
   RemoteHttpError,
   canBrowseRemotePlaylists,
+  canSearchRemoteMusic,
   loadRemoteState,
   remoteErrorMessage,
   remoteSession,
@@ -95,7 +96,7 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
       </div>
       <div className="min-w-0 space-y-4">
         {state?.permissions.requestUrl && <UrlRequestView expire={expire} refresh={() => loadRef.current(true)} />}
-        {state?.permissions.searchMusic && (
+        {state && canSearchRemoteMusic(state.permissions) && (
           <SearchView expire={expire} refresh={() => loadRef.current(true)} />
         )}
         {state?.permissions.searchLibrary && (

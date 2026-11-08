@@ -10,6 +10,7 @@ import {
 import {
   RemoteHttpError,
   canBrowseRemotePlaylists,
+  canSearchRemoteMusic,
   clearRemoteSession,
   exchangeRemoteToken,
   loadRemoteLibrary,
@@ -24,11 +25,13 @@ import {
   queueRemoteSearchResult,
   queueRemoteSong,
   remoteMediaUrlError,
+  remoteSearchErrorMessage,
   remoteSearchQueryError,
   remoteSearchQueueErrorMessage,
   remoteSession,
   requestRemoteUrl,
   resetRemoteClientForTests,
+  searchQueueFailure,
   searchRemoteMusic,
   settleRemoteExchange,
   shouldPollRemote,
@@ -384,6 +387,43 @@ describe('listener remote client', () => {
       { results: [{ id: 'a'.repeat(22), title: 'A', artist: null, duration: 90 }], expiresAt: future },
     );
     assert.throws(() => parseRemoteSearchResponse({ results: [{ id: 'bad', title: 'A', artist: null, duration: 1 }], expiresAt: future }));
+  });
+
+  it('shows search only when the listener can also queue the result', () => {
+    const base = { searchLibrary: true, requestUrl: false };
+    assert.equal(canSearchRemoteMusic({ ...base, addToQueue: true, searchMusic: true }), true);
+    // `/search` checks `add`; a read-only listener would only ever get 403.
+    assert.equal(canSearchRemoteMusic({ ...base, addToQueue: false, searchMusic: true }), false);
+    assert.equal(canSearchRemoteMusic({ ...base, addToQueue: true, searchMusic: false }), false);
+  });
+
+  it('drops spent search results after a failed queue attempt', () => {
+    const tooLong = searchQueueFailure(new RemoteHttpError(422, 'too_long', 'ignored'));
+    assert.deepEqual(tooLong, { message: 'This track is longer than 15 minutes.', drop: 'row' });
+
+    const full = searchQueueFailure(new RemoteHttpError(409, 'queue_full', 'The queue is full.'));
+    assert.deepEqual(full, { message: 'The queue is full. Search again to try this song.', drop: 'row' });
+
+    const limited = searchQueueFailure(new RemoteHttpError(429, 'rate_limited', 'Too many remote requests'));
+    assert.equal(limited.drop, 'row');
+    assert.match(limited.message, /^Too many requests right now\. Wait a minute, then try again\. Search again/);
+
+    const gone = searchQueueFailure(new RemoteHttpError(404, 'not_found', 'Search result not found.'));
+    assert.deepEqual(gone, { message: 'These search results have run out. Search again.', drop: 'all' });
+
+    const denied = searchQueueFailure(new RemoteHttpError(403, 'permission_denied', 'You are not allowed to use this command.'));
+    assert.deepEqual(denied, { message: 'You are not allowed to use this command.', drop: 'row' });
+
+    // Refused in the browser before the claim: the result is still valid.
+    assert.equal(searchQueueFailure(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.')).drop, 'none');
+    // A network failure may or may not have reached the claim; treat it as spent.
+    assert.equal(searchQueueFailure(new Error('offline')).drop, 'row');
+
+    assert.equal(
+      remoteSearchErrorMessage(new RemoteHttpError(429, 'rate_limited', 'Too many remote requests')),
+      'Too many searches right now. Wait a minute, then try again.',
+    );
+    assert.equal(remoteSearchErrorMessage(new RemoteHttpError(503, 'unavailable', 'Listener remote is unavailable.')), 'Listener remote is unavailable.');
   });
 });
 

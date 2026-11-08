@@ -8,10 +8,10 @@ import {
   enqueueRemoteMutation,
   formatTrackLength,
   queueRemoteSearchResult,
-  remoteErrorMessage,
+  remoteSearchErrorMessage,
   remoteSearchQueryError,
-  remoteSearchQueueErrorMessage,
   remoteSession,
+  searchQueueFailure,
   searchRemoteMusic,
   type RemoteSearchResult,
 } from '@/lib/listener-remote';
@@ -23,13 +23,14 @@ export function SearchView({ expire, refresh }: {
 }) {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<RemoteSearchResult[] | null>(null);
-  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const searchLock = useRef(false);
+  // Move focus to the results only when a search lands, not when a row is dropped.
+  const focusResults = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -43,7 +44,8 @@ export function SearchView({ expire, refresh }: {
   }, [error, notice]);
 
   useLayoutEffect(() => {
-    if (searching || results === null) return;
+    if (searching || results === null || !focusResults.current) return;
+    focusResults.current = false;
     resultsRef.current?.focus({ preventScroll: true });
   }, [results, searching]);
 
@@ -65,14 +67,13 @@ export function SearchView({ expire, refresh }: {
     void searchRemoteMusic(query).then(
       (data) => {
         if (!remoteSession()) return;
+        focusResults.current = true;
         setResults(data.results);
-        setExpiresAt(data.expiresAt);
       },
       (err: unknown) => {
         if (expire(err)) return;
-        setError(remoteErrorMessage(err));
+        setError(remoteSearchErrorMessage(err));
         setResults(null);
-        setExpiresAt(null);
       },
     ).finally(() => {
       searchLock.current = false;
@@ -80,18 +81,10 @@ export function SearchView({ expire, refresh }: {
     });
   };
 
+  // No client-side expiry check: a phone clock can be minutes off. The server's
+  // 404 for a spent or expired result clears the list with a clear message.
   const add = (row: RemoteSearchResult) => {
     if (lock.current) return;
-    if (expiresAt && Date.parse(expiresAt) <= Date.now()) {
-      flushSync(() => {
-        setError('Those search results have expired. Search again.');
-        setNotice(null);
-        setResults(null);
-        setExpiresAt(null);
-      });
-      errorRef.current?.focus({ preventScroll: true });
-      return;
-    }
     lock.current = true;
     setBusy(true);
     setNotice(null);
@@ -104,7 +97,11 @@ export function SearchView({ expire, refresh }: {
         await refresh();
       },
       (err: unknown) => {
-        if (!expire(err)) setError(remoteSearchQueueErrorMessage(err));
+        if (expire(err)) return;
+        const failure = searchQueueFailure(err);
+        if (failure.drop === 'all') setResults(null);
+        if (failure.drop === 'row') setResults((prev) => (prev ? prev.filter((item) => item.id !== row.id) : prev));
+        setError(failure.message);
       },
     ).finally(() => {
       lock.current = false;
@@ -120,7 +117,8 @@ export function SearchView({ expire, refresh }: {
         <section aria-labelledby="music-search" className="space-y-3">
           <h2 id="music-search" className="text-base font-semibold">Search</h2>
           <p id={hintId} className="text-sm text-foreground/80">
-            Find a song that is not in the library and add it to the queue.
+            Find a song that is not in the library and add it to the queue. Songs over 15 minutes
+            and live streams are not shown.
           </p>
           <form
             role="search"

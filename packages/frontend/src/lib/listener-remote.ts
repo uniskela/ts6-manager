@@ -118,8 +118,42 @@ export function remoteSearchQueueErrorMessage(error: unknown): string {
   if (error instanceof RemoteHttpError) {
     const mapped = DURATION_REFUSAL_MESSAGES[error.code];
     if (mapped) return mapped;
+    if (error.code === 'not_found') return 'These search results have run out. Search again.';
+    if (error.code === 'rate_limited') return 'Too many requests right now. Wait a minute, then try again.';
   }
   return remoteErrorMessage(error);
+}
+
+export function remoteSearchErrorMessage(error: unknown): string {
+  if (error instanceof RemoteHttpError && error.code === 'rate_limited') {
+    return 'Too many searches right now. Wait a minute, then try again.';
+  }
+  return remoteErrorMessage(error);
+}
+
+export type SearchQueueFailure = { message: string; drop: 'none' | 'row' | 'all' };
+
+/**
+ * Message for a failed `POST /search/queue`, and which results are now spent.
+ * The backend claims a result before any other check and never restores it, so
+ * after any server answer that row is gone. A 404 means the whole set expired
+ * or a newer search replaced it. A 400 was refused before the claim.
+ */
+export function searchQueueFailure(error: unknown): SearchQueueFailure {
+  const message = remoteSearchQueueErrorMessage(error);
+  if (!(error instanceof RemoteHttpError)) return { message: `${message} Search again to try this song.`, drop: 'row' };
+  if (error.code === 'not_found') return { message, drop: 'all' };
+  if (error.status === 400) return { message, drop: 'none' };
+  const final = error.code in DURATION_REFUSAL_MESSAGES || error.status === 403;
+  return { message: final ? message : `${message} Search again to try this song.`, drop: 'row' };
+}
+
+/**
+ * Search needs `searchMusic` and the add permission: `POST /search` checks
+ * `add`, so hide the view when the listener cannot queue a result anyway.
+ */
+export function canSearchRemoteMusic(permissions: RemotePermissions): boolean {
+  return permissions.searchMusic === true && permissions.addToQueue === true;
 }
 
 /** Client-side checks for POST /search (2–100 chars, no http(s) URLs). */
