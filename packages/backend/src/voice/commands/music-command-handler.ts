@@ -23,6 +23,7 @@ export class MusicCommandHandler {
   private registeredBots = new Set<number>();
   private eventBridge: EventBridge | null = null;
   private listenerRemote: ListenerRemoteService | null = null;
+  private playlistVoteNowFn: () => number = Date.now;
   private flowCommandLookup: FlowCommandLookup | null = null;
   private eventBridgeListening = false;
   private botChannelConfig = new Map<number, BotChannelConfig>();
@@ -56,6 +57,7 @@ export class MusicCommandHandler {
       get registeredBots() { return handler.registeredBots; },
       get eventBridge() { return handler.eventBridge; },
       get listenerRemote() { return handler.listenerRemote; },
+      playlistVoteNow: () => handler.playlistVoteNowFn(),
       set eventBridge(value) { handler.eventBridge = value; },
       get flowCommandLookup() { return handler.flowCommandLookup; },
       get eventBridgeListening() { return handler.eventBridgeListening; },
@@ -152,6 +154,11 @@ export class MusicCommandHandler {
 
   setListenerRemote(service: ListenerRemoteService): void {
     this.listenerRemote = service;
+  }
+
+  /** Test / deterministic deadline settlement for `!playlistvote`. */
+  setPlaylistVoteClock(clock: () => number): void {
+    this.playlistVoteNowFn = clock;
   }
 
   refreshAllBotChannels(): Promise<void> {

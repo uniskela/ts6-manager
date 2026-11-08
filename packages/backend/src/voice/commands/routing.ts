@@ -7,6 +7,7 @@ import { botOccupiesChannel, isBotSummonable } from './channel-ownership.js';
 import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
 import { channelCommandKey, claimChannelCommand } from './dedupe.js';
 import { checkMediaCommand, handleVoteSkip } from './media-access.js';
+import { handlePlaylistVote } from './playlist-vote-chat.js';
 import { handleListenerRemote, revokeDepartedRemote } from './listener-remote.js';
 import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 const CMD_PREFIX = '!';
@@ -451,6 +452,9 @@ export async function onTextMessage(
           break;
         case 'voteskip':
           await handleVoteSkip(context, bot, userClid, data.invokeruid);
+          break;
+        case 'playlistvote':
+          await handlePlaylistVote(context, bot, userClid, args, data.invokeruid);
           break;
         case 'prev':
           await context.handlePrev(bot, userClid);

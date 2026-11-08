@@ -31,3 +31,13 @@ export {
   cancelPlaylistVotesBotUnavailable,
   playlistVotesForRemote,
 } from './lifecycle.js';
+export {
+  playlistSongsToQueueItems,
+  restashForApproval,
+  settleExpiredPlaylistVote,
+} from './approval-settle.js';
+export type {
+  QueuedStart,
+  RequestPlaylist,
+  RequestPlaylistSong,
+} from './approval-settle.js';

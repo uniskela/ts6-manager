@@ -6,6 +6,7 @@ import { DEFAULT_PLAYLIST_VOTE_SETTINGS } from '@ts6/common';
 import { listenerRemoteRoutes, listenerRemoteIpGuard } from './listener-remote.routes.js';
 import { ListenerRemoteService } from '../voice/listener-remote.js';
 import { defaultMediaCommandPermissions } from '../voice/media-command-permissions.js';
+import { MusicCommandHandler, resetChatReplyCooldownsForTests } from '../voice/music-command-handler.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { playlistVoteSettingsKey } from '../voice/playlist-vote-settings.js';
 import { bindPlaylistVoteLifecycle } from '../voice/playlist-vote/lifecycle.js';
@@ -53,12 +54,14 @@ function link(id: number, position: number, track: PlaylistRow['songs'][number][
 }
 
 async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = {}) {
+  resetChatReplyCooldownsForTests();
   // Separate clocks so session TTL can elapse without forcing the 60s vote window closed.
   let voteNow = 1_700_000_000_000;
   let remoteNow = 1_700_000_000_000;
   const remote = new ListenerRemoteService(() => remoteNow);
   const queue = new PlayQueue();
   let peers = [...(opts.peers ?? [])];
+  const privateReplies: string[] = [];
   const state = {
     uid: binding.uid, channelId: binding.channelId, groups: '7',
     policy: null as string | null, botChannel: binding.channelId,
@@ -95,14 +98,27 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     deferNextPlaylistRead = false;
   };
 
-  const bot = {
+  const clientlistBody = () => {
+    if (state.channelId !== binding.channelId) return 'error id=0 msg=ok';
+    const rows = [
+      `clid=${binding.clid} cid=${binding.channelId} client_unique_identifier=${binding.uid} client_type=0`,
+      ...peers.map((p) => `clid=${p.clid} cid=${binding.channelId} client_unique_identifier=${p.uid} client_type=0`),
+    ];
+    return `${rows.join('|')}\nerror id=0 msg=ok`;
+  };
+
+  const bot: any = {
     currentConfig: { id: binding.botId, serverConfigId: binding.serverConfigId, name: 'Music bot', password: 'bot-secret' },
     ts3ClientId: 99, stopGeneration: 0,
     get status() { return state.botStatus; },
+    set status(value: string) { state.botStatus = value; },
     getCurrentChannelId: () => state.botChannel,
     nowPlaying: null as QueueItem | null,
     queue,
     videoSessionInfo: () => null,
+    floodHoldActive: false,
+    noteIgnoredCommand: () => undefined,
+    sendTextMessage: (_clid: number, text: string) => { privateReplies.push(text); },
     play: async (item: QueueItem) => { bot.nowPlaying = item; state.botStatus = 'playing'; },
     playStream: async (item: QueueItem) => { bot.nowPlaying = item; state.botStatus = 'playing'; },
   };
@@ -110,11 +126,12 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
 
   const runtime = new PlaylistVoteRuntime(() => bot);
   bindPlaylistVoteLifecycle(remote, runtime);
+  const voiceBotManager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
   const app = express();
   app.set('trust proxy', false);
   app.use(express.json());
   app.locals.listenerRemote = remote;
-  app.locals.voiceBotManager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
+  app.locals.voiceBotManager = voiceBotManager;
   app.locals.playlistVotes = runtime;
   app.locals.playlistVoteClock = () => voteNow;
   app.locals.eventBridge = {
@@ -127,12 +144,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
       assert.equal(cmd, 'clientlist -uid');
       clientlistCalls += 1;
       if (state.failElectorate && clientlistCalls > 1) throw new Error('clientlist offline');
-      if (state.channelId !== binding.channelId) return 'error id=0 msg=ok';
-      const rows = [
-        `clid=${binding.clid} cid=${binding.channelId} client_unique_identifier=${binding.uid} client_type=0`,
-        ...peers.map((p) => `clid=${p.clid} cid=${binding.channelId} client_unique_identifier=${p.uid} client_type=0`),
-      ];
-      return `${rows.join('|')}\nerror id=0 msg=ok`;
+      return clientlistBody();
     },
   };
   app.locals.prisma = {
@@ -200,6 +212,18 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   assert.ok(address && typeof address === 'object');
   const base = `http://127.0.0.1:${address.port}/api/listener-remote`;
 
+  const handler: any = new MusicCommandHandler(app.locals.prisma, voiceBotManager as any);
+  handler.setListenerRemote(remote);
+  handler.setPlaylistVoteClock(() => voteNow);
+  handler.botChannelConfig.set(binding.botId, {
+    serverConfigId: binding.serverConfigId,
+    virtualServerId: binding.virtualServerId,
+    defaultChannel: null,
+    commandChannelIds: [],
+  });
+  handler.musicBotClidsOnServer = () => new Set([99]);
+  handler.eventBridge = { executeCommand: async () => clientlistBody() };
+
   const request = (path: string, options: {
     session?: string; method?: string; body?: unknown;
   } = {}) => fetch(`${base}${path}`, {
@@ -228,8 +252,14 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     return body;
   };
 
+  const chatYes = (who: { clid: number; uid: string }) =>
+    handler.onTextMessage(binding.botId, bot, {
+      invokerid: String(who.clid), invokeruid: who.uid, msg: '!playlistvote yes',
+    });
+
   return {
     remote, request, exchangeAs, state, seed, bot, queue, audit, historyWrites, runtime,
+    privateReplies, chatYes,
     now: () => voteNow,    advance: (ms: number) => { voteNow += ms; remoteNow += ms; },
     /** Elapse credential TTL without closing an open vote window. */
     advanceRemote: (ms: number) => { remoteNow += ms; },
@@ -250,7 +280,12 @@ async function using(
   fn: (f: Awaited<ReturnType<typeof fixture>>) => Promise<void>,
 ) {
   const f = await fixture({ peers });
-  try { await fn(f); } finally { await f.close(); }
+  try {
+    await fn(f);
+  } finally {
+    f.releasePlaylistReadGate();
+    await f.close();
+  }
 }
 
 function enableVoting(f: Awaited<ReturnType<typeof fixture>>, overrides: Partial<typeof DEFAULT_PLAYLIST_VOTE_SETTINGS> = {}) {
@@ -288,6 +323,35 @@ async function asPeer(f: Awaited<ReturnType<typeof fixture>>) {
   const peerAuth = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
   f.state.uid = peer.uid;
   return peerAuth;
+}
+
+const third = { clid: 11, uid: 'third-listener-uid' };
+
+/** Open vote, peer yes (still open), optional access change, shrink electorate, cross deadline. */
+async function openNearPassThenDeadline(
+  f: Awaited<ReturnType<typeof fixture>>,
+  access: 'request' | 'browse' | 'hidden' = 'request',
+) {
+  enableVoting(f, { thresholdPercent: 100 });
+  f.seed(requestable(2));
+  const { session } = await f.exchangeAs(binding);
+  const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+  await assertOk(opened);
+  const { vote } = await opened.json() as { vote: { id: string } };
+  const peerAuth = await asPeer(f);
+  await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
+    session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
+  }));
+  assert.equal(f.queue.length, 0, '2/3 yes keeps the vote open');
+  if (access !== 'request') {
+    f.seed({
+      id: 1, name: 'Requestable', remoteAccess: access, serverConfigId: 2,
+      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
+    });
+  }
+  f.setPeers([peer]); // deadline electorate 2 with 2 yes — would pass on stale stash
+  f.advance(61_000);
+  return { session, vote, peerAuth };
 }
 
 function olderQueuedTrack(): QueueItem {
@@ -638,35 +702,6 @@ describe('B3 R2 security matrix', () => {
     assert.equal(f.queue.length, 0);
   }));
 
-  const third = { clid: 11, uid: 'third-listener-uid' };
-
-  /** Open vote, peer yes (still open), optional access change, shrink electorate, cross deadline. */
-  async function openNearPassThenDeadline(
-    f: Awaited<ReturnType<typeof fixture>>,
-    access: 'request' | 'browse' | 'hidden' = 'request',
-  ) {
-    enableVoting(f, { thresholdPercent: 100 });
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-    const peerAuth = await asPeer(f);
-    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
-      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    }));
-    assert.equal(f.queue.length, 0, '2/3 yes keeps the vote open');
-    if (access !== 'request') {
-      f.seed({
-        id: 1, name: 'Requestable', remoteAccess: access, serverConfigId: 2,
-        songs: [link(1, 0, song(100)), link(2, 1, song(101))],
-      });
-    }
-    f.setPeers([peer]); // deadline electorate 2 with 2 yes — would pass on stale stash
-    f.advance(61_000);
-    return { session, vote, peerAuth };
-  }
-
   it('post-deadline cancel after hide does not queue', async () => using([peer, third], async (f) => {
     const { session, vote } = await openNearPassThenDeadline(f, 'hidden');
     f.state.uid = binding.uid;
@@ -904,6 +939,145 @@ describe('B3 R2 security matrix', () => {
       session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
     });
     assert.equal(replay.status, 404);
+    assert.equal(f.queue.length, 3);
+  }));
+});
+
+describe('B4 cross-interface remote/chat races', () => {
+  async function openFiftyPercentVote(f: Awaited<ReturnType<typeof fixture>>) {
+    enableVoting(f, { thresholdPercent: 50 });
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(opened);
+    const body = await opened.json() as {
+      vote: { id: string; yes: number; needed: number; listeners: number };
+    };
+    assert.equal(body.vote.listeners, 3);
+    assert.equal(body.vote.needed, 2);
+    assert.equal(body.vote.yes, 1);
+    return { session, voteId: body.vote.id };
+  }
+
+  function assertApprovedOnce(f: Awaited<ReturnType<typeof fixture>>, trackIds: string[]) {
+    assert.deepEqual(
+      f.queue.getAll().filter((t) => trackIds.includes(t.id)).map((t) => t.id),
+      trackIds,
+    );
+    assert.equal(f.historyWrites.length, trackIds.length);
+    assert.deepEqual(
+      f.historyWrites.map((row) => row.create?.url).sort(),
+      trackIds.map((id) => `/secret/${id}.mp3`).sort(),
+    );
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+    const blob = JSON.stringify(f.privateReplies);
+    assert.ok(!blob.includes(binding.uid));
+    assert.ok(!blob.includes(peer.uid));
+    assert.ok(!blob.includes(third.uid));
+    assert.ok(!blob.includes('/secret/'));
+  }
+
+  it('chat wins while remote HTTP ballot is parked in restash', async () => using([peer, third], async (f) => {
+    const { voteId } = await openFiftyPercentVote(f);
+    f.state.botStatus = 'connected';
+    f.bot.nowPlaying = null;
+    f.queue.add(olderQueuedTrack());
+
+    f.armPlaylistReadGate();
+    const thirdAuth = await f.exchangeAs({ ...binding, clid: third.clid, uid: third.uid });
+    f.state.uid = third.uid;
+    const remoteInFlight = f.request(`/votes/${voteId}/ballot`, {
+      session: thirdAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    await f.waitPlaylistReadEntered();
+
+    await f.chatYes(peer);
+    assertApprovedOnce(f, ['100', '101']);
+    assert.deepEqual(f.queue.getAll().map((t) => t.id), ['old', '100', '101']);
+    assert.equal(f.queue.index, 0);
+    assert.equal(f.bot.nowPlaying?.id, 'old');
+
+    f.releasePlaylistReadGate();
+    const remoteRes = await remoteInFlight;
+    assert.ok([404, 409].includes(remoteRes.status), `loser status ${remoteRes.status}`);
+    assert.equal(f.queue.length, 3);
+    assert.equal(f.historyWrites.length, 2);
+  }));
+
+  it('remote HTTP wins while chat ballot is parked in restash', async () => using([peer, third], async (f) => {
+    const { voteId } = await openFiftyPercentVote(f);
+
+    f.armPlaylistReadGate();
+    const chatInFlight = f.chatYes(peer);
+    await f.waitPlaylistReadEntered();
+
+    const thirdAuth = await f.exchangeAs({ ...binding, clid: third.clid, uid: third.uid });
+    f.state.uid = third.uid;
+    const remoteRes = await f.request(`/votes/${voteId}/ballot`, {
+      session: thirdAuth.session, method: 'PUT', body: { choice: 'yes' },
+    });
+    await assertOk(remoteRes);
+    assert.equal((await remoteRes.json() as { vote: { status: string } }).vote.status, 'passed');
+    assertApprovedOnce(f, ['100', '101']);
+
+    f.releasePlaylistReadGate();
+    await chatInFlight;
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+  }));
+
+  it('deadline /state settle races chat ballot; queues history at most once', async () => using([peer, third], async (f) => {
+    const { session, vote } = await openNearPassThenDeadline(f);
+    f.state.uid = binding.uid;
+
+    f.armPlaylistReadGate();
+    const stateSettle = f.request('/state', { session });
+    await f.waitPlaylistReadEntered();
+
+    await f.chatYes(peer);
+    f.releasePlaylistReadGate();
+    await assertOk(await stateSettle);
+
+    assertApprovedOnce(f, ['100', '101']);
+    await f.chatYes(peer);
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    void vote;
+  }));
+
+  it('parked deadline settle for cancelled A cannot consume successor B (chat approves B)', async () => using([peer, third], async (f) => {
+    enableVoting(f, { thresholdPercent: 50 });
+    f.seed(requestable(2));
+    f.seed({
+      id: 2, name: 'Successor', remoteAccess: 'request', serverConfigId: 2,
+      songs: [link(20, 0, song(200)), link(21, 1, song(201)), link(22, 2, song(202))],
+    });
+    const { session } = await f.exchangeAs(binding);
+    const openedA = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    await assertOk(openedA);
+    const { vote: voteA } = await openedA.json() as { vote: { id: string } };
+
+    f.advance(61_000);
+    f.armPlaylistReadGate();
+    const settleA = f.request(`/votes/${voteA.id}`, { session, method: 'DELETE' });
+    await f.waitPlaylistReadEntered();
+
+    f.runtime.cancelBotUnavailable(binding.botId, f.now());
+    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
+
+    f.advance(BOT_COOLDOWN_MS);
+    const openedB = await f.request('/playlist-requests', { session, body: { playlistId: 2 } });
+    await assertOk(openedB);
+    const { vote: voteB } = await openedB.json() as { vote: { id: string } };
+    assert.notEqual(voteB.id, voteA.id);
+
+    f.releasePlaylistReadGate();
+    assert.equal((await settleA).status, 404);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.runtime.machine.getOpen('4', '8')?.id, voteB.id);
+
+    await f.chatYes(peer);
+    assertApprovedOnce(f, ['200', '201', '202']);
     assert.equal(f.queue.length, 3);
   }));
 });
