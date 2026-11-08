@@ -101,6 +101,10 @@ async function fixture() {
     dumpRow({ id: 'bbbbbbbbbbb', title: 'Ok Song', artist: 'Band', durationSec: 200 }),
   ];
   let dumpOverride: ((signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>) | null = null;
+  let youtubeDump:
+    | ((query: string, signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>)
+    | null = null;
+  let youtubeCalls = 0;
   const start = async (started: QueueItem) => {
     if (state.botStatus !== 'connected') return;
     state.botStatus = 'playing';
@@ -144,6 +148,12 @@ async function fixture() {
         })).join('\n'),
         stderr: '',
       };
+    },
+    // Always stub the YouTube fallback so route tests never spawn yt-dlp.
+    dumpYouTubeSearch: async (query: string, _maxResults?: number, signal?: AbortSignal) => {
+      youtubeCalls++;
+      if (youtubeDump) return youtubeDump(query, signal);
+      return { code: 0, stdout: '', stderr: '' };
     },
   };
   app.locals.voiceBotManager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
@@ -235,10 +245,14 @@ async function fixture() {
     request, exchange, queue, state, audit, bot, remote, app, base,
     get downloads() { return downloads; },
     get searchCalls() { return searchCalls; },
+    get youtubeCalls() { return youtubeCalls; },
     setSearch: (fn: typeof searchImpl) => { searchImpl = fn; },
     setDumpFailure: (stderr: string) => {
       dumpOverride = async () => ({ code: 1, stdout: '', stderr });
     },
+    setYouTubeDump: (
+      fn: (query: string, signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>,
+    ) => { youtubeDump = fn; },
     armDownloadGate: () => {
       downloadGate = { started: deferred<void>(), gate: deferred<void>() };
       return downloadGate;
@@ -297,6 +311,53 @@ describe('listener remote search (C2)', () => {
     assert.equal(response.status, 200);
     const body = await response.json() as { results: Array<{ title: string }> };
     assert.deepEqual(body.results.map((row) => row.title), ['Safe Song']);
+  }));
+
+  it('falls back to YouTube search when Music rows lack duration, then filters live/too-long', async () => using(async f => {
+    // C5: Music flat extract succeeds with duration=null → empty without fallback.
+    f.setSearch(async () => [
+      dumpRow({ id: 'musicnull01', title: 'Daft Punk One More Time', durationSec: null }),
+      dumpRow({ id: 'musicnull02', title: 'One More Time Radio', durationSec: null }),
+    ]);
+    f.setYouTubeDump(async () => ({
+      code: 0,
+      stdout: [
+        dumpRow({ id: 'FGBhQbmPwH8', title: 'One More Time', artist: 'Daft Punk', durationSec: 320 }),
+        dumpRow({ id: 'liveconcert', title: 'Live Concert', durationSec: 240, isLive: true }),
+        dumpRow({ id: 'toolonggggg', title: 'Hour Mix', durationSec: 3600 }),
+        dumpRow({ id: 'stillnullid', title: 'Still Unknown', durationSec: null }),
+      ].map((row) => JSON.stringify({
+        id: row.id, title: row.title, artists: [row.artist], duration: row.durationSec ?? 0,
+        thumbnail: row.thumbnail, is_live: row.isLive === true, live_status: row.liveStatus ?? undefined,
+      })).join('\n'),
+      stderr: '',
+    }));
+    const { session } = await f.exchange();
+    const response = await f.request('/search', { session, body: { query: 'Daft Punk One More Time' } });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { results: Array<{ title: string; duration: number }> };
+    assert.equal(f.youtubeCalls, 1);
+    assert.deepEqual(body.results.map((row) => row.title), ['One More Time']);
+    assert.equal(body.results[0]!.duration, 320);
+  }));
+
+  it('returns empty results when Music and YouTube both lack verified duration', async () => using(async f => {
+    f.setSearch(async () => [
+      dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null }),
+    ]);
+    f.setYouTubeDump(async () => ({
+      code: 0,
+      stdout: JSON.stringify({
+        id: 'stillnullid', title: 'Unknown YT', artists: ['x'], duration: 0,
+      }),
+      stderr: '',
+    }));
+    const { session } = await f.exchange();
+    const response = await f.request('/search', { session, body: { query: 'both-unusable' } });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { results: unknown[] };
+    assert.deepEqual(body.results, []);
+    assert.equal(f.youtubeCalls, 1);
   }));
 
   it('binds result ids to the searching identity and hides cross-listener reuse', async () => using(async f => {
@@ -542,12 +603,18 @@ describe('listener remote search (C2)', () => {
     assert.equal(f.searchCalls, 0);
 
     f.setDumpFailure('ERROR: credential-must-not-leak Sign in to confirm you are not a bot');
+    f.setYouTubeDump(async () => ({
+      code: 1,
+      stdout: '',
+      stderr: 'ERROR: youtube-also-down credential-must-not-leak',
+    }));
     const failed = await f.request('/search', { session, body: { query: 'provider-down' } });
     assert.equal(failed.status, 503);
     const body = await failed.json() as { error: string; code: string };
     assert.deepEqual(body, { error: 'Listener remote is unavailable.', code: 'unavailable' });
     assert.ok(!JSON.stringify(body).includes('credential'));
     assert.ok(!JSON.stringify(body).includes('Sign in'));
+    assert.equal(f.youtubeCalls, 1);
   }));
 
   it('re-checks duration on queue and refuses with 422 when the provider answer changed', async () => using(async f => {
