@@ -130,7 +130,13 @@ Shipped streaming work is listed under v1.11.0 above.
 
 ### Listener remote growth — v1.12.0
 
-Tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442). Playlist browsing, external search, playlist voting (off by default), and a standalone `/remote` page. PIN sign-in and the installable app stay in v1.12.x ([#464](https://github.com/uniskela/ts6-manager/issues/464)). This lane is unchanged by the Discord bridge.
+On `main` for the upcoming 1.12.0 release; tracked in [#442](https://github.com/uniskela/ts6-manager/issues/442).
+
+- The listener remote adds YouTube Music search, browsing of playlists shared with it, a longer-than-15-minutes and no-live rule for search results and pasted links, and **Listener remote** visibility on each playlist. Playlist voting stays off until an admin enables it. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Playlist voting](music-bots.md#playlist-voting).
+- The remote is served as its own page. See [Reverse proxy — Listener remote and client IP limits](reverse-proxy.md#listener-remote-and-client-ip-limits).
+- PIN sign-in and the installable app stay in v1.12.x ([#464](https://github.com/uniskela/ts6-manager/issues/464)).
+
+This lane is unchanged by the Discord bridge.
 
 ### Discord voice bridge — v1.12.0
 
