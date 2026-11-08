@@ -22,6 +22,8 @@ export type VoteBot = {
   queue: {
     upcomingCount: number;
     length: number;
+    /** Display cursor; same semantics as PlayQueue.index / chat !playlist. */
+    index: number;
     assertRoom: (count: number) => void;
     addMany: (items: QueueItem[]) => void;
     playAt: (index: number) => QueueItem | null;
@@ -183,10 +185,15 @@ export class PlaylistVoteRuntime {
         );
       }
       bot.queue.assertRoom(items.length);
-      const playIndex = bot.queue.length;
       bot.queue.addMany(items);
+      // Match chat !playlist: idle start resumes at the existing head (index < 0 → 0),
+      // or the next slot after the cursor when the queue already has a position (exhausted).
+      // Never jump to the newly appended block when older tracks are still ahead.
       const idle = bot.status === 'connected' && !bot.videoSessionInfo?.();
-      const startItem = idle && items.length > 0 ? bot.queue.playAt(playIndex) : null;
+      const startItem =
+        idle && items.length > 0
+          ? bot.queue.playAt(bot.queue.index < 0 ? 0 : bot.queue.index + 1)
+          : null;
       return { result: 'queued', startItem };
     } catch {
       return { result: 'queue_full', startItem: null };
