@@ -123,13 +123,13 @@ export async function handlePlaylistVote(
     : null;
   if (bot.floodHoldActive || bot.getCurrentChannelId() !== channelIdNum) return;
 
-  const voter = listeners?.find((peer) => peer.clid === clid && (!expectedUid || peer.uid === expectedUid));
-  if (!voter) {
-    privateReply(context, bot, clid, 'Playlist voting needs a verified listener in the bot channel.');
-    return;
-  }
   if (!listeners) {
     privateReply(context, bot, clid, 'Could not verify listeners right now.');
+    return;
+  }
+  const voter = listeners.find((peer) => peer.clid === clid && (!expectedUid || peer.uid === expectedUid));
+  if (!voter) {
+    privateReply(context, bot, clid, 'Playlist voting needs a verified listener in the bot channel.');
     return;
   }
 

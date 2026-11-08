@@ -32,7 +32,7 @@ B3 merged on main at `9ec216a` (#624). History follow-up: #628. B4 draft impleme
 | Non-listener / stale identity | Live clid+uid check rejects outsider and mismatched uid | covered |
 | Hidden playlist | Post-deadline chat cannot queue after hide; no history | covered |
 | Deadline revalidation | Still-requestable post-deadline chat settle queues once with history | covered |
-| Concurrent remote+chat | Parallel remote castBallot + chat yes queues once | covered |
+| Concurrent remote+chat | Real HTTP vs chat races (both orderings + deadline `/state` settle + successor stash) in `cross-interface-race.test.ts` | covered |
 | Unavailable listener lookup | Bridge throw fails closed; nothing queued | covered |
 | Bot unavailable / revoke | Move/disconnect and requester revoke cancel; chat cannot approve | covered |
 | Private replies | Replies omit UIDs, session tokens, and file paths | covered |
@@ -51,3 +51,4 @@ B3 merged on main at `9ec216a` (#624). History follow-up: #628. B4 draft impleme
 - [ ] **Mid-vote permission/settings changes:** playlist hide / remoteAccess demotion / maxRequestSize shrink at approval fail closed; threshold changes do not rewrite an already-open vote's stored percent
 - [ ] **Exactly-once queue:** proposal sole-pass, ballot threshold pass, deadline tick, and chat/remote concurrent ballots each queue at most once through the sync hook
 - [ ] Independent Thermos R2 on B4 draft + explicit owner GO before merge (do not merge B4a/B4b; keep #617 draft; keep #609 open)
+- [ ] **Follow-up (nit):** mid-window threshold pass (chat + remote PUT) still duplicates start+history vs shared settle `onQueued` — behaviour matches; share helper only if drift appears

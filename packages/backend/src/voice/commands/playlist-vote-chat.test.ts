@@ -4,7 +4,7 @@ import { DEFAULT_PLAYLIST_VOTE_SETTINGS } from '@ts6/common';
 import { PlayQueue, type QueueItem } from '../playlist/queue.js';
 import { ListenerRemoteService } from '../listener-remote.js';
 import { bindPlaylistVoteLifecycle } from '../playlist-vote/lifecycle.js';
-import { eventsQueued, PlaylistVoteRuntime } from '../playlist-vote/runtime.js';
+import { PlaylistVoteRuntime } from '../playlist-vote/runtime.js';
 import { playlistVoteSettingsKey } from '../playlist-vote-settings.js';
 import { MusicCommandHandler, resetChatReplyCooldownsForTests } from '../music-command-handler.js';
 
@@ -223,7 +223,7 @@ describe('B4 !playlistvote chat ballots', () => {
     f.openVote();
     await f.command('!playlistvote yes', { clid: '2', uid: peer });
     assert.equal(f.queue.length, 0);
-    assert.match(f.privateReplies.join('\n'), /Could not verify listeners|verified listener/i);
+    assert.match(f.privateReplies.join('\n'), /Could not verify listeners/i);
   });
 
   it('bot_unavailable cancels open vote so chat cannot approve', async () => {
@@ -244,37 +244,6 @@ describe('B4 !playlistvote chat ballots', () => {
     assert.equal(f.queue.length, 0);
   });
 
-  it('concurrent remote and chat threshold ballots queue once', async () => {
-    const f = await fixture({ threeListeners: true });
-    const voteId = f.openVote();
-    const nowMs = f.now();
-    const remoteBallot = async () => {
-      const result = f.runtime.machine.castBallot({
-        voteId,
-        botKey: '4',
-        channelId: '8',
-        voterUid: third,
-        choice: 'yes',
-        listenerUids: [requester, peer, third],
-        nowMs,
-      });
-      assert.equal(result.ok, true);
-      if (result.ok && eventsQueued(result.events)) {
-        const start = f.runtime.takeStart(voteId);
-        if (start) {
-          f.bot.queue.addMany(start.items);
-          for (const queued of start.items) {
-            f.historyWrites.push({ create: { url: queued.id } });
-          }
-        }
-      }
-    };
-    await Promise.all([
-      f.command('!playlistvote yes', { clid: '2', uid: peer }),
-      remoteBallot(),
-    ]);
-    assert.equal(f.queue.length, 2);
-    assert.equal(f.historyWrites.length, 2);
-    assert.equal(f.runtime.machine.getOpen('4', '8'), undefined);
-  });
+  // Concurrent remote HTTP vs chat races live in
+  // `playlist-vote/cross-interface-race.test.ts` (real routes + restash barriers).
 });
