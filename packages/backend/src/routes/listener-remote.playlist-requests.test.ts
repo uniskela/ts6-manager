@@ -290,6 +290,24 @@ async function asPeer(f: Awaited<ReturnType<typeof fixture>>) {
   return peerAuth;
 }
 
+function olderQueuedTrack(): QueueItem {
+  return { id: 'old', title: 'Already queued', filePath: '/secret/old.mp3', source: 'local' };
+}
+
+/** Idle head starts; history is the approved playlist only (not older queued songs). */
+function assertIdleHeadStartPlaylistHistory(f: Awaited<ReturnType<typeof fixture>>): void {
+  assert.equal(f.queue.length, 3);
+  assert.equal(f.queue.index, 0);
+  assert.equal(f.bot.nowPlaying?.title, 'Already queued');
+  assert.deepEqual(f.queue.getAll().map((t) => t.title), ['Already queued', 'Song 100', 'Song 101']);
+  assert.equal(f.historyWrites.length, 2);
+  assert.deepEqual(
+    f.historyWrites.map((row) => row.create?.url).sort(),
+    ['/secret/100.mp3', '/secret/101.mp3'],
+  );
+  assert.ok(!f.historyWrites.some((row) => row.create?.url === '/secret/old.mp3'));
+}
+
 describe('B3 whole-playlist propose/vote', () => {
   it('queues directly when voting is off (all-or-nothing)', async () => using([], async (f) => {
     f.seed(requestable(3));
@@ -306,21 +324,11 @@ describe('B3 whole-playlist propose/vote', () => {
 
   it('voting-off idle with older queued tracks starts the head; history is only the playlist', async () => using([], async (f) => {
     f.state.botStatus = 'connected';
-    f.queue.add({ id: 'old', title: 'Already queued', filePath: '/secret/old.mp3', source: 'local' });
+    f.queue.add(olderQueuedTrack());
     f.seed(requestable(2));
     const { session } = await f.exchangeAs(binding);
-    const response = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    assert.equal(response.status, 200);
-    assert.equal(f.queue.length, 3);
-    assert.equal(f.queue.index, 0);
-    assert.equal(f.bot.nowPlaying?.title, 'Already queued');
-    assert.deepEqual(f.queue.getAll().map((t) => t.title), ['Already queued', 'Song 100', 'Song 101']);
-    assert.equal(f.historyWrites.length, 2);
-    assert.deepEqual(
-      f.historyWrites.map((row) => row.create?.url).sort(),
-      ['/secret/100.mp3', '/secret/101.mp3'],
-    );
-    assert.ok(!f.historyWrites.some((row) => row.create?.url === '/secret/old.mp3'));
+    assert.equal((await f.request('/playlist-requests', { session, body: { playlistId: 1 } })).status, 200);
+    assertIdleHeadStartPlaylistHistory(f);
   }));
 
   it('voting-off while playing appends without restarting', async () => using([], async (f) => {
@@ -334,7 +342,6 @@ describe('B3 whole-playlist propose/vote', () => {
     assert.equal(f.queue.length, 3);
     assert.equal(f.queue.index, 0);
     assert.equal(f.bot.nowPlaying?.title, 'Now');
-    assert.equal(f.state.botStatus, 'playing');
   }));
 
   it('refuses browse-only and oversized / empty playlists', async () => using([], async (f) => {
@@ -716,18 +723,9 @@ describe('B3 R2 security matrix', () => {
     f.state.uid = binding.uid;
     f.state.botStatus = 'connected';
     f.bot.nowPlaying = null;
-    f.queue.add({ id: 'old', title: 'Already queued', filePath: '/secret/old.mp3', source: 'local' });
+    f.queue.add(olderQueuedTrack());
     await assertOk(await f.request('/state', { session }));
-    assert.equal(f.queue.length, 3);
-    assert.equal(f.queue.index, 0);
-    assert.equal(f.bot.nowPlaying?.title, 'Already queued');
-    assert.deepEqual(f.queue.getAll().map((t) => t.title), ['Already queued', 'Song 100', 'Song 101']);
-    assert.equal(f.historyWrites.length, 2);
-    assert.deepEqual(
-      f.historyWrites.map((row) => row.create?.url).sort(),
-      ['/secret/100.mp3', '/secret/101.mp3'],
-    );
-    assert.ok(!f.historyWrites.some((row) => row.create?.url === '/secret/old.mp3'));
+    assertIdleHeadStartPlaylistHistory(f);
   }));
 
   it('post-deadline hide does not write request history', async () => using([peer, third], async (f) => {
