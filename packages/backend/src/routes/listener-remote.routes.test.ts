@@ -313,7 +313,7 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(restrictedState.status, 200);
     assert.deepEqual((await restrictedState.json() as any).permissions, {
       searchLibrary: true, addToQueue: false, requestUrl: false,
-      browsePlaylists: true, requestPlaylist: false, searchMusic: true, vote: true,
+      browsePlaylists: true, requestPlaylist: false, searchMusic: false, vote: true,
     });
     assert.equal((await f.request('/library', { session })).status, 200);
     assert.equal(f.queue.length, 2);
@@ -324,6 +324,33 @@ describe('listener remote HTTP security boundary', () => {
     assert.ok(keys.has('playlist_vote_settings:2:3'));
     f.state.policy = '{malformed';
     assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 403);
+  }));
+
+  it('offers search only to listeners who can add, and /search enforces add itself', async () => using(async f => {
+    const { session } = await f.exchange();
+    const allowed = await f.request('/state', { session });
+    assert.equal(allowed.status, 200);
+    const open = (await allowed.json() as any).permissions;
+    assert.equal(open.addToQueue, true);
+    assert.equal(open.searchMusic, true);
+
+    // Browsing allowed, adding denied: no search, but the library and playlists stay readable.
+    restrict(f, [8]);
+    const denied = await f.request('/state', { session });
+    assert.equal(denied.status, 200);
+    const closed = (await denied.json() as any).permissions;
+    assert.equal(closed.browsePlaylists, true);
+    assert.equal(closed.addToQueue, false);
+    assert.equal(closed.searchMusic, false);
+    assert.equal((await f.request('/library', { session })).status, 200);
+    // The flag is a hint; the endpoint refuses on its own, before any search runs.
+    const search = await f.request('/search', { session, body: { query: 'neon skyline' } });
+    assert.equal(search.status, 403);
+    assert.deepEqual(await search.json(), { error: 'You are not allowed to use this command.', code: 'permission_denied' });
+
+    restrict(f, [7]);
+    const back = await f.request('/state', { session });
+    assert.equal((await back.json() as any).permissions.searchMusic, true);
   }));
 
   it('records refused access as one bounded total per source and window, without the address', async () => using(async f => {

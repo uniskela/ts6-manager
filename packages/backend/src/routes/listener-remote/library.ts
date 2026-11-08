@@ -29,7 +29,8 @@ export function registerLibraryRoutes(router: Router): void {
         requestUrl: canAdd,
         browsePlaylists: canBrowse,
         requestPlaylist: canRequestPlaylist,
-        searchMusic: canBrowse,
+        // POST /search checks `add`, so offer search only to listeners who can queue the result.
+        searchMusic: canAdd,
         vote: canVote,
       },
       ...voteFields,
