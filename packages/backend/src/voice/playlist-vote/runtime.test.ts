@@ -149,5 +149,44 @@ describe('PlaylistVoteRuntime.addAllOrNothing idle ordering', () => {
     assert.equal(queue.current?.title, 'Already queued');
     const taken = runtime.takeStart(queued.voteId);
     assert.equal(taken?.item.title, 'Already queued');
+    // History snapshot is only the approved playlist — never older queued songs.
+    assert.deepEqual(taken?.items.map((t) => t.title), ['New A', 'New B']);
+  });
+
+  it('playing bot keeps start snapshot for history without selecting a new cursor', () => {
+    const queue = new PlayQueue();
+    queue.add(track('old', 'Already queued'));
+    queue.playAt(0);
+    const runtime = new PlaylistVoteRuntime(() => botWith(queue, 'playing'));
+    const botKey = '1';
+    const channelId = '8';
+    runtime.stash(botKey, channelId, {
+      botId: 1,
+      playlistId: 7,
+      maxTracks: 25,
+      items: [track('n1', 'New A'), track('n2', 'New B')],
+      refreshedAtMs: 1_000,
+    });
+
+    const opened = runtime.machine.openVote({
+      botKey,
+      channelId,
+      requesterUid: 'req',
+      playlist: { id: 7, name: 'P', trackCount: 2 },
+      settings: { thresholdPercent: 80, windowMs: 60_000, maxTracks: 25 },
+      listenerUids: ['req'],
+      nowMs: 1_000,
+    });
+    assert.equal(opened.ok, true);
+    if (!opened.ok) return;
+    const queued = opened.events.find((e) => e.type === 'queue');
+    assert.ok(queued && queued.type === 'queue');
+    assert.equal(queue.index, 0);
+    assert.equal(queue.current?.title, 'Already queued');
+    const taken = runtime.takeStart(queued.voteId);
+    assert.ok(taken);
+    assert.deepEqual(taken.items.map((t) => t.title), ['New A', 'New B']);
+    // Fallback start item is first approved track; startCurrentIfIdle must still no-op while playing.
+    assert.equal(taken.item.title, 'New A');
   });
 });

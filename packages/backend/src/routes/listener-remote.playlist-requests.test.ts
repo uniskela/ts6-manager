@@ -304,6 +304,39 @@ describe('B3 whole-playlist propose/vote', () => {
     assert.ok(!serialized.includes('/secret/'));
   }));
 
+  it('voting-off idle with older queued tracks starts the head; history is only the playlist', async () => using([], async (f) => {
+    f.state.botStatus = 'connected';
+    f.queue.add({ id: 'old', title: 'Already queued', filePath: '/secret/old.mp3', source: 'local' });
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    const response = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
+    assert.equal(response.status, 200);
+    assert.equal(f.queue.length, 3);
+    assert.equal(f.queue.index, 0);
+    assert.equal(f.bot.nowPlaying?.title, 'Already queued');
+    assert.deepEqual(f.queue.getAll().map((t) => t.title), ['Already queued', 'Song 100', 'Song 101']);
+    assert.equal(f.historyWrites.length, 2);
+    assert.deepEqual(
+      f.historyWrites.map((row) => row.create?.url).sort(),
+      ['/secret/100.mp3', '/secret/101.mp3'],
+    );
+    assert.ok(!f.historyWrites.some((row) => row.create?.url === '/secret/old.mp3'));
+  }));
+
+  it('voting-off while playing appends without restarting', async () => using([], async (f) => {
+    f.state.botStatus = 'playing';
+    f.bot.nowPlaying = { id: 'cur', title: 'Now', filePath: '/secret/cur.mp3', source: 'local' };
+    f.queue.add(f.bot.nowPlaying);
+    f.queue.playAt(0);
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    await assertOk(await f.request('/playlist-requests', { session, body: { playlistId: 1 } }));
+    assert.equal(f.queue.length, 3);
+    assert.equal(f.queue.index, 0);
+    assert.equal(f.bot.nowPlaying?.title, 'Now');
+    assert.equal(f.state.botStatus, 'playing');
+  }));
+
   it('refuses browse-only and oversized / empty playlists', async () => using([], async (f) => {
     f.seed({ id: 1, name: 'Browse', remoteAccess: 'browse', serverConfigId: 2, songs: [link(1, 0, song(1))] });
     f.seed({ id: 2, name: 'Empty', remoteAccess: 'request', serverConfigId: 2, songs: [] });
@@ -676,6 +709,25 @@ describe('B3 R2 security matrix', () => {
     await assertOk(await f.request('/state', { session }));
     assert.equal(f.queue.length, 2, 'exactly-once queue');
     assert.equal(f.historyWrites.length, 2, 'no duplicate history on re-settle');
+  }));
+
+  it('deadline settle on idle bot with older queued tracks starts head; history is only approved playlist', async () => using([peer, third], async (f) => {
+    const { session } = await openNearPassThenDeadline(f);
+    f.state.uid = binding.uid;
+    f.state.botStatus = 'connected';
+    f.bot.nowPlaying = null;
+    f.queue.add({ id: 'old', title: 'Already queued', filePath: '/secret/old.mp3', source: 'local' });
+    await assertOk(await f.request('/state', { session }));
+    assert.equal(f.queue.length, 3);
+    assert.equal(f.queue.index, 0);
+    assert.equal(f.bot.nowPlaying?.title, 'Already queued');
+    assert.deepEqual(f.queue.getAll().map((t) => t.title), ['Already queued', 'Song 100', 'Song 101']);
+    assert.equal(f.historyWrites.length, 2);
+    assert.deepEqual(
+      f.historyWrites.map((row) => row.create?.url).sort(),
+      ['/secret/100.mp3', '/secret/101.mp3'],
+    );
+    assert.ok(!f.historyWrites.some((row) => row.create?.url === '/secret/old.mp3'));
   }));
 
   it('post-deadline hide does not write request history', async () => using([peer, third], async (f) => {
