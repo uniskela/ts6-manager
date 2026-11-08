@@ -32,6 +32,9 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
   const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
   const bannerRef = useRef<HTMLElement>(null);
   const [focusVote, setFocusVote] = useState<string | null>(null);
+  // Bumped whenever a ballot, cancel or proposal answer is shown. A poll that started
+  // before that answer carries an older vote, so its vote is not applied.
+  const voteAnswers = useRef(0);
 
   const loadState = async (force = false) => {
     const visible = document.visibilityState === 'visible';
@@ -41,10 +44,12 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
       return;
     }
     lastPoll.current = Date.now();
+    const answersAtStart = voteAnswers.current;
     try {
       const next = await loadRemoteState();
       if (!remoteSession()) return;
-      setState(next);
+      const stale = answersAtStart !== voteAnswers.current;
+      setState((prev) => (stale && prev ? { ...next, vote: prev.vote } : next));
       setStateError(null);
     } catch (error) {
       if (error instanceof RemoteHttpError && (error.status === 401 || !remoteSession())) {
@@ -83,6 +88,7 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
   const refresh = useCallback(() => loadRef.current(true), []);
   // Show a vote from a mutation at once instead of waiting for the next poll.
   const applyVote = useCallback((vote: RemoteVote) => {
+    voteAnswers.current += 1;
     setState((prev) => (prev ? { ...prev, vote } : prev));
   }, []);
   // A listener who just proposed a playlist is taken to the vote it opened.

@@ -194,7 +194,9 @@ describe('listener remote votes: wording', () => {
 
     const ballot = (code: string, status: number) => remoteVoteErrorMessage(new RemoteHttpError(status, code, 'server text'));
     assert.equal(ballot('not_found', 404), 'This vote has already ended.');
-    assert.match(ballot('permission_denied', 403), /Only the person who proposed/);
+    assert.equal(ballot('permission_denied', 403), 'You are not allowed to vote on playlists right now.');
+    assert.match(remoteVoteErrorMessage(new RemoteHttpError(403, 'permission_denied', 'x'), 'cancel'), /Only the person who proposed/);
+    assert.match(message('unavailable', 503), /could not be confirmed\. Check Up next/);
     assert.match(ballot('rate_limited', 429), /voting too quickly/);
     assert.match(ballot('unavailable', 503), /could not check who is in the channel/);
   });

@@ -37,6 +37,8 @@ export function PlaylistRequestControl({ playlist, access, expire, refresh, onVo
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // After a direct queue, a stray second tap must not queue the playlist again.
+  const [queued, setQueued] = useState(false);
   const lock = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const noticeRef = useRef<HTMLParagraphElement>(null);
@@ -59,7 +61,7 @@ export function PlaylistRequestControl({ playlist, access, expire, refresh, onVo
   const tooLarge = max !== null && playlist.trackCount > max;
   const empty = playlist.trackCount === 0;
   const voting = settings?.voting === true;
-  const disabled = busy || tooLarge || empty || access.voteOpen;
+  const disabled = busy || queued || tooLarge || empty || access.voteOpen;
 
   let hint: string;
   if (empty) hint = 'This playlist has no songs that can be played here.';
@@ -82,6 +84,7 @@ export function PlaylistRequestControl({ playlist, access, expire, refresh, onVo
       async (result) => {
         if (!remoteSession()) return;
         if (result.outcome === 'queued') {
+          setQueued(true);
           setNotice(`Added ${songs(result.trackCount)} from “${playlist.name}” to the queue.`);
         } else {
           // The banner takes focus and announces the vote; no second message here.
@@ -110,7 +113,7 @@ export function PlaylistRequestControl({ playlist, access, expire, refresh, onVo
         disabled={disabled}
         onClick={request}
       >
-        {busy ? 'Sending…' : label}
+        {busy ? 'Sending…' : queued ? 'Added to the queue' : label}
       </Button>
       {error && (
         <p ref={errorRef} role="alert" tabIndex={-1} className="text-sm text-destructive outline-none">{error}</p>

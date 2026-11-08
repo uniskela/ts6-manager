@@ -667,6 +667,8 @@ const PLAYLIST_REQUEST_MESSAGES: Record<string, string> = {
   queue_full: 'The queue is full. Try again when some songs have played.',
   not_found: 'This playlist is no longer shared with the remote.',
   permission_denied: 'You are not allowed to request whole playlists.',
+  // Also what a lost connection looks like: the request may or may not have arrived.
+  unavailable: 'The request could not be confirmed. Check Up next before trying again.',
 };
 
 /** Message for a failed whole-playlist request. `request_too_large` keeps the server text, which names the limit. */
@@ -681,11 +683,15 @@ export function remotePlaylistRequestErrorMessage(error: unknown): string {
   return PLAYLIST_REQUEST_MESSAGES[error.code] ?? error.message;
 }
 
-/** Message for a failed ballot, withdrawal or cancel. */
-export function remoteVoteErrorMessage(error: unknown): string {
+/** Message for a failed ballot or withdrawal (`ballot`), or a requester cancel (`cancel`). */
+export function remoteVoteErrorMessage(error: unknown, action: 'ballot' | 'cancel' = 'ballot'): string {
   if (!(error instanceof RemoteHttpError)) return remoteErrorMessage(error);
   if (error.code === 'not_found') return 'This vote has already ended.';
-  if (error.code === 'permission_denied') return 'Only the person who proposed this playlist can cancel the vote.';
+  if (error.code === 'permission_denied') {
+    return action === 'cancel'
+      ? 'Only the person who proposed this playlist can cancel the vote.'
+      : 'You are not allowed to vote on playlists right now.';
+  }
   if (error.code === 'rate_limited') {
     const wait = retryAfterText(error.retryAfterSeconds);
     return wait ? `You are voting too quickly. Try again in ${wait}.` : 'You are voting too quickly. Wait a moment.';

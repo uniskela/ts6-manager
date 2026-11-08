@@ -86,7 +86,11 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
     if (error) errorRef.current?.focus({ preventScroll: true });
   }, [error]);
 
-  const act = (task: () => Promise<RemoteVote | null>, done: (next: RemoteVote | null) => string) => {
+  const act = (
+    task: () => Promise<RemoteVote | null>,
+    done: (next: RemoteVote | null) => string,
+    action: 'ballot' | 'cancel' = 'ballot',
+  ) => {
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
@@ -100,7 +104,7 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
       },
       (err: unknown) => {
         if (expire(err)) return;
-        setError(remoteVoteErrorMessage(err));
+        setError(remoteVoteErrorMessage(err, action));
         void refresh();
       },
     ).finally(() => {
@@ -114,7 +118,7 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
     (next) => (next && next.status !== 'open' ? voteResultMessage(next) : `You voted ${choice}.`),
   );
   const withdraw = () => act(() => withdrawRemoteBallot(vote.id), () => 'Your vote was withdrawn.');
-  const cancel = () => act(async () => { await cancelRemoteVote(vote.id); return null; }, () => 'You cancelled the vote.');
+  const cancel = () => act(async () => { await cancelRemoteVote(vote.id); return null; }, () => 'You cancelled the vote.', 'cancel');
 
   const tone = open
     ? 'border-primary/70'

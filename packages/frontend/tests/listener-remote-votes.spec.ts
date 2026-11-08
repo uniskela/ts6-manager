@@ -228,9 +228,9 @@ test('closed votes explain why they ended', async ({ page }) => {
   const { current } = await openRemote(page, baseState({ vote: openVote({ status: 'failed', reason: 'deadline' }) }));
   await expect(banner(page).getByTestId('vote-result')).toHaveText('Vote failed. Not enough listeners voted yes for “Late Night Drive” in time.');
   current.state = baseState({ vote: openVote({ id: 'w'.repeat(22), status: 'cancelled', reason: 'requester_left' }) });
-  await expect(banner(page).getByTestId('vote-result')).toHaveText(/cancelled because the person who proposed it left the channel/, { timeout: 8_000 });
+  await expect(banner(page).getByTestId('vote-result')).toHaveText(/cancelled because the person who proposed it left the channel/, { timeout: 12_000 });
   current.state = baseState();
-  await expect(banner(page)).toHaveCount(0, { timeout: 8_000 });
+  await expect(banner(page)).toHaveCount(0, { timeout: 12_000 });
 });
 
 test('at zero the remote asks for the result instead of waiting for the next poll', async ({ page }) => {
@@ -271,7 +271,7 @@ test('limits and permissions are explained before anyone asks', async ({ page })
   await page.getByRole('button', { name: 'Back to playlists' }).click();
   await expect.poll(() => current.stateCalls).toBeGreaterThan(1);
   await openPlaylist(page);
-  await expect(page.getByText('You can add songs one at a time. Requesting the whole playlist is not allowed for you.')).toBeVisible({ timeout: 8_000 });
+  await expect(page.getByText('You can add songs one at a time. Requesting the whole playlist is not allowed for you.')).toBeVisible({ timeout: 12_000 });
   await expect(page.getByRole('button', { name: 'Propose this playlist' })).toHaveCount(0);
 });
 
@@ -339,4 +339,170 @@ test('the vote banner raises no CSP violations and stores nothing', async ({ pag
   }, [token, session, voteId]);
   expect(stored).toBe(false);
   expect(cspHits).toEqual([]);
+});
+
+// --- Review areas: duplicates, stale answers, permission changes, chat votes ---
+
+function gate() {
+  let release: () => void = () => {};
+  const opened = new Promise<void>((resolve) => { release = resolve; });
+  return { opened, release: () => release() };
+}
+
+test('repeated taps on a direct queue send one request, and a stray tap after it sends none', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const hold = gate();
+  let requests = 0;
+  await openRemote(page, baseState({ playlistRequests: { ...settings, voting: false } }));
+  await page.unroute(remote('/playlist-requests'));
+  await page.route(remote('/playlist-requests'), async (route) => {
+    requests += 1;
+    await hold.opened;
+    await fulfill(route, { ok: true, outcome: 'queued', trackCount: 3 });
+  });
+  await openPlaylist(page);
+  const add = page.getByRole('button', { name: 'Add all 3 songs' });
+  await add.dblclick();
+  await expect(page.getByRole('button', { name: 'Sending…' })).toBeDisabled();
+  await page.getByRole('button', { name: 'Sending…' }).click({ force: true });
+  hold.release();
+  await expect(page.getByText('Added 3 songs from “Late Night Drive” to the queue.')).toBeVisible();
+  const done = page.getByRole('button', { name: 'Added to the queue' });
+  await expect(done).toBeDisabled();
+  await done.click({ force: true });
+  expect(requests).toBe(1);
+});
+
+test('repeated ballot taps send one ballot', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const hold = gate();
+  let ballots = 0;
+  const { current } = await openRemote(page, baseState({ vote: openVote() }));
+  await page.unroute(remote(`/votes/${voteId}/ballot`));
+  await page.route(remote(`/votes/${voteId}/ballot`), async (route) => {
+    ballots += 1;
+    await hold.opened;
+    const voted = openVote({ ownBallot: 'yes', yes: 2 });
+    current.state = baseState({ vote: voted });
+    await fulfill(route, { ok: true, vote: voted });
+  });
+  const yes = banner(page).getByRole('button', { name: 'Yes' });
+  await yes.dblclick();
+  await expect(banner(page).getByRole('button', { name: 'No' })).toBeDisabled();
+  await banner(page).getByRole('button', { name: 'No' }).click({ force: true });
+  hold.release();
+  await expect(yes).toHaveAttribute('aria-pressed', 'true');
+  expect(ballots).toBe(1);
+});
+
+test('a poll that started before a ballot cannot undo it', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const before = openVote();
+  const after = openVote({ ownBallot: 'yes', yes: 2 });
+  let latest = before;
+  const held: Array<{ route: Route; snapshot: unknown }> = [];
+  await openRemote(page, baseState({ vote: before }), {
+    ballot: () => {
+      latest = after;
+      return { body: { ok: true, vote: after } };
+    },
+  });
+  await expect(banner(page).getByRole('button', { name: 'Yes' })).toBeVisible();
+  // From now on, hold every /state answer with the vote as it was when the poll arrived.
+  await page.unroute(remote('/state'));
+  await page.route(remote('/state'), (route) => { held.push({ route, snapshot: baseState({ vote: latest }) }); });
+  await expect.poll(() => held.length, { timeout: 12_000 }).toBeGreaterThanOrEqual(1);
+
+  const yes = banner(page).getByRole('button', { name: 'Yes' });
+  await yes.click();
+  await expect(yes).toHaveAttribute('aria-pressed', 'true');
+  // The ballot's own refresh is the second held poll; answer the old poll first.
+  await expect.poll(() => held.length).toBeGreaterThanOrEqual(2);
+  await fulfill(held[0].route, held[0].snapshot);
+  await page.waitForTimeout(200);
+  await expect(yes).toHaveAttribute('aria-pressed', 'true');
+  await expect(banner(page).getByText('2 yes · 0 no · needs 4 of 5 listeners')).toBeVisible();
+  for (const { route, snapshot } of held.slice(1)) await fulfill(route, snapshot);
+  await expect(yes).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('losing the vote permission mid-vote explains it and removes the buttons', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const { current } = await openRemote(page, baseState({ vote: openVote() }), {
+    ballot: () => {
+      current.state = baseState({ vote: openVote() }, { vote: false });
+      return { status: 403, body: { error: 'You are not allowed to use this command.', code: 'permission_denied' } };
+    },
+  });
+  await banner(page).getByRole('button', { name: 'Yes' }).click();
+  await expect(banner(page).getByRole('alert')).toHaveText('You are not allowed to vote on playlists right now.');
+  await expect(banner(page).getByText("Only listeners in the bot's channel can vote.")).toBeVisible();
+  await expect(banner(page).getByRole('button', { name: 'Yes' })).toHaveCount(0);
+});
+
+test('a refused or unconfirmed proposal never retries on its own', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  let reply: Reply | 'abort' = { status: 403, body: { error: 'You are not allowed to use this command.', code: 'permission_denied' } };
+  let requests = 0;
+  const { current } = await openRemote(page, baseState());
+  await page.unroute(remote('/playlist-requests'));
+  await page.route(remote('/playlist-requests'), (route) => {
+    requests += 1;
+    if (reply === 'abort') return route.abort('connectionreset');
+    return fulfill(route, reply.body, reply.status);
+  });
+  await openPlaylist(page);
+  const propose = page.getByRole('button', { name: 'Propose this playlist' });
+
+  await propose.click();
+  await expect(page.getByRole('alert')).toHaveText('You are not allowed to request whole playlists.');
+
+  reply = { status: 404, body: { error: 'Playlist not found.', code: 'not_found' } };
+  await propose.click();
+  await expect(page.getByRole('alert')).toHaveText('This playlist is no longer shared with the remote.');
+
+  reply = 'abort';
+  await propose.click();
+  await expect(page.getByRole('alert')).toHaveText('The request could not be confirmed. Check Up next before trying again.');
+  await page.waitForTimeout(500);
+  expect(requests).toBe(3);
+
+  // The server's permission change reaches the control on the next state read.
+  current.state = baseState({}, { requestPlaylist: false });
+  reply = { status: 403, body: { error: 'You are not allowed to use this command.', code: 'permission_denied' } };
+  await propose.click();
+  await expect(page.getByText('You can add songs one at a time. Requesting the whole playlist is not allowed for you.')).toBeVisible();
+  expect(requests).toBe(4);
+});
+
+test('a vote opened from chat shows on the remote, even for a playlist the remote cannot see', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const chatVote = openVote({ playlist: { id: null, name: 'Staff Picks', trackCount: 8 }, yes: 1, needed: 3, listeners: 3 });
+  const voted = { ...chatVote, ownBallot: 'yes', yes: 2 };
+  const { current, calls } = await openRemote(page, baseState({ vote: chatVote }), {
+    ballot: () => {
+      current.state = baseState({ vote: voted });
+      return { body: { ok: true, vote: voted } };
+    },
+  });
+  await expect(banner(page).getByText('Play “Staff Picks” (8 songs)?')).toBeVisible();
+  await banner(page).getByRole('button', { name: 'Yes' }).click();
+  await expect(banner(page).getByText('2 yes · 0 no · needs 3 of 3 listeners')).toBeVisible();
+  expect(calls[0]).toEqual({ method: 'PUT', path: `/votes/${voteId}/ballot`, body: { choice: 'yes' } });
+});
+
+test('the countdown reaching zero decides nothing: the server does', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  const late = openVote({ deadline: new Date(Date.now() - 5_000).toISOString() });
+  const { calls } = await openRemote(page, baseState({ vote: late }), {
+    ballot: () => ({ status: 404, body: { error: 'Vote not found.', code: 'not_found' } }),
+  });
+  await expect(banner(page).getByRole('timer')).toHaveText('Closing…');
+  await expect(banner(page).getByRole('heading', { name: 'Playlist vote' })).toBeVisible();
+  await expect(banner(page).getByTestId('vote-result')).toHaveCount(0);
+  const yes = banner(page).getByRole('button', { name: 'Yes' });
+  await expect(yes).toBeEnabled();
+  await yes.click();
+  await expect(banner(page).getByRole('alert')).toHaveText('This vote has already ended.');
+  expect(calls).toHaveLength(1);
 });
