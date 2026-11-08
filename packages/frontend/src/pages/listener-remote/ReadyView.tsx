@@ -1,15 +1,18 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import {
   REMOTE_POLL_MS,
   RemoteHttpError,
   canBrowseRemotePlaylists,
+  canRequestRemotePlaylist,
   canSearchRemoteMusic,
+  canVoteRemote,
   loadRemoteState,
   remoteErrorMessage,
   remoteSession,
   shouldPollRemote,
   type RemoteState,
+  type RemoteVote,
 } from '@/lib/listener-remote';
 import { LibraryView } from './LibraryView';
 import { NowPlayingView } from './NowPlayingView';
@@ -17,6 +20,7 @@ import { PlaylistsView } from './PlaylistsView';
 import { SearchView } from './SearchView';
 import { UpNextView } from './UpNextView';
 import { UrlRequestView } from './UrlRequestView';
+import { VoteBanner } from './VoteBanner';
 
 const STATUS_LABEL: Record<string, string> = { playing: 'Playing', paused: 'Paused', connected: 'Connected' };
 
@@ -26,6 +30,8 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
   const [loadingState, setLoadingState] = useState(true);
   const lastPoll = useRef(0);
   const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
+  const bannerRef = useRef<HTMLElement>(null);
+  const [focusVote, setFocusVote] = useState<string | null>(null);
 
   const loadState = async (force = false) => {
     const visible = document.visibilityState === 'visible';
@@ -74,6 +80,26 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
     return false;
   };
 
+  const refresh = useCallback(() => loadRef.current(true), []);
+  // Show a vote from a mutation at once instead of waiting for the next poll.
+  const applyVote = useCallback((vote: RemoteVote) => {
+    setState((prev) => (prev ? { ...prev, vote } : prev));
+  }, []);
+  // A listener who just proposed a playlist is taken to the vote it opened.
+  const openedVote = useCallback((vote: RemoteVote) => {
+    applyVote(vote);
+    setFocusVote(vote.id);
+  }, [applyVote]);
+
+  useLayoutEffect(() => {
+    if (!focusVote || state?.vote?.id !== focusVote) return;
+    setFocusVote(null);
+    bannerRef.current?.focus({ preventScroll: true });
+    bannerRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [focusVote, state?.vote?.id]);
+
+  const vote = state?.vote ?? null;
+
   return (
     <div className="space-y-4 lg:grid lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] lg:items-start lg:gap-x-8 lg:gap-y-6 lg:space-y-0">
       <header className="flex items-start justify-between gap-3 lg:col-span-2">
@@ -90,6 +116,18 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
         )}
       </header>
 
+      {state && vote && (
+        <VoteBanner
+          vote={vote}
+          windowSeconds={state.playlistRequests?.windowSeconds ?? 60}
+          canVote={canVoteRemote(state.permissions)}
+          expire={expire}
+          refresh={refresh}
+          applyVote={applyVote}
+          bannerRef={bannerRef}
+        />
+      )}
+
       <div className="min-w-0 space-y-4 lg:sticky lg:top-6">
         <NowPlayingView state={state} loading={loadingState} error={stateError} />
         <UpNextView state={state} loading={loadingState} />
@@ -103,7 +141,17 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
           <LibraryView canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
         )}
         {state && canBrowseRemotePlaylists(state.permissions) && (
-          <PlaylistsView canAdd={state.permissions.addToQueue} expire={expire} refresh={() => loadRef.current(true)} />
+          <PlaylistsView
+            canAdd={state.permissions.addToQueue}
+            request={{
+              allowed: canRequestRemotePlaylist(state.permissions),
+              settings: state.playlistRequests,
+              voteOpen: vote?.status === 'open',
+            }}
+            expire={expire}
+            refresh={refresh}
+            onVote={openedVote}
+          />
         )}
       </div>
     </div>

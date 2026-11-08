@@ -14,7 +14,13 @@ const DURATION_REFUSAL_MESSAGES: Record<string, string> = {
 };
 
 export class RemoteHttpError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string) {
+  constructor(
+    readonly status: number,
+    readonly code: string,
+    message: string,
+    /** Whole seconds from a 429 `Retry-After`, when the server sent one. */
+    readonly retryAfterSeconds: number | null = null,
+  ) {
     super(message);
     this.name = 'RemoteHttpError';
   }
@@ -33,6 +39,10 @@ export type RemotePermissions = {
   browsePlaylists?: boolean;
   /** C2+ `/state` flag; missing means false. See `canSearchRemoteMusic`. */
   searchMusic: boolean;
+  /** B3: may propose or queue a whole playlist. Missing means false. */
+  requestPlaylist?: boolean;
+  /** B3: may cast a ballot (any current listener). Missing means false. */
+  vote?: boolean;
 };
 export type RemoteState = {
   bot: { id: number; name: string; status: string };
@@ -40,6 +50,10 @@ export type RemoteState = {
   upNext: RemoteTrack[];
   upNextCount: number;
   permissions: RemotePermissions;
+  /** B3 settings; null when the backend does not send them. */
+  playlistRequests: RemotePlaylistRequestSettings | null;
+  /** The open vote on this bot and channel, or the last one for 30 s after it closes. */
+  vote: RemoteVote | null;
 };
 export type RemoteSong = { id: number; title: string; artist: string | null; duration: number | null };
 export type RemoteLibrary = { songs: RemoteSong[]; page: number; pageSize: number };
@@ -233,7 +247,9 @@ async function readBody(res: Response, auth: boolean): Promise<unknown> {
     const message = typeof record.error === 'string' && record.error.length > 0 && record.error.length <= 200
       ? record.error
       : 'Listener remote is unavailable.';
-    throw new RemoteHttpError(res.status, code, message);
+    const retry = Number(res.headers.get('Retry-After'));
+    const retryAfter = res.status === 429 && Number.isSafeInteger(retry) && retry > 0 ? retry : null;
+    throw new RemoteHttpError(res.status, code, message, retryAfter);
   }
   return body;
 }
@@ -298,6 +314,9 @@ export function parseRemoteState(body: unknown): RemoteState {
     requestUrl: permRow.requestUrl === true,
     searchMusic: permRow.searchMusic === true,
   };
+  // Optional B3 flags: set only when present, like browsePlaylists. Missing means no.
+  if (typeof permRow.requestPlaylist === 'boolean') parsedPermissions.requestPlaylist = permRow.requestPlaylist;
+  if (typeof permRow.vote === 'boolean') parsedPermissions.vote = permRow.vote;
   // Optional A3+ flag: omit when absent so older /state payloads stay valid.
   if (typeof permRow.browsePlaylists === 'boolean') {
     parsedPermissions.browsePlaylists = permRow.browsePlaylists;
@@ -308,6 +327,9 @@ export function parseRemoteState(body: unknown): RemoteState {
     upNext,
     upNextCount,
     permissions: parsedPermissions,
+    playlistRequests: parsePlaylistRequestSettings(row.playlistRequests),
+    // A vote this client cannot read is hidden rather than breaking the whole remote.
+    vote: row.vote == null ? null : tryParseRemoteVote(row.vote),
   };
 }
 
@@ -476,4 +498,231 @@ export function queueRemoteSearchResult(resultId: string): Promise<void> {
     return Promise.reject(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.'));
   }
   return remoteFetch('/search/queue', { method: 'POST', body: JSON.stringify({ resultId }) }, true).then(() => undefined);
+}
+
+// --- B3/B5: whole-playlist requests and votes ---
+
+const VOTE_ID = /^[A-Za-z0-9_-]{22}$/;
+const VOTE_STATUSES = new Set(['open', 'passed', 'failed', 'cancelled']);
+const VOTE_REASONS = new Set([
+  'approved', 'deadline', 'requester_cancelled', 'requester_left', 'bot_unavailable',
+  'revoked', 'playlist_unavailable', 'queue_full', 'listeners_unavailable',
+]);
+
+export type RemoteBallot = 'yes' | 'no';
+export type RemoteVoteStatus = 'open' | 'passed' | 'failed' | 'cancelled';
+export type RemoteVoteEndReason =
+  | 'approved' | 'deadline' | 'requester_cancelled' | 'requester_left' | 'bot_unavailable'
+  | 'revoked' | 'playlist_unavailable' | 'queue_full' | 'listeners_unavailable';
+/** K1 `ListenerRemoteVote`: counts only, never who voted. */
+export type RemoteVote = {
+  id: string;
+  status: RemoteVoteStatus;
+  reason: RemoteVoteEndReason | null;
+  playlist: { id: number | null; name: string; trackCount: number };
+  yes: number;
+  no: number;
+  needed: number;
+  listeners: number;
+  thresholdPercent: number;
+  deadline: string;
+  ownBallot: RemoteBallot | null;
+  isRequester: boolean;
+};
+export type RemotePlaylistRequestSettings = {
+  voting: boolean;
+  thresholdPercent: number;
+  windowSeconds: number;
+  maxTracks: number;
+};
+export type RemotePlaylistRequestResult =
+  | { outcome: 'queued'; trackCount: number }
+  | { outcome: 'vote'; created: boolean; vote: RemoteVote };
+
+function count(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw unavailable();
+  return value;
+}
+
+export function parseRemoteVote(value: unknown): RemoteVote {
+  if (!value || typeof value !== 'object') throw unavailable();
+  const row = value as Record<string, unknown>;
+  if (typeof row.id !== 'string' || !VOTE_ID.test(row.id)) throw unavailable();
+  if (typeof row.status !== 'string' || !VOTE_STATUSES.has(row.status)) throw unavailable();
+  const reason = row.reason ?? null;
+  if (reason !== null && (typeof reason !== 'string' || !VOTE_REASONS.has(reason))) throw unavailable();
+  const playlist = row.playlist;
+  if (!playlist || typeof playlist !== 'object') throw unavailable();
+  const list = playlist as Record<string, unknown>;
+  const playlistId = list.id ?? null;
+  if (playlistId !== null && (typeof playlistId !== 'number' || !Number.isSafeInteger(playlistId) || playlistId <= 0)) {
+    throw unavailable();
+  }
+  if (typeof list.name !== 'string') throw unavailable();
+  if (typeof row.thresholdPercent !== 'number' || !Number.isFinite(row.thresholdPercent)) throw unavailable();
+  if (typeof row.deadline !== 'string' || Number.isNaN(Date.parse(row.deadline))) throw unavailable();
+  const own = row.ownBallot ?? null;
+  if (own !== null && own !== 'yes' && own !== 'no') throw unavailable();
+  if (typeof row.isRequester !== 'boolean') throw unavailable();
+  // Allow-list: anything else the server adds (or leaks) is dropped here.
+  return {
+    id: row.id,
+    status: row.status as RemoteVoteStatus,
+    reason: reason as RemoteVoteEndReason | null,
+    playlist: { id: playlistId, name: list.name, trackCount: count(list.trackCount) },
+    yes: count(row.yes),
+    no: count(row.no),
+    needed: count(row.needed),
+    listeners: count(row.listeners),
+    thresholdPercent: row.thresholdPercent,
+    deadline: row.deadline,
+    ownBallot: own,
+    isRequester: row.isRequester,
+  };
+}
+
+function tryParseRemoteVote(value: unknown): RemoteVote | null {
+  try { return parseRemoteVote(value); } catch { return null; }
+}
+
+function parsePlaylistRequestSettings(value: unknown): RemotePlaylistRequestSettings | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const positive = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  if (typeof row.voting !== 'boolean' || !positive(row.thresholdPercent) || !positive(row.windowSeconds) || !positive(row.maxTracks)) {
+    return null;
+  }
+  return {
+    voting: row.voting,
+    thresholdPercent: row.thresholdPercent as number,
+    windowSeconds: row.windowSeconds as number,
+    maxTracks: row.maxTracks as number,
+  };
+}
+
+function parsePlaylistRequestResult(body: unknown): RemotePlaylistRequestResult {
+  if (!body || typeof body !== 'object') throw unavailable();
+  const row = body as Record<string, unknown>;
+  if (row.outcome === 'queued') return { outcome: 'queued', trackCount: count(row.trackCount) };
+  if (row.outcome === 'vote' && typeof row.created === 'boolean') {
+    return { outcome: 'vote', created: row.created, vote: parseRemoteVote(row.vote) };
+  }
+  throw unavailable();
+}
+
+function parseBallotResult(body: unknown): RemoteVote {
+  if (!body || typeof body !== 'object') throw unavailable();
+  return parseRemoteVote((body as Record<string, unknown>).vote);
+}
+
+function votePath(voteId: string): string | null {
+  return VOTE_ID.test(voteId) ? `/votes/${voteId}` : null;
+}
+
+const invalidRequest = () => new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.');
+
+export function requestRemotePlaylist(playlistId: number): Promise<RemotePlaylistRequestResult> {
+  if (!Number.isSafeInteger(playlistId) || playlistId <= 0) return Promise.reject(invalidRequest());
+  return remoteFetch('/playlist-requests', { method: 'POST', body: JSON.stringify({ playlistId }) }, true)
+    .then(parsePlaylistRequestResult);
+}
+
+export function castRemoteBallot(voteId: string, choice: RemoteBallot): Promise<RemoteVote> {
+  const path = votePath(voteId);
+  if (!path || (choice !== 'yes' && choice !== 'no')) return Promise.reject(invalidRequest());
+  return remoteFetch(`${path}/ballot`, { method: 'PUT', body: JSON.stringify({ choice }) }, true).then(parseBallotResult);
+}
+
+export function withdrawRemoteBallot(voteId: string): Promise<RemoteVote> {
+  const path = votePath(voteId);
+  if (!path) return Promise.reject(invalidRequest());
+  return remoteFetch(`${path}/ballot`, { method: 'DELETE' }, true).then(parseBallotResult);
+}
+
+export function cancelRemoteVote(voteId: string): Promise<void> {
+  const path = votePath(voteId);
+  if (!path) return Promise.reject(invalidRequest());
+  return remoteFetch(path, { method: 'DELETE' }, true).then(() => undefined);
+}
+
+export function canRequestRemotePlaylist(permissions: RemotePermissions): boolean {
+  return permissions.requestPlaylist === true;
+}
+
+export function canVoteRemote(permissions: RemotePermissions): boolean {
+  return permissions.vote === true;
+}
+
+/** "about 2 minutes" / "45 seconds", from a 429 Retry-After. */
+export function retryAfterText(seconds: number | null): string | null {
+  if (seconds == null || seconds <= 0) return null;
+  if (seconds < 90) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  return `about ${Math.round(seconds / 60)} minutes`;
+}
+
+const PLAYLIST_REQUEST_MESSAGES: Record<string, string> = {
+  vote_running: 'Another playlist vote is running in this channel. Wait for it to finish.',
+  playlist_not_requestable: 'This playlist can be browsed, but not requested as a whole.',
+  playlist_empty: 'This playlist has no songs that can be played here.',
+  queue_full: 'The queue is full. Try again when some songs have played.',
+  not_found: 'This playlist is no longer shared with the remote.',
+  permission_denied: 'You are not allowed to request whole playlists.',
+};
+
+/** Message for a failed whole-playlist request. `request_too_large` keeps the server text, which names the limit. */
+export function remotePlaylistRequestErrorMessage(error: unknown): string {
+  if (!(error instanceof RemoteHttpError)) return remoteErrorMessage(error);
+  if (error.code === 'rate_limited') {
+    const wait = retryAfterText(error.retryAfterSeconds);
+    return wait
+      ? `Playlist requests are paused right now. Try again in ${wait}.`
+      : 'Playlist requests are paused right now. Try again in a few minutes.';
+  }
+  return PLAYLIST_REQUEST_MESSAGES[error.code] ?? error.message;
+}
+
+/** Message for a failed ballot, withdrawal or cancel. */
+export function remoteVoteErrorMessage(error: unknown): string {
+  if (!(error instanceof RemoteHttpError)) return remoteErrorMessage(error);
+  if (error.code === 'not_found') return 'This vote has already ended.';
+  if (error.code === 'permission_denied') return 'Only the person who proposed this playlist can cancel the vote.';
+  if (error.code === 'rate_limited') {
+    const wait = retryAfterText(error.retryAfterSeconds);
+    return wait ? `You are voting too quickly. Try again in ${wait}.` : 'You are voting too quickly. Wait a moment.';
+  }
+  if (error.code === 'unavailable') return 'The bot could not check who is in the channel. Try again.';
+  return error.message;
+}
+
+/** Whole seconds left, clamped to the window so a wrong phone clock cannot show nonsense. */
+export function voteSecondsLeft(vote: RemoteVote, nowMs: number, windowSeconds = 60): number {
+  const left = Math.ceil((Date.parse(vote.deadline) - nowMs) / 1000);
+  if (!Number.isFinite(left)) return 0;
+  return Math.min(Math.max(left, 0), windowSeconds);
+}
+
+function tracks(n: number): string {
+  return `${n} song${n === 1 ? '' : 's'}`;
+}
+
+/** One plain sentence for a closed vote. */
+export function voteResultMessage(vote: RemoteVote): string {
+  const name = `“${vote.playlist.name}”`;
+  switch (vote.reason) {
+    case 'approved': return `Vote passed. ${tracks(vote.playlist.trackCount)} from ${name} were added to the queue.`;
+    case 'deadline': return `Vote failed. Not enough listeners voted yes for ${name} in time.`;
+    case 'requester_cancelled': return vote.isRequester ? 'You cancelled the vote.' : `The vote for ${name} was cancelled by the person who proposed it.`;
+    case 'requester_left': return `The vote for ${name} was cancelled because the person who proposed it left the channel.`;
+    case 'bot_unavailable': return `The vote for ${name} was cancelled because the bot stopped or moved.`;
+    case 'revoked': return `The vote for ${name} was cancelled because the proposer's remote access ended.`;
+    case 'playlist_unavailable': return `The vote for ${name} was cancelled because the playlist is no longer shared.`;
+    case 'queue_full': return `${name} could not be added because the queue is full.`;
+    case 'listeners_unavailable': return 'The vote failed because the bot could not check who is in the channel.';
+    default: return vote.status === 'passed' ? 'Vote passed.' : 'The vote has ended.';
+  }
+}
+
+/** "2 yes · 1 no · needs 4 of 5 listeners" */
+export function voteCountsText(vote: RemoteVote): string {
+  return `${vote.yes} yes · ${vote.no} no · needs ${vote.needed} of ${vote.listeners} listener${vote.listeners === 1 ? '' : 's'}`;
 }

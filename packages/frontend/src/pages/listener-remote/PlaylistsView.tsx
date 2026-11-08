@@ -8,7 +8,9 @@ import {
   loadRemotePlaylistSongs,
   loadRemotePlaylists,
   type RemotePlaylist,
+  type RemoteVote,
 } from '@/lib/listener-remote';
+import { PlaylistRequestControl, type PlaylistRequestAccess } from './PlaylistRequestControl';
 import { StatusNote } from './StatusNote';
 import {
   RemoteErrorAlert,
@@ -20,10 +22,12 @@ import {
   useRemoteSearchQuery,
 } from './remote-paged-list';
 
-export function PlaylistsView({ canAdd, expire, refresh }: {
+export function PlaylistsView({ canAdd, request, expire, refresh, onVote }: {
   readonly canAdd: boolean;
+  readonly request: PlaylistRequestAccess;
   readonly expire: (error: unknown) => boolean;
   readonly refresh: () => Promise<void>;
+  readonly onVote: (vote: RemoteVote) => void;
 }) {
   const [selected, setSelected] = useState<RemotePlaylist | null>(null);
 
@@ -32,8 +36,10 @@ export function PlaylistsView({ canAdd, expire, refresh }: {
       <PlaylistSongsView
         playlist={selected}
         canAdd={canAdd}
+        request={request}
         expire={expire}
         refresh={refresh}
+        onVote={onVote}
         onBack={() => setSelected(null)}
       />
     );
@@ -143,11 +149,13 @@ function PlaylistRows({ playlists, page, loading, hasData, onOpen }: {
   );
 }
 
-function PlaylistSongsView({ playlist, canAdd, expire, refresh, onBack }: {
+function PlaylistSongsView({ playlist, canAdd, request, expire, refresh, onVote, onBack }: {
   readonly playlist: RemotePlaylist;
   readonly canAdd: boolean;
+  readonly request: PlaylistRequestAccess;
   readonly expire: (error: unknown) => boolean;
   readonly refresh: () => Promise<void>;
+  readonly onVote: (vote: RemoteVote) => void;
   readonly onBack: () => void;
 }) {
   const [page, setPage] = useState(1);
@@ -194,6 +202,15 @@ function PlaylistSongsView({ playlist, canAdd, expire, refresh, onBack }: {
               </p>
             </div>
           </div>
+          {songsPage && (
+            <PlaylistRequestControl
+              playlist={songsPage.playlist}
+              access={request}
+              expire={expire}
+              refresh={refresh}
+              onVote={onVote}
+            />
+          )}
           <p id={statusId} className="sr-only" aria-live="polite">
             {loading ? 'Updating playlist songs.' : `${songs.length} songs on this page.`}
           </p>
