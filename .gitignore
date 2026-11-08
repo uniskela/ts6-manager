@@ -3,6 +3,7 @@ dist/
 build/
 .env
 .env.beta
+.env.accept-staging
 *.db
 *.db-journal
 *.log
