@@ -203,6 +203,25 @@ describe('bot volume routes', () => {
     assert.deepEqual(f.saved, [20]);
   });
 
+  it('keeps the applyVolume error when both restart and save fail', async () => {
+    const logs: string[] = [];
+    const orig = console.error;
+    console.error = (...args: unknown[]) => { logs.push(args.map(String).join(' ')); };
+    try {
+      const f = fixture(
+        async () => { throw new Error('sidecar down'); },
+        async () => { throw new Error('disk full'); },
+      );
+      const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 20 });
+      assert.equal(res.status, 500);
+      // Bodies are sanitized; the logged primary error must stay the apply failure.
+      assert.ok(logs.some((l) => /\[Error [0-9a-f]+\]/.test(l) && l.includes('sidecar down')));
+      assert.ok(!logs.some((l) => /\[Error [0-9a-f]+\]/.test(l) && l.includes('disk full')));
+    } finally {
+      console.error = orig;
+    }
+  });
+
   it('stream volume refuses a non-numeric level with 400', async () => {
     const f = fixture();
     const res = await send(f.app, 'POST', '/api/music-bots/1/stream/volume', { volume: 'abc' });

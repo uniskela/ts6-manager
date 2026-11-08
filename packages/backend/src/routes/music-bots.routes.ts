@@ -65,6 +65,25 @@ async function confirmLiveVolume(prisma: any, bot: VoiceBot, id: number, vol: nu
 }
 
 /**
+ * Run `op`, then confirm persistence. A confirm/flush failure is only thrown
+ * when `op` succeeded — it must never replace the original operation error.
+ */
+async function withLiveVolumeConfirm(op: () => Promise<void>, confirm: () => Promise<void>): Promise<void> {
+  let opErr: unknown;
+  try {
+    await op();
+  } catch (err) {
+    opErr = err;
+  }
+  try {
+    await confirm();
+  } catch (err) {
+    if (opErr === undefined) throw err;
+  }
+  if (opErr !== undefined) throw opErr;
+}
+
+/**
  * Apply a volume to a live bot (persist via volumeChange + confirmLiveVolume),
  * or save directly when no bot is running.
  */
@@ -74,11 +93,10 @@ async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: nu
     return;
   }
   const before = bot.currentConfig.volume;
-  try {
-    await bot.applyVolume(vol);
-  } finally {
-    await confirmLiveVolume(prisma, bot, id, vol, before);
-  }
+  await withLiveVolumeConfirm(
+    () => bot.applyVolume(vol),
+    () => confirmLiveVolume(prisma, bot, id, vol, before),
+  );
 }
 
 async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem | QueueItem[]): Promise<void> {
@@ -1088,11 +1106,12 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     if (!parsed.ok) throw new AppError(400, parsed.error);
     const prisma = req.app.locals.prisma;
     const beforeVolume = bot.currentConfig.volume;
-    try {
-      await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode));
-    } finally {
-      if (volume != null) await confirmLiveVolume(prisma, bot, bot.currentConfig.id, volume, beforeVolume);
-    }
+    await withLiveVolumeConfirm(
+      () => runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode)),
+      async () => {
+        if (volume != null) await confirmLiveVolume(prisma, bot, bot.currentConfig.id, volume, beforeVolume);
+      },
+    );
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -1108,11 +1127,10 @@ musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, ne
     const vol = parseVolume(volume);
     const prisma = req.app.locals.prisma;
     const before = bot.currentConfig.volume;
-    try {
-      await bot.setVideoStreamVolume(vol);
-    } finally {
-      await confirmLiveVolume(prisma, bot, bot.currentConfig.id, vol, before);
-    }
+    await withLiveVolumeConfirm(
+      () => bot.setVideoStreamVolume(vol),
+      () => confirmLiveVolume(prisma, bot, bot.currentConfig.id, vol, before),
+    );
     res.json({ success: true, volume: vol });
   } catch (err) { next(err); }
 });
