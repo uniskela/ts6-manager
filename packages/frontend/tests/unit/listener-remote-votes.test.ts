@@ -81,7 +81,6 @@ describe('listener remote votes: parsing', () => {
       { ...vote, id: 'short' },
       { ...vote, id: '../../admin/x/abcdefghi' },
       { ...vote, status: 'maybe' },
-      { ...vote, reason: 'because' },
       { ...vote, yes: -1 },
       { ...vote, needed: 1.5 },
       { ...vote, deadline: 'soon' },
@@ -91,6 +90,11 @@ describe('listener remote votes: parsing', () => {
       assert.throws(() => parseRemoteVote(bad), RemoteHttpError);
     }
     assert.equal(parseRemoteVote({ ...vote, playlist: { id: null, name: 'Hidden now', trackCount: 2 } }).playlist.id, null);
+    // A reason added by a newer backend still shows the vote, as a plain "ended".
+    const newer = parseRemoteVote({ ...vote, status: 'failed', reason: 'some_new_reason' });
+    assert.equal(newer.reason, null);
+    assert.equal(voteResultMessage(newer), 'The vote has ended.');
+    assert.throws(() => parseRemoteVote({ ...vote, reason: 42 }), RemoteHttpError);
   });
 
   it('reads the B3 state fields, and a bad vote hides the banner instead of the remote', async () => {
@@ -173,6 +177,8 @@ describe('listener remote votes: requests', () => {
     assert.equal(retryAfterText(1), '1 second');
     assert.equal(retryAfterText(45), '45 seconds');
     assert.equal(retryAfterText(null), null);
+    assert.equal(retryAfterText(7_200), 'about 2 hours');
+    assert.equal(retryAfterText(10_000_000), null);
     assert.equal(
       remotePlaylistRequestErrorMessage(new RemoteHttpError(429, 'rate_limited', 'x')),
       'Playlist requests are paused right now. Try again in a few minutes.',
@@ -198,7 +204,11 @@ describe('listener remote votes: wording', () => {
     assert.match(remoteVoteErrorMessage(new RemoteHttpError(403, 'permission_denied', 'x'), 'cancel'), /Only the person who proposed/);
     assert.match(message('unavailable', 503), /could not be confirmed\. Check Up next/);
     assert.match(ballot('rate_limited', 429), /voting too quickly/);
-    assert.match(ballot('unavailable', 503), /could not check who is in the channel/);
+    assert.equal(ballot('unavailable', 503), 'Your vote could not be confirmed. Check the tally, then try again if needed.');
+    // Inherited keys are never used as messages.
+    for (const code of ['__proto__', 'constructor', 'toString']) {
+      assert.equal(remotePlaylistRequestErrorMessage(new RemoteHttpError(400, code, 'server text')), 'server text');
+    }
   });
 
   it('describes every way a vote can end', () => {
@@ -214,8 +224,8 @@ describe('listener remote votes: wording', () => {
     assert.match(ended('playlist_unavailable', 'cancelled'), /no longer shared/);
     assert.match(ended('queue_full', 'failed'), /queue is full/);
     assert.match(ended('listeners_unavailable', 'failed'), /could not check who is in the channel/);
-    assert.equal(voteCountsText(vote), '2 yes · 1 no · needs 4 of 5 listeners');
-    assert.equal(voteCountsText({ ...vote, listeners: 1, needed: 1, yes: 1, no: 0 }), '1 yes · 0 no · needs 1 of 1 listener');
+    assert.equal(voteCountsText(vote), '2 yes, 1 no, needs 4 of 5 listeners');
+    assert.equal(voteCountsText({ ...vote, listeners: 1, needed: 1, yes: 1, no: 0 }), '1 yes, 0 no, needs 1 of 1 listener');
   });
 
   it('clamps the countdown to the vote window', () => {

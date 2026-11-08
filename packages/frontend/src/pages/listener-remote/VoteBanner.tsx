@@ -14,32 +14,56 @@ import {
   type RemoteVote,
 } from '@/lib/listener-remote';
 
-/** Announce the countdown once, when this many seconds are left. */
+/** Announce the countdown once, when this many seconds (or fewer) are left. */
 const LAST_CALL_SECONDS = 10;
+
+function secondsText(n: number): string {
+  return `${n} second${n === 1 ? '' : 's'}`;
+}
 
 /**
  * The playlist vote on this bot and channel: what is proposed, the tally,
  * time left, and the listener's own ballot. Counts only, never who voted.
+ * Every decision (tally, result, permissions) comes from the server.
  */
-export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, applyVote, bannerRef }: {
+export function VoteBanner({
+  vote,
+  windowSeconds,
+  canVote,
+  quietStart,
+  expire,
+  refresh,
+  applyVote,
+  announce,
+  focusFallback,
+  bannerRef,
+}: {
   readonly vote: RemoteVote;
   readonly windowSeconds: number;
   readonly canVote: boolean;
+  /** This listener just proposed the vote and focus is moving to the banner: skip the start announcement. */
+  readonly quietStart: boolean;
   readonly expire: (error: unknown) => boolean;
   readonly refresh: () => Promise<void>;
-  readonly applyVote: (vote: RemoteVote) => void;
+  /** Show a vote from a mutation answer; `null` only marks that an answer arrived (cancel). */
+  readonly applyVote: (vote: RemoteVote | null) => void;
+  /** Polite message in the remote's always-mounted live region. */
+  readonly announce: (message: string) => void;
+  /** Where focus goes if the banner disappears while it holds focus. */
+  readonly focusFallback: () => void;
   readonly bannerRef: RefObject<HTMLElement>;
 }) {
   const headingId = useId();
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [announcement, setAnnouncement] = useState('');
   const lock = useRef(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   const closingRefresh = useRef<string | null>(null);
   const lastCall = useRef<string | null>(null);
   const seen = useRef<{ id: string; status: string } | null>(null);
+  // True while keyboard or screen-reader focus is somewhere in the banner.
+  const focusInside = useRef(false);
   const open = vote.status === 'open';
   const secondsLeft = voteSecondsLeft(vote, now, windowSeconds);
   const name = `“${vote.playlist.name}”`;
@@ -51,40 +75,80 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
   }, [open, vote.id]);
 
   // At zero the server settles the vote on the next read: ask once instead of waiting for the poll.
+  // The countdown itself decides nothing.
   useEffect(() => {
     if (!open || secondsLeft > 0 || closingRefresh.current === vote.id) return;
     closingRefresh.current = vote.id;
     void refresh();
   }, [open, secondsLeft, vote.id, refresh]);
 
-  // Polite announcements for a new vote, a result, and the last ten seconds. The visible
-  // countdown is a timer, which screen readers do not read out every second.
+  // Announce a new vote and a result. The visible countdown is a timer, which
+  // screen readers do not read out every second.
   useEffect(() => {
     const before = seen.current;
     seen.current = { id: vote.id, status: vote.status };
     if (before?.id === vote.id && before.status === vote.status) return;
-    if (open) {
-      setAnnouncement(vote.isRequester
-        ? `Your playlist vote started for ${name}. ${secondsLeft} seconds left.`
-        : `A playlist vote started: play ${name}? ${secondsLeft} seconds left.`);
-    } else {
-      setAnnouncement(voteResultMessage(vote));
+    if (!open) {
+      announce(voteResultMessage(vote));
+      return;
     }
-    // Only the id and status changes are announced.
+    if (before?.id === vote.id) return;
+    if (secondsLeft <= LAST_CALL_SECONDS) lastCall.current = vote.id;
+    if (quietStart) return;
+    const left = secondsText(secondsLeft);
+    if (vote.isRequester) {
+      announce(before === null
+        ? `Your playlist vote for ${name} is running. ${left} left.`
+        : `Your playlist vote started for ${name}. ${left} left.`);
+    } else {
+      announce(before === null
+        ? `A playlist vote is running: play ${name}? ${left} left.`
+        : `A playlist vote started: play ${name}? ${left} left.`);
+    }
+    // Only id and status changes are announced here.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [vote.id, vote.status]);
 
+  // `<=` so a late timer tick (11 → 9) still gets the warning once.
   useEffect(() => {
-    if (!open || secondsLeft !== LAST_CALL_SECONDS || lastCall.current === vote.id) return;
+    if (!open || secondsLeft > LAST_CALL_SECONDS || secondsLeft <= 0 || lastCall.current === vote.id) return;
     lastCall.current = vote.id;
-    setAnnouncement(`${LAST_CALL_SECONDS} seconds left to vote on ${name}.`);
-  }, [open, secondsLeft, vote.id, name]);
+    announce(`${secondsText(secondsLeft)} left to vote on ${name}.`);
+  }, [open, secondsLeft, vote.id, name, announce]);
 
   useEffect(() => { setError(null); }, [vote.id]);
 
   useLayoutEffect(() => {
     if (error) errorRef.current?.focus({ preventScroll: true });
   }, [error]);
+
+  // A tap or click outside the banner means the listener moved on: stop holding focus.
+  useEffect(() => {
+    const onPointer = (event: PointerEvent) => {
+      if (!bannerRef.current?.contains(event.target as Node)) focusInside.current = false;
+    };
+    document.addEventListener('pointerdown', onPointer);
+    return () => document.removeEventListener('pointerdown', onPointer);
+  }, [bannerRef]);
+
+  // When the focused control disappears (withdraw, cancel, the vote closing, voting
+  // turned off), the browser drops focus to the page. Keep it on the banner instead.
+  useLayoutEffect(() => {
+    if (!focusInside.current) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) {
+      if (!bannerRef.current?.contains(active)) focusInside.current = false;
+      return;
+    }
+    bannerRef.current?.focus({ preventScroll: true });
+  });
+
+  // The banner goes away about 30 s after a vote closes; don't strand focus with it.
+  const fallbackRef = useRef(focusFallback);
+  fallbackRef.current = focusFallback;
+  useLayoutEffect(() => () => {
+    if (focusInside.current) fallbackRef.current();
+  }, []);
 
   const act = (
     task: () => Promise<RemoteVote | null>,
@@ -98,8 +162,8 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
     void enqueueRemoteMutation(task).then(
       async (next) => {
         if (!remoteSession()) return;
-        if (next) applyVote(next);
-        setAnnouncement(done(next));
+        applyVote(next);
+        announce(done(next));
         await refresh();
       },
       (err: unknown) => {
@@ -113,11 +177,15 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
     });
   };
 
-  const ballot = (choice: RemoteBallot) => act(
-    () => castRemoteBallot(vote.id, choice),
-    (next) => (next && next.status !== 'open' ? voteResultMessage(next) : `You voted ${choice}.`),
-  );
-  const withdraw = () => act(() => withdrawRemoteBallot(vote.id), () => 'Your vote was withdrawn.');
+  const ballot = (choice: RemoteBallot) => {
+    // Already chosen: a second tap changes nothing and sends nothing.
+    if (vote.ownBallot === choice) return;
+    act(
+      () => castRemoteBallot(vote.id, choice),
+      (next) => (next && next.status !== 'open' ? voteResultMessage(next) : `You voted ${choice}.`),
+    );
+  };
+  const withdraw = () => act(() => withdrawRemoteBallot(vote.id), () => 'Your vote was removed.');
   const cancel = () => act(async () => { await cancelRemoteVote(vote.id); return null; }, () => 'You cancelled the vote.', 'cancel');
 
   const tone = open
@@ -130,16 +198,20 @@ export function VoteBanner({ vote, windowSeconds, canVote, expire, refresh, appl
       tabIndex={-1}
       aria-labelledby={headingId}
       data-testid="vote-banner"
+      onFocus={() => { focusInside.current = true; }}
+      onBlur={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (next && !event.currentTarget.contains(next)) focusInside.current = false;
+      }}
       className={`space-y-3 rounded-lg border-2 bg-card p-4 outline-none focus-visible:ring-2 focus-visible:ring-ring lg:col-span-2 ${tone}`}
     >
-      <p className="sr-only" aria-live="polite" aria-atomic="true">{announcement}</p>
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <h2 id={headingId} className="text-base font-semibold">
           {open ? 'Playlist vote' : 'Playlist vote ended'}
         </h2>
         {open && (
-          <p role="timer" className="font-mono text-sm tabular-nums text-foreground/80">
-            {secondsLeft > 0 ? `${secondsLeft} s left` : 'Closing…'}
+          <p role="timer" className="text-sm tabular-nums text-foreground/80">
+            {secondsLeft > 0 ? `${secondsText(secondsLeft)} left` : 'Counting votes…'}
           </p>
         )}
       </div>
@@ -171,6 +243,7 @@ function TallyBar({ vote }: { readonly vote: RemoteVote }) {
   const width = Math.min(100, Math.round((vote.yes / needed) * 100));
   return (
     <div aria-hidden="true" className="h-2 w-full overflow-hidden rounded-full bg-muted">
+      {/* React sets this through CSSOM, which the remote's CSP (style-src 'self') allows. */}
       <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${width}%` }} />
     </div>
   );
@@ -181,11 +254,15 @@ function OwnBallot({ vote, canVote }: { readonly vote: RemoteVote; readonly canV
     return <p className="text-sm text-foreground/80">You proposed this playlist, so your yes is already counted.</p>;
   }
   if (!canVote) {
-    return <p className="text-sm text-foreground/80">Only listeners in the bot's channel can vote.</p>;
+    return <p className="text-sm text-foreground/80">Voting is not available to you right now.</p>;
   }
   if (vote.ownBallot) return <p className="text-sm text-foreground/80">You voted {vote.ownBallot}. You can change your vote until it closes.</p>;
   return null;
 }
+
+// While a request runs the buttons are aria-disabled, not disabled, so a focused
+// button keeps focus; the lock in `act` ignores extra taps.
+const BUSY = 'aria-disabled:cursor-not-allowed aria-disabled:opacity-50';
 
 function VoteActions({ vote, canVote, busy, ballot, withdraw, cancel }: {
   readonly vote: RemoteVote;
@@ -195,9 +272,10 @@ function VoteActions({ vote, canVote, busy, ballot, withdraw, cancel }: {
   readonly withdraw: () => void;
   readonly cancel: () => void;
 }) {
+  const busyProps = { 'aria-disabled': busy || undefined };
   if (vote.isRequester) {
     return (
-      <Button type="button" variant="outline" className="h-11 min-h-11 w-full sm:w-auto" disabled={busy} onClick={cancel}>
+      <Button type="button" variant="outline" className={`h-11 min-h-11 w-full sm:w-auto ${BUSY}`} {...busyProps} onClick={cancel}>
         Cancel vote
       </Button>
     );
@@ -209,9 +287,9 @@ function VoteActions({ vote, canVote, busy, ballot, withdraw, cancel }: {
         <Button
           type="button"
           variant={vote.ownBallot === 'yes' ? 'default' : 'outline'}
-          className="h-11 min-h-11 sm:min-w-24"
+          className={`h-11 min-h-11 sm:min-w-24 ${BUSY}`}
           aria-pressed={vote.ownBallot === 'yes'}
-          disabled={busy}
+          {...busyProps}
           onClick={() => ballot('yes')}
         >
           Yes
@@ -219,17 +297,17 @@ function VoteActions({ vote, canVote, busy, ballot, withdraw, cancel }: {
         <Button
           type="button"
           variant={vote.ownBallot === 'no' ? 'default' : 'outline'}
-          className="h-11 min-h-11 sm:min-w-24"
+          className={`h-11 min-h-11 sm:min-w-24 ${BUSY}`}
           aria-pressed={vote.ownBallot === 'no'}
-          disabled={busy}
+          {...busyProps}
           onClick={() => ballot('no')}
         >
           No
         </Button>
       </div>
       {vote.ownBallot && (
-        <Button type="button" variant="ghost" className="h-11 min-h-11" disabled={busy} onClick={withdraw}>
-          Withdraw my vote
+        <Button type="button" variant="ghost" className={`h-11 min-h-11 ${BUSY}`} {...busyProps} onClick={withdraw}>
+          Remove my vote
         </Button>
       )}
     </div>

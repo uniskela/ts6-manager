@@ -549,8 +549,10 @@ export function parseRemoteVote(value: unknown): RemoteVote {
   const row = value as Record<string, unknown>;
   if (typeof row.id !== 'string' || !VOTE_ID.test(row.id)) throw unavailable();
   if (typeof row.status !== 'string' || !VOTE_STATUSES.has(row.status)) throw unavailable();
-  const reason = row.reason ?? null;
-  if (reason !== null && (typeof reason !== 'string' || !VOTE_REASONS.has(reason))) throw unavailable();
+  // An end reason this client does not know yet reads as a plain "the vote has ended".
+  const rawReason = row.reason ?? null;
+  if (rawReason !== null && typeof rawReason !== 'string') throw unavailable();
+  const reason = rawReason !== null && VOTE_REASONS.has(rawReason) ? rawReason : null;
   const playlist = row.playlist;
   if (!playlist || typeof playlist !== 'object') throw unavailable();
   const list = playlist as Record<string, unknown>;
@@ -589,7 +591,10 @@ function parsePlaylistRequestSettings(value: unknown): RemotePlaylistRequestSett
   if (!value || typeof value !== 'object') return null;
   const row = value as Record<string, unknown>;
   const positive = (n: unknown) => typeof n === 'number' && Number.isFinite(n) && n > 0;
-  if (typeof row.voting !== 'boolean' || !positive(row.thresholdPercent) || !positive(row.windowSeconds) || !positive(row.maxTracks)) {
+  if (
+    typeof row.voting !== 'boolean' || !positive(row.thresholdPercent) || !positive(row.windowSeconds)
+    || (row.windowSeconds as number) > 3600 || !positive(row.maxTracks)
+  ) {
     return null;
   }
   return {
@@ -655,7 +660,9 @@ export function canVoteRemote(permissions: RemotePermissions): boolean {
 
 /** "about 2 minutes" / "45 seconds", from a 429 Retry-After. */
 export function retryAfterText(seconds: number | null): string | null {
-  if (seconds == null || seconds <= 0) return null;
+  // Beyond a day is not a useful wait time; fall back to the generic message.
+  if (seconds == null || seconds <= 0 || seconds > 86_400) return null;
+  if (seconds >= 5_400) return `about ${Math.round(seconds / 3600)} hours`;
   if (seconds < 90) return `${seconds} second${seconds === 1 ? '' : 's'}`;
   return `about ${Math.round(seconds / 60)} minutes`;
 }
@@ -680,7 +687,10 @@ export function remotePlaylistRequestErrorMessage(error: unknown): string {
       ? `Playlist requests are paused right now. Try again in ${wait}.`
       : 'Playlist requests are paused right now. Try again in a few minutes.';
   }
-  return PLAYLIST_REQUEST_MESSAGES[error.code] ?? error.message;
+  // Own keys only: a code such as "__proto__" must not pick up an inherited value.
+  return Object.prototype.hasOwnProperty.call(PLAYLIST_REQUEST_MESSAGES, error.code)
+    ? PLAYLIST_REQUEST_MESSAGES[error.code]
+    : error.message;
 }
 
 /** Message for a failed ballot or withdrawal (`ballot`), or a requester cancel (`cancel`). */
@@ -696,7 +706,8 @@ export function remoteVoteErrorMessage(error: unknown, action: 'ballot' | 'cance
     const wait = retryAfterText(error.retryAfterSeconds);
     return wait ? `You are voting too quickly. Try again in ${wait}.` : 'You are voting too quickly. Wait a moment.';
   }
-  if (error.code === 'unavailable') return 'The bot could not check who is in the channel. Try again.';
+  // Also what a lost connection looks like, so the vote may have counted.
+  if (error.code === 'unavailable') return 'Your vote could not be confirmed. Check the tally, then try again if needed.';
   return error.message;
 }
 
@@ -728,7 +739,7 @@ export function voteResultMessage(vote: RemoteVote): string {
   }
 }
 
-/** "2 yes · 1 no · needs 4 of 5 listeners" */
+/** "2 yes, 1 no, needs 4 of 5 listeners" */
 export function voteCountsText(vote: RemoteVote): string {
-  return `${vote.yes} yes · ${vote.no} no · needs ${vote.needed} of ${vote.listeners} listener${vote.listeners === 1 ? '' : 's'}`;
+  return `${vote.yes} yes, ${vote.no} no, needs ${vote.needed} of ${vote.listeners} listener${vote.listeners === 1 ? '' : 's'}`;
 }

@@ -72,7 +72,7 @@ export function PlaylistRequestControl({ playlist, access, expire, refresh, onVo
       + `${settings.thresholdPercent}% of listeners vote yes. If you are the only listener, it is added straight away.`;
   } else hint = `Adds all ${songs(playlist.trackCount)} to the queue.`;
 
-  const label = voting ? 'Propose this playlist' : `Add all ${songs(playlist.trackCount)}`;
+  const label = voting ? 'Start a vote for this playlist' : `Add all ${songs(playlist.trackCount)}`;
 
   const request = () => {
     if (disabled || lock.current) return;
