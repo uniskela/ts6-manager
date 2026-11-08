@@ -22,6 +22,7 @@ import { VideoQueueController, type VideoQueueItem, type VideoQueueSessionOption
 import { createVideoQueueStore } from './streaming/video-queue-store.js';
 import { AutomationController, type AutomationRuntimeState } from './automation-controller.js';
 import { readAutomationSettings } from './automation-settings.js';
+import { saveBotVolume } from './bot-volume.js';
 
 type SavedVideoQueue = { items: VideoQueueItem[]; options: VideoQueueSessionOptions | null };
 
@@ -274,6 +275,11 @@ export class VoiceBotManager extends EventEmitter {
 
     bot.on('volumeChange', (volume: number) => {
       this.broadcast('music:bot:volumeChange', { botId: config.id, volume });
+      // !vol / Discord / flows only change memory; persist so the next session
+      // does not come back at the old DB level (often 100%).
+      void saveBotVolume(this.prisma, config.id, volume).catch((err: Error) => {
+        console.error(`[VoiceBotManager] Failed to save volume for bot ${config.id}: ${err.message}`);
+      });
     });
 
     bot.on('metadataChange', (item: QueueItem) => {

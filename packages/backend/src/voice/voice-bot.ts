@@ -1500,6 +1500,8 @@ export class VoiceBot extends EventEmitter {
   /** One level for music, radio, video, and IPTV. */
   private assignSharedVolume(volume: number): number {
     const vol = this.clampVolume(volume);
+    // Same level already active — no emit (avoids a DB write on every stream start).
+    if (vol === this.config.volume && vol === this._videoStreamVolume) return vol;
     this.config.volume = vol;
     this._videoStreamVolume = vol;
     this.emit('volumeChange', vol);

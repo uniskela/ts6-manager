@@ -132,7 +132,7 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!voteskip`** — Vote to skip the current track; more than half of human listeners in the bot channel must vote. Bots do not count, each identity votes once, and changing tracks resets votes
 - **`!remote [bot name]`** — Get a private, one-time link to a phone-friendly [listener remote](#listener-remote) for the bot in your channel
 - **`!prev`** — Previous track, up to 50 back; at the oldest kept track it replays that track
-- **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV.
+- **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV, and the value is saved so the next bot or backend start restores it instead of resetting to full volume.
 - **`!np` / `!nowplaying`** — Show the current track
 - **`!radio [id]`** — List or play radio stations
 - **`!stream <url> [preset]`** — Start a video stream. Without a preset, a YouTube or Twitch link starts at Auto quality (up to the Auto quality limit) and any other URL at the bot's stored preset (720p by default), because Auto opens the source once more to measure it; `auto`, `480p`, `720p`, `1080p`, `1440p` or `2160p` sets it
