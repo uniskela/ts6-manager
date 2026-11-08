@@ -24,7 +24,7 @@ import { MAX_QUEUE_ITEMS, QueueFullError, type QueueItem, type QueueReservation 
 import { summarizeBotAutomation } from '@ts6/common';
 import type { BotMediaOverview } from '@ts6/common';
 import { parseAutomationSettings, readAutomationSettings } from '../voice/automation-settings.js';
-import { saveBotVolume } from '../voice/bot-volume.js';
+import { flushBotVolumeSave, saveBotVolume } from '../voice/bot-volume.js';
 
 export { saveBotVolume } from '../voice/bot-volume.js';
 export const musicBotRoutes: Router = Router();
@@ -53,17 +53,32 @@ function parseVolume(raw: unknown): number {
 }
 
 /**
- * Apply a volume to a live bot, or save it when no bot is running. A live bot
- * persists through VoiceBotManager's volumeChange listener (including when a
- * stream restart fails after the in-memory level already changed). Saving again
- * here would double-write the same value.
+ * After a live applyVolume: if the level changed, the manager listener already
+ * queued a save — await that queue so DB failures reach the client. If the
+ * level was unchanged (no emit), write once to repair a diverged DB row.
+ * Skip when a newer request already moved the in-memory level.
+ */
+async function confirmLiveVolume(prisma: any, bot: VoiceBot, id: number, vol: number, before: number): Promise<void> {
+  if (bot.currentConfig.volume !== vol) return;
+  if (before === vol) await saveBotVolume(prisma, id, vol);
+  else await flushBotVolumeSave(id);
+}
+
+/**
+ * Apply a volume to a live bot (persist via volumeChange + confirmLiveVolume),
+ * or save directly when no bot is running.
  */
 async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: number, vol: number): Promise<void> {
-  if (bot) {
-    await bot.applyVolume(vol);
+  if (!bot) {
+    await saveBotVolume(prisma, id, vol);
     return;
   }
-  await saveBotVolume(prisma, id, vol);
+  const before = bot.currentConfig.volume;
+  try {
+    await bot.applyVolume(vol);
+  } finally {
+    await confirmLiveVolume(prisma, bot, id, vol, before);
+  }
 }
 
 async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem | QueueItem[]): Promise<void> {
@@ -1029,12 +1044,16 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
     if (!parsed.ok) throw new AppError(400, parsed.error);
     // Conflicts answer 409 before an audit row exists; only real starts are audited.
     manager.assertVideoCanStart(bot, parsed.options.replaceSessionIds);
+    const prisma = req.app.locals.prisma;
+    const beforeVolume = bot.currentConfig.volume;
     const outcome = await runMediaAudited(
       req, bot, 'media.video.start',
       () => manager.startVideoStream(bot, safeSource, parsed.options),
       parsed.options.replaceSessionIds,
     );
-    // Start volume is persisted by the manager volumeChange listener when it changes.
+    if (parsed.options.volume != null) {
+      await confirmLiveVolume(prisma, bot, bot.currentConfig.id, parsed.options.volume, beforeVolume);
+    }
     res.json({
       success: true,
       alreadyRunning: outcome && typeof outcome === 'object' && 'alreadyRunning' in outcome
@@ -1067,8 +1086,13 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     const safeSource = assertVideoSource(source);
     const parsed = parseStreamStartOptions({ sourceMode: req.body?.sourceMode });
     if (!parsed.ok) throw new AppError(400, parsed.error);
-    await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode));
-    // Volume (if any) is persisted by the manager volumeChange listener.
+    const prisma = req.app.locals.prisma;
+    const beforeVolume = bot.currentConfig.volume;
+    try {
+      await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode));
+    } finally {
+      if (volume != null) await confirmLiveVolume(prisma, bot, bot.currentConfig.id, volume, beforeVolume);
+    }
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -1082,8 +1106,13 @@ musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, ne
     const { volume } = req.body;
     if (volume == null) throw new AppError(400, 'volume is required');
     const vol = parseVolume(volume);
-    // Persist is the manager volumeChange listener (including failed restarts).
-    await bot.setVideoStreamVolume(vol);
+    const prisma = req.app.locals.prisma;
+    const before = bot.currentConfig.volume;
+    try {
+      await bot.setVideoStreamVolume(vol);
+    } finally {
+      await confirmLiveVolume(prisma, bot, bot.currentConfig.id, vol, before);
+    }
     res.json({ success: true, volume: vol });
   } catch (err) { next(err); }
 });

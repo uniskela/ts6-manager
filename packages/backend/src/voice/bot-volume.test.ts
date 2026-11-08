@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { saveBotVolume } from './bot-volume.js';
+import { flushBotVolumeSave, saveBotVolume } from './bot-volume.js';
 
 /** Same fire-and-forget persist the manager attaches to volumeChange. */
 function attachVolumePersist(
@@ -96,6 +96,27 @@ describe('saveBotVolume', () => {
     await assert.rejects(() => saveBotVolume(prisma, 1, 40), /db down/);
     await saveBotVolume(prisma, 1, 50);
     assert.deepEqual(saved, [50]);
+  });
+
+  it('flushBotVolumeSave awaits the in-flight write without enqueueing another', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const saved: number[] = [];
+    const prisma = {
+      musicBot: {
+        update: async ({ data }: { data: { volume: number } }) => {
+          await gate;
+          saved.push(data.volume);
+        },
+      },
+    };
+    const write = saveBotVolume(prisma, 1, 44);
+    const flushed = flushBotVolumeSave(1);
+    release();
+    await Promise.all([write, flushed]);
+    assert.deepEqual(saved, [44]);
+    await flushBotVolumeSave(1);
+    assert.deepEqual(saved, [44], 'a second flush must not write again');
   });
 });
 

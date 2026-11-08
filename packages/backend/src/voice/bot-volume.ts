@@ -22,3 +22,12 @@ export function saveBotVolume(prisma: any, id: number, volume: number): Promise<
   next.then(forget, forget);
   return next;
 }
+
+/**
+ * Await the in-flight save queue for a bot without enqueueing another write.
+ * Used by HTTP routes after a live applyVolume so a listener save's failure
+ * can surface as a request error.
+ */
+export function flushBotVolumeSave(id: number): Promise<void> {
+  return volumeSaveTails.get(id) ?? Promise.resolve();
+}

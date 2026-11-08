@@ -52,22 +52,26 @@ function fixture(
       updateMany: async () => ({ count: 1 }),
     },
   };
-  // Mirror VoiceBotManager: persist once on volumeChange (not again in the route).
+  // Mirror VoiceBot + VoiceBotManager: no-op skips emit; real changes persist once.
   const bot = Object.assign(new EventEmitter(), {
     id: 1,
     currentConfig: { id: 1, serverConfigId: 1, volume: 50 },
     async applyVolume(v: number) {
       applied.push(v);
+      if (v === this.currentConfig.volume) {
+        await apply(v);
+        return;
+      }
       this.currentConfig.volume = v;
       this.emit('volumeChange', v);
       await apply(v);
     },
     async setVideoStreamVolume(v: number) { await this.applyVolume(v); },
     async setVideoSource(_source: string, v?: number) {
-      if (v != null) {
-        this.currentConfig.volume = v;
-        this.emit('volumeChange', v);
-      }
+      if (v == null) return;
+      if (v === this.currentConfig.volume) return;
+      this.currentConfig.volume = v;
+      this.emit('volumeChange', v);
     },
   });
   bot.on('volumeChange', (volume: number) => {
@@ -118,11 +122,27 @@ describe('bot volume routes', () => {
     assert.deepEqual(f.saved, [25, 34, 100]);
   });
 
-  it('persists a live volume change once (listener only, not a second route write)', async () => {
+  it('persists a live volume change once (listener write, route only flushes)', async () => {
     const f = fixture();
-    await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 40 });
-    await flushSaves();
+    const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 40 });
+    assert.equal(res.status, 200);
     assert.deepEqual(f.saved, [40]);
+  });
+
+  it('re-setting the current volume still confirms the DB row', async () => {
+    const f = fixture();
+    f.bot.currentConfig.volume = 50;
+    const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 50 });
+    assert.equal(res.status, 200);
+    assert.deepEqual(f.applied, [50]);
+    assert.deepEqual(f.saved, [50], 'no-op emit must still repair a diverged DB level');
+  });
+
+  it('surfaces a failed volume save as 500 to the HTTP client', async () => {
+    const f = fixture(async () => {}, async () => { throw new Error('disk full'); });
+    const res = await send(f.app, 'POST', '/api/music-bots/1/volume', { volume: 40 });
+    assert.equal(res.status, 500);
+    assert.deepEqual(f.applied, [40]);
   });
 
   it('saves when no live bot is attached', async () => {
