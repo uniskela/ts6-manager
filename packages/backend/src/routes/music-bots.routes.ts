@@ -53,20 +53,17 @@ function parseVolume(raw: unknown): number {
 }
 
 /**
- * Apply a volume to a live bot and save it. The in-memory level changes before
- * a running stream restarts, so it is saved even when that restart fails;
- * otherwise the next bot start would come back at the old level.
+ * Apply a volume to a live bot, or save it when no bot is running. A live bot
+ * persists through VoiceBotManager's volumeChange listener (including when a
+ * stream restart fails after the in-memory level already changed). Saving again
+ * here would double-write the same value.
  */
 async function applyAndSaveVolume(prisma: any, bot: VoiceBot | undefined, id: number, vol: number): Promise<void> {
-  try {
-    if (bot) await bot.applyVolume(vol);
-  } finally {
-    // A newer request may have changed the level while this one waited on the
-    // restart; saving now would put the older level back in the database.
-    if (!bot || bot.currentConfig.volume === vol) {
-      await saveBotVolume(prisma, id, vol);
-    }
+  if (bot) {
+    await bot.applyVolume(vol);
+    return;
   }
+  await saveBotVolume(prisma, id, vol);
 }
 
 async function saveRequestHistory(req: Request, bot: VoiceBot, item: QueueItem | QueueItem[]): Promise<void> {
@@ -1037,10 +1034,7 @@ musicBotRoutes.post('/:id/stream/start', async (req: Request, res: Response, nex
       () => manager.startVideoStream(bot, safeSource, parsed.options),
       parsed.options.replaceSessionIds,
     );
-    if (parsed.options.volume != null) {
-      const prisma = req.app.locals.prisma;
-      await saveBotVolume(prisma, bot.currentConfig.id, bot.currentConfig.volume);
-    }
+    // Start volume is persisted by the manager volumeChange listener when it changes.
     res.json({
       success: true,
       alreadyRunning: outcome && typeof outcome === 'object' && 'alreadyRunning' in outcome
@@ -1073,15 +1067,8 @@ musicBotRoutes.post('/:id/stream/source', async (req: Request, res: Response, ne
     const safeSource = assertVideoSource(source);
     const parsed = parseStreamStartOptions({ sourceMode: req.body?.sourceMode });
     if (!parsed.ok) throw new AppError(400, parsed.error);
-    try {
-      await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode));
-    } finally {
-      // Same rule as /stream/volume: once the bot took the level, save it.
-      if (volume != null && bot.currentConfig.volume === volume) {
-        const prisma = req.app.locals.prisma;
-        await saveBotVolume(prisma, bot.currentConfig.id, volume);
-      }
-    }
+    await runMediaAudited(req, bot, 'media.video.source_change', () => bot.setVideoSource(safeSource, volume, parsed.options.sourceMode));
+    // Volume (if any) is persisted by the manager volumeChange listener.
     res.json({ success: true });
   } catch (err) { next(err); }
 });
@@ -1095,16 +1082,8 @@ musicBotRoutes.post('/:id/stream/volume', async (req: Request, res: Response, ne
     const { volume } = req.body;
     if (volume == null) throw new AppError(400, 'volume is required');
     const vol = parseVolume(volume);
-    const prisma = req.app.locals.prisma;
-    try {
-      await bot.setVideoStreamVolume(vol);
-    } finally {
-      // setVideoStreamVolume refuses before changing anything when no stream
-      // runs; once it has changed the level, save it even if the restart fails.
-      if (bot.currentConfig.volume === vol) {
-        await saveBotVolume(prisma, bot.currentConfig.id, vol);
-      }
-    }
+    // Persist is the manager volumeChange listener (including failed restarts).
+    await bot.setVideoStreamVolume(vol);
     res.json({ success: true, volume: vol });
   } catch (err) { next(err); }
 });
