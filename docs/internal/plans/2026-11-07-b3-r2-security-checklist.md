@@ -32,7 +32,7 @@ B3 merged on main at `9ec216a` (#624). History follow-up: #628. B4 draft impleme
 | Non-listener / stale identity | Live clid+uid check rejects outsider and mismatched uid | covered |
 | Hidden playlist | Post-deadline chat cannot queue after hide; no history | covered |
 | Deadline revalidation | Still-requestable post-deadline chat settle queues once with history | covered |
-| Concurrent remote+chat | Real HTTP vs chat races (both orderings + deadline `/state` settle + successor stash) in `cross-interface-race.test.ts` | covered |
+| Concurrent remote+chat | Real HTTP vs chat races (both orderings + deadline `/state` settle + successor stash) in `listener-remote.playlist-requests.test.ts` (B4 cross-interface describe) | covered |
 | Unavailable listener lookup | Bridge throw fails closed; nothing queued | covered |
 | Bot unavailable / revoke | Move/disconnect and requester revoke cancel; chat cannot approve | covered |
 | Private replies | Replies omit UIDs, session tokens, and file paths | covered |

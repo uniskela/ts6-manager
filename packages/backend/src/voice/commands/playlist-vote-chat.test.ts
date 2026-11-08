@@ -245,5 +245,5 @@ describe('B4 !playlistvote chat ballots', () => {
   });
 
   // Concurrent remote HTTP vs chat races live in
-  // `playlist-vote/cross-interface-race.test.ts` (real routes + restash barriers).
+  // `listener-remote.playlist-requests.test.ts` (B4 cross-interface describe) (real routes + restash barriers).
 });
