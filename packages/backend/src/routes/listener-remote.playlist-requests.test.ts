@@ -72,6 +72,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   const playlists = new Map<number, PlaylistRow>();
   const seed = (row: PlaylistRow) => { playlists.set(row.id, row); return row; };
   const audit: Array<{ action: string }> = [];
+  const historyWrites: Array<{ create?: { url?: string; title?: string; musicBotId?: number } }> = [];
   /** Next playlist findFirst parks until `releasePlaylistReadGate` (deferred restash). */
   let deferNextPlaylistRead = false;
   let playlistReadWait: Promise<void> | null = null;
@@ -182,7 +183,10 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     },
     musicRequest: {
       createMany: async () => ({ count: 0 }),
-      upsert: async () => ({}),
+      upsert: async (args: { create?: { url?: string; title?: string; musicBotId?: number } }) => {
+        historyWrites.push(args);
+        return {};
+      },
       findMany: async () => [],
       deleteMany: async () => ({ count: 0 }),
     },
@@ -225,9 +229,8 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
   };
 
   return {
-    remote, request, exchangeAs, state, seed, bot, queue, audit, runtime,
-    now: () => voteNow,
-    advance: (ms: number) => { voteNow += ms; remoteNow += ms; },
+    remote, request, exchangeAs, state, seed, bot, queue, audit, historyWrites, runtime,
+    now: () => voteNow,    advance: (ms: number) => { voteNow += ms; remoteNow += ms; },
     /** Elapse credential TTL without closing an open vote window. */
     advanceRemote: (ms: number) => { remoteNow += ms; },
     setPeers: (next: Array<{ clid: number; uid: string }>) => { peers = [...next]; },
@@ -287,6 +290,24 @@ async function asPeer(f: Awaited<ReturnType<typeof fixture>>) {
   return peerAuth;
 }
 
+function olderQueuedTrack(): QueueItem {
+  return { id: 'old', title: 'Already queued', filePath: '/secret/old.mp3', source: 'local' };
+}
+
+/** Idle head starts; history is the approved playlist only (not older queued songs). */
+function assertIdleHeadStartPlaylistHistory(f: Awaited<ReturnType<typeof fixture>>): void {
+  assert.equal(f.queue.length, 3);
+  assert.equal(f.queue.index, 0);
+  assert.equal(f.bot.nowPlaying?.title, 'Already queued');
+  assert.deepEqual(f.queue.getAll().map((t) => t.title), ['Already queued', 'Song 100', 'Song 101']);
+  assert.equal(f.historyWrites.length, 2);
+  assert.deepEqual(
+    f.historyWrites.map((row) => row.create?.url).sort(),
+    ['/secret/100.mp3', '/secret/101.mp3'],
+  );
+  assert.ok(!f.historyWrites.some((row) => row.create?.url === '/secret/old.mp3'));
+}
+
 describe('B3 whole-playlist propose/vote', () => {
   it('queues directly when voting is off (all-or-nothing)', async () => using([], async (f) => {
     f.seed(requestable(3));
@@ -299,6 +320,28 @@ describe('B3 whole-playlist propose/vote', () => {
     const serialized = JSON.stringify(await (await f.request('/state', { session })).json());
     assert.ok(!serialized.includes(binding.uid));
     assert.ok(!serialized.includes('/secret/'));
+  }));
+
+  it('voting-off idle with older queued tracks starts the head; history is only the playlist', async () => using([], async (f) => {
+    f.state.botStatus = 'connected';
+    f.queue.add(olderQueuedTrack());
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    assert.equal((await f.request('/playlist-requests', { session, body: { playlistId: 1 } })).status, 200);
+    assertIdleHeadStartPlaylistHistory(f);
+  }));
+
+  it('voting-off while playing appends without restarting', async () => using([], async (f) => {
+    f.state.botStatus = 'playing';
+    f.bot.nowPlaying = { id: 'cur', title: 'Now', filePath: '/secret/cur.mp3', source: 'local' };
+    f.queue.add(f.bot.nowPlaying);
+    f.queue.playAt(0);
+    f.seed(requestable(2));
+    const { session } = await f.exchangeAs(binding);
+    await assertOk(await f.request('/playlist-requests', { session, body: { playlistId: 1 } }));
+    assert.equal(f.queue.length, 3);
+    assert.equal(f.queue.index, 0);
+    assert.equal(f.bot.nowPlaying?.title, 'Now');
   }));
 
   it('refuses browse-only and oversized / empty playlists', async () => using([], async (f) => {
@@ -597,7 +640,11 @@ describe('B3 R2 security matrix', () => {
 
   const third = { clid: 11, uid: 'third-listener-uid' };
 
-  async function openNearPassThenHide(f: Awaited<ReturnType<typeof fixture>>) {
+  /** Open vote, peer yes (still open), optional access change, shrink electorate, cross deadline. */
+  async function openNearPassThenDeadline(
+    f: Awaited<ReturnType<typeof fixture>>,
+    access: 'request' | 'browse' | 'hidden' = 'request',
+  ) {
     enableVoting(f, { thresholdPercent: 100 });
     f.seed(requestable(2));
     const { session } = await f.exchangeAs(binding);
@@ -605,22 +652,23 @@ describe('B3 R2 security matrix', () => {
     await assertOk(opened);
     const { vote } = await opened.json() as { vote: { id: string } };
     const peerAuth = await asPeer(f);
-    const ballot = await f.request(`/votes/${vote.id}/ballot`, {
+    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
       session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    });
-    await assertOk(ballot);
+    }));
     assert.equal(f.queue.length, 0, '2/3 yes keeps the vote open');
-    f.seed({
-      id: 1, name: 'Requestable', remoteAccess: 'hidden', serverConfigId: 2,
-      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
-    });
+    if (access !== 'request') {
+      f.seed({
+        id: 1, name: 'Requestable', remoteAccess: access, serverConfigId: 2,
+        songs: [link(1, 0, song(100)), link(2, 1, song(101))],
+      });
+    }
     f.setPeers([peer]); // deadline electorate 2 with 2 yes — would pass on stale stash
     f.advance(61_000);
     return { session, vote, peerAuth };
   }
 
   it('post-deadline cancel after hide does not queue', async () => using([peer, third], async (f) => {
-    const { session, vote } = await openNearPassThenHide(f);
+    const { session, vote } = await openNearPassThenDeadline(f, 'hidden');
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
@@ -629,7 +677,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline withdraw after hide does not queue', async () => using([peer, third], async (f) => {
-    const { vote, peerAuth } = await openNearPassThenHide(f);
+    const { vote, peerAuth } = await openNearPassThenDeadline(f, 'hidden');
     f.state.uid = peer.uid;
     const withdraw = await f.request(`/votes/${vote.id}/ballot`, {
       session: peerAuth.session, method: 'DELETE',
@@ -639,22 +687,7 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline cancel after remoteAccess demotion does not queue', async () => using([peer, third], async (f) => {
-    enableVoting(f, { thresholdPercent: 100 });
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-    const peerAuth = await asPeer(f);
-    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
-      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    }));
-    f.seed({
-      id: 1, name: 'Requestable', remoteAccess: 'browse', serverConfigId: 2,
-      songs: [link(1, 0, song(100)), link(2, 1, song(101))],
-    });
-    f.setPeers([peer]);
-    f.advance(61_000);
+    const { session, vote } = await openNearPassThenDeadline(f, 'browse');
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
@@ -662,22 +695,46 @@ describe('B3 R2 security matrix', () => {
   }));
 
   it('post-deadline cancel of still-requestable playlist may pass once after re-read', async () => using([peer, third], async (f) => {
-    enableVoting(f, { thresholdPercent: 100 });
-    f.seed(requestable(2));
-    const { session } = await f.exchangeAs(binding);
-    const opened = await f.request('/playlist-requests', { session, body: { playlistId: 1 } });
-    await assertOk(opened);
-    const { vote } = await opened.json() as { vote: { id: string } };
-    const peerAuth = await asPeer(f);
-    await assertOk(await f.request(`/votes/${vote.id}/ballot`, {
-      session: peerAuth.session, method: 'PUT', body: { choice: 'yes' },
-    }));
-    f.setPeers([peer]);
-    f.advance(61_000);
+    const { session, vote } = await openNearPassThenDeadline(f);
     f.state.uid = binding.uid;
     const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
     assert.equal(cancel.status, 404);
     assert.equal(f.queue.length, 2, 'eligible deadline pass still queues exactly once');
+    assert.equal(f.historyWrites.length, 2, 'deadline queue records exact track snapshot once');
+    assert.deepEqual(
+      f.historyWrites.map((row) => row.create?.url).sort(),
+      ['/secret/100.mp3', '/secret/101.mp3'],
+    );
+  }));
+
+  it('deadline settle via /state records history once; repeat settle does not duplicate', async () => using([peer, third], async (f) => {
+    const { session } = await openNearPassThenDeadline(f);
+    f.state.uid = binding.uid;
+    await assertOk(await f.request('/state', { session }));
+    assert.equal(f.queue.length, 2);
+    assert.equal(f.historyWrites.length, 2);
+    await assertOk(await f.request('/state', { session }));
+    assert.equal(f.queue.length, 2, 'exactly-once queue');
+    assert.equal(f.historyWrites.length, 2, 'no duplicate history on re-settle');
+  }));
+
+  it('deadline settle on idle bot with older queued tracks starts head; history is only approved playlist', async () => using([peer, third], async (f) => {
+    const { session } = await openNearPassThenDeadline(f);
+    f.state.uid = binding.uid;
+    f.state.botStatus = 'connected';
+    f.bot.nowPlaying = null;
+    f.queue.add(olderQueuedTrack());
+    await assertOk(await f.request('/state', { session }));
+    assertIdleHeadStartPlaylistHistory(f);
+  }));
+
+  it('post-deadline hide does not write request history', async () => using([peer, third], async (f) => {
+    const { session, vote } = await openNearPassThenDeadline(f, 'hidden');
+    f.state.uid = binding.uid;
+    const cancel = await f.request(`/votes/${vote.id}`, { session, method: 'DELETE' });
+    assert.equal(cancel.status, 404);
+    assert.equal(f.queue.length, 0);
+    assert.equal(f.historyWrites.length, 0);
   }));
 
   it('bot_unavailable cancels open vote and clears stash without queueing', async () => using([peer], async (f) => {
