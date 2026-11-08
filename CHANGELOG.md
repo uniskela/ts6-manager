@@ -431,6 +431,10 @@ Read [Upgrading](https://github.com/uniskela/ts6-manager/blob/v1.11.0/docs/publi
 
 ## [Unreleased]
 
+### Fixed
+
+- Music bot volume from `!vol`, the console slider, Discord volume controls, and Bot Flow voice-volume actions is saved and restored after a bot or backend restart (no longer returns to 100% when only the in-memory level had changed)
+
 ### Changed
 
 - Release Please now owns semver bumps, changelog sections, tags, and GitHub Releases on `main` (aligned with adhd-hub / codex-lb-rates)

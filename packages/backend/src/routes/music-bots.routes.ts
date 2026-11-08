@@ -24,7 +24,9 @@ import { MAX_QUEUE_ITEMS, QueueFullError, type QueueItem, type QueueReservation 
 import { summarizeBotAutomation } from '@ts6/common';
 import type { BotMediaOverview } from '@ts6/common';
 import { parseAutomationSettings, readAutomationSettings } from '../voice/automation-settings.js';
+import { saveBotVolume } from '../voice/bot-volume.js';
 
+export { saveBotVolume } from '../voice/bot-volume.js';
 export const musicBotRoutes: Router = Router();
 
 /**
@@ -48,26 +50,6 @@ function parseVolume(raw: unknown): number {
   const vol = typeof raw === 'number' || (typeof raw === 'string' && raw.trim() !== '') ? Number(raw) : NaN;
   if (!Number.isFinite(vol)) throw new AppError(400, 'volume must be a number from 0 to 100');
   return Math.max(0, Math.min(100, Math.round(vol)));
-}
-
-/** Per-bot chain of volume writes, so they reach the database in request order. */
-const volumeSaveTails = new Map<number, Promise<void>>();
-
-/**
- * Save a bot volume after any earlier save for the same bot finishes. The
- * in-memory level is set in request order, but concurrent database writes can
- * complete in any order; queueing keeps the newest level as the last write.
- */
-export function saveBotVolume(prisma: any, id: number, volume: number): Promise<void> {
-  const prev = volumeSaveTails.get(id) ?? Promise.resolve();
-  const next = prev
-    .catch(() => { /* the earlier request reported its own failure */ })
-    .then(() => prisma.musicBot.update({ where: { id }, data: { volume } }))
-    .then(() => {});
-  volumeSaveTails.set(id, next);
-  const forget = () => { if (volumeSaveTails.get(id) === next) volumeSaveTails.delete(id); };
-  next.then(forget, forget);
-  return next;
 }
 
 /**
