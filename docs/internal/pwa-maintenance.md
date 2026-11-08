@@ -4,7 +4,7 @@ The frontend uses `vite-plugin-pwa` in `injectManifest` mode. `packages/frontend
 
 ## Cache boundary
 
-Only `index.html`, `manifest.webmanifest`, build-produced `assets/*.{js,css,woff,woff2}`, `icons/*.png`, and `favicon.svg` are revisioned and precached. The build output is public and identical for every user. Do not inject user/session data into these files or expand the glob to backend files, downloads, source maps, media, or arbitrary JSON.
+Only `index.html`, `manifest.webmanifest`, build-produced `assets/*.{js,css,woff,woff2}`, `icons/*.{png,svg}`, and `favicon.svg` are revisioned and precached. The build output is public and identical for every user. Do not inject user/session data into these files or expand the glob to backend files, downloads, source maps, media, or arbitrary JSON.
 
 The worker serves exact precache entries for same-origin GET requests without query strings or Authorization headers. Navigation uses the static `index.html` only for the explicit application-route allow-list. It never stores a deep-link URL, query string, or a network navigation response. Login/setup **documents** are the same public shell; login/setup **API responses** remain network-only. Public widget URLs, the standalone `/remote` page (`remote.html`), and unknown routes are excluded from worker navigation fallback. `/api/listener-remote/` stays network-only, the same as other `/api/` traffic.
 
@@ -34,4 +34,4 @@ Physical-device release checklist (browser emulation cannot certify OS installat
 - Android Chromium: install prompt/menu, adaptive icon safe zone, standalone launch and deep links, keyboard, update across open windows.
 - Desktop: install/uninstall/reinstall, keyboard navigation, ordinary-tab sidebar/dialog behavior.
 
-The icon source is the existing teal TS monogram, expressed as paths in `public/favicon.svg`. Regenerate the four PNGs with `node packages/frontend/scripts/generate-icons.mjs` from the repository root (uses the backend's existing SVG renderer). The maskable image has an opaque full canvas; its meaningful TS strokes fit within the central 80%-diameter safe circle.
+The glyph source is the T6 monogram, expressed as `currentColor` paths in `public/favicon.svg`; the WebUI also uses it as the CSS mask for `BrandMark`, which blends the current accent into the brand violet. The icons wrap it in the brand colours shared with the TS6 Manager website: a `#4fd3e2` to `#9483ff` gradient on a `#0b1018` tile. Regenerate `icons/app-icon.svg` (the browser tab icon) and the four PNGs with `node packages/frontend/scripts/generate-icons.mjs` from the repository root (uses the backend's existing SVG renderer). `icon-192`/`icon-512` are the rounded tile; `apple-touch-icon` and `maskable-512` are full-bleed squares because iOS and Android apply their own mask. The maskable image has an opaque full canvas; its meaningful strokes fit within the central 80%-diameter safe circle.
