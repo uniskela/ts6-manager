@@ -131,6 +131,8 @@ Chat `!playlist` appends every track of a saved playlist in one step. The vote a
 
 Listeners in the channel answer an open vote with `!playlistvote yes` or `!playlistvote no`. The bot replies in a private message. The command needs a verified human listener in the bot's channel. With no open vote the reply is `No open playlist vote in this channel.`
 
+The bot also posts in the channel when a whole-playlist vote opens and when it ends (queued, cancelled, or failed, from the remote, from chat, or at the deadline). The opening post names the playlist and tells people to use `!playlistvote`; neither post includes listener names, tokens or links. If the requester is the only human listener, only the result is posted.
+
 ## Channel text commands
 
 When a bot is connected to a configured command channel, users in that channel can use built-in commands.
@@ -206,10 +208,10 @@ What you can do on the page:
 
 - see the current track and the queue (the first 50 upcoming tracks, with a count of the rest);
 - paste a link and choose **Request URL** to add it. A link to a playlist adds only its first track. A track longer than 15 minutes, a live stream, or a link whose length cannot be checked is refused (`This track is longer than 15 minutes.`, `Live streams are not allowed.`, or `Track duration could not be verified.`);
-- **Search** looks up a song or artist on YouTube Music, without an administrator's YouTube cookies, and adds a result with **+**. The list leaves out tracks longer than 15 minutes, live streams, and tracks with no known length. A query is 2–100 characters and is a song name, not a link; and
+- **Search** looks up a song or artist on YouTube Music, without an administrator's YouTube cookies. If Music returns no track with a confirmed length, it tries a regular YouTube search once, still without cookies, and adds a result with **+**. The list leaves out tracks longer than 15 minutes, live streams, and tracks with no known length. A query is 2–100 characters and is a song name, not a link; and
 - **Library** searches the server's songs by title or artist, and **Playlists** lists playlists an admin has set to **Browse** or **Request**. Open a playlist and queue its songs one at a time with **+**.
 
-Songs added with **+** join the queue one at a time. A whole-playlist request uses a playlist set to **Request** and follows [Playlist voting](#playlist-voting). People in the channel answer an open request with `!playlistvote yes` or `!playlistvote no`.
+Songs added with **+** join the queue one at a time. A whole-playlist request uses a playlist set to **Request** and follows [Playlist voting](#playlist-voting). People in the channel answer an open request with `!playlistvote yes` or `!playlistvote no`. The bot announces that vote in the channel when it opens and when it ends.
 
 The remote stops adding when 500 tracks are still waiting to play, and also when the bot's queue of played and waiting tracks reaches its 5,000-track limit. If the bot is connected and idle, what you add starts playing at once, whether or not Auto-DJ is on. If music is playing or paused, it joins the end of **Up next**. If the bot is streaming video, it joins the music queue and does not start by itself. The remote never interrupts or replaces what is playing. If someone stops the music or a video on that bot, or clears the queue, while your link is still loading, the request is dropped and the page shows `Playback was stopped before this request was ready.`; add it again if you still want it. Skipping a track or video does not drop it. Songs and links added from the remote are recorded in the bot's [request history](#requests).
 
