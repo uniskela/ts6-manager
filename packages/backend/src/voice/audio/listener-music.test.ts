@@ -260,6 +260,25 @@ describe('searchListenerMusic', () => {
     );
   });
 
+  it('throws on YouTube failure when Music succeeded with only unusable rows', async () => {
+    // Owner decision (#639): do not soft-return Music rows → route must 503.
+    await assert.rejects(
+      searchListenerMusic('music-ok-youtube-fail', 3, undefined, {
+        dumpMusicSearch: dump({
+          code: 0,
+          stdout: musicRow({ id: 'dQw4w9WgXcQ', title: 'Unknown', durationSec: null }),
+          stderr: '',
+        }),
+        dumpYouTubeSearch: dump({
+          code: 1,
+          stdout: '',
+          stderr: 'ERROR: youtube provider down',
+        }),
+      }),
+      /yt-dlp youtube search failed \(code 1\).*youtube provider down/,
+    );
+  });
+
   it('preserves live flags from flat search JSON for listener filtering', async () => {
     const stdout = JSON.stringify({
       id: 'dQw4w9WgXcQ',

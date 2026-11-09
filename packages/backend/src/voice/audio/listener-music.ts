@@ -133,8 +133,8 @@ export interface ListenerMusicSearchDump {
 
 export interface ListenerMusicSearchDeps {
   dumpMusicSearch: (query: string, maxResults: number, signal?: AbortSignal) => Promise<ListenerMusicSearchDump>;
-  /** Optional cookie-free YouTube search dump (defaults to ytsearchN:). */
-  dumpYouTubeSearch?: (query: string, maxResults: number, signal?: AbortSignal) => Promise<ListenerMusicSearchDump>;
+  /** Cookie-free YouTube search dump. Required when injecting deps so tests cannot omit it and spawn real yt-dlp. */
+  dumpYouTubeSearch: (query: string, maxResults: number, signal?: AbortSignal) => Promise<ListenerMusicSearchDump>;
 }
 
 const SEARCH_TIMEOUT_MS = 180_000;
@@ -245,6 +245,12 @@ async function dumpOrThrow(
  * (or Music fails), fall back once to cookie-free `ytsearchN:`. Live /
  * over-limit / unknown-duration filtering still happens at the route layer.
  * Does not download media.
+ *
+ * Error semantics (owner decision on #639): if neither provider yields a
+ * usable verified-duration row and the YouTube dump fails (or Music dump
+ * fails and YouTube then fails), this throws. The listener search route maps
+ * that to HTTP 503 — not soft 200 []. Soft empty is only when both dumps
+ * succeed but every row fails duration/live checks at the route.
  */
 export async function searchListenerMusic(
   query: string,
@@ -259,7 +265,6 @@ export async function searchListenerMusic(
   const trimmed = query.trim();
   if (!trimmed) throw new Error('Invalid search query');
 
-  const dumpYouTube = deps.dumpYouTubeSearch ?? defaultDumpYouTubeSearch;
   let musicRows: ListenerSearchResult[] | null = null;
   let musicError: unknown;
 
@@ -277,11 +282,13 @@ export async function searchListenerMusic(
 
   signal.throwIfAborted();
   try {
-    return await dumpOrThrow('youtube', dumpYouTube, trimmed, maxResults, signal);
+    return await dumpOrThrow('youtube', deps.dumpYouTubeSearch, trimmed, maxResults, signal);
   } catch (err) {
     signal.throwIfAborted();
     if (err instanceof Error && err.name === 'AbortError') throw err;
     // Prefer the Music error when both providers fail; otherwise surface YouTube.
+    // Music HTTP-success with only unusable rows leaves musicError unset, so a
+    // YouTube dump failure throws here → route 503 (intentional, not soft []).
     if (musicError instanceof Error) throw musicError;
     throw err;
   }
