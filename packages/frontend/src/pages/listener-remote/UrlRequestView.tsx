@@ -39,7 +39,10 @@ export function UrlRequestView({ expire, refresh }: {
         setError(problem);
         setNotice(null);
       });
-      errorRef.current?.focus({ preventScroll: true });
+      // Focus after paint so the alert node/ref is mounted (avoids losing focus races).
+      requestAnimationFrame(() => {
+        errorRef.current?.focus({ preventScroll: true });
+      });
       return;
     }
     if (lock.current) return;

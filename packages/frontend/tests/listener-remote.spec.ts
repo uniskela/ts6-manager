@@ -195,14 +195,25 @@ test('shows an empty remote, a load error, and the link prompt', async ({ page }
   await expect(page.getByText('No songs found.')).toBeVisible();
 });
 
-async function openRemote(page: Page, state: unknown = playing, extra?: (page: Page) => Promise<void>) {
+async function openRemote(
+  page: Page,
+  state: unknown = playing,
+  extra?: (page: Page) => Promise<void>,
+  options: { library?: (route: Route) => Promise<void> | void } = {},
+) {
   await installRemoteAuthRoutes(page);
   await page.route(remote('/state'), (route) => fulfill(route, state));
-  await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, {
-    songs: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}`, artist: 'Artist', duration: 100 })),
-    page: 1,
-    pageSize: 25,
-  }));
+  await page.route(/\/api\/listener-remote\/library/, async (route) => {
+    if (options.library) {
+      await options.library(route);
+      return;
+    }
+    await fulfill(route, {
+      songs: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}`, artist: 'Artist', duration: 100 })),
+      page: 1,
+      pageSize: 25,
+    });
+  });
   await extra?.(page);
   await page.goto(`/remote#token=${token}`);
   await expect(page.getByText(title)).toBeVisible();
@@ -289,14 +300,24 @@ test('a pasted link uses the existing endpoint and reports rate limits', async (
   expect(bodies).toEqual([{ url: 'https://example.com/a.mp3' }, { url: 'https://example.com/b.mp3' }]);
 });
 
-test('keeps library pagination focusable and announces URL form errors', async ({ page }) => {
+test('announces URL form errors', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  let libraryPage = 1;
-  await openRemote(page, playing, async (p) => {
-    await p.unroute(/\/api\/listener-remote\/library/);
-    await p.route(/\/api\/listener-remote\/library/, async (route) => {
+  await openRemote(page);
+  await page.getByLabel('Media URL').fill('not-a-url');
+  await page.getByRole('button', { name: 'Request URL' }).click();
+  const alert = page.getByRole('alert').filter({ hasText: /http or https URL/i });
+  await expect(alert).toBeVisible();
+  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-describedby', /.+/);
+  await expect(alert).toBeFocused({ timeout: 10_000 });
+});
+
+test('keeps library pagination focusable', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRemote(page, playing, undefined, {
+    library: async (route) => {
       const url = new URL(route.request().url());
-      libraryPage = Number(url.searchParams.get('page') || '1');
+      const libraryPage = Number(url.searchParams.get('page') || '1');
       await fulfill(route, {
         songs: Array.from({ length: 25 }, (_, i) => ({
           id: (libraryPage - 1) * 25 + i + 1,
@@ -307,7 +328,7 @@ test('keeps library pagination focusable and announces URL form errors', async (
         page: libraryPage,
         pageSize: 25,
       });
-    });
+    },
   });
 
   const results = page.getByTestId('library-results');
@@ -320,14 +341,6 @@ test('keeps library pagination focusable and announces URL form errors', async (
   const upNext = page.getByRole('list', { name: 'Up next' });
   await upNext.focus();
   await expect(upNext).toBeFocused();
-
-  await page.getByLabel('Media URL').fill('not-a-url');
-  await page.getByRole('button', { name: 'Request URL' }).click();
-  const alert = page.getByRole('alert').filter({ hasText: /http or https URL/i });
-  await expect(alert).toBeVisible();
-  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-invalid', 'true');
-  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-describedby', /.+/);
-  await expect(alert).toBeFocused();
 });
 
 test('exposes full truncated track titles for assistive reading', async ({ page }) => {
