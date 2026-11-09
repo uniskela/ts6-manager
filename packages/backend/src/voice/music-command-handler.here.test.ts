@@ -924,7 +924,7 @@ test('restricted playback blocks cross-channel !here and !come privately before 
   f.handler.prisma.appSetting.findUnique = async () => ({ value: JSON.stringify({
     playback: { mode: 'server_groups', serverGroupIds: [9] }, queue: { mode: 'everyone' }, video: { mode: 'everyone' },
   }) });
-  f.handler.eventBridge = { executeCommand: async () => 'client_unique_identifier=listener client_servergroups=6 client_type=0' };
+  f.handler.eventBridge = { executeCommand: async () => 'cid=20 client_unique_identifier=listener client_servergroups=6 client_type=0' };
   f.handler.channelToBots.set('9:1:20', new Set([1]));
   for (const command of ['here', 'come']) {
     await f.handler.onCrossChannelTextMessage(9, 1, 20, { invokerid: '2', invokeruid: 'listener', msg: `!${command}` });

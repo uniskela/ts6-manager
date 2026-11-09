@@ -2,7 +2,7 @@ import type { Request, Response, RequestHandler } from 'express';
 import { createHash, createHmac } from 'node:crypto';
 import type { z } from 'zod';
 import { ListenerRemoteError, type Binding as ListenerRemoteBinding, type ListenerRemoteService } from '../../voice/listener-remote.js';
-import { listHumanMediaListeners, resolveMediaIdentity } from '../../voice/media-listeners.js';
+import { resolveMediaIdentity } from '../../voice/media-listeners.js';
 import { authorizeMediaCommand, loadMediaCommandPermissions } from '../../voice/media-command-permissions.js';
 import type { VoiceBotManager } from '../../voice/voice-bot-manager.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
@@ -199,13 +199,11 @@ export async function liveIdentity(req: Request, binding: ListenerRemoteBinding)
   });
   if (row?.serverConfigId !== binding.serverConfigId || row.virtualServerId !== binding.virtualServerId) return null;
   const query = (cmd: string) => bridge.executeCommand(binding.serverConfigId, binding.virtualServerId, cmd);
+  // Presence comes from the same clientinfo row as UID — do not depend on
+  // clientlist succeeding for every peer in the channel (a missing peer UID
+  // must fail closed for vote tallies, not invalidate unrelated remotes).
   const identity = await resolveMediaIdentity(query, binding.clid, binding.uid);
-  if (!identity) return null;
-  const manager = req.app.locals.voiceBotManager as VoiceBotManager;
-  const bots = await manager.getBotsForServer(binding.serverConfigId);
-  const excluded = new Set(bots.map(({ bot: peer }) => peer.ts3ClientId));
-  const listeners = await listHumanMediaListeners(query, binding.channelId, excluded);
-  if (!listeners?.some(peer => peer.clid === binding.clid && peer.uid === binding.uid) || !botFor(req, binding)) return null;
+  if (!identity || identity.channelId !== binding.channelId || !botFor(req, binding)) return null;
   return identity;
 }
 

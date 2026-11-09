@@ -19,7 +19,7 @@ Secret fields are not populated back into edit forms. Leaving a secret field bla
 
 ## Authentication
 
-The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply.
+The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply. An administrator password reset, or disabling a user, revokes that account's refresh tokens. An access token that has not expired yet stays valid until it expires.
 
 WebSocket connections require application authentication and are scoped to the servers the user may access.
 

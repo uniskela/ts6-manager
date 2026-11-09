@@ -107,6 +107,30 @@ Local/downloaded tracks are decoded incrementally at media speed to keep memory 
 
 Playlists are shared by every media bot on the same TeamSpeak server. Create and edit them in **Media Library → Playlists**, then start or enqueue them from any bot's **Music → Playlists** view. Chat `!playlist` and `!pl` use the same server-wide list, including playlists created for another bot.
 
+**Listener remote visibility** is on each playlist, in the list and in **Edit**. New playlists, and playlists saved before this choice existed, start as **Hidden**.
+
+| Setting | What listeners see |
+|---------|--------------------|
+| **Hidden** | The playlist is left off the listener remote. |
+| **Browse** | Listeners can open it and queue its songs. |
+| **Request** | The same as **Browse**, and the playlist can be submitted as one whole-playlist request. That request uses [Playlist voting](#playlist-voting). |
+
+Hiding a playlist leaves its songs in the listener remote's library search. Chat `!playlist`, a bot's **Music → Playlists** view and Auto-DJ list every playlist on the server.
+
+## Playlist voting
+
+Open **Bot Flows → Chat commands**. **Playlist voting** sits under the built-in command permissions and applies to the server and virtual server chosen in the main server picker. It is stored with that server, not as an environment variable. Voting stays off until an admin turns it on, including after an upgrade.
+
+Chat `!playlist` appends every track of a saved playlist in one step. The vote and the size limit below apply to a whole-playlist request from the listener remote: the playlist is set to **Request**, and the listener may change the queue.
+
+| Setting | Default | What it does |
+|---------|---------|--------------|
+| **Require a vote for whole playlists** | Off | When on, the request opens a 60-second vote among human listeners in the bot's channel. One vote is open for that bot in that channel at a time. When off, an allowed request is queued with no vote. |
+| **Pass threshold (%)** | 80 | A whole number from 1 to 100. Yes votes needed are that percent of the human listeners in the channel, rounded up, and at least one. The person who requested the playlist counts as a yes, and that ballot stays yes. When that person is the only human listener, the playlist queues at once. Otherwise the vote stays open for 60 seconds and fails if it is still short. |
+| **Maximum request size (tracks)** | 25 | A whole number from 1 to 500. A longer playlist is refused, whether voting is on or off, and is not queued. |
+
+Listeners in the channel answer an open vote with `!playlistvote yes` or `!playlistvote no`. The bot replies in a private message. The command needs a verified human listener in the bot's channel. With no open vote the reply is `No open playlist vote in this channel.`
+
 ## Channel text commands
 
 When a bot is connected to a configured command channel, users in that channel can use built-in commands.
@@ -130,9 +154,10 @@ When a bot is connected to a configured command channel, users in that channel c
 - **`!pause`** — Toggle pause/resume
 - **`!skip` / `!next`** — Advance the queue
 - **`!voteskip`** — Vote to skip the current track; more than half of human listeners in the bot channel must vote. Bots do not count, each identity votes once, and changing tracks resets votes
+- **`!playlistvote yes|no`** — Vote on an open whole-playlist request in the bot channel. See [Playlist voting](#playlist-voting)
 - **`!remote [bot name]`** — Get a private, one-time link to a phone-friendly [listener remote](#listener-remote) for the bot in your channel
 - **`!prev`** — Previous track, up to 50 back; at the oldest kept track it replays that track
-- **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV.
+- **`!vol [0-100]` / `!volume [0-100]`** — Show or set the bot volume. The same level is used for music, radio, video, and IPTV, and the value is saved so the next bot or backend start restores it instead of resetting to full volume.
 - **`!np` / `!nowplaying`** — Show the current track
 - **`!radio [id]`** — List or play radio stations
 - **`!stream <url> [preset]`** — Start a video stream. Without a preset, a YouTube or Twitch link starts at Auto quality (up to the Auto quality limit) and any other URL at the bot's stored preset (720p by default), because Auto opens the source once more to measure it; `auto`, `480p`, `720p`, `1080p`, `1440p` or `2160p` sets it
@@ -144,7 +169,7 @@ When a bot is connected to a configured command channel, users in that channel c
 
 Custom chat commands are configured in **Bot Flows → Chat commands**, alongside the built-in list and clash warnings. See [Bot Flows](bot-flows.md).
 
-Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. **Everyone** is the default after upgrading. Help and read-only information stay accessible, including `!history`; human listeners can still use `!voteskip`, and `!remote` is never restricted (what the remote can do follows the same permissions, see below). `!again` counts as a playback command. [Bot flows — Chat commands](bot-flows.md#chat-commands) lists which group each command belongs to. Denied controls receive a short private reply with a cooldown.
+Admins can also restrict playback, queue/playlist changes, and video/IPTV commands to selected TeamSpeak server groups there. **Everyone** is the default after upgrading. Help and read-only information stay accessible, including `!history`; human listeners can still use `!voteskip` and `!playlistvote`, and `!remote` is never restricted (what the remote can do follows the same permissions, see below). `!again` counts as a playback command. [Bot flows — Chat commands](bot-flows.md#chat-commands) lists which group each command belongs to. Denied controls receive a short private reply with a cooldown.
 
 ### Several bots in one channel
 
@@ -175,19 +200,22 @@ The listener remote lets someone who is listening in the bot's channel see what 
 
 1. Join the channel the bot is in and type `!remote` (or `!remote Bot 2` to pick a bot when several share the channel; see [Several bots in one channel](#several-bots-in-one-channel)).
 2. The bot answers in a **private message** with a link: `Your private one-time listener remote link: https://…/remote#token=…`. Open it on your phone or computer. Do not share it.
-3. The page shows **Now playing**, **Up next**, a **Library** search box and a **Media URL** box. It refreshes every five seconds while the page is visible.
+3. The page shows **Now playing** and **Up next**, then **Media URL**, **Search**, **Library** and **Playlists** where you are allowed to use them. It refreshes every five seconds while the page is visible.
 
 What you can do on the page:
 
 - see the current track and the queue (the first 50 upcoming tracks, with a count of the rest);
-- search the server's song library by title or artist and add a song with the **+** button; and
-- paste a link and choose **Request URL** to add it. A link to a playlist adds only its first track.
+- paste a link and choose **Request URL** to add it. A link to a playlist adds only its first track. A track longer than 15 minutes, a live stream, or a link whose length cannot be checked is refused (`This track is longer than 15 minutes.`, `Live streams are not allowed.`, or `Track duration could not be verified.`);
+- **Search** looks up a song or artist on YouTube Music, without an administrator's YouTube cookies, and adds a result with **+**. The list leaves out tracks longer than 15 minutes, live streams, and tracks with no known length. A query is 2–100 characters and is a song name, not a link; and
+- **Library** searches the server's songs by title or artist, and **Playlists** lists playlists an admin has set to **Browse** or **Request**. Open a playlist and queue its songs one at a time with **+**.
 
-The queue holds at most 500 items. If the bot is connected and idle, what you add starts playing at once, whether or not Auto-DJ is on. If music is playing or paused, it joins the end of **Up next**. If the bot is streaming video, it joins the music queue and does not start by itself. The remote never interrupts or replaces what is playing. If someone stops the music or a video on that bot, or clears the queue, while your link is still loading, the request is dropped and the page shows `Playback was stopped before this request was ready.`; add it again if you still want it. Skipping a track or video does not drop it. Songs and links added from the remote are recorded in the bot's [request history](#requests).
+Songs added with **+** join the queue one at a time. A whole-playlist request uses a playlist set to **Request** and follows [Playlist voting](#playlist-voting). People in the channel answer an open request with `!playlistvote yes` or `!playlistvote no`.
+
+The remote stops adding when 500 tracks are still waiting to play, and also when the bot's queue of played and waiting tracks reaches its 5,000-track limit. If the bot is connected and idle, what you add starts playing at once, whether or not Auto-DJ is on. If music is playing or paused, it joins the end of **Up next**. If the bot is streaming video, it joins the music queue and does not start by itself. The remote never interrupts or replaces what is playing. If someone stops the music or a video on that bot, or clears the queue, while your link is still loading, the request is dropped and the page shows `Playback was stopped before this request was ready.`; add it again if you still want it. Skipping a track or video does not drop it. Songs and links added from the remote are recorded in the bot's [request history](#requests).
 
 What you cannot do: pause, skip, stop, seek, change the volume, reorder or clear the queue, or use any admin function. For those, use chat commands (`!skip`, `!voteskip` and so on) or ask an admin.
 
-**Permissions.** Actions follow the same **Who can use this?** settings as chat (**Bot Flows → Chat commands → Built-in command permissions**). Seeing the queue and searching the library are always available to a verified listener. **Add** buttons and the **Media URL** box appear only when you are allowed to use the **Queue and playlist changes** group, just as for `!queue <url>`. If an admin changes that setting while your page is open, the next add attempt is refused with `You are not allowed to use this command.` and the page updates.
+**Permissions.** Actions follow the same **Who can use this?** settings as chat (**Bot Flows → Chat commands → Built-in command permissions**). Seeing the queue, searching the library and browsing shared playlists are always available to a verified listener. The **Media URL** box, **Search**, **Library** add buttons and adding a song from a playlist appear only for the **Queue and playlist changes** group, the same group as `!queue <url>`. A whole-playlist request uses that same group. **Search** is shown only together with that permission: the search itself checks the add permission. If an admin changes the setting while the page is open, the next add is refused with `You are not allowed to use this command.` and the page updates.
 
 **How long it lasts.**
 
@@ -206,7 +234,7 @@ When the session ends, the page says the access is invalid or expired. Type `!re
 - you type `!remote` again (the new link replaces the earlier link and session for that bot); and
 - the Manager backend restarts.
 
-**Rate limits** are per minute and keep the page usable for everyone: you can request about three links per minute for a bot, paste at most five links per minute for that bot (a new `!remote` link does not reset this), and only one pasted link per bot is resolved at a time. The page shows `Too many remote requests` or `A media request is already pending.` when you hit a limit; wait a minute and try again. A pasted link that takes longer than two minutes to load is cancelled with `The media link took too long to load.`; closing the page or losing access also cancels it.
+**Rate limits** are per minute and keep the page usable for everyone: you can request about three links per minute for a bot, paste at most five links per minute for that bot (a new `!remote` link does not reset this), run about five music searches per minute, and only one pasted link per bot is resolved at a time. The page shows `Too many remote requests` or `A media request is already pending.` when you hit a limit; a search that is already running, or too many searches, uses the same `Too many remote requests` reply. Wait a minute and try again. A pasted link that takes longer than two minutes to load is cancelled with `The media link took too long to load.`; closing the page or losing access also cancels it.
 
 **What you may see in chat** when asking for a link. All of these arrive as private messages:
 

@@ -15,7 +15,7 @@ function fixture(policy: unknown = null) {
   for (const method of ['handlePlay', 'handleSkip', 'handleStop', 'handleVolume', 'handleQueue', 'handleShuffle', 'handleStream', 'handleTv', 'handleStopStream', 'handleHere', 'handleHelp', 'handleNowPlaying', 'handleChannels']) {
     handler[method] = async () => { actions.push(method); };
   }
-  handler.eventBridge = { executeCommand: async () => 'client_unique_identifier=human client_servergroups=6 client_type=0' };
+  handler.eventBridge = { executeCommand: async () => 'cid=5 client_unique_identifier=human client_servergroups=6 client_type=0' };
   const command = (msg: string, uid: string | undefined = 'human') => handler.onTextMessage(1, bot, { invokerid: '2', ...(uid ? { invokeruid: uid } : {}), msg });
   return { handler, bot, privateReplies, actions, command };
 }

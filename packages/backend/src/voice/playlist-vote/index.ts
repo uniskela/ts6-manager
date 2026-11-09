@@ -41,3 +41,10 @@ export type {
   RequestPlaylist,
   RequestPlaylistSong,
 } from './approval-settle.js';
+export {
+  deliverPlaylistVoteAnnouncements,
+  formatPlaylistVoteAnnounce,
+  resetPlaylistVoteAnnounceDedupeForTests,
+  sanitizePlaylistAnnounceName,
+} from './announce.js';
+export type { AnnounceBot } from './announce.js';

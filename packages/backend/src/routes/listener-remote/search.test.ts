@@ -78,6 +78,16 @@ function dumpRow(partial: Partial<ListenerSearchResult> & Pick<ListenerSearchRes
   };
 }
 
+async function hangUntilAborted(signal: AbortSignal | undefined, started?: { resolve: () => void }): Promise<never> {
+  started?.resolve();
+  await waitUntilAborted(signal);
+  throw signal?.reason ?? new Error('aborted');
+}
+
+function youtubeOkStdout(title: string): string {
+  return JSON.stringify({ id: 'FGBhQbmPwH8', title, artists: ['Band'], duration: 200 });
+}
+
 async function fixture() {
   let now = 1_000_000;
   const remote = new ListenerRemoteService(() => now);
@@ -101,6 +111,10 @@ async function fixture() {
     dumpRow({ id: 'bbbbbbbbbbb', title: 'Ok Song', artist: 'Band', durationSec: 200 }),
   ];
   let dumpOverride: ((signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>) | null = null;
+  let youtubeDump:
+    | ((query: string, signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>)
+    | null = null;
+  let youtubeCalls = 0;
   const start = async (started: QueueItem) => {
     if (state.botStatus !== 'connected') return;
     state.botStatus = 'playing';
@@ -145,6 +159,12 @@ async function fixture() {
         stderr: '',
       };
     },
+    // Always stub the YouTube fallback so route tests never spawn yt-dlp.
+    dumpYouTubeSearch: async (query: string, _maxResults?: number, signal?: AbortSignal) => {
+      youtubeCalls++;
+      if (youtubeDump) return youtubeDump(query, signal);
+      return { code: 0, stdout: '', stderr: '' };
+    },
   };
   app.locals.voiceBotManager = { getBot: () => bot, getBotsForServer: async () => [{ bot }] };
   const roster = [
@@ -158,7 +178,7 @@ async function fixture() {
       if (cmd.startsWith('clientinfo')) {
         const clid = Number(/clid=(\d+)/.exec(cmd)?.[1]);
         const row = roster.find((entry) => entry.clid === clid) ?? { clid, uid: state.uid };
-        return `client_unique_identifier=${row.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
+        return `cid=${state.channelId} client_unique_identifier=${row.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
       }
       return `${roster.map((row) =>
         `clid=${row.clid} cid=${state.channelId} client_unique_identifier=${row.uid} client_type=0`
@@ -235,10 +255,14 @@ async function fixture() {
     request, exchange, queue, state, audit, bot, remote, app, base,
     get downloads() { return downloads; },
     get searchCalls() { return searchCalls; },
+    get youtubeCalls() { return youtubeCalls; },
     setSearch: (fn: typeof searchImpl) => { searchImpl = fn; },
     setDumpFailure: (stderr: string) => {
       dumpOverride = async () => ({ code: 1, stdout: '', stderr });
     },
+    setYouTubeDump: (
+      fn: (query: string, signal?: AbortSignal) => Promise<{ code: number | null; stdout: string; stderr: string }>,
+    ) => { youtubeDump = fn; },
     armDownloadGate: () => {
       downloadGate = { started: deferred<void>(), gate: deferred<void>() };
       return downloadGate;
@@ -297,6 +321,73 @@ describe('listener remote search (C2)', () => {
     assert.equal(response.status, 200);
     const body = await response.json() as { results: Array<{ title: string }> };
     assert.deepEqual(body.results.map((row) => row.title), ['Safe Song']);
+  }));
+
+  it('falls back to YouTube search when Music rows lack duration, then filters live/too-long', async () => using(async f => {
+    // C5: Music flat extract succeeds with duration=null → empty without fallback.
+    f.setSearch(async () => [
+      dumpRow({ id: 'musicnull01', title: 'Daft Punk One More Time', durationSec: null }),
+      dumpRow({ id: 'musicnull02', title: 'One More Time Radio', durationSec: null }),
+    ]);
+    f.setYouTubeDump(async () => ({
+      code: 0,
+      stdout: [
+        dumpRow({ id: 'FGBhQbmPwH8', title: 'One More Time', artist: 'Daft Punk', durationSec: 320 }),
+        dumpRow({ id: 'liveconcert', title: 'Live Concert', durationSec: 240, isLive: true }),
+        dumpRow({ id: 'toolonggggg', title: 'Hour Mix', durationSec: 3600 }),
+        dumpRow({ id: 'stillnullid', title: 'Still Unknown', durationSec: null }),
+      ].map((row) => JSON.stringify({
+        id: row.id, title: row.title, artists: [row.artist], duration: row.durationSec ?? 0,
+        thumbnail: row.thumbnail, is_live: row.isLive === true, live_status: row.liveStatus ?? undefined,
+      })).join('\n'),
+      stderr: '',
+    }));
+    const { session } = await f.exchange();
+    const response = await f.request('/search', { session, body: { query: 'Daft Punk One More Time' } });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { results: Array<{ title: string; duration: number }> };
+    assert.equal(f.youtubeCalls, 1);
+    assert.deepEqual(body.results.map((row) => row.title), ['One More Time']);
+    assert.equal(body.results[0]!.duration, 320);
+  }));
+
+  it('returns empty results when Music and YouTube both lack verified duration', async () => using(async f => {
+    f.setSearch(async () => [
+      dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null }),
+    ]);
+    f.setYouTubeDump(async () => ({
+      code: 0,
+      stdout: JSON.stringify({
+        id: 'stillnullid', title: 'Unknown YT', artists: ['x'], duration: 0,
+      }),
+      stderr: '',
+    }));
+    const { session } = await f.exchange();
+    const response = await f.request('/search', { session, body: { query: 'both-unusable' } });
+    assert.equal(response.status, 200);
+    const body = await response.json() as { results: unknown[] };
+    assert.deepEqual(body.results, []);
+    assert.equal(f.youtubeCalls, 1);
+  }));
+
+  it('returns 503 when Music lacks duration and YouTube fallback fails', async () => using(async f => {
+    // Owner decision (#639): Music HTTP-success with unusable rows + YouTube dump
+    // failure is provider unavailability (503), not soft empty 200 [].
+    f.setSearch(async () => [
+      dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null }),
+    ]);
+    f.setYouTubeDump(async () => ({
+      code: 1,
+      stdout: '',
+      stderr: 'ERROR: youtube-fallback-down credential-must-not-leak',
+    }));
+    const { session } = await f.exchange();
+    const response = await f.request('/search', { session, body: { query: 'music-ok-youtube-fail' } });
+    assert.equal(response.status, 503);
+    const body = await response.json() as { error: string; code: string };
+    assert.deepEqual(body, { error: 'Listener remote is unavailable.', code: 'unavailable' });
+    assert.ok(!JSON.stringify(body).includes('credential'));
+    assert.equal(f.youtubeCalls, 1);
   }));
 
   it('binds result ids to the searching identity and hides cross-listener reuse', async () => using(async f => {
@@ -542,12 +633,18 @@ describe('listener remote search (C2)', () => {
     assert.equal(f.searchCalls, 0);
 
     f.setDumpFailure('ERROR: credential-must-not-leak Sign in to confirm you are not a bot');
+    f.setYouTubeDump(async () => ({
+      code: 1,
+      stdout: '',
+      stderr: 'ERROR: youtube-also-down credential-must-not-leak',
+    }));
     const failed = await f.request('/search', { session, body: { query: 'provider-down' } });
     assert.equal(failed.status, 503);
     const body = await failed.json() as { error: string; code: string };
     assert.deepEqual(body, { error: 'Listener remote is unavailable.', code: 'unavailable' });
     assert.ok(!JSON.stringify(body).includes('credential'));
     assert.ok(!JSON.stringify(body).includes('Sign in'));
+    assert.equal(f.youtubeCalls, 1);
   }));
 
   it('re-checks duration on queue and refuses with 422 when the provider answer changed', async () => using(async f => {
@@ -577,9 +674,7 @@ describe('listener remote search (C2)', () => {
     f.setSearch(async (_query, signal) => {
       if (!hangOnce) return [dumpRow({ id: 'fffffffffff', title: 'After disconnect', durationSec: 100 })];
       hangOnce = false;
-      started.resolve();
-      await waitUntilAborted(signal);
-      throw signal?.reason ?? new Error('aborted');
+      return hangUntilAborted(signal, started);
     });
     const ac = new AbortController();
     const pending = fetch(`${f.base}/search`, {
@@ -597,6 +692,29 @@ describe('listener remote search (C2)', () => {
     });
   }));
 
+  it('cancels an in-flight YouTube fallback when the client disconnects and frees the slot', async () => using(async f => {
+    const a = await f.exchange();
+    f.advance(60_000);
+    f.setSearch(async () => [dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null })]);
+    const started = deferred<void>();
+    f.setYouTubeDump(async (_query, signal) => hangUntilAborted(signal, started));
+    const ac = new AbortController();
+    const pending = fetch(`${f.base}/search`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${a.session}` },
+      body: JSON.stringify({ query: 'fallback-disconnect' }),
+      signal: ac.signal,
+    });
+    await started.promise;
+    ac.abort();
+    await assert.rejects(() => pending, (err: unknown) => err instanceof Error && err.name === 'AbortError');
+    const b = await f.exchange(otherBinding);
+    f.setYouTubeDump(async () => ({ code: 0, stdout: youtubeOkStdout('After fallback disconnect'), stderr: '' }));
+    await eventually(async () => {
+      assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-fallback-disconnect' } })).status, 200);
+    });
+  }));
+
   it('times out a stalled provider search and frees the slot', async () => using(async f => {
     const a = await f.exchange();
     f.advance(60_000);
@@ -606,15 +724,28 @@ describe('listener remote search (C2)', () => {
     f.setSearch(async (_query, signal) => {
       if (!hangOnce) return [dumpRow({ id: 'ggggggggggg', title: 'After timeout', durationSec: 100 })];
       hangOnce = false;
-      started.resolve();
-      await waitUntilAborted(signal);
-      throw signal?.reason ?? new Error('aborted');
+      return hangUntilAborted(signal, started);
     });
     const timedOut = await f.request('/search', { session: a.session, body: { query: 'provider-timeout' } });
     assert.equal(timedOut.status, 504);
     assert.equal((await timedOut.json() as { code: string }).code, 'timeout');
     const b = await f.exchange(otherBinding);
     assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-timeout' } })).status, 200);
+  }));
+
+  it('times out a stalled YouTube fallback after Music lacks duration and frees the slot', async () => using(async f => {
+    const a = await f.exchange();
+    f.advance(60_000);
+    f.app.locals.listenerRemoteSearchTimeoutMs = 40;
+    f.setSearch(async () => [dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null })]);
+    f.setYouTubeDump(async (_query, signal) => hangUntilAborted(signal));
+    const timedOut = await f.request('/search', { session: a.session, body: { query: 'fallback-timeout' } });
+    assert.equal(timedOut.status, 504);
+    assert.equal((await timedOut.json() as { code: string }).code, 'timeout');
+    assert.equal(f.youtubeCalls, 1);
+    const b = await f.exchange(otherBinding);
+    f.setYouTubeDump(async () => ({ code: 0, stdout: youtubeOkStdout('After fallback timeout'), stderr: '' }));
+    assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-fallback-timeout' } })).status, 200);
   }));
 
   it('allows a simultaneous provider search on another TeamSpeak server under global capacity', async () => using(async f => {
