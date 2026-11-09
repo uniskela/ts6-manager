@@ -58,7 +58,14 @@ export default function ListenerRemote() {
         () => settle(null),
         async (error: unknown) => {
           // Stale fragment token must not hide a still-valid HttpOnly cookie session.
-          const restored = await probeRemoteSession().catch(() => null);
+          let restored = null;
+          try {
+            restored = await probeRemoteSession();
+          } catch (probeError) {
+            if (!alive) return;
+            settle(remoteErrorMessage(probeError));
+            return;
+          }
           if (!alive) return;
           if (restored) settle(null);
           else settle(remoteErrorMessage(error));
