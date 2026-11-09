@@ -591,14 +591,76 @@ describe('listener remote HTTP security boundary', () => {
     const probed = await probe.json() as { botId: number; expiresAt: string; csrfToken: string; session?: unknown };
     assert.deepEqual(Object.keys(probed).sort(), ['botId', 'csrfToken', 'expiresAt']);
     assert.equal(probed.session, undefined);
-    assert.match(probed.csrfToken, /^[A-Za-z0-9_-]{43}$/);
-    const afterProbe = `ts6_lr_session=${session}; ts6_lr_csrf=${probed.csrfToken}`;
+    assert.equal(probed.csrfToken, csrf, 'GET /session must reuse a valid CSRF cookie');
     assert.equal((await f.request('/queue', {
-      headers: { Cookie: afterProbe, Origin: origin, 'X-CSRF-Token': probed.csrfToken },
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': csrf },
       body: { songId: 11 },
     })).status, 200);
     // Bearer path still skips CSRF (tests / non-browser clients).
     assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+  }));
+
+  it('keeps CSRF stable across concurrent session probes (two-tab safe)', async () => using(async f => {
+    const exchanged = await f.exchange();
+    const origin = 'http://localhost:5173';
+    const cookie = `ts6_lr_session=${exchanged.session}; ts6_lr_csrf=${exchanged.csrfToken}`;
+    const [tabA, tabB] = await Promise.all([
+      f.request('/session', { headers: { Cookie: cookie, Origin: origin } }),
+      f.request('/session', { headers: { Cookie: cookie, Origin: origin } }),
+    ]);
+    assert.equal(tabA.status, 200);
+    assert.equal(tabB.status, 200);
+    const a = await tabA.json() as { csrfToken: string };
+    const b = await tabB.json() as { csrfToken: string };
+    assert.equal(a.csrfToken, exchanged.csrfToken);
+    assert.equal(b.csrfToken, exchanged.csrfToken);
+    // Tab A can still mutate with the original in-memory token after tab B probed.
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': exchanged.csrfToken },
+      body: { songId: 11 },
+    })).status, 200);
+    // Tab B uses the same shared CSRF.
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': b.csrfToken },
+      body: { songId: 11 },
+    })).status, 200);
+    // Missing/malformed CSRF cookie → probe mints a recovery token (new pair works).
+    const recovered = await f.request('/session', {
+      headers: { Cookie: `ts6_lr_session=${exchanged.session}`, Origin: origin },
+    });
+    assert.equal(recovered.status, 200);
+    const recoveredBody = await recovered.json() as { csrfToken: string };
+    assert.match(recoveredBody.csrfToken, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(recoveredBody.csrfToken, exchanged.csrfToken);
+    const recoveredCookie = `ts6_lr_session=${exchanged.session}; ts6_lr_csrf=${recoveredBody.csrfToken}`;
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: recoveredCookie, Origin: origin, 'X-CSRF-Token': recoveredBody.csrfToken },
+      body: { songId: 11 },
+    })).status, 200);
+    // Mismatched header vs cookie is still rejected.
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: recoveredCookie, Origin: origin, 'X-CSRF-Token': exchanged.csrfToken },
+      body: { songId: 11 },
+    })).status, 403);
+    // Sign-out clears cookies and revokes the grant.
+    assert.equal((await f.request('/session', {
+      method: 'DELETE',
+      headers: { Cookie: recoveredCookie, Origin: origin, 'X-CSRF-Token': recoveredBody.csrfToken },
+    })).status, 200);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: recoveredCookie, Origin: origin },
+    })).status, 401);
+    // Session replacement (!remote exchange) rotates CSRF for the new grant.
+    const replaced = await f.exchange();
+    assert.notEqual(replaced.csrfToken, recoveredBody.csrfToken);
+    assert.equal((await f.request('/queue', {
+      headers: {
+        Cookie: `ts6_lr_session=${replaced.session}; ts6_lr_csrf=${replaced.csrfToken}`,
+        Origin: origin,
+        'X-CSRF-Token': replaced.csrfToken,
+      },
+      body: { songId: 11 },
+    })).status, 200);
   }));
 
   it('isolates concurrent cookie sessions across listeners', async () => using(async f => {

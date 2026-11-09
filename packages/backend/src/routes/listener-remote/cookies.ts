@@ -92,6 +92,23 @@ export function newCsrfToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
+const CSRF_VALUE = /^[A-Za-z0-9_-]{43}$/;
+
+/** Valid CSRF from the request cookie, if present. */
+export function csrfCookieValue(req: Request): string | undefined {
+  const value = parseCookies(req.get('Cookie'))[CSRF_COOKIE];
+  return typeof value === 'string' && CSRF_VALUE.test(value) ? value : undefined;
+}
+
+/**
+ * Reuse a valid CSRF cookie so a second tab's session probe cannot invalidate
+ * the first tab's in-memory token. Mint only when missing or malformed.
+ * Exchange / session replacement should call `newCsrfToken()` instead.
+ */
+export function resolveCsrfToken(req: Request): string {
+  return csrfCookieValue(req) ?? newCsrfToken();
+}
+
 /** Env-derived origins (sync). Prefer `allowedRemoteOriginsForRequest` when Prisma is available. */
 export function allowedRemoteOrigins(): Set<string> {
   const origins = new Set<string>();

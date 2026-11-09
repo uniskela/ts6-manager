@@ -6,8 +6,10 @@ import {
   SESSION_COOKIE,
   cookieMutationAllowed,
   cookieOriginAllowed,
+  csrfCookieValue,
   csrfMatches,
   parseCookies,
+  resolveCsrfToken,
   sessionCredentialFromRequest,
 } from './cookies.js';
 
@@ -97,5 +99,15 @@ describe('listener remote cookies', () => {
       cookie: `${SESSION_COOKIE}=${session}`,
       referer: 'http://localhost:5173/remote',
     })), true);
+  });
+
+  it('reuses a valid CSRF cookie and mints only when missing or malformed', () => {
+    const csrf = 'k'.repeat(43);
+    assert.equal(csrfCookieValue(req({ cookie: `${CSRF_COOKIE}=${csrf}` })), csrf);
+    assert.equal(csrfCookieValue(req({ cookie: `${CSRF_COOKIE}=short` })), undefined);
+    assert.equal(resolveCsrfToken(req({ cookie: `${CSRF_COOKIE}=${csrf}` })), csrf);
+    const minted = resolveCsrfToken(req({}));
+    assert.match(minted, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(minted, csrf);
   });
 });

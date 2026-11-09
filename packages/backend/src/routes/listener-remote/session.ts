@@ -5,6 +5,7 @@ import { authenticate, body, endpoint, fail, liveIdentity, service } from './sha
 import {
   clearListenerRemoteCookies,
   newCsrfToken,
+  resolveCsrfToken,
   sessionCredentialFromRequest,
   setListenerRemoteCookies,
 } from './cookies.js';
@@ -21,6 +22,7 @@ export function registerSessionRoutes(router: Router): void {
       async binding => Boolean(await liveIdentity(req, binding)),
       { remember: remember === true },
     );
+    // New session → new CSRF (invalidates any prior tab token for this cookie jar).
     const csrfToken = newCsrfToken();
     setListenerRemoteCookies(req, res, result.session, csrfToken, result.expiresAt);
     // Never return the session credential to JavaScript — HttpOnly cookie only.
@@ -37,8 +39,8 @@ export function registerSessionRoutes(router: Router): void {
     const credential = sessionCredentialFromRequest(req);
     const expiresAt = service(req).peekSessionExpiry(credential);
     if (expiresAt == null || !credential) fail(401, 'invalid_access', 'Remote access is invalid or expired');
-    // Refresh must recover CSRF for mutations even when document.cookie Path quirks apply.
-    const csrfToken = newCsrfToken();
+    // Reuse a valid CSRF so tab B's probe does not break tab A's in-memory token.
+    const csrfToken = resolveCsrfToken(req);
     setListenerRemoteCookies(req, res, credential, csrfToken, expiresAt);
     res.json({
       expiresAt: new Date(expiresAt).toISOString(),
