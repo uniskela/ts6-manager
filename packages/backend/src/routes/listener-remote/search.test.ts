@@ -78,6 +78,16 @@ function dumpRow(partial: Partial<ListenerSearchResult> & Pick<ListenerSearchRes
   };
 }
 
+async function hangUntilAborted(signal: AbortSignal | undefined, started?: { resolve: () => void }): Promise<never> {
+  started?.resolve();
+  await waitUntilAborted(signal);
+  throw signal?.reason ?? new Error('aborted');
+}
+
+function youtubeOkStdout(title: string): string {
+  return JSON.stringify({ id: 'FGBhQbmPwH8', title, artists: ['Band'], duration: 200 });
+}
+
 async function fixture() {
   let now = 1_000_000;
   const remote = new ListenerRemoteService(() => now);
@@ -664,9 +674,7 @@ describe('listener remote search (C2)', () => {
     f.setSearch(async (_query, signal) => {
       if (!hangOnce) return [dumpRow({ id: 'fffffffffff', title: 'After disconnect', durationSec: 100 })];
       hangOnce = false;
-      started.resolve();
-      await waitUntilAborted(signal);
-      throw signal?.reason ?? new Error('aborted');
+      return hangUntilAborted(signal, started);
     });
     const ac = new AbortController();
     const pending = fetch(`${f.base}/search`, {
@@ -687,18 +695,9 @@ describe('listener remote search (C2)', () => {
   it('cancels an in-flight YouTube fallback when the client disconnects and frees the slot', async () => using(async f => {
     const a = await f.exchange();
     f.advance(60_000);
-    f.setSearch(async () => [
-      dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null }),
-    ]);
+    f.setSearch(async () => [dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null })]);
     const started = deferred<void>();
-    let hangOnce = true;
-    f.setYouTubeDump(async (_query, signal) => {
-      if (!hangOnce) return { code: 0, stdout: '', stderr: '' };
-      hangOnce = false;
-      started.resolve();
-      await waitUntilAborted(signal);
-      throw signal?.reason ?? new Error('aborted');
-    });
+    f.setYouTubeDump(async (_query, signal) => hangUntilAborted(signal, started));
     const ac = new AbortController();
     const pending = fetch(`${f.base}/search`, {
       method: 'POST',
@@ -710,13 +709,7 @@ describe('listener remote search (C2)', () => {
     ac.abort();
     await assert.rejects(() => pending, (err: unknown) => err instanceof Error && err.name === 'AbortError');
     const b = await f.exchange(otherBinding);
-    f.setYouTubeDump(async () => ({
-      code: 0,
-      stdout: JSON.stringify({
-        id: 'FGBhQbmPwH8', title: 'After fallback disconnect', artists: ['Band'], duration: 200,
-      }),
-      stderr: '',
-    }));
+    f.setYouTubeDump(async () => ({ code: 0, stdout: youtubeOkStdout('After fallback disconnect'), stderr: '' }));
     await eventually(async () => {
       assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-fallback-disconnect' } })).status, 200);
     });
@@ -731,9 +724,7 @@ describe('listener remote search (C2)', () => {
     f.setSearch(async (_query, signal) => {
       if (!hangOnce) return [dumpRow({ id: 'ggggggggggg', title: 'After timeout', durationSec: 100 })];
       hangOnce = false;
-      started.resolve();
-      await waitUntilAborted(signal);
-      throw signal?.reason ?? new Error('aborted');
+      return hangUntilAborted(signal, started);
     });
     const timedOut = await f.request('/search', { session: a.session, body: { query: 'provider-timeout' } });
     assert.equal(timedOut.status, 504);
@@ -746,28 +737,14 @@ describe('listener remote search (C2)', () => {
     const a = await f.exchange();
     f.advance(60_000);
     f.app.locals.listenerRemoteSearchTimeoutMs = 40;
-    f.setSearch(async () => [
-      dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null }),
-    ]);
-    let hangOnce = true;
-    f.setYouTubeDump(async (_query, signal) => {
-      if (!hangOnce) return { code: 0, stdout: '', stderr: '' };
-      hangOnce = false;
-      await waitUntilAborted(signal);
-      throw signal?.reason ?? new Error('aborted');
-    });
+    f.setSearch(async () => [dumpRow({ id: 'musicnull01', title: 'Unknown Music', durationSec: null })]);
+    f.setYouTubeDump(async (_query, signal) => hangUntilAborted(signal));
     const timedOut = await f.request('/search', { session: a.session, body: { query: 'fallback-timeout' } });
     assert.equal(timedOut.status, 504);
     assert.equal((await timedOut.json() as { code: string }).code, 'timeout');
     assert.equal(f.youtubeCalls, 1);
     const b = await f.exchange(otherBinding);
-    f.setYouTubeDump(async () => ({
-      code: 0,
-      stdout: JSON.stringify({
-        id: 'FGBhQbmPwH8', title: 'After fallback timeout', artists: ['Band'], duration: 200,
-      }),
-      stderr: '',
-    }));
+    f.setYouTubeDump(async () => ({ code: 0, stdout: youtubeOkStdout('After fallback timeout'), stderr: '' }));
     assert.equal((await f.request('/search', { session: b.session, body: { query: 'after-fallback-timeout' } })).status, 200);
   }));
 

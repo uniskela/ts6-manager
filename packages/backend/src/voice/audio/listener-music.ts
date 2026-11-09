@@ -238,6 +238,11 @@ async function dumpOrThrow(
   return parseDumpRows(result.stdout);
 }
 
+const DEFAULT_LISTENER_MUSIC_SEARCH_DEPS: ListenerMusicSearchDeps = {
+  dumpMusicSearch: defaultDumpMusicSearch,
+  dumpYouTubeSearch: defaultDumpYouTubeSearch,
+};
+
 /**
  * List search results without administrator YouTube cookies.
  *
@@ -256,10 +261,7 @@ export async function searchListenerMusic(
   query: string,
   maxResults = 10,
   signal: AbortSignal = AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-  deps: ListenerMusicSearchDeps = {
-    dumpMusicSearch: defaultDumpMusicSearch,
-    dumpYouTubeSearch: defaultDumpYouTubeSearch,
-  },
+  deps: ListenerMusicSearchDeps = DEFAULT_LISTENER_MUSIC_SEARCH_DEPS,
 ): Promise<ListenerSearchResult[]> {
   signal.throwIfAborted();
   const trimmed = query.trim();
@@ -276,7 +278,7 @@ export async function searchListenerMusic(
     musicError = err;
   }
 
-  if (musicRows && musicRows.some(listenerSearchRowHasVerifiedDuration)) {
+  if (musicRows?.some(listenerSearchRowHasVerifiedDuration)) {
     return musicRows;
   }
 
