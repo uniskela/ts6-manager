@@ -4,11 +4,30 @@ import {
   LISTENER_MAX_DURATION_SEC,
   checkListenerDuration,
   listenerMusicSearchArgs,
+  listenerSearchRowHasVerifiedDuration,
   listenerTrackMetaFromYtDlp,
+  listenerYouTubeSearchArgs,
   searchListenerMusic,
   type ListenerMusicSearchDump,
+  type ListenerSearchResult,
 } from './listener-music.js';
 import { setYtCookieFile } from './youtube.js';
+
+function dump(payload: ListenerMusicSearchDump) {
+  return async () => payload;
+}
+
+function musicRow(partial: Partial<ListenerSearchResult> & Pick<ListenerSearchResult, 'id' | 'title'>): string {
+  return JSON.stringify({
+    id: partial.id,
+    title: partial.title,
+    artists: [partial.artist ?? 'Artist'],
+    duration: partial.durationSec ?? 0,
+    thumbnail: partial.thumbnail ?? '',
+    is_live: partial.isLive === true,
+    live_status: partial.liveStatus ?? undefined,
+  });
+}
 
 describe('checkListenerDuration', () => {
   it('accepts a track at or under 15 minutes', () => {
@@ -68,7 +87,7 @@ describe('listenerTrackMetaFromYtDlp', () => {
   });
 });
 
-describe('listenerMusicSearchArgs', () => {
+describe('listenerMusicSearchArgs / listenerYouTubeSearchArgs', () => {
   it('never requests cookies and targets Music Songs', () => {
     setYtCookieFile('/tmp/admin-youtube-cookies.txt');
     try {
@@ -85,34 +104,48 @@ describe('listenerMusicSearchArgs', () => {
     }
   });
 
+  it('builds cookie-free ytsearchN args for the duration fallback', () => {
+    setYtCookieFile('/tmp/admin-youtube-cookies.txt');
+    try {
+      const args = listenerYouTubeSearchArgs('Daft Punk One More Time', 10);
+      assert.equal(args.includes('--cookies'), false);
+      assert.ok(args.includes('ytsearch10:Daft Punk One More Time'));
+      assert.equal(args.includes('--'), false);
+      for (const flag of ['--flat-playlist', '--dump-json', '--no-download']) {
+        assert.ok(args.includes(flag));
+      }
+    } finally {
+      setYtCookieFile(null);
+    }
+  });
+
   it('rejects empty and option-shaped queries', () => {
     assert.throws(() => listenerMusicSearchArgs('   ', 3), /Invalid search query/);
     assert.throws(() => listenerMusicSearchArgs('-verbose', 3), /Invalid search query/);
+    assert.throws(() => listenerYouTubeSearchArgs('-verbose', 3), /Invalid search query/);
   });
 });
 
 describe('searchListenerMusic', () => {
-  const dump = (payload: ListenerMusicSearchDump) => async () => payload;
-
-  it('maps playable rows and skips non-video entries without hitting the network', async () => {
+  it('maps playable Music rows with verified duration without hitting YouTube search', async () => {
+    let youtubeCalls = 0;
     const stdout = [
       '[youtube:music:search_url] Downloading API JSON',
       JSON.stringify({ id: 'UCabcdefghijklmnopqrstuv', title: 'Channel' }),
-      JSON.stringify({
-        id: 'fJ9rUzIMcZQ',
-        title: 'Bohemian Rhapsody',
-        artists: ['Queen'],
-        duration: 355,
-        thumbnail: 'https://img.example/q.jpg',
-      }),
-      JSON.stringify({ id: 'dQw4w9WgXcQ', title: 'Rick', uploader: 'Rick Astley', duration: 0 }),
+      musicRow({ id: 'fJ9rUzIMcZQ', title: 'Bohemian Rhapsody', artist: 'Queen', durationSec: 355, thumbnail: 'https://img.example/q.jpg' }),
+      musicRow({ id: 'dQw4w9WgXcQ', title: 'Rick', artist: 'Rick Astley', durationSec: 0 }),
       'not json',
     ].join('\n');
 
     const results = await searchListenerMusic('bohemian', 10, undefined, {
       dumpMusicSearch: dump({ code: 0, stdout, stderr: '' }),
+      dumpYouTubeSearch: async () => {
+        youtubeCalls++;
+        return { code: 0, stdout: '', stderr: '' };
+      },
     });
 
+    assert.equal(youtubeCalls, 0, 'verified Music duration must skip YouTube fallback');
     assert.deepEqual(results, [
       {
         id: 'fJ9rUzIMcZQ',
@@ -135,6 +168,115 @@ describe('searchListenerMusic', () => {
         liveStatus: null,
       },
     ]);
+    assert.equal(listenerSearchRowHasVerifiedDuration(results[0]!), true);
+    assert.equal(listenerSearchRowHasVerifiedDuration(results[1]!), false);
+  });
+
+  it('falls back to YouTube search when Music rows have missing duration (C5)', async () => {
+    const musicStdout = Array.from({ length: 10 }, (_, i) =>
+      musicRow({
+        id: `abcdefghij${i}`,
+        title: `Daft Punk One More Time ${i}`,
+        durationSec: null,
+      }),
+    ).join('\n');
+    const youtubeStdout = [
+      musicRow({ id: 'FGBhQbmPwH8', title: 'Daft Punk - One More Time (Official Video)', artist: 'Daft Punk', durationSec: 320 }),
+      musicRow({ id: 'yTQRxVA9X0Y', title: 'One More Time', artist: 'Daft Punk', durationSec: 322 }),
+      musicRow({ id: 'liveeeeeeee', title: 'Live Set', durationSec: 240, isLive: true }),
+      musicRow({ id: 'toolonggggg', title: 'Extended', durationSec: 901 }),
+    ].join('\n');
+
+    let youtubeCalls = 0;
+    const results = await searchListenerMusic('Daft Punk One More Time', 10, undefined, {
+      dumpMusicSearch: dump({ code: 0, stdout: musicStdout, stderr: '' }),
+      dumpYouTubeSearch: async (_q, _n, signal) => {
+        signal?.throwIfAborted();
+        youtubeCalls++;
+        return { code: 0, stdout: youtubeStdout, stderr: '' };
+      },
+    });
+
+    assert.equal(youtubeCalls, 1);
+    assert.equal(results.length, 4);
+    assert.equal(results[0]!.durationSec, 320);
+    assert.equal(results[0]!.id, 'FGBhQbmPwH8');
+    assert.equal(results[2]!.isLive, true);
+    assert.equal(results[3]!.durationSec, 901);
+  });
+
+  it('falls back when Music fails and YouTube returns verified metadata', async () => {
+    const results = await searchListenerMusic('fallback-on-error', 3, undefined, {
+      dumpMusicSearch: dump({
+        code: 1,
+        stdout: '',
+        stderr: 'ERROR: Sign in to confirm you are not a bot',
+      }),
+      dumpYouTubeSearch: dump({
+        code: 0,
+        stdout: musicRow({ id: 'fJ9rUzIMcZQ', title: 'Safe', durationSec: 200 }),
+        stderr: '',
+      }),
+    });
+    assert.equal(results.length, 1);
+    assert.equal(results[0]!.durationSec, 200);
+  });
+
+  it('returns empty when both providers only yield unusable rows', async () => {
+    const results = await searchListenerMusic('nothing-usable', 5, undefined, {
+      dumpMusicSearch: dump({
+        code: 0,
+        stdout: musicRow({ id: 'dQw4w9WgXcQ', title: 'Unknown', durationSec: null }),
+        stderr: '',
+      }),
+      dumpYouTubeSearch: dump({
+        code: 0,
+        stdout: [
+          musicRow({ id: 'aaaaaaaaaaa', title: 'Also Unknown', durationSec: 0 }),
+          musicRow({ id: 'bbbbbbbbbbb', title: 'Live Only', durationSec: 120, isLive: true }),
+        ].join('\n'),
+        stderr: '',
+      }),
+    });
+    // Provider returns rows; route-layer checkListenerDuration still drops them.
+    assert.ok(results.every((row) => !listenerSearchRowHasVerifiedDuration(row)));
+  });
+
+  it('surfaces Music failure when YouTube fallback also fails', async () => {
+    await assert.rejects(
+      searchListenerMusic('both-fail', 3, undefined, {
+        dumpMusicSearch: dump({
+          code: 1,
+          stdout: '',
+          stderr: 'ERROR: music provider down',
+        }),
+        dumpYouTubeSearch: dump({
+          code: 1,
+          stdout: '',
+          stderr: 'ERROR: youtube provider down',
+        }),
+      }),
+      /yt-dlp music search failed \(code 1\).*music provider down/,
+    );
+  });
+
+  it('throws on YouTube failure when Music succeeded with only unusable rows', async () => {
+    // Owner decision (#639): do not soft-return Music rows → route must 503.
+    await assert.rejects(
+      searchListenerMusic('music-ok-youtube-fail', 3, undefined, {
+        dumpMusicSearch: dump({
+          code: 0,
+          stdout: musicRow({ id: 'dQw4w9WgXcQ', title: 'Unknown', durationSec: null }),
+          stderr: '',
+        }),
+        dumpYouTubeSearch: dump({
+          code: 1,
+          stdout: '',
+          stderr: 'ERROR: youtube provider down',
+        }),
+      }),
+      /yt-dlp youtube search failed \(code 1\).*youtube provider down/,
+    );
   });
 
   it('preserves live flags from flat search JSON for listener filtering', async () => {
@@ -146,52 +288,77 @@ describe('searchListenerMusic', () => {
       is_live: true,
       live_status: 'is_live',
     });
+    // Live Music-only rows are not "verified duration" for listener accept —
+    // fall through to YouTube unless YouTube is stubbed empty-usable.
     const results = await searchListenerMusic('live', 5, undefined, {
       dumpMusicSearch: dump({ code: 0, stdout, stderr: '' }),
+      dumpYouTubeSearch: dump({ code: 0, stdout, stderr: '' }),
     });
     assert.equal(results.length, 1);
     assert.equal(results[0]!.isLive, true);
     assert.equal(results[0]!.liveStatus, 'is_live');
     assert.equal(results[0]!.durationSec, 240);
+    assert.equal(listenerSearchRowHasVerifiedDuration(results[0]!), false);
   });
 
-  it('fails closed when yt-dlp exits non-zero', async () => {
-    await assert.rejects(
-      searchListenerMusic('q', 3, undefined, {
-        dumpMusicSearch: dump({
-          code: 1,
-          stdout: JSON.stringify({ id: 'dQw4w9WgXcQ', title: 'x', duration: 100 }),
-          stderr: 'ERROR: Sign in to confirm you are not a bot',
-        }),
-      }),
-      /yt-dlp music search failed \(code 1\).*Sign in/,
-    );
-  });
-
-  it('rejects cancelled and empty queries before calling the dump', async () => {
+  it('rejects cancelled and empty queries before calling either dump', async () => {
     const unexpected = async () => {
       assert.fail('cancelled or empty search must not dump');
       return { code: 0, stdout: '', stderr: '' };
     };
     await assert.rejects(
-      searchListenerMusic('song', 1, AbortSignal.abort(), { dumpMusicSearch: unexpected }),
+      searchListenerMusic('song', 1, AbortSignal.abort(), {
+        dumpMusicSearch: unexpected,
+        dumpYouTubeSearch: unexpected,
+      }),
       { name: 'AbortError' },
     );
     await assert.rejects(
-      searchListenerMusic('   ', 1, undefined, { dumpMusicSearch: unexpected }),
+      searchListenerMusic('   ', 1, undefined, {
+        dumpMusicSearch: unexpected,
+        dumpYouTubeSearch: unexpected,
+      }),
       /Invalid search query/,
     );
   });
 
-  it('propagates cancellation after a dump returns', async () => {
+  it('propagates cancellation after Music dump and skips YouTube fallback', async () => {
     const controller = new AbortController();
+    let youtubeCalls = 0;
     await assert.rejects(
       searchListenerMusic('song', 1, controller.signal, {
         dumpMusicSearch: async () => {
           controller.abort();
           return {
             code: 0,
-            stdout: JSON.stringify({ id: 'dQw4w9WgXcQ', title: 'x', duration: 100 }),
+            stdout: musicRow({ id: 'dQw4w9WgXcQ', title: 'x', durationSec: null }),
+            stderr: '',
+          };
+        },
+        dumpYouTubeSearch: async () => {
+          youtubeCalls++;
+          return { code: 0, stdout: '', stderr: '' };
+        },
+      }),
+      { name: 'AbortError' },
+    );
+    assert.equal(youtubeCalls, 0);
+  });
+
+  it('propagates cancellation during YouTube fallback', async () => {
+    const controller = new AbortController();
+    await assert.rejects(
+      searchListenerMusic('song', 1, controller.signal, {
+        dumpMusicSearch: dump({
+          code: 0,
+          stdout: musicRow({ id: 'dQw4w9WgXcQ', title: 'x', durationSec: null }),
+          stderr: '',
+        }),
+        dumpYouTubeSearch: async () => {
+          controller.abort();
+          return {
+            code: 0,
+            stdout: musicRow({ id: 'fJ9rUzIMcZQ', title: 'y', durationSec: 100 }),
             stderr: '',
           };
         },

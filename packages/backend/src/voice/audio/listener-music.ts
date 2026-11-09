@@ -74,6 +74,26 @@ function toListenerResult(item: YouTubeSearchResult): ListenerSearchResult | nul
   };
 }
 
+/** True when a flat row already has verified, non-live duration usable for listener search. */
+export function listenerSearchRowHasVerifiedDuration(row: ListenerSearchResult): boolean {
+  return checkListenerDuration({
+    durationSec: row.durationSec,
+    isLive: row.isLive,
+    liveStatus: row.liveStatus,
+  }).ok;
+}
+
+const LISTENER_YT_DLP_BASE = [
+  '--remote-components',
+  'ejs:github',
+  '--extractor-args',
+  'youtube:player_client=tv_embedded,web,default',
+  '--no-warnings',
+  '--flat-playlist',
+  '--dump-json',
+  '--no-download',
+] as const;
+
 /**
  * Cookie-free yt-dlp args for a YouTube Music Songs search.
  * Never includes `--cookies`, even when an admin cookie file is configured.
@@ -83,18 +103,25 @@ export function listenerMusicSearchArgs(query: string, maxResults: number): stri
   if (!trimmed || trimmed.startsWith('-')) throw new Error('Invalid search query');
   const n = Math.max(1, Math.floor(maxResults));
   return [
-    '--remote-components',
-    'ejs:github',
-    '--extractor-args',
-    'youtube:player_client=tv_embedded,web,default',
-    '--no-warnings',
-    '--flat-playlist',
-    '--dump-json',
-    '--no-download',
+    ...LISTENER_YT_DLP_BASE,
     '--playlist-items',
     `1-${n}`,
     '--',
     youTubeMusicSongSearchUrl(trimmed),
+  ];
+}
+
+/**
+ * Cookie-free yt-dlp args for regular YouTube search (`ytsearchN:`).
+ * Used when Music flat rows lack verified duration. Never includes `--cookies`.
+ */
+export function listenerYouTubeSearchArgs(query: string, maxResults: number): string[] {
+  const trimmed = query.trim();
+  if (!trimmed || trimmed.startsWith('-')) throw new Error('Invalid search query');
+  const n = Math.max(1, Math.floor(maxResults));
+  return [
+    ...LISTENER_YT_DLP_BASE,
+    `ytsearch${n}:${trimmed}`,
   ];
 }
 
@@ -106,6 +133,8 @@ export interface ListenerMusicSearchDump {
 
 export interface ListenerMusicSearchDeps {
   dumpMusicSearch: (query: string, maxResults: number, signal?: AbortSignal) => Promise<ListenerMusicSearchDump>;
+  /** Cookie-free YouTube search dump. Required when injecting deps so tests cannot omit it and spawn real yt-dlp. */
+  dumpYouTubeSearch: (query: string, maxResults: number, signal?: AbortSignal) => Promise<ListenerMusicSearchDump>;
 }
 
 const SEARCH_TIMEOUT_MS = 180_000;
@@ -117,13 +146,11 @@ function summarizeStderr(stderr: string, maxLen = 280): string {
   return chosen.join(' | ').slice(0, maxLen) || 'unknown yt-dlp error';
 }
 
-async function defaultDumpMusicSearch(
-  query: string,
-  maxResults: number,
+async function runListenerDump(
+  args: string[],
   signal?: AbortSignal,
 ): Promise<ListenerMusicSearchDump> {
   signal?.throwIfAborted();
-  const args = listenerMusicSearchArgs(query, maxResults);
   const group = process.platform !== 'win32';
   const { proc, redact } = await spawnYtDlp(args, {
     target: ytDlpTarget(args),
@@ -172,28 +199,99 @@ async function defaultDumpMusicSearch(
   });
 }
 
+async function defaultDumpMusicSearch(
+  query: string,
+  maxResults: number,
+  signal?: AbortSignal,
+): Promise<ListenerMusicSearchDump> {
+  return runListenerDump(listenerMusicSearchArgs(query, maxResults), signal);
+}
+
+async function defaultDumpYouTubeSearch(
+  query: string,
+  maxResults: number,
+  signal?: AbortSignal,
+): Promise<ListenerMusicSearchDump> {
+  return runListenerDump(listenerYouTubeSearchArgs(query, maxResults), signal);
+}
+
+function parseDumpRows(stdout: string): ListenerSearchResult[] {
+  return parseFlatSearchOutput(stdout)
+    .map(toListenerResult)
+    .filter((item): item is ListenerSearchResult => item !== null);
+}
+
+async function dumpOrThrow(
+  label: 'music' | 'youtube',
+  dump: (query: string, maxResults: number, signal?: AbortSignal) => Promise<ListenerMusicSearchDump>,
+  query: string,
+  maxResults: number,
+  signal: AbortSignal,
+): Promise<ListenerSearchResult[]> {
+  const result = await dump(query, maxResults, signal);
+  signal.throwIfAborted();
+  if (result.code !== 0) {
+    throw new Error(
+      `yt-dlp ${label} search failed (code ${result.code}): ${summarizeStderr(result.stderr)}`,
+    );
+  }
+  return parseDumpRows(result.stdout);
+}
+
+const DEFAULT_LISTENER_MUSIC_SEARCH_DEPS: ListenerMusicSearchDeps = {
+  dumpMusicSearch: defaultDumpMusicSearch,
+  dumpYouTubeSearch: defaultDumpYouTubeSearch,
+};
+
 /**
- * List Music search results without administrator YouTube cookies.
- * Fail closed on yt-dlp errors. Does not download media.
+ * List search results without administrator YouTube cookies.
+ *
+ * Prefer YouTube Music Songs. When every Music row lacks a verified duration
+ * (or Music fails), fall back once to cookie-free `ytsearchN:`. Live /
+ * over-limit / unknown-duration filtering still happens at the route layer.
+ * Does not download media.
+ *
+ * Error semantics (owner decision on #639): if neither provider yields a
+ * usable verified-duration row and the YouTube dump fails (or Music dump
+ * fails and YouTube then fails), this throws. The listener search route maps
+ * that to HTTP 503 — not soft 200 []. Soft empty is only when both dumps
+ * succeed but every row fails duration/live checks at the route.
  */
 export async function searchListenerMusic(
   query: string,
   maxResults = 10,
   signal: AbortSignal = AbortSignal.timeout(SEARCH_TIMEOUT_MS),
-  deps: ListenerMusicSearchDeps = { dumpMusicSearch: defaultDumpMusicSearch },
+  deps: ListenerMusicSearchDeps = DEFAULT_LISTENER_MUSIC_SEARCH_DEPS,
 ): Promise<ListenerSearchResult[]> {
   signal.throwIfAborted();
   const trimmed = query.trim();
   if (!trimmed) throw new Error('Invalid search query');
 
-  const result = await deps.dumpMusicSearch(trimmed, maxResults, signal);
-  signal.throwIfAborted();
+  let musicRows: ListenerSearchResult[] | null = null;
+  let musicError: unknown;
 
-  if (result.code !== 0) {
-    throw new Error(`yt-dlp music search failed (code ${result.code}): ${summarizeStderr(result.stderr)}`);
+  try {
+    musicRows = await dumpOrThrow('music', deps.dumpMusicSearch, trimmed, maxResults, signal);
+  } catch (err) {
+    signal.throwIfAborted();
+    if (err instanceof Error && err.name === 'AbortError') throw err;
+    musicError = err;
   }
 
-  return parseFlatSearchOutput(result.stdout)
-    .map(toListenerResult)
-    .filter((item): item is ListenerSearchResult => item !== null);
+  if (musicRows?.some(listenerSearchRowHasVerifiedDuration)) {
+    return musicRows;
+  }
+
+  signal.throwIfAborted();
+  try {
+    return await dumpOrThrow('youtube', deps.dumpYouTubeSearch, trimmed, maxResults, signal);
+  } catch (err) {
+    signal.throwIfAborted();
+    if (err instanceof Error && err.name === 'AbortError') throw err;
+    // Prefer the Music error when both providers fail; otherwise surface YouTube.
+    // Music HTTP-success with only unusable rows leaves musicError unset, so a
+    // YouTube dump failure throws here → route 503 (intentional, not soft []).
+    if (musicError instanceof Error) throw musicError;
+    throw err;
+  }
 }
