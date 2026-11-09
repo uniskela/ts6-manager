@@ -224,9 +224,9 @@ What you cannot do: pause, skip, stop, seek, change the volume, reorder or clear
 | What | Lifetime |
 |------|----------|
 | The link | Valid for 5 minutes and works once. Opening it a second time fails. |
-| Your session | 15 minutes from the moment you open the link, no matter how much you use it. Activity does not extend it. |
+| Your session | 12 hours from the moment you open the link (or 24 hours if you tick **Remember this browser**). Absolute expiry — activity does not extend it. Stored as an HttpOnly cookie so a refresh keeps you signed in while you stay in the channel. |
 
-When the session ends, the page says the access is invalid or expired. Type `!remote` in the channel again to get a new link. The page keeps the session only in the browser's memory, so reloading or closing it also means asking for a new link.
+When the session ends, the page says the access is invalid or expired. Type `!remote` in the channel again to get a new link. Reloading or reopening the browser keeps the remote while the cookie and your TeamSpeak presence are still valid; use **Sign out** to end it early. A manager backend restart clears every remote session (they are not written to the database).
 
 **What ends a session early:**
 

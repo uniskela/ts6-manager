@@ -1,4 +1,8 @@
-/** Listener remote client for the T04 contract. Session stays in memory only. */
+/**
+ * Listener remote client.
+ * Session credential is HttpOnly cookie only — never localStorage/URL/JS memory.
+ * Module state keeps expiresAt / botId / CSRF for UI and mutation headers.
+ */
 
 export const REMOTE_POLL_MS = 5_000;
 
@@ -20,7 +24,12 @@ export class RemoteHttpError extends Error {
   }
 }
 
-export type RemoteSession = { session: string; expiresAt: string; botId: number };
+export type RemoteSession = {
+  expiresAt: string;
+  botId: number;
+  csrfToken: string;
+  remember: boolean;
+};
 export type RemoteTrack = { id: string; title: string; artist: string | null; duration: number | null };
 export type RemotePermissions = {
   searchLibrary: boolean;
@@ -78,7 +87,7 @@ export type RemotePhase =
   | { kind: 'ended'; message: string }
   | { kind: 'ready'; nonce: number };
 
-/** Stay on the current controller when the session string did not change. */
+/** Stay on the current controller when the same browser session is still live. */
 export function settleRemoteExchange(
   current: RemotePhase,
   before: string | null,
@@ -92,6 +101,11 @@ export function settleRemoteExchange(
   return { kind: 'ready', nonce: current.kind === 'ready' ? current.nonce + 1 : 1 };
 }
 
+/** Opaque handle for settleRemoteExchange — botId + expiry, never the cookie secret. */
+export function remoteSessionKey(session: RemoteSession | null): string | null {
+  return session ? `${session.botId}:${session.expiresAt}` : null;
+}
+
 export function remoteSession(): RemoteSession | null {
   if (current && Date.parse(current.expiresAt) <= Date.now()) current = null;
   return current;
@@ -101,12 +115,46 @@ export function clearRemoteSession(): void {
   current = null;
 }
 
+const REMEMBER_KEY = 'ts6_lr_remember';
+let rememberPreference = false;
+
+function readStoredRemember(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(REMEMBER_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function setRemoteRememberPreference(value: boolean): void {
+  rememberPreference = value === true;
+  try {
+    if (rememberPreference) globalThis.localStorage?.setItem(REMEMBER_KEY, '1');
+    else globalThis.localStorage?.removeItem(REMEMBER_KEY);
+  } catch { /* private mode */ }
+}
+export function remoteRememberPreference(): boolean {
+  return rememberPreference || readStoredRemember();
+}
+
 export function resetRemoteClientForTests(): void {
   current = null;
   exchanges.clear();
   exchangeGeneration = 0;
   rememberedGeneration = 0;
   mutationTail = Promise.resolve();
+  rememberPreference = false;
+  try { globalThis.localStorage?.removeItem(REMEMBER_KEY); } catch { /* ignore */ }
+}
+
+export function formatRemoteExpiry(expiresAt: string, nowMs = Date.now()): string {
+  const ms = Date.parse(expiresAt) - nowMs;
+  if (!Number.isFinite(ms) || ms <= 0) return 'Expired';
+  const mins = Math.ceil(ms / 60_000);
+  if (mins < 60) return `Expires in ${mins}m`;
+  const hours = Math.floor(mins / 60);
+  const rem = mins % 60;
+  return rem ? `Expires in ${hours}h ${rem}m` : `Expires in ${hours}h`;
 }
 
 export function remoteErrorMessage(error: unknown): string {
@@ -215,11 +263,6 @@ export function remoteMediaUrlError(value: string): string | null {
   return null;
 }
 
-function remember(session: RemoteSession): RemoteSession {
-  current = session;
-  return session;
-}
-
 async function readBody(res: Response, auth: boolean): Promise<unknown> {
   const text = await res.text();
   let body: unknown = null;
@@ -244,15 +287,18 @@ async function remoteFetch(path: string, init: RequestInit, auth: boolean): Prom
   const headers = new Headers(init.headers);
   headers.set('Accept', 'application/json');
   if (init.body != null) headers.set('Content-Type', 'application/json');
-  if (session) headers.set('Authorization', `Bearer ${session.session}`);
+  const method = (init.method ?? 'GET').toUpperCase();
+  if (session && !['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    headers.set('X-CSRF-Token', session.csrfToken);
+  }
   let res: Response;
   try {
     res = await fetch(`/api/listener-remote${path}`, {
       ...init,
       headers,
       cache: 'no-store',
-      credentials: 'omit',
-      referrerPolicy: 'no-referrer',
+      credentials: 'include',
+      referrerPolicy: 'strict-origin-when-cross-origin',
     });
   } catch {
     throw unavailable();
@@ -263,10 +309,25 @@ async function remoteFetch(path: string, init: RequestInit, auth: boolean): Prom
 function parseSession(body: unknown): RemoteSession {
   if (!body || typeof body !== 'object') throw unavailable();
   const row = body as Record<string, unknown>;
-  if (typeof row.session !== 'string' || !SESSION.test(row.session)) throw unavailable();
+  if (typeof row.session === 'string') throw unavailable(); // must not return credential to JS
   if (typeof row.expiresAt !== 'string' || Number.isNaN(Date.parse(row.expiresAt))) throw unavailable();
   if (typeof row.botId !== 'number' || !Number.isSafeInteger(row.botId) || row.botId <= 0) throw unavailable();
-  return { session: row.session, expiresAt: row.expiresAt, botId: row.botId };
+  if (typeof row.csrfToken !== 'string' || !SESSION.test(row.csrfToken)) throw unavailable();
+  return {
+    expiresAt: row.expiresAt,
+    botId: row.botId,
+    csrfToken: row.csrfToken,
+    remember: row.remember === true,
+  };
+}
+
+function parseSessionProbe(body: unknown): Omit<RemoteSession, 'remember'> {
+  if (!body || typeof body !== 'object') throw unavailable();
+  const row = body as Record<string, unknown>;
+  if (typeof row.expiresAt !== 'string' || Number.isNaN(Date.parse(row.expiresAt))) throw unavailable();
+  if (typeof row.botId !== 'number' || !Number.isSafeInteger(row.botId) || row.botId <= 0) throw unavailable();
+  if (typeof row.csrfToken !== 'string' || !SESSION.test(row.csrfToken)) throw unavailable();
+  return { expiresAt: row.expiresAt, botId: row.botId, csrfToken: row.csrfToken };
 }
 
 function parseTrack(value: unknown): RemoteTrack {
@@ -398,24 +459,78 @@ function parseSong(value: unknown): RemoteSong {
   return { id: row.id, title: row.title, artist, duration };
 }
 
-export function exchangeRemoteToken(token: string): Promise<RemoteSession> {
+export function exchangeRemoteToken(token: string, remember = rememberPreference): Promise<RemoteSession> {
   if (!SESSION.test(token)) return Promise.reject(new RemoteHttpError(400, 'invalid_request', 'Invalid listener request.'));
   const existing = exchanges.get(token);
   if (existing) return existing;
   const generation = ++exchangeGeneration;
-  const pending = remoteFetch('/exchange', { method: 'POST', body: JSON.stringify({ token }) }, false)
+  const pending = remoteFetch('/exchange', {
+    method: 'POST',
+    body: JSON.stringify({ token, remember: remember === true }),
+  }, false)
     .then(parseSession)
     .then((session) => {
       // A newer success wins. A failed later attempt must not drop an older success.
       if (generation < rememberedGeneration) return session;
       rememberedGeneration = generation;
-      return remember(session);
+      return rememberSession(session);
     });
   pending.catch((error: unknown) => {
     if (!(error instanceof RemoteHttpError) || error.status >= 500) exchanges.delete(token);
   });
   exchanges.set(token, pending);
   return pending;
+}
+
+/** Restore after refresh when the HttpOnly cookie is still valid. */
+export async function probeRemoteSession(): Promise<RemoteSession | null> {
+  try {
+    const body = await remoteFetch('/session', { method: 'GET' }, false);
+    const probe = parseSessionProbe(body);
+    const prior = remoteSession();
+    const next: RemoteSession = {
+      expiresAt: probe.expiresAt,
+      botId: probe.botId,
+      csrfToken: probe.csrfToken,
+      remember: prior?.remember === true,
+    };
+    const fromDoc = readCsrfFromDocument();
+    if (fromDoc) next.csrfToken = fromDoc;
+    return rememberSession(next);
+  } catch (error) {
+    if (error instanceof RemoteHttpError && error.status === 401) {
+      clearRemoteSession();
+      return null;
+    }
+    throw error;
+  }
+}
+
+export async function signOutRemote(): Promise<void> {
+  try {
+    await remoteFetch('/session', { method: 'DELETE' }, true);
+  } catch (error) {
+    if (!(error instanceof RemoteHttpError && error.status === 401)) throw error;
+  } finally {
+    clearRemoteSession();
+  }
+}
+
+function readCsrfFromDocument(): string | null {
+  if (typeof document === 'undefined') return null;
+  const match = /(?:^|;\s*)ts6_lr_csrf=([^;]+)/.exec(document.cookie);
+  if (!match?.[1]) return null;
+  try {
+    const value = decodeURIComponent(match[1]);
+    return SESSION.test(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberSession(session: RemoteSession): RemoteSession {
+  current = session;
+  return session;
 }
 
 export function loadRemoteState(): Promise<RemoteState> {

@@ -5,10 +5,12 @@ import {
   RemoteHttpError,
   canBrowseRemotePlaylists,
   canSearchRemoteMusic,
+  formatRemoteExpiry,
   loadRemoteState,
   remoteErrorMessage,
   remoteSession,
   shouldPollRemote,
+  signOutRemote,
   type RemoteState,
 } from '@/lib/listener-remote';
 import { LibraryView } from './LibraryView';
@@ -24,8 +26,10 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
   const [state, setState] = useState<RemoteState | null>(null);
   const [stateError, setStateError] = useState<string | null>(null);
   const [loadingState, setLoadingState] = useState(true);
+  const [signingOut, setSigningOut] = useState(false);
   const lastPoll = useRef(0);
   const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
+  const session = remoteSession();
 
   const loadState = async (force = false) => {
     const visible = document.visibilityState === 'visible';
@@ -82,12 +86,37 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
           <h1 className="truncate text-lg font-semibold lg:text-2xl" title={state?.bot.name ?? 'Listener remote'}>
             {state?.bot.name ?? 'Listener remote'}
           </h1>
+          {session && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {formatRemoteExpiry(session.expiresAt)}
+              {session.remember ? ' · remembered browser' : ''}
+            </p>
+          )}
         </div>
-        {state && (
-          <Badge variant={state.bot.status === 'playing' ? 'default' : 'secondary'} className="shrink-0">
-            {STATUS_LABEL[state.bot.status] ?? 'Connected'}
-          </Badge>
-        )}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          {state && (
+            <Badge variant={state.bot.status === 'playing' ? 'default' : 'secondary'}>
+              {STATUS_LABEL[state.bot.status] ?? 'Connected'}
+            </Badge>
+          )}
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+            disabled={signingOut}
+            onClick={() => {
+              setSigningOut(true);
+              void signOutRemote().then(
+                () => onEnded('Signed out'),
+                (error: unknown) => {
+                  setSigningOut(false);
+                  onEnded(remoteErrorMessage(error));
+                },
+              );
+            }}
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       <div className="min-w-0 space-y-4 lg:sticky lg:top-6">

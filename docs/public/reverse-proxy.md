@@ -153,7 +153,10 @@ contain actions, bot/scope, outcomes and an identity fingerprint, never access
 credentials or pasted URLs.
 
 Run one backend replica: tokens, sessions and limits are bounded, process-local
-state and disappear on restart. Tokens last five minutes, sessions fifteen
-minutes absolutely. Leaving the bot channel or revocation invalidates access.
-Admins can revoke access through the documented API. No sidecar or database
-ports need publication for this feature.
+state and disappear on restart (including “remember this browser” cookies).
+Tokens last five minutes; sessions last twelve hours absolutely, or twenty-four
+with remember. Cookie sessions are host-only HttpOnly / SameSite=Strict under
+`/api/listener-remote` with CSRF and Origin checks on mutations. Leaving the
+bot channel or revocation invalidates access. Admins can revoke access through
+the documented API. No sidecar or database ports need publication for this
+feature.

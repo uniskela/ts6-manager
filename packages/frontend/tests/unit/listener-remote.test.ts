@@ -13,6 +13,7 @@ import {
   canSearchRemoteMusic,
   clearRemoteSession,
   exchangeRemoteToken,
+  formatRemoteExpiry,
   loadRemoteLibrary,
   loadRemotePlaylistSongs,
   loadRemotePlaylists,
@@ -28,17 +29,19 @@ import {
   remoteSearchErrorMessage,
   remoteSearchQueryError,
   remoteSearchQueueErrorMessage,
+  remoteRememberPreference,
   remoteSession,
   requestRemoteUrl,
   resetRemoteClientForTests,
   searchQueueFailure,
   searchRemoteMusic,
+  setRemoteRememberPreference,
   settleRemoteExchange,
   shouldPollRemote,
 } from '../../src/lib/listener-remote';
+import { MemoryStorage } from './helpers/memory-storage.ts';
 
 const token = 't'.repeat(43);
-const session = 's'.repeat(43);
 const future = new Date(Date.now() + 60_000).toISOString();
 
 function json(body: unknown, status = 200): Response {
@@ -87,23 +90,23 @@ describe('listener remote launch token', () => {
 });
 
 describe('listener remote client', () => {
-  const calls: Array<{ url: string; method: string; body: string | null; authorization: string | null }> = [];
-  let persisted = false;
+  const calls: Array<{
+    url: string; method: string; body: string | null;
+    authorization: string | null; csrf: string | null; credentials: RequestCredentials | undefined;
+  }> = [];
+  let storage: MemoryStorage;
+  const csrf = 'c'.repeat(43);
 
   beforeEach(() => {
-    resetRemoteClientForTests();
-    calls.length = 0;
-    persisted = false;
-    const storage = {
-      getItem: () => null,
-      setItem: () => { persisted = true; },
-      removeItem: () => { persisted = true; },
-      clear: () => { persisted = true; },
-      key: () => null,
-      length: 0,
-    };
+    storage = new MemoryStorage();
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
     Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: storage });
+    resetRemoteClientForTests();
+    calls.length = 0;
+    Object.defineProperty(globalThis, 'document', {
+      configurable: true,
+      value: { cookie: `ts6_lr_csrf=${csrf}` },
+    });
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers);
       calls.push({
@@ -111,12 +114,15 @@ describe('listener remote client', () => {
         method: init?.method ?? 'GET',
         body: typeof init?.body === 'string' ? init.body : null,
         authorization: headers.get('Authorization'),
+        csrf: headers.get('X-CSRF-Token'),
+        credentials: init?.credentials,
       });
       const url = new URL(String(input), 'http://remote.test');
       if (url.pathname.endsWith('/exchange')) {
         const posted = JSON.parse(String(init?.body));
-        assert.deepEqual(posted, { token });
-        return json({ session, expiresAt: future, botId: 12 });
+        assert.equal(posted.token, token);
+        assert.equal(posted.remember, false);
+        return json({ expiresAt: future, botId: 12, csrfToken: csrf, remember: false });
       }
       if (url.pathname.endsWith('/state')) {
         return json({
@@ -180,13 +186,29 @@ describe('listener remote client', () => {
     clearRemoteSession();
   });
 
-  it('exchanges a token once, keeps the session in memory, and fail-closes missing permissions', async () => {
-    assert.deepEqual(await exchangeRemoteToken(token), { session, expiresAt: future, botId: 12 });
+  it('persists remember preference in localStorage across navigations', () => {
+    setRemoteRememberPreference(true);
+    assert.equal(remoteRememberPreference(), true);
+    assert.equal(globalThis.localStorage.getItem('ts6_lr_remember'), '1');
+    // Simulate a fresh in-memory flag after page load; storage still wins.
+    resetRemoteClientForTests();
+    globalThis.localStorage.setItem('ts6_lr_remember', '1');
+    assert.equal(remoteRememberPreference(), true);
+    setRemoteRememberPreference(false);
+    assert.equal(remoteRememberPreference(), false);
+  });
+
+  it('exchanges a token once, keeps metadata in memory (not the cookie secret), and fail-closes missing permissions', async () => {
+    assert.deepEqual(await exchangeRemoteToken(token), {
+      expiresAt: future, botId: 12, csrfToken: csrf, remember: false,
+    });
     assert.equal(calls.length, 1);
+    assert.equal(calls[0]!.credentials, 'include');
+    assert.equal(calls[0]!.authorization, null);
     await exchangeRemoteToken(token);
     assert.equal(calls.length, 1);
-    assert.equal(remoteSession()?.session, session);
-    assert.equal(persisted, false);
+    assert.equal(remoteSession()?.botId, 12);
+    assert.equal(storage.length, 0, 'exchange must not write session secrets to storage');
     const state = await loadRemoteState();
     assert.equal(state.nowPlaying?.title, 'Neon Skyline');
     assert.equal('filePath' in (state.nowPlaying ?? {}), false);
@@ -200,7 +222,14 @@ describe('listener remote client', () => {
     assert.equal(canBrowseRemotePlaylists(state.permissions), true);
     assert.equal(canBrowseRemotePlaylists({ searchLibrary: true, addToQueue: false, requestUrl: false, searchMusic: false, browsePlaylists: false }), false);
     assert.equal(canBrowseRemotePlaylists({ searchLibrary: false, addToQueue: false, requestUrl: false, searchMusic: false, browsePlaylists: true }), true);
-    assert.equal(calls[1].authorization, `Bearer ${session}`);
+    assert.equal(calls[1]!.authorization, null);
+    assert.equal(calls[1]!.credentials, 'include');
+    assert.equal(calls[1]!.csrf, null);
+    await queueRemoteSong(9);
+    assert.equal(calls.at(-1)!.csrf, csrf);
+    assert.equal(calls.at(-1)!.authorization, null);
+    assert.equal(calls.at(-1)!.credentials, 'include');
+    assert.equal(formatRemoteExpiry(new Date(Date.now() + 90 * 60_000).toISOString(), Date.now()), 'Expires in 1h 30m');
     assert.equal(playbackSummary(state.nowPlaying, 'playing').label, 'Playing · 3:34');
     assert.equal(shouldPollRemote(false, 0, 10_000), false);
     assert.equal(shouldPollRemote(true, 0, 4_999), false);
@@ -259,7 +288,7 @@ describe('listener remote client', () => {
     globalThis.fetch = (async () => json({ error: 'The queue is full.', code: 'queue_full' }, 409)) as typeof fetch;
     await assert.rejects(() => queueRemoteSong(9), (error: unknown) => error instanceof RemoteHttpError
       && error.status === 409 && error.code === 'queue_full' && error.message === 'The queue is full.');
-    assert.equal(remoteSession()?.session, session);
+    assert.equal(remoteSession()?.botId, 12);
   });
 
   it('rejects pasted URLs that the contract will not accept', async () => {
@@ -286,7 +315,7 @@ describe('listener remote client', () => {
     await assert.rejects(() => exchangeRemoteToken(other), (error: unknown) => error instanceof RemoteHttpError && error.status === 401);
     await assert.rejects(() => exchangeRemoteToken(other));
     assert.equal(posts, 1);
-    assert.equal(remoteSession()?.session, session);
+    assert.equal(remoteSession()?.botId, 12);
   });
 
   it('retries a transient exchange instead of replaying the rejection', async () => {
@@ -294,11 +323,13 @@ describe('listener remote client', () => {
     globalThis.fetch = (async () => {
       attempts += 1;
       if (attempts === 1) return json({ error: 'Listener remote is unavailable.', code: 'unavailable' }, 503);
-      return json({ session, expiresAt: future, botId: 12 });
+      return json({ expiresAt: future, botId: 12, csrfToken: csrf, remember: false });
     }) as typeof fetch;
     await assert.rejects(() => exchangeRemoteToken(token));
     assert.equal(remoteSession(), null);
-    assert.deepEqual(await exchangeRemoteToken(token), { session, expiresAt: future, botId: 12 });
+    assert.deepEqual(await exchangeRemoteToken(token), {
+      expiresAt: future, botId: 12, csrfToken: csrf, remember: false,
+    });
     assert.equal(attempts, 2);
   });
 
@@ -317,22 +348,23 @@ describe('listener remote client', () => {
     const olderRequest = waiting.find((item) => item.token === first);
     assert.ok(newerRequest);
     assert.ok(olderRequest);
-    newerRequest.release(json({ session: second, expiresAt: future, botId: 2 }));
+    newerRequest.release(json({ expiresAt: future, botId: 2, csrfToken: csrf, remember: false }));
     assert.equal((await newer).botId, 2);
-    olderRequest.release(json({ session: first, expiresAt: future, botId: 1 }));
+    olderRequest.release(json({ expiresAt: future, botId: 1, csrfToken: csrf, remember: false }));
     await older;
-    assert.equal(remoteSession()?.session, second);
+    assert.equal(remoteSession()?.botId, 2);
   });
 
   it('keeps a live remote when a later exchange fails or repeats the same session', () => {
     const ready = { kind: 'ready' as const, nonce: 3 };
     const opening = { kind: 'opening' as const };
-    assert.deepEqual(settleRemoteExchange(opening, session, session, 'Remote access is invalid or expired'), { kind: 'ready', nonce: 0 });
-    assert.equal(settleRemoteExchange(ready, session, session, 'Remote access is invalid or expired'), ready);
+    const key = `12:${future}`;
+    assert.deepEqual(settleRemoteExchange(opening, key, key, 'Remote access is invalid or expired'), { kind: 'ready', nonce: 0 });
+    assert.equal(settleRemoteExchange(ready, key, key, 'Remote access is invalid or expired'), ready);
     assert.deepEqual(settleRemoteExchange(opening, null, null, 'Listener remote is unavailable.'), { kind: 'ended', message: 'Listener remote is unavailable.' });
-    assert.equal(settleRemoteExchange(ready, session, session, null), ready);
-    assert.deepEqual(settleRemoteExchange(ready, session, 'b'.repeat(43), null), { kind: 'ready', nonce: 4 });
-    assert.deepEqual(settleRemoteExchange(opening, null, session, null), { kind: 'ready', nonce: 1 });
+    assert.equal(settleRemoteExchange(ready, key, key, null), ready);
+    assert.deepEqual(settleRemoteExchange(ready, key, '2:' + future, null), { kind: 'ready', nonce: 4 });
+    assert.deepEqual(settleRemoteExchange(opening, null, key, null), { kind: 'ready', nonce: 1 });
     assert.deepEqual(settleRemoteExchange(opening, null, null, null), { kind: 'ended', message: 'Remote access is invalid or expired' });
   });
 

@@ -2,8 +2,12 @@ import { useEffect, useState } from 'react';
 import { remoteLaunchToken } from '@/lib/listener-remote-launch';
 import {
   exchangeRemoteToken,
+  probeRemoteSession,
   remoteErrorMessage,
+  remoteRememberPreference,
   remoteSession,
+  remoteSessionKey,
+  setRemoteRememberPreference,
   settleRemoteExchange,
   type RemotePhase,
 } from '@/lib/listener-remote';
@@ -15,7 +19,7 @@ type Phase = RemotePhase;
 function initialPhase(): Phase {
   if (remoteSession()) return { kind: 'ready', nonce: 0 };
   if (remoteLaunchToken()) return { kind: 'opening' };
-  return { kind: 'need-link' };
+  return { kind: 'opening' }; // probe cookie before need-link
 }
 
 function phaseWithoutToken(current: Phase): Phase {
@@ -27,6 +31,7 @@ function phaseWithoutToken(current: Phase): Phase {
 export default function ListenerRemote() {
   const [phase, setPhase] = useState<Phase>(initialPhase);
   const [generation, setGeneration] = useState(0);
+  const [remember, setRemember] = useState(remoteRememberPreference);
 
   useEffect(() => {
     const onToken = () => setGeneration((n) => n + 1);
@@ -35,22 +40,51 @@ export default function ListenerRemote() {
   }, []);
 
   useEffect(() => {
+    setRemoteRememberPreference(remember);
+  }, [remember]);
+
+  useEffect(() => {
     const token = remoteLaunchToken();
-    if (!token) {
-      setPhase(phaseWithoutToken);
-      return;
+    if (token) {
+      let alive = true;
+      const before = remoteSessionKey(remoteSession());
+      if (!before) setPhase({ kind: 'opening' });
+      const settle = (error: string | null) => {
+        if (!alive) return;
+        const after = remoteSessionKey(remoteSession());
+        setPhase((current) => settleRemoteExchange(current, before, after, error));
+      };
+      void exchangeRemoteToken(token, remoteRememberPreference()).then(
+        () => settle(null),
+        async (error: unknown) => {
+          // Stale fragment token must not hide a still-valid HttpOnly cookie session.
+          let restored = null;
+          try {
+            restored = await probeRemoteSession();
+          } catch (probeError) {
+            if (!alive) return;
+            settle(remoteErrorMessage(probeError));
+            return;
+          }
+          if (!alive) return;
+          if (restored) settle(null);
+          else settle(remoteErrorMessage(error));
+        },
+      );
+      return () => { alive = false; };
     }
+
     let alive = true;
-    const before = remoteSession()?.session ?? null;
-    if (!before) setPhase({ kind: 'opening' });
-    const settle = (error: string | null) => {
-      if (!alive) return;
-      const after = remoteSession()?.session ?? null;
-      setPhase((current) => settleRemoteExchange(current, before, after, error));
-    };
-    void exchangeRemoteToken(token).then(
-      () => settle(null),
-      (error: unknown) => settle(remoteErrorMessage(error)),
+    if (!remoteSession()) setPhase({ kind: 'opening' });
+    void probeRemoteSession().then(
+      (session) => {
+        if (!alive) return;
+        setPhase(session ? { kind: 'ready', nonce: 0 } : phaseWithoutToken({ kind: 'need-link' }));
+      },
+      (error: unknown) => {
+        if (!alive) return;
+        setPhase({ kind: 'ended', message: remoteErrorMessage(error) });
+      },
     );
     return () => { alive = false; };
   }, [generation]);
@@ -58,8 +92,19 @@ export default function ListenerRemote() {
   return (
     <main className="remote-shell mx-auto flex min-h-dvh w-full max-w-lg flex-col px-3 py-4 lg:max-w-6xl lg:px-6 lg:py-8">
       {phase.kind === 'ready'
-        ? <ReadyView key={phase.nonce} onEnded={(message) => setPhase({ kind: 'ended', message })} />
-        : <GateView phase={phase} />}
+        ? (
+          <ReadyView
+            key={phase.nonce}
+            onEnded={(message) => setPhase({ kind: 'ended', message })}
+          />
+        )
+        : (
+          <GateView
+            phase={phase}
+            remember={remember}
+            onRememberChange={setRemember}
+          />
+        )}
     </main>
   );
 }
