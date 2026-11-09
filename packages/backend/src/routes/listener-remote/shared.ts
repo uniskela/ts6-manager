@@ -10,8 +10,8 @@ import { clientRateKey } from '../../utils/client-address.js';
 import type { ListenerRemoteRefusalAudit, RefusalEvent } from '../../audit/index.js';
 import { config } from '../../config.js';
 import {
-  cookieMutationAllowed,
-  cookieOriginAllowed,
+  cookieMutationAllowedAsync,
+  cookieOriginAllowedAsync,
   sessionCredentialFromRequest,
 } from './cookies.js';
 
@@ -183,11 +183,11 @@ export function bearer(req: Request): string {
 }
 
 /** Cookie sessions need Origin (+ CSRF on mutations); Bearer-only skips. */
-function assertCookieTransport(req: Request): void {
+async function assertCookieTransport(req: Request): Promise<void> {
   const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
   if (mutating) {
-    if (!cookieMutationAllowed(req)) fail(403, 'csrf_rejected', 'Listener remote CSRF check failed.');
-  } else if (!cookieOriginAllowed(req)) {
+    if (!(await cookieMutationAllowedAsync(req))) fail(403, 'csrf_rejected', 'Listener remote CSRF check failed.');
+  } else if (!(await cookieOriginAllowedAsync(req))) {
     fail(403, 'origin_rejected', 'Listener remote origin check failed.');
   }
 }
@@ -223,14 +223,14 @@ export async function liveIdentity(req: Request, binding: ListenerRemoteBinding)
 }
 
 export async function authenticate(req: Request) {
-  assertCookieTransport(req);
+  await assertCookieTransport(req);
   const binding = await service(req).authenticate(bearer(req), async bound => Boolean(await liveIdentity(req, bound)));
   remember(req, binding);
   return binding;
 }
 
 export async function authorized(req: Request, command: string, args = '') {
-  assertCookieTransport(req);
+  await assertCookieTransport(req);
   let identity: NonNullable<Awaited<ReturnType<typeof liveIdentity>>> | undefined;
   let policy: Awaited<ReturnType<typeof loadMediaCommandPermissions>> | undefined;
   const binding = await service(req).authenticate(bearer(req), async bound => {

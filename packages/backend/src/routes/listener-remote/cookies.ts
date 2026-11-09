@@ -5,11 +5,17 @@
 import type { Request, Response } from 'express';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { config } from '../../config.js';
+import { loadPublicUrl } from '../../utils/app-settings.js';
 
 export const SESSION_COOKIE = 'ts6_lr_session';
 export const CSRF_COOKIE = 'ts6_lr_csrf';
-/** Cookie Path — host-only (no Domain attribute). */
-const COOKIE_PATH = '/api/listener-remote';
+/** Session cookie Path — host-only (no Domain attribute), API-scoped. */
+const SESSION_COOKIE_PATH = '/api/listener-remote';
+/**
+ * CSRF cookie Path must be readable from the SPA (`/remote`) via document.cookie
+ * for double-submit; session secret stays API-scoped above.
+ */
+const CSRF_COOKIE_PATH = '/';
 
 export function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
@@ -38,9 +44,9 @@ function wantsSecureCookie(req: Request): boolean {
   return process.env.NODE_ENV === 'production';
 }
 
-function cookieFlags(req: Request, maxAgeSec: number, httpOnly: boolean): string {
+function cookieFlags(req: Request, maxAgeSec: number, httpOnly: boolean, path: string): string {
   const parts = [
-    `Path=${COOKIE_PATH}`,
+    `Path=${path}`,
     'SameSite=Strict',
     `Max-Age=${Math.max(0, Math.floor(maxAgeSec))}`,
   ];
@@ -59,8 +65,8 @@ export function setListenerRemoteCookies(
   const maxAgeSec = Math.max(1, Math.ceil((expiresAtMs - Date.now()) / 1000));
   const existing = res.getHeader('Set-Cookie');
   const next = [
-    `${SESSION_COOKIE}=${encodeURIComponent(session)}; ${cookieFlags(req, maxAgeSec, true)}`,
-    `${CSRF_COOKIE}=${encodeURIComponent(csrfToken)}; ${cookieFlags(req, maxAgeSec, false)}`,
+    `${SESSION_COOKIE}=${encodeURIComponent(session)}; ${cookieFlags(req, maxAgeSec, true, SESSION_COOKIE_PATH)}`,
+    `${CSRF_COOKIE}=${encodeURIComponent(csrfToken)}; ${cookieFlags(req, maxAgeSec, false, CSRF_COOKIE_PATH)}`,
   ];
   if (!existing) res.setHeader('Set-Cookie', next);
   else if (Array.isArray(existing)) res.setHeader('Set-Cookie', [...existing.map(String), ...next]);
@@ -68,9 +74,14 @@ export function setListenerRemoteCookies(
 }
 
 export function clearListenerRemoteCookies(req: Request, res: Response): void {
-  const clear = (name: string, httpOnly: boolean) =>
-    `${name}=; Path=${COOKIE_PATH}; SameSite=Strict; Max-Age=0${httpOnly ? '; HttpOnly' : ''}${wantsSecureCookie(req) ? '; Secure' : ''}`;
-  const next = [clear(SESSION_COOKIE, true), clear(CSRF_COOKIE, false)];
+  const clear = (name: string, httpOnly: boolean, path: string) =>
+    `${name}=; Path=${path}; SameSite=Strict; Max-Age=0${httpOnly ? '; HttpOnly' : ''}${wantsSecureCookie(req) ? '; Secure' : ''}`;
+  const next = [
+    clear(SESSION_COOKIE, true, SESSION_COOKIE_PATH),
+    clear(CSRF_COOKIE, false, CSRF_COOKIE_PATH),
+    // Clear legacy Path=/api/listener-remote CSRF if an older build set it.
+    clear(CSRF_COOKIE, false, SESSION_COOKIE_PATH),
+  ];
   const existing = res.getHeader('Set-Cookie');
   if (!existing) res.setHeader('Set-Cookie', next);
   else if (Array.isArray(existing)) res.setHeader('Set-Cookie', [...existing.map(String), ...next]);
@@ -81,13 +92,25 @@ export function newCsrfToken(): string {
   return randomBytes(32).toString('base64url');
 }
 
-/** Allowed browser origins for cookie-authenticated remote calls. */
+/** Env-derived origins (sync). Prefer `allowedRemoteOriginsForRequest` when Prisma is available. */
 export function allowedRemoteOrigins(): Set<string> {
   const origins = new Set<string>();
   for (const raw of [config.frontendUrl, process.env.PUBLIC_URL]) {
     if (!raw) continue;
     try { origins.add(new URL(raw).origin); } catch { /* skip */ }
   }
+  return origins;
+}
+
+/** FRONTEND_URL, PUBLIC_URL env, and saved Public URL setting (DB overrides env). */
+export async function allowedRemoteOriginsForRequest(req: Request): Promise<Set<string>> {
+  const origins = allowedRemoteOrigins();
+  const prisma = req.app?.locals?.prisma;
+  if (!prisma) return origins;
+  try {
+    const { publicUrl } = await loadPublicUrl(prisma);
+    if (publicUrl) origins.add(new URL(publicUrl).origin);
+  } catch { /* ignore settings lookup failures — fail closed via empty/extra-less set */ }
   return origins;
 }
 
@@ -101,14 +124,7 @@ function originOf(urlOrOrigin: string | undefined): string | null {
   return null;
 }
 
-/**
- * Cookie sessions require a matching Origin (preferred) or Referer.
- * Bearer-only clients skip this (tests / non-browser).
- */
-export function cookieOriginAllowed(req: Request): boolean {
-  const cookies = parseCookies(req.get('Cookie'));
-  if (!cookies[SESSION_COOKIE]) return true;
-  const allowed = allowedRemoteOrigins();
+function originMatchesAllowed(req: Request, allowed: Set<string>): boolean {
   if (allowed.size === 0) return false;
   const origin = originOf(req.get('Origin') ?? undefined)
     ?? originOf(req.get('Referer') ?? undefined);
@@ -123,6 +139,22 @@ export function cookieOriginAllowed(req: Request): boolean {
     } catch { /* ignore */ }
   }
   return false;
+}
+
+/**
+ * Cookie sessions require a matching Origin (preferred) or Referer.
+ * Bearer-only clients skip this (tests / non-browser).
+ */
+export function cookieOriginAllowed(req: Request): boolean {
+  const cookies = parseCookies(req.get('Cookie'));
+  if (!cookies[SESSION_COOKIE]) return true;
+  return originMatchesAllowed(req, allowedRemoteOrigins());
+}
+
+export async function cookieOriginAllowedAsync(req: Request): Promise<boolean> {
+  const cookies = parseCookies(req.get('Cookie'));
+  if (!cookies[SESSION_COOKIE]) return true;
+  return originMatchesAllowed(req, await allowedRemoteOriginsForRequest(req));
 }
 
 export function csrfTokenFromRequest(req: Request): string | undefined {
@@ -149,6 +181,12 @@ export function cookieMutationAllowed(req: Request): boolean {
   const cookies = parseCookies(req.get('Cookie'));
   if (!cookies[SESSION_COOKIE]) return true;
   return cookieOriginAllowed(req) && csrfMatches(req);
+}
+
+export async function cookieMutationAllowedAsync(req: Request): Promise<boolean> {
+  const cookies = parseCookies(req.get('Cookie'));
+  if (!cookies[SESSION_COOKIE]) return true;
+  return (await cookieOriginAllowedAsync(req)) && csrfMatches(req);
 }
 
 export function fingerprintCookiePresence(req: Request): string {

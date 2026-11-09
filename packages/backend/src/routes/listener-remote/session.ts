@@ -36,8 +36,15 @@ export function registerSessionRoutes(router: Router): void {
     const binding = await authenticate(req);
     const credential = sessionCredentialFromRequest(req);
     const expiresAt = service(req).peekSessionExpiry(credential);
-    if (expiresAt == null) fail(401, 'invalid_access', 'Remote access is invalid or expired');
-    res.json({ expiresAt: new Date(expiresAt).toISOString(), botId: binding.botId });
+    if (expiresAt == null || !credential) fail(401, 'invalid_access', 'Remote access is invalid or expired');
+    // Refresh must recover CSRF for mutations even when document.cookie Path quirks apply.
+    const csrfToken = newCsrfToken();
+    setListenerRemoteCookies(req, res, credential, csrfToken, expiresAt);
+    res.json({
+      expiresAt: new Date(expiresAt).toISOString(),
+      botId: binding.botId,
+      csrfToken,
+    });
   }));
 
   router.delete('/session', endpoint(async (req, res) => {

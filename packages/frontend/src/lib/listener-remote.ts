@@ -306,12 +306,13 @@ function parseSession(body: unknown): RemoteSession {
   };
 }
 
-function parseSessionProbe(body: unknown): Omit<RemoteSession, 'csrfToken' | 'remember'> {
+function parseSessionProbe(body: unknown): Omit<RemoteSession, 'remember'> {
   if (!body || typeof body !== 'object') throw unavailable();
   const row = body as Record<string, unknown>;
   if (typeof row.expiresAt !== 'string' || Number.isNaN(Date.parse(row.expiresAt))) throw unavailable();
   if (typeof row.botId !== 'number' || !Number.isSafeInteger(row.botId) || row.botId <= 0) throw unavailable();
-  return { expiresAt: row.expiresAt, botId: row.botId };
+  if (typeof row.csrfToken !== 'string' || !SESSION.test(row.csrfToken)) throw unavailable();
+  return { expiresAt: row.expiresAt, botId: row.botId, csrfToken: row.csrfToken };
 }
 
 function parseTrack(value: unknown): RemoteTrack {
@@ -475,17 +476,11 @@ export async function probeRemoteSession(): Promise<RemoteSession | null> {
     const next: RemoteSession = {
       expiresAt: probe.expiresAt,
       botId: probe.botId,
-      csrfToken: prior?.csrfToken && SESSION.test(prior.csrfToken) ? prior.csrfToken : '',
+      csrfToken: probe.csrfToken,
       remember: prior?.remember === true,
     };
-    // CSRF cookie is readable by document.cookie when Path matches — prefer that.
     const fromDoc = readCsrfFromDocument();
     if (fromDoc) next.csrfToken = fromDoc;
-    if (!next.csrfToken) {
-      // Cookie session without CSRF cannot mutate; treat as need re-link for safety.
-      clearRemoteSession();
-      return null;
-    }
     return rememberSession(next);
   } catch (error) {
     if (error instanceof RemoteHttpError && error.status === 401) {

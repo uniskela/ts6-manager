@@ -563,6 +563,7 @@ describe('listener remote HTTP security boundary', () => {
     assert.match(sessionLine, /HttpOnly/i);
     assert.equal(/Domain=/i.test(sessionLine), false);
     assert.equal(/HttpOnly/i.test(csrfLine), false);
+    assert.match(csrfLine, /Path=\/(?:;|$)/);
     assert.match(csrfLine, /SameSite=Strict/);
     const data = await exchanged.json() as { csrfToken: string; session?: unknown };
     assert.equal(data.session, undefined);
@@ -587,9 +588,13 @@ describe('listener remote HTTP security boundary', () => {
     })).status, 200);
     const probe = await f.request('/session', { headers: { Cookie: cookie, Origin: origin } });
     assert.equal(probe.status, 200);
-    assert.deepEqual(Object.keys(await probe.json() as object).sort(), ['botId', 'expiresAt']);
+    const probed = await probe.json() as { botId: number; expiresAt: string; csrfToken: string; session?: unknown };
+    assert.deepEqual(Object.keys(probed).sort(), ['botId', 'csrfToken', 'expiresAt']);
+    assert.equal(probed.session, undefined);
+    assert.match(probed.csrfToken, /^[A-Za-z0-9_-]{43}$/);
+    const afterProbe = `ts6_lr_session=${session}; ts6_lr_csrf=${probed.csrfToken}`;
     assert.equal((await f.request('/queue', {
-      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': csrf },
+      headers: { Cookie: afterProbe, Origin: origin, 'X-CSRF-Token': probed.csrfToken },
       body: { songId: 11 },
     })).status, 200);
     // Bearer path still skips CSRF (tests / non-browser clients).
