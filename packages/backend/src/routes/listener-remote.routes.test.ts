@@ -162,12 +162,20 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     body: options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
     signal: options.signal,
   });
-  const exchange = async () => {
+  const exchange = async (opts: { remember?: boolean } = {}) => {
     const issued = remote.issue(binding);
-    const response = await request('/exchange', { body: { token: issued.token } });
+    const response = await request('/exchange', {
+      body: { token: issued.token, ...(opts.remember ? { remember: true } : {}) },
+    });
     assert.equal(response.status, 200);
-    const data = await response.json() as { session: string; expiresAt: string; botId: number };
-    return { ...data, token: issued.token };
+    const data = await response.json() as {
+      expiresAt: string; botId: number; csrfToken: string; remember: boolean; session?: unknown;
+    };
+    assert.equal(data.session, undefined);
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const { session, csrf } = credentialsFromExchange(response);
+    assert.equal(csrf, data.csrfToken);
+    return { session, expiresAt: data.expiresAt, botId: data.botId, csrfToken: data.csrfToken, remember: data.remember, token: issued.token };
   };
   return {
     refusalRows, refusalLog, flushRefusals: () => refusals.flush(),
@@ -200,10 +208,15 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(success.headers.get('cache-control'), 'no-store');
     assert.equal(success.headers.get('referrer-policy'), 'no-referrer');
     const data = await success.json() as Record<string, unknown>;
-    assert.deepEqual(Object.keys(data).sort(), ['botId', 'expiresAt', 'session']);
+    assert.deepEqual(Object.keys(data).sort(), ['botId', 'csrfToken', 'expiresAt', 'remember']);
     assert.equal(data.botId, binding.botId);
-    assert.match(String(data.session), /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(data.remember, false);
+    assert.match(String(data.csrfToken), /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(data.session, undefined);
     assert.ok(!JSON.stringify(data).includes(binding.uid));
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const { session } = credentialsFromExchange(success);
+    assert.match(session, /^[A-Za-z0-9_-]{43}$/);
     assert.equal((await f.request('/exchange', { body: { token } })).status, 401);
   }));
 
@@ -514,7 +527,17 @@ describe('listener remote HTTP security boundary', () => {
     });
     await using(async f => {
       const { session } = await f.exchange();
-      f.advance(15 * 60_000 + 1);
+      f.advance(12 * 60 * 60_000 - 60_000);
+      assert.equal((await f.request('/state', { session })).status, 200);
+      f.advance(60_000 + 1);
+      assert.equal((await f.request('/state', { session })).status, 401);
+    });
+    await using(async f => {
+      const { session, remember } = await f.exchange({ remember: true });
+      assert.equal(remember, true);
+      f.advance(24 * 60 * 60_000 - 60_000);
+      assert.equal((await f.request('/state', { session })).status, 200);
+      f.advance(60_000 + 1);
       assert.equal((await f.request('/state', { session })).status, 401);
     });
     for (const role of ['viewer', 'operator'] as const) await using(async f => {
@@ -523,6 +546,79 @@ describe('listener remote HTTP security boundary', () => {
       assert.equal((await f.request('/state', { session })).status, 200);
     }, role);
   });
+
+  it('sets host-only HttpOnly session cookies and requires CSRF+Origin for cookie mutations', async () => using(async f => {
+    const issued = f.remote.issue(binding);
+    const exchanged = await f.request('/exchange', { body: { token: issued.token } });
+    assert.equal(exchanged.status, 200);
+    const setCookie = typeof exchanged.headers.getSetCookie === 'function'
+      ? exchanged.headers.getSetCookie()
+      : [String(exchanged.headers.get('set-cookie') ?? '')];
+    const sessionLine = setCookie.find((line) => line.startsWith('ts6_lr_session='));
+    const csrfLine = setCookie.find((line) => line.startsWith('ts6_lr_csrf='));
+    assert.ok(sessionLine);
+    assert.ok(csrfLine);
+    assert.match(sessionLine, /Path=\/api\/listener-remote/);
+    assert.match(sessionLine, /SameSite=Strict/);
+    assert.match(sessionLine, /HttpOnly/i);
+    assert.equal(/Domain=/i.test(sessionLine), false);
+    assert.equal(/HttpOnly/i.test(csrfLine), false);
+    assert.match(csrfLine, /SameSite=Strict/);
+    const data = await exchanged.json() as { csrfToken: string; session?: unknown };
+    assert.equal(data.session, undefined);
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const { session, csrf } = credentialsFromExchange(exchanged);
+    assert.equal(csrf, data.csrfToken);
+    const cookie = `ts6_lr_session=${session}; ts6_lr_csrf=${csrf}`;
+    const origin = 'http://localhost:5173';
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin },
+      body: { songId: 11 },
+    })).status, 403);
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: 'https://evil.example', 'X-CSRF-Token': csrf },
+      body: { songId: 11 },
+    })).status, 403);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: cookie, Origin: 'https://evil.example' },
+    })).status, 403);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: cookie, Origin: origin },
+    })).status, 200);
+    const probe = await f.request('/session', { headers: { Cookie: cookie, Origin: origin } });
+    assert.equal(probe.status, 200);
+    assert.deepEqual(Object.keys(await probe.json() as object).sort(), ['botId', 'expiresAt']);
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': csrf },
+      body: { songId: 11 },
+    })).status, 200);
+    // Bearer path still skips CSRF (tests / non-browser clients).
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+  }));
+
+  it('isolates concurrent cookie sessions across listeners', async () => using(async f => {
+    const first = await f.exchange();
+    const otherBinding = { ...binding, uid: 'other-listener', clid: 10 };
+    const previous = f.state.uid;
+    f.state.uid = otherBinding.uid;
+    const otherToken = f.remote.issue(otherBinding).token;
+    const otherRes = await f.request('/exchange', { body: { token: otherToken } });
+    assert.equal(otherRes.status, 200);
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const other = credentialsFromExchange(otherRes);
+    const origin = 'http://localhost:5173';
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: `ts6_lr_session=${other.session}`, Origin: origin },
+    })).status, 200);
+    f.remote.revoke(binding.botId, binding.uid);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: `ts6_lr_session=${other.session}`, Origin: origin },
+    })).status, 200);
+    f.state.uid = previous;
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: `ts6_lr_session=${first.session}`, Origin: origin },
+    })).status, 401);
+  }));
 
   it('does not count administrator route errors as listener refusals', async () => using(async f => {
     assert.equal((await f.request('/bots/not-a-number/revoke', { admin: true, method: 'POST', body: {} })).status, 400);

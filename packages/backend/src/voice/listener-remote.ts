@@ -38,7 +38,10 @@ interface Grant {
 }
 
 const TOKEN_TTL = 5 * 60_000;
-const SESSION_TTL = 15 * 60_000;
+/** Default browser session (absolute). Activity does not extend. */
+export const SESSION_TTL_MS = 12 * 60 * 60_000;
+/** Optional "remember this browser" absolute cap. */
+export const REMEMBER_SESSION_TTL_MS = 24 * 60 * 60_000;
 const MAX_ENTRIES = 10_000;
 const RATE_WINDOW = 60_000;
 /** One window per client address: all requests, and exchanges. */
@@ -117,6 +120,13 @@ export class ListenerRemoteService {
     return grant && grant.expiresAt > this.now() ? grant.binding : undefined;
   }
 
+  /** Absolute session expiry ms, or undefined when the credential is unknown/expired. */
+  peekSessionExpiry(session: string | undefined): number | undefined {
+    if (typeof session !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(session)) return undefined;
+    const grant = this.sessions.get(hash(session));
+    return grant && grant.expiresAt > this.now() ? grant.expiresAt : undefined;
+  }
+
   checkRequest(session: string): void {
     this.prune();
     const grant = this.sessions.get(this.credentialHash(session));
@@ -145,7 +155,11 @@ export class ListenerRemoteService {
     return { token, expiresAt: grant.expiresAt };
   }
 
-  async exchange(token: string, validate: ValidateBinding): Promise<{ session: string; expiresAt: number; binding: Binding }> {
+  async exchange(
+    token: string,
+    validate: ValidateBinding,
+    options: { remember?: boolean } = {},
+  ): Promise<{ session: string; expiresAt: number; binding: Binding; remember: boolean }> {
     this.prune();
     const tokenHash = this.credentialHash(token);
     const grant = this.tokens.get(tokenHash);
@@ -158,9 +172,10 @@ export class ListenerRemoteService {
     await this.validate(grant, validate);
     const session = randomBytes(32).toString('base64url');
     grant.sessionHash = hash(session);
-    grant.expiresAt = this.now() + SESSION_TTL;
+    const remember = options.remember === true;
+    grant.expiresAt = this.now() + (remember ? REMEMBER_SESSION_TTL_MS : SESSION_TTL_MS);
     this.sessions.set(grant.sessionHash, grant);
-    return { session, expiresAt: grant.expiresAt, binding: { ...grant.binding } };
+    return { session, expiresAt: grant.expiresAt, binding: { ...grant.binding }, remember };
   }
 
   async authenticate(session: string, validate: ValidateBinding): Promise<Binding> {

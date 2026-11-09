@@ -247,9 +247,10 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     if (exchanged.status !== 200) {
       assert.fail(`exchange ${exchanged.status}: ${await exchanged.text()}`);
     }
-    const body = await exchanged.json() as { session: string };
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const creds = credentialsFromExchange(exchanged);
     state.uid = previous;
-    return body;
+    return creds;
   };
 
   const chatYes = (who: { clid: number; uid: string }) =>
@@ -859,8 +860,8 @@ describe('B3 R2 security matrix', () => {
   it('session expiry alone does not cancel a vote while requester stays in channel', async () => using([peer], async (f) => {
     const { session, vote } = await openVoteAsRequester(f);
     assert.ok(f.runtime.machine.getOpen('4', '8'));
-    // Session TTL is 15 minutes; advance credential clock only (vote window stays open).
-    f.advanceRemote(15 * 60_000 + 1);
+    // Session TTL is 12 hours absolute; advance credential clock only (vote window stays open).
+    f.advanceRemote(12 * 60 * 60_000 + 1);
     f.remote.checkIp('127.0.0.1', false);
     assert.ok(f.runtime.machine.getOpen('4', '8'), 'expired credentials must not cancel the vote (#442)');
     // Requester session is dead; peer can still approve.

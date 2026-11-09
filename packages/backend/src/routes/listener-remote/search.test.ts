@@ -249,7 +249,8 @@ async function fixture() {
     const issued = remote.issue(bound);
     const response = await request('/exchange', { body: { token: issued.token } });
     assert.equal(response.status, 200);
-    return response.json() as Promise<{ session: string }>;
+    const { credentialsFromExchange } = await import('./cookie-test-util.js');
+    return credentialsFromExchange(response);
   };
   return {
     request, exchange, queue, state, audit, bot, remote, app, base,

@@ -60,7 +60,8 @@ test('remote issues a private fragment link for exactly one verified bot and ide
   assert.equal(f.privateReplies.length, 1);
   assert.equal(f.privateReplies[0].clid, 2);
   assert.match(f.privateReplies[0].text, /https:\/\/ts\.example\.test\/manager\/remote#token=[A-Za-z0-9_-]{43}$/);
-  assert.deepEqual(f.channelReplies, []);
+  assert.deepEqual(f.channelReplies, ['A private remote link was sent.']);
+  assert.equal(f.channelReplies[0]!.includes('token'), false);
   const exchanged = await f.service.exchange(f.token(), async binding => {
     assert.deepEqual(binding, { botId: 1, serverConfigId: 9, virtualServerId: 2, channelId: 5, clid: 2, uid: 'human' });
     return true;
@@ -84,7 +85,7 @@ test('concurrent duplicate remote commands issue and reply once', async () => {
   await Promise.all([f.command(), f.command(), f.command()]);
   assert.equal(f.privateReplies.length, 1);
   assert.equal(f.queries.length, 1); // clientinfo only (no clientlist for own presence)
-  assert.deepEqual(f.channelReplies, []);
+  assert.deepEqual(f.channelReplies, ['A private remote link was sent.']);
 });
 
 test('remote does not issue a credential if the pending audit insert fails', async () => {
@@ -161,9 +162,13 @@ test('HTTP loopback Public URL works only outside production', async () => {
       process.env.NODE_ENV = environment;
       const f = fixture('http://127.0.0.1:3000');
       await f.command();
-      if (environment === 'development') assert.match(f.privateReplies[0].text, /\/remote#token=/);
-      else assert.match(f.privateReplies[0].text, /requires an HTTPS Public URL/);
-      assert.deepEqual(f.channelReplies, []);
+      if (environment === 'development') {
+        assert.match(f.privateReplies[0].text, /\/remote#token=/);
+        assert.deepEqual(f.channelReplies, ['A private remote link was sent.']);
+      } else {
+        assert.match(f.privateReplies[0].text, /requires an HTTPS Public URL/);
+        assert.deepEqual(f.channelReplies, []);
+      }
     }
   } finally {
     if (previous === undefined) delete process.env.NODE_ENV; else process.env.NODE_ENV = previous;
