@@ -19,7 +19,8 @@ import {
   settleExpiredPlaylistVote,
   type RequestPlaylist,
 } from '../../voice/playlist-vote/approval-settle.js';
-import type { PlaylistVotePublic } from '../../voice/playlist-vote/state-machine.js';
+import { deliverPlaylistVoteAnnouncements } from '../../voice/playlist-vote/announce.js';
+import type { PlaylistVoteEvent, PlaylistVotePublic } from '../../voice/playlist-vote/state-machine.js';
 import type { QueueItem } from '../../voice/playlist/queue.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../../voice/music-request-history.js';
 import type { VoiceBotManager } from '../../voice/voice-bot-manager.js';
@@ -221,6 +222,8 @@ async function settleExpiredVote(
   maxTracks: number,
   nowMs: number,
 ): Promise<{ queued: boolean; start: { botId: number; item: QueueItem; items: QueueItem[] } | null }> {
+  const manager = req.app.locals.voiceBotManager as VoiceBotManager;
+  const announceBot = manager.getBot(binding.botId) as ListenerBot | undefined;
   return settleExpiredPlaylistVote({
     runtime,
     botId: binding.botId,
@@ -229,14 +232,22 @@ async function settleExpiredVote(
     listenerUids,
     maxTracks,
     nowMs,
+    announceBot,
     loadPlaylist: (serverConfigId, id) => loadRequestPlaylist(req, serverConfigId, id),
     onQueued: async (start) => {
       await maybeStart(req, start.botId, start.item);
-      const manager = req.app.locals.voiceBotManager as VoiceBotManager;
       const bot = manager.getBot(start.botId) as ListenerBot | undefined;
       if (bot) await saveHistory(req, bot, start.items);
     },
   });
+}
+
+function announceVoteEvents(
+  bot: { sendChannelMessage?: (msg: string) => void; getCurrentChannelId?: () => number | null | undefined } | null | undefined,
+  channelId: number,
+  events: readonly PlaylistVoteEvent[],
+): void {
+  deliverPlaylistVoteAnnouncements(bot, channelId, events);
 }
 
 export function registerPlaylistRequestRoutes(router: Router): void {
@@ -353,6 +364,7 @@ export function registerPlaylistRequestRoutes(router: Router): void {
         fail(503, 'unavailable', 'Listener remote is unavailable.');
       }
 
+      announceVoteEvents(bot, binding.channelId, opened.events);
       if (eventsQueued(opened.events)) {
         const start = runtime.takeStart(opened.vote.id);
         if (start) {
@@ -439,6 +451,7 @@ export function registerPlaylistRequestRoutes(router: Router): void {
     runtime.recordBallot(botKey, binding.uid, nowMs);
     refuseBallotResult(result);
 
+    announceVoteEvents(bot, binding.channelId, result.events);
     if (eventsQueued(result.events)) {
       const start = runtime.takeStart(voteId);
       if (start) {
@@ -513,6 +526,8 @@ export function registerPlaylistRequestRoutes(router: Router): void {
         fail(404, 'not_found', 'Vote not found.');
       }
       runtime.clearStash(botKey, channelId);
+      const manager = req.app.locals.voiceBotManager as VoiceBotManager;
+      announceVoteEvents(manager.getBot(binding.botId) as ListenerBot | undefined, binding.channelId, result.events);
       res.json({ ok: true });
     });
   }));
@@ -542,7 +557,7 @@ export async function playlistVoteStateFields(req: Request, binding: {
       // Fail closed at deadline; do not invent an empty electorate or requester_left.
       await settleExpiredVote(req, runtime, binding, null, settings.maxRequestSize, nowMs);
     } else if (!listeners.includes(open.requesterUid)) {
-      runtime.machine.cancelExternal({
+      const leftEvents = runtime.machine.cancelExternal({
         botKey,
         channelId,
         reason: 'requester_left',
@@ -550,6 +565,8 @@ export async function playlistVoteStateFields(req: Request, binding: {
         nowMs,
       });
       runtime.clearStash(botKey, channelId);
+      const manager = req.app.locals.voiceBotManager as VoiceBotManager;
+      announceVoteEvents(manager.getBot(binding.botId) as ListenerBot | undefined, binding.channelId, leftEvents);
     } else {
       await settleExpiredVote(req, runtime, binding, listeners, settings.maxRequestSize, nowMs);
     }

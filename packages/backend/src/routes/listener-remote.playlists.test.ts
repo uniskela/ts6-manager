@@ -90,7 +90,7 @@ async function fixture() {
     assert.equal(server, binding.serverConfigId);
     assert.equal(virtualServer, binding.virtualServerId);
     if (cmd.startsWith('clientinfo')) {
-      return `client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
+      return `cid=${state.channelId} client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
     }
     assert.equal(cmd, 'clientlist -uid');
     return `clid=${binding.clid} cid=${state.channelId} client_unique_identifier=${state.uid} client_type=0\nerror id=0 msg=ok`;

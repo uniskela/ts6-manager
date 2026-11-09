@@ -68,7 +68,7 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
     botServer: binding.serverConfigId, databaseServer: binding.serverConfigId,
     virtualServer: binding.virtualServerId, botStatus: 'playing' as string,
     voteSettings: null as string | null,
-    /** Fail the 2nd+ clientlist in a request (electorate) while auth's first list still works. */
+    /** Fail clientlist (electorate) while auth still uses clientinfo. */
     failElectorate: false,
   };
   let clientlistCalls = 0;
@@ -139,11 +139,11 @@ async function fixture(opts: { peers?: Array<{ clid: number; uid: string }> } = 
       assert.equal(server, binding.serverConfigId);
       assert.equal(virtualServer, binding.virtualServerId);
       if (cmd.startsWith('clientinfo')) {
-        return `client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
+        return `cid=${state.channelId} client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
       }
       assert.equal(cmd, 'clientlist -uid');
       clientlistCalls += 1;
-      if (state.failElectorate && clientlistCalls > 1) throw new Error('clientlist offline');
+      if (state.failElectorate) throw new Error('clientlist offline');
       return clientlistBody();
     },
   };
@@ -661,6 +661,44 @@ describe('B3 R2 security matrix', () => {
     assert.equal(f.queue.length, 0);
   }));
 
+  it('clientlist failure does not invalidate concurrent remote sessions (presence is clientinfo)', async () => using([peer], async (f) => {
+    enableVoting(f);
+    f.seed(requestable(2));
+    const a = await f.exchangeAs(binding);
+    const b = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
+    f.state.failElectorate = true;
+    f.state.uid = binding.uid;
+    assert.equal((await f.request('/state', { session: a.session })).status, 200);
+    f.state.uid = peer.uid;
+    assert.equal((await f.request('/state', { session: b.session })).status, 200);
+    // Ballot still needs the electorate roster — that path stays fail-closed.
+    assert.equal((await f.request(`/votes/AAAAAAAAAAAAAAAAAAAAAA/ballot`, {
+      session: b.session, method: 'PUT', body: { choice: 'yes' },
+    })).status, 503);
+  }));
+
+  it('peer leave or reconnect does not invalidate the other remote session', async () => using([peer], async (f) => {
+    enableVoting(f);
+    f.seed(requestable(2));
+    const a = await f.exchangeAs(binding);
+    const b = await f.exchangeAs({ ...binding, clid: peer.clid, uid: peer.uid });
+
+    // Peer leaves the channel view — only that clid grant is revoked.
+    assert.equal(f.remote.revokeClient(binding.serverConfigId, binding.virtualServerId, peer.clid), undefined);
+    f.state.uid = binding.uid;
+    assert.equal((await f.request('/state', { session: a.session })).status, 200);
+    f.state.uid = peer.uid;
+    assert.equal((await f.request('/state', { session: b.session })).status, 401);
+
+    // Peer reconnects under a new clid with a fresh grant; A stays valid.
+    const reconnected = { ...binding, clid: peer.clid + 50, uid: peer.uid };
+    const b2 = await f.exchangeAs(reconnected);
+    f.state.uid = binding.uid;
+    assert.equal((await f.request('/state', { session: a.session })).status, 200);
+    f.state.uid = peer.uid;
+    assert.equal((await f.request('/state', { session: b2.session })).status, 200);
+  }));
+
   it('listener lookup failure refuses ballots and fails the vote at deadline (not empty electorate)', async () => using([peer], async (f) => {
     const { session, vote } = await openVoteAsRequester(f);
     const peerAuth = await asPeer(f);
@@ -676,7 +714,7 @@ describe('B3 R2 security matrix', () => {
     f.advance(61_000);
     f.state.uid = binding.uid;
     f.resetClientlistCalls();
-    // Auth succeeds (1st clientlist); electorate lookup fails (2nd) → tick with null, not [].
+    // Auth succeeds via clientinfo; electorate clientlist fails → tick with null, not [].
     const stateRes = await f.request('/state', { session });
     assert.equal(stateRes.status, 200);
     const state = await stateRes.json() as { vote: { status: string; reason: string | null } | null };
