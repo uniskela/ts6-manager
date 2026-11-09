@@ -158,7 +158,7 @@ async function fixture() {
       if (cmd.startsWith('clientinfo')) {
         const clid = Number(/clid=(\d+)/.exec(cmd)?.[1]);
         const row = roster.find((entry) => entry.clid === clid) ?? { clid, uid: state.uid };
-        return `client_unique_identifier=${row.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
+        return `cid=${state.channelId} client_unique_identifier=${row.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
       }
       return `${roster.map((row) =>
         `clid=${row.clid} cid=${state.channelId} client_unique_identifier=${row.uid} client_type=0`

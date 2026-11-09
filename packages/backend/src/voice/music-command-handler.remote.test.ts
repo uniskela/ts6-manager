@@ -39,7 +39,7 @@ function fixture(publicUrl: string | null = 'https://ts.example.test/manager') {
     executeCommand: async (configId: number, sid: number, command: string) => {
       assert.equal(configId, 9); assert.equal(sid, 2); queries.push(command);
       return command.startsWith('clientinfo')
-        ? 'client_unique_identifier=human client_servergroups=6 client_type=0'
+        ? 'cid=5 client_unique_identifier=human client_servergroups=6 client_type=0'
         : 'clid=2 cid=5 client_type=0 client_unique_identifier=human|clid=42 cid=5 client_type=0 client_unique_identifier=self';
     },
     getMainHelperChannelId: () => 5,
@@ -83,7 +83,7 @@ test('concurrent duplicate remote commands issue and reply once', async () => {
   const f = fixture();
   await Promise.all([f.command(), f.command(), f.command()]);
   assert.equal(f.privateReplies.length, 1);
-  assert.equal(f.queries.length, 2);
+  assert.equal(f.queries.length, 1); // clientinfo only (no clientlist for own presence)
   assert.deepEqual(f.channelReplies, []);
 });
 
@@ -173,10 +173,10 @@ test('HTTP loopback Public URL works only outside production', async () => {
 test('remote rejects missing, reused and query identities, managed bots, and non-listeners privately', async () => {
   for (const kind of ['missing', 'reused', 'query', 'managed-bot', 'elsewhere']) {
     const f = fixture();
-    if (kind === 'query') f.bridge.executeCommand = async () => 'client_unique_identifier=human client_servergroups=6 client_type=1';
+    if (kind === 'query') f.bridge.executeCommand = async () => 'cid=5 client_unique_identifier=human client_servergroups=6 client_type=1';
     if (kind === 'managed-bot') f.handler.musicBotClidsOnServer = () => new Set([2, 42]);
     if (kind === 'elsewhere') f.bridge.executeCommand = async (_config: number, _sid: number, command: string) => command.startsWith('clientinfo')
-      ? 'client_unique_identifier=human client_servergroups=6 client_type=0'
+      ? 'cid=6 client_unique_identifier=human client_servergroups=6 client_type=0'
       : 'clid=2 cid=6 client_type=0 client_unique_identifier=human';
     await f.command('!remote', kind === 'missing' ? null : kind === 'reused' ? 'previous-user' : 'human');
     assert.equal(f.privateReplies.length, 1, kind);
@@ -205,7 +205,7 @@ test('flood hold beginning during remote checks prevents issuing a credential', 
   f.service.issue = () => { issued++; throw new Error('must not issue'); };
   f.bridge.executeCommand = async (...args: any[]) => {
     const result = await query(...args);
-    if (args[2] === 'clientlist -uid') f.bot.floodHoldActive = true;
+    if (String(args[2]).startsWith('clientinfo')) f.bot.floodHoldActive = true;
     return result;
   };
   await f.command();

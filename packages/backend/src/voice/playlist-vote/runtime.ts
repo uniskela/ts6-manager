@@ -8,6 +8,7 @@ import {
   type PlaylistVotePublic,
 } from './state-machine.js';
 import { QueueFullError, type QueueItem } from '../playlist/queue.js';
+import { deliverPlaylistVoteAnnouncements } from './announce.js';
 
 /** Same upcoming cap as listener append (F1). */
 const MAX_UPCOMING_TRACKS = 500;
@@ -123,8 +124,9 @@ export class PlaylistVoteRuntime {
   /** Bot move / disconnect / stop — cancel every open vote for this bot. */
   cancelBotUnavailable(botId: number, nowMs: number): void {
     const botKey = botKeyFor(botId);
+    const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
-      this.machine.cancelExternal({
+      const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
         reason: 'bot_unavailable',
@@ -132,15 +134,17 @@ export class PlaylistVoteRuntime {
         nowMs,
       });
       this.clearStash(botKey, open.channelId);
+      deliverPlaylistVoteAnnouncements(bot, Number(open.channelId), events);
     }
   }
 
   /** Admin/session revoke of one listener — cancel if they are the requester. */
   cancelRequesterRevoked(botId: number, uid: string, nowMs: number): void {
     const botKey = botKeyFor(botId);
+    const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
       if (open.requesterUid !== uid) continue;
-      this.machine.cancelExternal({
+      const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
         reason: 'revoked',
@@ -148,14 +152,16 @@ export class PlaylistVoteRuntime {
         nowMs,
       });
       this.clearStash(botKey, open.channelId);
+      deliverPlaylistVoteAnnouncements(bot, Number(open.channelId), events);
     }
   }
 
   /** Admin bot-wide revoke — cancel every open vote on that bot. */
   cancelAllRevoked(botId: number, nowMs: number): void {
     const botKey = botKeyFor(botId);
+    const bot = this.getBot(botId);
     for (const open of this.machine.listOpenForBot(botKey)) {
-      this.machine.cancelExternal({
+      const events = this.machine.cancelExternal({
         botKey,
         channelId: open.channelId,
         reason: 'revoked',
@@ -163,6 +169,7 @@ export class PlaylistVoteRuntime {
         nowMs,
       });
       this.clearStash(botKey, open.channelId);
+      deliverPlaylistVoteAnnouncements(bot, Number(open.channelId), events);
     }
   }
 

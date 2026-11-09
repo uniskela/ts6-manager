@@ -1,5 +1,5 @@
 import { loadPublicUrl } from '../../utils/app-settings.js';
-import { resolveMediaIdentity, listHumanMediaListeners } from '../media-listeners.js';
+import { resolveMediaIdentity } from '../media-listeners.js';
 import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 import type { VoiceBot } from '../voice-bot.js';
 import type { CommandContext } from './context.js';
@@ -72,8 +72,9 @@ export async function handleListenerRemote(
     const identity = await resolveMediaIdentity(query, clid, expectedUid);
     const excluded = context.musicBotClidsOnServer(configId, sid);
     excluded.add(bot.ts3ClientId);
-    const listeners = identity ? await listHumanMediaListeners(query, channelId, excluded) : null;
-    if (!identity || !listeners?.some(peer => peer.clid === clid && peer.uid === identity.uid)
+    // Own presence via clientinfo cid — not clientlist (peer UID gaps poison the roster).
+    // Still refuse managed music-bot clids so a bot never receives a listener remote.
+    if (!identity || identity.channelId !== channelId || excluded.has(clid)
       || bot.getCurrentChannelId() !== channelId || !connected(bot)
       || state.value !== revision) {
       reply('Listener remote needs a verified listener in the bot channel.');

@@ -13,6 +13,7 @@ import {
   settleExpiredPlaylistVote,
   type RequestPlaylist,
 } from '../playlist-vote/approval-settle.js';
+import { deliverPlaylistVoteAnnouncements } from '../playlist-vote/announce.js';
 import { musicHistoryErrorCode, recordMusicRequests } from '../music-request-history.js';
 import { listHumanMediaListeners } from '../media-listeners.js';
 import type { VoiceBot } from '../voice-bot.js';
@@ -160,6 +161,7 @@ export async function handlePlaylistVote(
       listenerUids,
       maxTracks: settings.maxRequestSize,
       nowMs,
+      announceBot: bot,
       loadPlaylist: (serverConfigId, playlistId) => loadPlaylist(context.prisma, serverConfigId, playlistId),
       onQueued: async (start) => {
         await startCurrentIfIdle(bot, start.item);
@@ -210,6 +212,7 @@ export async function handlePlaylistVote(
     return;
   }
 
+  deliverPlaylistVoteAnnouncements(bot, channelIdNum, result.events);
   if (eventsQueued(result.events)) {
     const start = runtime.takeStart(open.id);
     if (start) {

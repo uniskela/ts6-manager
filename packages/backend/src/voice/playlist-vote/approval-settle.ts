@@ -3,12 +3,14 @@
  * Callers inject playlist load / post-queue side effects (start + history).
  */
 import type { QueueItem } from '../playlist/queue.js';
+import { deliverPlaylistVoteAnnouncements, type AnnounceBot } from './announce.js';
 import {
   botKeyFor,
   channelIdFor,
   eventsQueued,
   type PlaylistVoteRuntime,
 } from './runtime.js';
+import type { PlaylistVoteEvent } from './state-machine.js';
 
 export type RequestPlaylistSong = {
   id: number;
@@ -98,11 +100,13 @@ export async function settleExpiredPlaylistVote(input: {
   nowMs: number;
   loadPlaylist: (serverConfigId: number, playlistId: number) => Promise<RequestPlaylist | null>;
   onQueued?: (start: QueuedStart) => Promise<void>;
-}): Promise<{ queued: boolean; start: QueuedStart | null }> {
+  /** Optional voice bot for channel announce_result on deadline settle. */
+  announceBot?: AnnounceBot;
+}): Promise<{ queued: boolean; start: QueuedStart | null; events: readonly PlaylistVoteEvent[] }> {
   const botKey = botKeyFor(input.botId);
   const channelId = channelIdFor(input.channelId);
   const open = input.runtime.machine.getOpen(botKey, channelId);
-  if (!open || input.nowMs < open.deadlineMs) return { queued: false, start: null };
+  if (!open || input.nowMs < open.deadlineMs) return { queued: false, start: null, events: [] };
   const voteId = open.id;
 
   if (input.listenerUids !== null) {
@@ -120,7 +124,7 @@ export async function settleExpiredPlaylistVote(input: {
   }
 
   const still = input.runtime.machine.getOpen(botKey, channelId);
-  if (!still || still.id !== voteId) return { queued: false, start: null };
+  if (!still || still.id !== voteId) return { queued: false, start: null, events: [] };
 
   const events = input.runtime.machine.tickDeadline({
     botKey,
@@ -128,11 +132,12 @@ export async function settleExpiredPlaylistVote(input: {
     listenerUids: input.listenerUids,
     nowMs: input.nowMs,
   });
+  deliverPlaylistVoteAnnouncements(input.announceBot, input.channelId, events);
   if (eventsQueued(events)) {
     const start = input.runtime.takeStart(voteId);
     if (start && input.onQueued) await input.onQueued(start);
-    return { queued: true, start };
+    return { queued: true, start, events };
   }
   input.runtime.clearStash(botKey, channelId);
-  return { queued: false, start: null };
+  return { queued: false, start: null, events };
 }
