@@ -1,7 +1,17 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import {
+  REMOTE_CSRF,
+  REMOTE_SESSION,
+  REMOTE_TOKEN,
+  expectCookieAuth,
+  fulfillExchange,
+  installRemoteAuthRoutes,
+  remotePath,
+} from './listener-remote-fixtures';
 
-const token = 't'.repeat(43);
-const session = 's'.repeat(43);
+const token = REMOTE_TOKEN;
+const session = REMOTE_SESSION;
+const csrf = REMOTE_CSRF;
 const voteId = 'v'.repeat(22);
 
 const playlist = { id: 3, name: 'Late Night Drive', trackCount: 3, duration: 600, wholeRequest: true };
@@ -76,11 +86,17 @@ async function openRemote(page: Page, state: unknown, handlers: {
     const url = new URL(request.url());
     calls.push({ method: request.method(), path: url.pathname.replace('/api/listener-remote', ''), body: request.postDataJSON() });
   };
-  await page.route(remote('/exchange'), (route) => fulfill(route, {
-    session,
-    expiresAt: new Date(Date.now() + 600_000).toISOString(),
-    botId: 12,
-  }));
+  await installRemoteAuthRoutes(page, { session, csrf });
+  await page.unroute(remotePath('/exchange'));
+  await page.route(remotePath('/exchange'), async (route) => {
+    expect(route.request().headers().authorization).toBeUndefined();
+    await fulfillExchange(page, route, {
+      session,
+      csrf,
+      botId: 12,
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    });
+  });
   await page.route(remote('/state'), (route) => {
     current.stateCalls += 1;
     return fulfill(route, current.state);
@@ -90,16 +106,19 @@ async function openRemote(page: Page, state: unknown, handlers: {
   await page.route(remote('/playlists/3/songs'), (route) => fulfill(route, { playlist, songs, page: 1, pageSize: 25 }));
   await page.route(remote('/playlist-requests'), (route) => {
     record(route);
+    expectCookieAuth(route, csrf);
     const reply = handlers.request?.() ?? { body: { ok: true, outcome: 'vote', created: true, vote: openVote({ isRequester: true, ownBallot: 'yes' }) } };
     return fulfill(route, reply.body, reply.status, reply.headers);
   });
   await page.route(remote(`/votes/${voteId}/ballot`), (route) => {
     record(route);
+    expectCookieAuth(route, csrf);
     const reply = handlers.ballot?.(route.request().method(), route.request().postDataJSON()) ?? { body: { ok: true, vote: openVote() } };
     return fulfill(route, reply.body, reply.status, reply.headers);
   });
   await page.route(remote(`/votes/${voteId}`), (route) => {
     record(route);
+    expectCookieAuth(route, csrf);
     const reply = handlers.cancel?.() ?? { body: { ok: true } };
     return fulfill(route, reply.body, reply.status, reply.headers);
   });

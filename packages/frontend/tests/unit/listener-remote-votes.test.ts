@@ -22,7 +22,7 @@ import {
 } from '../../src/lib/listener-remote';
 
 const token = 't'.repeat(43);
-const session = 's'.repeat(43);
+const csrf = 'c'.repeat(43);
 const voteId = 'v'.repeat(22);
 const future = new Date(Date.now() + 60_000).toISOString();
 
@@ -53,10 +53,16 @@ beforeEach(async () => {
   resetRemoteClientForTests();
   calls.length = 0;
   reply = () => ({ body: { ok: true } });
+  Object.defineProperty(globalThis, 'document', {
+    configurable: true,
+    value: { cookie: `ts6_lr_csrf=${csrf}` },
+  });
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input), 'http://remote.test');
     const path = url.pathname.replace('/api/listener-remote', '');
-    if (path === '/exchange') return respond({ body: { session, expiresAt: future, botId: 12 } });
+    if (path === '/exchange') {
+      return respond({ body: { expiresAt: future, botId: 12, csrfToken: csrf, remember: false } });
+    }
     calls.push({ path, method: init?.method ?? 'GET', body: typeof init?.body === 'string' ? init.body : null });
     return respond(reply(path, init?.method ?? 'GET'));
   }) as typeof fetch;

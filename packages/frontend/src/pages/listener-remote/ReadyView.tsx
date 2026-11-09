@@ -7,10 +7,12 @@ import {
   canRequestRemotePlaylist,
   canSearchRemoteMusic,
   canVoteRemote,
+  formatRemoteExpiry,
   loadRemoteState,
   remoteErrorMessage,
   remoteSession,
   shouldPollRemote,
+  signOutRemote,
   type RemoteState,
   type RemoteVote,
 } from '@/lib/listener-remote';
@@ -28,6 +30,7 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
   const [state, setState] = useState<RemoteState | null>(null);
   const [stateError, setStateError] = useState<string | null>(null);
   const [loadingState, setLoadingState] = useState(true);
+  const [signingOut, setSigningOut] = useState(false);
   const lastPoll = useRef(0);
   const loadRef = useRef<(force?: boolean) => Promise<void>>(async () => {});
   const bannerRef = useRef<HTMLElement>(null);
@@ -39,6 +42,7 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
   // Bumped whenever a ballot, cancel or proposal answer is shown. A poll that started
   // before that answer carries an older vote, so its vote is not applied.
   const voteAnswers = useRef(0);
+  const session = remoteSession();
 
   const loadState = async (force = false) => {
     const visible = document.visibilityState === 'visible';
@@ -127,12 +131,37 @@ export function ReadyView({ onEnded }: { readonly onEnded: (message: string) => 
           <h1 ref={headingRef} tabIndex={-1} className="truncate text-lg font-semibold outline-none lg:text-2xl" title={state?.bot.name ?? 'Listener remote'}>
             {state?.bot.name ?? 'Listener remote'}
           </h1>
+          {session && (
+            <p className="mt-1 text-xs text-muted-foreground">
+              {formatRemoteExpiry(session.expiresAt)}
+              {session.remember ? ' · remembered browser' : ''}
+            </p>
+          )}
         </div>
-        {state && (
-          <Badge variant={state.bot.status === 'playing' ? 'default' : 'secondary'} className="shrink-0">
-            {STATUS_LABEL[state.bot.status] ?? 'Connected'}
-          </Badge>
-        )}
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          {state && (
+            <Badge variant={state.bot.status === 'playing' ? 'default' : 'secondary'}>
+              {STATUS_LABEL[state.bot.status] ?? 'Connected'}
+            </Badge>
+          )}
+          <button
+            type="button"
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline disabled:opacity-50"
+            disabled={signingOut}
+            onClick={() => {
+              setSigningOut(true);
+              void signOutRemote().then(
+                () => onEnded('Signed out'),
+                (error: unknown) => {
+                  setSigningOut(false);
+                  onEnded(remoteErrorMessage(error));
+                },
+              );
+            }}
+          >
+            Sign out
+          </button>
+        </div>
       </header>
 
       {state && vote && (

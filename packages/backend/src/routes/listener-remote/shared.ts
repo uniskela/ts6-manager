@@ -9,6 +9,11 @@ import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import { clientRateKey } from '../../utils/client-address.js';
 import type { ListenerRemoteRefusalAudit, RefusalEvent } from '../../audit/index.js';
 import { config } from '../../config.js';
+import {
+  cookieMutationAllowedAsync,
+  cookieOriginAllowedAsync,
+  sessionCredentialFromRequest,
+} from './cookies.js';
 
 export function service(req: Request): ListenerRemoteService {
   const value = req.app.locals.listenerRemote;
@@ -148,7 +153,7 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
     // A live session is limited per listener when it authenticates, so listeners
     // sharing one address do not use up each other's budget. Everything else,
     // including unknown credentials, counts against the client address.
-    const credential = exchange ? undefined : bearerCredential(req);
+    const credential = exchange ? undefined : sessionCredentialFromRequest(req);
     const listener = remote.sessionRateKey(credential);
     const bound = listener ? remote.sessionBinding(credential) : undefined;
     if (listener && bound) {
@@ -168,13 +173,23 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
 };
 
 export function bearerCredential(req: Request): string | undefined {
-  return /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get('Authorization') ?? '')?.[1];
+  return sessionCredentialFromRequest(req);
 }
 
 export function bearer(req: Request): string {
   const credential = bearerCredential(req);
   if (!credential) fail(401, 'invalid_access', 'Listener access is invalid or expired.');
   return credential;
+}
+
+/** Cookie sessions need Origin (+ CSRF on mutations); Bearer-only skips. */
+async function assertCookieTransport(req: Request): Promise<void> {
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
+  if (mutating) {
+    if (!(await cookieMutationAllowedAsync(req))) fail(403, 'csrf_rejected', 'Listener remote CSRF check failed.');
+  } else if (!(await cookieOriginAllowedAsync(req))) {
+    fail(403, 'origin_rejected', 'Listener remote origin check failed.');
+  }
 }
 
 export function botFor(req: Request, binding: ListenerRemoteBinding) {
@@ -208,12 +223,14 @@ export async function liveIdentity(req: Request, binding: ListenerRemoteBinding)
 }
 
 export async function authenticate(req: Request) {
+  await assertCookieTransport(req);
   const binding = await service(req).authenticate(bearer(req), async bound => Boolean(await liveIdentity(req, bound)));
   remember(req, binding);
   return binding;
 }
 
 export async function authorized(req: Request, command: string, args = '') {
+  await assertCookieTransport(req);
   let identity: NonNullable<Awaited<ReturnType<typeof liveIdentity>>> | undefined;
   let policy: Awaited<ReturnType<typeof loadMediaCommandPermissions>> | undefined;
   const binding = await service(req).authenticate(bearer(req), async bound => {

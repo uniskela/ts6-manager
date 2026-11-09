@@ -1,7 +1,18 @@
 import { expect, test, type Locator, type Page, type Route } from '@playwright/test';
+import {
+  REMOTE_CSRF,
+  REMOTE_SESSION,
+  REMOTE_TOKEN,
+  expectCookieAuth,
+  fulfillExchange,
+  fulfillJson,
+  installRemoteAuthRoutes,
+  remotePath,
+} from './listener-remote-fixtures';
 
-const token = 't'.repeat(43);
-const session = 's'.repeat(43);
+const token = REMOTE_TOKEN;
+const session = REMOTE_SESSION;
+const csrf = REMOTE_CSRF;
 const title = 'Neon Skyline and a long title that has to stay inside a 375px phone';
 
 const playing = {
@@ -21,11 +32,11 @@ const library = {
 };
 
 function remote(path: string): RegExp {
-  return new RegExp(`/api/listener-remote${path}$`);
+  return remotePath(path);
 }
 
 async function fulfill(route: Route, body: unknown, status = 200) {
-  await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+  await fulfillJson(route, body, status);
 }
 
 async function noHorizontalOverflow(page: Page) {
@@ -49,11 +60,18 @@ test('opens a phone remote from a fragment token', async ({ page }) => {
   await page.route(remote('/exchange'), async (route) => {
     exchanges += 1;
     expect(route.request().headers().authorization).toBeUndefined();
-    expect(route.request().postDataJSON()).toEqual({ token });
-    await fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 });
+    expect(route.request().postDataJSON()).toEqual({ token, remember: false });
+    await fulfillExchange(page, route, { session, csrf });
+  });
+  await page.route(remote('/session'), async (route) => {
+    if (route.request().method() === 'GET') {
+      await fulfill(route, { expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12, csrfToken: csrf });
+      return;
+    }
+    await fulfill(route, { ok: true });
   });
   await page.route(remote('/state'), async (route) => {
-    expect(route.request().headers().authorization).toBe(`Bearer ${session}`);
+    expectCookieAuth(route);
     await stateGate;
     await fulfill(route, playing);
   });
@@ -61,10 +79,12 @@ test('opens a phone remote from a fragment token', async ({ page }) => {
     await fulfill(route, library);
   });
   await page.route(remote('/queue'), async (route) => {
+    expectCookieAuth(route);
     queueBodies.push(route.request().postDataJSON());
     await fulfill(route, { ok: true });
   });
   await page.route(remote('/requests'), async (route) => {
+    expectCookieAuth(route);
     urlCalls += 1;
     expect(route.request().postDataJSON()).toEqual({ url: 'https://example.com/track.mp3' });
     await urlGate;
@@ -113,7 +133,7 @@ test('opens a phone remote from a fragment token', async ({ page }) => {
 
 test('hides library actions the listener is not allowed to use', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await installRemoteAuthRoutes(page);
   await page.route(remote('/state'), (route) => fulfill(route, {
     ...playing,
     permissions: { searchLibrary: true, addToQueue: false, requestUrl: false, browsePlaylists: false },
@@ -129,7 +149,7 @@ test('hides library actions the listener is not allowed to use', async ({ page }
 
 test('clears the remote when the session is revoked', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
-  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await installRemoteAuthRoutes(page);
   await page.route(remote('/state'), (route) => fulfill(route, playing));
   await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, library));
   await page.route(remote('/queue'), (route) => fulfill(route, { error: 'Listener access is invalid or expired.', code: 'invalid_access' }, 401));
@@ -150,7 +170,16 @@ test('shows an empty remote, a load error, and the link prompt', async ({ page }
   let stateStatus = 503;
   let stateBody: unknown = { error: 'Listener remote is unavailable.', code: 'unavailable' };
   let exchangeSession = session;
-  await page.route(remote('/exchange'), (route) => fulfill(route, { session: exchangeSession, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await page.route(remote('/exchange'), async (route) => {
+    await fulfillExchange(page, route, { session: exchangeSession, csrf });
+  });
+  await page.route(remote('/session'), async (route) => {
+    if (route.request().method() === 'GET') {
+      await fulfill(route, { expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12, csrfToken: csrf });
+      return;
+    }
+    await fulfill(route, { ok: true });
+  });
   await page.route(remote('/state'), (route) => fulfill(route, stateBody, stateStatus));
   await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, { songs: [], page: 1, pageSize: 25 }));
   await page.goto(`/remote#token=${token}`);
@@ -166,14 +195,25 @@ test('shows an empty remote, a load error, and the link prompt', async ({ page }
   await expect(page.getByText('No songs found.')).toBeVisible();
 });
 
-async function openRemote(page: Page, state: unknown = playing, extra?: (page: Page) => Promise<void>) {
-  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+async function openRemote(
+  page: Page,
+  state: unknown = playing,
+  extra?: (page: Page) => Promise<void>,
+  options: { library?: (route: Route) => Promise<void> | void } = {},
+) {
+  await installRemoteAuthRoutes(page);
   await page.route(remote('/state'), (route) => fulfill(route, state));
-  await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, {
-    songs: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}`, artist: 'Artist', duration: 100 })),
-    page: 1,
-    pageSize: 25,
-  }));
+  await page.route(/\/api\/listener-remote\/library/, async (route) => {
+    if (options.library) {
+      await options.library(route);
+      return;
+    }
+    await fulfill(route, {
+      songs: Array.from({ length: 25 }, (_, i) => ({ id: i + 1, title: `Song ${i + 1}`, artist: 'Artist', duration: 100 })),
+      page: 1,
+      pageSize: 25,
+    });
+  });
   await extra?.(page);
   await page.goto(`/remote#token=${token}`);
   await expect(page.getByText(title)).toBeVisible();
@@ -239,6 +279,7 @@ test('a pasted link uses the existing endpoint and reports rate limits', async (
   let calls = 0;
   await openRemote(page, playing, async (p) => {
     await p.route(remote('/requests'), (route) => {
+      expectCookieAuth(route);
       calls += 1;
       bodies.push(route.request().postDataJSON());
       if (calls === 1) return fulfill(route, { ok: true });
@@ -259,14 +300,24 @@ test('a pasted link uses the existing endpoint and reports rate limits', async (
   expect(bodies).toEqual([{ url: 'https://example.com/a.mp3' }, { url: 'https://example.com/b.mp3' }]);
 });
 
-test('keeps library pagination focusable and announces URL form errors', async ({ page }) => {
+test('announces URL form errors', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  let libraryPage = 1;
-  await openRemote(page, playing, async (p) => {
-    await p.unroute(/\/api\/listener-remote\/library/);
-    await p.route(/\/api\/listener-remote\/library/, async (route) => {
+  await openRemote(page);
+  await page.getByLabel('Media URL').fill('not-a-url');
+  await page.getByRole('button', { name: 'Request URL' }).click();
+  const alert = page.getByRole('alert').filter({ hasText: /http or https URL/i });
+  await expect(alert).toBeVisible();
+  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-describedby', /.+/);
+  await expect(alert).toBeFocused({ timeout: 10_000 });
+});
+
+test('keeps library pagination focusable', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openRemote(page, playing, undefined, {
+    library: async (route) => {
       const url = new URL(route.request().url());
-      libraryPage = Number(url.searchParams.get('page') || '1');
+      const libraryPage = Number(url.searchParams.get('page') || '1');
       await fulfill(route, {
         songs: Array.from({ length: 25 }, (_, i) => ({
           id: (libraryPage - 1) * 25 + i + 1,
@@ -277,7 +328,7 @@ test('keeps library pagination focusable and announces URL form errors', async (
         page: libraryPage,
         pageSize: 25,
       });
-    });
+    },
   });
 
   const results = page.getByTestId('library-results');
@@ -290,14 +341,6 @@ test('keeps library pagination focusable and announces URL form errors', async (
   const upNext = page.getByRole('list', { name: 'Up next' });
   await upNext.focus();
   await expect(upNext).toBeFocused();
-
-  await page.getByLabel('Media URL').fill('not-a-url');
-  await page.getByRole('button', { name: 'Request URL' }).click();
-  const alert = page.getByRole('alert').filter({ hasText: /http or https URL/i });
-  await expect(alert).toBeVisible();
-  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-invalid', 'true');
-  await expect(page.getByLabel('Media URL')).toHaveAttribute('aria-describedby', /.+/);
-  await expect(alert).toBeFocused();
 });
 
 test('exposes full truncated track titles for assistive reading', async ({ page }) => {
@@ -314,7 +357,7 @@ test('serves the standalone remote page with a strict CSP and no violations', as
     if (/content security policy/i.test(msg.text())) cspHits.push(msg.text());
   });
 
-  await page.route(remote('/exchange'), (route) => fulfill(route, { session, expiresAt: new Date(Date.now() + 60_000).toISOString(), botId: 12 }));
+  await installRemoteAuthRoutes(page);
   await page.route(remote('/state'), (route) => fulfill(route, playing));
   await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, library));
 

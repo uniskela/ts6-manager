@@ -179,7 +179,8 @@ async function fixture() {
       body: JSON.stringify({ token: issued.token }),
     });
     assert.equal(exchanged.status, 200);
-    return await exchanged.json() as { session: string };
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    return credentialsFromExchange(exchanged);
   };
   return {
     remote, request, exchange, state, playlists, seed, playlistQueries, playlistSongQueries, bot,

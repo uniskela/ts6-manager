@@ -1,7 +1,14 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
+import {
+  REMOTE_CSRF,
+  REMOTE_SESSION,
+  REMOTE_TOKEN,
+  expectCookieAuth,
+  fulfillJson,
+  installRemoteAuthRoutes,
+  remotePath,
+} from './listener-remote-fixtures';
 
-const token = 't'.repeat(43);
-const session = 's'.repeat(43);
 const idA = 'a'.repeat(22);
 const idB = 'b'.repeat(22);
 
@@ -27,14 +34,6 @@ const found = {
   expiresAt: new Date(Date.now() + 300_000).toISOString(),
 };
 
-function remote(path: string): RegExp {
-  return new RegExp(`/api/listener-remote${path}$`);
-}
-
-async function fulfill(route: Route, body: unknown, status = 200) {
-  await route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
-}
-
 async function noHorizontalOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1)).toBe(true);
 }
@@ -48,26 +47,30 @@ async function openSearch(page: Page, options: {
   queue?: (body: unknown) => Reply;
 } = {}) {
   const calls = { search: [] as unknown[], queue: [] as unknown[] };
-  await page.route(remote('/exchange'), (route) => fulfill(route, {
-    session,
-    expiresAt: new Date(Date.now() + 60_000).toISOString(),
-    botId: 12,
-  }));
-  await page.route(remote('/state'), (route) => fulfill(route, options.remoteState ?? state));
-  await page.route(/\/api\/listener-remote\/library/, (route) => fulfill(route, { songs: [], page: 1, pageSize: 25 }));
-  await page.route(remote('/search'), (route) => {
+  await installRemoteAuthRoutes(page);
+  await page.route(remotePath('/state'), async (route) => {
+    expectCookieAuth(route);
+    await fulfillJson(route, options.remoteState ?? state);
+  });
+  await page.route(/\/api\/listener-remote\/library/, async (route) => {
+    expectCookieAuth(route);
+    await fulfillJson(route, { songs: [], page: 1, pageSize: 25 });
+  });
+  await page.route(remotePath('/search'), async (route) => {
+    expectCookieAuth(route);
     const body = route.request().postDataJSON();
     calls.search.push(body);
     const reply = options.search?.(body) ?? { status: 200, body: found };
-    return fulfill(route, reply.body, reply.status);
+    return fulfillJson(route, reply.body, reply.status);
   });
-  await page.route(remote('/search/queue'), (route) => {
+  await page.route(remotePath('/search/queue'), async (route) => {
+    expectCookieAuth(route);
     const body = route.request().postDataJSON();
     calls.queue.push(body);
     const reply = options.queue?.(body) ?? { status: 200, body: { ok: true } };
-    return fulfill(route, reply.body, reply.status);
+    return fulfillJson(route, reply.body, reply.status);
   });
-  await page.goto(`/remote#token=${token}`);
+  await page.goto(`/remote#token=${REMOTE_TOKEN}`);
   await expect(page.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
   return calls;
 }
@@ -96,7 +99,6 @@ test('phone: search and queue a result with the keyboard', async ({ page }) => {
   await expect(results).toBeFocused();
   await expect(region.locator('[aria-live="polite"]')).toHaveText('2 search results.');
   expect(calls.search).toEqual([{ query: 'neon skyline' }]);
-  // The query travels in the body only.
   expect(page.url()).not.toContain('neon');
 
   const add = page.getByRole('button', { name: 'Add Neon Skyline to the queue' });
@@ -109,14 +111,13 @@ test('phone: search and queue a result with the keyboard', async ({ page }) => {
   await page.keyboard.press('Enter');
   await expect(region.getByText('Added Neon Skyline to the queue.')).toBeVisible();
   expect(calls.queue).toEqual([{ resultId: idA }]);
-  // A queued result is spent; the other one stays.
   await expect(add).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Add Paper Lanterns to the queue' })).toBeVisible();
 
   const stored = await page.evaluate((secrets) => {
     const dump = JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } });
     return secrets.some((secret) => dump.includes(secret));
-  }, [token, session, idA, idB, 'neon skyline']);
+  }, [REMOTE_TOKEN, REMOTE_SESSION, idA, idB, 'neon skyline']);
   expect(stored).toBe(false);
   await noHorizontalOverflow(page);
 });
@@ -151,7 +152,6 @@ test('a refused result is removed and the reason is announced', async ({ page })
   await expect(tooLong).toBeFocused();
   await expect(page.getByRole('button', { name: 'Add Neon Skyline to the queue' })).toHaveCount(0);
 
-  // Expired or replaced results: the whole list goes, with a plain next step.
   await page.getByRole('button', { name: 'Add Paper Lanterns to the queue' }).click();
   await expect(region.getByRole('alert')).toHaveText('These search results have run out. Search again.');
   await expect(page.getByTestId('search-results').getByRole('listitem')).toHaveCount(0);
@@ -191,10 +191,8 @@ test('rate limits, empty results and links get plain messages', async ({ page })
   await page.getByRole('button', { name: 'Search', exact: true }).click();
   await expect(region.getByRole('alert')).toHaveText('Paste a song name, not a link.');
   await expect(input).toHaveAttribute('aria-invalid', 'true');
-  // The link never reached the server.
   expect(calls.search).toEqual([{ query: 'nothing here' }, { query: 'neon' }]);
 
-  // One character cannot be submitted.
   await input.fill('a');
   await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeDisabled();
 });
@@ -213,7 +211,6 @@ test('an expired session during search returns to the link prompt', async ({ pag
 
 test('search is hidden unless the listener may search and queue', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
-  // `/search` checks the add permission, so a read-only listener never sees it.
   await openSearch(page, {
     remoteState: { ...state, permissions: { ...state.permissions, addToQueue: false, requestUrl: false } },
   });
@@ -227,4 +224,56 @@ test('search is hidden when the backend does not offer it', async ({ page }) => 
   await openSearch(page, { remoteState: { ...state, permissions: withoutFlag } });
   await expect(page.getByLabel('Media URL')).toBeVisible();
   await expect(page.getByLabel('Search for a song')).toHaveCount(0);
+});
+
+test('two tabs keep CSRF after the second tab probes the session', async ({ browser }) => {
+  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:4175' });
+  const pageA = await context.newPage();
+  await pageA.setViewportSize({ width: 375, height: 812 });
+
+  const queueCalls: Array<{ tab: string; csrf: string | undefined }> = [];
+  const install = async (page: Page, tab: string) => {
+    await installRemoteAuthRoutes(page);
+    await page.route(remotePath('/state'), async (route) => {
+      expectCookieAuth(route);
+      await fulfillJson(route, state);
+    });
+    await page.route(/\/api\/listener-remote\/library/, (route) => fulfillJson(route, { songs: [], page: 1, pageSize: 25 }));
+    await page.route(remotePath('/search'), async (route) => {
+      expectCookieAuth(route);
+      await fulfillJson(route, found);
+    });
+    await page.route(remotePath('/search/queue'), async (route) => {
+      expectCookieAuth(route);
+      queueCalls.push({ tab, csrf: route.request().headers()['x-csrf-token'] });
+      await fulfillJson(route, { ok: true });
+    });
+  };
+
+  await install(pageA, 'A');
+  await pageA.goto(`/remote#token=${REMOTE_TOKEN}`);
+  await expect(pageA.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
+
+  const pageB = await context.newPage();
+  await pageB.setViewportSize({ width: 375, height: 812 });
+  await install(pageB, 'B');
+  // No fragment token — restore from shared HttpOnly cookie via GET /session.
+  await pageB.goto('/remote');
+  await expect(pageB.getByRole('heading', { name: 'Aurora Radio' })).toBeVisible();
+
+  await pageA.getByLabel('Search for a song').fill('neon');
+  await pageA.getByRole('button', { name: 'Search', exact: true }).click();
+  await pageA.getByRole('button', { name: 'Add Neon Skyline to the queue' }).click();
+  await expect(pageA.getByText('Added Neon Skyline to the queue.')).toBeVisible();
+
+  await pageB.getByLabel('Search for a song').fill('neon');
+  await pageB.getByRole('button', { name: 'Search', exact: true }).click();
+  await pageB.getByRole('button', { name: 'Add Paper Lanterns to the queue' }).click();
+  await expect(pageB.getByText('Added Paper Lanterns to the queue.')).toBeVisible();
+
+  expect(queueCalls).toEqual([
+    { tab: 'A', csrf: REMOTE_CSRF },
+    { tab: 'B', csrf: REMOTE_CSRF },
+  ]);
+  await context.close();
 });
