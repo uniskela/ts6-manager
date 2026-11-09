@@ -115,12 +115,26 @@ export function clearRemoteSession(): void {
   current = null;
 }
 
+const REMEMBER_KEY = 'ts6_lr_remember';
 let rememberPreference = false;
+
+function readStoredRemember(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(REMEMBER_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export function setRemoteRememberPreference(value: boolean): void {
   rememberPreference = value === true;
+  try {
+    if (rememberPreference) globalThis.localStorage?.setItem(REMEMBER_KEY, '1');
+    else globalThis.localStorage?.removeItem(REMEMBER_KEY);
+  } catch { /* private mode */ }
 }
 export function remoteRememberPreference(): boolean {
-  return rememberPreference;
+  return rememberPreference || readStoredRemember();
 }
 
 export function resetRemoteClientForTests(): void {
@@ -130,6 +144,7 @@ export function resetRemoteClientForTests(): void {
   rememberedGeneration = 0;
   mutationTail = Promise.resolve();
   rememberPreference = false;
+  try { globalThis.localStorage?.removeItem(REMEMBER_KEY); } catch { /* ignore */ }
 }
 
 export function formatRemoteExpiry(expiresAt: string, nowMs = Date.now()): string {

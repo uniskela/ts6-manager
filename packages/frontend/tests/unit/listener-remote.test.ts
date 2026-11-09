@@ -29,14 +29,17 @@ import {
   remoteSearchErrorMessage,
   remoteSearchQueryError,
   remoteSearchQueueErrorMessage,
+  remoteRememberPreference,
   remoteSession,
   requestRemoteUrl,
   resetRemoteClientForTests,
   searchQueueFailure,
   searchRemoteMusic,
+  setRemoteRememberPreference,
   settleRemoteExchange,
   shouldPollRemote,
 } from '../../src/lib/listener-remote';
+import { MemoryStorage } from './helpers/memory-storage.ts';
 
 const token = 't'.repeat(43);
 const future = new Date(Date.now() + 60_000).toISOString();
@@ -91,23 +94,15 @@ describe('listener remote client', () => {
     url: string; method: string; body: string | null;
     authorization: string | null; csrf: string | null; credentials: RequestCredentials | undefined;
   }> = [];
-  let persisted = false;
+  let storage: MemoryStorage;
   const csrf = 'c'.repeat(43);
 
   beforeEach(() => {
-    resetRemoteClientForTests();
-    calls.length = 0;
-    persisted = false;
-    const storage = {
-      getItem: () => null,
-      setItem: () => { persisted = true; },
-      removeItem: () => { persisted = true; },
-      clear: () => { persisted = true; },
-      key: () => null,
-      length: 0,
-    };
+    storage = new MemoryStorage();
     Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: storage });
     Object.defineProperty(globalThis, 'sessionStorage', { configurable: true, value: storage });
+    resetRemoteClientForTests();
+    calls.length = 0;
     Object.defineProperty(globalThis, 'document', {
       configurable: true,
       value: { cookie: `ts6_lr_csrf=${csrf}` },
@@ -191,6 +186,18 @@ describe('listener remote client', () => {
     clearRemoteSession();
   });
 
+  it('persists remember preference in localStorage across navigations', () => {
+    setRemoteRememberPreference(true);
+    assert.equal(remoteRememberPreference(), true);
+    assert.equal(globalThis.localStorage.getItem('ts6_lr_remember'), '1');
+    // Simulate a fresh in-memory flag after page load; storage still wins.
+    resetRemoteClientForTests();
+    globalThis.localStorage.setItem('ts6_lr_remember', '1');
+    assert.equal(remoteRememberPreference(), true);
+    setRemoteRememberPreference(false);
+    assert.equal(remoteRememberPreference(), false);
+  });
+
   it('exchanges a token once, keeps metadata in memory (not the cookie secret), and fail-closes missing permissions', async () => {
     assert.deepEqual(await exchangeRemoteToken(token), {
       expiresAt: future, botId: 12, csrfToken: csrf, remember: false,
@@ -201,7 +208,7 @@ describe('listener remote client', () => {
     await exchangeRemoteToken(token);
     assert.equal(calls.length, 1);
     assert.equal(remoteSession()?.botId, 12);
-    assert.equal(persisted, false);
+    assert.equal(storage.length, 0, 'exchange must not write session secrets to storage');
     const state = await loadRemoteState();
     assert.equal(state.nowPlaying?.title, 'Neon Skyline');
     assert.equal('filePath' in (state.nowPlaying ?? {}), false);
