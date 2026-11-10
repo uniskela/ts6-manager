@@ -6,27 +6,37 @@
 # EACCES both ways. Match production: share an isolated *named* jobs volume between an
 # INT-only backend container and the fetcher. Host never needs to open the socket.
 #
+# Rootless Docker Engine 29.x: network_mode: host shares the real host loopback (pasta).
+# Bridge + host.docker.internal cannot reach host 127.0.0.1-only publishes (TS/WebQuery),
+# so INT backend/sidecar use host networking and keep LISTEN_HOST=127.0.0.1.
+#
 # Seed token (compose install input) vs installed token (backend reads inside /jobs):
 #   MEDIA_FETCHER_SEED_TOKEN_FILE  → host seed copied into /jobs/.token (umask 077, gitignored)
 #   MEDIA_FETCHER_TOKEN_FILE       → inside containers: /jobs/.token (do not point host env at seed)
 #
+# Interactions (fail-closed):
+#   Default OFF via TS6_DISCORD_INT_INTERACTIONS / TS6_DISCORD_INT_LIVE (not ambient
+#   DISCORD_INTERACTIONS_ENABLED from the shell — avoids production/env bleed).
+#   Supervised window also needs matching DISCORD_* identity in .env.discord-integration-test
+#   and the process isolation gate (TS6_ISOLATED_LIVE_INTERACTIONS + app id + public key).
+#
 # Prerequisites: Linux 6.7+ Landlock ABI, rootless Docker OK.
 #   umask 077; openssl rand -hex 32 > .media-fetcher-token-int
+#   # SIDECAR_SECRET must be set in .env.discord-integration-test for --profile int-backend
 #
 # Fetcher + proxy only (IPC check / prep):
 #   docker compose -f docker-compose.discord-int-media-fetcher.yml up --build -d
 #   ./scripts/discord-int-media-fetcher-ipc-check.sh
 #
-# INT backend + sidecar (profile int-backend) for supervised #20 — builds from this tree,
-# preserves discord-int-test.db, LISTEN_HOST=127.0.0.1 via network_mode: host, no published
-# fetcher/proxy ports, no production DB:
+# INT backend + sidecar (profile int-backend) — builds from this tree:
 #   DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
 #   DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \
 #   docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
+# Offline stack check (stops competing host :3011 first):
+#   ./scripts/discord-int-media-fetcher-stack-check.sh
 #
 # Tear down:
-#   docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down -v
-# Prefer omitting -v if you want to keep the installed jobs token between runs.
+#   docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
 # Do not point production stacks at these volumes.
 
 services:
@@ -146,7 +156,7 @@ services:
       discord_int_fetch:
 
   # Optional INT backend built from this tree (not GHCR latest). Host network keeps
-  # LISTEN_HOST=127.0.0.1 valid under TS6_ISOLATED_INTEGRATION while sharing /jobs.
+  # LISTEN_HOST=127.0.0.1 valid and reaches disposable TS/WebQuery on host loopback.
   sidecar:
     profiles: ["int-backend"]
     build:
@@ -155,12 +165,14 @@ services:
     image: ts6-discord-int-sidecar:local
     container_name: ts6-discord-int-sidecar
     network_mode: host
+    env_file:
+      - .env.discord-integration-test
     environment:
       - SIDECAR_PORT=9800
       - SIDECAR_HOST=127.0.0.1
-      # Required when starting profile int-backend; omit for fetcher-only / ipc-check.
-      - SIDECAR_SECRET=${SIDECAR_SECRET:-}
       - MUSIC_DIR=/data/music
+      # SIDECAR_SECRET comes from env_file only — do not interpolate ${SIDECAR_SECRET:-}
+      # here (that blanks a file value when the host shell unset the var).
     volumes:
       - ${DISCORD_INT_MUSIC_DIR:-./packages/backend/data/discord-int-music}:/data/music
     restart: "no"
@@ -187,8 +199,9 @@ services:
       - MUSIC_DIR=/data/music
       - SIDECAR_URL=http://127.0.0.1:9800
       - TS6_ISOLATED_INTEGRATION=1
-      # Keep live latch off unless the operator explicitly sets it in the env file.
-      - DISCORD_INTERACTIONS_ENABLED=false
+      # Dedicated activation knobs (default OFF). Not DISCORD_INTERACTIONS_ENABLED from the shell.
+      - DISCORD_INTERACTIONS_ENABLED=${TS6_DISCORD_INT_INTERACTIONS:-false}
+      - TS6_ISOLATED_LIVE_INTERACTIONS=${TS6_DISCORD_INT_LIVE:-false}
     volumes:
       - discord-int-jobs:/jobs
       - ${DISCORD_INT_DB_DIR:-./packages/backend/prisma/data}:/data/discord-int

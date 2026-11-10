@@ -149,7 +149,9 @@ Radio playback requires the isolated media fetcher. There is no legacy/unrestric
 
 Standalone compose (does not touch production fetcher stacks). Services use `restart: "no"` so the operator controls start/stop.
 
-**Rootless IPC:** host UID/GID and container uid 1000 do not share a bind-mounted mode-600 `jobs.sock` / `.token` (EACCES). Match production: named volumes `discord-int-jobs` / `discord-int-ctl`, and run the INT backend in-compose (`--profile int-backend`, `network_mode: host`, `LISTEN_HOST=127.0.0.1`) so it mounts `/jobs` in the same userns. Do not chmod 777, world-readable tokens, or Docker-socket mounts.
+**Rootless IPC:** host UID/GID and container uid 1000 do not share a bind-mounted mode-600 `jobs.sock` / `.token` (EACCES). Match production: named volumes `discord-int-jobs` / `discord-int-ctl`, and run the INT backend in-compose (`--profile int-backend`, `network_mode: host`, `LISTEN_HOST=127.0.0.1`) so it mounts `/jobs` in the same userns. On rootless Engine 29.x, host networking shares host loopback (needed for disposable TS/WebQuery); bridge `host.docker.internal` cannot reach `127.0.0.1`-only publishes. Do not chmod 777, world-readable tokens, or Docker-socket mounts.
+
+**Interactions:** compose defaults `DISCORD_INTERACTIONS_ENABLED` / `TS6_ISOLATED_LIVE_INTERACTIONS` from `TS6_DISCORD_INT_INTERACTIONS` / `TS6_DISCORD_INT_LIVE` (default false) — not ambient shell `DISCORD_INTERACTIONS_ENABLED`. Supervised enable still requires the process isolation gate (pinned test app id + public key).
 
 ```bash
 umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
@@ -157,6 +159,8 @@ umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
 docker compose -f docker-compose.discord-int-media-fetcher.yml up --build -d
 # Offline socket/token check (no Discord tunnel):
 ./scripts/discord-int-media-fetcher-ipc-check.sh
+# Offline full stack (fetcher+sidecar+backend); stops competing host :3011:
+# ./scripts/discord-int-media-fetcher-stack-check.sh
 # Supervised #20 prep — INT backend+sidecar from this tree + shared jobs volume:
 # DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
 # DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \
