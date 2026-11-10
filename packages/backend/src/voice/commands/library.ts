@@ -1,6 +1,6 @@
 import type { VoiceBot } from '../voice-bot.js';
 import { AppError } from '../../middleware/error-handler.js';
-import { MediaSessionConflictError, safeUrlDisplayTitle } from '../media-session.js';
+import { MediaSessionConflictError, publicMediaTitle, safeUrlDisplayTitle } from '../media-session.js';
 import { QueueFullError, type QueueItem } from '../playlist/queue.js';
 import { isYouTubeHostUrl } from '../audio/youtube.js';
 import {
@@ -75,8 +75,34 @@ export function formatNamedMatchError(kind: 'playlist' | 'station', matches: Nam
 
 export function formatPlaylistList(playlists: NamedRecord[]): string {
   return playlists.length
-    ? `Playlists (first 10):\n${playlists.slice(0, 10).map((p) => `[${p.id}] ${p.name.slice(0, 60)}`).join('\n')}`
+    ? `Playlists (first 10):\n${playlists.slice(0, 10).map((p) => `[${p.id}] ${p.name.slice(0, 60)}`).join('\n')}\nUse /playlist tracks <name> to list removable track positions.`
     : 'No playlists configured for this bot/server.';
+}
+
+/** Labels an operator may type for /playlist remove (display + stored + host placeholder). */
+export function trackMatchLabels(song: { title: string; sourceUrl?: string | null }): string[] {
+  const labels: string[] = [];
+  const push = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (labels.some((label) => label.toLowerCase() === trimmed.toLowerCase())) return;
+    labels.push(trimmed);
+  };
+  push(song.title ?? '');
+  push(publicMediaTitle(song.title, song.sourceUrl));
+  if (song.sourceUrl) push(safeUrlDisplayTitle(song.sourceUrl));
+  return labels;
+}
+
+export function formatPlaylistTracks(playlistName: string, songs: PlaylistSongRow[]): string {
+  const name = playlistName.slice(0, 60);
+  if (!songs.length) return `Playlist "${name}" is empty.`;
+  const lines = songs.slice(0, 25).map((row, index) => {
+    const title = publicMediaTitle(row.song.title, row.song.sourceUrl).slice(0, 80);
+    return `[#${index + 1}] ${title}`;
+  });
+  const more = songs.length > 25 ? `\n…and ${songs.length - 25} more` : '';
+  return `Tracks in "${name}" (remove with #N or title):\n${lines.join('\n')}${more}`;
 }
 
 export async function loadPlaylistSummaries(db: PlaylistCatalog, serverConfigId: number): Promise<NamedRecord[]> {
@@ -300,7 +326,7 @@ export async function createServerPlaylist(
 export async function addUrlToPlaylist(
   db: PlaylistCatalog,
   input: { query: string; url: string; serverConfigId: number },
-): Promise<{ ok: true; playlist: string; title: string } | { ok: false; message: string }> {
+): Promise<{ ok: true; playlist: string; title: string; position: number } | { ok: false; message: string }> {
   const summaries = await loadPlaylistSummaries(db, input.serverConfigId);
   const matches = matchNamed(summaries, input.query);
   if (matches.length !== 1) return { ok: false, message: formatNamedMatchError('playlist', matches, '/playlist list') };
@@ -340,19 +366,20 @@ export async function addUrlToPlaylist(
     const existing = await tx.playlistSong.findUnique({
       where: { playlistId_songId: { playlistId: playlist.id, songId: song.id } },
     });
-    if (existing) return { added: false as const, title: song.title };
+    if (existing) return { added: false as const, title: song.title as string, position: 0 };
     const maxPos = await tx.playlistSong.aggregate({
       where: { playlistId: playlist.id },
       _max: { position: true },
     });
+    const dbPosition = (maxPos._max.position ?? -1) + 1;
     await tx.playlistSong.create({
-      data: { playlistId: playlist.id, songId: song.id, position: (maxPos._max.position ?? -1) + 1 },
+      data: { playlistId: playlist.id, songId: song.id, position: dbPosition },
     });
-    return { added: true as const, title: song.title };
+    return { added: true as const, title: song.title as string, position: dbPosition + 1 };
   };
   const result = db.$transaction ? await db.$transaction(work) : await work(db);
   if (!result.added) return { ok: false, message: 'That URL is already in the playlist.' };
-  return { ok: true, playlist: playlist.name, title: result.title };
+  return { ok: true, playlist: playlist.name, title: result.title, position: result.position };
 }
 
 export async function removeTrackFromPlaylist(
@@ -371,18 +398,23 @@ export async function removeTrackFromPlaylist(
     return { ok: false, message: 'Shared or foreign playlists cannot be edited from this server.' };
   }
   const songs = playlist.songs as PlaylistSongRow[];
-  const track = input.track.trim();
+  const track = input.track.trim().replace(/^#/, '');
   const byPosition = /^[1-9]\d*$/.test(track) ? songs[Number(track) - 1] : undefined;
   const q = track.toLowerCase();
-  const exact = songs.filter((row: PlaylistSongRow) => row.song.title.toLowerCase() === q);
-  const partial = songs.filter((row: PlaylistSongRow) => row.song.title.toLowerCase().includes(q));
+  const labelMatch = (row: PlaylistSongRow, mode: 'exact' | 'partial') =>
+    trackMatchLabels(row.song).some((label) => {
+      const lower = label.toLowerCase();
+      return mode === 'exact' ? lower === q : lower.includes(q);
+    });
+  const exact = songs.filter((row) => labelMatch(row, 'exact'));
+  const partial = songs.filter((row) => labelMatch(row, 'partial'));
   const chosen = byPosition ?? (exact.length === 1 ? exact[0] : partial.length === 1 ? partial[0] : undefined);
   if (!chosen) {
     return {
       ok: false,
       message: (exact.length > 1 || partial.length > 1)
-        ? 'Ambiguous track; use a position number from /playlist list.'
-        : 'Track not found in that playlist.',
+        ? 'Ambiguous track; use a position number from /playlist tracks.'
+        : 'Track not found in that playlist. Use /playlist tracks to list positions.',
     };
   }
   await db.playlistSong.deleteMany({ where: { playlistId: playlist.id, songId: chosen.song.id } });

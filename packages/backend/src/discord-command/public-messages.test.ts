@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { AppError } from '../middleware/error-handler.js';
+import { MediaEgressError } from '../voice/egress/media-egress.js';
+import { RADIO_FETCHER_UNAVAILABLE } from '../voice/egress/media-fetcher-client.js';
 import { MediaSessionConflictError } from '../voice/media-session.js';
 import { QueueFullError } from '../voice/playlist/queue.js';
 import { publicCommandError } from './public-messages.js';
@@ -18,6 +20,13 @@ describe('publicCommandError (finding #9)', () => {
     }]);
     assert.match(publicCommandError(conflict, 'fallback'), /video stream.*Bot/i);
     assert.match(publicCommandError(new QueueFullError(2, 0), 'fallback'), /queue is full/i);
+  });
+
+  it('finding #20: passes through MediaEgressError radio fetcher guidance', () => {
+    assert.equal(
+      publicCommandError(new MediaEgressError(RADIO_FETCHER_UNAVAILABLE), 'Radio playback failed.'),
+      RADIO_FETCHER_UNAVAILABLE,
+    );
   });
 
   it('hides generic AppError and unexpected internals', () => {

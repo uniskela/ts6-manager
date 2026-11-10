@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { MediaEgressError } from '../voice/egress/media-egress.js';
+import { RADIO_FETCHER_UNAVAILABLE } from '../voice/egress/media-fetcher-client.js';
 import { defaultMediaCommandPermissions, type MediaCommandPermissions } from '../voice/media-command-permissions.js';
+import { safeUrlDisplayTitle } from '../voice/media-session.js';
 import type { MediaUrlPipelineDeps } from '../voice/media-url-pipeline.js';
 import { PlayQueue, type QueueItem } from '../voice/playlist/queue.js';
 import { createDiscordCommandAdapter, type DiscordCommandDeps, type DiscordCommandIntent } from './adapter.js';
@@ -714,6 +717,20 @@ describe('Discord playlist and radio catalog (2B-2A)', () => {
     assert.equal(bot.nowPlaying?.source, 'radio');
   });
 
+  it('finding #20: radio play returns actionable fetcher-unavailable guidance', async () => {
+    const bot = fakeBot();
+    bot.playStream = async () => {
+      throw new MediaEgressError(RADIO_FETCHER_UNAVAILABLE);
+    };
+    const music = createMusicCommandService(serviceOpts(bot, { prisma: fakeCatalog() }));
+    const result = await music.execute(musicIntent({
+      command: 'radio', args: { subcommand: 'play', station: 'Jazz FM' },
+    }), binding);
+    assert.equal(result.ok, false);
+    assert.equal(result.content, RADIO_FETCHER_UNAVAILABLE);
+    assert.doesNotMatch(result.content, /Radio playback failed/);
+  });
+
   it('does not enqueue a playlist loaded after /stop', async () => {
     const bot = fakeBot();
     const catalog = fakeCatalog();
@@ -795,9 +812,16 @@ describe('Discord playlist edits (2B-2B)', () => {
       args: { subcommand: 'add', name: 'Night', url: 'https://8.8.8.8/night.mp3' },
     }), binding);
     assert.equal(add.ok, true);
+    assert.match(add.content, /\[#1\]/);
     const playlist = await catalog.playlist.findFirst({ where: { OR: [{ serverConfigId: 9 }, { serverConfigId: null }], id: 20 } });
     assert.equal(playlist.songs.length, 1);
     assert.equal(playlist.songs[0].position, 0);
+    const tracks = await music.execute(musicIntent({
+      command: 'playlist',
+      args: { subcommand: 'tracks', name: 'Night' },
+    }), binding);
+    assert.equal(tracks.ok, true);
+    assert.match(tracks.content, /\[#1\]/);
     const removed = await music.execute(musicIntent({
       command: 'playlist',
       ts6Role: 'admin',
@@ -806,6 +830,34 @@ describe('Discord playlist edits (2B-2B)', () => {
     assert.equal(removed.ok, true);
     const empty = await catalog.playlist.findFirst({ where: { OR: [{ serverConfigId: 9 }, { serverConfigId: null }], id: 20 } });
     assert.equal(empty.songs.length, 0);
+  });
+
+  it('finding #18: removes by displayed host title after stored title enrichment', async () => {
+    const catalog = fakeCatalog();
+    const music = createMusicCommandService(serviceOpts(fakeBot(), { prisma: catalog }));
+    const url = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
+    await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'create', name: 'Smoke' },
+    }), binding);
+    const add = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'add', name: 'Smoke', url },
+    }), binding);
+    assert.equal(add.ok, true);
+    assert.match(add.content, /Media from www\.soundhelix\.com/);
+    const song = catalog._songs.find((s: any) => s.sourceUrl === url);
+    assert.ok(song);
+    song.title = 'SoundHelix-Song-1';
+    const removed = await music.execute(musicIntent({
+      command: 'playlist',
+      ts6Role: 'admin',
+      args: { subcommand: 'remove', name: 'Smoke', track: safeUrlDisplayTitle(url) },
+    }), binding);
+    assert.equal(removed.ok, true);
+    assert.equal(catalog._links.filter((l: any) => l.songId === song.id).length, 0);
   });
 
   it('does not treat Discord Manage Guild as playlist-edit admin', async () => {

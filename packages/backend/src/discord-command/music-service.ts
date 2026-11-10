@@ -13,16 +13,19 @@ import {
 import { applyMediaUrlToBot, beginChatMediaRequest } from '../voice/commands/queue.js';
 import {
   addUrlToPlaylist,
+  catalogScopeWhere,
   createServerPlaylist,
   enqueueSavedPlaylist,
   formatNamedMatchError,
   formatPlaylistList,
+  formatPlaylistTracks,
   loadPlaylistSummaries,
   loadRadioStations,
   matchNamed,
   radioQueueItem,
   removeTrackFromPlaylist,
   type PlaylistCatalog,
+  type PlaylistSongRow,
 } from '../voice/commands/library.js';
 import { formatRadioListMessage } from '../voice/ts6-chat-format.js';
 import { validateUrl } from '../utils/url-validator.js';
@@ -115,9 +118,16 @@ function arg(intent: DiscordCommandIntent, ...keys: string[]): string {
   return '';
 }
 
-function playlistAction(intent: DiscordCommandIntent): 'list' | 'play' | 'create' | 'add' | 'remove' {
+function playlistAction(intent: DiscordCommandIntent): 'list' | 'tracks' | 'play' | 'create' | 'add' | 'remove' {
   const action = arg(intent, 'subcommand', 'action', 'op').toLowerCase();
-  if (action === 'list' || action === 'play' || action === 'create' || action === 'add' || action === 'remove') return action;
+  if (
+    action === 'list'
+    || action === 'tracks'
+    || action === 'play'
+    || action === 'create'
+    || action === 'add'
+    || action === 'remove'
+  ) return action;
   return arg(intent, 'name', 'playlist', 'query') ? 'play' : 'list';
 }
 
@@ -132,7 +142,7 @@ function mediaArgs(intent: DiscordCommandIntent): string {
   if (intent.command === 'volume') return volumeArg(intent);
   if (intent.command === 'playlist') {
     const action = playlistAction(intent);
-    return action === 'list' ? '' : action;
+    return action === 'list' || action === 'tracks' ? '' : action;
   }
   if (intent.command === 'radio') {
     const action = radioAction(intent);
@@ -388,6 +398,21 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     if (action === 'list') {
       return ok(formatPlaylistList(await loadPlaylistSummaries(deps.prisma, serverConfigId)));
     }
+    if (action === 'tracks') {
+      const query = arg(intent, 'name', 'playlist', 'query');
+      if (!query) return fail('unavailable', 'Usage: /playlist tracks <name>');
+      const summaries = await loadPlaylistSummaries(deps.prisma, serverConfigId);
+      const matches = matchNamed(summaries, query);
+      if (matches.length !== 1) {
+        return fail('unavailable', formatNamedMatchError('playlist', matches, '/playlist list'));
+      }
+      const playlist = await deps.prisma!.playlist.findFirst({
+        where: { ...catalogScopeWhere(serverConfigId), id: matches[0].id },
+        include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
+      });
+      if (!playlist) return fail('unavailable', 'Playlist not found. Use /playlist list.');
+      return ok(formatPlaylistTracks(playlist.name, playlist.songs as PlaylistSongRow[]));
+    }
     if (action === 'play') {
       const query = arg(intent, 'name', 'playlist', 'query');
       if (!query) return fail('unavailable', 'Usage: /playlist play <name>', 'deferred');
@@ -424,12 +449,15 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
         const result = await addUrlToPlaylist(deps.prisma!, { query: name, url, serverConfigId });
         if (!result.ok) return fail('unavailable', result.message, 'deferred');
         const title = publicMediaTitle(result.title, url);
-        return ok(`Added to "${result.playlist.slice(0, 60)}": ${title.slice(0, 80)}`, 'deferred');
+        return ok(
+          `Added to "${result.playlist.slice(0, 60)}" [#${result.position}]: ${title.slice(0, 80)}`,
+          'deferred',
+        );
       });
     }
     const name = arg(intent, 'name', 'playlist');
     const track = arg(intent, 'track', 'song', 'title');
-    if (!name || !track) return fail('unavailable', 'Usage: /playlist remove <name> <track>');
+    if (!name || !track) return fail('unavailable', 'Usage: /playlist remove <name> <track|#N>');
     return once(intent, 'immediate', async () => {
       const result = await removeTrackFromPlaylist(deps.prisma!, { query: name, track, serverConfigId });
       if (!result.ok) return fail('unavailable', result.message);
