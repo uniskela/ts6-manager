@@ -17,6 +17,7 @@ import {
   enqueueSavedPlaylist,
   formatNamedMatchError,
   formatPlaylistList,
+  listPlaylistTracks,
   loadPlaylistSummaries,
   loadRadioStations,
   matchNamed,
@@ -115,9 +116,16 @@ function arg(intent: DiscordCommandIntent, ...keys: string[]): string {
   return '';
 }
 
-function playlistAction(intent: DiscordCommandIntent): 'list' | 'play' | 'create' | 'add' | 'remove' {
+function playlistAction(intent: DiscordCommandIntent): 'list' | 'tracks' | 'play' | 'create' | 'add' | 'remove' {
   const action = arg(intent, 'subcommand', 'action', 'op').toLowerCase();
-  if (action === 'list' || action === 'play' || action === 'create' || action === 'add' || action === 'remove') return action;
+  if (
+    action === 'list'
+    || action === 'tracks'
+    || action === 'play'
+    || action === 'create'
+    || action === 'add'
+    || action === 'remove'
+  ) return action;
   return arg(intent, 'name', 'playlist', 'query') ? 'play' : 'list';
 }
 
@@ -132,7 +140,7 @@ function mediaArgs(intent: DiscordCommandIntent): string {
   if (intent.command === 'volume') return volumeArg(intent);
   if (intent.command === 'playlist') {
     const action = playlistAction(intent);
-    return action === 'list' ? '' : action;
+    return action === 'list' || action === 'tracks' ? '' : action;
   }
   if (intent.command === 'radio') {
     const action = radioAction(intent);
@@ -388,6 +396,13 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     if (action === 'list') {
       return ok(formatPlaylistList(await loadPlaylistSummaries(deps.prisma, serverConfigId)));
     }
+    if (action === 'tracks') {
+      const query = arg(intent, 'name', 'playlist', 'query');
+      if (!query) return fail('unavailable', 'Usage: /playlist tracks <name>');
+      const result = await listPlaylistTracks(deps.prisma, { query, serverConfigId });
+      if (!result.ok) return fail('unavailable', result.message);
+      return ok(result.message);
+    }
     if (action === 'play') {
       const query = arg(intent, 'name', 'playlist', 'query');
       if (!query) return fail('unavailable', 'Usage: /playlist play <name>', 'deferred');
@@ -424,12 +439,15 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
         const result = await addUrlToPlaylist(deps.prisma!, { query: name, url, serverConfigId });
         if (!result.ok) return fail('unavailable', result.message, 'deferred');
         const title = publicMediaTitle(result.title, url);
-        return ok(`Added to "${result.playlist.slice(0, 60)}": ${title.slice(0, 80)}`, 'deferred');
+        return ok(
+          `Added to "${result.playlist.slice(0, 60)}" [#${result.position}]: ${title.slice(0, 80)}`,
+          'deferred',
+        );
       });
     }
     const name = arg(intent, 'name', 'playlist');
     const track = arg(intent, 'track', 'song', 'title');
-    if (!name || !track) return fail('unavailable', 'Usage: /playlist remove <name> <track>');
+    if (!name || !track) return fail('unavailable', 'Usage: /playlist remove <name> <track|#N>');
     return once(intent, 'immediate', async () => {
       const result = await removeTrackFromPlaylist(deps.prisma!, { query: name, track, serverConfigId });
       if (!result.ok) return fail('unavailable', result.message);

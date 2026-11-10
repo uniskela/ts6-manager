@@ -131,12 +131,56 @@ Use a **temporary HTTPS** exposure of only `/api/discord/interactions` for the *
 
 **Environment:** dedicated test Discord application, private test guild, isolated `discord-int-test.db`, non-D1 TeamSpeak lab bot.
 
-## 7. External actions that still need explicit approval
+## 7. Viewer-only Discord identity (findings #5 / #21)
+
+Prepare a genuine viewer-only member before the next supervised live window:
+
+1. In the INT-TEST guild, create (or reuse) a role with **no** administrator / Manage Guild powers.
+2. Put that role snowflake only in `DISCORD_VIEWER_ROLE_IDS` (not in `DISCORD_ADMIN_ROLE_IDS`).
+3. Assign it to a second Discord account used only for deny checks.
+4. Confirm that account lacks every role listed in `DISCORD_ADMIN_ROLE_IDS`.
+5. Live checks (after a new operator GO): `/ts status` and `/playlist create` must deny; admin account commands still succeed.
+
+Do not fabricate deny observations. Do not broaden privileges just to green the matrix.
+
+## 8. INT-TEST media fetcher (finding #20)
+
+Radio playback requires the isolated media fetcher. There is no legacy/unrestricted ffmpeg fallback. Live #20 PASS requires audible playback with a healthy fetcher — an unavailable message alone is not acceptance.
+
+Standalone compose (does not touch production fetcher stacks). Services use `restart: "no"` so the operator controls start/stop.
+
+```bash
+umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
+mkdir -p data/discord-int-media-jobs data/discord-int-media-ctl
+# Optional override: MEDIA_FETCHER_SEED_TOKEN_FILE=./.media-fetcher-token-int
+docker compose -f docker-compose.discord-int-media-fetcher.yml up --build
+```
+
+Keep seed and installed paths distinct even if backend env is exported into the shell:
+
+| Variable | Role |
+|----------|------|
+| `MEDIA_FETCHER_SEED_TOKEN_FILE` | Compose install input (default `./.media-fetcher-token-int`) |
+| `MEDIA_FETCHER_TOKEN_FILE` | Backend → installed `data/discord-int-media-jobs/.token` |
+| `MEDIA_FETCHER_SOCK` | Backend → installed `data/discord-int-media-jobs/jobs.sock` |
+
+Landlock, internal `discord_int_fetch` network, token mode 600, and fail-closed client behaviour match production fetcher policy. Do not fall back to in-process ffmpeg.
+
+Tear down after the supervised window:
+
+```bash
+docker compose -f docker-compose.discord-int-media-fetcher.yml down
+```
+
+Do not modify production media-fetcher services.
+
+## 9. External actions that still need explicit approval
 
 1. Creating or selecting a Discord **test** application (leave existing Uniskela command-app routing alone).
 2. Setting the test application's Interactions Endpoint URL.
 3. Read-only fetch of remote guild commands.
-4. Registering/updating guild slash commands.
+4. Registering/updating guild slash commands (include `/playlist tracks` when refreshing guild commands after this fix).
 5. Creating a public HTTPS tunnel / DNS.
 6. Any TeamSpeak playback on a lab bot.
 7. Pointing anything at production guilds, D1, or Portainer stacks.
+8. Starting the INT-TEST media-fetcher compose alongside a live interactions window.

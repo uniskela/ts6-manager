@@ -22,6 +22,9 @@ packages/frontend/test-results/
 packages/frontend/playwright-report/
 .pr-test/
 .media-fetcher-token
+.media-fetcher-token-int
+data/discord-int-media-jobs/
+data/discord-int-media-ctl/
 bin/
 
 # Local integration-test runtime artifacts (never commit)

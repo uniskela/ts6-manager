@@ -162,6 +162,9 @@ export function getSupportedSlashCommands(): SlashCommandDefinition[] {
       handlerCommands: ['playlist'],
       options: [
         sub('list', 'List playlists'),
+        sub('tracks', 'List tracks and removable positions in a playlist', [
+          opt(DiscordOptionType.STRING, 'name', 'Playlist name', { required: true }),
+        ]),
         sub('play', 'Enqueue a saved playlist', [
           opt(DiscordOptionType.STRING, 'name', 'Playlist name', { required: true }),
         ]),
@@ -172,9 +175,9 @@ export function getSupportedSlashCommands(): SlashCommandDefinition[] {
           opt(DiscordOptionType.STRING, 'name', 'Playlist name', { required: true }),
           opt(DiscordOptionType.STRING, 'url', 'Track URL', { required: true }),
         ]),
-        sub('remove', 'Remove a track from a playlist (admin)', [
+        sub('remove', 'Remove a track by #N or title (admin)', [
           opt(DiscordOptionType.STRING, 'name', 'Playlist name', { required: true }),
-          opt(DiscordOptionType.STRING, 'track', 'Track title to remove', { required: true }),
+          opt(DiscordOptionType.STRING, 'track', 'Position (#N) or title', { required: true }),
         ]),
       ],
     },

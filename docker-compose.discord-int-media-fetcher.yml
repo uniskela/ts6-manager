@@ -1,0 +1,120 @@
+# Standalone INT-TEST media fetcher (Commands & Radio supervised live).
+# Does NOT modify production media-fetcher services or docker-compose.media-fetcher.yml.
+# Host backend (LISTEN_HOST=127.0.0.1) reaches the job socket via the bind-mounted jobs dir.
+#
+# Seed token (compose install input) vs installed token (backend reads):
+#   MEDIA_FETCHER_SEED_TOKEN_FILE  → host seed copied into /jobs/.token (umask 077, gitignored)
+#   MEDIA_FETCHER_TOKEN_FILE       → backend path to the *installed* jobs token (not the seed)
+# Do not export MEDIA_FETCHER_TOKEN_FILE as the seed path into this compose file.
+#
+# Prerequisites: Linux 6.7+ Landlock ABI, rootless Docker OK.
+#   umask 077; openssl rand -hex 32 > .media-fetcher-token-int
+#   mkdir -p data/discord-int-media-jobs data/discord-int-media-ctl
+#   docker compose -f docker-compose.discord-int-media-fetcher.yml up --build
+#   # restart: "no" — operator starts/stops explicitly; no auto-restart after crash
+#
+# Backend env (gitignored .env.discord-integration-test):
+#   MEDIA_FETCHER=1
+#   MEDIA_FETCHER_SOCK=<repo>/data/discord-int-media-jobs/jobs.sock
+#   MEDIA_FETCHER_TOKEN_FILE=<repo>/data/discord-int-media-jobs/.token
+#
+# Tear down (stops all INT-only fetcher/proxy containers):
+#   docker compose -f docker-compose.discord-int-media-fetcher.yml down
+# Do not point production stacks at these bind mounts.
+
+services:
+  media-fetcher-token:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+    environment:
+      - TOKEN_SRC=/src/token
+      - TOKEN_DEST=/jobs/.token
+      - CTL_TOKEN_DEST=/ctl/.ctl-token
+    volumes:
+      # Seed only — never the backend's installed MEDIA_FETCHER_TOKEN_FILE path.
+      - ${MEDIA_FETCHER_SEED_TOKEN_FILE:-./.media-fetcher-token-int}:/src/token:ro
+      - ./data/discord-int-media-jobs:/jobs
+      - ./data/discord-int-media-ctl:/ctl
+    command: ["node", "/app/install-token.mjs"]
+    restart: "no"
+    networks:
+      discord_int_fetch:
+
+  media-egress-proxy:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    container_name: ts6-discord-int-media-egress-proxy
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - PROXY_CTL=/ctl/proxy.sock
+      - PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token
+      - PROXY_PORT=8080
+    volumes:
+      - ./data/discord-int-media-ctl:/ctl
+    command: ["node", "/app/proxy.mjs"]
+    depends_on:
+      media-fetcher-token:
+        condition: service_completed_successfully
+    restart: "no"
+    networks:
+      discord_int_fetch:
+      discord_int_egress:
+
+  media-fetcher:
+    build:
+      context: ./services/media-fetcher
+      dockerfile: Dockerfile
+    image: ts6-media-fetcher:local
+    container_name: ts6-discord-int-media-fetcher
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      - JOBS_SOCK=/jobs/jobs.sock
+      - PROXY_CTL=/ctl/proxy.sock
+      - PROXY_CTL_TOKEN_FILE=/ctl/.ctl-token
+      - PROXY_HOST=media-egress-proxy
+      - MEDIA_FETCHER_TOKEN_FILE=/jobs/.token
+      - FETCHER_MAX_JOBS=4
+    volumes:
+      - ./data/discord-int-media-jobs:/jobs
+      - ./data/discord-int-media-ctl:/ctl
+    command: ["node", "/app/fetcher.mjs"]
+    depends_on:
+      media-fetcher-token:
+        condition: service_completed_successfully
+      media-egress-proxy:
+        condition: service_started
+    restart: "no"
+    networks:
+      discord_int_fetch:
+
+networks:
+  discord_int_fetch:
+    internal: true
+  discord_int_egress:
