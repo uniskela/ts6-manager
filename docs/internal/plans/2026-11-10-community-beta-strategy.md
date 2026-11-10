@@ -6,15 +6,17 @@
 
 ## What already exists (D1 lab)
 
+**Location:** Lab runbooks and scripts below live on draft [#504](https://github.com/uniskela/ts6-manager/pull/504) under `packages/discord-bridge/` (**not** on `main`). Check out that branch (tip at authoring: `46ce40c9`) or an equivalent worktree before any A–D or private-beta session. The GHCR publish workflow and its trust doc are already on `main`.
+
 | Piece | Role | Trust / gate |
 |-------|------|----------------|
-| `lab/ACCEPTANCE.md` | Operator stdin marks for A–D | Evidence only; NO-GO until all four PASS |
-| `lab/PRIVATE-BETA.md` | Restricted private-beta runtime on **disposable** `d1-ts-lab` | Phase 1 supervised **GO**; public / unattended / merge / publish **NO-GO** |
-| `lab/PRIVATE-PILOT.md` | Same image class against a dedicated channel on an **existing** private TS | Prepared; first production-server session **NO-GO** until disposable-lab recovery + monitoring pass |
-| `scripts/private-beta.sh` / `private-pilot.sh` | check / build / up `--confirm` / status / stop / rollback | Presence prints SET/MISSING only; `restart: "no"`; no published bridge ports |
-| Host `host-status.json` | Privacy-safe health (`ok` / `degraded` / `parked` / `fail-closed` / `stale`) | No usernames, uniqueIds, tokens, audio |
-| GHCR workflow on `main` | `publish-discord-bridge-private-beta.yml` + [trust model](../discord-bridge-private-beta-publish.md) | Manual dispatch; private package; reduced-trust; **not** Release Please; do not dispatch without maintainer + environment approval |
-| One-person live smoke | Bidirectional DAVE smoke PASS | Not A–D |
+| `#504` `packages/discord-bridge/lab/ACCEPTANCE.md` | Operator stdin marks for A–D | Evidence only; NO-GO until all four PASS |
+| `#504` `packages/discord-bridge/lab/PRIVATE-BETA.md` | Restricted private-beta runtime on **disposable** `d1-ts-lab` | Phase 1 supervised **GO**; public / unattended / merge / publish **NO-GO** |
+| `#504` `packages/discord-bridge/lab/PRIVATE-PILOT.md` | Same image class against a dedicated channel on an **existing** private TS | Prepared; first production-server session **NO-GO** until disposable-lab recovery + monitoring pass |
+| `#504` `packages/discord-bridge/scripts/private-beta.sh` / `private-pilot.sh` / `d1-ts-lab.sh` | check / build / up `--confirm` / status / stop / rollback; disposable TS lab | Presence prints SET/MISSING only; `restart: "no"`; no published bridge ports |
+| `#504` Host `host-status.json` (under lab evidence bind-mount) | Privacy-safe health (`ok` / `degraded` / `parked` / `fail-closed` / `stale`) | No usernames, uniqueIds, tokens, audio |
+| `main` GHCR workflow | `.github/workflows/publish-discord-bridge-private-beta.yml` + [trust model](../discord-bridge-private-beta-publish.md) | Manual dispatch; private package; reduced-trust; **not** Release Please; do not dispatch without maintainer + environment approval |
+| `#504` curated one-person live smoke | Bidirectional DAVE smoke PASS | Not A–D |
 
 **Do not confuse:** private-beta usage counters ≠ A–D mark evidence. Private-pilot ≠ public beta. GHCR private-beta tag ≠ stable `v1.12.0` image.
 
@@ -26,11 +28,11 @@ Volunteers bring **TeamSpeak and Discord clients only**. The unfinished Node 24 
 
 ### Session model: “Community lab night”
 
-1. **Operator** runs disposable `d1-ts-lab` + private Discord **test guild/channel** (not production Uniskela app; not production TS).
+1. **Operator** checks out `#504` (or syncs that tree), then runs disposable `packages/discord-bridge/scripts/d1-ts-lab.sh` + private Discord **test guild/channel** (not production Uniskela app; not production TS).
 2. Publish a short call for testers (Discord/forum/GitHub Discussion) with consent text below.
 3. Schedule a **supervised** window (operator present entire time).
 4. Volunteers join via **private path only** (existing Tailscale / invite-only Discord / one-time TS password for the disposable lab). No wild public `0.0.0.0` TS advertise for acceptance.
-5. Run A–D per `ACCEPTANCE.md` (or serialize across nights if fewer than four people).
+5. Run A–D per `#504` `packages/discord-bridge/lab/ACCEPTANCE.md` (or serialize across nights if fewer than four people).
 6. Collect counters + operator-attested hear notes only. Volunteers file bugs with the privacy template below.
 
 ### Concurrent humans (hard floor)
@@ -91,7 +93,7 @@ All required. None are satisfied by Sonar QG alone.
 |---|------|--------|
 | 1 | D1 A–D LIVE PASS with evidence on a known SHA | Operator + volunteers |
 | 2 | Independent security/lifecycle review of that SHA | Independent reviewer |
-| 3 | Disposable-lab Phase 1+2 private-beta recovery observed live (`PRIVATE-BETA.md`) | Operator |
+| 3 | Disposable-lab Phase 1+2 private-beta recovery observed live (`#504` `packages/discord-bridge/lab/PRIVATE-BETA.md`) | Operator |
 | 4 | Bridge remains **disabled by default**; no ports on worker; DAVE fail-closed; token redaction | Engineering |
 | 5 | Secrets: write-only tokens, encrypted at rest once D2 lands; GET never returns secrets | Engineering |
 | 6 | Emergency stop: documented `stop` / compose down / revoke Discord tokens / leave mapped channels | Operator |
@@ -161,15 +163,15 @@ D6 + stable  Full matrix → curate #609 → owner GO → `v1.12.0`
 
 | Control | Action |
 |---------|--------|
-| Monitor | `private-beta.sh status` / `host-status.json`; alert on `fail-closed`, duplicate receiver, process exit |
+| Monitor | `#504` `packages/discord-bridge/scripts/private-beta.sh status` / `host-status.json`; alert on `fail-closed`, duplicate receiver, process exit |
 | Soft stop | `private-beta.sh stop` or product Stop; confirm bots leave voice |
 | Hard stop | Compose down; revoke/regenerate Discord bot tokens; remove guild invites; stop disposable TS |
-| Rollback | Prior local SHA (`private-beta.sh rollback`) or prior GHCR digest for pilot |
+| Rollback | Prior local SHA (`private-beta.sh rollback` on `#504`) or prior GHCR digest for pilot |
 | Incident | No audio/PII in public issues; open private maintainer channel; pause invites |
 
 ## Immediate next development task
 
-1. **Rebuild** local lab image for `#504` tip (`46ce40c9` or current HEAD) and confirm `d1-ts-lab.sh start` + presence SET/MISSING (no `--confirm`).
+1. **Check out `#504`** (tip `46ce40c9` or current HEAD). **Rebuild** local lab image from that tree and confirm `packages/discord-bridge/scripts/d1-ts-lab.sh start` + presence SET/MISSING (no `--confirm`). These scripts are **not** on `main`.
 2. **Publish a volunteer call draft** (text only — owner posts) + schedule first **Community lab night** aimed at scenario **A**.
 3. Keep `#609` / public GHCR dispatch / Bridge-K edits blocked until explicit GO.
 
