@@ -128,7 +128,7 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 ### Targeted live retest (after GO)
 
 1. Re-register guild commands so `/playlist tracks` is present.
-2. Start INT-only media fetcher (`docker-compose.discord-int-media-fetcher.yml`) and point backend `MEDIA_FETCHER*` at the installed jobs token/socket — **#20 PASS requires audible radio**, not only the unavailable message.
+2. Start INT-only media fetcher (`docker-compose.discord-int-media-fetcher.yml`; named jobs volume + `--profile int-backend` under rootless — not host bind mounts). Offline: `./scripts/discord-int-media-fetcher-ipc-check.sh`. **#20 PASS requires audible radio**, not only the unavailable message.
 3. Confirm a viewer-only member (VIEWER role, no ADMIN roles) before #5/#21.
 4. #18: `/playlist add` → `/playlist tracks` → remove by `#N` or displayed host title after enrichment (positions must match).
 5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -f docker-compose.discord-int-media-fetcher.yml down`.
