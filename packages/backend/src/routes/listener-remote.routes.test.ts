@@ -83,7 +83,7 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     assert.equal(server, binding.serverConfigId);
     assert.equal(virtualServer, binding.virtualServerId);
     if (cmd.startsWith('clientinfo')) {
-      return `client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
+      return `cid=${state.channelId} client_unique_identifier=${state.uid} client_servergroups=${state.groups} client_type=0\nerror id=0 msg=ok`;
     }
     assert.equal(cmd, 'clientlist -uid');
     return `clid=${binding.clid} cid=${state.channelId} client_unique_identifier=${state.uid} client_type=0\nerror id=0 msg=ok`;
@@ -139,6 +139,8 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     expandYouTube: async () => null,
     downloadTrack: async () => { downloads++; return item; },
   };
+  // C1a: default probe matches the fixture track so existing /requests tests stay green.
+  app.locals.listenerLinkProbe = async () => ({ durationSec: item.duration ?? 123 });
   if (!fullApp) app.use('/api/listener-remote', listenerRemoteIpGuard, listenerRemoteRoutes);
   if (!fullApp) app.use('/api/listener-remote-admin', (req, _res, next) => {
     if (role) (req as any).user = { id: 1, username: 'administrator', role };
@@ -160,12 +162,20 @@ async function fixture(role?: 'admin' | 'viewer' | 'operator', fullApp = false) 
     body: options.rawBody ?? (options.body === undefined ? undefined : JSON.stringify(options.body)),
     signal: options.signal,
   });
-  const exchange = async () => {
+  const exchange = async (opts: { remember?: boolean } = {}) => {
     const issued = remote.issue(binding);
-    const response = await request('/exchange', { body: { token: issued.token } });
+    const response = await request('/exchange', {
+      body: { token: issued.token, ...(opts.remember ? { remember: true } : {}) },
+    });
     assert.equal(response.status, 200);
-    const data = await response.json() as { session: string; expiresAt: string; botId: number };
-    return { ...data, token: issued.token };
+    const data = await response.json() as {
+      expiresAt: string; botId: number; csrfToken: string; remember: boolean; session?: unknown;
+    };
+    assert.equal(data.session, undefined);
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const { session, csrf } = credentialsFromExchange(response);
+    assert.equal(csrf, data.csrfToken);
+    return { session, expiresAt: data.expiresAt, botId: data.botId, csrfToken: data.csrfToken, remember: data.remember, token: issued.token };
   };
   return {
     refusalRows, refusalLog, flushRefusals: () => refusals.flush(),
@@ -198,10 +208,15 @@ describe('listener remote HTTP security boundary', () => {
     assert.equal(success.headers.get('cache-control'), 'no-store');
     assert.equal(success.headers.get('referrer-policy'), 'no-referrer');
     const data = await success.json() as Record<string, unknown>;
-    assert.deepEqual(Object.keys(data).sort(), ['botId', 'expiresAt', 'session']);
+    assert.deepEqual(Object.keys(data).sort(), ['botId', 'csrfToken', 'expiresAt', 'remember']);
     assert.equal(data.botId, binding.botId);
-    assert.match(String(data.session), /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(data.remember, false);
+    assert.match(String(data.csrfToken), /^[A-Za-z0-9_-]{43}$/);
+    assert.equal(data.session, undefined);
     assert.ok(!JSON.stringify(data).includes(binding.uid));
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const { session } = credentialsFromExchange(success);
+    assert.match(session, /^[A-Za-z0-9_-]{43}$/);
     assert.equal((await f.request('/exchange', { body: { token } })).status, 401);
   }));
 
@@ -309,14 +324,46 @@ describe('listener remote HTTP security boundary', () => {
     }
     const restrictedState = await f.request('/state', { session });
     assert.equal(restrictedState.status, 200);
-    assert.deepEqual((await restrictedState.json() as any).permissions, { searchLibrary: true, addToQueue: false, requestUrl: false });
+    assert.deepEqual((await restrictedState.json() as any).permissions, {
+      searchLibrary: true, addToQueue: false, requestUrl: false,
+      browsePlaylists: true, requestPlaylist: false, searchMusic: false, vote: true,
+    });
     assert.equal((await f.request('/library', { session })).status, 200);
     assert.equal(f.queue.length, 2);
     assert.equal(f.downloads, 0);
     assert.ok(f.settingQueries.length > 0);
-    for (const query of f.settingQueries) assert.deepEqual(query, { where: { key: 'media_command_permissions:2:3' } });
+    const keys = new Set(f.settingQueries.map((query: { where: { key: string } }) => query.where.key));
+    assert.ok(keys.has('media_command_permissions:2:3'));
+    assert.ok(keys.has('playlist_vote_settings:2:3'));
     f.state.policy = '{malformed';
     assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 403);
+  }));
+
+  it('offers search only to listeners who can add, and /search enforces add itself', async () => using(async f => {
+    const { session } = await f.exchange();
+    const allowed = await f.request('/state', { session });
+    assert.equal(allowed.status, 200);
+    const open = (await allowed.json() as any).permissions;
+    assert.equal(open.addToQueue, true);
+    assert.equal(open.searchMusic, true);
+
+    // Browsing allowed, adding denied: no search, but the library and playlists stay readable.
+    restrict(f, [8]);
+    const denied = await f.request('/state', { session });
+    assert.equal(denied.status, 200);
+    const closed = (await denied.json() as any).permissions;
+    assert.equal(closed.browsePlaylists, true);
+    assert.equal(closed.addToQueue, false);
+    assert.equal(closed.searchMusic, false);
+    assert.equal((await f.request('/library', { session })).status, 200);
+    // The flag is a hint; the endpoint refuses on its own, before any search runs.
+    const search = await f.request('/search', { session, body: { query: 'neon skyline' } });
+    assert.equal(search.status, 403);
+    assert.deepEqual(await search.json(), { error: 'You are not allowed to use this command.', code: 'permission_denied' });
+
+    restrict(f, [7]);
+    const back = await f.request('/state', { session });
+    assert.equal((await back.json() as any).permissions.searchMusic, true);
   }));
 
   it('records refused access as one bounded total per source and window, without the address', async () => using(async f => {
@@ -480,7 +527,17 @@ describe('listener remote HTTP security boundary', () => {
     });
     await using(async f => {
       const { session } = await f.exchange();
-      f.advance(15 * 60_000 + 1);
+      f.advance(12 * 60 * 60_000 - 60_000);
+      assert.equal((await f.request('/state', { session })).status, 200);
+      f.advance(60_000 + 1);
+      assert.equal((await f.request('/state', { session })).status, 401);
+    });
+    await using(async f => {
+      const { session, remember } = await f.exchange({ remember: true });
+      assert.equal(remember, true);
+      f.advance(24 * 60 * 60_000 - 60_000);
+      assert.equal((await f.request('/state', { session })).status, 200);
+      f.advance(60_000 + 1);
       assert.equal((await f.request('/state', { session })).status, 401);
     });
     for (const role of ['viewer', 'operator'] as const) await using(async f => {
@@ -489,6 +546,146 @@ describe('listener remote HTTP security boundary', () => {
       assert.equal((await f.request('/state', { session })).status, 200);
     }, role);
   });
+
+  it('sets host-only HttpOnly session cookies and requires CSRF+Origin for cookie mutations', async () => using(async f => {
+    const issued = f.remote.issue(binding);
+    const exchanged = await f.request('/exchange', { body: { token: issued.token } });
+    assert.equal(exchanged.status, 200);
+    const setCookie = typeof exchanged.headers.getSetCookie === 'function'
+      ? exchanged.headers.getSetCookie()
+      : [String(exchanged.headers.get('set-cookie') ?? '')];
+    const sessionLine = setCookie.find((line) => line.startsWith('ts6_lr_session='));
+    const csrfLine = setCookie.find((line) => line.startsWith('ts6_lr_csrf='));
+    assert.ok(sessionLine);
+    assert.ok(csrfLine);
+    assert.match(sessionLine, /Path=\/api\/listener-remote/);
+    assert.match(sessionLine, /SameSite=Strict/);
+    assert.match(sessionLine, /HttpOnly/i);
+    assert.equal(/Domain=/i.test(sessionLine), false);
+    assert.equal(/HttpOnly/i.test(csrfLine), false);
+    assert.match(csrfLine, /Path=\/(?:;|$)/);
+    assert.match(csrfLine, /SameSite=Strict/);
+    const data = await exchanged.json() as { csrfToken: string; session?: unknown };
+    assert.equal(data.session, undefined);
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const { session, csrf } = credentialsFromExchange(exchanged);
+    assert.equal(csrf, data.csrfToken);
+    const cookie = `ts6_lr_session=${session}; ts6_lr_csrf=${csrf}`;
+    const origin = 'http://localhost:5173';
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin },
+      body: { songId: 11 },
+    })).status, 403);
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: 'https://evil.example', 'X-CSRF-Token': csrf },
+      body: { songId: 11 },
+    })).status, 403);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: cookie, Origin: 'https://evil.example' },
+    })).status, 403);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: cookie, Origin: origin },
+    })).status, 200);
+    const probe = await f.request('/session', { headers: { Cookie: cookie, Origin: origin } });
+    assert.equal(probe.status, 200);
+    const probed = await probe.json() as { botId: number; expiresAt: string; csrfToken: string; session?: unknown };
+    assert.deepEqual(Object.keys(probed).sort(), ['botId', 'csrfToken', 'expiresAt']);
+    assert.equal(probed.session, undefined);
+    assert.equal(probed.csrfToken, csrf, 'GET /session must reuse a valid CSRF cookie');
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': csrf },
+      body: { songId: 11 },
+    })).status, 200);
+    // Bearer path still skips CSRF (tests / non-browser clients).
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+  }));
+
+  it('keeps CSRF stable across concurrent session probes (two-tab safe)', async () => using(async f => {
+    const exchanged = await f.exchange();
+    const origin = 'http://localhost:5173';
+    const cookie = `ts6_lr_session=${exchanged.session}; ts6_lr_csrf=${exchanged.csrfToken}`;
+    const [tabA, tabB] = await Promise.all([
+      f.request('/session', { headers: { Cookie: cookie, Origin: origin } }),
+      f.request('/session', { headers: { Cookie: cookie, Origin: origin } }),
+    ]);
+    assert.equal(tabA.status, 200);
+    assert.equal(tabB.status, 200);
+    const a = await tabA.json() as { csrfToken: string };
+    const b = await tabB.json() as { csrfToken: string };
+    assert.equal(a.csrfToken, exchanged.csrfToken);
+    assert.equal(b.csrfToken, exchanged.csrfToken);
+    // Tab A can still mutate with the original in-memory token after tab B probed.
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': exchanged.csrfToken },
+      body: { songId: 11 },
+    })).status, 200);
+    // Tab B uses the same shared CSRF.
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: cookie, Origin: origin, 'X-CSRF-Token': b.csrfToken },
+      body: { songId: 11 },
+    })).status, 200);
+    // Missing/malformed CSRF cookie → probe mints a recovery token (new pair works).
+    const recovered = await f.request('/session', {
+      headers: { Cookie: `ts6_lr_session=${exchanged.session}`, Origin: origin },
+    });
+    assert.equal(recovered.status, 200);
+    const recoveredBody = await recovered.json() as { csrfToken: string };
+    assert.match(recoveredBody.csrfToken, /^[A-Za-z0-9_-]{43}$/);
+    assert.notEqual(recoveredBody.csrfToken, exchanged.csrfToken);
+    const recoveredCookie = `ts6_lr_session=${exchanged.session}; ts6_lr_csrf=${recoveredBody.csrfToken}`;
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: recoveredCookie, Origin: origin, 'X-CSRF-Token': recoveredBody.csrfToken },
+      body: { songId: 11 },
+    })).status, 200);
+    // Mismatched header vs cookie is still rejected.
+    assert.equal((await f.request('/queue', {
+      headers: { Cookie: recoveredCookie, Origin: origin, 'X-CSRF-Token': exchanged.csrfToken },
+      body: { songId: 11 },
+    })).status, 403);
+    // Sign-out clears cookies and revokes the grant.
+    assert.equal((await f.request('/session', {
+      method: 'DELETE',
+      headers: { Cookie: recoveredCookie, Origin: origin, 'X-CSRF-Token': recoveredBody.csrfToken },
+    })).status, 200);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: recoveredCookie, Origin: origin },
+    })).status, 401);
+    // Session replacement (!remote exchange) rotates CSRF for the new grant.
+    const replaced = await f.exchange();
+    assert.notEqual(replaced.csrfToken, recoveredBody.csrfToken);
+    assert.equal((await f.request('/queue', {
+      headers: {
+        Cookie: `ts6_lr_session=${replaced.session}; ts6_lr_csrf=${replaced.csrfToken}`,
+        Origin: origin,
+        'X-CSRF-Token': replaced.csrfToken,
+      },
+      body: { songId: 11 },
+    })).status, 200);
+  }));
+
+  it('isolates concurrent cookie sessions across listeners', async () => using(async f => {
+    const first = await f.exchange();
+    const otherBinding = { ...binding, uid: 'other-listener', clid: 10 };
+    const previous = f.state.uid;
+    f.state.uid = otherBinding.uid;
+    const otherToken = f.remote.issue(otherBinding).token;
+    const otherRes = await f.request('/exchange', { body: { token: otherToken } });
+    assert.equal(otherRes.status, 200);
+    const { credentialsFromExchange } = await import('./listener-remote/cookie-test-util.js');
+    const other = credentialsFromExchange(otherRes);
+    const origin = 'http://localhost:5173';
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: `ts6_lr_session=${other.session}`, Origin: origin },
+    })).status, 200);
+    f.remote.revoke(binding.botId, binding.uid);
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: `ts6_lr_session=${other.session}`, Origin: origin },
+    })).status, 200);
+    f.state.uid = previous;
+    assert.equal((await f.request('/state', {
+      headers: { Cookie: `ts6_lr_session=${first.session}`, Origin: origin },
+    })).status, 401);
+  }));
 
   it('does not count administrator route errors as listener refusals', async () => using(async f => {
     assert.equal((await f.request('/bots/not-a-number/revoke', { admin: true, method: 'POST', body: {} })).status, 400);
@@ -526,6 +723,43 @@ describe('listener remote HTTP security boundary', () => {
       assert.deepEqual(f.audit, [], 'a disallowed link opens no audit attempt');
     });
   });
+
+  it('applies C1a duration and live rules to POST /requests only, with validation_failed audit', async () => using(async f => {
+    const { LISTENER_MAX_DURATION_SEC } = await import('../voice/audio/listener-music.js');
+    const { session } = await f.exchange();
+    const before = f.queue.length;
+
+    for (const [label, probe, code] of [
+      ['too_long', async () => ({ durationSec: LISTENER_MAX_DURATION_SEC + 1 }), 'too_long'],
+      ['live', async () => ({ durationSec: 120, isLive: true }), 'live_not_allowed'],
+      ['unknown', async () => ({ durationSec: null }), 'duration_unknown'],
+    ] as const) {
+      f.app.locals.listenerLinkProbe = probe;
+      const refused = await f.request('/requests', { session, body: { url: `${mediaUrl}&${label}` } });
+      assert.equal(refused.status, 422, label);
+      assert.equal((await refused.json() as { code: string }).code, code, label);
+      assert.equal(f.downloads, 0, label);
+      assert.equal(f.queue.length, before, label);
+      const completion = f.audit.find((row: any) => row.where?.operationId && row.data?.resultCode === 'validation_failed') as any;
+      assert.ok(completion, `${label} audited as validation_failed`);
+      assert.equal(completion.data.outcome, 'failure', label);
+    }
+
+    f.app.locals.listenerLinkProbe = async () => ({ durationSec: LISTENER_MAX_DURATION_SEC });
+    let boundaryDownloads = 0;
+    f.app.locals.mediaUrlPipelineDeps.downloadTrack = async () => {
+      boundaryDownloads++;
+      return { ...item, duration: LISTENER_MAX_DURATION_SEC };
+    };
+    assert.equal((await f.request('/requests', { session, body: { url: `${mediaUrl}&boundary` } })).status, 200);
+    assert.equal(boundaryDownloads, 1);
+    assert.equal(f.queue.length, before + 1);
+
+    // Library POST /queue is not subject to the paste-link duration rules.
+    f.app.locals.listenerLinkProbe = async () => ({ durationSec: LISTENER_MAX_DURATION_SEC + 1, isLive: true });
+    assert.equal((await f.request('/queue', { session, body: { songId: 11 } })).status, 200);
+    assert.equal(f.queue.length, before + 2);
+  }));
 
   it('sanitizes resolver and audit-storage failures, and records successful actions without credential material', async () => using(async f => {
     const { session, token } = await f.exchange();

@@ -99,6 +99,15 @@ export JWT_SECRET=dummy
 export ENCRYPTION_KEY=dummy
 export SIDECAR_SECRET=dummy
 export TS6_BETA_TAG=v0.0.0-beta.0
+# accept-staging compose requires these for `docker compose config`
+export TS_ACCEPT_QUERY_PASSWORD=dummy-query-password
+export TS_ACCEPT_QUERY_API_KEY=dummy-query-api-key
+export PUBLIC_URL=https://example.test
+export TS_VOICE_BIND_IP=100.64.0.1
+export TS_VOICE_HOST_PORT=19987
+export ACCEPT_HTTP_PORT=13100
+export WEBRTC_UDP_PORT=10000
+export GIT_SHA=accept-check
 
 # Override files are not complete projects: they only make sense layered on a
 # base file, so that is how they are validated.
@@ -128,6 +137,11 @@ fi
 
 echo "==> beta compose isolation"
 if ! python3 "$ROOT/scripts/ci/check-beta-compose.py"; then
+  fail=1
+fi
+
+echo "==> accept-staging compose isolation"
+if ! python3 "$ROOT/scripts/ci/check-accept-staging-compose.py"; then
   fail=1
 fi
 

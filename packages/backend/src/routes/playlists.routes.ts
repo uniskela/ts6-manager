@@ -1,6 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
+import type { PlaylistRemoteAccess } from '@ts6/common';
 import { requireRole } from '../middleware/rbac.js';
 import { AppError } from '../middleware/error-handler.js';
+import { actorFromRequest, recordLocalSuccess } from '../audit/index.js';
+import { buildRow } from '../audit/writer.js';
 import {
   catalogScopeWhere,
   effectivePlaylistMode,
@@ -21,10 +25,22 @@ export const playlistRoutes: Router = Router();
 
 playlistRoutes.use(requireRole('admin'));
 
+function normalizePlaylistRemoteAccess(raw: unknown, fallback: PlaylistRemoteAccess = 'hidden'): PlaylistRemoteAccess {
+  if (raw === 'hidden' || raw === 'browse' || raw === 'request') return raw;
+  return fallback;
+}
+
+/** Reject unknown values when the client sends remoteAccess explicitly. */
+function parsePlaylistRemoteAccess(raw: unknown): PlaylistRemoteAccess {
+  if (raw === 'hidden' || raw === 'browse' || raw === 'request') return raw;
+  throw new AppError(400, 'remoteAccess must be hidden, browse, or request');
+}
+
 function mapPlaylistSummary(p: {
   id: number;
   name: string;
   mode: string;
+  remoteAccess?: string | null;
   musicBotId: number | null;
   youtubePlaylistId: string | null;
   serverConfigId: number | null;
@@ -35,6 +51,7 @@ function mapPlaylistSummary(p: {
     id: p.id,
     name: p.name,
     mode: effectivePlaylistMode(p),
+    remoteAccess: normalizePlaylistRemoteAccess(p.remoteAccess),
     musicBotId: p.musicBotId,
     youtubePlaylistId: p.youtubePlaylistId,
     serverConfigId: p.serverConfigId,
@@ -85,6 +102,7 @@ playlistRoutes.get('/:id', async (req: Request, res: Response, next) => {
       id: playlist.id,
       name: playlist.name,
       mode: effectivePlaylistMode(playlist),
+      remoteAccess: normalizePlaylistRemoteAccess(playlist.remoteAccess),
       musicBotId: playlist.musicBotId,
       youtubePlaylistId: playlist.youtubePlaylistId,
       serverConfigId: playlist.serverConfigId,
@@ -111,11 +129,13 @@ playlistRoutes.get('/:id', async (req: Request, res: Response, next) => {
 playlistRoutes.post('/', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
-    const { name, musicBotId, mode, serverConfigId } = req.body;
+    const { name, musicBotId, mode, serverConfigId, remoteAccess } = req.body;
     if (name == null || String(name).trim() === '') throw new AppError(400, 'name is required');
     const displayName = normalizePlaylistDisplayName(String(name));
     const nameKey = normalizePlaylistNameKey(displayName);
     const playlistMode = normalizePlaylistMode(mode, 'local');
+    const playlistRemoteAccess =
+      remoteAccess === undefined ? undefined : parsePlaylistRemoteAccess(remoteAccess);
     // Playlists belong to the server they were created on; without one they stay
     // shared like legacy playlists.
     if (serverConfigId != null && !(Number.isInteger(serverConfigId) && serverConfigId > 0)) {
@@ -129,21 +149,38 @@ playlistRoutes.post('/', async (req: Request, res: Response, next) => {
     const occupant = await findPlaylistNameOccupant(prisma, nameKey, scopeId);
     if (occupant) throw new PlaylistNameConflictError(displayName, occupant.id);
 
+    const createData = {
+      name: displayName,
+      nameKey,
+      mode: playlistMode,
+      musicBotId: musicBotId ? parseInt(musicBotId) : null,
+      serverConfigId: scopeId,
+      ...(playlistRemoteAccess !== undefined ? { remoteAccess: playlistRemoteAccess } : {}),
+    };
+
     try {
-      const playlist = await prisma.playlist.create({
-        data: {
-          name: displayName,
-          nameKey,
-          mode: playlistMode,
-          musicBotId: musicBotId ? parseInt(musicBotId) : null,
-          serverConfigId: scopeId,
-        },
-      });
+      const playlist =
+        playlistRemoteAccess !== undefined && playlistRemoteAccess !== 'hidden'
+          ? (
+              await recordLocalSuccess(
+                prisma,
+                {
+                  actor: actorFromRequest(req.user),
+                  action: 'playlist.remote_access_update',
+                  connectionId: serverConfigId ?? null,
+                  target: { type: 'playlist', id: 0 },
+                },
+                async (tx) => tx.playlist.create({ data: createData }),
+                { resolveTargetId: (created) => created.id },
+              )
+            ).result
+          : await prisma.playlist.create({ data: createData });
 
       res.status(201).json({
         id: playlist.id,
         name: playlist.name,
         mode: normalizePlaylistMode(playlist.mode),
+        remoteAccess: normalizePlaylistRemoteAccess(playlist.remoteAccess),
       });
     } catch (err) {
       if (isPlaylistNameUniqueViolation(err)) throw new PlaylistNameConflictError(displayName);
@@ -159,7 +196,7 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
   try {
     const prisma = req.app.locals.prisma;
     const id = parseInt(req.params.id as string);
-    const { name, musicBotId, mode } = req.body;
+    const { name, musicBotId, mode, remoteAccess } = req.body;
 
     const existing = await prisma.playlist.findUnique({ where: { id } });
     if (!existing) throw new AppError(404, 'Playlist not found');
@@ -178,8 +215,40 @@ playlistRoutes.put('/:id', async (req: Request, res: Response, next) => {
     if (musicBotId !== undefined) data.musicBotId = musicBotId ? parseInt(musicBotId) : null;
     if (mode !== undefined) data.mode = normalizePlaylistMode(mode);
 
+    let nextRemoteAccess: PlaylistRemoteAccess | undefined;
+    if (remoteAccess !== undefined) {
+      nextRemoteAccess = parsePlaylistRemoteAccess(remoteAccess);
+      data.remoteAccess = nextRemoteAccess;
+    }
+
     try {
-      await prisma.playlist.update({ where: { id }, data });
+      await prisma.$transaction(async (tx: any) => {
+        const current = await tx.playlist.findUnique({ where: { id } });
+        if (!current) throw new AppError(404, 'Playlist not found');
+
+        if (Object.keys(data).length === 0) return;
+
+        const visibilityChanged =
+          nextRemoteAccess !== undefined &&
+          nextRemoteAccess !== normalizePlaylistRemoteAccess(current.remoteAccess);
+
+        await tx.playlist.update({ where: { id }, data });
+
+        if (visibilityChanged) {
+          await tx.adminAuditEvent.create({
+            data: buildRow({
+              actor: actorFromRequest(req.user),
+              action: 'playlist.remote_access_update',
+              connectionId: current.serverConfigId ?? null,
+              target: { type: 'playlist', id },
+              operationId: randomUUID(),
+              outcome: 'success',
+              resultCode: 'ok',
+              completedAt: new Date(),
+            }),
+          });
+        }
+      });
     } catch (err) {
       if (isPlaylistNameUniqueViolation(err)) {
         throw new PlaylistNameConflictError(String(data.name ?? existing.name));

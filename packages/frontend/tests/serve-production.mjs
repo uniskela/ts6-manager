@@ -8,10 +8,15 @@ let generation = 0;
 let unavailable = false;
 let accessExpired = false;
 let accessLogins = 0;
-const APP_ORIGIN = 'http://127.0.0.1:4175';
+const APP_ORIGIN = process.env.APP_ORIGIN || 'http://127.0.0.1:4175';
 let mutations = 0;
 let needsSetup = false;
 let allowTestAuth = false;
+/** Rotating refresh-family fixture for two-tab Playwright (test server only). */
+let refreshFamily = null;
+let refreshRotateCount = 0;
+let refreshReplayRevokes = 0;
+let refreshPresented = [];
 let dashboardScenario = 'no-connections';
 let dashboardRequests = 0;
 let permissionScenario = 'normal';
@@ -265,6 +270,111 @@ async function readJson(req) {
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
 }
 
+function b64urlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString('base64url');
+}
+
+/** Mint a JWT-shaped access token the frontend expiry/subject parsers understand. */
+function mintAccessToken({ seq, ttlSeconds = 900 }) {
+  const header = b64urlJson({ alg: 'none', typ: 'JWT' });
+  const payload = b64urlJson({
+    id: 1,
+    username: testRole,
+    exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    seq,
+    role: testRole,
+  });
+  return `${header}.${payload}.test`;
+}
+
+let refreshMintSeq = 0;
+
+function mintRefreshToken() {
+  refreshMintSeq += 1;
+  return `brand-test-refresh-${refreshMintSeq}`;
+}
+
+function resetRefreshFamily() {
+  refreshFamily = null;
+  refreshRotateCount = 0;
+  refreshReplayRevokes = 0;
+  refreshPresented = [];
+}
+
+function ensureRefreshFamily() {
+  // Keep a revoked family until /__test/reset — recreating must not reuse a
+  // previously issued refresh string (logout/replay of an abandoned family
+  // would otherwise collide with the new live token).
+  if (refreshFamily) return refreshFamily;
+  refreshFamily = {
+    family: `test-family-${Date.now()}-${refreshMintSeq}`,
+    live: mintRefreshToken(),
+    seq: 1,
+    consumed: new Map(),
+    revoked: false,
+  };
+  return refreshFamily;
+}
+
+function authUserPayload() {
+  return {
+    id: 1,
+    username: testRole,
+    displayName: testRole === 'admin' ? 'Administrator' : 'Viewer',
+    role: testRole,
+  };
+}
+
+function loginTokenPair() {
+  // Each login mints a new family (mirrors server). A prior live family is
+  // abandoned — logout presenting its tokens must not revoke this new family.
+  resetRefreshFamily();
+  const family = ensureRefreshFamily();
+  return {
+    accessToken: mintAccessToken({ seq: family.seq, ttlSeconds: 900 }),
+    refreshToken: family.live,
+    user: authUserPayload(),
+  };
+}
+
+function logoutPresented(presented) {
+  if (!refreshFamily || !presented) return;
+  if (presented === refreshFamily.live || refreshFamily.consumed.has(presented)) {
+    refreshFamily.revoked = true;
+    refreshFamily.live = null;
+  }
+}
+
+function rotateRefresh(presented) {
+  refreshPresented.push(presented);
+  const family = ensureRefreshFamily();
+  if (family.revoked) {
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  if (family.consumed.has(presented)) {
+    family.revoked = true;
+    family.live = null;
+    refreshReplayRevokes++;
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  if (presented !== family.live) {
+    return { status: 401, body: { error: 'Invalid refresh token' } };
+  }
+  const nextSeq = family.seq + 1;
+  const nextRefresh = mintRefreshToken();
+  family.consumed.set(presented, nextRefresh);
+  family.live = nextRefresh;
+  family.seq = nextSeq;
+  refreshRotateCount++;
+  return {
+    status: 200,
+    body: {
+      accessToken: mintAccessToken({ seq: nextSeq, ttlSeconds: 900 }),
+      refreshToken: nextRefresh,
+    },
+  };
+}
+
 const connections = [
   { id: 1, name: 'Primary connection', host: 'voice.example.test', webqueryPort: 10080, sshPort: 10022, useHttps: true },
   { id: 2, name: 'Secondary connection', host: 'backup.example.test', webqueryPort: 10080, sshPort: 10022, useHttps: true },
@@ -329,6 +439,7 @@ const server = createServer(async (req, res) => {
       mutations = 0;
       needsSetup = false;
       allowTestAuth = false;
+      resetRefreshFamily();
       dashboardScenario = 'no-connections';
       dashboardRequests = 0;
       permissionScenario = 'normal';
@@ -396,6 +507,19 @@ const server = createServer(async (req, res) => {
     }
     if (url.pathname === '/__test/auth' && url.searchParams.has('role')) {
       testRole = url.searchParams.get('role') === 'viewer' ? 'viewer' : 'admin';
+    }
+    if (url.pathname === '/__test/refresh-state') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        rotateCount: refreshRotateCount,
+        replayRevokes: refreshReplayRevokes,
+        presented: refreshPresented,
+        live: refreshFamily?.live ?? null,
+        seq: refreshFamily?.seq ?? null,
+        revoked: refreshFamily?.revoked ?? false,
+        consumedCount: refreshFamily?.consumed?.size ?? 0,
+      }));
+      return;
     }
     res.setHeader('Content-Type', 'application/json');
     res.end(JSON.stringify({ mutations, accessLogins, dashboardScenario, dashboardRequests, permissionScenario, permissionRequests, botScenario, botUpdateRequests, adminActionScenario, adminActionRequests, virtualServerListRequests, channelScenario, channelRequests, logsScenario, logsRequests }));
@@ -495,16 +619,27 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    if (allowTestAuth && url.pathname === '/api/auth/refresh' && req.method === 'POST') {
+      const body = await readJson(req);
+      const result = rotateRefresh(body.refreshToken);
+      res.statusCode = result.status;
+      res.end(JSON.stringify(result.body));
+      return;
+    }
+    if (allowTestAuth && url.pathname === '/api/auth/logout' && req.method === 'POST') {
+      const body = await readJson(req);
+      logoutPresented(body.refreshToken);
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
+
     const data = url.pathname === '/api/health' ? { status: 'ok' }
       : url.pathname === '/api/setup/status' ? { needsSetup }
-      : url.pathname === '/api/auth/login' && allowTestAuth ? {
-        accessToken: 'brand-test-access-token',
-        refreshToken: 'brand-test-refresh-token',
-        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
-      }
+      : url.pathname === '/api/auth/login' && allowTestAuth ? loginTokenPair()
       : url.pathname === '/api/auth/login' ? { error: 'Invalid credentials' }
       : url.pathname === '/api/auth/me' && allowTestAuth ? {
-        user: { id: 1, username: testRole, displayName: testRole === 'admin' ? 'Administrator' : 'Viewer', role: testRole },
+        user: authUserPayload(),
       }
       : url.pathname === '/api/servers/deployment-check' && allowTestAuth ? {
         managerInDocker: false,
@@ -736,9 +871,19 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify(data));
     return;
   }
+  const REMOTE_CSP = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'none'; manifest-src 'none'";
+  if (url.pathname === '/remote/') {
+    res.writeHead(301, { Location: `/remote${url.search}` });
+    res.end();
+    return;
+  }
   const staticPath = /^\/(assets|icons)\//.test(url.pathname)
-    || ['/sw.js', '/favicon.svg', '/manifest.webmanifest'].includes(url.pathname);
-  const file = staticPath ? url.pathname.slice(1) : 'index.html';
+    || ['/sw.js', '/favicon.svg', '/manifest.webmanifest', '/remote.html'].includes(url.pathname);
+  const file = url.pathname === '/remote' || url.pathname === '/remote.html'
+    ? 'remote.html'
+    : staticPath
+      ? url.pathname.slice(1)
+      : 'index.html';
   if (file.includes('..')) { res.writeHead(400); res.end(); return; }
   try {
     let data = await readFile(new URL(file, dist));
@@ -748,6 +893,11 @@ const server = createServer(async (req, res) => {
       html: 'text/html', js: 'application/javascript', css: 'text/css', png: 'image/png',
       svg: 'image/svg+xml', webmanifest: 'application/manifest+json',
     }[ext] || 'application/octet-stream');
+    if (file === 'remote.html') {
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('X-Frame-Options', 'DENY');
+      res.setHeader('Content-Security-Policy', REMOTE_CSP);
+    }
     res.end(data);
   } catch { res.writeHead(404); res.end('Not found'); }
 });
@@ -757,6 +907,8 @@ server.on('error', (err) => {
   console.error('[serve-production] listen failed:', err);
   process.exit(1);
 });
-server.listen(4175, '127.0.0.1', () => {
-  console.log('[serve-production] ready on http://127.0.0.1:4175');
+const listenPort = Number(process.env.PORT || 4175);
+const listenHost = process.env.HOST || '127.0.0.1';
+server.listen(listenPort, listenHost, () => {
+  console.log(`[serve-production] ready on http://${listenHost}:${listenPort} (APP_ORIGIN=${APP_ORIGIN})`);
 });

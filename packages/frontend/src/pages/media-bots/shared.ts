@@ -1,8 +1,34 @@
 import axios from 'axios';
-import type { YouTubeSearchResult } from '@ts6/common';
+import type { PlaylistRemoteAccess, YouTubeSearchResult } from '@ts6/common';
 
 
 // ─── Helper ──────────────────────────────────────────────────────────────────
+
+/** Admin labels for Playlist.remoteAccess (#442 A2). */
+export const PLAYLIST_REMOTE_ACCESS_OPTIONS: ReadonlyArray<{
+  value: PlaylistRemoteAccess;
+  label: string;
+  description: string;
+}> = [
+  { value: 'hidden', label: 'Hidden', description: 'Not listed on the listener remote' },
+  { value: 'browse', label: 'Browse', description: 'Listeners can browse and queue songs' },
+  { value: 'request', label: 'Request', description: 'Browse plus whole-playlist requests' },
+];
+
+/** Owner decision: hiding a playlist does not hide its songs from GET /library. */
+export const PLAYLIST_REMOTE_ACCESS_LIBRARY_NOTE =
+  'Hiding a playlist does not hide its songs from the listener remote library.';
+
+export function normalizePlaylistRemoteAccess(raw: unknown): PlaylistRemoteAccess {
+  if (raw === 'browse' || raw === 'request' || raw === 'hidden') return raw;
+  return 'hidden';
+}
+
+export function playlistRemoteAccessLabel(raw: unknown): string {
+  const value = normalizePlaylistRemoteAccess(raw);
+  return PLAYLIST_REMOTE_ACCESS_OPTIONS.find((o) => o.value === value)?.label ?? 'Hidden';
+}
+
 
 export function formatTime(seconds: number | null | undefined): string {
   if (!seconds || seconds <= 0) return '0:00';

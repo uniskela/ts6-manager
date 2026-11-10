@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:e2e": "tsc -b && VITE_E2E_AUTH_HOOKS=true vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json",
     "test": "playwright test",
@@ -35,7 +36,7 @@
     "@radix-ui/react-switch": "^1.4.1",
     "@radix-ui/react-tabs": "^1.2.1",
     "@radix-ui/react-tooltip": "^1.4.1",
-    "@tanstack/react-query": "^5.104.5",
+    "@tanstack/react-query": "^5.106.1",
     "@tanstack/react-table": "^8.20.0",
     "@ts6/common": "workspace:*",
     "axios": "^1.21.0",

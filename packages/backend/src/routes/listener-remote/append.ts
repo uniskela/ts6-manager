@@ -12,7 +12,10 @@ const MAX_UPCOMING_TRACKS = 500;
 /** Played and waiting tracks together; reached only on a bot whose queue is never cleared. */
 const MAX_QUEUE_ITEMS = 5000;
 
-export type ListenerAppendAction = 'listener.remote.queue_add' | 'listener.remote.request';
+export type ListenerAppendAction =
+  | 'listener.remote.queue_add'
+  | 'listener.remote.request'
+  | 'listener.remote.search_queue';
 
 /** Fail with 409 `queue_full` when a listener request would grow the bot's queue past its limits. */
 export function assertQueueRoom(bot: { queue: Pick<PlayQueue, 'upcomingCount' | 'length'> }): void {

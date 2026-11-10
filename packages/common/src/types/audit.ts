@@ -53,8 +53,10 @@ export const ADMIN_AUDIT_ACTIONS = [
   'settings.limits_update',
   'settings.video_streaming_update',
   'settings.iptv_network_update',
+  'settings.playlist_vote_update',
   'music_bot.avatar_update',
   'music_bot.automation_update',
+  'playlist.remote_access_update',
   'channel_banner.upload',
   'channel_banner.delete',
   'server_icon.upload',
@@ -72,6 +74,9 @@ export const ADMIN_AUDIT_ACTIONS = [
   'listener.remote.queue_add',
   'listener.remote.issue',
   'listener.remote.request',
+  'listener.remote.search_queue',
+  'listener.remote.playlist_request',
+  'listener.remote.vote_cancel',
   'listener.remote.revoke',
   // Refusals recorded as bounded per-window totals (listener remote audit policy).
   'listener.remote.auth_failed',
@@ -130,6 +135,7 @@ export const ADMIN_AUDIT_TARGET_TYPES = [
   'user',
   'settings',
   'music_bot',
+  'playlist',
   'channel_banner',
   'server_icon',
   /** A window's total of refusals; the id holds the count (`n=12`) and context. */

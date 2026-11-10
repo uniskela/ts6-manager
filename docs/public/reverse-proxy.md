@@ -105,9 +105,14 @@ admins see is described in [Media bots — Listener remote](music-bots.md#listen
 that prefix consistently for both the frontend and `/api/` routes. Links never
 derive their origin from a request's `Host` or forwarded headers.
 
-Links open `/remote`. That page reads the fragment once, removes it, and exchanges
-it for a short-lived session. The API contract is `docs/internal/listener-remote-api.md`
-in the source repository.
+Links open `/remote`. That path is its own HTML entry (`remote.html`), not the admin
+SPA shell. Stock nginx configs serve it with a strict Content-Security-Policy
+(self-only scripts, styles, and connections; no framing; no inline script). If you
+terminate TLS or rewrite paths at an outer reverse proxy, forward `/remote` to that
+entry unchanged and do not strip or override those security headers unless you
+replace them with an equivalent policy. The page reads the fragment once, removes
+it, and exchanges it for a short-lived session. The API contract is
+`docs/internal/listener-remote-api.md` in the source repository.
 
 `TRUST_PROXY` tells the backend which proxies may report a client's address in `X-Forwarded-For`. Without it, rate limits see the immediate proxy rather than individual listeners. The bundled images set a default, and a value you set always replaces it:
 
@@ -148,7 +153,10 @@ contain actions, bot/scope, outcomes and an identity fingerprint, never access
 credentials or pasted URLs.
 
 Run one backend replica: tokens, sessions and limits are bounded, process-local
-state and disappear on restart. Tokens last five minutes, sessions fifteen
-minutes absolutely. Leaving the bot channel or revocation invalidates access.
-Admins can revoke access through the documented API. No sidecar or database
-ports need publication for this feature.
+state and disappear on restart (including “remember this browser” cookies).
+Tokens last five minutes; sessions last twelve hours absolutely, or twenty-four
+with remember. Cookie sessions are host-only HttpOnly / SameSite=Strict under
+`/api/listener-remote` with CSRF and Origin checks on mutations. Leaving the
+bot channel or revocation invalidates access. Admins can revoke access through
+the documented API. No sidecar or database ports need publication for this
+feature.
