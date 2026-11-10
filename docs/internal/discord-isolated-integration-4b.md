@@ -159,8 +159,11 @@ umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
 docker compose -f docker-compose.discord-int-media-fetcher.yml up --build -d
 # Offline socket/token check (no Discord tunnel):
 ./scripts/discord-int-media-fetcher-ipc-check.sh
-# Offline full stack (fetcher+sidecar+backend); stops competing host :3011:
+# Offline full stack (fetcher+sidecar+backend). Does not kill arbitrary :3011
+# listeners — free the port yourself, or STOP_INT_HOST_BACKEND=1 only after the
+# script verifies a disposable INT-TEST host backend:
 # ./scripts/discord-int-media-fetcher-stack-check.sh
+
 # Supervised #20 prep — INT backend+sidecar from this tree + shared jobs volume:
 # DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
 # DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \

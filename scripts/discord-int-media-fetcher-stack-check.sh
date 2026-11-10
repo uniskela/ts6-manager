@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
 # Offline INT media-fetcher + backend stack check (no Discord tunnel / interactions).
+#
+# Port safety: never kills an arbitrary :3011/:9800 listener. If a verified
+# disposable INT-TEST *host* backend holds :3011, set STOP_INT_HOST_BACKEND=1
+# to stop only that process. Otherwise free the port yourself and rerun.
+# Cleanup only runs `docker compose -f docker-compose.discord-int-media-fetcher.yml
+# down` (no -v) — does not stop docker-compose.discord-int-ts.yml or production.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -18,21 +24,24 @@ cleanup() {
     echo "KEEP=1 — leaving stack up"
     return
   fi
+  # Tear down only this compose file's INT services. Do not use -v (keeps jobs
+  # volume + never touches discord-int-test.db host bind). Do not stop the
+  # disposable TS project (docker-compose.discord-int-ts.yml) or production stacks.
   "${COMPOSE[@]}" --profile int-backend --profile ipc-check down --remove-orphans || true
 }
 trap cleanup EXIT
 
 [[ -f "$ENV_FILE" ]] || die "missing .env.discord-integration-test"
 
-# Resolve DB/music dirs; ensure SIDECAR_SECRET exists (gitignored env only).
+# Resolve DB/music dirs from gitignored INT env. Never rewrite production paths.
+# Refuse to invent/overwrite SIDECAR_SECRET here — operator must set it explicitly.
 eval "$(ROOT="$ROOT" python3 - <<'PY'
 from pathlib import Path
-import os, secrets
+import os
 root = Path(os.environ["ROOT"])
 env_path = root / ".env.discord-integration-test"
-lines = env_path.read_text().splitlines()
 vals = {}
-for line in lines:
+for line in env_path.read_text().splitlines():
     if not line or line.startswith("#") or "=" not in line:
         continue
     k, v = line.split("=", 1)
@@ -43,21 +52,13 @@ if not db.startswith("file:"):
 db_path = Path(db[5:])
 if not db_path.is_file() or db_path.name != "discord-int-test.db":
     raise SystemExit("expected existing discord-int-test.db")
+# Refuse obvious production DB basenames even if somehow mis-pointed.
+if db_path.name == "ts6webui.db":
+    raise SystemExit("refusing ts6webui.db — INT stack uses discord-int-test.db only")
 music = Path(vals["MUSIC_DIR"]) if vals.get("MUSIC_DIR") else root / "packages/backend/data/discord-int-music"
 secret = vals.get("SIDECAR_SECRET", "").strip()
 if len(secret) < 16:
-    secret = secrets.token_hex(24)
-    out, seen = [], False
-    for line in lines:
-        if line.startswith("SIDECAR_SECRET="):
-            out.append(f"SIDECAR_SECRET={secret}")
-            seen = True
-        else:
-            out.append(line)
-    if not seen:
-        out.append(f"SIDECAR_SECRET={secret}")
-    env_path.write_text("\n".join(out) + "\n")
-    print("echo \"stack-check: wrote SIDECAR_SECRET into env file (omitted)\"")
+    raise SystemExit("SIDECAR_SECRET missing/short in .env.discord-integration-test — set it manually (script will not write secrets)")
 print(f"export DISCORD_INT_DB_DIR={str(db_path.parent)!r}")
 print(f"export DISCORD_INT_MUSIC_DIR={str(music)!r}")
 print(f"export DISCORD_INT_DB_INO={db_path.stat().st_ino}")
@@ -112,19 +113,60 @@ ok "supervised compose knobs can enable interactions (not started live)"
 export TS6_DISCORD_INT_INTERACTIONS=false
 export TS6_DISCORD_INT_LIVE=false
 
-echo "==> ensure host :3011 / :9800 free"
+# Port occupancy: never kill arbitrary listeners. Only a positively identified
+# disposable INT-TEST host backend may be stopped, and only with explicit approval.
+is_disposable_int_host_backend() {
+  local pid="$1"
+  local cmd cwd envfile
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  cmd="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+  [[ -n "$cmd" ]] || return 1
+  # Refuse production-ish images / compose project names in the command line.
+  if echo "$cmd" | grep -Eqi 'ts6webui|ghcr\.io/uniskela/ts6-manager/(backend|sidecar)|docker-compose\.yml'; then
+    return 1
+  fi
+  # Positive INT markers on argv (tsx/node host INT backend from this worktree).
+  if echo "$cmd" | grep -Eq 'discord-int-test|\.env\.discord-integration-test|TS6_ISOLATED_INTEGRATION'; then
+    return 0
+  fi
+  # Or cwd / environ points at the INT env / isolated db basename.
+  cwd="$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+  if [[ -n "$cwd" ]] && echo "$cwd" | grep -Eq 'integration-discord-bridge-commands-radio|discord-int'; then
+    if echo "$cmd" | grep -Eq 'packages/backend|tsx|node .*dist/index'; then
+      return 0
+    fi
+  fi
+  if [[ -r "/proc/$pid/environ" ]]; then
+    envfile="$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null || true)"
+    if echo "$envfile" | grep -Eq '^TS6_ISOLATED_INTEGRATION=(1|true)$' \
+      && echo "$envfile" | grep -Eq 'discord-int-test\.db'; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+echo "==> ensure host :3011 / :9800 free (no blind kills)"
 if ss -ltnp 2>/dev/null | grep -q '127.0.0.1:3011'; then
   pid="$(ss -ltnp 2>/dev/null | sed -n 's/.*127.0.0.1:3011.*pid=\([0-9]\+\).*/\1/p' | head -1)"
-  [[ -n "$pid" ]] || die "port 3011 busy but pid unknown"
-  echo "stopping competing host listener pid=$pid"
-  kill "$pid" || die "could not stop pid $pid"
+  [[ -n "$pid" ]] || die "port 3011 busy but pid unknown — aborting (will not kill)"
+  if ! is_disposable_int_host_backend "$pid"; then
+    die "port 3011 busy (pid=$pid) and not verified as disposable INT-TEST backend — stop it yourself, then rerun"
+  fi
+  if [[ "${STOP_INT_HOST_BACKEND:-0}" != "1" ]]; then
+    die "port 3011 held by verified INT-TEST host backend (pid=$pid). Re-run with STOP_INT_HOST_BACKEND=1 to stop only that process, or free the port yourself"
+  fi
+  echo "STOP_INT_HOST_BACKEND=1 — stopping verified INT-TEST host backend pid=$pid"
+  kill "$pid" || die "could not stop verified INT pid $pid"
   for _ in $(seq 1 40); do
     ss -ltnp 2>/dev/null | grep -q '127.0.0.1:3011' || break
     sleep 0.25
   done
-  ss -ltnp 2>/dev/null | grep -q '127.0.0.1:3011' && die "port 3011 still busy"
+  ss -ltnp 2>/dev/null | grep -q '127.0.0.1:3011' && die "port 3011 still busy after verified INT stop"
 fi
-ss -ltnp 2>/dev/null | grep -q '127.0.0.1:9800' && die "port 9800 busy"
+if ss -ltnp 2>/dev/null | grep -q '127.0.0.1:9800'; then
+  die "port 9800 busy — aborting (will not kill). Free INT sidecar / host sidecar yourself, then rerun"
+fi
 
 echo "==> disposable TS WebQuery"
 python3 - <<'PY'

@@ -13,6 +13,8 @@ cleanup() {
     echo "KEEP=1 — leaving stack up"
     return
   fi
+  # Only this compose file's fetcher/proxy/token oneshot. No -v (keeps named
+  # volumes). Never touches INT TS compose or production stacks.
   "${COMPOSE[@]}" --profile ipc-check down --remove-orphans || true
 }
 trap cleanup EXIT
