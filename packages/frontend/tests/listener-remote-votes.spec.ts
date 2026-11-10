@@ -181,6 +181,8 @@ test('phone: propose a playlist, see the vote, and cancel it', async ({ page }) 
   expect(calls[1]).toEqual({ method: 'DELETE', path: `/votes/${voteId}`, body: null });
   await expect(vote.getByRole('heading', { name: 'Playlist vote ended' })).toBeVisible();
   await expect(vote.getByTestId('vote-result')).toHaveText('You cancelled the vote.');
+  // act() announced once; closed-status effect must not re-fire via NBSP.
+  await expect.poll(async () => announcer(page).evaluate((el) => el.textContent)).toBe('You cancelled the vote.');
   await expect(vote.getByRole('timer')).toHaveCount(0);
 });
 
@@ -245,7 +247,9 @@ test('a deciding yes shows the result at once', async ({ page }) => {
   });
   await banner(page).getByRole('button', { name: 'Yes' }).click();
   await expect(banner(page).getByTestId('vote-result')).toHaveText('Vote passed. 3 songs from “Late Night Drive” were added to the queue.');
-  await expect(announcer(page)).toHaveText('Vote passed. 3 songs from “Late Night Drive” were added to the queue.');
+  // Exact textContent: no trailing NBSP from a second announce() of the same string.
+  const passedMsg = 'Vote passed. 3 songs from “Late Night Drive” were added to the queue.';
+  await expect.poll(async () => announcer(page).evaluate((el) => el.textContent)).toBe(passedMsg);
   await expect(banner(page).getByRole('button')).toHaveCount(0);
 });
 

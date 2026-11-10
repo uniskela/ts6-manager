@@ -62,6 +62,8 @@ export function VoteBanner({
   const closingRefresh = useRef<string | null>(null);
   const lastCall = useRef<string | null>(null);
   const seen = useRef<{ id: string; status: string } | null>(null);
+  // act() already spoke this closed id/status; skip the effect so ReadyView's NBSP re-fire is not spoken twice.
+  const resultAnnounced = useRef<{ id: string; status: string } | null>(null);
   // True while keyboard or screen-reader focus is somewhere in the banner.
   const focusInside = useRef(false);
   const open = vote.status === 'open';
@@ -89,6 +91,8 @@ export function VoteBanner({
     seen.current = { id: vote.id, status: vote.status };
     if (before?.id === vote.id && before.status === vote.status) return;
     if (!open) {
+      if (resultAnnounced.current?.id === vote.id && resultAnnounced.current.status === vote.status) return;
+      resultAnnounced.current = { id: vote.id, status: vote.status };
       announce(voteResultMessage(vote));
       return;
     }
@@ -162,6 +166,12 @@ export function VoteBanner({
     void enqueueRemoteMutation(task).then(
       async (next) => {
         if (!remoteSession()) return;
+        // Mark before applyVote so the status-change effect does not re-announce.
+        if (next && next.status !== 'open') {
+          resultAnnounced.current = { id: next.id, status: next.status };
+        } else if (action === 'cancel') {
+          resultAnnounced.current = { id: vote.id, status: 'cancelled' };
+        }
         applyVote(next);
         announce(done(next));
         await refresh();
