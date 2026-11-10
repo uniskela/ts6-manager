@@ -1,10 +1,10 @@
 # Discord voice bridge — compatibility and trust contract
 
-Target: **v1.12.0**. Default: **disabled**. Status: **proposed; draft PR for owner review, not accepted**.
+Target: **v1.12.0**. Default: **disabled**. Status: **accepted** ([#503](https://github.com/uniskela/ts6-manager/pull/503)); D1–D6 implementation and live acceptance still open.
 
-This is the Bridge-K contract. The draft PR is for review, not approval. Do not start Bridge-D1, merge, or publish until the owner explicitly accepts it. Do not shrink 5+1 to a single-bot product. Do not move incomplete work into another release. Escalate blockers.
+This is the Bridge-K contract. Do not shrink 5+1 to a single-bot product. Do not move incomplete bridge work out of v1.12.0 to ship sooner. Do not amend this contract without a separate owner-approved change (draft D2 amendments: [#563](https://github.com/uniskela/ts6-manager/pull/563)). Escalate blockers.
 
-Listener remote ([#442](https://github.com/uniskela/ts6-manager/issues/442)) stays in v1.12.0. v1.11.2 ([#460](https://github.com/uniskela/ts6-manager/pull/460)) stays on its current process.
+Listener remote ([#442](https://github.com/uniskela/ts6-manager/issues/442)) and Commands & Radio stay in v1.12.0 with this bridge.
 
 Companion spec: [superpowers/specs/2026-10-23-discord-voice-bridge-design.md](superpowers/specs/2026-10-23-discord-voice-bridge-design.md).
 
