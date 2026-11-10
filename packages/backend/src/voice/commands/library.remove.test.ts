@@ -7,63 +7,7 @@ import {
   removeTrackFromPlaylist,
   trackMatchLabels,
 } from './library.js';
-
-function catalog(playlists: Array<Record<string, unknown>>) {
-  const songs: any[] = [];
-  const links: any[] = [];
-  let nextSong = 1;
-  const db: any = {
-    playlist: {
-      findMany: async () => playlists.map((p) => ({ id: p.id, name: p.name })),
-      findFirst: async ({ where }: any) => {
-        const byId = playlists.find((p) => p.id === where.id);
-        if (!byId) return null;
-        return {
-          ...byId,
-          songs: links
-            .filter((l) => l.playlistId === byId.id)
-            .sort((a, b) => a.position - b.position)
-            .map((l) => ({ position: l.position, song: songs.find((s) => s.id === l.songId) })),
-        };
-      },
-    },
-    song: {
-      findFirst: async ({ where }: any) =>
-        songs.find((s) => s.sourceUrl === where.sourceUrl && s.serverConfigId === where.serverConfigId) ?? null,
-      create: async ({ data }: any) => {
-        const created = { id: nextSong++, ...data };
-        songs.push(created);
-        return created;
-      },
-    },
-    playlistSong: {
-      findUnique: async ({ where }: any) => {
-        const key = where.playlistId_songId;
-        return links.find((l) => l.playlistId === key.playlistId && l.songId === key.songId) ?? null;
-      },
-      create: async ({ data }: any) => {
-        links.push(data);
-        return data;
-      },
-      deleteMany: async ({ where }: any) => {
-        for (let i = links.length - 1; i >= 0; i -= 1) {
-          if (links[i].playlistId === where.playlistId && links[i].songId === where.songId) {
-            links.splice(i, 1);
-          }
-        }
-        return { count: 1 };
-      },
-      aggregate: async ({ where }: any) => {
-        const positions = links.filter((l) => l.playlistId === where.playlistId).map((l) => l.position);
-        return { _max: { position: positions.length ? Math.max(...positions) : null } };
-      },
-    },
-    $transaction: async (fn: (tx: any) => Promise<unknown>) => fn(db),
-    _songs: songs,
-    _links: links,
-  };
-  return db;
-}
+import { fakePlaylistCatalog } from './library.test-catalog.js';
 
 describe('playlist remove matching (finding #18)', () => {
   const url = 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3';
@@ -77,7 +21,7 @@ describe('playlist remove matching (finding #18)', () => {
   });
 
   it('removes by the add-time display title after metadata enrichment', async () => {
-    const db = catalog([{
+    const db = fakePlaylistCatalog([{
       id: 1, name: 'Live Smoke', mode: 'stream', youtubePlaylistId: null, serverConfigId: 9,
     }]);
     const added = await addUrlToPlaylist(db, { query: 'Live Smoke', url, serverConfigId: 9 });
@@ -85,7 +29,6 @@ describe('playlist remove matching (finding #18)', () => {
     if (!added.ok) return;
     assert.equal(added.position, 1);
     assert.equal(added.title, display);
-    // Enrichment replaces the stored title after insert (as live INT-TEST did).
     db._songs[0].title = 'SoundHelix-Song-1';
     const byDisplay = await removeTrackFromPlaylist(db, {
       query: 'Live Smoke',
@@ -97,7 +40,7 @@ describe('playlist remove matching (finding #18)', () => {
   });
 
   it('removes by unambiguous position from /playlist tracks', async () => {
-    const db = catalog([{
+    const db = fakePlaylistCatalog([{
       id: 2, name: 'Ordered', mode: 'stream', youtubePlaylistId: null, serverConfigId: 9,
     }]);
     await addUrlToPlaylist(db, {
@@ -121,7 +64,7 @@ describe('playlist remove matching (finding #18)', () => {
   });
 
   it('refuses ambiguous duplicate titles and points at /playlist tracks', async () => {
-    const db = catalog([{
+    const db = fakePlaylistCatalog([{
       id: 3, name: 'Dupes', mode: 'stream', youtubePlaylistId: null, serverConfigId: 9,
     }]);
     await addUrlToPlaylist(db, {
@@ -141,7 +84,7 @@ describe('playlist remove matching (finding #18)', () => {
   });
 
   it('blocks unauthorised removal of shared/foreign playlists', async () => {
-    const db = catalog([{
+    const db = fakePlaylistCatalog([{
       id: 4, name: 'Shared', mode: 'stream', youtubePlaylistId: null, serverConfigId: null,
     }]);
     db._songs.push({

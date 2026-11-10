@@ -13,19 +13,17 @@ import {
 import { applyMediaUrlToBot, beginChatMediaRequest } from '../voice/commands/queue.js';
 import {
   addUrlToPlaylist,
-  catalogScopeWhere,
   createServerPlaylist,
   enqueueSavedPlaylist,
   formatNamedMatchError,
   formatPlaylistList,
-  formatPlaylistTracks,
+  listPlaylistTracks,
   loadPlaylistSummaries,
   loadRadioStations,
   matchNamed,
   radioQueueItem,
   removeTrackFromPlaylist,
   type PlaylistCatalog,
-  type PlaylistSongRow,
 } from '../voice/commands/library.js';
 import { formatRadioListMessage } from '../voice/ts6-chat-format.js';
 import { validateUrl } from '../utils/url-validator.js';
@@ -401,17 +399,9 @@ export function createMusicCommandService(deps: MusicServiceDeps): MusicCommandS
     if (action === 'tracks') {
       const query = arg(intent, 'name', 'playlist', 'query');
       if (!query) return fail('unavailable', 'Usage: /playlist tracks <name>');
-      const summaries = await loadPlaylistSummaries(deps.prisma, serverConfigId);
-      const matches = matchNamed(summaries, query);
-      if (matches.length !== 1) {
-        return fail('unavailable', formatNamedMatchError('playlist', matches, '/playlist list'));
-      }
-      const playlist = await deps.prisma!.playlist.findFirst({
-        where: { ...catalogScopeWhere(serverConfigId), id: matches[0].id },
-        include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
-      });
-      if (!playlist) return fail('unavailable', 'Playlist not found. Use /playlist list.');
-      return ok(formatPlaylistTracks(playlist.name, playlist.songs as PlaylistSongRow[]));
+      const result = await listPlaylistTracks(deps.prisma, { query, serverConfigId });
+      if (!result.ok) return fail('unavailable', result.message);
+      return ok(result.message);
     }
     if (action === 'play') {
       const query = arg(intent, 'name', 'playlist', 'query');

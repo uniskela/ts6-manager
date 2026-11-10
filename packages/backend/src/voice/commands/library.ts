@@ -74,9 +74,13 @@ export function formatNamedMatchError(kind: 'playlist' | 'station', matches: Nam
 }
 
 export function formatPlaylistList(playlists: NamedRecord[]): string {
-  return playlists.length
-    ? `Playlists (first 10):\n${playlists.slice(0, 10).map((p) => `[${p.id}] ${p.name.slice(0, 60)}`).join('\n')}\nUse /playlist tracks <name> to list removable track positions.`
-    : 'No playlists configured for this bot/server.';
+  if (!playlists.length) return 'No playlists configured for this bot/server.';
+  const lines = playlists.slice(0, 10).map((p) => `[${p.id}] ${p.name.slice(0, 60)}`);
+  return [
+    'Playlists (first 10):',
+    ...lines,
+    'Use /playlist tracks <name> to list removable track positions.',
+  ].join('\n');
 }
 
 /** Labels an operator may type for /playlist remove (display + stored + host placeholder). */
@@ -103,6 +107,23 @@ export function formatPlaylistTracks(playlistName: string, songs: PlaylistSongRo
   });
   const more = songs.length > 25 ? `\n…and ${songs.length - 25} more` : '';
   return `Tracks in "${name}" (remove with #N or title):\n${lines.join('\n')}${more}`;
+}
+
+export async function listPlaylistTracks(
+  db: PlaylistCatalog,
+  input: { query: string; serverConfigId: number },
+): Promise<{ ok: true; message: string } | { ok: false; message: string }> {
+  const summaries = await loadPlaylistSummaries(db, input.serverConfigId);
+  const matches = matchNamed(summaries, input.query);
+  if (matches.length !== 1) {
+    return { ok: false, message: formatNamedMatchError('playlist', matches, '/playlist list') };
+  }
+  const playlist = await db.playlist.findFirst({
+    where: { ...catalogScopeWhere(input.serverConfigId), id: matches[0].id },
+    include: { songs: { include: { song: true }, orderBy: { position: 'asc' } } },
+  });
+  if (!playlist) return { ok: false, message: 'Playlist not found. Use /playlist list.' };
+  return { ok: true, message: formatPlaylistTracks(playlist.name, playlist.songs as PlaylistSongRow[]) };
 }
 
 export async function loadPlaylistSummaries(db: PlaylistCatalog, serverConfigId: number): Promise<NamedRecord[]> {
