@@ -7,7 +7,8 @@ import { tryClaimChatInfoReply } from './dedupe.js';
 
 const votes = new VoteSkip();
 
-async function mediaScope(context: CommandContext, bot: VoiceBot) {
+/** Resolve serverConfigId + virtualServerId for live clientlist / permission checks. */
+export async function mediaScope(context: CommandContext, bot: VoiceBot) {
   const mapped = context.botChannelConfig.get(bot.currentConfig.id);
   const config = mapped ?? await context.prisma.musicBot.findUnique({
     where: { id: bot.currentConfig.id }, select: { serverConfigId: true, virtualServerId: true },

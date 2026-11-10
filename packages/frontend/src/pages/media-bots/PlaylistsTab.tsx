@@ -66,9 +66,29 @@ import type {
   PlaylistSummary,
   PlaylistDetail,
   PlaylistMode,
+  PlaylistRemoteAccess,
 } from '@ts6/common';
 import { settingsApi } from '@/api/settings.api';
-import { formatTime, UrlLoadInfo, youtubeInfoErrorMessage, urlInfoPlaylistLabel, urlItemSelectKey, allUrlItemKeys, selectedUrlItems, importJobProgressLabel, importJobCompleteMessage, importCapHint, chunk, REGISTER_BATCH_SIZE, ADD_SONGS_BATCH_SIZE, playlistAddMessage } from './shared';
+import {
+  formatTime,
+  UrlLoadInfo,
+  youtubeInfoErrorMessage,
+  urlInfoPlaylistLabel,
+  urlItemSelectKey,
+  allUrlItemKeys,
+  selectedUrlItems,
+  importJobProgressLabel,
+  importJobCompleteMessage,
+  importCapHint,
+  chunk,
+  REGISTER_BATCH_SIZE,
+  ADD_SONGS_BATCH_SIZE,
+  playlistAddMessage,
+  PLAYLIST_REMOTE_ACCESS_OPTIONS,
+  PLAYLIST_REMOTE_ACCESS_LIBRARY_NOTE,
+  normalizePlaylistRemoteAccess,
+  playlistRemoteAccessLabel,
+} from './shared';
 import { ImportQueueOptions } from './ImportQueueOptions';
 
 
@@ -129,6 +149,7 @@ export function PlaylistsTab() {
   const [showEdit, setShowEdit] = useState(false);
   const [editName, setEditName] = useState('');
   const [editMode, setEditMode] = useState<PlaylistMode>('local');
+  const [editRemoteAccess, setEditRemoteAccess] = useState<PlaylistRemoteAccess>('hidden');
   const [addYtUrl, setAddYtUrl] = useState('');
   // Bumped whenever the URL changes so a slow Load for an old URL is ignored.
   const addUrlRequestId = useRef(0);
@@ -246,17 +267,20 @@ export function PlaylistsTab() {
     if (!detail) return;
     setEditName(detail.name);
     setEditMode(detail.mode === 'stream' ? 'stream' : 'local');
+    setEditRemoteAccess(normalizePlaylistRemoteAccess(detail.remoteAccess));
     setShowEdit(true);
   };
 
   const handleEditSave = () => {
     if (!selectedId || !editName.trim()) return;
     const modeChanging = editMode !== playlistMode && !isYtLinked;
+    const currentRemoteAccess = normalizePlaylistRemoteAccess(detail?.remoteAccess);
     updatePlaylist.mutate(
       {
         id: selectedId,
         data: {
           name: editName.trim(),
+          remoteAccess: editRemoteAccess,
           ...(isYtLinked ? {} : { mode: editMode }),
         },
       },
@@ -265,6 +289,13 @@ export function PlaylistsTab() {
           toast.success('Playlist updated');
           if (modeChanging && (detail?.songs?.length ?? 0) > 0) {
             toast.message('Mode changed — remove songs that no longer match the new mode if needed');
+          }
+          if (editRemoteAccess !== currentRemoteAccess) {
+            toast.message(
+              editRemoteAccess === 'hidden'
+                ? 'Playlist hidden from the listener remote'
+                : `Listener remote visibility: ${playlistRemoteAccessLabel(editRemoteAccess)}`,
+            );
           }
           setShowEdit(false);
         },
@@ -491,9 +522,12 @@ export function PlaylistsTab() {
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium truncate">{pl.name}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5">
+                  <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                     <Badge variant="outline" className="text-[9px] h-4 px-1">
                       {pl.mode === 'stream' ? 'stream' : 'local'}
+                    </Badge>
+                    <Badge variant="outline" className="text-[9px] h-4 px-1">
+                      {playlistRemoteAccessLabel(pl.remoteAccess)}
                     </Badge>
                     <p className="text-[10px] text-muted-foreground">
                       {pl.songCount} song{pl.songCount !== 1 ? 's' : ''}
@@ -527,6 +561,8 @@ export function PlaylistsTab() {
                     {playlistMode === 'local'
                       ? 'Local only — library uploads / scanned local files'
                       : 'Stream only — YouTube / URL tracks'}
+                    {' · '}
+                    Listener remote: {playlistRemoteAccessLabel(detail.remoteAccess)}
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
@@ -696,7 +732,8 @@ export function PlaylistsTab() {
           <DialogHeader>
             <DialogTitle>Edit Playlist</DialogTitle>
             <DialogDescription>
-              Rename this playlist or change whether it holds local or stream tracks.
+              Rename this playlist, change whether it holds local or stream tracks, or set how it
+              appears on the listener remote.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -729,6 +766,29 @@ export function PlaylistsTab() {
                   YouTube-imported playlists stay in stream mode.
                 </p>
               )}
+            </div>
+            <div>
+              <Label className="text-xs" htmlFor="playlist-remote-access">
+                Listener remote visibility
+              </Label>
+              <Select
+                value={editRemoteAccess}
+                onValueChange={(v) => setEditRemoteAccess(v as PlaylistRemoteAccess)}
+              >
+                <SelectTrigger id="playlist-remote-access" aria-label="Listener remote visibility">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {PLAYLIST_REMOTE_ACCESS_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label} — {option.description}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                {PLAYLIST_REMOTE_ACCESS_LIBRARY_NOTE}
+              </p>
             </div>
           </div>
           <DialogFooter>

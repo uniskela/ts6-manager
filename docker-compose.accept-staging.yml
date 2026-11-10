@@ -1,0 +1,144 @@
+# Disposable Listener Remote / #632 acceptance stack.
+#
+# Standalone file — do NOT layer with docker-compose.pr-test.yml (Compose
+# concatenates `ports`, which would re-open 0.0.0.0 publishes).
+#
+# Project name is fixed so volumes/networks cannot collide with pr-test, beta,
+# or production compose projects in the same Docker engine.
+#
+# Required: copy .env.accept-staging.example → .env.accept-staging and fill
+# generated secrets + TS_VOICE_BIND_IP (private lab/Tailscale IPv4, never 0.0.0.0).
+#
+#   docker compose -p ts6-accept-632 --env-file .env.accept-staging \
+#     -f docker-compose.accept-staging.yml config
+#   # inspect published host_ip/ports, then up --build only after that looks right
+
+name: ts6-accept-632
+
+services:
+  teamspeak:
+    image: teamspeaksystems/teamspeak6-server:6.0.0-beta13
+    restart: "no"
+    environment:
+      TSSERVER_LICENSE_ACCEPTED: accept
+      TSSERVER_QUERY_HTTP_ENABLED: "1"
+      TSSERVER_QUERY_HTTP_PORT: "10080"
+      TSSERVER_QUERY_HTTP_ALLOW_GUEST: "0"
+      TSSERVER_QUERY_SSH_ENABLED: "1"
+      TSSERVER_QUERY_SSH_PORT: "10022"
+      TSSERVER_QUERY_SSH_ALLOW_GUEST: "0"
+      TSSERVER_QUERY_ADMIN_PASSWORD: ${TS_ACCEPT_QUERY_PASSWORD:?Set TS_ACCEPT_QUERY_PASSWORD}
+      TSSERVER_QUERY_ADMIN_API_KEY: ${TS_ACCEPT_QUERY_API_KEY:?Set TS_ACCEPT_QUERY_API_KEY}
+      # Metrics stay in-container only — not published to the host.
+      TSSERVER_METRICS_ENABLED: "0"
+    volumes:
+      - accept-teamspeak-data:/var/tsserver
+    ports:
+      # Voice only. Bind IP must be an explicit private lab/Tailscale address.
+      # Host port defaults to 19987 to avoid colliding with a host TS on 9987.
+      - "${TS_VOICE_BIND_IP:?Set TS_VOICE_BIND_IP to a private IPv4 (not 0.0.0.0)}:${TS_VOICE_HOST_PORT:-19987}:9987/udp"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/10080 && exec 4<>/dev/tcp/127.0.0.1/10022'",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 36
+      start_period: 15s
+    networks:
+      - accept
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        GIT_SHA: ${GIT_SHA:-accept-staging}
+    restart: "no"
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DATABASE_URL: file:/app/packages/backend/data/ts6webui.db
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set ENCRYPTION_KEY}
+      SIDECAR_SECRET: ${SIDECAR_SECRET:?Set SIDECAR_SECRET}
+      SIDECAR_URL: http://sidecar:9800
+      JWT_ACCESS_EXPIRY: 15m
+      JWT_REFRESH_EXPIRY: 7d
+      # Loopback admin UI; remotes use PUBLIC_URL (HTTPS).
+      FRONTEND_URL: http://127.0.0.1:${ACCEPT_HTTP_PORT:-13100}
+      PUBLIC_URL: ${PUBLIC_URL:?Set PUBLIC_URL to the private HTTPS origin}
+      MUSIC_DIR: /data/music
+      TS_ALLOW_SELF_SIGNED: ${TS_ALLOW_SELF_SIGNED:-true}
+      TS_ALLOW_PRIVATE_HOSTS: ${TS_ALLOW_PRIVATE_HOSTS:-true}
+      LOCAL_DEV_BOOTSTRAP_CONNECTION: "1"
+      TS_BOOTSTRAP_HOST: teamspeak
+      TS_BOOTSTRAP_WEBQUERY_PORT: "10080"
+      TS_BOOTSTRAP_API_KEY: ${TS_ACCEPT_QUERY_API_KEY:?Set TS_ACCEPT_QUERY_API_KEY}
+      TS_BOOTSTRAP_NAME: Accept staging TeamSpeak 6
+      TS_BOOTSTRAP_SSH_PORT: "10022"
+      TS_BOOTSTRAP_SSH_USER: serveradmin
+      TS_BOOTSTRAP_SSH_PASSWORD: ${TS_ACCEPT_QUERY_PASSWORD:?Set TS_ACCEPT_QUERY_PASSWORD}
+    volumes:
+      - accept-backend-data:/app/packages/backend/data
+      - accept-music-data:/data/music
+    # No host publish — API only via frontend proxy on loopback.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      sidecar:
+        condition: service_started
+      teamspeak:
+        condition: service_healthy
+    networks:
+      - accept
+
+  sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile.sidecar
+    restart: "no"
+    environment:
+      SIDECAR_PORT: 9800
+      SIDECAR_SECRET: ${SIDECAR_SECRET:?Set SIDECAR_SECRET}
+      MUSIC_DIR: /data/music
+      VIDEO_QUEUE_SIZE: 8192
+      AUDIO_QUEUE_SIZE: 16384
+      WEBRTC_UDP_PORT: ${WEBRTC_UDP_PORT:-10000}
+      WEBRTC_NAT1TO1_IP: 127.0.0.1
+    volumes:
+      - accept-music-data:/data/music
+    ports:
+      - "127.0.0.1:${WEBRTC_UDP_PORT:-10000}:${WEBRTC_UDP_PORT:-10000}/udp"
+    networks:
+      - accept
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        GIT_SHA: ${GIT_SHA:-accept-staging}
+    restart: "no"
+    ports:
+      # Admin + /remote + /api via private HTTPS reverse-proxy / Tailscale Serve only.
+      - "127.0.0.1:${ACCEPT_HTTP_PORT:-13100}:80"
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - accept
+
+volumes:
+  accept-backend-data:
+    name: ts6-accept-632-backend-data
+  accept-music-data:
+    name: ts6-accept-632-music-data
+  accept-teamspeak-data:
+    name: ts6-accept-632-teamspeak-data
+
+networks:
+  accept:
+    name: ts6-accept-632

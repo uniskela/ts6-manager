@@ -21,6 +21,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { timeAgo } from '@/lib/utils';
 import { CommandsTab } from '@/pages/media-bots/CommandsTab';
 import { MediaCommandPermissions } from '@/components/bots/MediaCommandPermissions';
+import { PlaylistVoteSettingsCard } from '@/components/bots/PlaylistVoteSettingsCard';
 
 /** Render Bot Flows and its server-scoped Chat commands tab. */
 export default function BotList() {
@@ -102,6 +103,7 @@ export default function BotList() {
         {tabLinks}
         <div role="tabpanel" id="bot-chat-commands-panel" aria-labelledby="bot-chat-commands-tab" tabIndex={0}>
           <MediaCommandPermissions />
+          <PlaylistVoteSettingsCard />
           <CommandsTab showClashWarnings />
         </div>
       </div>

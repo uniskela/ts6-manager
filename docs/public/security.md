@@ -19,13 +19,13 @@ Secret fields are not populated back into edit forms. Leaving a secret field bla
 
 ## Authentication
 
-The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply.
+The backend uses JWT access tokens plus refresh-token rotation with reuse detection. Authentication endpoints are rate-limited and password complexity rules apply. An administrator password reset, or disabling a user, revokes that account's refresh tokens. An access token that has not expired yet stays valid until it expires.
 
 WebSocket connections require application authentication and are scoped to the servers the user may access.
 
 ## Listener remote
 
-The `!remote` chat command gives a listener in a media bot's channel a private, one-time link to a small web page where they can see the queue and add music. It does not sign anyone in to the manager. The link is valid for 5 minutes and works once; the session it opens lasts 15 minutes in total and ends early if the listener leaves the channel. Only hashes of the credentials are kept in memory, and a backend restart ends every session. Pasted links go through the same outbound-request checks as other media URLs, without the IPTV local-hosts exception. It needs an HTTPS Public URL and, behind an outer reverse proxy, a matching `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
+The `!remote` chat command gives a listener in a media bot's channel a private, one-time link to a small web page where they can see the queue and add music. It does not sign anyone in to the manager. The link is valid for 5 minutes and works once. Exchanging it sets a host-only `HttpOnly` / `Secure` / `SameSite=Strict` session cookie (12 hours by default, or 24 hours when the listener chooses “Remember this browser”). The session secret is never returned to JavaScript, stored in `localStorage`, or put in URLs. Cookie mutations require CSRF and Origin checks. Every protected action still verifies the live TeamSpeak UID, channel, and bot connection; leaving the channel, bot moves, or admin revoke end control. Credentials are hashed in process memory only — **a backend restart ends every remembered browser session**. The bot also posts a short channel acknowledgement that a private link was sent (never the link itself). Pasted links go through the same outbound-request checks as other media URLs, without the IPTV local-hosts exception. It needs an HTTPS Public URL and, behind an outer reverse proxy, a matching `TRUST_PROXY`. See [Media bots — Listener remote](music-bots.md#listener-remote) and [Reverse proxy](reverse-proxy.md#listener-remote-and-client-ip-limits).
 
 ## Outbound requests
 

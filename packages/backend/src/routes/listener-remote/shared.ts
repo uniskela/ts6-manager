@@ -2,13 +2,18 @@ import type { Request, Response, RequestHandler } from 'express';
 import { createHash, createHmac } from 'node:crypto';
 import type { z } from 'zod';
 import { ListenerRemoteError, type Binding as ListenerRemoteBinding, type ListenerRemoteService } from '../../voice/listener-remote.js';
-import { listHumanMediaListeners, resolveMediaIdentity } from '../../voice/media-listeners.js';
+import { resolveMediaIdentity } from '../../voice/media-listeners.js';
 import { authorizeMediaCommand, loadMediaCommandPermissions } from '../../voice/media-command-permissions.js';
 import type { VoiceBotManager } from '../../voice/voice-bot-manager.js';
 import type { EventBridge } from '../../bot-engine/event-bridge.js';
 import { clientRateKey } from '../../utils/client-address.js';
 import type { ListenerRemoteRefusalAudit, RefusalEvent } from '../../audit/index.js';
 import { config } from '../../config.js';
+import {
+  cookieMutationAllowedAsync,
+  cookieOriginAllowedAsync,
+  sessionCredentialFromRequest,
+} from './cookies.js';
 
 export function service(req: Request): ListenerRemoteService {
   const value = req.app.locals.listenerRemote;
@@ -83,7 +88,18 @@ function listenerRateSource(res: Response): string | undefined {
   return typeof source === 'string' ? source : undefined;
 }
 
-const ROUTE_LABELS = new Set(['state', 'library', 'queue', 'requests', 'exchange', 'session']);
+const ROUTE_LABELS = new Set([
+  'state',
+  'library',
+  'playlists',
+  'playlist-requests',
+  'votes',
+  'queue',
+  'requests',
+  'search',
+  'exchange',
+  'session',
+]);
 
 /** Fixed label of the route, for refusal totals; never text from the request. */
 export function routeLabel(req: Request): string {
@@ -137,7 +153,7 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
     // A live session is limited per listener when it authenticates, so listeners
     // sharing one address do not use up each other's budget. Everything else,
     // including unknown credentials, counts against the client address.
-    const credential = exchange ? undefined : bearerCredential(req);
+    const credential = exchange ? undefined : sessionCredentialFromRequest(req);
     const listener = remote.sessionRateKey(credential);
     const bound = listener ? remote.sessionBinding(credential) : undefined;
     if (listener && bound) {
@@ -157,13 +173,23 @@ export const listenerRemoteIpGuard: RequestHandler = (req, res, next) => {
 };
 
 export function bearerCredential(req: Request): string | undefined {
-  return /^Bearer ([A-Za-z0-9_-]{43})$/.exec(req.get('Authorization') ?? '')?.[1];
+  return sessionCredentialFromRequest(req);
 }
 
 export function bearer(req: Request): string {
   const credential = bearerCredential(req);
   if (!credential) fail(401, 'invalid_access', 'Listener access is invalid or expired.');
   return credential;
+}
+
+/** Cookie sessions need Origin (+ CSRF on mutations); Bearer-only skips. */
+async function assertCookieTransport(req: Request): Promise<void> {
+  const mutating = !['GET', 'HEAD', 'OPTIONS'].includes(req.method.toUpperCase());
+  if (mutating) {
+    if (!(await cookieMutationAllowedAsync(req))) fail(403, 'csrf_rejected', 'Listener remote CSRF check failed.');
+  } else if (!(await cookieOriginAllowedAsync(req))) {
+    fail(403, 'origin_rejected', 'Listener remote origin check failed.');
+  }
 }
 
 export function botFor(req: Request, binding: ListenerRemoteBinding) {
@@ -188,23 +214,23 @@ export async function liveIdentity(req: Request, binding: ListenerRemoteBinding)
   });
   if (row?.serverConfigId !== binding.serverConfigId || row.virtualServerId !== binding.virtualServerId) return null;
   const query = (cmd: string) => bridge.executeCommand(binding.serverConfigId, binding.virtualServerId, cmd);
+  // Presence comes from the same clientinfo row as UID — do not depend on
+  // clientlist succeeding for every peer in the channel (a missing peer UID
+  // must fail closed for vote tallies, not invalidate unrelated remotes).
   const identity = await resolveMediaIdentity(query, binding.clid, binding.uid);
-  if (!identity) return null;
-  const manager = req.app.locals.voiceBotManager as VoiceBotManager;
-  const bots = await manager.getBotsForServer(binding.serverConfigId);
-  const excluded = new Set(bots.map(({ bot: peer }) => peer.ts3ClientId));
-  const listeners = await listHumanMediaListeners(query, binding.channelId, excluded);
-  if (!listeners?.some(peer => peer.clid === binding.clid && peer.uid === binding.uid) || !botFor(req, binding)) return null;
+  if (!identity || identity.channelId !== binding.channelId || !botFor(req, binding)) return null;
   return identity;
 }
 
 export async function authenticate(req: Request) {
+  await assertCookieTransport(req);
   const binding = await service(req).authenticate(bearer(req), async bound => Boolean(await liveIdentity(req, bound)));
   remember(req, binding);
   return binding;
 }
 
 export async function authorized(req: Request, command: string, args = '') {
+  await assertCookieTransport(req);
   let identity: NonNullable<Awaited<ReturnType<typeof liveIdentity>>> | undefined;
   let policy: Awaited<ReturnType<typeof loadMediaCommandPermissions>> | undefined;
   const binding = await service(req).authenticate(bearer(req), async bound => {

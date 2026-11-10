@@ -7,7 +7,9 @@ import { botOccupiesChannel, isBotSummonable } from './channel-ownership.js';
 import { chooseCommandBot, parseBotTarget, type ChannelBot } from './targeting.js';
 import { channelCommandKey, claimChannelCommand } from './dedupe.js';
 import { checkMediaCommand, handleVoteSkip } from './media-access.js';
+import { handlePlaylistVote } from './playlist-vote-chat.js';
 import { handleListenerRemote, revokeDepartedRemote } from './listener-remote.js';
+import { cancelPlaylistVotesBotUnavailable } from '../playlist-vote/lifecycle.js';
 const CMD_PREFIX = '!';
 const MUSIC_COMMANDS = new Set<string>(BUILTIN_CHAT_COMMANDS);
 const loggableMessage = (message: string) => /^\s*!remote(?:\s|$)/i.test(message) ? '!remote [redacted]' : message;
@@ -130,9 +132,15 @@ export function registerBot(context: CommandContext, botId: number, bot: VoiceBo
       revokeDepartedRemote(context, cfg.serverConfigId, cfg.virtualServerId, command.name, data);
     }
   });
-  bot.on('disconnected', () => context.listenerRemote?.revoke(botId));
+  bot.on('disconnected', () => {
+    context.listenerRemote?.revoke(botId);
+    cancelPlaylistVotesBotUnavailable(context.listenerRemote, botId);
+  });
   bot.on('statusChange', (status) => {
-    if (status === 'stopped' || status === 'error') context.listenerRemote?.revoke(botId);
+    if (status === 'stopped' || status === 'error') {
+      context.listenerRemote?.revoke(botId);
+      cancelPlaylistVotesBotUnavailable(context.listenerRemote, botId);
+    }
   });
 
   bot.on('textMessage', (data: Record<string, string>) => {
@@ -445,6 +453,9 @@ export async function onTextMessage(
         case 'voteskip':
           await handleVoteSkip(context, bot, userClid, data.invokeruid);
           break;
+        case 'playlistvote':
+          await handlePlaylistVote(context, bot, userClid, args, data.invokeruid);
+          break;
         case 'prev':
           await context.handlePrev(bot, userClid);
           break;
@@ -498,8 +509,8 @@ export async function onTextMessage(
 }
 
 /**
- * Send a command reply. When the command came from another channel, prefers the
- * SSH command-channel listener so the user sees the message where they typed.
+ * Send command replies through checked SSH sends, including in the bot's channel.
+ * Native voice sends do not report delivery failures back to this caller.
  * Await this before joinChannel/refreshBotChannels — those disconnect the
  * listener and optimistically change the bot's channel id.
  */
@@ -514,15 +525,10 @@ export async function reply(
   const botId = bot.currentConfig.id;
   const replyChannelId = context.activeReplyChannel.get(`${botId}:${targetClid}`);
   const cfg = context.botChannelConfig.get(botId);
-  // Actual voice presence only — defaultChannel fallback made cross-channel
-  // replies take the home-channel path while the bot was still elsewhere.
-  const homeCid = bot.getCurrentChannelId() || 0;
-
   if (
     replyChannelId &&
     cfg &&
-    context.eventBridge &&
-    (homeCid <= 0 || replyChannelId !== homeCid)
+    context.eventBridge
   ) {
     const ok = await context.eventBridge.sendChannelText(
       cfg.serverConfigId,
@@ -533,7 +539,7 @@ export async function reply(
     );
     if (!ok) {
       console.warn(
-        `[MusicCmd] Cross-channel reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
+        `[MusicCmd] SSH reply failed for bot ${botId} cid=${replyChannelId}, falling back to home channel`,
       );
       try {
         bot.sendChannelMessage(msg);

@@ -20,28 +20,28 @@ Built on the **WebQuery HTTP API** (the ServerQuery replacement in modern TeamSp
 
 ## Documentation
 
-The maintained public documentation is available at **[www.uniskela.com/docs/ts6-manager](https://www.uniskela.com/docs/ts6-manager/)** and is sourced from the reviewed Markdown files in [`docs/public/`](docs/public/index.md).
+The maintained public documentation is available at **[ts6manager.com/docs](https://ts6manager.com/docs/)** and is sourced from the reviewed Markdown files in [`docs/public/`](docs/public/index.md).
 
 Start with:
 
-- [Installation](https://www.uniskela.com/docs/ts6-manager/latest/installation/)
-- [Configuration](https://www.uniskela.com/docs/ts6-manager/latest/configuration/)
-- [Upgrading](https://www.uniskela.com/docs/ts6-manager/latest/upgrading/)
-- [TeamSpeak compatibility](https://www.uniskela.com/docs/ts6-manager/latest/teamspeak-compatibility/)
-- [Music bots](https://www.uniskela.com/docs/ts6-manager/latest/music-bots/)
-- [Bot flows](https://www.uniskela.com/docs/ts6-manager/latest/bot-flows/)
-- [Security](https://www.uniskela.com/docs/ts6-manager/latest/security/)
-- [Troubleshooting](https://www.uniskela.com/docs/ts6-manager/latest/troubleshooting/)
-- [Video streaming](https://www.uniskela.com/docs/ts6-manager/latest/video-streaming/)
-- [Architecture](https://www.uniskela.com/docs/ts6-manager/latest/architecture/)
-- [Environment variables](https://www.uniskela.com/docs/ts6-manager/latest/environment-variables/)
+- [Installation](https://ts6manager.com/docs/latest/installation/)
+- [Configuration](https://ts6manager.com/docs/latest/configuration/)
+- [Upgrading](https://ts6manager.com/docs/latest/upgrading/)
+- [TeamSpeak compatibility](https://ts6manager.com/docs/latest/teamspeak-compatibility/)
+- [Music bots](https://ts6manager.com/docs/latest/music-bots/)
+- [Bot flows](https://ts6manager.com/docs/latest/bot-flows/)
+- [Security](https://ts6manager.com/docs/latest/security/)
+- [Troubleshooting](https://ts6manager.com/docs/latest/troubleshooting/)
+- [Video streaming](https://ts6manager.com/docs/latest/video-streaming/)
+- [Architecture](https://ts6manager.com/docs/latest/architecture/)
+- [Environment variables](https://ts6manager.com/docs/latest/environment-variables/)
 
 
 ### Using this project with AI coding agents
 
 If you use Codex, Cursor, Claude Code, or another assistant with [Context7 MCP](https://context7.com/), you can ask it to consult TS6 Manager's documentation before changing deployment settings or integrations. Context7 is optional; you can always use the maintained docs directly.
 
-> Use Context7 MCP to resolve the official documentation library for `uniskela/ts6-manager` (expected ID: `/uniskela/ts6-manager`), then retrieve guidance for installation, configuration, upgrading, TeamSpeak compatibility, music/video bots, and troubleshooting. Match the guidance to the TS6 Manager version I'm using. If the library is still indexing or doesn't cover that version, check the [maintained documentation](https://www.uniskela.com/docs/ts6-manager/) and linked source files instead.
+> Use Context7 MCP to resolve the official documentation library for `uniskela/ts6-manager` (expected ID: `/uniskela/ts6-manager`), then retrieve guidance for installation, configuration, upgrading, TeamSpeak compatibility, music/video bots, and troubleshooting. Match the guidance to the TS6 Manager version I'm using. If the library is still indexing or doesn't cover that version, check the [maintained documentation](https://ts6manager.com/docs/) and linked source files instead.
 
 ## Screenshots
 
@@ -138,7 +138,7 @@ Compare two to four entities from the same permission layer in a read-only table
 - Live video streaming from YouTube, Twitch, or direct URLs to TeamSpeak channels
 - WebRTC-based with Go sidecar relay (Pion) for low-latency delivery
 - Quality presets (480p, 720p, 1080p)
-- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](https://www.uniskela.com/docs/ts6-manager/latest/video-streaming/)); channel browsing, filtering, and music-bot streaming
+- M3U/M3U8 playlist URL management; administrators can also upload `.m3u`, `.m3u8`, or `.txt` playlist files (see [Video streaming](https://ts6manager.com/docs/latest/video-streaming/)); channel browsing, filtering, and music-bot streaming
 - In-browser preview with WebRTC playback
 - A/V synchronization via RTCP Sender Reports
 - Runs as a Docker sidecar container alongside the backend; optional [native binaries](docs/public/native-sidecar.md) are published with each release for host GPU encoders

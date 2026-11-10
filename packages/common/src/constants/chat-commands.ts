@@ -16,6 +16,7 @@ export const BUILTIN_CHAT_COMMANDS = [
   'skip',
   'next',
   'voteskip',
+  'playlistvote',
   'remote',
   'prev',
   'vol',
@@ -57,7 +58,7 @@ export const MEDIA_COMMAND_GROUP_BY_COMMAND = {
   prev: 'playback', vol: 'playback', volume: 'playback', repeat: 'playback', seek: 'playback',
   queue: 'queue', add: 'queue', shuffle: 'queue', playlist: 'queue', pl: 'queue', remove: 'queue',
   stream: 'video', stopstream: 'video', tv: 'video', iptv: 'video',
-  voteskip: 'listener', remote: 'listener',
+  voteskip: 'listener', playlistvote: 'listener', remote: 'listener',
 } as const satisfies Record<BuiltinChatCommand, MediaCommandGroup | 'info' | 'listener'>;
 
 /** Read-only command forms stay public even when controls are restricted. */

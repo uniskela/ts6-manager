@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { PlaylistMode, PlaylistRemoteAccess } from '@ts6/common';
 import { playlistsApi } from '../api/music.api';
 
 export function usePlaylists(serverConfigId?: number) {
@@ -19,8 +20,13 @@ export function usePlaylist(id: number | null) {
 export function useCreatePlaylist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: { name: string; musicBotId?: number; mode?: 'local' | 'stream'; serverConfigId?: number }) =>
-      playlistsApi.create(data),
+    mutationFn: (data: {
+      name: string;
+      musicBotId?: number;
+      mode?: PlaylistMode;
+      remoteAccess?: PlaylistRemoteAccess;
+      serverConfigId?: number;
+    }) => playlistsApi.create(data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['playlists'] }),
   });
 }
@@ -28,7 +34,18 @@ export function useCreatePlaylist() {
 export function useUpdatePlaylist() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, data }: { id: number; data: any }) => playlistsApi.update(id, data),
+    mutationFn: ({
+      id,
+      data,
+    }: {
+      id: number;
+      data: {
+        name?: string;
+        musicBotId?: number | null;
+        mode?: PlaylistMode;
+        remoteAccess?: PlaylistRemoteAccess;
+      };
+    }) => playlistsApi.update(id, data),
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['playlists'] });
       qc.invalidateQueries({ queryKey: ['playlist', id] });

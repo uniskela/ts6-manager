@@ -5,6 +5,7 @@ build/
 .env.beta
 .env.discord-integration-test
 .env.discord-integration-test.local
+.env.accept-staging
 *.db
 *.db-journal
 *.log

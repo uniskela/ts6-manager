@@ -2,7 +2,7 @@ import { test, expect, type APIRequestContext, type Locator, type Page } from '@
 import { readFileSync, readdirSync } from 'node:fs';
 import { canHandleRequest, isAppNavigation } from '../pwa/cache-policy';
 
-const routes = ['/dashboard', '/channels', '/clients', '/permissions', '/server-groups', '/channel-groups', '/media-bots', '/bots', '/bots/1', '/files', '/settings', '/login', '/setup', '/remote'];
+const routes = ['/dashboard', '/channels', '/clients', '/permissions', '/server-groups', '/channel-groups', '/media-bots', '/bots', '/bots/1', '/files', '/settings', '/login', '/setup'];
 const privatePaths = ['/api', '/api/health', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/me', '/api/setup/status', '/api/servers/1/clients', '/api/servers/1/files', '/api/servers/1/tokens', '/api/servers/1/bans', '/api/music-bots', '/api/bots/1/logs', '/api/iptv/playlists/upload', '/api/iptv/playlists/1/replace', '/api/listener-remote', '/api/listener-remote/exchange', '/api/listener-remote/state', '/ws', '/ws/live'];
 const baseThemes = ['light', 'dark', 'black'] as const;
 const accents = ['cyan', 'violet', 'red', 'blue', 'emerald', 'amber'] as const;
@@ -84,9 +84,11 @@ test('request policy denies private, cross-origin, authenticated and mutating re
   for (const req of [new Request('https://cdn.example.test/assets/app.js'), new Request(origin + '/assets/app.js', { headers: { Authorization: 'Bearer test' } }), new Request(origin + '/settings', { method: 'POST' })]) {
     expect(canHandleRequest(req, new URL(req.url), origin)).toBe(false);
   }
-  for (const path of [...routes, '/', '/remote/', '/bots/1/']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(true);
+  for (const path of [...routes, '/', '/bots/1/']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(true);
   expect(isAppNavigation({ mode: 'navigate' } as Request, new URL('/dashboard?edge-auth=1', origin))).toBe(false);
-  for (const path of ['/api/auth', '/ws', '/widget/private-token', '/unknown', '/settings-extra']) expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(false);
+  for (const path of ['/api/auth', '/ws', '/widget/private-token', '/unknown', '/settings-extra', '/remote', '/remote/']) {
+    expect(isAppNavigation({ mode: 'navigate' } as Request, new URL(path, origin))).toBe(false);
+  }
 });
 
 test('production manifest and icons meet installability requirements', async ({ page, request }) => {
@@ -111,6 +113,13 @@ test('canonical brand mark is shared by product surfaces', async ({ page, reques
   expect(favicon).toContain('viewBox="0 0 512 512"');
   expect(favicon).toContain('currentColor');
   expect(favicon).not.toMatch(/<text|>TS</i);
+  // The tab icon wraps the same glyph in the brand gradient and tile.
+  const glyph = favicon.match(/<path d="([^"]+)"/)![1];
+  const appIcon = await (await request.get('/icons/app-icon.svg')).text();
+  expect(appIcon).toContain(`d="${glyph}"`);
+  expect(appIcon).toContain('#4fd3e2');
+  expect(appIcon).toContain('#9483ff');
+  expect(appIcon).not.toContain('currentColor');
 
   await controlled(page);
   await expect(page.getByRole('heading', { name: 'TS6 Manager' })).toBeVisible();
@@ -238,6 +247,7 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
           primaryForeground: computed.backgroundColor,
           ring: computed.borderColor,
           mark: getComputedStyle(document.querySelector<HTMLElement>('[data-brand-mark]')!).backgroundColor,
+          markGradient: getComputedStyle(document.querySelector<HTMLElement>('[data-brand-mark]')!).backgroundImage,
           neutral: Object.fromEntries(['--background', '--card', '--secondary', '--muted', '--border', '--accent'].map(name => [name, root.getPropertyValue(name).trim()])),
           semantic: Object.fromEntries(['--destructive', '--success', '--warning'].map(name => [name, root.getPropertyValue(name).trim()])),
         };
@@ -282,6 +292,7 @@ test('appearance combinations preserve neutral and semantic tokens with visible 
       expect(contrastRatio(buttonColours.foreground, buttonColours.background), `${baseTheme}/${accent} primary hover contrast`).toBeGreaterThanOrEqual(4.5);
       expect(contrastRatio(badgeColours.foreground, badgeColours.background), `${baseTheme}/${accent} primary badge contrast`).toBeGreaterThanOrEqual(4.5);
       expect(colours.mark, `${baseTheme}/${accent} BrandMark inheritance`).toBe(colours.primary);
+      expect(colours.markGradient, `${baseTheme}/${accent} BrandMark gradient starts at the accent`).toContain(`linear-gradient(135deg, ${colours.primary} 15%`);
 
       neutralBaseline ??= colours.neutral;
       semanticBaseline ??= colours.semantic;
@@ -396,7 +407,7 @@ test('real worker caches only public build output; private traffic stays live', 
   });
   expect(cached.length).toBeGreaterThan(10);
   for (const item of cached) {
-    expect(item.path).toMatch(/^\/(index\.html|manifest\.webmanifest|favicon\.svg|icons\/[^/]+\.png|assets\/[^/]+\.(js|css|woff2?))$/);
+    expect(item.path).toMatch(/^\/(index\.html|manifest\.webmanifest|favicon\.svg|icons\/[^/]+\.(png|svg)|assets\/[^/]+\.(js|css|woff2?))$/);
     expect(item.body).not.toContain('test-only-sensitive-response');
     expect(item.body).not.toContain('test-secret');
     expect(item.body).not.toContain('private-action');
@@ -426,6 +437,14 @@ test('offline shell supports deep links without swallowing APIs or replaying mut
   await context.setOffline(false);
   await page.goto('/login');
   expect((await (await request.get('/__test/state')).json()).mutations).toBe(0);
+});
+
+test('root service worker does not navigate /remote', async ({ page }) => {
+  await controlled(page);
+  const response = await page.goto('/remote');
+  expect(response?.fromServiceWorker()).toBe(false);
+  expect(await response?.text()).toContain('Listener remote');
+  expect(await response?.text()).not.toContain('TS6 Manager');
 });
 
 test('backend outage is visible even when the browser is online and clears on recovery', async ({ page, request }) => {

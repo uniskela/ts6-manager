@@ -7,6 +7,8 @@ import { BotEngine } from './bot-engine/engine.js';
 import { VoiceBotManager } from './voice/voice-bot-manager.js';
 import { MusicCommandHandler } from './voice/music-command-handler.js';
 import { ListenerRemoteService } from './voice/listener-remote.js';
+import { bindPlaylistVoteLifecycle } from './voice/playlist-vote/lifecycle.js';
+import { PlaylistVoteRuntime } from './voice/playlist-vote/runtime.js';
 import { config } from './config.js';
 import { describeTrustProxy } from './trust-proxy.js';
 import { setYtCookieFile } from './voice/audio/youtube.js';
@@ -168,6 +170,9 @@ async function main() {
   const musicCommandHandler = new MusicCommandHandler(prisma, voiceBotManager);
   const listenerRemote = new ListenerRemoteService();
   app.locals.listenerRemote = listenerRemote;
+  const playlistVotes = new PlaylistVoteRuntime((botId) => voiceBotManager.getBot(botId));
+  app.locals.playlistVotes = playlistVotes;
+  bindPlaylistVoteLifecycle(listenerRemote, playlistVotes);
   // Bounded audit totals for refused listener remote requests.
   const listenerRemoteRefusals = new ListenerRemoteRefusalAudit(prisma);
   app.locals.listenerRemoteRefusals = listenerRemoteRefusals;
