@@ -2,17 +2,23 @@
 # Does NOT modify production media-fetcher services or docker-compose.media-fetcher.yml.
 # Host backend (LISTEN_HOST=127.0.0.1) reaches the job socket via the bind-mounted jobs dir.
 #
+# Seed token (compose install input) vs installed token (backend reads):
+#   MEDIA_FETCHER_SEED_TOKEN_FILE  → host seed copied into /jobs/.token (umask 077, gitignored)
+#   MEDIA_FETCHER_TOKEN_FILE       → backend path to the *installed* jobs token (not the seed)
+# Do not export MEDIA_FETCHER_TOKEN_FILE as the seed path into this compose file.
+#
 # Prerequisites: Linux 6.7+ Landlock ABI, rootless Docker OK.
 #   umask 077; openssl rand -hex 32 > .media-fetcher-token-int
 #   mkdir -p data/discord-int-media-jobs data/discord-int-media-ctl
-#   docker compose -f docker-compose.discord-int-media-fetcher.yml up -d --build
+#   docker compose -f docker-compose.discord-int-media-fetcher.yml up --build
+#   # restart: "no" — operator starts/stops explicitly; no auto-restart after crash
 #
 # Backend env (gitignored .env.discord-integration-test):
 #   MEDIA_FETCHER=1
 #   MEDIA_FETCHER_SOCK=<repo>/data/discord-int-media-jobs/jobs.sock
 #   MEDIA_FETCHER_TOKEN_FILE=<repo>/data/discord-int-media-jobs/.token
 #
-# Tear down after the supervised window:
+# Tear down (stops all INT-only fetcher/proxy containers):
 #   docker compose -f docker-compose.discord-int-media-fetcher.yml down
 # Do not point production stacks at these bind mounts.
 
@@ -36,7 +42,8 @@ services:
       - TOKEN_DEST=/jobs/.token
       - CTL_TOKEN_DEST=/ctl/.ctl-token
     volumes:
-      - ${MEDIA_FETCHER_TOKEN_FILE:-./.media-fetcher-token-int}:/src/token:ro
+      # Seed only — never the backend's installed MEDIA_FETCHER_TOKEN_FILE path.
+      - ${MEDIA_FETCHER_SEED_TOKEN_FILE:-./.media-fetcher-token-int}:/src/token:ro
       - ./data/discord-int-media-jobs:/jobs
       - ./data/discord-int-media-ctl:/ctl
     command: ["node", "/app/install-token.mjs"]
@@ -68,7 +75,7 @@ services:
     depends_on:
       media-fetcher-token:
         condition: service_completed_successfully
-    restart: unless-stopped
+    restart: "no"
     networks:
       discord_int_fetch:
       discord_int_egress:
@@ -103,7 +110,7 @@ services:
         condition: service_completed_successfully
       media-egress-proxy:
         condition: service_started
-    restart: unless-stopped
+    restart: "no"
     networks:
       discord_int_fetch:
 

@@ -145,19 +145,34 @@ Do not fabricate deny observations. Do not broaden privileges just to green the 
 
 ## 8. INT-TEST media fetcher (finding #20)
 
-Radio playback requires the isolated media fetcher. There is no legacy/unrestricted ffmpeg fallback.
+Radio playback requires the isolated media fetcher. There is no legacy/unrestricted ffmpeg fallback. Live #20 PASS requires audible playback with a healthy fetcher — an unavailable message alone is not acceptance.
 
-Standalone compose (does not touch production fetcher stacks):
+Standalone compose (does not touch production fetcher stacks). Services use `restart: "no"` so the operator controls start/stop.
 
 ```bash
-umask 077; openssl rand -hex 32 > .media-fetcher-token-int
+umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
 mkdir -p data/discord-int-media-jobs data/discord-int-media-ctl
-docker compose -f docker-compose.discord-int-media-fetcher.yml up -d --build
+# Optional override: MEDIA_FETCHER_SEED_TOKEN_FILE=./.media-fetcher-token-int
+docker compose -f docker-compose.discord-int-media-fetcher.yml up --build
 ```
 
-Point the disposable INT backend at the bind-mounted job socket via `MEDIA_FETCHER=1`, `MEDIA_FETCHER_SOCK`, and `MEDIA_FETCHER_TOKEN_FILE` in `.env.discord-integration-test`. If the fetcher is down or unset, `/radio play` must reply with the documented actionable unavailable message — not a generic “Radio playback failed.”
+Keep seed and installed paths distinct even if backend env is exported into the shell:
 
-Tear down with `docker compose -f docker-compose.discord-int-media-fetcher.yml down` after the supervised window. Do not modify production media-fetcher services.
+| Variable | Role |
+|----------|------|
+| `MEDIA_FETCHER_SEED_TOKEN_FILE` | Compose install input (default `./.media-fetcher-token-int`) |
+| `MEDIA_FETCHER_TOKEN_FILE` | Backend → installed `data/discord-int-media-jobs/.token` |
+| `MEDIA_FETCHER_SOCK` | Backend → installed `data/discord-int-media-jobs/jobs.sock` |
+
+Landlock, internal `discord_int_fetch` network, token mode 600, and fail-closed client behaviour match production fetcher policy. Do not fall back to in-process ffmpeg.
+
+Tear down after the supervised window:
+
+```bash
+docker compose -f docker-compose.discord-int-media-fetcher.yml down
+```
+
+Do not modify production media-fetcher services.
 
 ## 9. External actions that still need explicit approval
 

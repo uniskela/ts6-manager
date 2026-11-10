@@ -30,27 +30,44 @@ Do **not** point production Discord apps or production Interactions URLs here. G
 
 ### 1. Start the temporary test endpoint
 
+**Do not** tunnel to backend `:3011`. Tunnel only to the path filter on `:3012`, which allows **POST `/api/discord/interactions` only**.
+
+Mandatory order (handler before Discord’s signed validation PING):
+
 ```bash
 cd /path/to/integration-discord-bridge-commands-radio/packages/backend
 set -a; . ../../.env.discord-integration-test; set +a
-# Confirm still prep-safe:
-#   DISCORD_INTERACTIONS_ENABLED=false  LISTEN_HOST=127.0.0.1  TS6_ISOLATED_INTEGRATION=1
-# Backend should already be on :3011 from prep; if not:
-#   pnpm exec tsx src/index.ts
+# Prep-safe until GO: DISCORD_INTERACTIONS_ENABLED=false  LISTEN_HOST=127.0.0.1  TS6_ISOLATED_INTEGRATION=1
+# Confirm test identity: DISCORD_TEST_APPLICATION_ID == DISCORD_APPLICATION_ID; viewer/admin role IDs set.
 
-# Path-filter + short-lived public HTTPS to ONLY /api/discord/interactions
-# Example (trycloudflare / cloudflared) — pick one operator-approved tunnel:
-cloudflared tunnel --url http://127.0.0.1:3011
-# Prefer a filter that rejects non-interactions paths if available.
+# 1) Backend on loopback only (interactions still OFF):
+#    pnpm exec tsx src/index.ts   # :3011
 
-# In Discord Developer Portal → INT-TEST application only:
-#   Interactions Endpoint URL = https://<tunnel>/api/discord/interactions
-# Wait for Discord validation (200) before enabling the flag.
+# 2) Path filter — refuses health/auth/admin and every non-interactions path:
+node --import tsx src/discord-int-path-filter-cli.ts \
+  --upstream http://127.0.0.1:3011 --listen-port 3012
 
-# Enable interactions for the supervised window only, then restart backend:
-#   DISCORD_INTERACTIONS_ENABLED=true
-# Optional latch if required by this build:
-#   TS6_ISOLATED_LIVE_INTERACTIONS=1
+# 3) After explicit operator GO — enable the isolated interaction handler, then restart backend:
+#    DISCORD_INTERACTIONS_ENABLED=true
+#    TS6_ISOLATED_LIVE_INTERACTIONS=1   # if required by this build
+# Handler must be up before Discord saves the Interactions URL (signed PING).
+
+# 4) Short-lived public HTTPS → path filter ONLY (never :3011):
+cloudflared tunnel --url http://127.0.0.1:3012
+
+# 5) Discord Developer Portal → INT-TEST app only:
+#    Interactions Endpoint URL = https://<tunnel-host>/api/discord/interactions
+#    Save; expect validation PING → 200 through the filter.
+```
+
+Negative-path check (must fail closed through the public hostname):
+
+```bash
+# Expect non-200 / filter refusal — not backend health JSON:
+curl -sS -o /dev/null -w '%{http_code}\n' "https://<tunnel-host>/api/health"
+curl -sS -o /dev/null -w '%{http_code}\n' "https://<tunnel-host>/"
+# Local filter sanity (404 JSON from the filter, not upstream):
+curl -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:3012/api/health
 ```
 
 Guild slash inventory: dry-run first; apply **guild-only** updates only if create/update list is intentional (volume cosmetic drift may stay unapplied).
@@ -65,7 +82,7 @@ node --import tsx src/discord-command/slash-register-cli.ts \
 
 ### 2. Connect Discord and TeamSpeak clients
 
-- Discord: INT-TEST guild only. Have one **admin** account and one **viewer** account (or role swap).
+- Discord: INT-TEST guild only. Have one **admin** account and one genuine **viewer-only** account (VIEWER role, no ADMIN roles).
 - TeamSpeak: disposable INT server voice (loopback / private publish — not production). Confirm nickname **DiscordIntLab** is present before `/play`.
 
 ### 3–4. Run the 21-command checklist and record results
@@ -111,17 +128,19 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 ### Targeted live retest (after GO)
 
 1. Re-register guild commands so `/playlist tracks` is present.
-2. Optional: start `docker-compose.discord-int-media-fetcher.yml` and set `MEDIA_FETCHER*` in the INT env; otherwise expect actionable unavailable text on #20.
+2. Start INT-only media fetcher (`docker-compose.discord-int-media-fetcher.yml`) and point backend `MEDIA_FETCHER*` at the installed jobs token/socket — **#20 PASS requires audible radio**, not only the unavailable message.
 3. Confirm a viewer-only member (VIEWER role, no ADMIN roles) before #5/#21.
-4. #18: `/playlist add` → `/playlist tracks` → remove by `#N` or displayed host title after enrichment.
-5. Tear down tunnel + fetcher; leave interactions off.
+4. #18: `/playlist add` → `/playlist tracks` → remove by `#N` or displayed host title after enrichment (positions must match).
+5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -f docker-compose.discord-int-media-fetcher.yml down`.
 
 ### 5. Remove Interactions URL and stop the tunnel
 
 1. Discord Developer Portal (INT-TEST app only): clear Interactions Endpoint URL → Save.
-2. Stop cloudflared / tunnel process.
-3. Set `DISCORD_INTERACTIONS_ENABLED=false` (and clear live latch if set); restart backend.
-4. Confirm `curl -sS http://127.0.0.1:3011/api/health` still ok and interactions remain off in env.
+2. Stop cloudflared / tunnel process (it must have targeted `:3012`, never `:3011`).
+3. Stop the path-filter process on `:3012`.
+4. Set `DISCORD_INTERACTIONS_ENABLED=false` (and clear live latch if set); restart backend.
+5. `docker compose -f docker-compose.discord-int-media-fetcher.yml down` (stops all INT-only fetcher/proxy containers).
+6. Confirm `curl -sS http://127.0.0.1:3011/api/health` still ok and interactions remain off in env.
 
 ### 6. Verify isolated environment is clean
 
@@ -134,7 +153,8 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 
 ## Do not
 
-- Claim PASS without operator confirmation for audible steps
+- Claim PASS without operator confirmation for audible steps (#20 needs audible radio, not only an unavailable reply)
+- Tunnel directly to backend `:3011` (path filter `:3012` only)
 - Register on production Uniskela app / change production Interactions URL
 - Leave trycloudflare URL configured after the session
 - Start D1 pilot, invent bridge health JSON, or expose the development VPS to community volunteers

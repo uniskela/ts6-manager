@@ -388,6 +388,9 @@ export async function addUrlToPlaylist(
       where: { playlistId_songId: { playlistId: playlist.id, songId: song.id } },
     });
     if (existing) return { added: false as const, title: song.title as string, position: 0 };
+    // Operator #N is 1-based order in /playlist tracks (sorted list), not the raw DB position column.
+    // After deletions, DB positions can have gaps; list/remove still use contiguous #1..#N.
+    const priorCount = (playlist.songs as PlaylistSongRow[] | undefined)?.length ?? 0;
     const maxPos = await tx.playlistSong.aggregate({
       where: { playlistId: playlist.id },
       _max: { position: true },
@@ -396,7 +399,7 @@ export async function addUrlToPlaylist(
     await tx.playlistSong.create({
       data: { playlistId: playlist.id, songId: song.id, position: dbPosition },
     });
-    return { added: true as const, title: song.title as string, position: dbPosition + 1 };
+    return { added: true as const, title: song.title as string, position: priorCount + 1 };
   };
   const result = db.$transaction ? await db.$transaction(work) : await work(db);
   if (!result.added) return { ok: false, message: 'That URL is already in the playlist.' };

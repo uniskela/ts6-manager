@@ -4,6 +4,7 @@ import { publicMediaTitle, safeUrlDisplayTitle } from '../media-session.js';
 import {
   addUrlToPlaylist,
   formatPlaylistTracks,
+  listPlaylistTracks,
   removeTrackFromPlaylist,
   trackMatchLabels,
 } from './library.js';
@@ -61,6 +62,48 @@ describe('playlist remove matching (finding #18)', () => {
     assert.equal(removed.ok, true);
     assert.equal(db._links.length, 1);
     assert.equal(db._links[0].songId, db._songs[0].id);
+  });
+
+  it('keeps add/tracks/remove on the same #N after delete then add', async () => {
+    const db = fakePlaylistCatalog([{
+      id: 5, name: 'Ordinal', mode: 'stream', youtubePlaylistId: null, serverConfigId: 9,
+    }]);
+    const a = await addUrlToPlaylist(db, {
+      query: 'Ordinal', url: 'https://example.test/a.mp3', serverConfigId: 9,
+    });
+    const b = await addUrlToPlaylist(db, {
+      query: 'Ordinal', url: 'https://example.test/b.mp3', serverConfigId: 9,
+    });
+    const c = await addUrlToPlaylist(db, {
+      query: 'Ordinal', url: 'https://example.test/c.mp3', serverConfigId: 9,
+    });
+    assert.equal(a.ok && a.position, 1);
+    assert.equal(b.ok && b.position, 2);
+    assert.equal(c.ok && c.position, 3);
+    const removedFirst = await removeTrackFromPlaylist(db, {
+      query: 'Ordinal', track: '1', serverConfigId: 9,
+    });
+    assert.equal(removedFirst.ok, true);
+    const fourth = await addUrlToPlaylist(db, {
+      query: 'Ordinal', url: 'https://example.test/d.mp3', serverConfigId: 9,
+    });
+    assert.equal(fourth.ok, true);
+    if (!fourth.ok) return;
+    // After deleting #1, remaining were #1,#2; new track is #3 (not raw DB position+1).
+    assert.equal(fourth.position, 3);
+    const listing = await listPlaylistTracks(db, { query: 'Ordinal', serverConfigId: 9 });
+    assert.equal(listing.ok, true);
+    if (!listing.ok) return;
+    assert.match(listing.message, /\[#3\].*Media from example\.test/);
+    assert.equal(fourth.position, 3);
+    const songD = db._songs.find((s: any) => s.sourceUrl === 'https://example.test/d.mp3');
+    assert.ok(songD);
+    const removed = await removeTrackFromPlaylist(db, {
+      query: 'Ordinal', track: String(fourth.position), serverConfigId: 9,
+    });
+    assert.equal(removed.ok, true);
+    assert.equal(db._links.some((l: any) => l.songId === songD.id), false);
+    assert.equal(db._links.length, 2);
   });
 
   it('refuses ambiguous duplicate titles and points at /playlist tracks', async () => {
