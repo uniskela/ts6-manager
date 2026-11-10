@@ -27,6 +27,9 @@ const schemaPath = fileURLToPath(new URL('../../../prisma/schema.prisma', import
 const migrationSqlPath = fileURLToPath(
   new URL('../../../prisma/migrations/20261103000000_playlist_name_key/migration.sql', import.meta.url),
 );
+const remoteAccessMigrationSqlPath = fileURLToPath(
+  new URL('../../../prisma/migrations/20261106000000_playlist_remote_access/migration.sql', import.meta.url),
+);
 
 async function pushCurrentSchema(url: string) {
   execFileSync(process.execPath, [prismaCli, 'db', 'push', '--skip-generate', '--schema', schemaPath], {
@@ -421,7 +424,22 @@ describe('playlist nameKey uniqueness corrections (finding #11)', () => {
         [{ id: 1, name: 'Clean', nameKey: 'clean' }],
       );
 
-      // 7. Post-upgrade create / rename / import-style allocate
+      // 7. Listener-remote column lands after nameKey in production migrate order.
+      // Prisma client expects it before createServerPlaylist can run.
+      const remoteAccessMigration = await readFile(remoteAccessMigrationSqlPath, 'utf8');
+      for (const statement of remoteAccessMigration.replace(/^--.*$/gm, '').split(';').map((s) => s.trim()).filter(Boolean)) {
+        await prisma.$executeRawUnsafe(statement);
+      }
+      assert.ok(
+        (await prisma.$queryRawUnsafe<Array<{ name: string }>>('PRAGMA table_info("Playlist")'))
+          .some((c) => c.name === 'remoteAccess'),
+      );
+      assert.deepEqual(
+        await prisma.$queryRawUnsafe(`SELECT "id", "remoteAccess" FROM "Playlist"`),
+        [{ id: 1, remoteAccess: 'hidden' }],
+      );
+
+      // 8. Post-upgrade create / rename / import-style allocate
       // Need server/bot rows for createServerPlaylist — insert minimally.
       await prisma.$executeRawUnsafe(`
         CREATE TABLE IF NOT EXISTS "TsServerConfig" (
