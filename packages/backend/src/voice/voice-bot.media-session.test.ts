@@ -206,8 +206,10 @@ describe('radio stream bounded buffer and EOF drain', () => {
     await bot.playStream({
       id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
     });
-    bot.pause(); // freeze the tick so the HWM fill is stable
+    // Write while flowing, then pause so the tick cannot drain before we assert.
     first.stdout.write(Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES, 1));
+    assert.ok(await waitUntil(() => b.streamChunksSize >= STREAM_PCM_HIGH_WATER_BYTES, 1000));
+    bot.pause();
     assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
     await bot.playStream({
       id: 'b', title: 'B', source: 'radio', filePath: '', streamUrl: 'https://example.test/b.mp3',
