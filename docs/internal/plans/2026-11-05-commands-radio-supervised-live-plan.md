@@ -142,6 +142,23 @@ Preserve the previous **17 PASS** rows. Retest **only** #5, #18, #20, #21 — do
 4. After the four-row session: record PASS/FAIL/NOT TESTED per row, then shutdown.
 5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down`. Expect **no** `:3011` listener afterward.
 
+### Session result (2026-11-11, tip `50cb88dc`)
+
+**Final tally: 21 PASS / 0 FAIL / 0 NOT TESTED.** Prior 17 PASS preserved; retest rows #5, #18, #20, #21 all PASS under supervision.
+
+| # | Result | Note |
+|---|--------|------|
+| 5 | PASS | Viewer `test_user61651`: permission denial; admin: Connected to TeamSpeak 6 Server |
+| 18 | PASS | Title remove + `#N` remove of enriched `SoundHelix-Song-1` from `live-smoke` |
+| 20 | PASS | Operator-confirmed audible; Discord: `Now playing: INT disposable SoundHelix` |
+| 21 | PASS | Viewer: cannot edit playlists; admin `/playlist list` showed only `live-smoke` |
+
+**Outstanding (not resolved by the PASS):** after audible start, `#20` radio playback stopped after approximately **two seconds**. Treat as a functional reliability defect before release approval. Do not silently classify the duration issue as fixed.
+
+**Cleanup evidence:** INT Interactions URL cleared; trycloudflare tunnel removed; path filter stopped; `ts6-discord-int-media` `--profile int-backend down`; no `:3011`/`:3012` listeners; disposable DB preserved; disposable TS (`ts6-discord-int`) and D1 untouched; interactions env remained off after cleanup.
+
+**Tested integration SHA:** `50cb88dc1bc72c6ad3ebb84d9994b31081ede0c6`.
+
 ### 5. Remove Interactions URL and stop the tunnel
 
 1. Discord Developer Portal (INT-TEST app only): clear Interactions Endpoint URL → Save.

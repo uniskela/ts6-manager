@@ -257,8 +257,9 @@ describe('VoiceBot Auto-DJ integration', () => {
     assert.equal(f.controller.active, true);
     assert.equal(f.bot.nowPlaying?.id, radio.id);
     assert.equal(f.loaded.length, 1);
-    assert.equal(f.streams.length, 2);
-    assert.equal(f.streams[0].killed, true);
+    // Resume keeps the same live stream (stdout pause/resume), does not re-open.
+    assert.equal(f.streams.length, 1);
+    assert.equal(f.streams[0].killed, false);
     assert.equal(f.controller.state.failures, 0);
   });
 
