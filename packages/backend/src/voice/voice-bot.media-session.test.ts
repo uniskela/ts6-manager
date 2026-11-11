@@ -44,6 +44,36 @@ function radioHarness() {
   return { bot, b, stdout, proc, killed: () => killed };
 }
 
+function dualRadioHarness() {
+  const bot = makeBot();
+  const b = bot as any;
+  b.startIcyPolling = () => {};
+  b.stopIcyPolling = () => {};
+  b.updateNowPlayingNickname = () => {};
+  b.client.sendVoice = () => {};
+  const mk = () => {
+    const s: {
+      stdout: PassThrough;
+      process: any;
+      killed: number;
+      kill: () => void;
+    } = {
+      stdout: new PassThrough({ highWaterMark: 1024 * 1024 }),
+      process: new EventEmitter() as any,
+      killed: 0,
+      // Arrow so VoiceBot can call streamKill unbound.
+      kill: () => {},
+    };
+    s.kill = () => { s.killed++; };
+    return s;
+  };
+  const first = mk();
+  const second = mk();
+  let n = 0;
+  b.pipeline.toPcmStream = async () => (++n === 1 ? first : second);
+  return { bot, b, first, second };
+}
+
 async function waitUntil(pred: () => boolean, ms: number): Promise<boolean> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -172,27 +202,18 @@ describe('radio stream bounded buffer and EOF drain', () => {
   });
 
   it('replacement discards previous buffered audio', async () => {
-    const bot = makeBot();
-    const b = bot as any;
-    b.startIcyPolling = () => {};
-    b.updateNowPlayingNickname = () => {};
-    b.client.sendVoice = () => {};
-    const first = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
-    first.kill = () => { first.killed++; };
-    const second = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
-    second.kill = () => { second.killed++; };
-    let n = 0;
-    b.pipeline.toPcmStream = async () => (++n === 1 ? first : second);
+    const { bot, b, first, second } = dualRadioHarness();
     await bot.playStream({
       id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
     });
+    bot.pause(); // freeze the tick so the HWM fill is stable
     first.stdout.write(Buffer.alloc(STREAM_PCM_HIGH_WATER_BYTES, 1));
     assert.equal(b.streamChunksSize, STREAM_PCM_HIGH_WATER_BYTES);
     await bot.playStream({
       id: 'b', title: 'B', source: 'radio', filePath: '', streamUrl: 'https://example.test/b.mp3',
     });
     assert.equal(bot.nowPlaying?.id, 'b');
-    assert.ok(first.killed >= 1);
+    assert.ok(first.killed >= 1, `expected first stream killed, got ${first.killed}`);
     assert.ok(b.streamChunksSize < STREAM_PCM_HIGH_WATER_BYTES);
     second.stdout.end();
     second.process.emit('close', 0);
@@ -268,18 +289,7 @@ describe('radio stream source error cleanup', () => {
   });
 
   it('ignores stale source error after replacement', async () => {
-    const bot = makeBot();
-    const b = bot as any;
-    b.startIcyPolling = () => {};
-    b.stopIcyPolling = () => {};
-    b.updateNowPlayingNickname = () => {};
-    b.client.sendVoice = () => {};
-    const first = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
-    first.kill = () => { first.killed++; };
-    const second = { stdout: new PassThrough({ highWaterMark: 1024 * 1024 }), process: new EventEmitter() as any, killed: 0 };
-    second.kill = () => { second.killed++; };
-    let n = 0;
-    b.pipeline.toPcmStream = async () => (++n === 1 ? first : second);
+    const { bot, b, second } = dualRadioHarness();
     await bot.playStream({
       id: 'a', title: 'A', source: 'radio', filePath: '', streamUrl: 'https://example.test/a.mp3',
     });
@@ -313,7 +323,8 @@ describe('stale radio startup', () => {
       let killed = 0;
       b.pipeline.toPcmStream = () => new Promise((done, fail) => { resolve = done; reject = fail; });
       const startup = bot.playStream({ id: 'radio', title: 'Radio', source: 'radio', filePath: '', streamUrl: 'https://example.test/radio' });
-      assert.ok(resolve);
+      // prepareMusicStart is async, so toPcmStream is scheduled on a microtask.
+      assert.ok(await waitUntil(() => typeof resolve === 'function', 1000));
       const startupToken = bot.playbackToken;
       if (newer) {
         b.ensurePlayableFile = async () => '/newer.opus';

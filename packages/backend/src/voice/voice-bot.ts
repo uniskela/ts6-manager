@@ -928,13 +928,18 @@ export class VoiceBot extends EventEmitter {
     if (connectionIntent === this.connectionIntent) await this.start();
   }
 
-  /** Returns sessions actually replaced (this bot's video) when starting music. */
-  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
-    if (item.streamUrl) return this.playStream(item, options);
+  /**
+   * Shared music/radio start gate. `current` is null when a newer owner won
+   * after video replace (caller should return `replaced` unchanged).
+   */
+  private async prepareMusicStart(
+    item: QueueItem,
+    options: MusicStartOptions,
+  ): Promise<{ replaced: MediaSessionInfo[]; current: (() => boolean) | null }> {
     if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
       throw new Error('Bot is not connected');
     }
-    if (options.automation && !options.automation()) return [];
+    if (options.automation && !options.automation()) return { replaced: [], current: null };
     if (!options.automation) this.automation?.requestQueued();
     const intent = this.playbackOwner = {};
     const replaced: MediaSessionInfo[] = [];
@@ -942,18 +947,25 @@ export class VoiceBot extends EventEmitter {
       const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
       if (session) replaced.push(session);
     }
-    if (intent !== this.playbackOwner) return replaced;
+    if (intent !== this.playbackOwner) return { replaced, current: null };
     this.beginMusicSession();
-
     this.stopIcyPolling();
     this.stopPlayback();
     const owner = this.playbackOwner;
-    const current = () => owner === this.playbackOwner;
     this._nowPlaying = item;
     this._status = 'playing';
     this.emit('statusChange', this._status);
     this.emit('nowPlaying', item);
     this.updateNowPlayingNickname(item.title);
+    return { replaced, current: () => owner === this.playbackOwner };
+  }
+
+  /** Returns sessions actually replaced (this bot's video) when starting music. */
+  async play(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
+    if (item.streamUrl) return this.playStream(item, options);
+    const prep = await this.prepareMusicStart(item, options);
+    if (!prep.current) return prep.replaced;
+    const { replaced, current } = prep;
 
     try {
       if (
@@ -1319,6 +1331,28 @@ export class VoiceBot extends EventEmitter {
     this.playbackTimer = setTimeout(this.streamTick, FRAME_MS);
   }
 
+  private takeStreamFrameOrPad(): Buffer | null {
+    const frame = this.takeFromStreamChunks(BYTES_PER_FRAME);
+    if (frame || !this.streamSourceEnded || this.streamChunksSize === 0) return frame;
+    const raw = this.takeFromStreamChunks(this.streamChunksSize)!;
+    const padded = Buffer.alloc(BYTES_PER_FRAME, 0);
+    raw.copy(padded);
+    return padded;
+  }
+
+  /** false → tick should stop (track finished). */
+  private continueAfterStreamUnderrun(): boolean {
+    if (!this.streamSourceEnded) return true;
+    // Unshifted remainder may still sit on a paused stdout after EOF.
+    if (this.flushPausedStreamStdout() || this.streamChunksSize > 0) {
+      this.releaseStreamBackpressureAfterTake();
+      return true;
+    }
+    const item = this.streamItem ?? this._nowPlaying;
+    if (item) this.finishStreamTrack(item, this.streamFailedClose);
+    return false;
+  }
+
   private streamTick = (): void => {
     if (this.streamStartEpoch !== this.loopEpoch || !this._isStreaming) return;
 
@@ -1328,32 +1362,17 @@ export class VoiceBot extends EventEmitter {
       return;
     }
 
-    const lagMs = now - this.streamNextDue;
-    if (lagMs >= FRAME_MS) {
+    if (now - this.streamNextDue >= FRAME_MS) {
       this.streamNextDue = now + FRAME_MS;
     }
 
-    let frame = this.takeFromStreamChunks(BYTES_PER_FRAME);
-    if (!frame && this.streamSourceEnded && this.streamChunksSize > 0) {
-      const raw = this.takeFromStreamChunks(this.streamChunksSize)!;
-      const padded = Buffer.alloc(BYTES_PER_FRAME, 0);
-      raw.copy(padded);
-      frame = padded;
-    }
+    const frame = this.takeStreamFrameOrPad();
     if (frame) {
       this.releaseStreamBackpressureAfterTake();
-      const opusFrame = this.pipeline.encodeFrame(frame, this.config.volume);
-      this.sendVoiceFrame(opusFrame);
+      this.sendVoiceFrame(this.pipeline.encodeFrame(frame, this.config.volume));
       this.streamFramesSent++;
-    } else if (this.streamSourceEnded) {
-      // Unshifted remainder may still sit on a paused stdout after EOF.
-      if (this.flushPausedStreamStdout() || this.streamChunksSize > 0) {
-        this.releaseStreamBackpressureAfterTake();
-      } else {
-        const item = this.streamItem ?? this._nowPlaying;
-        if (item) this.finishStreamTrack(item, this.streamFailedClose);
-        return;
-      }
+    } else if (!this.continueAfterStreamUnderrun()) {
+      return;
     }
 
     this.streamNextDue += FRAME_MS;
@@ -1442,36 +1461,16 @@ export class VoiceBot extends EventEmitter {
 
   /** Returns sessions actually replaced (this bot's video) when starting a stream. */
   async playStream(item: QueueItem, options: MusicStartOptions = {}): Promise<MediaSessionInfo[]> {
-    if (this._status !== 'connected' && this._status !== 'playing' && this._status !== 'paused') {
-      throw new Error('Bot is not connected');
-    }
     if (!item.streamUrl) {
       throw new Error('No streamUrl provided');
     }
-    if (options.automation && !options.automation()) return [];
-    if (!options.automation) this.automation?.requestQueued();
-    const intent = this.playbackOwner = {};
-    const replaced: MediaSessionInfo[] = [];
-    if (this._videoStreaming || this._videoStarting) {
-      const session = await this.replaceVideoWithMusic(options.replaceSessionIds);
-      if (session) replaced.push(session);
-    }
-    if (intent !== this.playbackOwner) return replaced;
-    this.beginMusicSession();
-
-    this.stopIcyPolling();
-    this.stopPlayback();
-    const owner = this.playbackOwner;
-    const current = () => owner === this.playbackOwner;
-    this._nowPlaying = item;
+    const prep = await this.prepareMusicStart(item, options);
+    if (!prep.current) return prep.replaced;
+    const { replaced, current } = prep;
     this._isStreaming = true;
-    this._status = 'playing';
     this.streamStartTime = Date.now();
     this.streamSourceEnded = false;
     this.streamFramesSent = 0;
-    this.emit('statusChange', this._status);
-    this.emit('nowPlaying', item);
-    this.updateNowPlayingNickname(item.title);
     this.startIcyPolling(item.streamUrl);
 
     try {
