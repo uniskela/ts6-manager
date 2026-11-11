@@ -153,10 +153,12 @@ Standalone compose (does not touch production fetcher stacks). Services use `res
 
 **Interactions:** compose defaults `DISCORD_INTERACTIONS_ENABLED` / `TS6_ISOLATED_LIVE_INTERACTIONS` from `TS6_DISCORD_INT_INTERACTIONS` / `TS6_DISCORD_INT_LIVE` (default false) — not ambient shell `DISCORD_INTERACTIONS_ENABLED`. Supervised enable still requires the process isolation gate (pinned test app id + public key).
 
+**Compose project:** always `-p ts6-discord-int-media` (also set via compose `name:`). Distinct from disposable INT TS (`ts6-discord-int`), production, and D1. Do not use the repository directory's default project name.
+
 ```bash
 umask 077; openssl rand -hex 32 > .media-fetcher-token-int   # seed; gitignored
 # Optional override: MEDIA_FETCHER_SEED_TOKEN_FILE=./.media-fetcher-token-int
-docker compose -f docker-compose.discord-int-media-fetcher.yml up --build -d
+docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml up --build -d
 # Offline socket/token check (no Discord tunnel):
 ./scripts/discord-int-media-fetcher-ipc-check.sh
 # Offline full stack (fetcher+sidecar+backend). Does not kill arbitrary :3011
@@ -167,7 +169,7 @@ docker compose -f docker-compose.discord-int-media-fetcher.yml up --build -d
 # Supervised #20 prep — INT backend+sidecar from this tree + shared jobs volume:
 # DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
 # DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \
-# docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
+# docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
 ```
 
 Keep seed and installed paths distinct even if backend env is exported into the shell:
@@ -183,7 +185,7 @@ Landlock, internal `discord_int_fetch` network, token mode 600, and fail-closed 
 Tear down after the supervised window:
 
 ```bash
-docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
+docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
 ```
 
 Do not modify production media-fetcher services.

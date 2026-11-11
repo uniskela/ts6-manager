@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Offline INT media-fetcher IPC validation (no Discord tunnel / interactions).
 # Starts fetcher+proxy on named volumes, runs ipc-check, tears down on exit unless KEEP=1.
+# Always uses Compose project ts6-discord-int-media (-p), never the repo-dir default.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-COMPOSE=(docker compose -f docker-compose.discord-int-media-fetcher.yml)
+# shellcheck source=discord-int-media-fetcher-compose.sh
+source "$ROOT/scripts/discord-int-media-fetcher-compose.sh"
+COMPOSE=(discord_int_media_compose)
 SEED="${MEDIA_FETCHER_SEED_TOKEN_FILE:-$ROOT/.media-fetcher-token-int}"
 
 cleanup() {
@@ -13,24 +16,25 @@ cleanup() {
     echo "KEEP=1 — leaving stack up"
     return
   fi
-  # Only this compose file's fetcher/proxy/token oneshot. No -v (keeps named
-  # volumes). Never touches INT TS compose or production stacks.
+  # Only project ts6-discord-int-media. No -v. Never touches INT TS / production.
   "${COMPOSE[@]}" --profile ipc-check down --remove-orphans || true
 }
 trap cleanup EXIT
+
+discord_int_media_assert_project_safe || exit 1
 
 if [[ ! -f "$SEED" ]]; then
   umask 077
   openssl rand -hex 32 >"$SEED"
   echo "created seed token at ${SEED##*/} (contents omitted)"
 fi
-# Owner-only seed; never chmod 644/777
 chmod 600 "$SEED" || true
 
 export MEDIA_FETCHER_SEED_TOKEN_FILE="$SEED"
 
-echo "==> building/starting INT media-fetcher (named volumes)"
+echo "==> project=$DISCORD_INT_MEDIA_COMPOSE_PROJECT starting INT media-fetcher"
 "${COMPOSE[@]}" up --build -d media-fetcher-token media-egress-proxy media-fetcher
+discord_int_media_assert_running_labels || exit 1
 
 echo "==> waiting for jobs socket inside volume"
 ready=0

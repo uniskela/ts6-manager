@@ -1,6 +1,12 @@
 # Standalone INT-TEST media fetcher (Commands & Radio supervised live).
 # Does NOT modify production media-fetcher services or docker-compose.media-fetcher.yml.
 #
+# Compose project (required): ts6-discord-int-media
+#   Distinct from production, disposable INT TS (ts6-discord-int), and D1 lab.
+#   Always: docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml …
+#   Scripts source scripts/discord-int-media-fetcher-compose.sh (same -p).
+#   Do not rely on the repository directory's default Compose project name.
+#
 # Rootless Docker remaps container UIDs (host orca → subuid). Bind-mounting jobs.sock
 # / .token mode 600 between host backend (uid 999) and fetcher (uid 1000→197608) yields
 # EACCES both ways. Match production: share an isolated *named* jobs volume between an
@@ -25,19 +31,21 @@
 #   # SIDECAR_SECRET must be set in .env.discord-integration-test for --profile int-backend
 #
 # Fetcher + proxy only (IPC check / prep):
-#   docker compose -f docker-compose.discord-int-media-fetcher.yml up --build -d
+#   docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml up --build -d
 #   ./scripts/discord-int-media-fetcher-ipc-check.sh
 #
 # INT backend + sidecar (profile int-backend) — builds from this tree:
 #   DISCORD_INT_DB_DIR=…/packages/backend/prisma/data \
 #   DISCORD_INT_MUSIC_DIR=…/packages/backend/data/discord-int-music \
-#   docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
-# Offline stack check (stops competing host :3011 first):
+#   docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend up --build -d
+# Offline stack check:
 #   ./scripts/discord-int-media-fetcher-stack-check.sh
 #
-# Tear down:
-#   docker compose -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
+# Tear down (this project only; no -v; does not stop ts6-discord-int TS):
+#   docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml --profile int-backend down
 # Do not point production stacks at these volumes.
+
+name: ts6-discord-int-media
 
 services:
   media-fetcher-token:

@@ -128,10 +128,10 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 ### Targeted live retest (after GO)
 
 1. Re-register guild commands so `/playlist tracks` is present.
-2. Start INT-only media fetcher (`docker-compose.discord-int-media-fetcher.yml`; named jobs volume + `--profile int-backend` under rootless — not host bind mounts). Offline: `./scripts/discord-int-media-fetcher-ipc-check.sh`. **#20 PASS requires audible radio**, not only the unavailable message.
+2. Start INT-only media fetcher (`-p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml`; named jobs volume + `--profile int-backend` under rootless — not host bind mounts). Offline: `./scripts/discord-int-media-fetcher-ipc-check.sh`. **#20 PASS requires audible radio**, not only the unavailable message.
 3. Confirm a viewer-only member (VIEWER role, no ADMIN roles) before #5/#21.
 4. #18: `/playlist add` → `/playlist tracks` → remove by `#N` or displayed host title after enrichment (positions must match).
-5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -f docker-compose.discord-int-media-fetcher.yml down`.
+5. Shutdown: clear Interactions URL → stop tunnel → stop path filter → disable interactions → `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml down`.
 
 ### 5. Remove Interactions URL and stop the tunnel
 
@@ -139,7 +139,7 @@ Focused fix branch (do not merge #601 yet): playlist remove aliases + `/playlist
 2. Stop cloudflared / tunnel process (it must have targeted `:3012`, never `:3011`).
 3. Stop the path-filter process on `:3012`.
 4. Set `DISCORD_INTERACTIONS_ENABLED=false` (and clear live latch if set); restart backend.
-5. `docker compose -f docker-compose.discord-int-media-fetcher.yml down` (stops all INT-only fetcher/proxy containers).
+5. `docker compose -p ts6-discord-int-media -f docker-compose.discord-int-media-fetcher.yml down` (stops all INT-only fetcher/proxy containers; not `ts6-discord-int` TS).
 6. Confirm `curl -sS http://127.0.0.1:3011/api/health` still ok and interactions remain off in env.
 
 ### 6. Verify isolated environment is clean

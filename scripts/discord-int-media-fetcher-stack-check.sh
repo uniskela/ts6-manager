@@ -4,14 +4,16 @@
 # Port safety: never kills an arbitrary :3011/:9800 listener. If a verified
 # disposable INT-TEST *host* backend holds :3011, set STOP_INT_HOST_BACKEND=1
 # to stop only that process. Otherwise free the port yourself and rerun.
-# Cleanup only runs `docker compose -f docker-compose.discord-int-media-fetcher.yml
-# down` (no -v) — does not stop docker-compose.discord-int-ts.yml or production.
+# Cleanup: docker compose -p ts6-discord-int-media … down (no -v) — does not stop
+# docker-compose.discord-int-ts.yml (project ts6-discord-int) or production.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export ROOT
-COMPOSE=(docker compose -f docker-compose.discord-int-media-fetcher.yml)
+# shellcheck source=discord-int-media-fetcher-compose.sh
+source "$ROOT/scripts/discord-int-media-fetcher-compose.sh"
+COMPOSE=(discord_int_media_compose)
 ENV_FILE="$ROOT/.env.discord-integration-test"
 SEED="${MEDIA_FETCHER_SEED_TOKEN_FILE:-$ROOT/.media-fetcher-token-int}"
 KEEP="${KEEP:-0}"
@@ -24,13 +26,13 @@ cleanup() {
     echo "KEEP=1 — leaving stack up"
     return
   fi
-  # Tear down only this compose file's INT services. Do not use -v (keeps jobs
-  # volume + never touches discord-int-test.db host bind). Do not stop the
-  # disposable TS project (docker-compose.discord-int-ts.yml) or production stacks.
+  # Tear down only project ts6-discord-int-media. No -v (keeps jobs volume +
+  # never deletes discord-int-test.db). Does not stop ts6-discord-int TS.
   "${COMPOSE[@]}" --profile int-backend --profile ipc-check down --remove-orphans || true
 }
 trap cleanup EXIT
 
+discord_int_media_assert_project_safe || die "compose project isolation check failed"
 [[ -f "$ENV_FILE" ]] || die "missing .env.discord-integration-test"
 
 # Resolve DB/music dirs from gitignored INT env. Never rewrite production paths.
@@ -197,12 +199,16 @@ assert not any("d1" in (b[1] or "").lower() and "prod" in (b[1] or "").lower() f
 print("stack-check OK: INT guild binding + loopback TS config on existing db")
 PY
 
-echo "==> start INT stack (set STACK_BUILD=1 to force --build)"
+echo "==> start INT stack project=$DISCORD_INT_MEDIA_COMPOSE_PROJECT (STACK_BUILD=1 to force --build)"
+# Snapshot foreign projects before up (must remain after cleanup)
+FOREIGN_BEFORE="$(docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' \
+  | awk -F'\t' -v p="$DISCORD_INT_MEDIA_COMPOSE_PROJECT" '$2!="" && $2!=p {print}' | sort)"
 UP_ARGS=(--profile int-backend up -d)
 if [[ "${STACK_BUILD:-0}" == "1" ]]; then
   UP_ARGS=(--profile int-backend up --build -d)
 fi
 "${COMPOSE[@]}" "${UP_ARGS[@]}"
+discord_int_media_assert_running_labels || die "INT container project labels incorrect"
 
 echo "==> wait for backend health"
 ready=0
@@ -269,4 +275,31 @@ s.on('connect',()=>{clearTimeout(t);s.end();console.log('backend-to-webquery PAS
 s.on('error',e=>{console.error(e);process.exit(1);});
 "
 
+FOREIGN_AFTER_UP="$(docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' \
+  | awk -F'\t' -v p="$DISCORD_INT_MEDIA_COMPOSE_PROJECT" '$2!="" && $2!=p {print}' | sort)"
+if [[ "$FOREIGN_BEFORE" != "$FOREIGN_AFTER_UP" ]]; then
+  die "foreign compose containers changed unexpectedly during INT up"
+fi
+if docker inspect ts6-discord-int-teamspeak >/dev/null 2>&1; then
+  ts_proj="$(docker inspect -f '{{index .Config.Labels "com.docker.compose.project"}}' ts6-discord-int-teamspeak)"
+  [[ "$ts_proj" == "ts6-discord-int" ]] || die "INT TS container project label drifted: $ts_proj"
+  ok "disposable TS remains project ts6-discord-int (untouched)"
+fi
+
+if [[ "$KEEP" != "1" ]]; then
+  echo "==> cleanup project=$DISCORD_INT_MEDIA_COMPOSE_PROJECT only (no -v)"
+  "${COMPOSE[@]}" --profile int-backend --profile ipc-check down --remove-orphans
+  KEEP=1 # prevent EXIT trap from re-running down
+  FOREIGN_AFTER_DOWN="$(docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' \
+    | awk -F'\t' -v p="$DISCORD_INT_MEDIA_COMPOSE_PROJECT" '$2!="" && $2!=p {print}' | sort)"
+  if [[ "$FOREIGN_BEFORE" != "$FOREIGN_AFTER_DOWN" ]]; then
+    die "down --remove-orphans affected a foreign Compose project"
+  fi
+  for c in "${DISCORD_INT_MEDIA_OWNED_CONTAINERS[@]}"; do
+    if docker inspect "$c" >/dev/null 2>&1; then
+      die "owned container '$c' still present after project down"
+    fi
+  done
+  ok "cleanup removed only ts6-discord-int-media containers"
+fi
 ok "offline stack validation complete (not audible radio acceptance)"
